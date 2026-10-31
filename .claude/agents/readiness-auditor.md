@@ -49,8 +49,9 @@ the code and account are right; report the gap as docs drift.
 - **Account shape.** Deployments may share an account with unrelated projects. Audit only
   `contentworker-*` resources, treat any token or member that can deploy to the account as able to
   deploy over contentworker, and flag `contentworker-*` resources nothing in the repo references
-  (`git grep` the name) as orphans. Resources renamed `contentworker-v1-*` belong to the previous
-  generation; report them as an inventory note, not a finding, unless something still binds them.
+  (`git grep` the name) as orphans. Resources from the earlier `contentworker-edge` stack, renamed
+  out of the way when this deployment was provisioned, are an inventory note, not a finding,
+  unless something still binds them.
 - **Tiers.** Ask the caller for zone plans or read them from the API; mark each recommendation that
   needs a higher plan as tier-gated.
 

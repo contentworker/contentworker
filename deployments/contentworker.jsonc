@@ -3,10 +3,10 @@
 // own D1, R2, KV, Vectorize, queues and Workers; spaces and environments live inside its D1.
 // scripts/fleet.ts renders each app's wrangler.<id>.json from this file.
 //
-// Provisioned 2026-10-31. The account's v1 resources (the contentworker-edge Worker) were renamed to
-// contentworker-v1-* to free these names: KV contentworker-v1-cache, queues contentworker-v1-
-// {events,events-dlq,bulk,agents}, Vectorize contentworker-v1-vectors. The AI Gateway
-// "contentworker" is shared with v1 (gateway ids can't be renamed; it's a proxy config).
+// Provisioned 2026-10-31. The account's resources from the earlier contentworker-edge stack (its
+// KV cache, its event, bulk and agent queues, and its Vectorize index) were renamed out of the way
+// to free these names, and nothing in this repo binds them. The AI Gateway "contentworker" is still
+// shared with that stack (gateway ids can't be renamed; it's a proxy config).
 {
   "id": "contentworker",
   "ring": "internal",
