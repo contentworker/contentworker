@@ -1,0 +1,97 @@
+---
+title: Content modeling
+description: Content types, the thirteen field types, components and repeaters, validations, and how to change a model safely.
+---
+
+A content model is the set of content types in a space. Good models describe content by what it
+*is* (an article, an author, a promo block) rather than where it appears, so the same entry can
+feed a website, an app, an email and an agent.
+
+## Content types
+
+A content type has:
+
+- an **`apiId`**, the stable identifier the API and SDKs use (`article`), which never changes;
+- a **name** people see (`Article`);
+- a **display field**, the field used as each entry's title in lists, pickers and search results;
+- an ordered list of **fields**.
+
+Creating or changing a content type makes a draft definition; publishing it makes the change live
+for authoring and delivery. Each publish bumps the type's version, and an
+`content_type.published` event lets integrations (generated types, caches) react.
+
+## Field types
+
+| Type        | Holds                                                | Value                          |
+| ----------- | ---------------------------------------------------- | ------------------------------ |
+| `Symbol`    | Short, single-line text: titles, names, labels       | string                         |
+| `Slug`      | A URL-safe identifier, normalized as you type        | string                         |
+| `Text`      | Long, multi-line plain text                          | string                         |
+| `RichText`  | A structured document: headings, lists, links, embeds | object                        |
+| `Integer`   | A whole number                                       | integer                        |
+| `Number`    | A decimal number                                     | number                         |
+| `Boolean`   | Yes or no                                            | boolean                        |
+| `Date`      | A date or date and time                              | ISO 8601 string                |
+| `Location`  | A point on a map                                     | `{ "lat": …, "lon": … }`       |
+| `JSON`      | Free-form structured data                            | object                         |
+| `Link`      | A reference to an entry or an asset                  | `{ "id": …, "linkType": … }`   |
+| `Component` | A group of nested fields (a "hero", a "call to action") | object                      |
+| `Array`     | A list of `Symbol`, `Link` or `Component` items      | array                          |
+
+Each field also says whether it is **required**, **localized** (a separate value per locale) and
+**unique** (no two entries of the type may share a value; a clash is refused with the entry that
+holds it). A field can carry a **default value** that new entries start with.
+
+### Components and repeaters
+
+A `Component` field groups nested fields that belong together: a hero block's heading, image and
+button. An `Array` of components is a **repeater**: a list of feature cards, FAQ items or table
+rows that editors add, remove and reorder.
+
+Nested fields are ordinary fields, with three exceptions. They can't be localized on their own
+(localization is decided once, on the field holding the component), they can't be unique, and they
+can't be slugs. Components nest up to three levels; anything deeper is usually better as its own
+content type, linked.
+
+### References
+
+A `Link` field points at an entry or an asset; an `Array` of links holds several. Restrict which
+content types a link may target with `linkContentTypes`. Publishing an entry checks that
+everything it links to exists, and an entry other published entries link to can't be permanently
+deleted until those links are removed.
+
+## Validations
+
+| Validation          | Applies to                 | Checks                                       |
+| ------------------- | -------------------------- | -------------------------------------------- |
+| `in`                | Symbol, Text, Integer, Number | The value is one of a list               |
+| `regexp`            | Symbol, Text               | The value matches a pattern                  |
+| `range`             | Integer, Number            | The value is between a min and a max         |
+| `size`              | Symbol, Text, Array        | Length, or number of items, is within bounds |
+| `linkContentTypes`  | Link, Array of Link        | The linked entry is one of these types       |
+
+Validations run on every write, from every surface: the admin, the API, imports, AI drafting and
+agents. An AI agent can't save an entry a person couldn't.
+
+## Changing a model
+
+- **Adding a field** is safe: existing entries simply have no value for it until edited. Make it
+  optional first if entries already exist, then fill it (AI autofill can help, see
+  [AI features](/guides/ai/)) before making it required.
+- **Renaming** a field's name is safe; its `apiId` is what code depends on, so treat that as
+  permanent.
+- **Try risky changes in an environment.** Create a `staging` environment from `main`, change the
+  model there, point a preview at it, then merge it back. See
+  [Concepts](/start/concepts/#spaces-and-environments).
+
+## Types for your code
+
+Every space can describe its model as TypeScript, so code reading entries is typed by the model as
+it is right now:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/content-types?format=typescript" \
+  -H "Authorization: Bearer $CPA" > src/contentworker.d.ts
+```
+
+The `contentworker-codegen` CLI does the same from a build script. See [SDKs](/guides/sdks/#typed-content).

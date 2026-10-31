@@ -1,0 +1,30 @@
+{
+  "name": "@contentworker/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The api Worker: Management and Preview REST (Hono + OpenAPI), the MCP server, OAuth, setup/OIDC, media and the live route. HTTP only; async work and stateful objects are the engine's.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@contentworker/agent-runtime": "workspace:*",
+    "@contentworker/application": "workspace:*",
+    "@contentworker/http": "workspace:*",
+    "@contentworker/platform": "workspace:*",
+    "@contentworker/seed": "workspace:*",
+    "hono": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

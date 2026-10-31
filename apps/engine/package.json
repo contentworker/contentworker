@@ -1,0 +1,36 @@
+{
+  "name": "@contentworker/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The engine Worker: queue consumers, the cron sweeper, and every Durable Object and Workflow. No public route.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@contentworker/adapters": "workspace:*",
+    "@contentworker/agent-runtime": "workspace:*",
+    "@contentworker/application": "workspace:*",
+    "@contentworker/db": "workspace:*",
+    "@contentworker/domain": "workspace:*",
+    "@contentworker/platform": "workspace:*",
+    "@contentworker/ports": "workspace:*",
+    "@contentworker/redaction": "workspace:*",
+    "@contentworker/test-kit": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

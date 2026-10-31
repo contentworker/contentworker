@@ -1,0 +1,3 @@
+# Astro's generated types, and the OpenAPI document scripts/openapi.ts writes before each build.
+.astro/
+src/generated/

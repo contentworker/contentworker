@@ -1,0 +1,23 @@
+// contentworker's own deployment at contentworker.app. Its resources keep the base names
+// (suffix ""), which are the values in apps/*/wrangler.jsonc. One deployment = one customer: its
+// own D1, R2, KV, Vectorize, queues and Workers; spaces and environments live inside its D1.
+// scripts/fleet.ts renders each app's wrangler.<id>.json from this file.
+//
+// Provisioned 2026-10-31. The account's v1 resources (the contentworker-edge Worker) were renamed to
+// contentworker-v1-* to free these names: KV contentworker-v1-cache, queues contentworker-v1-
+// {events,events-dlq,bulk,agents}, Vectorize contentworker-v1-vectors. The AI Gateway
+// "contentworker" is shared with v1 (gateway ids can't be renamed; it's a proxy config).
+{
+  "id": "contentworker",
+  "ring": "internal",
+  "slot": 1,
+  "domain": "contentworker.app",
+  "suffix": "",
+  "environment": "production",
+  // Set by scripts/provision.sh contentworker (wrangler d1 create).
+  "d1Id": "3a8b59b4-0d41-46dc-a460-f24b9e0af765",
+  "docs": true,
+  // AI Gateway request logs (model, tokens, cost; never prompt or answer).
+  "aiGatewayLogs": true,
+  "kvId": "9ce1a0ea5a3f4da6b9a415be020b3c81"
+}

@@ -1,0 +1,385 @@
+import type { AppContext } from '@contentworker/application';
+import {
+  createContentType,
+  createEntry,
+  createSpace,
+  publishContentType,
+  startWorkflowRun,
+} from '@contentworker/application';
+import {
+  ConflictError,
+  type DomainEvent,
+  type Principal,
+  SCOPES,
+  WorkflowBuilder,
+  type WorkflowRun,
+} from '@contentworker/domain';
+import { type Clock, type IdGenerator, TransactionConflictError } from '@contentworker/ports';
+import { RecordingWorkflowEngine } from '@contentworker/test-kit';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { createD1Store } from '../src/store.js';
+import { testDb } from './env.js';
+
+/**
+ * What the D1 store guarantees beyond the port's basics: `withTransaction` as a unit of work (atomic
+ * commit, compare-and-set guards that fail the whole unit), the lease-claimed outbox, and every
+ * caller-sized list split under D1's 100-bound-parameter cap.
+ */
+const clock: Clock = { now: () => new Date('2026-01-01T00:00:00.000Z') };
+const uid = () => crypto.randomUUID();
+const ids: IdGenerator = { newId: uid };
+
+const store = createD1Store(testDb);
+const ctx: AppContext = { store, clock, ids };
+const spaceId = `uow-${uid()}`;
+const scope = { spaceId, environmentId: 'main' };
+
+const event = (n: string): DomainEvent => ({
+  id: `evt-${uid()}`,
+  type: 'entry.published',
+  scope,
+  occurredAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, Number(n))).toISOString(),
+  entryId: `lease-${n}`,
+  contentTypeApiId: 'article',
+  version: 1,
+  fields: {},
+});
+
+const settle = async <T>(ps: Promise<T>[]) => {
+  const results = await Promise.allSettled(ps);
+  return {
+    ok: results.filter((r) => r.status === 'fulfilled') as PromiseFulfilledResult<T>[],
+    failed: results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[],
+  };
+};
+
+beforeAll(async () => {
+  await createSpace(ctx, { spaceId, name: 'UoW', defaultLocale: 'en-US', locales: ['en-US'] });
+  await createContentType(ctx, scope, {
+    apiId: 'article',
+    name: 'Article',
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: true,
+        position: 0,
+      },
+    ],
+  });
+  await publishContentType(ctx, scope, 'article');
+});
+
+describe('withTransaction (unit of work)', () => {
+  it('commits every write at once and writes nothing when fn throws', async () => {
+    const [a, b] = [`tag-${uid()}`, `tag-${uid()}`];
+    await store.withTransaction(async (tx) => {
+      await tx.taxonomy.createTag(scope, { id: a, name: 'A' });
+      await tx.taxonomy.createTag(scope, { id: b, name: 'B' });
+      // Reads inside the unit see committed state only.
+      expect(await tx.taxonomy.getTag(scope, a)).toBeNull();
+    });
+    expect(await store.taxonomy.getTag(scope, a)).toMatchObject({ name: 'A' });
+    expect(await store.taxonomy.getTag(scope, b)).toMatchObject({ name: 'B' });
+
+    const c = `tag-${uid()}`;
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.taxonomy.createTag(scope, { id: c, name: 'C' });
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+    expect(await store.taxonomy.getTag(scope, c)).toBeNull();
+  });
+
+  it('refuses returning compare-and-set methods that have no in-unit answer', async () => {
+    await expect(
+      store.withTransaction((tx) =>
+        tx.bulkJobs.claimChunk(scope, 'j', 'c', { now: new Date(), staleBefore: new Date() }),
+      ),
+    ).rejects.toThrow(/cannot run inside withTransaction/);
+    await expect(
+      store.withTransaction((tx) => tx.outbox.deleteRelayedBefore(new Date(), 1)),
+    ).rejects.toThrow(/cannot run inside withTransaction/);
+  });
+
+  it('two units saving the same run revision: exactly one commits', async () => {
+    const principal: Principal = {
+      spaceId,
+      kind: 'user',
+      subject: 'racer@example.com',
+      scopes: [SCOPES.contentWrite, SCOPES.contentPublish],
+    };
+    const graph = new WorkflowBuilder()
+      .n('start', 'trigger.manual', 'Submit')
+      .n('done', 'control.end', 'Done')
+      .e('start', 'done')
+      .graph();
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'Race' } },
+    });
+    const v = await store.workflowGraphs.publishVersion(
+      scope,
+      { id: uid(), name: 'Race', description: '', contentTypes: [], graph },
+      { publishedAt: clock.now().toISOString() },
+    );
+    const run = await startWorkflowRun(ctx, new RecordingWorkflowEngine(), principal, scope, {
+      entryId: entry.id,
+      workflowId: v.id,
+    });
+    const cur = (await store.workflowRuns.get(scope, run.id)) as WorkflowRun;
+
+    const save = (label: string) =>
+      store.withTransaction(async (tx) => {
+        const saved = await tx.workflowRuns.save(
+          scope,
+          { ...cur, rev: cur.rev + 1, vars: { winner: label } },
+          cur.rev,
+        );
+        await tx.outbox.append({ ...event('1'), id: `evt-${label}-${uid()}` });
+        return saved;
+      });
+    const { ok, failed } = await settle([save('a'), save('b')]);
+    expect(ok).toHaveLength(1);
+    expect(ok[0]?.value).toBe(true);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.reason).toBeInstanceOf(TransactionConflictError);
+
+    const after = (await store.workflowRuns.get(scope, run.id)) as WorkflowRun;
+    expect(after.rev).toBe(cur.rev + 1);
+    // Outside a unit the same stale CAS reports false instead of throwing.
+    expect(await store.workflowRuns.save(scope, { ...after, rev: 99 }, cur.rev)).toBe(false);
+  });
+
+  it('two units finalizing the same bulk job: one wins, the other conflicts', async () => {
+    const jobId = uid();
+    await store.bulkJobs.createJob(scope, {
+      id: jobId,
+      action: 'publish',
+      status: 'running',
+      totalItems: 1,
+      totalChunks: 1,
+      completedChunks: 1,
+      succeeded: 1,
+      failed: 0,
+      createdAt: clock.now().toISOString(),
+    });
+    const finalize = () =>
+      store.withTransaction((tx) =>
+        tx.bulkJobs.finalizeJob(scope, jobId, 'completed', clock.now()),
+      );
+    const { ok, failed } = await settle([finalize(), finalize()]);
+    expect(ok).toHaveLength(1);
+    expect(ok[0]?.value).toMatchObject({ id: jobId, status: 'completed', succeeded: 1 });
+    expect(failed[0]?.reason).toBeInstanceOf(TransactionConflictError);
+    // Committed state is now final: an in-unit finalize reports null up front.
+    expect(await finalize()).toBeNull();
+    expect((await store.bulkJobs.getJob(scope, jobId))?.status).toBe('completed');
+  });
+});
+
+describe('outbox lease claims', () => {
+  it('concurrent readPending claims never return the same event', async () => {
+    const appended = Array.from({ length: 40 }, (_, i) => event(String(i)));
+    await store.outbox.appendMany(appended); // > one INSERT's parameter budget
+    const mine = new Set(appended.map((e) => e.id));
+
+    const [a, b] = await Promise.all([store.outbox.readPending(25), store.outbox.readPending(25)]);
+    const aIds = a.map((e) => e.id);
+    const bIds = b.map((e) => e.id);
+    expect(aIds.filter((id) => bIds.includes(id))).toEqual([]);
+    for (const batch of [a, b]) {
+      const at = batch.map((e) => e.occurredAt);
+      expect(at).toEqual([...at].sort());
+    }
+    // Every event appended here was claimed by one of the two (nothing else is pending).
+    const claimed = new Set([...aIds, ...bIds]);
+    expect([...mine].every((id) => claimed.has(id))).toBe(true);
+
+    // Held leases keep a third relayer off them.
+    const third = await store.outbox.readPending(100);
+    expect(third.filter((e) => claimed.has(e.id))).toEqual([]);
+  });
+
+  it('a lapsed lease is re-claimed; markRelayed commits with its unit', async () => {
+    const e = event('500');
+    await store.outbox.append(e);
+    // Claimed inside a unit, executed immediately (visible before the unit commits).
+    await store
+      .withTransaction(async (tx) => {
+        const got = await tx.outbox.readPending(100);
+        expect(got.map((x) => x.id)).toContain(e.id);
+        const [row] = (
+          await testDb.prepare('select claimed_by from outbox where id = ?').bind(e.id).all<{
+            claimed_by: string | null;
+          }>()
+        ).results;
+        expect(row?.claimed_by).toBeTruthy();
+        throw new Error('relayer crashed before markRelayed');
+      })
+      .catch(() => undefined);
+    expect((await store.outbox.readPending(100)).map((x) => x.id)).not.toContain(e.id);
+
+    // Lease expires: the event is claimable again.
+    await testDb.prepare('update outbox set claimed_until = 0 where id = ?').bind(e.id).run();
+    await store.withTransaction(async (tx) => {
+      const got = await tx.outbox.readPending(100);
+      expect(got.map((x) => x.id)).toContain(e.id);
+      await tx.outbox.markRelayed(got.map((x) => x.id));
+    });
+    const [row] = (
+      await testDb.prepare('select relayed_at from outbox where id = ?').bind(e.id).all<{
+        relayed_at: number | null;
+      }>()
+    ).results;
+    expect(row?.relayed_at).not.toBeNull();
+  });
+});
+
+describe('unique value claims', () => {
+  const claim = (value: string) => ({
+    contentTypeApiId: 'article',
+    fieldApiId: 'slug',
+    locale: 'en-US',
+    value,
+  });
+
+  it('a racing claim of the same value loses with ConflictError (direct)', async () => {
+    const value = `slug-${uid()}`;
+    const { ok, failed } = await settle([
+      store.entries.replaceUniqueClaims(scope, `e-a-${value}`, [claim(value)]),
+      store.entries.replaceUniqueClaims(scope, `e-b-${value}`, [claim(value)]),
+    ]);
+    expect(ok).toHaveLength(1);
+    expect(failed[0]?.reason).toBeInstanceOf(ConflictError);
+    expect(String(failed[0]?.reason)).toMatch(/already uses/);
+    const conflicts = await store.entries.findUniqueConflicts(scope, [claim(value)]);
+    expect(conflicts).toHaveLength(1);
+  });
+
+  it('a racing claim inside units fails the losing unit with ConflictError', async () => {
+    const value = `slug-${uid()}`;
+    const claimIn = (entryId: string) =>
+      store.withTransaction(async (tx) => {
+        expect(await tx.entries.findUniqueConflicts(scope, [claim(value)], entryId)).toEqual([]);
+        await tx.entries.replaceUniqueClaims(scope, entryId, [claim(value)]);
+      });
+    const { ok, failed } = await settle([claimIn(`u-a-${value}`), claimIn(`u-b-${value}`)]);
+    expect(ok).toHaveLength(1);
+    expect(failed[0]?.reason).toBeInstanceOf(ConflictError);
+    expect(failed[0]?.reason).not.toBeInstanceOf(TransactionConflictError);
+    expect(await store.entries.findUniqueConflicts(scope, [claim(value)])).toHaveLength(1);
+  });
+});
+
+describe('D1 parameter cap', () => {
+  it('splits caller-sized lists across statements', async () => {
+    // 60 unique claims (4 params each) in one call, then looked up in one call.
+    const owner = `cap-${uid()}`;
+    const claims = Array.from({ length: 60 }, (_, i) => ({
+      contentTypeApiId: 'article',
+      fieldApiId: 'slug',
+      locale: 'en-US',
+      value: `${owner}-${i}`,
+    }));
+    await store.entries.replaceUniqueClaims(scope, owner, claims);
+    expect(await store.entries.findUniqueConflicts(scope, claims)).toHaveLength(60);
+
+    // 150 published snapshots written, fetched, counted and removed in single calls.
+    const snaps = Array.from({ length: 150 }, (_, i) => ({
+      entryId: `${owner}-p${i}`,
+      contentTypeApiId: 'capdoc',
+      version: 1,
+      fields: { title: { 'en-US': `t${i}` } },
+      publishedAt: clock.now().toISOString(),
+    }));
+    await store.entries.putPublishedMany(scope, snaps);
+    const idList = [...snaps.map((s) => s.entryId), ...Array.from({ length: 100 }, () => uid())];
+    expect(await store.entries.getPublishedMany(scope, idList)).toHaveLength(150);
+    expect(await store.entries.countPublished(scope, { contentType: 'capdoc' })).toBe(150);
+    await store.entries.removePublishedMany(
+      scope,
+      snaps.map((s) => s.entryId),
+    );
+    expect(await store.entries.countPublished(scope, { contentType: 'capdoc' })).toBe(0);
+
+    // 120 draft entries: getMany + saveAggregateMany (one UPDATE per row).
+    const created = await Promise.all(
+      Array.from({ length: 120 }, (_, i) =>
+        createEntry(ctx, scope, {
+          contentTypeApiId: 'article',
+          fields: { title: { 'en-US': `${owner} draft ${i}` } },
+        }),
+      ),
+    );
+    const entryIds = created.map((c) => c.entry.id);
+    const got = await store.entries.getMany(scope, entryIds);
+    expect(got).toHaveLength(120);
+    expect(got.every((g) => typeof g.fields.title?.['en-US'] === 'string')).toBe(true);
+    await store.entries.saveAggregateMany(
+      scope,
+      got.map((g) => ({ ...g.entry, status: 'changed' as const })),
+    );
+    expect(
+      (await store.entries.getMany(scope, entryIds)).every((g) => g.entry.status === 'changed'),
+    ).toBe(true);
+
+    // A large `in` filter is one JSON parameter, not one per value.
+    const big = await store.entries.list(scope, {
+      contentTypeApiId: 'article',
+      limit: 1000,
+      filters: [
+        {
+          field: 'title',
+          op: 'in',
+          value: Array.from({ length: 200 }, (_, i) => `${owner} draft ${i}`),
+        },
+      ],
+    });
+    expect(big).toHaveLength(120);
+
+    // Reverse closure over 300 seeds: one JSON parameter.
+    await store.references.replaceForEntries(
+      scope,
+      Array.from({ length: 30 }, (_, i) => ({
+        fromEntryId: `${owner}-from-${i}`,
+        edges: [
+          {
+            fromEntryId: `${owner}-from-${i}`,
+            fromField: 'ref',
+            toId: `${owner}-to-${i}`,
+            toType: 'Entry' as const,
+          },
+        ],
+      })),
+    );
+    const closure = await store.references.findReverseClosure(
+      scope,
+      Array.from({ length: 300 }, (_, i) => `${owner}-to-${i}`),
+      { maxDepth: 3, maxEntries: 1000 },
+    );
+    expect(closure).toHaveLength(30);
+  });
+});
+
+describe('stored secrets', () => {
+  it('compare-and-sets a header whose key SQLite paths cannot quote', async () => {
+    const id = `sec-${uid()}`;
+    await store.webhooks.create(scope, {
+      id,
+      url: 'https://hook.example/cw',
+      topics: ['*'],
+      secret: 's',
+      active: true,
+      headers: { 'X-"Odd"': 'v1', Keep: 'k' },
+    });
+    const ref = { column: 'webhooks.headers' as const, id, key: 'X-"Odd"' };
+    expect(await store.storedSecrets.replace(ref, 'stale', 'v2')).toBe(false);
+    expect(await store.storedSecrets.replace(ref, 'v1', 'v2')).toBe(true);
+    expect((await store.webhooks.get(scope, id))?.headers).toEqual({ 'X-"Odd"': 'v2', Keep: 'k' });
+  });
+});

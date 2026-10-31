@@ -1,0 +1,44 @@
+---
+/*
+ * The theme menu, as a select: Match system (the default, as in the admin), Light, Dark.
+ * This one only acts on a change; ThemeProvider.astro applies the stored choice before paint.
+ */
+// biome-ignore lint/correctness/noUnusedImports: rendered below
+import Select from '@astrojs/starlight/components/Select.astro';
+---
+
+<starlight-theme-select>
+  <Select
+    icon="moon"
+    label="Theme"
+    options={[
+      { label: 'Dark', selected: false, value: 'dark' },
+      { label: 'Light', selected: false, value: 'light' },
+      { label: 'Match system', selected: true, value: 'auto' },
+    ]}
+    width="8.25em"
+  />
+</starlight-theme-select>
+
+<script is:inline>
+  StarlightThemeProvider.updatePickers();
+</script>
+
+<script>
+  class StarlightThemeSelect extends HTMLElement {
+    constructor() {
+      super();
+      this.querySelector('select')?.addEventListener('change', (e) => {
+        if (!(e.currentTarget instanceof HTMLSelectElement)) return;
+        const v = e.currentTarget.value;
+        const choice = v === 'light' || v === 'dark' ? v : 'auto';
+        try {
+          localStorage.setItem('starlight-theme', choice);
+        } catch {}
+        StarlightThemeProvider.apply(choice);
+        StarlightThemeProvider.updatePickers(choice);
+      });
+    }
+  }
+  customElements.define('starlight-theme-select', StarlightThemeSelect);
+</script>

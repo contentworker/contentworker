@@ -1,0 +1,29 @@
+{
+  "name": "@contentworker/sdk-core",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./inline-edit": {
+      "types": "./src/inline-edit.ts",
+      "default": "./src/inline-edit.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/inline-edit.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
+    "test": "vitest run",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@contentworker/typescript-config": "workspace:*",
+    "jsdom": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@contentworker/sdk-web",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
+    "test": "vitest run --passWithNoTests",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@contentworker/sdk-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19"
+  },
+  "devDependencies": {
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/react": "catalog:",
+    "react": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

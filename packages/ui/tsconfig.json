@@ -1,0 +1,11 @@
+{
+  "extends": "@contentworker/typescript-config/react-app.json",
+  "compilerOptions": {
+    // Lets the shadcn CLI resolve its aliases when adding components here.
+    "paths": {
+      "@contentworker/ui": ["./src"],
+      "@contentworker/ui/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

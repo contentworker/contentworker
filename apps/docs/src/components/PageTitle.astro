@@ -1,0 +1,13 @@
+---
+/*
+ * The page header: the title in Inter 600, set a touch tight, with a muted line under it. That
+ * line is the page's `description`, which Starlight otherwise only puts in <meta>.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: used in the markup
+const { title, description } = Astro.locals.starlightRoute.entry.data;
+---
+
+<header class="cw-page-header">
+  <h1 id="_top">{title}</h1>
+  {description && <p class="cw-lede">{description}</p>}
+</header>

@@ -1,0 +1,61 @@
+---
+title: AI features
+description: Drafting, translation, summaries, autofill, tagging, alt text, audits, search and the agents that enrich and moderate content, all validated like a human edit.
+---
+
+Every AI feature in contentworker follows one rule: **an AI can never produce content a person
+couldn't**. Generated values are checked against the content model with the same validation as a
+human edit, and most features return a proposal you look at before anything is saved.
+
+## In the entry editor
+
+| Feature          | What it does                                                         | API (`POST …/entries/…`)     |
+| ---------------- | -------------------------------------------------------------------- | ---------------------------- |
+| **Generate**     | Drafts a new entry of a type from a prompt                           | `…/generate`                 |
+| **Canvas**       | Turns free-form prose into a structured entry, field by field        | `…/canvas`                   |
+| **Translate**    | Translates an entry's localized fields into another locale           | `…/{id}/translate`           |
+| **Summarize**    | Writes a summary, optionally into a field                            | `…/{id}/summarize`           |
+| **Autofill**     | Fills one empty field from the rest of the entry                     | `…/{id}/autofill`            |
+| **Suggest tags** | Proposes tags from your taxonomy, and new ones                       | `…/{id}/suggest-tags`        |
+| **Audit**        | Reviews an entry for problems, and can open tasks for them           | `…/{id}/audit`               |
+| **Moderate**     | Classifies an entry's text for policy problems                       | `…/{id}/moderate`            |
+
+The editing features take `"apply": true` to save the result as a new draft version straight
+away; without it, they return the proposal for you to accept. Either way the result is a draft:
+nothing AI-generated is published without someone (or a workflow) publishing it.
+
+On assets, **Alt text** describes an image for accessibility, and **Auto-tag** proposes tags.
+
+### AI actions
+
+An **AI action** is a saved prompt your team reuses: "rewrite for a younger audience", "write a
+meta description". It has a prompt template with variables, an optional target field, and runs
+against an entry like the built-in features.
+
+## Search
+
+Delivery search is **hybrid** by default: it combines keyword matching with semantic similarity,
+so a search for "running shoes" also finds "trainers". Choose `mode=semantic` or `mode=lexical`
+to use one or the other. The editor also finds **related entries** and **near-duplicates** by
+meaning. See [Reading content](/guides/reading-content/#search).
+
+## Agents
+
+Agents run on their own, on publish or on a [schedule](/guides/releases-and-scheduling/#agent-schedules):
+
+- **Enrich** fills empty text fields on a newly published entry.
+- **Moderate** classifies the entry and records a hold when something is flagged.
+- **Curate** proposes improvements to text that's already there.
+- **Repurpose** derives variants for other channels, such as a social post or a newsletter blurb.
+
+Each run is recorded in the agent run log with its decisions and token usage. Whether an agent's
+changes apply directly or wait as an [agent review](/guides/approvals/#agent-reviews) is a setting;
+reviewing first is the default posture, and repurposing always waits for review.
+
+## Model tiers
+
+Features ask for a **tier**, not a specific model: `fast` for classification and tagging,
+`balanced` for drafting (the default), `flagship` for the hardest writing. Models run on
+Cloudflare Workers AI, and your workspace maps each tier to a model, so a model can change without
+changing a workflow or an integration.
+Usage is metered against your workspace's AI budget.

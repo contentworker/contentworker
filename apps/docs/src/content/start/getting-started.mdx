@@ -1,0 +1,106 @@
+---
+title: Getting started
+description: Model a content type, write and publish an entry, then read it back over the Delivery API.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+This walks through the whole loop once: a content type, an entry, a delivery key and a request
+that returns the published entry. Each step shows the admin and the API; use whichever you prefer.
+
+The examples use four shell variables. Set them to your workspace's values:
+
+```sh
+export API=https://api.your-workspace.contentworker.app   # the Management and Preview API
+export CDN=https://cdn.your-workspace.contentworker.app   # the public Delivery API
+export SPACE=your-space                                   # the space id, shown in the admin's header
+export CMA=cwk_cma_...                                     # a Management key (see step 1)
+```
+
+A workspace has three addresses: the admin at its own domain, the API at `api.` and the cached
+public Delivery API at `cdn.`.
+
+Every Management route lives under `/spaces/$SPACE/environments/main/…`; `main` is the
+environment every space starts with. See [Concepts](/start/concepts/#spaces-and-environments).
+
+<Steps>
+
+1. **Get a Management key.** In the admin, open **Settings → API keys** and create a key of kind
+   **Management (CMA)**. The token is shown once; copy it into `$CMA`. Check it works:
+
+   ```sh
+   curl -s "$API/auth/me" -H "Authorization: Bearer $CMA"
+   ```
+
+   The response names the space the key belongs to and its scopes. See
+   [API keys and access](/guides/api-keys/).
+
+2. **Model a content type.** In the admin, open **Content → New content type** and add a `title`
+   (Symbol, required) and a `body` (Text). Or over the API:
+
+   ```sh
+   curl -s "$API/spaces/$SPACE/environments/main/content-types" \
+     -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+     -d '{
+       "apiId": "article",
+       "name": "Article",
+       "displayField": "title",
+       "fields": [
+         { "apiId": "title", "name": "Title", "type": "Symbol", "required": true, "localized": false, "position": 0 },
+         { "apiId": "body",  "name": "Body",  "type": "Text",   "required": false, "localized": false, "position": 1 }
+       ]
+     }'
+
+   curl -s -X POST "$API/spaces/$SPACE/environments/main/content-types/article/published" \
+     -H "Authorization: Bearer $CMA"
+   ```
+
+   A content type is usable once its definition is published. See
+   [Content modeling](/guides/content-modeling/).
+
+3. **Write an entry.** In the admin, open **Content → Article → New entry**. Over the API, field values
+   are keyed by field, then by locale (`en-US` here; use your space's default locale):
+
+   ```sh
+   curl -s "$API/spaces/$SPACE/environments/main/entries" \
+     -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+     -d '{
+       "contentTypeApiId": "article",
+       "fields": {
+         "title": { "en-US": "Hello, world" },
+         "body":  { "en-US": "Our first published entry." }
+       }
+     }'
+   ```
+
+   The response is the new entry, in <span class="cw-badge" data-state="draft">Draft</span>. Note
+   its `id`.
+
+4. **Publish it.** Click **Publish** in the entry editor, or:
+
+   ```sh
+   curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/published" \
+     -H "Authorization: Bearer $CMA"
+   ```
+
+   The entry is now <span class="cw-badge" data-state="published">Published</span>, and every
+   webhook subscribed to `entry.published` is notified.
+
+5. **Read it as your site would.** Create a **Delivery (CDA)** key: it can read published content
+   and nothing else, so it is the one to ship in a site or app.
+
+   ```sh
+   curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article&locale=en-US" \
+     -H "Authorization: Bearer $CDA"
+   ```
+
+   With `locale=` set, each field comes back as a plain value rather than keyed by locale. See
+   [Reading content](/guides/reading-content/).
+
+</Steps>
+
+## Next
+
+- [Concepts](/start/concepts/): the vocabulary the rest of these docs use.
+- [SDKs](/guides/sdks/): typed clients for the Delivery and Management APIs.
+- [Workflows](/guides/workflows/): put a review between "save" and "publish".

@@ -1,0 +1,121 @@
+---
+title: SDKs
+description: Typed clients for the Delivery and Management APIs, React and Vue bindings, an edge client, typed content from your model, and inline editing on previews.
+---
+
+| Package                            | For                                                              |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `@contentworker/sdk-core`          | Delivery and Preview, in any JavaScript runtime. No dependencies |
+| `@contentworker/sdk-web`           | React hooks over sdk-core, plus inline editing                   |
+| `@contentworker/sdk-vue`           | Vue 3 composables over sdk-core                                  |
+| `@contentworker/sdk-edge`          | A tiny single-locale Delivery client for edge functions          |
+| `@contentworker/sdk-react-native`  | Delivery with offline sync for mobile apps                       |
+| `@contentworker/sdk-management`    | The Management API: model, author, publish, administer           |
+| `@contentworker/sdk-codegen`       | TypeScript types generated from your content model               |
+
+## Reading content
+
+```ts
+import { createDeliveryClient } from '@contentworker/sdk-core';
+
+const client = createDeliveryClient({
+  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.CONTENTWORKER_CDA_TOKEN!,
+});
+
+const article = await client.getEntry('0192f3a4-…', { locale: 'en-US', include: 1 });
+
+const latest = await client
+  .query()
+  .contentType('article')
+  .locale('en-US')
+  .limit(10)
+  .fetch();
+
+const hits = await client.search('waterproof running shoes', { topK: 5 });
+```
+
+The client takes the same filters, ordering and projection as the
+[Delivery API](/guides/reading-content/), throws `DeliveryError` on a failed request, and can keep
+a short in-memory cache (`cacheTtlMs`). Pass `preview: true` with a Preview key to read drafts;
+Preview is served from the workspace's `api.` address, so point `baseUrl` there
+(`https://api.your-workspace.contentworker.app`) for a preview client.
+
+### React and Vue
+
+```tsx
+import { ContentworkerProvider, useEntry } from '@contentworker/sdk-web';
+
+function Article({ id }: { id: string }) {
+  const { data, error, loading } = useEntry(id, { locale: 'en-US' });
+  if (loading) return <p>Loading…</p>;
+  if (error) return <p>Couldn't load this article.</p>;
+  return <h1>{String(data?.fields.title)}</h1>;
+}
+
+// <ContentworkerProvider client={client}><Article id="…" /></ContentworkerProvider>
+```
+
+`@contentworker/sdk-vue` has the same surface as composables (`useEntry`, `useEntries`,
+`useSemanticSearch`), installed with `app.use(createContentworker(client))`. Both fetch on the
+client only, so server rendering stays predictable.
+
+## Writing content
+
+```ts
+import { createManagementClient } from '@contentworker/sdk-management';
+
+const cma = createManagementClient({
+  baseUrl: 'https://api.your-workspace.contentworker.app',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.CONTENTWORKER_CMA_TOKEN!,
+});
+
+const entry = await cma.entries.create({
+  contentTypeApiId: 'article',
+  fields: { title: { 'en-US': 'Hello, world' } },
+});
+await cma.entries.publish(entry.id);
+```
+
+Every method maps to one Management route: content types, entries and their versions, assets
+(with direct uploads), releases, scheduled actions, webhooks, environments and keys. The client is
+exactly as powerful as its token; the server checks every call. Failures throw `ManagementError`
+with the status and the error body.
+
+## Typed content
+
+Generate TypeScript types from your space's content types, so `entry.fields.title` is a `string`
+rather than `unknown`:
+
+```sh
+npx contentworker-codegen --url https://api.your-workspace.contentworker.app --space your-space \
+  --environment main --token "$CONTENTWORKER_CPA_TOKEN" --out src/generated/content-types.ts
+```
+
+```ts
+import type { ArticleFields } from './generated/content-types.js';
+
+const article = await client.getEntry<ArticleFields>(id, { locale: 'en-US' });
+article.fields.title; // string
+```
+
+Each content type becomes a delivery shape (`ArticleFields`, one value per field) and a management
+shape (`ArticleDraftFields`, keyed by locale). A field's `in` validation becomes a union of its
+allowed values. The same output is served at `GET …/content-types?format=typescript`.
+
+## Inline editing
+
+On a preview, the SDKs can mark each rendered value with the entry and field it came from; an
+overlay then outlines a value on hover and opens that field in the editor on click.
+
+```tsx
+const editable = useEditable();
+<h1 {...editable(entry, 'title')}>{entry.fields.title}</h1>
+```
+
+`editable()` adds a `data-cw-ref` attribute only when the client is in preview mode. In production
+it returns nothing, so the same components ship without revealing entry ids or field names.

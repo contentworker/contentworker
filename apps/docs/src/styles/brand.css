@@ -1,0 +1,614 @@
+/*
+ * "The Ink and Slate" (the admin's design system, DESIGN.md at the repo root) carried into
+ * Starlight. Hand-written and safe to edit. Colours come only from theme.css, which is generated
+ * from the admin's tokens and never hand-edited: Starlight's slots, plus `--cw-*` for the admin's
+ * own token names. See apps/docs/DESIGN.md.
+ */
+
+:root {
+  /* The admin's header bar is 48px. */
+  --sl-nav-height: 3rem;
+  --sl-content-width: 48rem;
+  --sl-text-h1: clamp(1.75rem, 1.3rem + 1.4vw, 2.25rem);
+  --sl-text-h2: 1.375rem;
+  --sl-text-h3: 1.0625rem;
+  --sl-text-h4: 0.9375rem;
+  /* Controls are pills (18px in the admin, fully round at docs heights); panels 24px. */
+  --cw-pill: 999px;
+  --cw-r-panel: 1.5rem;
+  --cw-r-md: calc(var(--cw-radius) * 0.8);
+  --cw-ring: 0 0 0 1px color-mix(in oklch, var(--cw-foreground) 10%, transparent);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Browser surfaces ───────────────────────────────────────────────────── */
+
+::selection {
+  background-color: color-mix(in oklch, var(--cw-foreground) 18%, transparent);
+}
+
+/* The admin's focus treatment: a ring-coloured outline, never a hue. */
+:where(a, button, summary, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--cw-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+html {
+  scrollbar-color: var(--cw-border) transparent;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
+/* DESIGN.md: every animation gets a reduced-motion alternative. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.sl-markdown-content :is(h1, h2, h3, h4) {
+  text-wrap: balance;
+}
+
+.sl-markdown-content :is(ul, ol) ::marker {
+  color: var(--cw-muted-foreground);
+}
+
+/* ── Top bar ────────────────────────────────────────────────────────────── */
+
+/* `header.header`, not `.header`: Starlight's inner header div shares the class. */
+header.header {
+  border-bottom: 1px solid var(--cw-border);
+}
+
+/* The admin's wordmark: lowercase "contentworker", semibold, tight. */
+.site-title {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--cw-foreground);
+}
+
+/* Search reads as one of the admin's inputs: a 32px pill on the input fill, no border. */
+site-search > button[data-open-modal] {
+  height: 2rem;
+  border: 1px solid transparent;
+  border-radius: var(--cw-pill);
+  background: var(--cw-input);
+  color: var(--cw-muted-foreground);
+  font-size: 0.8125rem;
+  box-shadow: none;
+}
+
+site-search > button[data-open-modal]:hover {
+  color: var(--cw-foreground);
+}
+
+site-search kbd {
+  background: var(--cw-muted);
+  border-radius: 4px;
+}
+
+/* The admin's primary button: the ink-button fill with panel text, 32px pill. */
+.cw-header-button {
+  display: inline-flex;
+  align-items: center;
+  height: 2rem;
+  padding-inline: 0.75rem;
+  border-radius: var(--cw-pill);
+  background: var(--cw-primary);
+  color: var(--cw-primary-foreground);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.cw-header-button:hover {
+  background: color-mix(in oklch, var(--cw-primary) 80%, transparent);
+}
+
+starlight-theme-select select {
+  font-size: 0.8125rem;
+}
+
+/* Table of contents: quiet until current, then ink. */
+starlight-toc a,
+mobile-starlight-toc a {
+  color: var(--cw-muted-foreground);
+}
+
+starlight-toc a[aria-current="true"],
+mobile-starlight-toc a[aria-current="true"] {
+  color: var(--cw-foreground);
+  font-weight: 500;
+}
+
+/* ── Sidebar (the admin's: panel ground, ghost items) ───────────────────── */
+
+.sidebar-content {
+  --sl-sidebar-item-padding-inline: 0.625rem;
+}
+
+.sidebar-content .large {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--cw-foreground);
+}
+
+.sidebar-content a {
+  font-size: 0.875rem;
+  color: var(--cw-muted-foreground);
+  border-radius: var(--cw-pill);
+}
+
+.sidebar-content a:hover {
+  color: var(--cw-foreground);
+}
+
+/* Where you are is the admin's active nav item: the raised fill in ink, not an inverted pill. */
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  background: var(--cw-muted);
+  color: var(--cw-foreground);
+  font-weight: 500;
+}
+
+/* ── Page header ────────────────────────────────────────────────────────── */
+
+.cw-page-header {
+  margin-top: 1rem;
+}
+
+.cw-page-header h1 {
+  font-size: var(--sl-text-h1);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--cw-foreground);
+}
+
+.cw-page-header .cw-lede {
+  margin-top: 0.5rem;
+  max-width: 68ch;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  color: var(--cw-muted-foreground);
+}
+
+/* ── Prose ──────────────────────────────────────────────────────────────── */
+
+.sl-markdown-content {
+  line-height: 1.7;
+}
+
+/* A section opens on a hairline. Starlight wraps a heading in `.sl-heading-wrapper` for its anchor
+   link, so the rule goes on the wrapper and spans the column. */
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+  margin-top: 2.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--cw-border);
+}
+
+.sl-markdown-content > .sl-heading-wrapper.level-h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.sl-markdown-content h2:not(:where(.not-content *)) {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--cw-foreground);
+}
+
+.sl-markdown-content h3:not(:where(.not-content *)) {
+  margin-top: 2rem;
+  font-weight: 600;
+  color: var(--cw-foreground);
+}
+
+/* Links are Ledger's work blue, underlined; every other colour is a status. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--cw-link);
+  text-decoration-color: color-mix(in oklch, var(--cw-link) 35%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  text-decoration-color: currentColor;
+}
+
+.sl-markdown-content code:not(:where(.not-content *, pre *)) {
+  padding: 0.1em 0.35em;
+  border: 0;
+  border-radius: 4px;
+  background: var(--cw-muted);
+  color: var(--cw-foreground);
+  font-size: 0.875em;
+}
+
+.sl-markdown-content strong {
+  color: var(--cw-foreground);
+  font-weight: 600;
+}
+
+.sl-markdown-content hr {
+  border-color: var(--cw-border);
+}
+
+/* ── Tables (the admin's: label-size column heads, hairline rows) ───────── */
+
+.sl-markdown-content table:not(:where(.not-content *)) {
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--cw-border);
+  vertical-align: top;
+}
+
+.sl-markdown-content :is(th, td):first-child:not(:where(.not-content *)) {
+  padding-inline-start: 0;
+}
+
+/* Column labels use the admin's label style: 12px 500, muted, sentence case (no uppercase). */
+.sl-markdown-content th:not(:where(.not-content *)) {
+  background: none;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--cw-muted-foreground);
+}
+
+.sl-markdown-content tbody tr:hover {
+  background: color-mix(in oklch, var(--cw-muted) 50%, transparent);
+}
+
+/* ── Callouts: a 1px tinted border and fill, never a coloured side stripe ── */
+
+.starlight-aside {
+  --cw-aside: var(--cw-foreground);
+  border: 1px solid color-mix(in oklch, var(--cw-aside) 30%, transparent);
+  border-radius: var(--cw-radius);
+  background: color-mix(in oklch, var(--cw-aside) 6%, var(--cw-background));
+  color: var(--sl-color-text);
+  --sl-color-asides-text-accent: var(--cw-aside);
+  --sl-color-asides-border: transparent;
+}
+
+.starlight-aside--note {
+  --cw-aside: var(--cw-foreground);
+}
+.starlight-aside--tip {
+  --cw-aside: var(--cw-ok);
+}
+.starlight-aside--caution {
+  --cw-aside: var(--cw-wait);
+}
+.starlight-aside--danger {
+  --cw-aside: var(--cw-bad);
+}
+
+.starlight-aside__title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+/* ── Buttons (the admin's: 32–36px pills) ──────────────────────────────── */
+
+.sl-link-button {
+  min-height: 2.25rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: var(--cw-pill);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25;
+  box-shadow: none;
+}
+
+.sl-link-button.primary {
+  background: var(--cw-primary);
+  border-color: transparent;
+  color: var(--cw-primary-foreground);
+}
+
+.sl-link-button.primary:hover {
+  background: color-mix(in oklch, var(--cw-primary) 80%, transparent);
+}
+
+.sl-link-button.secondary {
+  background: transparent;
+  border-color: var(--cw-border);
+  color: var(--cw-foreground);
+}
+
+.sl-link-button.secondary:hover {
+  background: var(--cw-muted);
+}
+
+.sl-link-button.minimal {
+  color: var(--cw-foreground);
+  padding-inline: 0.25rem;
+}
+
+/* ── Cards: the admin's panel, a 24px slate step with a hairline ring ───── */
+
+.sl-link-card,
+.card {
+  border: 0;
+  border-radius: var(--cw-r-panel);
+  background: var(--cw-card);
+  box-shadow: var(--cw-ring);
+}
+
+.sl-link-card:hover {
+  background: var(--cw-card);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--cw-foreground) 25%, transparent);
+}
+
+.sl-link-card .title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--cw-foreground);
+}
+
+.sl-link-card .description {
+  font-size: 0.875rem;
+  color: var(--cw-muted-foreground);
+}
+
+.pagination-links a {
+  border: 1px solid var(--cw-border);
+  border-radius: var(--cw-radius);
+  background: transparent;
+  box-shadow: none;
+  color: var(--cw-muted-foreground);
+}
+
+.pagination-links a:hover {
+  background: var(--cw-muted);
+}
+
+.pagination-links .link-title {
+  color: var(--cw-foreground);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.expressive-code .frame {
+  box-shadow: none;
+}
+
+/* ── Home (splash) ──────────────────────────────────────────────────────── */
+
+.hero {
+  padding-bottom: 0.5rem;
+}
+
+.hero .stack {
+  text-align: start;
+}
+
+.hero .copy {
+  align-items: flex-start;
+}
+
+.hero .actions {
+  justify-content: flex-start;
+  gap: 0.75rem 1rem;
+}
+
+.hero h1 {
+  max-width: 22ch;
+  font-size: clamp(2rem, 1.4rem + 2.6vw, 3.25rem);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  color: var(--cw-foreground);
+}
+
+.hero .tagline {
+  max-width: 62ch;
+  font-size: clamp(1rem, 0.95rem + 0.3vw, 1.125rem);
+  line-height: 1.6;
+  color: var(--cw-muted-foreground);
+}
+
+@media (min-width: 50rem) {
+  .hero {
+    grid-template-columns: 1fr;
+    padding-block: clamp(2.5rem, 1rem + 6vmin, 5rem) 1.5rem;
+  }
+}
+
+/* ── State badge (the admin's StatusBadge: tinted fill, coloured text, label always present) ── */
+
+.cw-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 0.5rem;
+  border: 1px solid color-mix(in oklch, var(--c) 30%, transparent);
+  border-radius: var(--cw-pill);
+  background: color-mix(in oklch, var(--c) 10%, transparent);
+  color: var(--c);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* The admin's StatusBadge vocabulary (apps/web/app/cms/lib/format.ts): draft and archived are at
+   rest (idle), changed waits on a person (wait), published is live (ok). */
+.cw-badge[data-state="draft"] {
+  --c: var(--cw-idle);
+}
+.cw-badge[data-state="changed"] {
+  --c: var(--cw-wait);
+}
+.cw-badge[data-state="published"] {
+  --c: var(--cw-ok);
+}
+.cw-badge[data-state="archived"] {
+  --c: var(--cw-idle);
+}
+
+/* ── Node catalog and workflow templates (palette entries) ─────────────── */
+
+.cw-node {
+  padding: 0.875rem 1rem 1rem;
+  border-radius: var(--cw-r-md);
+  background: var(--cw-card);
+  box-shadow: var(--cw-ring);
+  scroll-margin-top: calc(var(--sl-nav-height) + 1rem);
+}
+
+.cw-node + .cw-node {
+  margin-top: 0.75rem;
+}
+
+.cw-node-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+}
+
+.cw-node-icon {
+  align-self: center;
+  display: inline-flex;
+  color: var(--cw-foreground);
+}
+
+.sl-markdown-content .cw-node h3 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--cw-foreground);
+}
+
+.sl-markdown-content .cw-node .cw-node-type {
+  padding: 0;
+  background: none;
+  font-size: 0.75rem;
+  color: var(--cw-muted-foreground);
+}
+
+.cw-node-tags {
+  margin-inline-start: auto;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--cw-muted-foreground);
+}
+
+.sl-markdown-content .cw-node > p {
+  margin-top: 0.375rem;
+  font-size: 0.9375rem;
+}
+
+.sl-markdown-content .cw-node-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+  color: var(--sl-color-text);
+}
+
+.sl-markdown-content .cw-node-facts li {
+  margin: 0;
+}
+
+.cw-fact-label {
+  margin-inline-end: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--cw-muted-foreground);
+}
+
+.cw-outputs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.sl-markdown-content .cw-node table {
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.sl-markdown-content :is(.cw-node, .cw-endpoint-group) details {
+  margin-top: 0.75rem;
+}
+
+.sl-markdown-content :is(.cw-node, .cw-endpoint-group) summary {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--cw-foreground);
+  cursor: pointer;
+}
+
+.cw-node-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+/* ── Endpoint index (reference/rest-api) ───────────────────────────────── */
+
+.cw-index-count,
+.cw-muted {
+  color: var(--cw-muted-foreground);
+}
+
+.cw-endpoint-group {
+  margin-top: 1.5rem;
+}
+
+.cw-endpoint-group > .cw-fact-label {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--cw-foreground);
+  font-weight: 600;
+}
+
+.sl-markdown-content .cw-endpoints {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.sl-markdown-content .cw-endpoints code {
+  overflow-wrap: anywhere;
+}
+
+.cw-method {
+  width: 4.5rem;
+  font-family: var(--sl-font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--cw-muted-foreground);
+}

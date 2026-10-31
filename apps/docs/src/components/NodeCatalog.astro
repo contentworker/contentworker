@@ -1,0 +1,128 @@
+---
+/*
+ * The workflow node catalog, rendered from NODE_SPECS in @contentworker/domain at build time.
+ * Labels, config fields, defaults and output branches come from the same objects the workflow
+ * editor's palette and the run engine read, so this page cannot drift. Pass `category` to render
+ * one group.
+ */
+import {
+  CATEGORY_LABELS,
+  NODE_SPECS,
+  type NodeCategory,
+  type NodeSpec,
+} from '@contentworker/domain';
+// biome-ignore lint/correctness/noUnusedImports: rendered below
+import NodeIcon from './NodeIcon.astro';
+
+interface Props {
+  category: NodeCategory;
+}
+
+const { category } = Astro.props;
+// biome-ignore lint/correctness/noUnusedVariables: used in the markup
+const specs: readonly NodeSpec[] = NODE_SPECS.filter((s) => s.category === category);
+
+// biome-ignore lint/correctness/noUnusedVariables: used in the markup
+const show = (v: unknown) =>
+  v === undefined ? '' : typeof v === 'string' ? (v === '' ? '""' : v) : JSON.stringify(v);
+// biome-ignore lint/correctness/noUnusedVariables: used in the markup
+const label = CATEGORY_LABELS[category];
+---
+
+<div class="cw-catalog" data-category={category} aria-label={label}>
+  {
+    specs.map((s) => (
+      <section class="cw-node" id={s.type}>
+        <div class="cw-node-head">
+          <span class="cw-node-icon" title={label}>
+            <NodeIcon name={s.icon} size={16} />
+          </span>
+          <h3>{s.label}</h3>
+          <code class="cw-node-type">{s.type}</code>
+          {(s.rollback || s.waits) && (
+            <span class="cw-node-tags">
+              {[s.rollback && 'undo', s.waits && 'waits'].filter(Boolean).join(' · ')}
+            </span>
+          )}
+        </div>
+        <p>{s.description}</p>
+        <ul class="cw-node-facts">
+          <li>
+            <span class="cw-fact-label">Outputs</span>
+            {typeof s.outputs === 'function' ? (
+              'one per configured route'
+            ) : s.outputs.length === 0 ? (
+              'none: ends the run'
+            ) : (
+              <span class="cw-outputs">
+                {s.outputs.map((o) => (
+                  <code>{o}</code>
+                ))}
+              </span>
+            )}
+          </li>
+          {s.rollback && (
+            <li>
+              <span class="cw-fact-label">Undo</span>reversed if the run later fails
+            </li>
+          )}
+          {s.waits && (
+            <li>
+              <span class="cw-fact-label">Waits</span>for a person or an event
+            </li>
+          )}
+          {s.loop && (
+            <li>
+              <span class="cw-fact-label">Loop</span>accepts a <code>next</code> back-edge
+            </li>
+          )}
+          {s.retries !== undefined && (
+            <li>
+              <span class="cw-fact-label">Retries</span>
+              {s.retries} by default
+            </li>
+          )}
+        </ul>
+        {s.fields.length > 0 && (
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Kind</th>
+                <th>Default</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.fields.map((f) => (
+                <tr>
+                  <td>
+                    <code>{f.key}</code>
+                    {f.required && ' (required)'}
+                  </td>
+                  <td>{f.kind}</td>
+                  <td>{f.default !== undefined && <code>{show(f.default)}</code>}</td>
+                  <td>
+                    {f.label}
+                    {f.options && (
+                      <>
+                        {'. One of '}
+                        {f.options.map((o, i) => (
+                          <>
+                            {i > 0 && ', '}
+                            <code>{o}</code>
+                          </>
+                        ))}
+                      </>
+                    )}
+                    {f.hint && `. ${f.hint}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    ))
+  }
+</div>

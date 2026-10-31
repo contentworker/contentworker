@@ -1,0 +1,50 @@
+---
+/*
+ * Starlight's ThemeProvider with the admin's rule: match the system unless the reader chose Light
+ * or Dark (Ledger's default, apps/web/app/lib/theme.ts). The choices are Dark, Light and
+ * Match system, stored as Starlight's `starlight-theme` ('dark', 'light' or 'auto') so the OpenAPI
+ * explorer at /api/ reads the same choice. Inline, so the first paint is already the right theme.
+ */
+// Biome parses only the frontmatter, so components used in the markup read as dead.
+// biome-ignore lint/correctness/noUnusedImports: rendered below
+import { Icon } from '@astrojs/starlight/components';
+---
+
+<script is:inline>
+  window.StarlightThemeProvider = (() => {
+    const media = matchMedia('(prefers-color-scheme: dark)');
+    const read = () => {
+      try {
+        const v = localStorage.getItem('starlight-theme');
+        return v === 'light' || v === 'dark' ? v : 'auto';
+      } catch {
+        return 'auto';
+      }
+    };
+    const apply = (choice) => {
+      document.documentElement.dataset.theme =
+        choice === 'auto' ? (media.matches ? 'dark' : 'light') : choice;
+    };
+    apply(read());
+    media.addEventListener('change', () => read() === 'auto' && apply('auto'));
+    return {
+      read,
+      apply,
+      updatePickers(choice = read()) {
+        document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+          const select = picker.querySelector('select');
+          if (select) select.value = choice;
+          const icon = document.querySelector('#theme-icons')?.content.querySelector(`.${choice}`);
+          const current = picker.querySelector('svg.label-icon');
+          if (icon && current) current.replaceChildren(...icon.cloneNode(true).childNodes);
+        });
+      },
+    };
+  })();
+</script>
+
+<template id="theme-icons">
+  <Icon name="sun" class="light" />
+  <Icon name="moon" class="dark" />
+  <Icon name="laptop" class="auto" />
+</template>

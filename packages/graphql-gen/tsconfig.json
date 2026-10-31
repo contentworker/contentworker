@@ -1,0 +1,5 @@
+{
+  "extends": "@contentworker/typescript-config/base.json",
+  "compilerOptions": {},
+  "include": ["src/**/*"]
+}
