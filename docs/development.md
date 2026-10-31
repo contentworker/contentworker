@@ -32,11 +32,15 @@ Objects and Workflows emulated. Their vars are overridden with `LOCAL_STACK_VARS
 | `EMBEDDINGS_PROVIDER`    | `local`                                 | Hash embeddings                                              |
 | `VECTOR_STORE`           | `memory`                                | Vectorize has no local emulator                              |
 | `ALLOW_FAKE_ADAPTERS`    | `all`                                   | Accept every dev fake                                        |
+| `SEED_DEV`               | `true`                                  | Load the demo dataset                                        |
+| `SEED_SCALE`             | `1`                                     | Demo size (~550 entries); raise it for a benchmark corpus    |
 
-The local database starts empty, and while it has no people, the admin on localhost is open
-(no sign-in) for local development. Adding the first person through `/setup` turns sign-in on.
-To load the demo dataset (`@contentworker/seed`), add `SEED_DEV: 'true'` (and optionally
-`SEED_SCALE`) to `LOCAL_STACK_VARS`; the api seeds on its first request per isolate.
+Local dev always runs on the demo dataset (`@contentworker/seed`): on its first request the api
+seeds a space, dev API keys and a corpus covering every capability (content model, entries,
+assets, taxonomy, releases, workflows, automation, agents). Seeding is idempotent, so restarts
+keep the data; to start over, delete `apps/web/.wrangler/state` and apply the migrations again.
+While the database has no people, the admin on localhost is open (no sign-in); adding the first
+person through `/setup` turns sign-in on.
 
 Everything the api serves is reachable on the same origin through the web gateway, with a
 bearer token: e.g. `curl -H 'authorization: Bearer dev-admin-token' http://localhost:5173/spaces`,

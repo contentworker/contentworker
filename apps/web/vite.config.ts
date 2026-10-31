@@ -27,6 +27,10 @@ const LOCAL_STACK_VARS = {
   EMBEDDINGS_PROVIDER: 'local',
   VECTOR_STORE: 'memory',
   ALLOW_FAKE_ADAPTERS: 'all',
+  // Local dev always runs on the demo dataset (@contentworker/seed), loaded on the api's first
+  // request. Config validation refuses SEED_DEV wherever secure secrets are required.
+  SEED_DEV: 'true',
+  SEED_SCALE: '1',
 };
 
 export default defineConfig({
