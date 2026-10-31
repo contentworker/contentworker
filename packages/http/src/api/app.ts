@@ -7,6 +7,7 @@ import type { AIProvider, BlobStore, EventBus } from '@contentworker/ports';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
+import { WEB_SIGN_IN } from './access-policy.js';
 import type { AuthDeps, AuthRateLimit } from './auth.js';
 import { createApiHasher } from './auth.js';
 import { doc, mountDocs } from './docs/openapi.js';
@@ -23,7 +24,6 @@ import { deliveryRoutes } from './routes/delivery.js';
 import { managementRoutes } from './routes/management.js';
 import { previewRoutes } from './routes/preview.js';
 import { teamRoutes } from './routes/team.js';
-import { WEB_SIGN_IN } from './access-policy.js';
 
 /** A bus that never emits — the Live Content API then yields only keepalives. */
 const noopBus: EventBus = {

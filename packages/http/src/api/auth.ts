@@ -43,7 +43,6 @@ import { HTTPException } from 'hono/http-exception';
 
 export type { AuthRateLimit } from '@contentworker/platform/auth-rate-limit';
 
-
 /** Default SHA-256 hasher (no pepper). Prefer {@link createApiHasher} in production. */
 export const sha256Hasher = createHasher();
 

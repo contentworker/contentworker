@@ -104,7 +104,10 @@ const toOpenApiPath = (path: string) => path.replace(/:([A-Za-z0-9_]+)/g, '{$1}'
 
 export const TAGS: { name: string; description: string }[] = [
   { name: 'System', description: 'Liveness/readiness probes.' },
-  { name: 'Auth', description: 'Principal resolution (web sign-in, API keys), and ending a person’s credentials.' },
+  {
+    name: 'Auth',
+    description: 'Principal resolution (web sign-in, API keys), and ending a person’s credentials.',
+  },
   {
     name: 'Spaces & environments',
     description: 'Spaces, environments (branches), aliases, compare/merge, and space config.',

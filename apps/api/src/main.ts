@@ -5,10 +5,10 @@
  */
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import { createHasher, drainOutbox } from '@contentworker/application';
+import { WEB_SIGN_IN } from '@contentworker/http/api/access-policy';
 import { createApp } from '@contentworker/http/api/app';
 import { type AuthDeps, createApiHasher } from '@contentworker/http/api/auth';
 import { validateApiSecrets } from '@contentworker/http/api/secure-secrets';
-import { WEB_SIGN_IN } from '@contentworker/http/api/access-policy';
 import type { McpDeps } from '@contentworker/http/mcp/deps';
 import { mcpRoutes } from '@contentworker/http/mcp/routes';
 import { createCfRequestRateLimiter } from '@contentworker/http/rate-limit';
@@ -34,7 +34,6 @@ const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /** Idempotent dev bootstrap runs once per isolate (SEED_DEV + real database). */
 let devSeeded = false;
-
 
 function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
   const app = new Hono();

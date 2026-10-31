@@ -77,7 +77,8 @@ export async function principalForWebUser(
   user: WebUser,
 ): Promise<Principal> {
   if (!spaceId) {
-    if (user.role !== 'admin') throw new ForbiddenError('Only deployment administrators can do that');
+    if (user.role !== 'admin')
+      throw new ForbiddenError('Only deployment administrators can do that');
     return { spaceId: '*', kind: 'user', subject: user.sub, scopes: [...scopesForKind('cma')] };
   }
   const access = await webUserAccess(ctx, spaceId, user);
