@@ -126,11 +126,16 @@ cd apps/web && npx wrangler d1 migrations apply DB --local && cd ../..
 
 # The whole stack in one Vite session: web, plus api, engine and delivery as auxiliary Workers
 pnpm dev
+
+# Open http://localhost:5173: the first request seeds the demo dataset into space-1
+# To start over with a fresh seed: rm -rf apps/web/.wrangler/state, then the migrations again
 ```
 
 The dev session runs offline: models are mocked (`AI_MODE=mock`), embeddings are local and vectors
 are held in memory. On localhost the admin is open without signing in until someone creates an
 account, and the api accepts the bootstrap token `dev-admin-token` (all scopes, all spaces).
+It always runs on the demo dataset (`@contentworker/seed`, about 550 entries with releases,
+workflows and agent runs in `space-1`), seeded idempotently on the first request.
 
 ## End-to-end example
 

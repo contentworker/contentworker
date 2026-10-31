@@ -11,7 +11,7 @@
 ```bash
 pnpm install
 cd apps/web && npx wrangler d1 migrations apply DB --local && cd ../..
-pnpm dev
+pnpm dev   # the api seeds the demo dataset into space-1 on its first request
 ```
 
 `pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173). The web

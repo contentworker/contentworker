@@ -101,7 +101,7 @@ Rendered from the registry's `sso` field. Passwords, passkeys, TOTP and SCIM nee
 | Var                   | Default       | Purpose                                                                                                                                 |
 | --------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `CMA_KEY` / `CDA_KEY` / `CPA_KEY` | `dev-cma-key` / `dev-cda-key` / `dev-cpa-key` | Keys seeded into the in-memory store. A D1 deployment gets keys from the API (`POST …/api-keys`) or the demo seed |
-| `SEED_DEV`            | `false`       | `true` runs the idempotent `@contentworker/seed` demo dataset on the first request per isolate. Never in production                     |
+| `SEED_DEV`            | `false`       | `true` runs the idempotent `@contentworker/seed` demo dataset on the first request per isolate; `pnpm dev` sets it. Never in production |
 | `SEED_SCALE`          | `1`           | Corpus multiplier: `1` ≈ 550 entries, `100` ≈ 44k                                                                                      |
 | `SEED_SPACE_ID`       | `space-1`     | Seed space (also MCP's default space)                                                                                                   |
 | `SEED_ENV_ID`         | `main`        | Seed environment                                                                                                                        |
