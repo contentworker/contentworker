@@ -25,6 +25,9 @@ export default defineConfig({
           environment: 'jsdom',
           include: ['tests/**/*.test.tsx'],
           setupFiles: ['tests/setup-dom.ts'],
+          // A file's first test pays for loading its screen (the workflow editor, the rich-text
+          // editor) in jsdom: ~300 ms locally, but over the 5 s default on a busy CI runner.
+          testTimeout: 15_000,
         },
       },
     ],
