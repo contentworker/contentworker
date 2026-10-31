@@ -1,0 +1,23 @@
+{
+  "name": "@contentworker/design",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ledger design tokens shared by the web app and the docs: the palette and faces apps/web/app/app.css authors, held to it by a test, and the builders for the docs' generated Starlight and Scalar themes.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "sync:theme": "tsx scripts/sync-theme.ts",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

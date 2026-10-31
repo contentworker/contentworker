@@ -1,0 +1,195 @@
+import type { EntryFields, Scope } from './types.js';
+
+/**
+ * Domain events. These are appended to the transactional outbox within the same
+ * transaction as the state change, then relayed to the event bus / queue. Every
+ * event carries a stable `id` so downstream handlers can be idempotent.
+ */
+export type DomainEvent =
+  | EntryPublishedEvent
+  | EntryUnpublishedEvent
+  | ContentTypePublishedEvent
+  | ReleasePublishedEvent
+  | AssetPublishedEvent
+  | AssetUnpublishedEvent
+  | SearchReindexRequestedEvent
+  | BulkChunkDueEvent
+  | EntriesPublishedBulkEvent
+  | BulkJobCompletedEvent
+  | WorkflowRunEndedEvent
+  | WorkflowTaskOpenedEvent
+  | WorkflowWebhookEvent
+  | EnvironmentAliasChangedEvent;
+
+export interface BaseEvent {
+  readonly id: string;
+  readonly scope: Scope;
+  readonly occurredAt: string;
+}
+
+export interface EntryPublishedEvent extends BaseEvent {
+  readonly type: 'entry.published';
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+  readonly version: number;
+  readonly fields: EntryFields;
+}
+
+export interface EntryUnpublishedEvent extends BaseEvent {
+  readonly type: 'entry.unpublished';
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+}
+
+/**
+ * An asset entered/left the published read model. Delivery renders EMBED asset
+ * file/title/description into the entries that link them, so these events are
+ * what let those renders be invalidated — without them a republished asset
+ * stays stale in every entry and list that shows it until the cache TTL.
+ */
+export interface AssetPublishedEvent extends BaseEvent {
+  readonly type: 'asset.published';
+  readonly assetId: string;
+}
+
+export interface AssetUnpublishedEvent extends BaseEvent {
+  readonly type: 'asset.unpublished';
+  readonly assetId: string;
+}
+
+/**
+ * An environment alias was created, repointed or removed. `scope.environmentId` is the ALIAS
+ * name: everything delivered under it may now come from a different environment, so caches keyed
+ * by the alias must be dropped.
+ */
+export interface EnvironmentAliasChangedEvent extends BaseEvent {
+  readonly type: 'environment_alias.changed';
+  /** The new target, or null when the alias was removed. */
+  readonly targetEnvironmentId: string | null;
+}
+
+export interface ContentTypePublishedEvent extends BaseEvent {
+  readonly type: 'content_type.published';
+  readonly contentTypeApiId: string;
+  readonly version: number;
+}
+
+/** Emitted when a release ships. Per-member entry events are emitted separately
+ *  in the same transaction, so this is a summary for webhooks/audit. */
+export interface ReleasePublishedEvent extends BaseEvent {
+  readonly type: 'release.published';
+  readonly releaseId: string;
+  readonly entryIds: readonly string[];
+}
+
+/**
+ * A request to (re)embed every published entry in the scope — a background job,
+ * not a state-change fact. Enqueued via the outbox so the expensive work runs on
+ * the worker/queue consumer instead of the triggering request.
+ */
+export interface SearchReindexRequestedEvent extends BaseEvent {
+  readonly type: 'search.reindex_requested';
+  /** Limit the reindex to one content type, or all when omitted. */
+  readonly contentTypeApiId?: string;
+  /**
+   * Continuation cursor: reindex only entries with `entryId` strictly greater
+   * (keyset paging — stable under concurrent publishes/unpublishes). Set only
+   * on self-enqueued follow-up slices: the consumer processes a bounded slice
+   * per invocation and re-enqueues the remainder, so one queue message never
+   * has to fit an entire reindex inside a single invocation's limits.
+   */
+  readonly afterEntryId?: string;
+  /** Entries already processed by earlier slices (bounds the job total). */
+  readonly entriesSoFar?: number;
+}
+
+/**
+ * A bulk-job chunk is ready to run. A control event, not a state-change fact:
+ * consumers CAS-claim the chunk so a redelivered event is a no-op. Routed to
+ * the dedicated bulk topic so chunk processing never starves entry delivery.
+ */
+export interface BulkChunkDueEvent extends BaseEvent {
+  readonly type: 'bulk.chunk_due';
+  readonly jobId: string;
+  readonly chunkId: string;
+}
+
+/**
+ * Coalesced publish/unpublish fact for one committed bulk chunk — entry ids
+ * only, no field payloads (downstream consumers batch-read what they need).
+ * Replaces N per-entry events for bulk operations so 100k entries produce
+ * ~500 events instead of 100,000.
+ */
+export interface EntriesPublishedBulkEvent extends BaseEvent {
+  readonly type: 'entries.published_bulk';
+  readonly jobId: string;
+  /** Chunk this event coalesces — with jobId + entryId it forms the STABLE
+   *  derived id for synthesized per-entry webhooks, so receiver-side dedupe
+   *  survives chunk re-runs (which mint a fresh event id). */
+  readonly chunkId: string;
+  readonly action: 'publish' | 'unpublish';
+  readonly entryIds: readonly string[];
+}
+
+/** Terminal bulk-job fact: totals for webhooks/audit, and the unconditional
+ *  scope-epoch cache bump that backstops any debounced bump along the way. */
+export interface BulkJobCompletedEvent extends BaseEvent {
+  readonly type: 'bulk.job_completed';
+  readonly jobId: string;
+  /** Which kind of job finished. An import creates drafts; it publishes nothing. */
+  readonly action: 'publish' | 'unpublish' | 'import';
+  readonly total: number;
+  readonly succeeded: number;
+  readonly failed: number;
+}
+
+/** The outcomes a workflow run ends with, each its own webhook topic. */
+export type WorkflowRunEndType =
+  | 'workflow_run.completed'
+  | 'workflow_run.declined'
+  | 'workflow_run.cancelled'
+  | 'workflow_run.failed'
+  | 'workflow_run.rolled_back';
+
+/**
+ * A workflow run ended. Appended in the same transaction as the run row's terminal status, so
+ * subscribers hear about every ending exactly once.
+ */
+export interface WorkflowRunEndedEvent extends BaseEvent {
+  readonly type: WorkflowRunEndType;
+  readonly runId: string;
+  readonly workflowId: string;
+  readonly version: number;
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+  readonly reason: string | null;
+}
+
+/** A run opened an approval, event wait or agent review (the inbox and notifications use it). */
+export interface WorkflowTaskOpenedEvent extends BaseEvent {
+  readonly type: 'workflow.task_opened';
+  readonly taskId: string;
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly kind: 'approval' | 'event' | 'review';
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+  readonly title: string;
+  readonly assignee: string | null;
+  readonly requiredScope: string | null;
+  readonly deadline: string;
+}
+
+/**
+ * The body a `content.webhook` node posts. Never appended to the outbox: the node sends it
+ * directly, with `id` derived from the node's effect key so a retried step is the same delivery.
+ */
+export interface WorkflowWebhookEvent extends BaseEvent {
+  readonly type: 'workflow.webhook';
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly entryId: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
+export type EventType = DomainEvent['type'];

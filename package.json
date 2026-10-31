@@ -1,0 +1,35 @@
+{
+  "name": "contentworker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "contentworker: an API-first, agent-first headless CMS built entirely on Cloudflare (Workers, D1, R2, KV, Queues, Durable Objects, Workflows, Vectorize, Workers AI).",
+  "type": "module",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "pnpm --filter @contentworker/web dev",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "biome format --write .",
+    "check-types": "turbo run check-types",
+    "docs:dev": "pnpm --filter @contentworker/docs-site dev",
+    "docs:build": "pnpm --filter @contentworker/docs-site build",
+    "sync:theme": "pnpm --filter @contentworker/design sync:theme",
+    "db:migrate:local": "pnpm --filter @contentworker/web exec wrangler d1 migrations apply DB --local",
+    "test:fleet": "node --test scripts/*.test.ts",
+    "test:toolkit": ".claude/scripts/toolkit-check.sh && .claude/hooks/tests/docs-hooks.test.sh && .claude/hooks/tests/guard-hooks.test.sh",
+    "fleet": "node scripts/fleet.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@types/node": "catalog:",
+    "jsonc-parser": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.34.5",
+  "license": "Apache-2.0"
+}

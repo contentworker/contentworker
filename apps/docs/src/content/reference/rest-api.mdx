@@ -1,0 +1,51 @@
+---
+title: REST API
+description: Base URLs, authentication, conventions and every operation the API serves, generated from the API's own routes.
+---
+
+import EndpointIndex from '../../components/EndpointIndex.astro';
+
+## Base URL and paths
+
+A workspace serves the API from two addresses, for example for a workspace at
+`your-workspace.contentworker.app`:
+
+| Surface    | Address                                    | Paths                                       | Key kind |
+| ---------- | ------------------------------------------ | ------------------------------------------- | -------- |
+| Management | `https://api.your-workspace.contentworker.app` | `/spaces/{space}/environments/{env}/…`, plus space-level `/spaces/{space}/…` | CMA |
+| Preview    | `https://api.your-workspace.contentworker.app` | `/preview/{space}/{env}/…`                  | CPA      |
+| Delivery   | `https://cdn.your-workspace.contentworker.app` | `/delivery/{space}/{env}/…`                 | CDA      |
+
+The `cdn.` address is the cached, read-only Delivery API meant for sites and apps. The admin's own
+address forwards these paths to the API too, which is how the admin itself calls it.
+
+`{env}` is an environment id or an alias. The OpenAPI 3.1 document for all of it is at
+[`/openapi.json`](/openapi.json) here, and every deployment serves its own at `GET /openapi.json`.
+The [OpenAPI explorer](/api/) lets you browse it and send requests.
+
+## Conventions
+
+- **Authentication**: `Authorization: Bearer <token>` on every request. See
+  [API keys and access](/guides/api-keys/).
+- **Bodies** are JSON (`content-type: application/json`).
+- **IDs** are UUIDv7: time-ordered, so sorting by id sorts by creation time.
+- **Field values** are keyed by field, then by locale, on every write and on reads without
+  `locale=`: `{ "title": { "en-US": "Hello" } }`.
+- **Timestamps** are ISO 8601 in UTC.
+- **Lists** return `{ "items": [...] }`, with `total` where it's cheap to count; page with `limit`
+  and `skip`.
+- **Errors** return `{ "error": { "code", "message" } }`, plus `issues` on a 422. See
+  [Errors](/guides/api-keys/#errors).
+- **Read your writes**: every API response carries an `x-cw-bookmark` header. Send the last value
+  back on your next request and its reads are at least that fresh, even when a read replica
+  answers.
+- **Scopes**: each operation needs one [permission scope](/reference/scopes/), checked against the
+  space in the path.
+
+## Operations
+
+Every operation the API serves, grouped as the explorer groups them. This list is generated from
+the API's routes when these docs are built; request and response bodies are in the
+[explorer](/api/).
+
+<EndpointIndex />

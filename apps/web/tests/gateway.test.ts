@@ -1,0 +1,190 @@
+import {
+  BOOKMARK_HEADER,
+  DEV_PRINCIPAL_KEY,
+  PRINCIPAL_HEADER,
+  verifyPrincipal,
+} from '@contentworker/security/principal';
+import { describe, expect, it, vi } from 'vitest';
+
+const KEY = 'gateway-test-key';
+vi.mock('cloudflare:workers', () => ({ env: { PRINCIPAL_KEY: 'gateway-test-key' } }));
+
+const { forwardToApi, isApiPath } = await import('~/lib/gateway.server');
+const { setPrincipalHeader, principalKey } = await import('~/lib/principal.server');
+
+type Caller = Awaited<ReturnType<Parameters<typeof forwardToApi>[1]['principal']>>;
+
+const ORIGIN = 'https://cms.example.com';
+const ada = {
+  kind: 'user' as const,
+  id: 'usr_ada',
+  name: 'Ada',
+  email: 'ada@example.com',
+  role: 'admin' as const,
+};
+
+/** Forwards `request` with `who` signed in, and returns what reached the api. */
+async function forward(request: Request, who: Caller = null) {
+  const seen: Request[] = [];
+  const api = {
+    fetch: vi.fn(async (r: Request) => {
+      seen.push(r);
+      return new Response('ok', { headers: { [BOOKMARK_HEADER]: 'bm-2' } });
+    }),
+  };
+  const principal = vi.fn(async () => who);
+  const res = await forwardToApi(request, {
+    api: api as unknown as Fetcher,
+    principal,
+    sign: setPrincipalHeader,
+  });
+  return { res, sent: seen[0], api, principal };
+}
+
+describe('isApiPath', () => {
+  it('forwards the api’s surfaces', () => {
+    for (const p of [
+      '/spaces',
+      '/spaces/s1/environments/main/entries',
+      '/preview/s1/entries',
+      '/delivery/s1/entries',
+      '/mcp',
+      '/oauth/token',
+      '/oauth/authorize',
+      '/.well-known/oauth-authorization-server',
+      '/.well-known/oauth-protected-resource/mcp',
+      '/media/s1/a.png',
+      '/openapi.json',
+      '/docs',
+      '/guides',
+      '/guides/webhooks',
+      '/health/api',
+    ])
+      expect(isApiPath(p), p).toBe(true);
+  });
+
+  it('keeps the admin’s own pages', () => {
+    for (const p of [
+      '/',
+      '/dashboard',
+      '/content',
+      '/login',
+      '/team',
+      '/health',
+      '/health/deep',
+      '/spacesuit',
+      '/mcpx',
+      '/scim/v2/Users',
+      '/.well-known/security.txt',
+    ])
+      expect(isApiPath(p), p).toBe(false);
+  });
+});
+
+describe('forwardToApi', () => {
+  it('passes a bearer request through untouched, but never with a caller’s principal', async () => {
+    const request = new Request(`${ORIGIN}/spaces/s1/entries`, {
+      headers: {
+        authorization: 'Bearer cw_pat_123',
+        [PRINCIPAL_HEADER]: 'forged.value',
+        [BOOKMARK_HEADER]: 'bm-1',
+      },
+    });
+    const { sent, principal } = await forward(request, ada);
+    expect(sent?.headers.get('authorization')).toBe('Bearer cw_pat_123');
+    expect(sent?.headers.get(PRINCIPAL_HEADER)).toBeNull();
+    expect(sent?.headers.get(BOOKMARK_HEADER)).toBe('bm-1');
+    // The session is never looked at for a bearer call.
+    expect(principal).not.toHaveBeenCalled();
+  });
+
+  it('swaps a session for a signed principal bound to the path, and drops the cookie', async () => {
+    const request = new Request(`${ORIGIN}/spaces/s1/entries?limit=5`, {
+      method: 'POST',
+      body: '{"a":1}',
+      headers: {
+        cookie: '__Host-cw_session=secret',
+        origin: ORIGIN,
+        'content-type': 'application/json',
+        [BOOKMARK_HEADER]: 'bm-1',
+      },
+    });
+    const { res, sent } = await forward(request, ada);
+    expect(sent?.headers.get('cookie')).toBeNull();
+    expect(sent?.headers.get(BOOKMARK_HEADER)).toBe('bm-1');
+    expect(sent?.method).toBe('POST');
+    expect(await sent?.text()).toBe('{"a":1}');
+    expect(new URL(sent!.url).search).toBe('?limit=5');
+    const header = sent?.headers.get(PRINCIPAL_HEADER);
+    expect(await verifyPrincipal(KEY, header, '/spaces/s1/entries')).toEqual({
+      sub: 'usr_ada',
+      email: 'ada@example.com',
+      name: 'Ada',
+      role: 'admin',
+    });
+    expect(await verifyPrincipal(KEY, header, '/spaces/s2/entries')).toBeNull();
+    // The api's bookmark comes back to the browser untouched.
+    expect(res.headers.get(BOOKMARK_HEADER)).toBe('bm-2');
+  });
+
+  it('replaces a principal the browser sent with its own', async () => {
+    const request = new Request(`${ORIGIN}/mcp`, {
+      headers: { cookie: 's=1', [PRINCIPAL_HEADER]: 'forged.value' },
+    });
+    const { sent } = await forward(request, ada);
+    const header = sent?.headers.get(PRINCIPAL_HEADER);
+    expect(header).not.toBe('forged.value');
+    expect(await verifyPrincipal(KEY, header, '/mcp')).not.toBeNull();
+  });
+
+  it('forwards without credentials when nobody is signed in', async () => {
+    const request = new Request(`${ORIGIN}/spaces`, {
+      headers: { cookie: 'junk=1', [PRINCIPAL_HEADER]: 'forged.value' },
+    });
+    const { sent } = await forward(request, null);
+    expect(sent?.headers.get('cookie')).toBeNull();
+    expect(sent?.headers.get(PRINCIPAL_HEADER)).toBeNull();
+    expect(sent?.headers.get('authorization')).toBeNull();
+  });
+
+  it('never lends the session to a cross-site request', async () => {
+    const request = new Request(`${ORIGIN}/spaces/s1/entries`, {
+      method: 'POST',
+      headers: { cookie: '__Host-cw_session=secret', origin: 'https://evil.example' },
+    });
+    const { sent, principal } = await forward(request, ada);
+    expect(principal).not.toHaveBeenCalled();
+    expect(sent?.headers.get(PRINCIPAL_HEADER)).toBeNull();
+    expect(sent?.headers.get('cookie')).toBeNull();
+  });
+
+  it('refuses someone whose two-factor sign-in or password is due', async () => {
+    const request = new Request(`${ORIGIN}/spaces`, { headers: { cookie: 's=1' } });
+    const { res, api } = await forward(request, { ...ada, due: 'Set up two-factor first.' });
+    expect(res.status).toBe(403);
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+
+  it('signs as `local` in open local development', async () => {
+    const request = new Request('http://localhost:5173/spaces', { headers: {} });
+    const { sent } = await forward(request, {
+      kind: 'open',
+      id: 'local',
+      name: 'local',
+      role: 'admin',
+    });
+    expect(await verifyPrincipal(KEY, sent?.headers.get(PRINCIPAL_HEADER), '/spaces')).toEqual({
+      sub: 'local',
+      email: '',
+      name: 'local',
+      role: 'admin',
+    });
+  });
+});
+
+describe('principalKey', () => {
+  it('uses the deployment’s key, never the dev key, when one is set', () => {
+    expect(principalKey()).toBe(KEY);
+    expect(principalKey()).not.toBe(DEV_PRINCIPAL_KEY);
+  });
+});

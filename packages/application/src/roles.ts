@@ -1,0 +1,142 @@
+import {
+  type ContentAction,
+  type ContentTypeGrant,
+  grantsAdmin,
+  NotFoundError,
+  type Role,
+  SCOPES,
+  ValidationError,
+} from '@contentworker/domain';
+import type { AppContext } from './context.js';
+import { invalidateCachedPrincipals } from './principal-cache.js';
+import { type AccessPolicy, assertKeepsAnAdmin, NO_SSO } from './team.js';
+
+export interface RoleInput {
+  readonly name: string;
+  readonly description?: string;
+  readonly scopes: readonly string[];
+  readonly contentGrants?: readonly ContentTypeGrant[];
+}
+
+const KNOWN_SCOPES = new Set<string>(Object.values(SCOPES));
+const KNOWN_ACTIONS = new Set<ContentAction>(['read', 'write', 'publish']);
+
+function validateRoleInput(input: RoleInput): void {
+  const issues: { field: string; message: string }[] = [];
+  if (!input.name?.trim()) issues.push({ field: 'name', message: 'Role name is required' });
+  for (const scope of input.scopes ?? []) {
+    if (!KNOWN_SCOPES.has(scope)) {
+      issues.push({ field: 'scopes', message: `Unknown scope "${scope}"` });
+    }
+  }
+  for (const grant of input.contentGrants ?? []) {
+    if (!grant.contentTypeApiId?.trim()) {
+      issues.push({ field: 'contentGrants', message: 'contentTypeApiId is required' });
+    }
+    for (const action of grant.actions ?? []) {
+      if (!KNOWN_ACTIONS.has(action)) {
+        issues.push({ field: 'contentGrants', message: `Unknown action "${action}"` });
+      }
+    }
+  }
+  if (issues.length > 0) throw new ValidationError(issues);
+}
+
+/** Creates a custom role (granular RBAC) in a space. */
+export async function createRole(
+  ctx: AppContext,
+  spaceId: string,
+  input: RoleInput,
+): Promise<Role> {
+  validateRoleInput(input);
+  const role: Role = {
+    id: ctx.ids.newId(),
+    spaceId,
+    name: input.name,
+    description: input.description,
+    scopes: [...input.scopes],
+    contentGrants: [...(input.contentGrants ?? [])],
+  };
+  await ctx.store.roles.save(role);
+  await invalidateCachedPrincipals(ctx, spaceId);
+  return role;
+}
+
+/**
+ * Replaces a role's definition. Keys and people holding it pick the change up live. A preset
+ * role stays that preset. Refused with `LastAdminError` when dropping `space:admin` would leave
+ * the space with no administrator.
+ */
+export async function updateRole(
+  ctx: AppContext,
+  spaceId: string,
+  id: string,
+  input: RoleInput,
+  policy: AccessPolicy = NO_SSO,
+): Promise<Role> {
+  validateRoleInput(input);
+  const existing = await ctx.store.roles.get(spaceId, id);
+  if (!existing) throw new NotFoundError('Role', id);
+  const role: Role = {
+    id,
+    spaceId,
+    name: input.name,
+    description: input.description,
+    scopes: [...input.scopes],
+    contentGrants: [...(input.contentGrants ?? [])],
+    ...(existing.preset ? { preset: existing.preset } : {}),
+  };
+  if (grantsAdmin(existing.scopes) && !grantsAdmin(role.scopes)) {
+    const roles = await ctx.store.roles.list(spaceId);
+    await assertKeepsAnAdmin(ctx, spaceId, policy, {
+      roles: roles.map((r) => (r.id === id ? role : r)),
+    });
+  }
+  await ctx.store.roles.save(role);
+  return role;
+}
+
+export async function getRole(ctx: AppContext, spaceId: string, id: string): Promise<Role> {
+  const role = await ctx.store.roles.get(spaceId, id);
+  if (!role) throw new NotFoundError('Role', id);
+  return role;
+}
+
+export async function listRoles(ctx: AppContext, spaceId: string): Promise<Role[]> {
+  return ctx.store.roles.list(spaceId);
+}
+
+/**
+ * Deletes a role. Refused for a built-in preset (edit or clone it instead), and while any active
+ * API key or person still holds it.
+ */
+export async function deleteRole(ctx: AppContext, spaceId: string, id: string): Promise<void> {
+  const role = await ctx.store.roles.get(spaceId, id);
+  if (!role) throw new NotFoundError('Role', id);
+  if (role.preset) {
+    throw new ValidationError([
+      { field: 'id', message: `“${role.name}” is a built-in role; edit or clone it instead` },
+    ]);
+  }
+  const keys = await ctx.store.auth.list(spaceId);
+  const holders = keys.filter((k) => k.roleId === id && !k.revoked);
+  if (holders.length > 0) {
+    throw new ValidationError([
+      {
+        field: 'id',
+        message: `Role is assigned to ${holders.length} active API key(s); revoke them first`,
+      },
+    ]);
+  }
+  const people = (await ctx.store.members.list(spaceId)).filter((m) => m.roleId === id);
+  if (people.length > 0) {
+    throw new ValidationError([
+      {
+        field: 'id',
+        message: `Role is held by ${people.length} person(s) on the team; change their role first`,
+      },
+    ]);
+  }
+  await ctx.store.roles.delete(spaceId, id);
+  await invalidateCachedPrincipals(ctx, spaceId);
+}

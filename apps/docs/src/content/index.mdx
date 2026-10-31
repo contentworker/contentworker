@@ -1,0 +1,52 @@
+---
+title: Documentation
+description: An API-first, AI-agentic headless CMS. Guides for the people who write and approve content, and reference for the developers who integrate with it.
+template: splash
+hero:
+  title: Content your team and your agents can both be trusted with.
+  tagline: >-
+    contentworker is a headless CMS built API-first. Editors model, write, review and publish in the
+    admin; developers read the same content over REST, GraphQL and SDKs; AI agents work through an
+    MCP server that can do exactly what a person with the same key can, and nothing more.
+  actions:
+    - text: Get started
+      link: /start/getting-started/
+      icon: right-arrow
+    - text: Concepts
+      link: /start/concepts/
+      variant: secondary
+    - text: REST API
+      link: /reference/rest-api/
+      variant: minimal
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## What it does
+
+- **Structured content, modeled once.** Content types are typed, validated fields: text, rich
+  text, references, components and repeaters, localized per field. See
+  [Content modeling](/guides/content-modeling/).
+- **Every change is a version.** Saving a draft appends an immutable version; publishing pins one
+  for delivery. Entries move through
+  <span class="cw-badge" data-state="draft">Draft</span>{' '}
+  <span class="cw-badge" data-state="changed">Changed</span>{' '}
+  <span class="cw-badge" data-state="published">Published</span>, and you can diff or restore any
+  version. See [Editing and publishing](/guides/editing-and-publishing/).
+- **Review before it ships.** Workflows route entries through validation, policy checks,
+  approvals and AI steps, and releases publish many entries as one. See
+  [Workflows](/guides/workflows/) and [Approvals and reviews](/guides/approvals/).
+- **AI that proposes, people that decide.** Drafting, translation, tagging, enrichment and
+  moderation return proposals you review, with the same validation as a human edit. See
+  [AI features](/guides/ai/).
+- **One surface for people and agents.** The REST API, the admin and the MCP server call the same
+  operations under the same permission checks. See [MCP server](/guides/mcp/).
+
+## Where next
+
+<CardGrid>
+  <LinkCard title="Getting started" href="/start/getting-started/" description="Model a type, publish an entry, read it over the Delivery API." />
+  <LinkCard title="Workflows" href="/guides/workflows/" description="Route entries through review, approvals and AI steps before they publish." />
+  <LinkCard title="Reading content" href="/guides/reading-content/" description="Query, filter, localize, search and stream published content." />
+  <LinkCard title="Node catalog" href="/reference/nodes/" description="Every workflow node type, its fields and its output branches." />
+</CardGrid>

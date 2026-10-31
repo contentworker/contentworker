@@ -1,0 +1,29 @@
+{
+  "name": "@contentworker/application",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@contentworker/domain": "workspace:*",
+    "@contentworker/ports": "workspace:*"
+  },
+  "devDependencies": {
+    "@contentworker/test-kit": "workspace:*",
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

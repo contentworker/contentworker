@@ -1,0 +1,433 @@
+/**
+ * The engine Worker: everything asynchronous and stateful. Queue consumers (domain events, bulk
+ * chunks, agent jobs, dead letters), the cron sweeper (outbox relay, scheduled actions, bulk-stall
+ * recovery, retention, secret reseal, agent schedules), and the owner of every Durable Object and
+ * Workflow class. It has no public route; the api and delivery Workers reach it through bindings.
+ */
+import {
+  createHttpFunctionInvoker,
+  createWebhookSender,
+} from '@contentworker/adapters/http-effects';
+import {
+  type ConsumeDeps,
+  consumeEvent,
+  drainOutbox,
+  pruneEventHistory,
+  resealSecrets,
+  resumeStalledBulkJobs,
+  runDueAgentSchedules,
+  runDueScheduledActions,
+  runPublishAgents,
+} from '@contentworker/application';
+import type { Scope } from '@contentworker/domain';
+import { isResealTick } from '@contentworker/platform/data-key';
+import { CostGuardDO, doAgentCostGuardFromEnv } from '@contentworker/platform/do/cost-guard';
+import { createDoEventBus, LiveHubDO } from '@contentworker/platform/do/live-hub';
+import { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
+import { SearchShardDO } from '@contentworker/platform/do/search-shard';
+import { type EdgeEnv, withJurisdiction } from '@contentworker/platform/env';
+import {
+  type AgentJobMessage,
+  deliveryScopeTag,
+  isAgentJob,
+  isDomainEvent,
+  type PurgeMessage,
+} from '@contentworker/platform/messages';
+import { makeMetrics } from '@contentworker/platform/metrics';
+import {
+  agentConfigFromEnv,
+  type EdgeWired,
+  makeAgents,
+  wireEdge,
+} from '@contentworker/platform/wire';
+import { redactCredentials } from '@contentworker/redaction';
+import { AgentWorkflow } from './workflows/agent-workflow.js';
+import { EditorialWorkflow } from './workflows/editorial-workflow.js';
+
+/** A queue message's payload (kept as one accessor so every consumer reads it the same way). */
+const payloadOf = (m: { body: unknown }): unknown => m.body;
+
+// Worker-entrypoint classes must be exported from the deployed script: the engine owns every
+// Durable Object and Workflow; the api and delivery Workers bind them by script name.
+export { AgentWorkflow, CostGuardDO, EditorialWorkflow, LiveHubDO, RateLimiterDO, SearchShardDO };
+
+/** Events after which a space:environment's delivery responses may be stale. */
+const PURGING_EVENTS = new Set<string>([
+  'entry.published',
+  'entry.unpublished',
+  'entries.published_bulk',
+  'asset.published',
+  'asset.unpublished',
+  'content_type.published',
+  'release.published',
+  'environment_alias.changed',
+]);
+
+/**
+ * contentworker-events consumer body. When AGENTS_QUEUE is bound, entry.published events
+ * enqueue an agent job there (before ack, so at-least-once holds) instead of
+ * awaiting workflows inline — a batch of 25 published entries then costs 25
+ * cheap sends, not up to 25×2 polled Workflow runs in one invocation.
+ */
+async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired): Promise<void> {
+  const metrics = makeMetrics(env.METRICS);
+  const agentConfig = agentConfigFromEnv(env);
+  const agentsConfigured = agentConfig.enrich || agentConfig.moderate;
+  const forwardAgents = Boolean(env.AGENTS_QUEUE) && agentsConfigured;
+  const deps: ConsumeDeps = {
+    // One coalescing set per batch: a batch of same-type publishes writes each
+    // cache tag once instead of once per message (KV rate-limits per key).
+    invalidatedTags: new Set<string>(),
+    sender: createWebhookSender(),
+    invoker: createHttpFunctionInvoker(),
+    cache: wired.cache,
+    // RAG indexing only when embeddings are
+    // explicitly configured (EMBEDDINGS_PROVIDER), never with the dev fallback.
+    rag: env.EMBEDDINGS_PROVIDER ? wired.rag : undefined,
+    // Independent of rag: lexical indexing works without embeddings.
+    searchIndex: wired.rag.searchIndex,
+    // Import chunks stage their records here rather than carrying entry ids;
+    // without it they stay claimable instead of running.
+    blob: wired.blob,
+    bus: env.LIVE_HUB ? createDoEventBus(env.LIVE_HUB) : undefined,
+    onLiveError: (err) => console.error('live publish error', err),
+    // Inline agents only when no contentworker-agents queue is bound (dev/demo parity).
+    agents: forwardAgents ? undefined : makeAgents(env, wired.ctx, wired.ai),
+    agentConfig: forwardAgents ? undefined : agentConfig,
+  };
+  // Delivery cache tags made stale by this batch, sent as ONE purge message after it (purges are
+  // rationed, so a burst of publishes in one space costs one tag, not one call per entry).
+  const stale = new Set<string>();
+  for (const msg of batch.messages) {
+    // Validate the message shape before treating it as a DomainEvent. A
+    // malformed/poison message is acked (dropped) rather than retried forever.
+    const event = payloadOf(msg);
+    if (!isDomainEvent(event)) {
+      console.error('dropping malformed queue message', { id: msg.id });
+      metrics.count('contentworker_events_consumed_total', 1, {
+        type: 'malformed',
+        outcome: 'dropped',
+      });
+      msg.ack();
+      continue;
+    }
+    try {
+      const runs = await consumeEvent(wired.ctx, deps, event);
+      for (const r of runs) {
+        console.log(JSON.stringify({ msg: `${r.workflow} complete`, ...r }));
+      }
+      if (forwardAgents && event.type === 'entry.published' && env.AGENTS_QUEUE) {
+        const job: AgentJobMessage = {
+          kind: 'agent.publish_run',
+          scope: event.scope,
+          entryId: event.entryId,
+        };
+        await env.AGENTS_QUEUE.send(job);
+      }
+      if (PURGING_EVENTS.has(event.type)) {
+        stale.add(deliveryScopeTag(event.scope.spaceId, event.scope.environmentId));
+      }
+      metrics.count('contentworker_events_consumed_total', 1, {
+        type: event.type,
+        outcome: 'ok',
+      });
+      msg.ack();
+    } catch (err) {
+      console.error('event dispatch failed; retrying', err);
+      metrics.count('contentworker_events_consumed_total', 1, {
+        type: event.type,
+        outcome: 'error',
+      });
+      msg.retry();
+    }
+  }
+  if (stale.size > 0 && env.PURGE_QUEUE) {
+    const message: PurgeMessage = { tags: [...stale] };
+    await env.PURGE_QUEUE.send(message).catch((err: unknown) => {
+      // Not fatal: delivery responses go stale for at most their max-age (60s).
+      console.error('delivery purge enqueue failed', redactCredentials(err));
+    });
+  }
+}
+
+/**
+ * Entries per durable agent-workflow instance.
+ *
+ * Sized against the per-instance STEP ceiling (~1024 on Workflows). Worst case
+ * per entry is ~13 steps: enrich (loadEntry, generateFields, record,
+ * createReview) + moderate (loadEntry, classify, record) + one recordRun per
+ * workflow + the watcher start + the retract path (retractEntry, recordRun).
+ * 25 × 13 ≈ 325 leaves room for a future activity without silently pushing an
+ * instance over the limit — and still cuts instance count 25×, so 100k
+ * published entries cost ~4k instances instead of 100k+.
+ */
+const AGENT_CHUNK = 25;
+
+/**
+ * contentworker-agents consumer body.
+ *
+ * Fire-and-forget: the whole on-publish pass (enrich → moderate → record →
+ * retract) now runs INSIDE the durable workflow, so this only has to start
+ * instances and ack. It used to call `runPublishAgents`, which awaited each
+ * run's result — and awaiting a result on Workflows means polling
+ * `instance.status()`, pinning one consumer invocation per entry for up to ten
+ * minutes. At 100k published entries that model needed 100k+ instances each
+ * holding an invocation; this needs one instance per {@link AGENT_CHUNK}
+ * entries and holds nothing.
+ *
+ * Runtimes without a durable start (in-process, dev/demo) keep the inline path.
+ */
+async function consumeAgentJobs(
+  batch: MessageBatch,
+  env: EdgeEnv,
+  wired: EdgeWired,
+): Promise<void> {
+  const metrics = makeMetrics(env.METRICS);
+  const agentConfig = agentConfigFromEnv(env);
+  const agents = makeAgents(env, wired.ctx, wired.ai);
+
+  const jobs = batch.messages.filter((m) => {
+    if (isAgentJob(payloadOf(m))) return true;
+    console.error('dropping malformed agent job', { id: m.id });
+    metrics.count('contentworker_agent_jobs_total', 1, { outcome: 'dropped' });
+    m.ack();
+    return false;
+  });
+  if (jobs.length === 0) return;
+  if (!agents) {
+    // Agents were disabled after the jobs were enqueued — drop, don't retry.
+    for (const m of jobs) m.ack();
+    metrics.count('contentworker_agent_jobs_total', jobs.length, { outcome: 'disabled' });
+    return;
+  }
+
+  if (agents.startPublishRuns) {
+    // Group by scope: one instance covers entries from a single space/env.
+    const byScope = new Map<string, { scope: Scope; ids: string[]; msgs: Message[] }>();
+    for (const m of jobs) {
+      const job = payloadOf(m) as AgentJobMessage;
+      const key = `${job.scope.spaceId}::${job.scope.environmentId}`;
+      const bucket = byScope.get(key) ?? { scope: job.scope, ids: [], msgs: [] };
+      bucket.ids.push(job.entryId);
+      bucket.msgs.push(m);
+      byScope.set(key, bucket);
+    }
+    for (const bucket of byScope.values()) {
+      // Ack/retry PER CHUNK, not per bucket: retrying messages whose instance
+      // already started would re-run their agents, and the pass now performs a
+      // real state change (retracting a held entry), so duplicates are not
+      // free the way recorded proposals were.
+      for (let at = 0; at < bucket.ids.length; at += AGENT_CHUNK) {
+        const ids = bucket.ids.slice(at, at + AGENT_CHUNK);
+        const msgs = bucket.msgs.slice(at, at + AGENT_CHUNK);
+        try {
+          await agents.startPublishRuns({
+            scope: bucket.scope,
+            entryIds: ids,
+            enrich: agentConfig.enrich,
+            moderate: agentConfig.moderate,
+            ...(agentConfig.autoApply !== undefined ? { autoApply: agentConfig.autoApply } : {}),
+          });
+          for (const m of msgs) m.ack();
+          metrics.count('contentworker_agent_jobs_total', msgs.length, { outcome: 'started' });
+        } catch (err) {
+          // Instance creation failed (rate limit, transient) — only this
+          // chunk's messages redeliver.
+          console.error('agent workflow start failed; retrying chunk', err);
+          for (const m of msgs) m.retry();
+          metrics.count('contentworker_agent_jobs_total', msgs.length, { outcome: 'error' });
+        }
+      }
+    }
+    return;
+  }
+
+  // Non-durable runtime: run the pass inline, one entry at a time.
+  for (const m of jobs) {
+    const job = payloadOf(m) as AgentJobMessage;
+    try {
+      const runs = await runPublishAgents(wired.ctx, agents, job.scope, job.entryId, agentConfig);
+      for (const r of runs) console.log(JSON.stringify({ msg: `${r.workflow} complete`, ...r }));
+      metrics.count('contentworker_agent_jobs_total', 1, { outcome: 'ok' });
+      m.ack();
+    } catch (err) {
+      console.error('agent job failed; retrying', err);
+      metrics.count('contentworker_agent_jobs_total', 1, { outcome: 'error' });
+      m.retry();
+    }
+  }
+}
+
+export default {
+  /**
+   * Queue consumers, routed by queue name:
+   * - contentworker-events: the application's consumeEvent body — webhooks,
+   *   cache invalidation, RAG indexing (one bounded slice per reindex message),
+   *   functions, live fan-out. On-publish agent runs are forwarded to contentworker-agents
+   *   when that queue is bound, else run inline (dev parity).
+   * - contentworker-agents: one agent job per invocation (batch size 1) — each job can
+   *   await durable Workflow runs for minutes without starving event delivery.
+   * - contentworker-events-dlq: dead letters are logged loudly and acked, never silent.
+   * Per-message ack/retry so one poison message doesn't recycle a batch.
+   */
+  async queue(batch: MessageBatch, rawEnv: EdgeEnv, _exec: ExecutionContext): Promise<void> {
+    const env = withJurisdiction(rawEnv);
+    if (batch.queue === 'contentworker-events-dlq') {
+      const metrics = makeMetrics(env.METRICS);
+      for (const msg of batch.messages) {
+        console.error(
+          JSON.stringify({
+            msg: 'dead-lettered message dropped after max retries',
+            id: msg.id,
+            body: msg.body,
+          }),
+        );
+        metrics.count('contentworker_dead_letters_total');
+        msg.ack();
+      }
+      return;
+    }
+
+    const wired = wireEdge(env);
+    try {
+      if (batch.queue === 'contentworker-agents') {
+        await consumeAgentJobs(batch, env, wired);
+      } else {
+        await consumeEvents(batch, env, wired);
+      }
+      // Events appended during consumption (reindex continuation slices, moderation
+      // retractions) relay now instead of waiting for the cron.
+      if (wired.queue) {
+        const metrics = makeMetrics(env.METRICS);
+        await drainOutbox(wired.ctx, wired.queue, { routeTopic: wired.routeTopic }).then(
+          (relayed) => {
+            if (relayed > 0) {
+              metrics.count('contentworker_outbox_relayed_total', relayed, {
+                trigger: 'post-batch',
+              });
+            }
+          },
+          (err) => {
+            console.error('post-batch outbox relay failed', redactCredentials(err));
+            metrics.count('contentworker_relay_errors_total', 1, { trigger: 'post-batch' });
+          },
+        );
+      }
+    } finally {
+      await wired.close();
+    }
+  },
+
+  /**
+   * Cron sweeper (every minute): drains any outbox rows the post-commit nudge
+   * missed (crash/eviction) and fires due scheduled publish/unpublish actions.
+   */
+  async scheduled(ctrl: ScheduledController, rawEnv: EdgeEnv, _exec: ExecutionContext) {
+    const env = withJurisdiction(rawEnv);
+    const wired = wireEdge(env);
+    const metrics = makeMetrics(env.METRICS);
+    try {
+      // Retention sweep on the top-of-hour tick only (the cron fires every
+      // minute): trims relayed outbox rows + old webhook delivery records.
+      if (wired.persistent && new Date(ctrl.scheduledTime).getUTCMinutes() === 0) {
+        try {
+          const pruned = await pruneEventHistory(wired.ctx, {
+            ...(env.EVENT_RETENTION_HOURS
+              ? { retentionHours: Number(env.EVENT_RETENTION_HOURS) }
+              : {}),
+          });
+          if (pruned.outboxDeleted > 0 || pruned.webhookDeliveriesDeleted > 0) {
+            console.log(JSON.stringify({ msg: 'event history pruned', ...pruned }));
+            metrics.count('contentworker_events_pruned_total', pruned.outboxDeleted, {
+              table: 'outbox',
+            });
+            metrics.count('contentworker_events_pruned_total', pruned.webhookDeliveriesDeleted, {
+              table: 'webhook_deliveries',
+            });
+          }
+        } catch (err) {
+          console.error('event history prune failed', err);
+        }
+      }
+      // Secrets-at-rest sweep, once a day (03:30 UTC): reseals values under
+      // DATA_KEY_PREVIOUS onto DATA_KEY after a rotation.
+      if (wired.persistent && isResealTick(ctrl.scheduledTime)) {
+        try {
+          const r = await resealSecrets({ store: wired.ctx.store, sealer: wired.sealer });
+          console.log(JSON.stringify({ msg: 'secrets resealed', ...r }));
+          metrics.count('contentworker_secrets_resealed_total', r.resealed);
+          if (r.unreadable > 0) {
+            // Never the values: only where they live.
+            console.error(
+              JSON.stringify({
+                msg: 'secrets unreadable with DATA_KEY or DATA_KEY_PREVIOUS',
+                unreadable: r.unreadable,
+                refs: r.unreadableRefs,
+              }),
+            );
+            metrics.count('contentworker_secrets_unreadable_total', r.unreadable);
+          }
+        } catch (err) {
+          console.error('secret reseal failed', err);
+        }
+      }
+      // Actions first: their outbox events are then picked up by the relay
+      // sweep below instead of waiting a full cron interval.
+      const { executed, failed } = await runDueScheduledActions(wired.ctx);
+      if (executed > 0)
+        metrics.count('contentworker_scheduled_actions_total', executed, { outcome: 'executed' });
+      if (failed > 0)
+        metrics.count('contentworker_scheduled_actions_total', failed, { outcome: 'failed' });
+      if (executed > 0 || failed > 0) {
+        console.log(JSON.stringify({ msg: 'scheduled actions run', executed, failed }));
+      }
+      // A relay error must not abort the tick (agent schedules still run).
+      if (wired.queue) {
+        try {
+          const total = await drainOutbox(wired.ctx, wired.queue, {
+            maxIterations: 20,
+            routeTopic: wired.routeTopic,
+          });
+          if (total > 0)
+            metrics.count('contentworker_outbox_relayed_total', total, { trigger: 'cron' });
+        } catch (err) {
+          console.error('cron outbox relay failed', err);
+          metrics.count('contentworker_relay_errors_total', 1, { trigger: 'cron' });
+        }
+      }
+      // Bulk-job crash recovery: re-nudge chunks whose claim went stale or
+      // whose chunk_due event was lost (normally returns 0 — one cheap
+      // indexed query). The re-appended events relay on the next tick's
+      // drain (or the following nudge).
+      if (wired.persistent) {
+        try {
+          const resumed = await resumeStalledBulkJobs(wired.ctx);
+          if (resumed > 0) {
+            console.log(JSON.stringify({ msg: 'stalled bulk chunks re-nudged', resumed }));
+            metrics.count('contentworker_bulk_chunks_resumed_total', resumed);
+          }
+        } catch (err) {
+          console.error('bulk stall sweep failed', err);
+        }
+      }
+      // Recurring agent jobs: due schedules run here on the cron tick, metered
+      // through a separate background counter window (the `agent:` DO prefix,
+      // AI_AGENT_* ceilings when set) so batch spend can't exhaust the
+      // interactive budget.
+      if (env.AGENTS_SCHEDULES === 'true') {
+        const bgGuard = doAgentCostGuardFromEnv(env);
+        const scheduleCtx = { ...wired.ctx, costGuard: bgGuard ?? wired.ctx.costGuard };
+        const agents = makeAgents(env, scheduleCtx, wired.ai);
+        if (agents) {
+          const s = await runDueAgentSchedules(scheduleCtx, agents, {
+            entriesPerRun: Number(env.AGENT_SCHEDULE_MAX_ENTRIES ?? 25),
+            maxRunTokens: Number(env.AGENT_SCHEDULE_MAX_RUN_TOKENS ?? 100_000),
+          });
+          if (s.schedules > 0) console.log(JSON.stringify({ msg: 'agent schedules run', ...s }));
+        }
+      }
+    } finally {
+      await wired.close();
+    }
+  },
+} satisfies ExportedHandler<EdgeEnv>;

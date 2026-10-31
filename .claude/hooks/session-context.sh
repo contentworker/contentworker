@@ -1,0 +1,25 @@
+#!/bin/bash
+# SessionStart: tells Claude where it is (the branch, uncommitted work, whether this is a worktree)
+# before it does anything. The main checkout is shared between sessions that switch branches, so
+# when it sits on main the advice is to branch in a worktree rather than switch it. Local git only,
+# no network. Fails open.
+# Without jq every hook here exits silently, guards included, so say so once at the start. Plain
+# stdout from a SessionStart hook reaches Claude as context, so this needs no jq to say it.
+command -v jq >/dev/null 2>&1 || {
+  echo "jq is not installed, so the contentworker hooks in .claude/hooks (the deploy and migration guards, the docs and rules reminders) are all off this session. Tell the user to install jq (brew install jq) and start a new session."
+  exit 0
+}
+. "$(dirname "$0")/lib.sh"
+dir=${CLAUDE_PROJECT_DIR:-$(field .cwd)}
+top=$(git -C "${dir:-.}" rev-parse --show-toplevel 2>/dev/null) || exit 0
+branch=$(git -C "$top" branch --show-current 2>/dev/null)
+dirty=$(git -C "$top" status --porcelain 2>/dev/null | grep -c .)
+worktree=no
+[ "$(git -C "$top" rev-parse --git-dir)" != "$(git -C "$top" rev-parse --git-common-dir)" ] && worktree=yes
+
+msg="contentworker session: branch \`${branch:-detached}\`, $dirty uncommitted path(s), worktree: $worktree."
+if [ "$branch" = main ] && [ "$worktree" = no ]; then
+  msg+=" This checkout is shared with other sessions: don't switch its branch. For branch work, create a git worktree (\`git worktree add ../contentworker-<topic> -b <branch> origin/main\`) and open the PR with \`gh pr create --head <branch>\`."
+fi
+msg+=" Toolkit (.claude/README.md): agents engineer, test-engineer, code-reviewer, hexagonal-guardian, security-reviewer, workers-reviewer, admin-ui-reviewer, devops, docs-sync; /preflight before saying done, /review-change before a PR, /ship to open one. Deploys and remote D1 migrations happen only in CI."
+context SessionStart "$msg"

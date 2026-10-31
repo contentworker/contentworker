@@ -1,0 +1,34 @@
+{
+  "name": "@contentworker/docs-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "contentworker's public docs: a Starlight static site deployed as a Workers static-assets Worker. Reference pages render from @contentworker/domain and the API's OpenAPI document at build time.",
+  "scripts": {
+    "prepare:data": "tsx scripts/openapi.ts",
+    "dev": "pnpm prepare:data && astro dev",
+    "build": "pnpm prepare:data && astro build && node scripts/check-links.mjs",
+    "preview": "astro preview",
+    "deploy": "pnpm build && wrangler deploy",
+    "check-types": "tsx scripts/openapi.ts && astro sync && tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@astrojs/starlight": "catalog:",
+    "@contentworker/design": "workspace:*",
+    "@contentworker/domain": "workspace:*",
+    "@fontsource-variable/inter": "catalog:",
+    "astro": "catalog:",
+    "lucide": "catalog:"
+  },
+  "devDependencies": {
+    "@contentworker/http": "workspace:*",
+    "@contentworker/platform": "workspace:*",
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

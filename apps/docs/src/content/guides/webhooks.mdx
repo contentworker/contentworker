@@ -1,0 +1,100 @@
+---
+title: Webhooks
+description: Subscribe a URL to content events, verify each delivery's signature, and handle retries.
+---
+
+A webhook POSTs a JSON event to your URL whenever something it subscribes to happens: rebuild a
+static site when an article is published, purge a CDN when an asset changes, notify a channel when
+a release ships.
+
+## Subscribe
+
+In **Settings → Webhooks**, or with a key holding `space:admin`:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/webhooks" \
+  -H "Authorization: Bearer $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{
+    "url": "https://example.com/hooks/contentworker",
+    "topics": ["entry.published", "entry.unpublished"],
+    "secret": "a-long-random-string",
+    "headers": { "x-site": "marketing" }
+  }'
+```
+
+- **`topics`** are the event types to send, or `["*"]` for all of them.
+- **`secret`** signs every delivery; keep it somewhere your receiver can read it.
+- **`headers`** are added to every request, for routing or a static credential on your side.
+- **`active: false`** pauses a webhook without deleting it.
+
+Webhooks belong to an environment, so `staging` changes don't rebuild production.
+
+## Events
+
+Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
+(`{ spaceId, environmentId }`) and `occurredAt`, plus:
+
+| Type                     | Also carries                                          | Sent when                               |
+| ------------------------ | ----------------------------------------------------- | --------------------------------------- |
+| `entry.published`        | `entryId`, `contentTypeApiId`, `version`, `fields`    | An entry is published                   |
+| `entry.unpublished`      | `entryId`, `contentTypeApiId`                         | An entry is unpublished, or trashed while live |
+| `asset.published`        | `assetId`                                             | An asset is published                   |
+| `asset.unpublished`      | `assetId`                                             | An asset is unpublished                 |
+| `content_type.published` | `contentTypeApiId`, `version`                         | A content type's definition is published |
+| `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
+
+```json
+{
+  "id": "0192f3a4-7c1e-7b2a-9d4e-5f6a7b8c9d0e",
+  "type": "entry.published",
+  "scope": { "spaceId": "acme", "environmentId": "main" },
+  "occurredAt": "2026-10-30T09:15:02.481Z",
+  "entryId": "0192f3a4-6b0d-7a19-8c3d-4e5f6a7b8c9d",
+  "contentTypeApiId": "article",
+  "version": 4,
+  "fields": { "title": { "en-US": "Hello, world" } }
+}
+```
+
+An event is recorded in the same transaction as the change it describes, so you receive it if and
+only if the change happened, never for a publish that was rolled back.
+
+## Verify the signature
+
+Each delivery carries three headers:
+
+| Header                       | Value                                              |
+| ---------------------------- | -------------------------------------------------- |
+| `x-contentworker-event`      | The event type                                     |
+| `x-contentworker-timestamp`  | The event's `occurredAt`                           |
+| `x-contentworker-signature`  | `sha256=` and the hex HMAC-SHA256 of `timestamp.body` with your secret |
+
+Compute the HMAC over the timestamp, a `.`, and the raw request body exactly as received (before
+parsing it), and compare in constant time. Reject old timestamps to stop replays.
+
+```ts
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+export function verify(rawBody: string, headers: Headers, secret: string): boolean {
+  const timestamp = headers.get('x-contentworker-timestamp') ?? '';
+  const signature = headers.get('x-contentworker-signature') ?? '';
+  const expected = `sha256=${createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex')}`;
+  const fresh = Math.abs(Date.now() - Date.parse(timestamp)) < 5 * 60_000;
+  return (
+    fresh &&
+    signature.length === expected.length &&
+    timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+  );
+}
+```
+
+## Retries and the delivery log
+
+Answer with any 2xx status to acknowledge. A non-2xx answer, a redirect, a timeout (10 seconds) or
+a network error counts as a failure and is retried with exponential backoff. Because a delivery can
+be retried, handle each event `id` once.
+
+Every attempt is logged with its status: **Settings → Webhooks → Deliveries**, or
+`GET …/webhooks/{id}/deliveries`.
+
+Webhook URLs must be public `http` or `https` addresses (use `https`); private and internal addresses are refused.

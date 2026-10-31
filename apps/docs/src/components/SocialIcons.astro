@@ -1,0 +1,13 @@
+---
+/*
+ * The header's right side: the API explorer as the one pill button, then Starlight's own icons.
+ * Starlight has no setting for header links, and SocialIcons is the one slot in its header's right
+ * group, so the link rides an override of it rather than a fork of Header. The right group is
+ * hidden below 50rem; the sidebar keeps "OpenAPI explorer" for small screens.
+ */
+// biome-ignore lint/correctness/noUnusedImports: rendered as <Default /> below
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+---
+
+<a class="cw-header-button" href="/api/">API explorer</a>
+<Default><slot /></Default>

@@ -1,0 +1,16 @@
+// Static-assets Worker for the contentworker docs. No runtime code: Astro's dist/ is served as is.
+// Deploy with `pnpm docs:deploy` (build, link check, then `wrangler deploy`).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "contentworker-docs",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  // Served only at its custom domain: no workers.dev or preview URL as a second address.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "docs.contentworker.app", "custom_domain": true }]
+}

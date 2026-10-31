@@ -1,0 +1,185 @@
+# Development
+
+## Prerequisites
+
+- Node.js ≥ 24 (`.nvmrc`) and pnpm 10 (`packageManager` in the root `package.json`).
+- No Cloudflare account: local development runs every Worker in workerd through the Cloudflare
+  Vite plugin and Miniflare, with a local D1.
+
+## Running locally
+
+```bash
+pnpm install
+cd apps/web && npx wrangler d1 migrations apply DB --local && cd ../..
+pnpm dev
+```
+
+`pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173). The web
+Worker's Vite config (`apps/web/vite.config.ts`) starts the **api, engine and delivery Workers as
+auxiliary Workers** in the same session, all on one local D1, with the queues, cron, Durable
+Objects and Workflows emulated. Their vars are overridden with `LOCAL_STACK_VARS`:
+
+| Var                      | Local value                             | Why                                                          |
+| ------------------------ | --------------------------------------- | ------------------------------------------------------------ |
+| `REQUIRE_SECURE_SECRETS` | `false`                                 | Allow the dev tokens below                                   |
+| `ADMIN_TOKEN`            | `dev-admin-token`                       | Root bearer token                                            |
+| `MCP_TOKEN`              | `dev-mcp-token`                         | Mounts `/mcp`                                                |
+| `TOKEN_PEPPER`           | `dev-pepper`                            |                                                              |
+| `MEDIA_SIGNING_SECRET`   | `dev-media-signing-secret`              |                                                              |
+| `PRINCIPAL_KEY`          | `contentworker-local-dev-principal-key` | The same `DEV_PRINCIPAL_KEY` the web Worker uses locally     |
+| `AI_MODE`                | `mock`                                  | No model calls                                               |
+| `AI_GATEWAY_ID`          | empty                                   | No AI Gateway                                                |
+| `EMBEDDINGS_PROVIDER`    | `local`                                 | Hash embeddings                                              |
+| `VECTOR_STORE`           | `memory`                                | Vectorize has no local emulator                              |
+| `ALLOW_FAKE_ADAPTERS`    | `all`                                   | Accept every dev fake                                        |
+
+The local database starts empty, and while it has no people, the admin on localhost is open
+(no sign-in) for local development. Adding the first person through `/setup` turns sign-in on.
+To load the demo dataset (`@contentworker/seed`), add `SEED_DEV: 'true'` (and optionally
+`SEED_SCALE`) to `LOCAL_STACK_VARS`; the api seeds on its first request per isolate.
+
+Everything the api serves is reachable on the same origin through the web gateway, with a
+bearer token: e.g. `curl -H 'authorization: Bearer dev-admin-token' http://localhost:5173/spaces`,
+and MCP at `http://localhost:5173/mcp` with `dev-mcp-token`.
+
+The docs site runs on its own: `pnpm docs:dev`.
+
+## Common commands
+
+```bash
+# Test / typecheck / lint everything (what CI's verify job runs; turbo, cached)
+pnpm check-types && pnpm test && pnpm lint
+
+# One package
+pnpm --filter @contentworker/application test
+
+# A single test file or test name (vitest)
+pnpm --filter @contentworker/application exec vitest run test/releases.test.ts -t "publishes"
+
+# Fleet registry and DO-migration golden tests
+node --test scripts/*.test.ts
+
+# Bundle check for a Worker (nothing is uploaded)
+pnpm --filter @contentworker/api exec wrangler deploy --dry-run --outdir /tmp/api
+
+# Regenerate committed embeds after editing docs/ or MCP skills
+pnpm --filter @contentworker/docs generate
+pnpm --filter @contentworker/http generate:skills
+```
+
+### Where each suite runs
+
+| Package                          | Environment                         | What it covers                                                                 |
+| -------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------ |
+| `@contentworker/domain`          | node                                | Pure rules                                                                     |
+| `@contentworker/application`     | node, `@contentworker/test-kit` fakes | Every use-case                                                               |
+| `@contentworker/db`              | workerd (vitest-pool-workers), Miniflare D1 with the migrations applied | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest |
+| `@contentworker/http`            | node, in-memory fakes               | REST routes, auth, OpenAPI, MCP tools, the skills embed                       |
+| `@contentworker/engine`          | workerd                             | Durable Objects (search shard, live hub, cost guard, rate limiter) and real Workflow runs with `AI_MODE=mock` |
+| `@contentworker/docs`            | node                                | The `docs/` embed matches disk                                                 |
+| `@contentworker/web`             | vitest; Playwright (`pnpm --filter @contentworker/web e2e`) | Auth and lib units; device and CMS e2e with axe in WebKit and Chromium |
+
+The web e2e harness starts its own dev server on port 5390 with a fresh local D1 in
+`.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings), so it coexists with a
+`pnpm dev` session. Install browsers once with
+`pnpm --filter @contentworker/web exec playwright install webkit chromium`.
+
+### MCP smoke scripts
+
+Against a running stack (override the default URL with `MCP_URL`, the token with `MCP_TOKEN`):
+
+```bash
+MCP_URL=http://localhost:5173/mcp node apps/api/scripts/mcp-smoke.mjs          # tool surface end-to-end
+MCP_URL=http://localhost:5173/mcp node apps/api/scripts/mcp-search-smoke.mjs   # search tools
+```
+
+## Conventions
+
+- **Strict TypeScript** (`packages/typescript-config/base.json`): `noUncheckedIndexedAccess`,
+  `noUnusedLocals`, `verbatimModuleSyntax`. ESM with `.js` specifiers in the core packages.
+- **TypeScript 7** is the native compiler and has no JS API: run `tsc`, never
+  `import ts from 'typescript'`. The SDKs bundle JS with tsup and emit `.d.ts` with `tsc`.
+- **Dependencies come from the pnpm catalog.** Every version lives in `catalog:` in
+  `pnpm-workspace.yaml` (`catalogMode: strict`); a `package.json` says `"catalog:"`, or
+  `"workspace:*"` for a `@contentworker/*` package. To add one, put its latest stable version in
+  the catalog, then `"name": "catalog:"` in the package and `pnpm install`. Only
+  `peerDependencies` keep their own ranges. `scripts/catalog.test.ts` fails CI on a stray version
+  or an unused entry.
+- **Type-only imports** use `import type`.
+- **Biome**: single quotes, semicolons, trailing commas, 2-space indent, width 100.
+- **IDs** from `ctx.ids.newId()` (UUIDv7), never `crypto.randomUUID()`.
+- **Time** from `ctx.clock.now()`, never `new Date()` inside use-cases.
+- **Scope everything**: thread `{ spaceId, environmentId }` through every store and use-case call.
+- **workerd only**: `nodejs_compat`, no filesystem, no long-lived sockets, no Node servers.
+- **Unit of work**: inside `withTransaction`, read everything first, then write; never rely on
+  reading your own buffered writes (see [Consistency](./consistency.md)).
+
+## Adding a use-case
+
+1. Add the function to the right module in `packages/application/src/` (exported from
+   `index.ts`). It takes `AppContext` and a `Scope`.
+2. Keep pure rules (state transitions, validation) in `packages/domain`.
+3. If it needs a new persistence capability, add a method to the port in
+   `packages/ports/src/content-store.ts`, implement it in `packages/db/src/store.ts` **and** the
+   test-kit in-memory store, and add a contract test in `packages/db/test/`.
+4. Test it in `packages/application/test/<capability>.test.ts` with `@contentworker/test-kit`
+   fakes. Name tests for the capability, never for a roadmap phase.
+5. Expose it on **both** surfaces: an HTTP route in `packages/http/src/api/routes/*` (with its
+   OpenAPI doc) and an MCP tool in `packages/http/src/mcp/server.ts`; or an event handler in
+   `consumeEvent` when it is reactive.
+
+## Changing the database schema
+
+1. Add a new numbered file, `packages/db/migrations/NNNN_<what>.sql`. Expand-only: new tables,
+   new nullable or defaulted columns, new indexes. Never edit an applied migration; drop or
+   rename only in a later change once no deployed code reads the old shape.
+2. Mirror it in `packages/db/src/schema.ts` (or `auth-schema.ts` for web auth tables).
+   Timestamps are `integer` epoch milliseconds (`mode: 'timestamp_ms'`), JSON is `text`
+   (`mode: 'json'`), booleans are `integer` 0/1.
+3. Apply locally: `cd apps/web && npx wrangler d1 migrations apply DB --local`. The
+   `@contentworker/db` tests apply the migrations to Miniflare D1 themselves.
+4. Remote databases are migrated only by CI, before the new code deploys
+   ([Deployment](./deployment.md#the-pipeline)).
+
+Keep the D1 limits in mind: at most 100 bound parameters per statement (`chunked`,
+`selectChunked`, or one JSON parameter with `json_each`), one writer per database (no writes on
+read paths), 10 GB per database.
+
+## D1 schema reference
+
+`(space_id, environment_id)` leads the primary key or a unique index of every content table.
+`0001_init.sql` creates:
+
+| Tables                                                                  | Purpose                                                       |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `spaces`, `environments`, `environment_aliases`                         | Spaces, branches, alias → environment                         |
+| `content_types`                                                         | Content-type definitions (`fields` JSON)                      |
+| `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values` | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
+| `assets`, `asset_published`                                             | Asset metadata and its published read model                   |
+| `references`                                                            | Link graph (reverse lookups for invalidation and usage)       |
+| `api_keys`, `roles`, `space_members`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings` | Access                       |
+| `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins` | Integrations                                               |
+| `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks` | Publishing at scale                                    |
+| `comments`, `tasks`                                                     | Collaboration                                                 |
+| `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows |
+| `concept_schemes`, `concepts`, `tags`                                   | Taxonomy                                                      |
+| `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`          | AI actions and the agent ledger                               |
+| `audit_log`                                                             | Per-space audit trail                                         |
+| `outbox`                                                                | Transactional outbox (`claimed_until` lease, `relayed_at`)    |
+| `_guard`                                                                | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost |
+
+`0002_auth.sql` adds the web app's tables: `users`, `sessions`, `recovery_codes`,
+`sign_in_challenges`, `passkeys`, `passkey_challenges`, `scim_groups`, `scim_group_members`,
+`workspace_settings`, `auth_failures`, `admin_audit`.
+
+The lexical search index is not in D1: it lives in `SearchShardDO` (FTS5). Vectors live in
+Vectorize. See [AI, agents & search](./ai-agents-and-search.md).
+
+## Testing approach
+
+The application layer is tested against `@contentworker/test-kit` fakes: an in-memory
+`ContentStore` that enforces the same unit-of-work rule as D1 (no reading your own uncommitted
+writes), fake blob, vector and embeddings stores, and deterministic `Clock` and `IdGenerator`.
+The D1 store runs the same contract suite in workerd, plus concurrency tests (racing publishes:
+exactly one wins; outbox leases never double-claim). Because the fakes implement the same ports
+as the real adapters, a passing application test exercises the real use-case logic.
