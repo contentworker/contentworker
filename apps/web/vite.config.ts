@@ -28,8 +28,9 @@ const LOCAL_STACK_VARS = {
   VECTOR_STORE: 'memory',
   ALLOW_FAKE_ADAPTERS: 'all',
   // Local dev always runs on the demo dataset (@contentworker/seed), loaded on the api's first
-  // request. Config validation refuses SEED_DEV wherever secure secrets are required.
-  SEED_DEV: 'true',
+  // request. The device tests keep their fresh, empty database: they create what they need.
+  // Config validation refuses SEED_DEV wherever secure secrets are required.
+  SEED_DEV: e2e ? 'false' : 'true',
   SEED_SCALE: '1',
 };
 

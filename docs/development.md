@@ -84,7 +84,8 @@ pnpm --filter @contentworker/http generate:skills
 | `@contentworker/web`             | vitest; Playwright (`pnpm --filter @contentworker/web e2e`) | Auth and lib units; device and CMS e2e with axe in WebKit and Chromium |
 
 The web e2e harness starts its own dev server on port 5390 with a fresh local D1 in
-`.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings), so it coexists with a
+`.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings, and unseeded: the tests
+create what they need), so it coexists with a
 `pnpm dev` session. Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
