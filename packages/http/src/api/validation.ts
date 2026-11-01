@@ -274,6 +274,14 @@ export const moveAssetsBody = z.object({
   ids: z.array(zId).min(1).max(MAX_ASSET_MOVE),
   folderId: zId.nullable().describe('The folder to file them in; null takes them to the root'),
 });
+export const assetReindexBody = z.object({
+  all: z
+    .boolean()
+    .optional()
+    .describe(
+      'Every asset with a file; by default only those never ingested or whose ingest failed',
+    ),
+});
 export const assetFolderBody = z.object({
   name: z.string().min(1).max(128),
   parentId: zId.nullable().optional().describe('The folder to create it in (absent: the root)'),

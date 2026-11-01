@@ -242,6 +242,15 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
       const obj = await bucket.get(key);
       return obj ? obj.text() : null;
     },
+    async open(key) {
+      const obj = await bucket.get(key);
+      if (!obj) return null;
+      return {
+        body: obj.body as ReadableStream<Uint8Array>,
+        size: obj.size,
+        ...(obj.httpMetadata?.contentType ? { contentType: obj.httpMetadata.contentType } : {}),
+      };
+    },
     async deletePrefix(prefix, keep) {
       // List everything first, then delete: deleting between pages could shift what a cursor
       // points at and skip objects.
@@ -346,8 +355,15 @@ export async function handleMediaRequest(
     if (!request.body) return text(400, 'empty body');
     // The stored type is the one the URL was signed for, not whatever the
     // client sends — the signer decided what this key may hold.
-    await opts.bucket.put(key, request.body, { httpMetadata: { contentType } });
-    return new Response(null, { status: 200 });
+    const stored = (await opts.bucket.put(key, request.body, {
+      httpMetadata: { contentType },
+    })) as { httpEtag?: string } | null;
+    // The stored bytes' etag: the api's upload notice names them by it, as R2's own does, so a
+    // second PUT through the same URL (new bytes) is told apart from a redelivery.
+    return new Response(null, {
+      status: 200,
+      ...(stored?.httpEtag ? { headers: { etag: stored.httpEtag } } : {}),
+    });
   }
 
   if (request.method !== 'GET' && request.method !== 'HEAD') {

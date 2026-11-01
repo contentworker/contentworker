@@ -7,6 +7,7 @@ import {
   approvePluginCapabilities,
   approvePromotion,
   archiveAsset,
+  assetSearchDeps,
   auditActor,
   auditEntry,
   autofillField,
@@ -133,6 +134,7 @@ import {
   purgeEntry,
   reassignTask,
   refreshVideoAsset,
+  reingestAsset,
   rejectPromotion,
   relatedEntries,
   removeEntryFromRelease,
@@ -148,12 +150,14 @@ import {
   revokeEverythingFor,
   runAIAction,
   scheduleAction,
+  searchAssets,
   searchIndexHealth,
   setAssetMetadata,
   setConceptBroader,
   setEntryMetadata,
   setEnvironmentAlias,
   setPluginEnabled,
+  startAssetReindex,
   startBulkJob,
   startEnvironmentClone,
   startImportJob,
@@ -190,6 +194,7 @@ import {
   ForbiddenError,
   type InstalledPlugin,
   maskDeniedFields,
+  NotConfiguredError,
   NotFoundError,
   PROMOTION_STATUSES,
   type PromotionStatus,
@@ -212,7 +217,7 @@ import {
 } from '../auth';
 import { doc } from '../docs/openapi';
 import * as docs from '../docs/schemas';
-import { clampCount, MAX_PAGE_LIMIT, parseAssetListQuery } from '../query';
+import { clampCount, MAX_PAGE_LIMIT, parseAssetListQuery, parseAssetSearchQuery } from '../query';
 import {
   agentScheduleBody,
   agentSchedulePatchBody,
@@ -222,6 +227,7 @@ import {
   assetFolderBody,
   assetFolderPatchBody,
   assetMetadataBody,
+  assetReindexBody,
   assetRenditionBody,
   assetRenditionPatchBody,
   auditBody,
@@ -828,6 +834,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       const options = {
         dryRun: c.req.query('dryRun') === 'true',
         publish: c.req.query('publish') !== 'false',
+        // Run inline (no blob store): the imported assets go through ingest once written.
+        reindexAssets: Boolean(deps.assetIngest),
       };
       if (options.dryRun || !blob) {
         const report = await importSnapshot(ctx, scopeOf(c), snapshot, options);
@@ -863,7 +871,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         spaceId: body.targetSpaceId ?? (c.req.param('space') as string),
         environmentId: body.targetEnvironmentId,
       };
-      const options = { publish: body.publish !== false };
+      const options = { publish: body.publish !== false, reindexAssets: Boolean(deps.assetIngest) };
       if (!blob) return c.json(await cloneEnvironment(ctx, scopeOf(c), target, options), 201);
       return c.json(await startEnvironmentClone(ctx, scopeOf(c), target, options), 202);
     },
@@ -1755,6 +1763,58 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json({ ...page, items: await signed(c, page.items) });
     },
   );
+  app.get(
+    `${BASE}/assets/search`,
+    doc('Assets', 'Search the asset library (hybrid, with facets)', {
+      ok: docs.assetSearchPage,
+      description:
+        'Full text (file name, title, caption, alt text, tag names, text read from documents and ' +
+        'recordings) and semantic similarity, fused by rank. Drafts and published alike; ' +
+        'archived left out unless status asks. facets counts matches by kind, tag and folder, ' +
+        'each without its own filter.',
+      query: {
+        q: 'Search text (1–256 characters)',
+        kind: 'image | video | audio | document | other',
+        tag: 'A taxonomy tag id',
+        folder: 'A folder id, or root for assets in no folder',
+        status: 'draft | published | archived | all',
+        limit: 'Most results, 1..100 (default 20)',
+      },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const page = await searchAssets(
+        ctx,
+        deps.assetSearch ?? assetSearchDeps(rag),
+        scopeOf(c),
+        parseAssetSearchQuery(c.req.query()),
+      );
+      return c.json({ ...page, items: await signed(c, page.items) });
+    },
+  );
+  app.post(
+    `${BASE}/assets/reindex`,
+    doc('Assets', 'Send the asset library through ingest', {
+      body: assetReindexBody,
+      ok: docs.assetReindex,
+      status: 202,
+      description:
+        'A resumable bulk job (follow it at /bulk-jobs/{id}) that re-runs ingest — hash, ' +
+        'duplicates, dimensions, alt text and tags where empty, text extraction, search index — ' +
+        'on assets never ingested (uploaded before ingest) or whose ingest failed; all: true ' +
+        'takes every asset with a file. Hosted videos are left out. While a reindex is running ' +
+        'in the environment, that job is returned instead (running: true). 501 when the ingest ' +
+        'queue is not bound.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      if (!deps.assetIngest) {
+        throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to reindex assets');
+      }
+      const { all } = await parseBody(c, assetReindexBody);
+      return c.json(await startAssetReindex(ctx, scopeOf(c), { all: all === true }), 202);
+    },
+  );
   app.post(
     `${BASE}/assets`,
     doc('Assets', 'Create an asset (presigned direct upload)', {
@@ -1813,6 +1873,25 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => c.json(await refreshVideoAsset(ctx, scopeOf(c), c.req.param('id'))),
+  );
+  app.post(
+    `${BASE}/assets/:id/reingest`,
+    doc('Assets', "Run ingest on an asset's file again", {
+      ok: docs.asset,
+      status: 202,
+      description:
+        'Queues a fresh ingest run on the current file (a retry after ingestStatus error, or ' +
+        'after the AI or extraction setup changed). Alt text and tags are still only filled ' +
+        'where empty. 501 when the ingest queue is not bound; 400 for a hosted video.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      if (!deps.assetIngest) {
+        throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to re-run ingest');
+      }
+      const asset = await reingestAsset(ctx, deps.assetIngest, scopeOf(c), c.req.param('id'));
+      return c.json(await signedOne(c, asset), 202);
+    },
   );
   app.patch(`${BASE}/assets/:id/metadata`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(

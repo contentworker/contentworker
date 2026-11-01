@@ -1,4 +1,4 @@
-import type { WorkersAiRun } from '@contentworker/adapters/ai-workers';
+import type { WorkersAiRun, WorkersAiToMarkdown } from '@contentworker/adapters/ai-workers';
 import type { KvGateBinding } from '@contentworker/adapters/asset-gate-kv';
 import type { R2BucketLike } from '@contentworker/adapters/blob-r2';
 import type { ImagesBindingLike } from '@contentworker/adapters/images-cf';
@@ -62,6 +62,18 @@ export interface EdgeEnv {
    */
   readonly MEDIA_PURGE_QUEUE?: Queue;
   /**
+   * Producer side of `contentworker-asset-events`, the queue R2's object-create notifications for
+   * the media bucket land on: the api adds a message when an upload through its signed PUT
+   * completes (local development has no notifications), and asks for re-ingest there. Absent →
+   * uploads are ingested only from R2's notifications, and re-ingest answers 501.
+   */
+  readonly ASSET_EVENTS_QUEUE?: Queue;
+  /**
+   * Asset ingest runs (`AssetIngestWorkflow`, one instance per file version), started by the
+   * engine's asset-events consumer. Absent → asset events are acknowledged and nothing is ingested.
+   */
+  readonly ASSET_INGEST_WF?: Workflow;
+  /**
    * R2 bucket holding asset bytes (native binding — no access keys). When
    * bound it is THE BlobStore: uploads and downloads go through this Worker's
    * signed `/media/*` route (see @contentworker/adapters/blob-r2).
@@ -70,7 +82,7 @@ export interface EdgeEnv {
   /**
    * Cloudflare Images binding. Executes resize/crop/format transforms over R2
    * bytes on `/media/*` GETs carrying transform params; absent → the original
-   * bytes are served.
+   * bytes are served. The engine reads image dimensions with it (`info`) during ingest.
    */
   readonly IMAGES?: ImagesBindingLike;
   /**
@@ -184,7 +196,7 @@ export interface EdgeEnv {
    * Workers AI binding — required when AI_PROVIDER / EMBEDDINGS_PROVIDER is
    * `workers-ai` (the only Workers AI transport; no credentials needed).
    */
-  readonly AI?: { run: WorkersAiRun };
+  readonly AI?: { run: WorkersAiRun; toMarkdown?: WorkersAiToMarkdown };
   /** `live` (default) or `mock` (every generateJson answers from its heuristic). */
   readonly AI_MODE?: string;
   /** Per-call cap for generateJson, ms (default 20000). */

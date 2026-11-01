@@ -66,6 +66,19 @@ describe('createR2BlobStore', () => {
     expect(await blob.get('k/a.json')).toBeNull();
   });
 
+  it('streams an object with its size and type, and null for a missing key', async () => {
+    const { bucket } = fakeBucket();
+    const store = createR2BlobStore(bucket, { signer });
+    await store.put('s/e/a/file.pdf', 'hello', 'application/pdf');
+    const opened = await store.open?.('s/e/a/file.pdf');
+    expect(opened?.size).toBe(5);
+    expect(opened?.contentType).toBe('application/pdf');
+    let text = '';
+    for await (const chunk of opened?.body ?? []) text += new TextDecoder().decode(chunk);
+    expect(text).toBe('hello');
+    expect(await store.open?.('s/e/a/missing')).toBeNull();
+  });
+
   it('issues signed media URLs under the configured origin, encoding key segments', async () => {
     const { bucket } = fakeBucket();
     const blob = createR2BlobStore(bucket, { signer, baseUrl: 'https://api.example/' });

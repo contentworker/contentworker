@@ -54,6 +54,12 @@ export default defineConfig(async () => ({
             name: 'contentworker-editorial-test',
             className: 'EditorialTestWorkflow',
           },
+          // Asset ingest over fakes for the bytes, Images, extraction and the model
+          // (test/fixtures/asset-ingest.ts).
+          ASSET_INGEST_WF: {
+            name: 'contentworker-asset-ingest-test',
+            className: 'AssetIngestTestWorkflow',
+          },
         },
         bindings: {
           AUTH_RATE_LIMIT_MAX: '3',

@@ -105,7 +105,9 @@ still fails safe: moderation flags the entry, and a router takes its most carefu
 Usage is metered per space against a rolling window with a ceiling on requests and on tokens. When
 a space is over either ceiling, the next AI call is refused with a `429` ("AI budget exceeded for
 this space; retry later") and nothing is generated; the window resets on its own. Calls from
-the entry editor, the API, MCP and workflows all count. Background agent passes can be given a
+the entry editor, the API, MCP and workflows all count, and so does the processing of uploads
+(alt text, tags, and reading the text of documents and recordings), which skips those parts
+rather than failing when the budget is spent. Background agent passes can be given a
 separate, stricter window, so batch work can't use up the budget editors need; an agent pass
 refused for budget is recorded in the run log as `skipped` with the reason. The deployment's
 administrator sets the ceilings and the window, and can turn metering off.

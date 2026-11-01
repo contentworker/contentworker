@@ -2,6 +2,7 @@ import type {
   AccessPolicy,
   AgentRunner,
   AppContext,
+  AssetSearchDeps,
   PluginSourcePolicy,
   RagDeps,
   WorkflowNodeDeps,
@@ -32,6 +33,7 @@ import {
 } from '@contentworker/platform/auth-rate-limit';
 import type {
   AIProvider,
+  AssetIngestQueue,
   BlobStore,
   EventBus,
   Hasher,
@@ -74,6 +76,13 @@ export interface AuthDeps {
   readonly rag: RagDeps;
   /** Object storage for asset uploads/downloads. */
   readonly blob: BlobStore;
+  /**
+   * Asset search's indexes (`wireEdge`'s `assetSearch`, which decides once whether queries are
+   * embedded). Absent (tests, local fakes): the RAG wiring's, embedding included.
+   */
+  readonly assetSearch?: AssetSearchDeps;
+  /** Hands asset files to ingest (re-ingest and reindex, which answer 501 without it). */
+  readonly assetIngest?: AssetIngestQueue;
   /** AI provider for entry generation. */
   readonly ai: AIProvider;
   /** Agent-workflow runtime for on-demand agent actions (moderation). */

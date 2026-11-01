@@ -697,6 +697,9 @@ importers:
       '@contentworker/ports':
         specifier: workspace:*
         version: link:../ports
+      '@contentworker/redaction':
+        specifier: workspace:*
+        version: link:../redaction
     devDependencies:
       '@contentworker/test-kit':
         specifier: workspace:*

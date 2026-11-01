@@ -2,6 +2,7 @@ import { NotFoundError, type Scope, ValidationError } from '@contentworker/domai
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
+import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { getAsset, setAssetMetadata } from './assets';
 import type { AppContext } from './context';
 import { createTag, listTags } from './taxonomy';
@@ -49,14 +50,18 @@ export async function generateAltText(
 
   const title = asset.title?.[locale] ?? asset.title?.[config.defaultLocale];
   const description = asset.description?.[locale] ?? asset.description?.[config.defaultLocale];
-  const system =
+  const system = [
     'You write concise, descriptive alt text for images, for accessibility and SEO. ' +
-    'One sentence, under 125 characters, no "image of"/"picture of" prefix.';
+      'One sentence, under 125 characters, no "image of"/"picture of" prefix.',
+    UNTRUSTED_CONTENT_GUARD,
+  ].join('\n');
+  // The file name, title, description and context are whatever an uploader or editor typed (or
+  // ingest ran unattended on an upload): data to describe, never instructions.
   const prompt = [
-    `File: ${asset.file.fileName} (${asset.file.contentType}).`,
-    title ? `Title: ${String(title)}` : '',
-    description ? `Description: ${String(description)}` : '',
-    input.context ? `Context: ${input.context}` : '',
+    `File: ${wrapUntrusted(asset.file.fileName)} (${asset.file.contentType}).`,
+    title ? `Title: ${wrapUntrusted(String(title))}` : '',
+    description ? `Description: ${wrapUntrusted(String(description))}` : '',
+    input.context ? `Context: ${wrapUntrusted(input.context)}` : '',
     'Write alt text.',
   ]
     .filter(Boolean)
@@ -135,14 +140,16 @@ export async function autoTagAsset(
 
   const title = defaultLocale ? asset.title?.[defaultLocale] : undefined;
   const description = defaultLocale ? asset.description?.[defaultLocale] : undefined;
-  const system =
+  const system = [
     'You tag media assets. Choose the most relevant tags from the existing vocabulary, ' +
-    'and suggest a few new tag names only when nothing fits. Return tag NAMES, lowercase.';
+      'and suggest a few new tag names only when nothing fits. Return tag NAMES, lowercase.',
+    UNTRUSTED_CONTENT_GUARD,
+  ].join('\n');
   const prompt = [
-    `File: ${asset.file.fileName} (${asset.file.contentType}).`,
-    title ? `Title: ${String(title)}` : '',
-    description ? `Description: ${String(description)}` : '',
-    `Existing tags: ${existing.map((t) => t.name).join(', ') || '(none)'}`,
+    `File: ${wrapUntrusted(asset.file.fileName)} (${asset.file.contentType}).`,
+    title ? `Title: ${wrapUntrusted(String(title))}` : '',
+    description ? `Description: ${wrapUntrusted(String(description))}` : '',
+    `Existing tags: ${existing.length ? wrapUntrusted(existing.map((t) => t.name).join(', ')) : '(none)'}`,
     'Pick relevant existing tags and optionally suggest new ones.',
   ]
     .filter(Boolean)

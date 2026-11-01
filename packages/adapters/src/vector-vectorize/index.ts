@@ -1,5 +1,11 @@
 import type { Scope } from '@contentworker/domain';
-import type { VectorMatch, VectorRow, VectorStore } from '@contentworker/ports';
+import type {
+  AssetSearchCorpus,
+  AssetVectorMatch,
+  VectorMatch,
+  VectorRow,
+  VectorStore,
+} from '@contentworker/ports';
 
 /** The subset of a Vectorize index binding this adapter uses. */
 export interface VectorizeBinding {
@@ -58,6 +64,21 @@ async function hashHex(input: string, chars: number): Promise<string> {
 
 /** Namespace per scope, space + environment (hashed: two UUIDs would exceed the 64-byte cap). */
 const namespaceFor = (scope: Scope) => hashHex(`${scope.spaceId}:${scope.environmentId}`, 32);
+
+/** The library corpus keeps the `asset:` prefix it shipped with; the published one has its own. */
+const corpusPrefix = (corpus: AssetSearchCorpus) => (corpus === 'library' ? 'asset' : 'asset-pub');
+
+/**
+ * Asset vectors' namespace per scope and corpus: not the entries' one, so an entry query
+ * (semantic search, related entries, RAG answers) never meets an asset's text, and the reverse;
+ * and the published corpus apart from the library's, so Delivery's top K is published assets only.
+ */
+const assetNamespaceFor = (scope: Scope, corpus: AssetSearchCorpus) =>
+  hashHex(`${corpusPrefix(corpus)}:${scope.spaceId}:${scope.environmentId}`, 32);
+
+/** One vector per asset and corpus, under a deterministic id. */
+const assetVectorId = (scope: Scope, assetId: string, corpus: AssetSearchCorpus) =>
+  hashHex(`${corpusPrefix(corpus)}:${scope.spaceId}:${scope.environmentId}:${assetId}`, 48);
 
 /** Deterministic per-entry id prefix; row ids are `<prefix>:<ordinal>`. */
 const entryPrefix = (scope: Scope, entryId: string) =>
@@ -123,6 +144,45 @@ export function createVectorizeStore(
       const ids: string[] = [];
       for (let i = 0; i < MAX_CHUNKS_PER_ENTRY; i++) ids.push(`${prefix}:${i}`);
       await deleteInBatches(index, ids);
+    },
+
+    async upsertAsset(scope, row) {
+      const [id, namespace] = await Promise.all([
+        assetVectorId(scope, row.assetId, row.corpus),
+        assetNamespaceFor(scope, row.corpus),
+      ]);
+      await index.upsert([
+        {
+          id,
+          values: row.embedding,
+          namespace,
+          metadata: {
+            kind: 'asset',
+            spaceId: scope.spaceId,
+            environmentId: scope.environmentId,
+            assetId: row.assetId,
+            assetKind: row.assetKind,
+            version: row.version,
+            modelId: opts.modelId,
+          },
+        },
+      ]);
+    },
+
+    async deleteAsset(scope, assetId, corpus) {
+      await index.deleteByIds([await assetVectorId(scope, assetId, corpus)]);
+    },
+
+    async queryAssets(scope, embedding, q) {
+      const { matches } = await index.query(embedding, {
+        topK: Math.min(q.topK, MAX_TOP_K),
+        namespace: await assetNamespaceFor(scope, q.corpus),
+        returnMetadata: 'all',
+      });
+      const minScore = q.minScore ?? -1;
+      return matches
+        .filter((m) => m.score >= minScore && typeof m.metadata?.assetId === 'string')
+        .map((m): AssetVectorMatch => ({ assetId: String(m.metadata?.assetId), score: m.score }));
     },
 
     async query(scope: Scope, embedding: number[], opts2: { topK: number; minScore?: number }) {

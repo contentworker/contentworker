@@ -106,6 +106,28 @@ Changing or deleting a rendition keeps its URLs; the copies cached at the edge a
 couple of minutes. Browsers that already hold a copy keep it until their own cache lets go, so
 give a changed preset a new name when that matters.
 
+## Search
+
+`GET /delivery/{space}/{env}/assets?q=coffee` searches published assets by file name, title,
+caption, alt text, tag names and the text of documents, by words and by meaning, best match first:
+
+```json
+{
+  "items": [{ "id": "…", "kind": "image", "url": "https://media.example.com/…" }],
+  "total": 1,
+  "facets": { "kind": { "image": 1 }, "tag": {}, "folder": { "root": 1 } }
+}
+```
+
+It needs a key with `search:read` as well as `delivery:read` (a **403** otherwise; the default
+delivery key has both). `kind`, `tag`, `folder` and `locale` work as on the listing, and `limit`
+is at most 100 (a search has no further pages). Each facet counts the matches under every other filter, so a client can
+show how many of each kind remain while one is chosen. Only published assets are searched, as
+they were published (with the text of the published file version); drafts never appear, and the
+results are cached like any delivery read, refreshed when an asset is published, unpublished, or
+processed while published. In `@contentworker/sdk-core`:
+`client.searchAssets('coffee', { kind: 'image' })`.
+
 ## Unpublishing and expiry
 
 Unpublishing, archiving or deleting an asset stops its URLs: they answer `404` once the edge

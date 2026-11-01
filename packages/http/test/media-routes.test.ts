@@ -31,10 +31,10 @@ function fakeBucket(): R2BucketLike {
       };
     },
     async put(key, value, options) {
-      objects.set(key, {
-        bytes: new Uint8Array(await new Response(value).arrayBuffer()),
-        type: options?.httpMetadata?.contentType,
-      });
+      const bytes = new Uint8Array(await new Response(value).arrayBuffer());
+      objects.set(key, { bytes, type: options?.httpMetadata?.contentType });
+      // As R2: the etag names the bytes.
+      return { httpEtag: `"${new TextDecoder().decode(bytes)}"` };
     },
     async delete(keys) {
       for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key);
@@ -96,6 +96,61 @@ describe('/media routes', () => {
     expect(transformed.headers.get('content-type')).toBe('image/avif');
     expect(transformed.headers.get('vary')).toBe('Accept');
     expect(formats).toEqual(['image/avif']);
+  });
+
+  it('starts ingest for a completed upload only, and a failed notice never fails it', async () => {
+    const bucket = fakeBucket();
+    const uploaded: string[] = [];
+    const app = mediaRoutes({
+      ctx: ctx(),
+      bucket,
+      signer,
+      onUploaded: async (key) => {
+        uploaded.push(key);
+        throw new Error('queue down');
+      },
+    });
+    const blob = createR2BlobStore(bucket, { signer, baseUrl: 'https://w.example' });
+    const { url } = await blob.getUploadUrl('s1/main/a/my file.png', 'image/png');
+    const put = await app.request(url, {
+      method: 'PUT',
+      headers: { 'content-length': '3' },
+      body: 'png',
+    });
+    expect(put.status).toBe(200);
+    expect(uploaded).toEqual(['s1/main/a/my file.png']);
+
+    // A refused upload (forged signature) and a download start nothing.
+    await app.request(url.replace(/sig=[^&]+/, 'sig=forged'), { method: 'PUT', body: 'x' });
+    await app.request(await blob.getDownloadUrl('s1/main/a/my file.png'));
+    expect(uploaded).toHaveLength(1);
+  });
+
+  it('names each upload’s bytes by etag, so the same URL used twice is two uploads', async () => {
+    const bucket = fakeBucket();
+    const uploaded: { key: string; etag?: string }[] = [];
+    const app = mediaRoutes({
+      ctx: ctx(),
+      bucket,
+      signer,
+      onUploaded: async (key, etag) => {
+        uploaded.push({ key, ...(etag ? { etag } : {}) });
+      },
+    });
+    const blob = createR2BlobStore(bucket, { signer, baseUrl: 'https://w.example' });
+    const { url } = await blob.getUploadUrl('s1/main/a/p.png', 'image/png');
+    for (const body of ['one', 'two']) {
+      const put = await app.request(url, {
+        method: 'PUT',
+        headers: { 'content-length': '3' },
+        body,
+      });
+      expect(put.headers.get('etag')).toBe(`"${body}"`);
+    }
+    expect(uploaded).toEqual([
+      { key: 's1/main/a/p.png', etag: '"one"' },
+      { key: 's1/main/a/p.png', etag: '"two"' },
+    ]);
   });
 
   it('is not mounted without a bucket', async () => {

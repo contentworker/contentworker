@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   activeFilterCount,
   assetLibraryQuery,
+  assetSearchQuery,
   bulkSummary,
+  facetChips,
   fileSize,
   folderLabel,
   folderRows,
+  ingestState,
   runBulk,
 } from '~/cms/lib/assets';
 
@@ -87,5 +90,55 @@ describe('file sizes', () => {
     expect(fileSize(512)).toBe('512 B');
     expect(fileSize(1536)).toBe('1.5 KB');
     expect(fileSize(25 * 1024 * 1024)).toBe('25 MB');
+  });
+});
+
+describe('asset search', () => {
+  it('searches what the folder and filter bar say, relevance first (no sort)', () => {
+    expect(
+      assetSearchQuery(
+        'mug',
+        { kind: 'folder', id: 'f1' },
+        {
+          kind: 'image',
+          status: 'all',
+          tag: 't1',
+          sort: 'size-desc',
+        },
+      ),
+    ).toEqual({ q: 'mug', limit: 100, folder: 'f1', kind: 'image', status: 'all', tag: 't1' });
+    expect(assetSearchQuery('mug', { kind: 'root' }, {})).toEqual({
+      q: 'mug',
+      limit: 100,
+      folder: 'root',
+    });
+  });
+
+  it('names facet chips, most matches first, leaving out tags and folders it can’t name', () => {
+    const chips = facetChips(
+      { kind: { image: 1, document: 3 }, tag: { t1: 2, gone: 5 }, folder: { root: 1, f1: 4 } },
+      [{ id: 't1', name: 'Hero' }],
+      [folder('f1', 'Brand', '/f1/')],
+    );
+    expect(chips.kind.map((c) => [c.label, c.count])).toEqual([
+      ['Documents', 3],
+      ['Images', 1],
+    ]);
+    expect(chips.tag.map((c) => c.label)).toEqual(['Hero']);
+    expect(chips.folder.map((c) => [c.value, c.label])).toEqual([
+      ['f1', 'Brand'],
+      ['root', 'Not in a folder'],
+    ]);
+  });
+
+  it('says processing for pending and running ingest, failed with why, and nothing when done', () => {
+    expect(ingestState({ ingestStatus: 'pending' })).toEqual({ state: 'processing' });
+    expect(ingestState({ ingestStatus: 'processing' })).toEqual({ state: 'processing' });
+    expect(ingestState({ ingestStatus: 'error', ingestError: 'boom' })).toEqual({
+      state: 'failed',
+      error: 'boom',
+    });
+    expect(ingestState({ ingestStatus: 'ready' })).toBeNull();
+    expect(ingestState({})).toBeNull();
   });
 });

@@ -341,13 +341,24 @@ interface Asset {
   folderId?: string; // absent at the library root
   version?: number; // 1, then +1 per file replacement (absent reads as 1)
   r2Key?: string; // where the bytes live; absent for a hosted video
-  contentHash?: string;
+  contentHash?: string; // SHA-256 of the bytes (hex), set by ingest
   createdAt?: string;
   createdBy?: string; // as the audit log names actors
   archivedAt?: string; // only while archived
   rights?: AssetRights; // { license?, credit?, expiresAt?, embargoUntil? }
+  ingestStatus?: 'pending' | 'processing' | 'ready' | 'error'; // absent: never ingested
+  ingestError?: string;
+  duplicateOf?: string; // the oldest other asset in the scope with the same contentHash
+  aiSuggestions?: { altText?: string[]; tags?: string[] }; // filled by a model, not yet saved
 }
 ```
+
+Ingest (migration `0011_asset_ingest`; see
+[Architecture](./architecture.md#asset-ingest-and-search)) owns `contentHash`, `ingestStatus`,
+`ingestError` and `duplicateOf`: it writes them through `AssetRepo.recordIngest`, and `save`
+leaves them as they are. `aiSuggestions` marks the alt text locales and tag ids ingest filled
+from a model; `clearAcceptedSuggestions` drops a field's mark when a metadata patch carries it,
+so saving the field makes it the editor's.
 
 `file.video` is present on hosted video assets (provider, status, playback URLs). `metadata` holds
 the editorial "aspects": per-locale alt text, taxonomy tag ids, a focal point (0..1 on each axis,
@@ -453,7 +464,7 @@ under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows
 `DomainEvent` (`packages/domain/src/events.ts`) is a discriminated union appended to the
 transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. The types are
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-`asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`, `environment_alias.changed`,
+`asset.unpublished`, `asset.deleted`, `asset.ingested`, `content_type.published`, `release.published`, `environment_alias.changed`,
 `environment.deleted`, `promotion.awaiting_approval`, `environment.promoted`, `bulk.job_completed`,
 the `workflow_run.*` end states,
 `workflow.task_opened` and `workflow.webhook`, plus control messages for background work

@@ -118,6 +118,46 @@ export interface Asset {
     readonly expiresAt?: string;
     readonly embargoUntil?: string;
   };
+  /** SHA-256 of the bytes (hex), once ingested. */
+  readonly contentHash?: string;
+  /** Where ingest stands on the current file; absent when it never ran. */
+  readonly ingestStatus?: 'pending' | 'processing' | 'ready' | 'error';
+  /** Why the last ingest failed. */
+  readonly ingestError?: string;
+  /** The oldest other asset here with the same bytes. */
+  readonly duplicateOf?: string;
+  /** What ingest filled from a model that no person has saved yet. */
+  readonly aiSuggestions?: {
+    readonly altText?: readonly string[];
+    readonly tags?: readonly string[];
+  };
+}
+
+/** An asset search (`assets.search`): text, and filters that narrow it. */
+export interface AssetSearchQuery {
+  readonly q: string;
+  /** 1..100, default 20. */
+  readonly limit?: number;
+  readonly kind?: AssetKind;
+  readonly tag?: string;
+  /** A folder id, or `root` for assets in no folder. */
+  readonly folder?: string;
+  readonly status?: AssetStatus | 'all';
+}
+
+/** Matches per value of each facet (each counted without its own filter). */
+export interface AssetFacets {
+  readonly kind: Readonly<Record<string, number>>;
+  readonly tag: Readonly<Record<string, number>>;
+  /** By folder id; `root` for assets in no folder. */
+  readonly folder: Readonly<Record<string, number>>;
+}
+
+export interface AssetSearchPage {
+  /** Best match first. */
+  readonly items: Asset[];
+  readonly total: number;
+  readonly facets: AssetFacets;
 }
 
 /** What `assets.list` keeps and how it orders them. */
@@ -454,6 +494,21 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** One page of the library; pass `nextCursor` back as `cursor` for the next. */
       list: (query: AssetListQuery = {}) => get<AssetPage>(`${envBase}/assets`, { ...query }),
       get: (id: string) => get<Asset>(`${envBase}/assets/${e(id)}`),
+      /** Hybrid search of the library (full text and semantic), with facet counts. */
+      search: (query: AssetSearchQuery) =>
+        get<AssetSearchPage>(`${envBase}/assets/search`, { ...query }),
+      /** Runs ingest on the asset's current file again (a retry after `ingestStatus: error`). */
+      reingest: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/reingest`),
+      /**
+       * Sends assets through ingest as a bulk job: those never ingested or whose ingest failed,
+       * or every asset with a file (`all`). While one is running, that job comes back
+       * (`running: true`). Follow `job` with `bulkJobs.get`.
+       */
+      reindex: (opts: { all?: boolean } = {}) =>
+        post<{ assets: number; job?: { id: string; status: string }; running?: true }>(
+          `${envBase}/assets/reindex`,
+          opts,
+        ),
       /**
        * Creates a draft asset and returns a presigned upload target. PUT the
        * bytes to `upload.url` with `upload.headers`, then publish the asset.

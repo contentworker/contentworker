@@ -373,7 +373,26 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   the open one `aria-current`; New folder (or subfolder), Rename and Delete (in-place confirm, empty
   folders only) sit under it, and the name form hands focus back to the button that opened it (a
   created folder takes focus itself). Then the **filter bar**, as the entries' (kind, status, tag,
-  sort) with the Grid/List segmented switch at its end, kept per browser. **Grid**: board cards,
+  sort) with the Grid/List segmented switch at its end, kept per browser, under the **search
+  box** (`type="search"`, Escape or the clear button puts the library back; no autocorrect, a
+  search Enter key). Typing searches once it pauses: results rank by relevance, all at once (up to
+  100), and the folder and filters still apply. A search shows **facet chips** under the filter
+  bar, a `role="group"` per facet (Kind, Tag, Folder), each chip a pressed toggle named by what it
+  shows ("Images 3 matches", the count in muted text), narrowing the search the way the filter bar
+  and tree do, so they agree. One always-mounted polite line (`text-ui`, muted) says "Searching…"
+  (the results region `aria-busy`) and then "3 matches for “mug”"; changing the search clears the
+  selection. **What ingest found** sits beside an asset's status, on cards, rows and the sheet: a
+  `run` "Processing" stamp while ingest runs (the library polls until nothing shown is
+  processing); a ruled `bad` "Processing failed" with a Retry icon button and the reason written
+  out under it in the `bad` colour (read once, never only on hover); and a `wait` "Possible
+  duplicate" stamp that is a button opening the original. Badges that are buttons, and the
+  sheet's tag toggles, take `hit-area` and the full `ring` edge. In the sheet, alt text and tags a
+  model filled are marked as the `ai` tone until an editor changes them: an "AI suggestion" stamp
+  by the field, and on each suggested tag an `ai` dot and the word "AI". Saving sends only the
+  fields that changed, so an untouched suggestion stays marked. The sheet fills its form only
+  when another asset opens: Retry or a poll bringing the same asset back keeps unsaved edits,
+  and opening the original from the duplicate stamp with edits in the form asks in place first
+  ("Open the original and discard your changes?", Keep editing focused). **Grid**: board cards,
   the name the open button over the card, the checkbox top-left, status badges and the actions
   below. **List**: a table, `stack="rows"` laid out like the entries rows on a phone. **Selecting**
   shows a bulk bar (`role="group"`, "2 selected · Publish selected · Archive selected · Move

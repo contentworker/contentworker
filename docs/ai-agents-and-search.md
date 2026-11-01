@@ -263,9 +263,42 @@ Lexical-only hits derive their snippet from the published fields. Exposed at
 `GET /delivery/:space/:env/search` (hybrid by default; `?mode=semantic` / `?mode=lexical`
 selects one leg), the GraphQL `search` resolver, and the `content_search` MCP tool.
 
+## Asset search
+
+Assets are searched apart from entries (`packages/application/src/asset-search.ts`), in two
+corpora (`AssetSearchCorpus`): the library, every asset as it is now, and the published assets,
+their published snapshots. Ingest writes one vector per asset and corpus into a Vectorize namespace
+of the corpus's own (`VectorStore.upsertAsset`, metadata `kind: 'asset'`, `spaceId`,
+`environmentId`, `assetId`) and one document into that corpus's shards of `SearchShardDO`
+(`space:env:assets:<n>`, `RagDeps.assetSearchIndex`; `space:env:pubassets:<n>`,
+`RagDeps.publishedAssetSearchIndex`), so `semanticSearch`, `relatedEntries` and RAG answers never
+return an asset or its text, and Delivery's candidates are published assets only. The indexed text
+is the file name, title, description, alt text, tag names and an excerpt of the text ingest
+extracted from the snapshot's own file version (1,500 characters embedded, 100,000 indexed). The
+published corpus is written on `asset.published` and by ingest of a published asset, and emptied
+for the asset on `asset.unpublished`. Embedding (documents and queries) happens only with
+`EMBEDDINGS_PROVIDER` set, decided once in `wireEdge` (`EdgeWired.assetSearch`).
+
+`searchAssets` (Management `GET …/assets/search`, scope `preview:read`) and
+`searchDeliveredAssets` (Delivery `GET …/assets?q=`) take `q` (1–256 characters), `limit`
+(default 20, at most 100) and the filters `kind`, `tag`, `folder` and, for the library, `status`.
+Each leg contributes up to 100 candidates, fused by RRF; the response is `{ items, total,
+facets }`, with `facets.kind`, `facets.tag` and `facets.folder` each counted under every filter
+but its own. Delivery returns published assets only, in the delivered shape, and needs
+`search:read` as well as `delivery:read`; a key with content grants gets an empty result. MCP's
+`assets_search` runs either (`delivered: true` for Delivery's, with the same scopes). Without a
+bound index the lexical leg scans the 500 most recent assets.
+
+Extracted text and model output are untrusted. Text from a file is only stored, embedded and
+indexed; it never reaches a generation prompt (alt text and tags are generated from the file name,
+title and description, each wrapped with `wrapUntrusted` under `UNTRUSTED_CONTENT_GUARD`). Text
+extraction is a model call metered by the space's AI budget (`runWithBudget`). What a model returns is written only where the field is empty, through
+`applyAssetMetadata`, as one line of at most 300 characters, and tags only from the space's
+existing vocabulary: ingest never creates a tag.
+
 ## MCP server
 
-The api Worker serves MCP at `/mcp`, with 151 tools and published agent skills. Transport, auth,
+The api Worker serves MCP at `/mcp`, with 154 tools and published agent skills. Transport, auth,
 connecting a client, the tool catalog and skills are in [MCP server](./mcp.md). The assistant in the
 admin calls the same tools in-process (see [Coworker](#coworker-the-admins-assistant)).
 

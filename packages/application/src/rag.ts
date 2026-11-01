@@ -12,6 +12,13 @@ export interface RagDeps {
    * the lexical leg stays on the store's built-in term matching.
    */
   readonly searchIndex?: SearchIndex;
+  /**
+   * The asset corpus of the same shards (`…:assets:<n>`): asset search's lexical leg, written by
+   * ingest and by asset publishes. Separate objects, so entry search never meets an asset.
+   */
+  readonly assetSearchIndex?: SearchIndex;
+  /** The published assets' corpus of the same shards (`…:pubassets:<n>`): Delivery's search. */
+  readonly publishedAssetSearchIndex?: SearchIndex;
 }
 
 /** Largest `topK` a search may request; bounds vector/FTS over-fetch work. */

@@ -1,5 +1,8 @@
 import type { Scope } from '@contentworker/domain';
 import type {
+  AssetSearchCorpus,
+  AssetVectorMatch,
+  AssetVectorRow,
   EmbeddingsProvider,
   LexicalSearchHit,
   SearchDoc,
@@ -80,6 +83,16 @@ export class InMemorySearchIndex implements SearchIndex {
     this.docs.delete(`${key(scope)}::${entryId}`);
   }
 
+  async clear(scope: Scope): Promise<void> {
+    const prefix = `${key(scope)}::`;
+    for (const k of [...this.docs.keys()]) if (k.startsWith(prefix)) this.docs.delete(k);
+  }
+
+  /** The text held for a document, for a test to look into. */
+  textOf(scope: Scope, id: string): string | undefined {
+    return this.docs.get(`${key(scope)}::${id}`)?.text;
+  }
+
   async search(scope: Scope, query: string, opts: { topK: number }): Promise<LexicalSearchHit[]> {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return [];
@@ -98,6 +111,38 @@ export class InMemorySearchIndex implements SearchIndex {
 /** In-memory VectorStore mirroring the Vectorize adapter's behavior for tests. */
 export class InMemoryVectorStore implements VectorStore {
   private rows: VectorRow[] = [];
+  /**
+   * Asset vectors of the library corpus, by scope and asset (`space::env::asset`), kept apart
+   * from entries', as the adapter's namespace; {@link publishedAssetRows} holds the other corpus.
+   */
+  readonly assetRows = new Map<string, AssetVectorRow>();
+  readonly publishedAssetRows = new Map<string, AssetVectorRow>();
+
+  private corpusRows(corpus: AssetSearchCorpus): Map<string, AssetVectorRow> {
+    return corpus === 'library' ? this.assetRows : this.publishedAssetRows;
+  }
+
+  async upsertAsset(scope: Scope, row: AssetVectorRow): Promise<void> {
+    this.corpusRows(row.corpus).set(`${key(scope)}::${row.assetId}`, row);
+  }
+
+  async deleteAsset(scope: Scope, assetId: string, corpus: AssetSearchCorpus): Promise<void> {
+    this.corpusRows(corpus).delete(`${key(scope)}::${assetId}`);
+  }
+
+  async queryAssets(
+    scope: Scope,
+    embedding: number[],
+    opts: { topK: number; minScore?: number; corpus: AssetSearchCorpus },
+  ): Promise<AssetVectorMatch[]> {
+    const prefix = `${key(scope)}::`;
+    return [...this.corpusRows(opts.corpus).entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, r]) => ({ assetId: r.assetId, score: cosine(embedding, r.embedding) }))
+      .filter((m) => m.score >= (opts.minScore ?? 0))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, opts.topK);
+  }
 
   async upsert(rows: VectorRow[]): Promise<void> {
     for (const row of rows) {

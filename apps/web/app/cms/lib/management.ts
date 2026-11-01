@@ -671,7 +671,7 @@ export interface EntrySuggestion {
 /** A durable job's progress, as the management API reports it. */
 export interface BulkJobSummary {
   readonly id: string;
-  readonly action: 'publish' | 'unpublish' | 'import';
+  readonly action: 'publish' | 'unpublish' | 'import' | 'asset_reindex';
   readonly status: 'running' | 'completed' | 'cancelled';
   readonly totalItems: number;
   readonly totalChunks: number;
@@ -871,8 +871,38 @@ export interface AssetPage {
   readonly nextCursor?: string;
 }
 
+/** An asset search (`GET …/assets/search`): text, and the filters that narrow it. */
+export interface AssetSearchQuery {
+  readonly q: string;
+  readonly kind?: AssetKind;
+  readonly tag?: string;
+  /** A folder id, or `root` for assets in no folder; absent: every folder. */
+  readonly folder?: string;
+  /** Absent hides archived assets. */
+  readonly status?: AssetStatus | 'all';
+  /** 1..100; the API's default is 20. */
+  readonly limit?: number;
+}
+
+/**
+ * How many matches each facet value has, each counted with the other filters but not its own:
+ * `kind` by asset kind, `tag` by tag id, `folder` by folder id (`root` for assets in no folder).
+ */
+export interface AssetFacets {
+  readonly kind: Readonly<Record<string, number>>;
+  readonly tag: Readonly<Record<string, number>>;
+  readonly folder: Readonly<Record<string, number>>;
+}
+
+/** An asset search's results: best match first, with facet counts. */
+export interface AssetSearchPage {
+  readonly items: Asset[];
+  readonly total: number;
+  readonly facets: AssetFacets;
+}
+
 /** The query string for an {@link AssetListQuery}, without the empty parts. */
-export function assetQueryParams(query: AssetListQuery): URLSearchParams {
+export function assetQueryParams(query: AssetListQuery | AssetSearchQuery): URLSearchParams {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
     if (v !== undefined && v !== '') params.set(k, String(v));
@@ -1129,6 +1159,28 @@ export function createManagementClient(
     listAssets(query: AssetListQuery = {}): Promise<AssetPage> {
       const qs = assetQueryParams(query).toString();
       return req('GET', `${mgmt}/assets${qs ? `?${qs}` : ''}`);
+    },
+    /** Searches the library (full text and semantic), with facet counts. */
+    searchAssets(query: AssetSearchQuery): Promise<AssetSearchPage> {
+      const qs = assetQueryParams(query).toString();
+      return req('GET', `${mgmt}/assets/search?${qs}`);
+    },
+    getAsset(id: string): Promise<Asset> {
+      return req('GET', `${mgmt}/assets/${encodeURIComponent(id)}`);
+    },
+    /** Runs ingest on the asset's file again (after it failed); comes back pending. */
+    reingestAsset(id: string): Promise<Asset> {
+      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/reingest`);
+    },
+    /**
+     * Sends the library through ingest as a bulk job: the assets never ingested or whose ingest
+     * failed, or every asset with a file (`all`).
+     */
+    reindexAssets(opts: { all?: boolean } = {}): Promise<{
+      assets: number;
+      job?: BulkJobSummary;
+    }> {
+      return req('POST', `${mgmt}/assets/reindex`, opts);
     },
     createAsset(input: {
       fileName: string;

@@ -23,6 +23,12 @@ export {
   WORKERS_AI_DECISION_MODEL_BY_TIER,
   type WorkersAIDecisionOptions,
 } from './decisions';
+export {
+  createWorkersAITextExtractor,
+  WORKERS_AI_TRANSCRIBE_MODEL,
+  type WorkersAITextExtractorOptions,
+  type WorkersAiToMarkdown,
+} from './extract';
 export { extractJson } from './json';
 export {
   DEFAULT_TIMEOUT_MS,

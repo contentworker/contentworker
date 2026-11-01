@@ -306,6 +306,10 @@ export class InMemoryContentStore implements ContentStore {
       if (purge) purge.nudgedAt = at;
       return deleted;
     },
+    markEnvironmentPurgeProgress: async (spaceId, environmentId, at) => {
+      const purge = this.purgeData.get(`${spaceId}::${environmentId}`);
+      if (purge) purge.nudgedAt = at;
+    },
     finishEnvironmentPurge: async (spaceId, environmentId) => {
       this.purgeData.delete(`${spaceId}::${environmentId}`);
     },
@@ -682,6 +686,7 @@ export class InMemoryContentStore implements ContentStore {
         )
         .filter(([, a]) => !f.tag || a.metadata.tags.includes(f.tag))
         .filter(([, a]) => (f.folderId === undefined ? true : (a.folderId ?? null) === f.folderId))
+        .filter(([, a]) => !f.contentHash || a.contentHash === f.contentHash)
         .map(([k, a]) => ({ a, v: sortValue(k, a) }));
       const dir = sort.direction === 'asc' ? 1 : -1;
       rows.sort((x, y) => dir * (x.v - y.v || x.a.id.localeCompare(y.a.id)));
@@ -725,7 +730,62 @@ export class InMemoryContentStore implements ContentStore {
       }
       this.touchAsset(scope, asset);
     },
-    save: async (scope, asset) => this.touchAsset(scope, asset),
+    save: async (scope, asset) => {
+      // As the D1 store: an update leaves what ingest owns as ingest last wrote it.
+      const current = this.assetData.get(`${scopeKey(scope)}::${asset.id}`);
+      if (!current) {
+        this.touchAsset(scope, asset);
+        return;
+      }
+      const {
+        contentHash: _h,
+        ingestStatus: _s,
+        ingestError: _e,
+        duplicateOf: _d,
+        ...edited
+      } = asset;
+      this.touchAsset(scope, {
+        ...edited,
+        ...(current.contentHash ? { contentHash: current.contentHash } : {}),
+        ...(current.ingestStatus ? { ingestStatus: current.ingestStatus } : {}),
+        ...(current.ingestError ? { ingestError: current.ingestError } : {}),
+        ...(current.duplicateOf ? { duplicateOf: current.duplicateOf } : {}),
+      });
+    },
+    recordIngest: async (scope, id, version, patch) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const current = this.assetData.get(key);
+      if (!current || (current.version ?? 1) !== version) return;
+      if (patch.onlyFrom && !patch.onlyFrom.includes(current.ingestStatus ?? null)) return;
+      const next: Record<string, unknown> = { ...current };
+      const setOrClear = (field: string, value: string | null | undefined) => {
+        if (value === undefined) return;
+        if (value === null) delete next[field];
+        else next[field] = value;
+      };
+      if (patch.status !== undefined) next.ingestStatus = patch.status;
+      setOrClear('ingestError', patch.error);
+      setOrClear('contentHash', patch.contentHash);
+      setOrClear('duplicateOf', patch.duplicateOf);
+      const file = { ...current.file };
+      if (patch.size !== undefined) Object.assign(file, { size: patch.size });
+      if (patch.width !== undefined) Object.assign(file, { width: patch.width });
+      if (patch.height !== undefined) Object.assign(file, { height: patch.height });
+      if (patch.contentType !== undefined) Object.assign(file, { contentType: patch.contentType });
+      next.file = file;
+      // Not a touch: ingest doesn't move the asset in the library's order.
+      this.assetData.set(key, next as unknown as Asset);
+    },
+    recordPublishedFile: async (scope, id, version, measured) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const current = this.publishedAssetData.get(key);
+      if (!current || (current.version ?? 1) !== version) return;
+      const file = { ...current.file };
+      if (measured.size !== undefined) Object.assign(file, { size: measured.size });
+      if (measured.width !== undefined) Object.assign(file, { width: measured.width });
+      if (measured.height !== undefined) Object.assign(file, { height: measured.height });
+      this.publishedAssetData.set(key, { ...current, file });
+    },
     moveToFolder: async (scope, ids, folderId) => {
       if (folderId !== null && !this.assetFolderData.has(`${scopeKey(scope)}::${folderId}`)) {
         throw new TransactionConflictError();
@@ -2104,8 +2164,11 @@ export class InMemoryContentStore implements ContentStore {
       (m) => [m, [...m.entries()].map(([k, v]) => [k, clone(v)] as const)] as const,
     );
     const outboxSnapshot = [...this.outboxData];
+    // Purge progress marks hold Dates, so they are copied here rather than JSON round-tripped.
+    const purgeSnapshot = [...this.purgeData].map(([k, v]) => [k, { ...v }] as const);
     try {
       return await fn({
+        spaces: this.spaces,
         contentTypes: this.contentTypes,
         entries: this.entries,
         assets: this.assets,
@@ -2128,6 +2191,8 @@ export class InMemoryContentStore implements ContentStore {
       }
       this.outboxData.length = 0;
       this.outboxData.push(...outboxSnapshot);
+      this.purgeData.clear();
+      for (const [k, v] of purgeSnapshot) this.purgeData.set(k, v);
       throw err;
     }
   }

@@ -44,6 +44,8 @@
   "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "contentworker-media" }],
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "contentworker-vectors" }],
   "ai": { "binding": "AI" },
+  // Ingest reads image dimensions with `info` (not billed).
+  "images": { "binding": "IMAGES" },
   "stream": { "binding": "STREAM" },
   "worker_loaders": [{ "binding": "PLUGIN_LOADER" }],
 
@@ -55,7 +57,9 @@
       { "binding": "AGENTS_QUEUE", "queue": "contentworker-agents" },
       { "binding": "PURGE_QUEUE", "queue": "contentworker-purge" },
       // The media Worker's cache: a revoked asset's tag, now and once more after KV's read cache.
-      { "binding": "MEDIA_PURGE_QUEUE", "queue": "contentworker-media-purge" }
+      { "binding": "MEDIA_PURGE_QUEUE", "queue": "contentworker-media-purge" },
+      // Re-ingest requests from asset_reindex bulk chunks.
+      { "binding": "ASSET_EVENTS_QUEUE", "queue": "contentworker-asset-events" }
     ],
     "consumers": [
       {
@@ -83,7 +87,18 @@
         "max_concurrency": 4,
         "dead_letter_queue": "contentworker-events-dlq"
       },
-      { "queue": "contentworker-events-dlq", "max_batch_size": 25, "max_batch_timeout": 5 }
+      { "queue": "contentworker-events-dlq", "max_batch_size": 25, "max_batch_timeout": 5 },
+      // R2 object-create notifications for the media bucket (scripts/provision.sh creates the
+      // rule), plus the api's upload and re-ingest messages: each starts an AssetIngestWorkflow.
+      {
+        "queue": "contentworker-asset-events",
+        "max_batch_size": 25,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "max_concurrency": 4,
+        "dead_letter_queue": "contentworker-asset-events-dlq"
+      },
+      { "queue": "contentworker-asset-events-dlq", "max_batch_size": 25, "max_batch_timeout": 5 }
     ]
   },
   "triggers": { "crons": ["* * * * *"] },
@@ -110,6 +125,13 @@
       "binding": "EDITORIAL_WF",
       "name": "contentworker-editorial",
       "class_name": "EditorialWorkflow"
+    },
+    // One run per asset file version (hash, probe, enrich, extract, index), started by the
+    // contentworker-asset-events consumer.
+    {
+      "binding": "ASSET_INGEST_WF",
+      "name": "contentworker-asset-ingest",
+      "class_name": "AssetIngestWorkflow"
     }
   ],
   // `send_email` (EMAIL) is added per deployment by scripts/fleet.ts when the deployment sets an

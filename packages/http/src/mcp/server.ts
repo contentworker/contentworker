@@ -7,6 +7,7 @@ import {
   approvePluginCapabilities,
   approvePromotion,
   archiveAsset,
+  assetSearchDeps,
   assignRolePreset,
   auditEntry,
   autofillField,
@@ -118,6 +119,7 @@ import {
   publishWorkflowVersion,
   purgeEntry,
   refreshVideoAsset,
+  reingestAsset,
   rejectPromotion,
   relatedEntries,
   requestPromotion,
@@ -132,6 +134,8 @@ import {
   runAIAction,
   saveWorkflowDraft,
   scheduleAction,
+  searchAssets,
+  searchDeliveredAssets,
   searchIndexHealth,
   semanticSearch,
   setAssetMetadata,
@@ -139,6 +143,7 @@ import {
   setEnvironmentAlias,
   setPluginEnabled,
   setWorkflowSeparationDefault,
+  startAssetReindex,
   startBulkJob,
   startEnvironmentClone,
   startSnapshotImport,
@@ -1438,7 +1443,11 @@ export function buildServer(
       const target = scopeOf(args);
       guard(SCOPES.contentManage, target);
       const snapshot = args.snapshot as unknown as EnvironmentSnapshot;
-      const options = { dryRun: args.dryRun, publish: args.publish };
+      const options = {
+        dryRun: args.dryRun,
+        publish: args.publish,
+        reindexAssets: Boolean(deps.assetIngest),
+      };
       if (args.dryRun || !deps.blob)
         return ok(await importSnapshot(ctx, target, snapshot, options));
       return ok(await startSnapshotImport(ctx, deps.blob, target, snapshot, options));
@@ -1476,7 +1485,11 @@ export function buildServer(
       // Authorized separately: cloning into a space the caller cannot manage
       // would be a tenancy hole.
       guard(SCOPES.contentManage, to);
-      const options = { dryRun: args.dryRun, publish: args.publish };
+      const options = {
+        dryRun: args.dryRun,
+        publish: args.publish,
+        reindexAssets: Boolean(deps.assetIngest),
+      };
       if (args.dryRun || !deps.blob) {
         return ok(await importSnapshot(ctx, to, await exportSnapshot(ctx, from), options));
       }
@@ -3131,6 +3144,8 @@ export function buildServer(
   );
 
   // --- assets / media intelligence ---------------------------------------
+  const emptyFacets = { kind: {}, tag: {}, folder: {} };
+  const assetSearch = deps.assetSearch ?? assetSearchDeps(rag);
   // Reads hand out a short-lived signed URL, never the stored non-expiring one (as the REST
   // routes do). Without a blob store (local fakes) there is nothing to sign with.
   const signedOne = (s: Scope, asset: Asset) =>
@@ -3186,6 +3201,116 @@ export function buildServer(
           }),
         ),
       );
+    },
+  );
+
+  server.registerTool(
+    'assets_search',
+    {
+      description:
+        'Search assets: full text (file name, title, caption, alt text, tag names, text read ' +
+        'from documents and recordings) and semantic similarity, fused by rank, best match ' +
+        'first, with facet counts by kind, tag and folder. The library by default (drafts and ' +
+        'published; archived only when status asks); delivered: true searches what Delivery ' +
+        'serves (published only, in the delivered shape) and needs delivery read access.',
+      inputSchema: toolSchema('assets_search', () =>
+        z.object({
+          q: z.string().min(1).max(256),
+          limit: z.number().int().positive().max(100).optional(),
+          kind: z.enum(ASSET_KINDS as unknown as [string, ...string[]]).optional(),
+          tag: z.string().max(128).optional().describe('taxonomy tag id'),
+          folderId: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('assets filed in this folder; null for those in no folder'),
+          status: z.enum(['draft', 'published', 'archived', 'all']).optional(),
+          delivered: z.boolean().optional().describe('search published assets as Delivery serves'),
+          locale: z
+            .string()
+            .optional()
+            .describe('with delivered: resolve title, description and alt text for one locale'),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      const query = {
+        q: args.q,
+        ...(args.limit ? { limit: args.limit } : {}),
+        filters: {
+          ...(args.kind ? { kind: args.kind as (typeof ASSET_KINDS)[number] } : {}),
+          ...(args.tag ? { tag: args.tag } : {}),
+          ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
+          ...(args.status && !args.delivered ? { status: args.status } : {}),
+        },
+      };
+      if (args.delivered) {
+        // As the delivery route's ?q=: delivery:read and search:read.
+        guard(SCOPES.deliveryRead, scopeOf(args));
+        guard(SCOPES.searchRead, scopeOf(args));
+        // As the delivery route: a key with content grants reads no assets.
+        if (principal.contentGrants) return ok({ items: [], total: 0, facets: emptyFacets });
+        return ok(
+          await searchDeliveredAssets(
+            ctx,
+            assetSearch,
+            scopeOf(args),
+            query,
+            args.locale !== undefined ? { locale: args.locale } : {},
+          ),
+        );
+      }
+      guard(SCOPES.previewRead, scopeOf(args));
+      const page = await searchAssets(ctx, assetSearch, scopeOf(args), query);
+      return ok({
+        ...page,
+        items: await Promise.all(page.items.map((a) => signedOne(scopeOf(args), a))),
+      });
+    },
+  );
+
+  server.registerTool(
+    'asset_reingest',
+    {
+      description:
+        "Run ingest on an asset's current file again: hash and duplicate check, dimensions, alt " +
+        'text and tags where empty (as AI suggestions), text extraction, search index. For a ' +
+        'retry after ingestStatus error. Refused for hosted videos.',
+      inputSchema: toolSchema('asset_reingest', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      if (!deps.assetIngest) {
+        throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to re-run ingest');
+      }
+      return ok(
+        await signedOne(
+          scopeOf(args),
+          await reingestAsset(ctx, deps.assetIngest, scopeOf(args), args.id),
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    'assets_reindex',
+    {
+      description:
+        'Send the asset library through ingest as a resumable bulk job: assets never ingested ' +
+        '(uploaded before ingest) or whose ingest failed, or every asset with a file (all: ' +
+        'true). While a reindex is running, that job comes back instead (running: true). ' +
+        'Follow the job with bulk_job_status. Refused when the ingest queue is not bound.',
+      inputSchema: toolSchema('assets_reindex', () =>
+        z.object({ all: z.boolean().optional(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      if (!deps.assetIngest) {
+        throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to reindex assets');
+      }
+      return ok(await startAssetReindex(ctx, scopeOf(args), { all: args.all === true }));
     },
   );
 

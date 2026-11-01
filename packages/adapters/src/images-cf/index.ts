@@ -1,7 +1,10 @@
 import type { FocalPoint } from '@contentworker/domain';
 import type {
+  ByteStream,
   ImageFit,
   ImageFormat,
+  ImageInfo,
+  ImageProbe,
   ImageTransformer,
   ImageTransformSpec,
 } from '@contentworker/ports';
@@ -38,8 +41,14 @@ export interface CfImageTransform {
 
 export type CfOutputFormat = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/avif' | 'image/gif';
 
+/** The Images binding's `info` answer: dimensions for raster images, none for SVG. */
+export type CfImageInfo =
+  | { format: string; fileSize: number; width: number; height: number }
+  | { format: 'image/svg+xml' };
+
 /** The subset of the Images binding (`env.IMAGES`) this adapter uses. */
 export interface ImagesBindingLike {
+  info(stream: ReadableStream<Uint8Array>): Promise<CfImageInfo>;
   input(stream: ReadableStream<Uint8Array>): {
     transform(t: CfImageTransform): ReturnType<ImagesBindingLike['input']>;
     output(o: { format: CfOutputFormat; quality?: number }): Promise<{
@@ -242,4 +251,45 @@ export async function transformImage(
   headers.set('x-content-type-options', 'nosniff');
   if (parsed.format === 'auto') headers.set('vary', 'Accept');
   return new Response(res.body, { status: res.status, headers });
+}
+
+/**
+ * The ImageProbe port over the Images binding's `info` (not billed): the format and dimensions of
+ * an image, read from its bytes. Bytes that aren't an image it reads, and SVG (no intrinsic
+ * size), are `null`; a failure of the service itself throws, so a durable caller retries.
+ */
+export function createCfImageProbe(images: Pick<ImagesBindingLike, 'info'>): ImageProbe {
+  return {
+    async info(body: ByteStream): Promise<ImageInfo | null> {
+      let info: CfImageInfo;
+      try {
+        info = await images.info(toReadable(body));
+      } catch (err) {
+        // The binding refuses what it can't decode with an error naming the input; that's an
+        // answer ("not an image"), not an outage.
+        if (/unsupported|invalid|decode|not.*image/i.test(String(err))) return null;
+        throw err;
+      }
+      if (!('width' in info)) return null;
+      return {
+        width: info.width,
+        height: info.height,
+        format: info.format,
+        ...(info.fileSize ? { size: info.fileSize } : {}),
+      };
+    },
+  };
+}
+
+/** A web stream from the port's async-iterable bytes (passed through when it already is one). */
+function toReadable(body: ByteStream): ReadableStream<Uint8Array> {
+  if (body instanceof ReadableStream) return body as ReadableStream<Uint8Array>;
+  const it = body[Symbol.asyncIterator]();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { value, done } = await it.next();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+  });
 }

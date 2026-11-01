@@ -39,7 +39,10 @@ Everything below is built and tested on v2.
   paging, bulk moves, archive and restore, and delete refused while entries link to an asset.
   Published files on the media Worker at stable, immutable URLs with per-space renditions and a
   width ladder for `srcset`, revoked on unpublish; one delivered-asset shape for REST, embeds,
-  GraphQL and Preview; short-lived signed URLs for Management and Preview reads.
+  GraphQL and Preview; short-lived signed URLs for Management and Preview reads. Ingest on upload
+  (R2 notification → Workflow): content hash and duplicate marker, dimensions, AI alt text and
+  tags where empty, text from documents and audio; hybrid asset search with facets in
+  Management, MCP and Delivery, and a reindex job for older assets.
 - **Taxonomy and collaboration.** Concept schemes, concepts and tags; comments, tasks, legacy
   workflow steps, and editorial workflow graphs on Cloudflare Workflows (runs, timeline,
   approvals with separation of duties, the copilot).

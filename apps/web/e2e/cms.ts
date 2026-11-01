@@ -255,3 +255,82 @@ export async function seedAssetFolder(request: APIRequestContext, name: string):
   expect(res.ok(), await res.text()).toBe(true);
   return ((await res.json()) as { id: string }).id;
 }
+
+/**
+ * Creates an asset and PUTs its bytes through the signed upload URL, as the admin's Upload does,
+ * which hands the file to ingest. Returns the asset's id.
+ */
+export async function uploadAssetBytes(
+  request: APIRequestContext,
+  fileName: string,
+  bytes: Buffer,
+  contentType = 'text/plain',
+): Promise<string> {
+  const res = await api(request, 'POST', `${MGMT}/assets`, {
+    fileName,
+    contentType,
+    title: { 'en-US': fileName },
+  });
+  expect(res.ok(), await res.text()).toBe(true);
+  const { asset, upload } = (await res.json()) as {
+    asset: { id: string };
+    upload: { url: string; headers: Record<string, string> };
+  };
+  const put = await request.fetch(upload.url, {
+    method: 'PUT',
+    headers: upload.headers,
+    data: bytes,
+  });
+  expect(put.ok(), await put.text()).toBe(true);
+  return asset.id;
+}
+
+interface IngestState {
+  readonly ingestStatus?: string;
+  readonly ingestError?: string;
+  readonly duplicateOf?: string;
+}
+
+/** The asset as the Management API returns it, for what ingest recorded on it. */
+async function ingestOf(request: APIRequestContext, id: string): Promise<IngestState> {
+  const res = await api(request, 'GET', `${MGMT}/assets/${id}`);
+  expect(res.ok(), await res.text()).toBe(true);
+  return (await res.json()) as IngestState;
+}
+
+/**
+ * What ingest finds, seeded through the API: two uploads of the same bytes (the second a possible
+ * duplicate of the first), and an asset whose file never arrived, sent through ingest, which fails
+ * on it ("The file is not in storage") once the hash step's retries are spent. Waits for both.
+ */
+export async function seedIngestFindings(request: APIRequestContext, stamp: number) {
+  // Specs run side by side and can draw the same millisecond: the bytes and names must still be
+  // theirs alone, or one spec's twin is the other's duplicate.
+  stamp = stamp * 1000 + Math.floor(Math.random() * 1000);
+  const bytes = Buffer.from(`the same bytes, twice ${stamp}`);
+  const original = `twin-a-${stamp}.txt`;
+  const copy = `twin-b-${stamp}.txt`;
+  const originalId = await uploadAssetBytes(request, original, bytes);
+  // The copy goes up once the original is ingested, as a later upload of the same file would.
+  await expect
+    .poll(async () => (await ingestOf(request, originalId)).ingestStatus, { timeout: 90_000 })
+    .toBe('ready');
+  const copyId = await uploadAssetBytes(request, copy, bytes);
+  const broken = `Broken ${stamp}`;
+  const brokenId = await seedAsset(request, broken);
+  const retry = await api(request, 'POST', `${MGMT}/assets/${brokenId}/reingest`);
+  expect(retry.ok(), await retry.text()).toBe(true);
+  // Settled first, so a run that failed says so (with its reason) rather than timing out.
+  await expect
+    .poll(async () => (await ingestOf(request, copyId)).ingestStatus, { timeout: 90_000 })
+    .toMatch(/^(ready|error)$/);
+  const copied = await ingestOf(request, copyId);
+  expect(copied, JSON.stringify(copied)).toMatchObject({
+    ingestStatus: 'ready',
+    duplicateOf: originalId,
+  });
+  await expect
+    .poll(async () => (await ingestOf(request, brokenId)).ingestStatus, { timeout: 120_000 })
+    .toBe('error');
+  return { original, copy, broken };
+}

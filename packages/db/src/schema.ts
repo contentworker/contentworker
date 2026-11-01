@@ -1,5 +1,7 @@
 import type {
+  AssetAiSuggestions,
   AssetFile,
+  AssetIngestStatus,
   AssetKind,
   AssetMetadata,
   AssetRights,
@@ -277,9 +279,15 @@ export const assets = sqliteTable(
     createdBy: text('created_by'),
     archivedAt: integer('archived_at', { mode: 'timestamp_ms' }),
     rights: text('rights', { mode: 'json' }).$type<AssetRights>(),
+    // Written by asset ingest only (0011_asset_ingest); NULL until it first runs.
+    ingestStatus: text('ingest_status').$type<AssetIngestStatus>(),
+    ingestError: text('ingest_error'),
+    duplicateOf: text('duplicate_of'),
+    aiSuggestions: text('ai_suggestions', { mode: 'json' }).$type<AssetAiSuggestions>(),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    index('assets_by_ingest').on(t.spaceId, t.environmentId, t.ingestStatus),
     index('assets_by_updated').on(t.spaceId, t.environmentId, t.updatedAt, t.id),
     index('assets_by_created').on(t.spaceId, t.environmentId, t.createdAt, t.id),
     index('assets_by_kind').on(t.spaceId, t.environmentId, t.kind, t.updatedAt),

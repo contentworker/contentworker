@@ -3,6 +3,7 @@ import {
   type CfImageTransform,
   type CfOutputFormat,
   cdnCgiOptions,
+  createCfImageProbe,
   createCfImageTransformer,
   type ImagesBindingLike,
   negotiateFormat,
@@ -40,7 +41,10 @@ function fakeImages() {
       };
     },
   };
-  const images: ImagesBindingLike = { input: () => handle };
+  const images: ImagesBindingLike = {
+    input: () => handle,
+    info: async () => ({ format: 'image/png', fileSize: 3, width: 1, height: 1 }),
+  };
   return { images, calls };
 }
 
@@ -149,5 +153,66 @@ describe('transformImage', () => {
     expect(
       await transformImage(images, body(), 'image/png', new URLSearchParams(''), null),
     ).toBeNull();
+  });
+});
+
+describe('createCfImageProbe', () => {
+  const stream = (text: string) =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(text));
+        c.close();
+      },
+    });
+
+  it('reads format and dimensions from the bytes', async () => {
+    const seen: string[] = [];
+    const probe = createCfImageProbe({
+      info: async (s) => {
+        seen.push(await new Response(s).text());
+        return { format: 'image/jpeg', fileSize: 1234, width: 640, height: 480 };
+      },
+    });
+    expect(await probe.info(stream('jpeg-bytes'))).toEqual({
+      width: 640,
+      height: 480,
+      format: 'image/jpeg',
+      size: 1234,
+    });
+    expect(seen).toEqual(['jpeg-bytes']);
+  });
+
+  it('answers null for SVG (no intrinsic size) and for bytes it cannot decode', async () => {
+    const svg = createCfImageProbe({ info: async () => ({ format: 'image/svg+xml' }) });
+    expect(await svg.info(stream('<svg/>'))).toBeNull();
+    const notImage = createCfImageProbe({
+      info: async () => {
+        throw new Error('IMAGES_INFO_ERROR 9412: Unsupported image type');
+      },
+    });
+    expect(await notImage.info(stream('%PDF'))).toBeNull();
+  });
+
+  it('throws when the service itself fails, so a durable step retries', async () => {
+    const down = createCfImageProbe({
+      info: async () => {
+        throw new Error('network connection lost');
+      },
+    });
+    await expect(down.info(stream('x'))).rejects.toThrow('network connection lost');
+  });
+
+  it('accepts any async-iterable byte stream', async () => {
+    const probe = createCfImageProbe({
+      info: async (s) => {
+        const text = await new Response(s).text();
+        return { format: 'image/png', fileSize: text.length, width: 2, height: 3 };
+      },
+    });
+    async function* chunks() {
+      yield new TextEncoder().encode('ab');
+      yield new TextEncoder().encode('cd');
+    }
+    expect(await probe.info(chunks())).toMatchObject({ width: 2, height: 3, size: 4 });
   });
 });

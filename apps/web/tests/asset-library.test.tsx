@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { Asset, AssetFolder, Tag } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -67,6 +67,18 @@ const client = {
   refreshVideoAsset: vi.fn(),
   uploadAsset: vi.fn(async (..._args: unknown[]) => asset()),
   uploadVideo: vi.fn(),
+  searchAssets: vi.fn(async (_q: unknown) => ({
+    items: assets,
+    total: assets.length,
+    facets: { kind: {}, tag: {}, folder: {} } as {
+      kind: Record<string, number>;
+      tag: Record<string, number>;
+      folder: Record<string, number>;
+    },
+  })),
+  getAsset: vi.fn(async (id: string) => asset({ id, title: { 'en-US': 'The original' } })),
+  reingestAsset: vi.fn(async (id: string) => asset({ id, ingestStatus: 'pending' })),
+  setAssetMetadata: vi.fn(async (id: string, _patch: unknown) => asset({ id })),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -82,6 +94,7 @@ const { AssetLibrary } = await import('~/cms/components/AssetLibrary');
 const { ApiError } = await import('~/cms/lib/management');
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
   assets = [];
   folders = [];
@@ -667,5 +680,338 @@ describe('folders', () => {
     expect(
       await screen.findByText('“Campaigns” isn’t empty: move or delete what is in it first'),
     ).toBeTruthy();
+  });
+});
+
+describe('searching the library', () => {
+  const lastSearch = () => client.searchAssets.mock.calls.at(-1)?.[0];
+
+  it('searches once typing pauses, with facet chips that narrow it, and comes back on clear', async () => {
+    folders = [folder('f1', 'Campaigns')];
+    assets = [asset({ title: { 'en-US': 'Red mug' } })];
+    client.searchAssets.mockImplementation(async () => ({
+      items: assets,
+      total: 1,
+      facets: { kind: { image: 1, document: 2 }, tag: { t1: 1 }, folder: { f1: 1, root: 2 } },
+    }));
+    renderLibrary();
+    await waitFor(() => expect(client.listAssets).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search assets' }), {
+      target: { value: 'mug' },
+    });
+    await waitFor(() => expect(lastSearch()).toEqual({ q: 'mug', limit: 100 }));
+    expect(await screen.findByText('1 match for “mug”')).toBeTruthy();
+
+    const kinds = screen.getByRole('group', { name: 'Kind' });
+    const documents = within(kinds).getByRole('button', { name: 'Documents 2 matches' });
+    expect(documents.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(documents);
+    await waitFor(() => expect(lastSearch()).toEqual({ q: 'mug', limit: 100, kind: 'document' }));
+    expect(
+      within(screen.getByRole('group', { name: 'Kind' }))
+        .getByRole('button', { name: 'Documents 2 matches' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true');
+    // The filter bar says the same thing the chip did.
+    expect(
+      (screen.getByRole('combobox', { name: 'Kind' }) as unknown as HTMLSelectElement).value,
+    ).toBe('document');
+
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Tag' })).getByRole('button', {
+        name: 'Hero 1 match',
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Folder' })).getByRole('button', {
+        name: 'Campaigns 1 match',
+      }),
+    );
+    await waitFor(() =>
+      expect(lastSearch()).toEqual({
+        q: 'mug',
+        limit: 100,
+        kind: 'document',
+        tag: 't1',
+        folder: 'f1',
+      }),
+    );
+
+    const listCalls = client.listAssets.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    await waitFor(() => expect(client.listAssets.mock.calls.length).toBeGreaterThan(listCalls));
+    expect(screen.queryByRole('group', { name: 'Kind' })).toBeNull();
+  });
+
+  it('says when nothing matches', async () => {
+    client.searchAssets.mockImplementation(async () => ({
+      items: [],
+      total: 0,
+      facets: { kind: {}, tag: {}, folder: {} },
+    }));
+    renderLibrary();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search assets' }), {
+      target: { value: 'nothing' },
+    });
+    expect(await screen.findByText('No matches for “nothing”')).toBeTruthy();
+    expect(screen.getByText('No matches')).toBeTruthy();
+  });
+});
+
+describe('what ingest found', () => {
+  it('marks a possible duplicate and opens the original from it', async () => {
+    assets = [asset({ id: 'copy', duplicateOf: 'orig', file: { fileName: 'copy.jpg' } })];
+    renderLibrary();
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Possible duplicate: open the asset “copy.jpg” duplicates',
+      }),
+    );
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith('orig'));
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+  });
+
+  it('shows processing, and a failure with its reason and a Retry that re-runs it', async () => {
+    assets = [
+      asset({ id: 'p', ingestStatus: 'processing', file: { fileName: 'busy.jpg' } }),
+      asset({
+        id: 'e',
+        ingestStatus: 'error',
+        ingestError: 'The file is not in storage',
+        file: { fileName: 'broken.pdf' },
+      }),
+    ];
+    renderLibrary();
+    expect(await screen.findByText('Processing')).toBeTruthy();
+    expect(screen.getByText('Processing failed')).toBeTruthy();
+    expect(screen.getByText(/The file is not in storage/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry processing “broken.pdf”' }));
+    await waitFor(() => expect(client.reingestAsset).toHaveBeenCalledWith('e'));
+    expect(await screen.findByText('Processing “broken.pdf” again')).toBeTruthy();
+  });
+
+  it('marks alt text and tags a model filled as AI suggestions until they are changed', async () => {
+    assets = [
+      asset({
+        metadata: { altText: { 'en-US': 'A red mug' }, tags: ['t1'] },
+        aiSuggestions: { altText: ['en-US'], tags: ['t1'] },
+      }),
+    ];
+    renderLibrary();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open “photo.jpg”' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('button', { name: /Hero/ });
+    expect(within(dialog).getAllByText('AI suggestion')).toHaveLength(2);
+    fireEvent.change(within(dialog).getByLabelText('Alt text (en-US)'), {
+      target: { value: 'A red mug on a shelf' },
+    });
+    expect(within(dialog).getAllByText('AI suggestion')).toHaveLength(1);
+  });
+
+  it('marks nothing an editor wrote', async () => {
+    assets = [asset({ metadata: { altText: { 'en-US': 'Mine' }, tags: ['t1'] } })];
+    renderLibrary();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open “photo.jpg”' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('button', { name: 'Hero' });
+    expect(within(dialog).queryByText('AI suggestion')).toBeNull();
+  });
+});
+
+describe('unsaved edits in the detail sheet', () => {
+  const openSheet = async (name: string) => {
+    fireEvent.click(await screen.findByRole('button', { name: `Open “${name}”` }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('button', { name: /Hero/ });
+    return dialog;
+  };
+  const altBox = (dialog: HTMLElement) =>
+    within(dialog).getByLabelText('Alt text (en-US)') as HTMLTextAreaElement;
+
+  it('keeps what was typed when Retry brings the same asset back, and the list with it', async () => {
+    assets = [
+      asset({
+        id: 'e',
+        ingestStatus: 'error',
+        ingestError: 'Timed out',
+        file: { fileName: 'b.jpg' },
+      }),
+    ];
+    renderLibrary();
+    const dialog = await openSheet('b.jpg');
+    fireEvent.change(altBox(dialog), { target: { value: 'Typed, not saved' } });
+    // The server's copy changes meanwhile; the refetch that follows Retry must not overwrite.
+    assets = [
+      asset({
+        id: 'e',
+        ingestStatus: 'pending',
+        metadata: { altText: { 'en-US': 'Server' }, tags: [] },
+        file: { fileName: 'b.jpg' },
+      }),
+    ];
+    const listCalls = client.listAssets.mock.calls.length;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retry processing “b.jpg”' }));
+    await waitFor(() => expect(client.reingestAsset).toHaveBeenCalledWith('e'));
+    await waitFor(() => expect(client.listAssets.mock.calls.length).toBeGreaterThan(listCalls));
+    await waitFor(() => expect(within(dialog).getByText('Processing')).toBeTruthy());
+    expect(altBox(dialog).value).toBe('Typed, not saved');
+  });
+
+  it('keeps what was typed when a poll finds ingest finished', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    assets = [asset({ id: 'p', ingestStatus: 'processing', file: { fileName: 'busy.jpg' } })];
+    renderLibrary();
+    const dialog = await openSheet('busy.jpg');
+    fireEvent.change(altBox(dialog), { target: { value: 'Mine' } });
+    assets = [
+      asset({
+        id: 'p',
+        ingestStatus: 'ready',
+        metadata: { altText: { 'en-US': 'From the model' }, tags: [] },
+        file: { fileName: 'busy.jpg' },
+      }),
+    ];
+    const listCalls = client.listAssets.mock.calls.length;
+    await act(() => vi.advanceTimersByTimeAsync(4500));
+    await waitFor(() => expect(client.listAssets.mock.calls.length).toBeGreaterThan(listCalls));
+    await waitFor(() => expect(within(dialog).queryByText('Processing')).toBeNull());
+    expect(altBox(dialog).value).toBe('Mine');
+  });
+
+  it('stops polling once nothing shown is processing', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    assets = [asset({ id: 'r', ingestStatus: 'ready' })];
+    renderLibrary();
+    await screen.findByRole('button', { name: 'Open “photo.jpg”' });
+    const listCalls = client.listAssets.mock.calls.length;
+    await act(() => vi.advanceTimersByTimeAsync(9000));
+    expect(client.listAssets.mock.calls.length).toBe(listCalls);
+  });
+
+  it('asks before the duplicate badge replaces unsaved edits, and opens the original on yes', async () => {
+    assets = [asset({ id: 'copy', duplicateOf: 'orig', file: { fileName: 'copy.jpg' } })];
+    renderLibrary();
+    const dialog = await openSheet('copy.jpg');
+    fireEvent.change(altBox(dialog), { target: { value: 'Half written' } });
+    const badge = () =>
+      within(dialog).getByRole('button', {
+        name: 'Possible duplicate: open the asset “copy.jpg” duplicates',
+      });
+    fireEvent.click(badge());
+    const ask = within(dialog).getByRole('alertdialog', {
+      name: 'Open the original and discard your changes?',
+    });
+    expect(client.getAsset).not.toHaveBeenCalled();
+    fireEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull();
+    expect(altBox(dialog).value).toBe('Half written');
+
+    fireEvent.click(badge());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard and open' }));
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith('orig'));
+    await waitFor(() => expect(altBox(screen.getByRole('dialog')).value).toBe(''));
+  });
+
+  it('opens the original at once from the badge when nothing was edited', async () => {
+    assets = [asset({ id: 'copy', duplicateOf: 'orig', file: { fileName: 'copy.jpg' } })];
+    renderLibrary();
+    const dialog = await openSheet('copy.jpg');
+    fireEvent.click(
+      within(dialog).getByRole('button', {
+        name: 'Possible duplicate: open the asset “copy.jpg” duplicates',
+      }),
+    );
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith('orig'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('saves without accepting AI suggestions it did not touch', async () => {
+    assets = [
+      asset({
+        metadata: { altText: { 'en-US': 'A red mug' }, tags: ['t1'] },
+        aiSuggestions: { altText: ['en-US'], tags: ['t1'] },
+      }),
+    ];
+    renderLibrary();
+    const dialog = await openSheet('photo.jpg');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save metadata' }));
+    await waitFor(() => expect(client.setAssetMetadata).toHaveBeenCalled());
+    const patch = client.setAssetMetadata.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect('altText' in patch).toBe(false);
+    expect('tags' in patch).toBe(false);
+  });
+
+  it('sends only the field that changed', async () => {
+    assets = [
+      asset({
+        metadata: { altText: { 'en-US': 'A red mug' }, tags: ['t1'] },
+        aiSuggestions: { altText: ['en-US'], tags: ['t1'] },
+      }),
+    ];
+    renderLibrary();
+    const dialog = await openSheet('photo.jpg');
+    fireEvent.change(altBox(dialog), { target: { value: 'A red mug on a shelf' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save metadata' }));
+    await waitFor(() => expect(client.setAssetMetadata).toHaveBeenCalled());
+    const patch = client.setAssetMetadata.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(patch.altText).toEqual({ 'en-US': 'A red mug on a shelf' });
+    expect('tags' in patch).toBe(false);
+  });
+
+  it('marks an AI-suggested tag in sight, not only to a screen reader', async () => {
+    assets = [asset({ metadata: { altText: {}, tags: ['t1'] }, aiSuggestions: { tags: ['t1'] } })];
+    renderLibrary();
+    const dialog = await openSheet('photo.jpg');
+    const tag = within(dialog).getByRole('button', { name: /Hero/ });
+    expect(within(tag).getByText('AI').getAttribute('aria-hidden')).toBe('true');
+    expect(within(tag).getByText('(AI suggestion)')).toBeTruthy();
+  });
+
+  it('reads a failure reason once, in the sheet as in the grid', async () => {
+    assets = [
+      asset({
+        id: 'e',
+        ingestStatus: 'error',
+        ingestError: 'Timed out',
+        file: { fileName: 'b.jpg' },
+      }),
+    ];
+    renderLibrary();
+    expect(await screen.findAllByText('Timed out')).toHaveLength(1);
+    const dialog = await openSheet('b.jpg');
+    expect(within(dialog).getAllByText(/Timed out/)).toHaveLength(1);
+  });
+});
+
+describe('searching with a selection', () => {
+  it('clears the selection and its failures when the search changes', async () => {
+    assets = [asset({ id: 'a1', file: { fileName: 'one.jpg' } })];
+    renderLibrary();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select “one.jpg”' }));
+    expect(screen.getByRole('group', { name: 'Selected assets' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search assets' }), {
+      target: { value: 'two' },
+    });
+    expect(screen.queryByRole('group', { name: 'Selected assets' })).toBeNull();
+  });
+
+  it('says Searching… and is busy while the next results load, in an always-present live line', async () => {
+    let resolve: (v: unknown) => void = () => {};
+    client.searchAssets.mockImplementationOnce(
+      () => new Promise((r) => (resolve = r as (v: unknown) => void)) as never,
+    );
+    renderLibrary();
+    await waitFor(() => expect(client.listAssets).toHaveBeenCalled());
+    const live = document.querySelector('p[aria-live="polite"].text-ui');
+    expect(live).toBeTruthy();
+    expect(live?.textContent).toBe('');
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search assets' }), {
+      target: { value: 'mug' },
+    });
+    await waitFor(() => expect(live?.textContent).toBe('Searching…'));
+    expect(live?.getAttribute('aria-busy')).toBe('true');
+    resolve({ items: [], total: 0, facets: { kind: {}, tag: {}, folder: {} } });
+    await waitFor(() => expect(live?.textContent).toBe('No matches for “mug”'));
+    expect(live?.getAttribute('aria-busy')).toBeNull();
   });
 });

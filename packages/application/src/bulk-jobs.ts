@@ -160,6 +160,15 @@ export interface BulkChunkDeps {
     job: BulkJob,
     chunk: BulkJobChunk,
   ) => Promise<BulkChunkOutcome>;
+  /**
+   * Sends an asset reindex chunk's assets through ingest again (`asset-ingest.ts`), injected for
+   * the same reason: it needs the ingest queue. Absent, the chunk stays claimable.
+   */
+  readonly assetReindexChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
 }
 
 export async function runBulkChunk(
@@ -203,7 +212,11 @@ export async function runBulkChunk(
   // use-cases; there is no batched transaction to run, and no coalesced
   // publish fact to emit, because an import publishes nothing.
   if (job.action === 'import') {
-    return runImportChunkAndFold(ctx, deps, scope, job, chunk);
+    return runChunkAndFold(ctx, deps.importChunk, scope, job, chunk);
+  }
+  // An asset reindex chunk hands its assets to ingest: nothing is written here but the report.
+  if (job.action === 'asset_reindex') {
+    return runChunkAndFold(ctx, deps.assetReindexChunk, scope, job, chunk);
   }
 
   const runTx = job.action === 'publish' ? publishEntriesTx : unpublishEntriesTx;
@@ -451,20 +464,20 @@ export async function cancelBulkJob(
 }
 
 /**
- * Runs an import chunk and folds its outcome into the job.
+ * Runs an import or asset reindex chunk and folds its outcome into the job.
  *
  * Mirrors the publish path's bookkeeping exactly — claim, run, complete,
  * finalize — so progress, cancellation, the stall sweep and the per-item
  * report all behave the same regardless of what kind of job it is.
  */
-async function runImportChunkAndFold(
+async function runChunkAndFold(
   ctx: AppContext,
-  deps: BulkChunkDeps,
+  run: BulkChunkDeps['importChunk'],
   scope: Scope,
   job: BulkJob,
   chunk: BulkJobChunk,
 ): Promise<RunBulkChunkResult> {
-  if (!deps.importChunk) {
+  if (!run) {
     // Releasing the claim rather than completing it: this is a wiring fault,
     // and a retry after the consumer is fixed should find the work waiting.
     await ctx.store.bulkJobs.releaseChunk(scope, job.id, chunk.chunkId);
@@ -472,7 +485,7 @@ async function runImportChunkAndFold(
   }
 
   try {
-    const { succeeded, failures } = await deps.importChunk(scope, job, chunk);
+    const { succeeded, failures } = await run(scope, job, chunk);
     const updated = await ctx.store.bulkJobs.completeChunk(scope, job.id, chunk.chunkId, {
       status: 'completed',
       succeeded,

@@ -391,6 +391,26 @@ describe('purging a deleted environment', () => {
     await createEnvironment(ctx, 's1', 'staging');
   });
 
+  it('marks progress and hands on in one unit: a failed hand-off leaves no mark', async () => {
+    await deleteEnvironment(ctx, 's1', 'staging', { confirm: 'staging', principal: admin });
+    const event = (await store.outbox.readPending(100)).find(
+      (e) => e.type === 'environment.purge_due',
+    ) as EnvironmentPurgeDueEvent;
+    const later = { ...ctx, clock: new FixedClock(new Date('2026-01-01T00:10:00.000Z')) };
+    const append = store.outbox.append;
+    store.outbox.append = async () => {
+      throw new Error('outbox write failed');
+    };
+    const search = { index: new InMemorySearchIndex() };
+    await expect(runEnvironmentPurge(later, { assetSearch: search }, event)).rejects.toThrow(
+      'outbox write failed',
+    );
+    store.outbox.append = append;
+    // The mark rolled back with the hand-off: the purge still reads as stalled, so the sweep
+    // restarts it rather than waiting on an event that was never written.
+    expect(await resumeStalledEnvironmentPurges(later)).toBe(1);
+  });
+
   it('restarts one whose event was lost, once it stalls', async () => {
     await deleteEnvironment(ctx, 's1', 'staging', { confirm: 'staging', principal: admin });
     const before = (await store.outbox.readPending(100)).length;

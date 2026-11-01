@@ -1,4 +1,4 @@
-import type { BlobStore, DownloadUrlOptions } from '@contentworker/ports';
+import type { BlobObject, BlobStore, DownloadUrlOptions } from '@contentworker/ports';
 
 /**
  * An in-memory BlobStore for dev/tests. It hands out deterministic fake
@@ -27,8 +27,9 @@ export class FakeBlobStore implements BlobStore {
   /** Actually holds bytes, so checksum verification is exercised for real. */
   private readonly objects = new Map<string, string | Uint8Array>();
 
-  async put(key: string, body: string | Uint8Array, _contentType: string) {
+  async put(key: string, body: string | Uint8Array, contentType: string) {
     this.objects.set(key, body);
+    this.types.set(key, contentType);
   }
   async get(key: string) {
     const body = this.objects.get(key);
@@ -48,6 +49,25 @@ export class FakeBlobStore implements BlobStore {
     }
     return deleted;
   }
+
+  /** Every key `open` was asked for, in order: a test proves what ingest read. */
+  readonly opened: string[] = [];
+
+  async open(key: string): Promise<BlobObject | null> {
+    this.opened.push(key);
+    const bytes = this.bytes(key);
+    if (!bytes) return null;
+    const contentType = this.types.get(key);
+    return {
+      body: (async function* () {
+        yield bytes;
+      })(),
+      size: bytes.byteLength,
+      ...(contentType ? { contentType } : {}),
+    };
+  }
+
+  private readonly types = new Map<string, string>();
 
   /** The stored bytes of `key`, as written (a test reads back a binary upload with this). */
   bytes(key: string): Uint8Array | null {

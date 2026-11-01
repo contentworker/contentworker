@@ -54,6 +54,7 @@ client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: numb
 client.search(query, { topK? }): Promise<SearchHit[]>
 client.getAsset(id, { locale? }): Promise<DeliveredAsset>
 client.listAssets({ limit?, cursor?, skip?, kind?, tag?, folder?, locale? }): Promise<AssetPage>
+client.searchAssets(q, { limit?, kind?, tag?, folder?, locale? }): Promise<AssetSearchPage>  // Delivery only
 client.query(): EntryQueryBuilder<F>     // fluent builder
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
@@ -251,7 +252,7 @@ cma.entries.versions.list(id) / .get(id, v) / .diff(id, from, to)
 cma.entries.versions.restore(id, v, { expectedVersion? })
 
 cma.assets.create({ fileName, contentType })          // → { asset, upload } (presigned PUT)
-cma.assets.list(query) / .get(id) / .setMetadata(id, patch) / .usage(id) / .archive(id) / .restore(id) / .delete(id) / .move(ids, folderId)
+cma.assets.list(query) / .get(id) / .search({ q, kind?, tag?, folder?, status?, limit? }) / .setMetadata(id, patch) / .usage(id) / .archive(id) / .restore(id) / .delete(id) / .move(ids, folderId) / .reingest(id) / .reindex({ all? })
 cma.assets.folders.list() / .create({ name, parentId }) / .update(id, changes) / .delete(id)
 cma.assets.publish(id) / .unpublish(id)
 

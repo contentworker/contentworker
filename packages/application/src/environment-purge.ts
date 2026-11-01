@@ -4,6 +4,7 @@ import {
   type Scope,
 } from '@contentworker/domain';
 import type { AssetGate, BlobStore } from '@contentworker/ports';
+import { type AssetSearchDeps, removeAssetFromSearch } from './asset-search';
 import { allAssets } from './assets';
 import type { AppContext } from './context';
 
@@ -30,7 +31,12 @@ export interface PurgeDeps {
   readonly blob?: BlobStore;
   /** The media origin's gate; its entries for the environment go when the rows are gone. */
   readonly assetGate?: AssetGate;
+  /** Asset search: each asset's vector and document go before its row does. */
+  readonly assetSearch?: AssetSearchDeps;
 }
+
+/** Assets whose search entries one purge event removes (each is a vector delete or two). */
+export const PURGE_ASSETS_PER_EVENT = 200;
 
 export type PurgeOutcome = 'finished' | 'continued';
 
@@ -47,6 +53,33 @@ export async function runEnvironmentPurge(
   // A late or duplicate event for a purge that already finished: the id may name a new
   // environment by now, so do nothing at all (the store's step re-checks this per statement).
   if (!(await isPurging(ctx, event.scope))) return 'finished';
+  // First the asset search entries, a page per event, while the asset rows still name them:
+  // vectors can only be deleted by id, and once the rows are gone nothing does.
+  if (deps.assetSearch && !event.assetIndexCleared) {
+    const page = await ctx.store.assets.list(event.scope, {
+      limit: PURGE_ASSETS_PER_EVENT,
+      filters: { status: 'all' },
+      sort: { field: 'createdAt', direction: 'asc' },
+      ...(event.assetCursor ? { cursor: event.assetCursor } : {}),
+    });
+    for (const asset of page.items) {
+      await removeAssetFromSearch(deps.assetSearch, event.scope, asset.id);
+    }
+    // The progress mark, so the stall sweep doesn't take a long cleanup for a lost event and
+    // start another, and the event that continues it: in one unit, so neither commits alone.
+    await ctx.store.withTransaction(async (tx) => {
+      await tx.spaces.markEnvironmentPurgeProgress(
+        event.scope.spaceId,
+        event.scope.environmentId,
+        ctx.clock.now(),
+      );
+      await tx.outbox.append({
+        ...purgeDue(ctx, event.scope),
+        ...(page.nextCursor ? { assetCursor: page.nextCursor } : { assetIndexCleared: true }),
+      });
+    });
+    return 'continued';
+  }
   for (let step = 0; step < PURGE_STEPS_PER_EVENT; step++) {
     const deleted = await ctx.store.spaces.purgeEnvironmentStep(
       spaceId,
@@ -67,7 +100,7 @@ export async function runEnvironmentPurge(
       return 'finished';
     }
   }
-  await ctx.store.outbox.append(purgeDue(ctx, event.scope));
+  await ctx.store.outbox.append({ ...purgeDue(ctx, event.scope), assetIndexCleared: true });
   return 'continued';
 }
 
@@ -126,9 +159,12 @@ async function deleteEnvironmentFiles(
       const other = { spaceId: scope.spaceId, environmentId: env.id };
       for (const asset of await allAssets(ctx, other)) inUse.add(asset.id);
     }
-    await blob.deletePrefix?.(`${scope.spaceId}/${scope.environmentId}/`, (key) =>
-      inUse.has(key.split('/')[2] ?? ''),
-    );
+    // An asset's file stays while another environment's asset of the same id points at it; what
+    // ingest derived from it here (`…/assetId/v<n>/…`, five segments) is this environment's alone.
+    await blob.deletePrefix?.(`${scope.spaceId}/${scope.environmentId}/`, (key) => {
+      const parts = key.split('/');
+      return parts.length === 4 && inUse.has(parts[2] ?? '');
+    });
   }
   // Work staged for jobs in it (an import still running when it was deleted): never read now.
   await blob.deletePrefix?.(`imports/${scope.spaceId}/${scope.environmentId}/`, () => false);

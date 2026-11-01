@@ -13,6 +13,7 @@ export type DomainEvent =
   | AssetPublishedEvent
   | AssetUnpublishedEvent
   | AssetDeletedEvent
+  | AssetIngestedEvent
   | AssetRenditionsChangedEvent
   | SearchReindexRequestedEvent
   | BulkChunkDueEvent
@@ -76,6 +77,21 @@ export interface AssetDeletedEvent extends BaseEvent {
 }
 
 /**
+ * Ingest finished an asset's file (`version`): it is hashed, probed, enriched where empty and
+ * indexed for search. `duplicateOf` names an older asset with the same bytes, when there is one.
+ * `published`: whether the asset was published when ingest finished, so only then is Delivery's
+ * cache purged (what Delivery serves, its search and its dimensions, can have changed).
+ */
+export interface AssetIngestedEvent extends BaseEvent {
+  readonly type: 'asset.ingested';
+  readonly assetId: string;
+  readonly version: number;
+  readonly published: boolean;
+  readonly contentHash?: string;
+  readonly duplicateOf?: string;
+}
+
+/**
  * A space's rendition preset was created, changed or deleted. `scope` is where the change was made;
  * presets belong to the whole space, so the engine purges what every environment of the space
  * delivers: the rendition's cached images on the media origin and the delivery responses that list
@@ -115,6 +131,13 @@ export interface EnvironmentDeletedEvent extends BaseEvent {
  */
 export interface EnvironmentPurgeDueEvent extends BaseEvent {
   readonly type: 'environment.purge_due';
+  /**
+   * The asset search index (vectors, which can only be removed by id) is cleared before the rows
+   * go, a page of assets per event: `assetCursor` is where the next page starts, and
+   * `assetIndexCleared` says that phase is done. An event without either starts it (again).
+   */
+  readonly assetCursor?: string;
+  readonly assetIndexCleared?: boolean;
 }
 
 /**
@@ -206,8 +229,11 @@ export interface EntriesPublishedBulkEvent extends BaseEvent {
 export interface BulkJobCompletedEvent extends BaseEvent {
   readonly type: 'bulk.job_completed';
   readonly jobId: string;
-  /** Which kind of job finished. An import creates drafts; it publishes nothing. */
-  readonly action: 'publish' | 'unpublish' | 'import';
+  /**
+   * Which kind of job finished. An import creates drafts; it publishes nothing. An asset reindex
+   * sent assets through ingest again.
+   */
+  readonly action: 'publish' | 'unpublish' | 'import' | 'asset_reindex';
   readonly total: number;
   readonly succeeded: number;
   readonly failed: number;

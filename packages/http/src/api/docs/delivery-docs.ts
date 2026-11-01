@@ -1,7 +1,9 @@
+import { z } from 'zod';
 import { doc } from './openapi';
 import {
   deliveredAsset,
   deliveredAssetPage,
+  deliveredAssetSearchPage,
   publishedEntry,
   publishedEntryList,
   searchHits,
@@ -40,12 +42,16 @@ const DOCS = {
       query: { locale: 'Resolve fields for one locale', include: 'Reference resolution depth' },
     }),
   listAssets: () =>
-    doc('Delivery', 'List published assets', {
-      ok: deliveredAssetPage,
+    doc('Delivery', 'List or search published assets', {
+      ok: z.union([deliveredAssetPage, deliveredAssetSearchPage]),
       description:
         'In publish order. URLs are on the media origin and immutable (the file version is in ' +
-        'them). Page with the response’s nextCursor.',
+        'them). Page with the response’s nextCursor. With q, a hybrid search (full text and ' +
+        'semantic, fused by rank) over published assets only, best match first, with facet ' +
+        'counts by kind, tag and folder; limit applies, paging does not. A search needs the ' +
+        'search:read scope as well as delivery:read (403 without it).',
       query: {
+        q: 'Search text (1–256 characters): file name, title, caption, alt text, tags, document text',
         limit: 'Page size',
         cursor: 'nextCursor from the previous page',
         skip: 'Offset (without a cursor)',

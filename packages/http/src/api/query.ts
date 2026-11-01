@@ -13,6 +13,7 @@
  *   - `content_type`, `limit`, `skip`, `since`, `locale`  → as before
  */
 
+import type { AssetSearchQuery } from '@contentworker/application';
 import {
   ASSET_KINDS,
   type AssetKind,
@@ -233,6 +234,27 @@ export function parseDeliveredAssetQuery(q: Record<string, string | undefined>):
       ...(kind ? { kind } : {}),
       ...(q.tag ? { tag: q.tag.slice(0, 128) } : {}),
       ...(folder !== undefined ? { folderId: folder === 'root' ? null : folder } : {}),
+    },
+  };
+}
+
+/**
+ * An asset search's query string: `q`, `limit`, and the filters `kind`, `tag`, `folder` (an id,
+ * or `root`) and, for the library, `status` (`all` includes archived).
+ */
+export function parseAssetSearchQuery(q: Record<string, string | undefined>): AssetSearchQuery {
+  const kind = oneOf('kind', q.kind, ASSET_KINDS);
+  const status = oneOf('status', q.status, ASSET_STATUSES);
+  const limit = clampCount(q.limit, MAX_PAGE_LIMIT, { min: 1 });
+  const folder = q.folder === undefined || q.folder === '' ? undefined : q.folder;
+  return {
+    q: q.q ?? '',
+    ...(limit !== undefined ? { limit } : {}),
+    filters: {
+      ...(kind ? { kind } : {}),
+      ...(q.tag ? { tag: q.tag.slice(0, 128) } : {}),
+      ...(folder !== undefined ? { folderId: folder === 'root' ? null : folder } : {}),
+      ...(status ? { status } : {}),
     },
   };
 }

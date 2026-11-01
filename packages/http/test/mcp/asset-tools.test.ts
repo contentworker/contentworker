@@ -15,6 +15,7 @@ import {
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
+  FakeAssetIngestQueue,
   FakeBlobStore,
   FixedClock,
   InMemoryContentStore,
@@ -316,5 +317,108 @@ describe('asset library tools (MCP), on the same use-cases as the HTTP routes', 
       arguments: { space: SPACE, id: draft.id },
     });
     expect(refused.isError).toBe(true);
+  });
+});
+
+describe('asset search and ingest tools (MCP), on the same use-cases as the HTTP routes', () => {
+  it('assets_search searches the library, or what Delivery serves with delivered: true', async () => {
+    const { ctx, deps, add } = await setup();
+    const draft = await add('mug-draft.png', 'image/png');
+    const live = await add('mug.pdf', 'application/pdf');
+    await publishAsset(ctx, scope, live.id);
+    const client = await connect(deps, admin);
+    const search = async (args: Record<string, unknown>) =>
+      payload(
+        await client.callTool({ name: 'assets_search', arguments: { space: SPACE, ...args } }),
+      ) as {
+        items: { id: string }[];
+        total: number;
+        facets: { kind: Record<string, number> };
+      };
+
+    const lib = await search({ q: 'mug' });
+    expect(lib.items.map((a) => a.id).sort()).toEqual([draft.id, live.id].sort());
+    expect(lib.facets.kind).toEqual({ image: 1, document: 1 });
+    expect((await search({ q: 'mug', kind: 'image' })).items.map((a) => a.id)).toEqual([draft.id]);
+    expect((await search({ q: 'mug', delivered: true })).items.map((a) => a.id)).toEqual([live.id]);
+  });
+
+  it('checks scopes as the routes do', async () => {
+    const { deps, add } = await setup();
+    await add('mug.png', 'image/png');
+    const deliveryOnly: Principal = {
+      spaceId: SPACE,
+      kind: 'cda',
+      scopes: [SCOPES.deliveryRead],
+    };
+    const cda = await connect(deps, deliveryOnly);
+    const lib = await cda.callTool({
+      name: 'assets_search',
+      arguments: { space: SPACE, q: 'mug' },
+    });
+    expect(lib.isError).toBe(true);
+    // delivered: true is Delivery's ?q=: delivery:read and search:read.
+    const deliveredReadOnly = await cda.callTool({
+      name: 'assets_search',
+      arguments: { space: SPACE, q: 'mug', delivered: true },
+    });
+    expect(deliveredReadOnly.isError).toBe(true);
+    const searcher = await connect(deps, {
+      ...deliveryOnly,
+      scopes: [SCOPES.deliveryRead, SCOPES.searchRead],
+    });
+    const delivered = await searcher.callTool({
+      name: 'assets_search',
+      arguments: { space: SPACE, q: 'mug', delivered: true },
+    });
+    expect(delivered.isError).toBeFalsy();
+    const granted = await connect(deps, {
+      ...deliveryOnly,
+      scopes: [SCOPES.deliveryRead, SCOPES.searchRead],
+      contentGrants: [{ contentTypeApiId: 'post', actions: ['read'] }],
+    } as Principal);
+    expect(
+      payload(
+        await granted.callTool({
+          name: 'assets_search',
+          arguments: { space: SPACE, q: 'mug', delivered: true },
+        }),
+      ),
+    ).toEqual({ items: [], total: 0, facets: { kind: {}, tag: {}, folder: {} } });
+    const r = await connect(deps, reader);
+    for (const [name, args] of [
+      ['asset_reingest', { id: 'x' }],
+      ['assets_reindex', {}],
+    ] as const) {
+      expect((await r.callTool({ name, arguments: { space: SPACE, ...args } })).isError, name).toBe(
+        true,
+      );
+    }
+  });
+
+  it('asset_reingest queues a run; assets_reindex starts the bulk job', async () => {
+    const { deps, add } = await setup();
+    const a = await add('mug.png', 'image/png');
+    const queue = new FakeAssetIngestQueue();
+    const client = await connect({ ...deps, assetIngest: queue }, admin);
+    const out = payload(
+      await client.callTool({ name: 'asset_reingest', arguments: { space: SPACE, id: a.id } }),
+    );
+    expect(out).toMatchObject({ id: a.id, ingestStatus: 'pending' });
+    expect(queue.requested).toHaveLength(1);
+    const job = payload(
+      // all: the re-ingested asset is pending, which the default reindex leaves alone.
+      await client.callTool({ name: 'assets_reindex', arguments: { space: SPACE, all: true } }),
+    );
+    expect(job).toMatchObject({ assets: 1, job: { action: 'asset_reindex' } });
+    // Without the queue it says so rather than doing nothing.
+    const bare = await connect(deps, admin);
+    expect(
+      (await bare.callTool({ name: 'asset_reingest', arguments: { space: SPACE, id: a.id } }))
+        .isError,
+    ).toBe(true);
+    const reindex = await bare.callTool({ name: 'assets_reindex', arguments: { space: SPACE } });
+    expect(reindex.isError).toBe(true);
+    expect(JSON.stringify(reindex.content)).toMatch(/ASSET_EVENTS_QUEUE/);
   });
 });

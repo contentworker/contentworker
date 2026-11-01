@@ -383,6 +383,9 @@ content grants gets `403`, because the report exposes entry ids across content t
 | ------ | ---------------------------- | ----------------- | --------------------------------------------------------------------------------- |
 | GET    | `…/assets`                   | `preview:read`    | List assets: `kind`, `mime` (`image/*`), `tag`, `folder` (id or `root`), `status` (archived hidden unless `archived`/`all`), `sort` (`updatedAt`, `createdAt`, `size`), `order`, `limit`, `cursor` → `{ items, nextCursor? }` |
 | POST   | `…/assets`                   | `content:write`   | Create draft + presigned upload URL (optional `folderId`)                         |
+| GET    | `…/assets/search`            | `preview:read`    | Hybrid search of the library (full text and semantic, fused by rank): `q` (1–256 characters), `kind`, `tag`, `folder` (id or `root`), `status` (archived hidden unless asked), `limit` (≤ 100) → `{ items, total, facets: { kind, tag, folder } }`, each facet counted without its own filter |
+| POST   | `…/assets/reindex`           | `content:write`   | Send assets through ingest as an `asset_reindex` bulk job `{ all? }` (202 `{ assets, job? }`): those never ingested or whose ingest failed, or every asset with a file; while one runs, that job comes back with `running: true`; 501 without the ingest queue |
+| POST   | `…/assets/:id/reingest`      | `content:write`   | Run ingest on the current file again (202, the asset as `pending`); does nothing while it is `pending` or `processing`; 400 for a hosted video; 501 without the ingest queue |
 | POST   | `…/assets/move`              | `content:write`   | `{ ids (≤ 500), folderId \| null }` → `{ moved }`; 404 for an unknown folder      |
 | GET    | `…/assets/:id`               | `preview:read`    | Get asset                                                                         |
 | GET    | `…/asset-renditions`         | `preview:read`    | The space's rendition presets `{ items }` (the same in every environment)         |
@@ -570,7 +573,7 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 | -------- | -------------------------------------------- | --------------- | ------------------------------ |
 | GET      | `/delivery/:space/:env/entries`              | `delivery:read` | List published entries         |
 | GET      | `/delivery/:space/:env/entries/:id`          | `delivery:read` | Get one published entry        |
-| GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets: `limit`, `cursor` (or `skip`), `kind`, `tag`, `folder` (id or `root`), `locale` → `{ items, total, nextCursor? }` |
+| GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets: `limit`, `cursor` (or `skip`), `kind`, `tag`, `folder` (id or `root`), `locale` → `{ items, total, nextCursor? }`. With `q`, a hybrid search of published assets only (needs `search:read` too, else 403) → `{ items, total, facets }`; a content-granted key gets an empty result with empty `facets` |
 | GET      | `/delivery/:space/:env/assets/:id`           | `delivery:read` | Get one published asset (`locale`) |
 | GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default** |
 | GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream    |

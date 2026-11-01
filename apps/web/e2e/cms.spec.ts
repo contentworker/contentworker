@@ -9,6 +9,7 @@ import {
   SPACE,
   seedAsset,
   seedCms,
+  seedIngestFindings,
   statusOf,
   useCmsScope,
   withoutAssistant,
@@ -379,6 +380,57 @@ test('typing right after creating an entry lands in the created entry, never a f
   await expect(page.getByRole('heading', { level: 1, name: `${title} v2` })).toBeVisible();
 });
 
+test('the asset library searches: a match by name, facet chips, and back to the library on clear', async ({
+  page,
+  request,
+}) => {
+  // Waits on ingest, which a cold engine takes a while to start.
+  test.setTimeout(120_000);
+  const stamp = Date.now();
+  // Shares no word with the search below (its stamp in base 36), so neither leg can match it.
+  const other = `Ordinary ${stamp.toString(36)}`;
+  await seedAsset(request, other);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await expect(library.getByRole('button', { name: `Open “${other}”` })).toBeVisible();
+
+  // Uploaded through the signed PUT, which hands the file to ingest; ingest indexes it.
+  const wanted = `heliotrope-${stamp}.txt`;
+  await page
+    .getByLabel('Upload asset files')
+    .setInputFiles([
+      { name: wanted, mimeType: 'text/plain', buffer: Buffer.from('a heliotrope field guide') },
+    ]);
+  const uploads = page.getByRole('region', { name: 'Uploads' });
+  await expect(uploads.getByRole('status')).toHaveText('Uploaded 1 file', { timeout: 30_000 });
+
+  const box = library.getByRole('searchbox', { name: 'Search assets' });
+  const query = `heliotrope ${stamp}`;
+  // Ingest runs on the engine after the upload: search again until the index has caught up. The
+  // summary names the query, so the library shown before the debounced search can't pass.
+  await expect(async () => {
+    await box.fill('');
+    await box.fill(query);
+    await expect(library.getByText(new RegExp(`match(es)? for “${query}”`))).toBeVisible({
+      timeout: 3_000,
+    });
+    await expect(library.getByRole('button', { name: `Open “${wanted}”` })).toBeVisible({
+      timeout: 1_000,
+    });
+  }).toPass({ timeout: 90_000 });
+  await expect(library.getByRole('button', { name: `Open “${other}”` })).toHaveCount(0);
+  const kinds = library.getByRole('group', { name: 'Kind' });
+  await expect(kinds.getByRole('button', { name: /^Documents \d+ match/ })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
+
+  await library.getByRole('button', { name: 'Clear search' }).click();
+  await expect(library.getByRole('button', { name: `Open “${other}”` })).toBeVisible();
+  await expect(library.getByRole('group', { name: 'Kind' })).toHaveCount(0);
+});
+
 test('the asset library: a folder, uploads into it, a move, a bulk archive, a restore and a guarded delete', async ({
   page,
   request,
@@ -553,4 +605,49 @@ test.describe('publishing from a row, without the assistant', () => {
     expect(await statusOf(request, id)).toBe('draft');
     await expect(row.getByText('Draft', { exact: true })).toBeVisible();
   });
+});
+
+test('the asset library shows what ingest found: a duplicate opens its original, and a failed ingest retries', async ({
+  page,
+  request,
+}) => {
+  // Waits for ingest to find the twin and to give up on the missing file (after its retries).
+  test.setTimeout(240_000);
+  const stamp = Date.now();
+  const { original, copy, broken } = await seedIngestFindings(request, stamp);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  const duplicateBadge = `Possible duplicate: open the asset “${copy}” duplicates`;
+
+  // From the grid: the badge opens the original's sheet.
+  await library.getByRole('button', { name: duplicateBadge }).click();
+  let sheet = page.getByRole('dialog');
+  await expect(sheet.getByRole('heading', { name: original })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+
+  // From the copy's sheet with an edit in it: asked in place first, then the original.
+  await library.getByRole('button', { name: `Open “${copy}”` }).click();
+  sheet = page.getByRole('dialog');
+  await sheet.getByLabel('Alt text (en-US)').fill('Not saved yet');
+  await sheet.getByRole('button', { name: duplicateBadge }).click();
+  const ask = sheet.getByRole('alertdialog', {
+    name: 'Open the original and discard your changes?',
+  });
+  await expect(ask).toBeVisible();
+  await ask.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(sheet.getByLabel('Alt text (en-US)')).toHaveValue('Not saved yet');
+  await sheet.getByRole('button', { name: duplicateBadge }).click();
+  await sheet.getByRole('button', { name: 'Discard and open' }).click();
+  await expect(sheet.getByRole('heading', { name: original })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  // The failure's reason is on the card, in sight; Retry sends the asset through ingest again.
+  await expect(library.getByText('The file is not in storage').first()).toBeVisible();
+  await library.getByRole('button', { name: `Retry processing “${broken}”` }).click();
+  await expect(page.getByText(`Processing “${broken}” again`)).toBeVisible();
+  await expect(library.getByRole('button', { name: `Retry processing “${broken}”` })).toHaveCount(
+    0,
+  );
 });

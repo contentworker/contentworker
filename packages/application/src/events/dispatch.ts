@@ -1,6 +1,7 @@
 import type { DomainEvent, EntriesPublishedBulkEvent, Webhook } from '@contentworker/domain';
 import type {
   AssetGate,
+  AssetIngestQueue,
   BlobStore,
   Cache,
   FunctionInvoker,
@@ -8,6 +9,8 @@ import type {
   WebhookSender,
 } from '@contentworker/ports';
 import { syncAssetGate } from '../asset-gate';
+import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
+import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../asset-search';
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
@@ -22,6 +25,7 @@ import {
   removeEntryEmbeddings,
   runReindexJob,
 } from '../rag';
+import { isSnapshotJob } from '../snapshot-jobs';
 
 /** Reverse-reference walk bound: embed chains deeper than this stay stale
  *  until their own next publish (cycle-safe either way via the visited set). */
@@ -62,6 +66,13 @@ export interface DispatchDeps {
    * back to a D1 replica on every miss.
    */
   readonly assetGate?: AssetGate;
+  /**
+   * The asset search indexes. When present, an asset publish or unpublish re-indexes it from what
+   * is published now, and deletes (of an asset, of an environment) remove what was indexed.
+   */
+  readonly assetSearch?: AssetSearchDeps;
+  /** The ingest queue, which `asset_reindex` bulk chunks feed; absent, those chunks wait. */
+  readonly assetIngest?: AssetIngestQueue;
   /**
    * Tags already invalidated during this consumer invocation. A queue batch of
    * same-type publishes (a release, a burst of scheduled publishes) would
@@ -104,6 +115,9 @@ export async function dispatchEvent(
   if (event.type === 'bulk.chunk_due') {
     await runBulkChunk(ctx, event, {
       ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob) } : {}),
+      ...(deps.assetIngest
+        ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
+        : {}),
     });
     return;
   }
@@ -116,6 +130,7 @@ export async function dispatchEvent(
       {
         ...(deps.blob ? { blob: deps.blob } : {}),
         ...(deps.assetGate ? { assetGate: deps.assetGate } : {}),
+        ...(deps.assetSearch ? { assetSearch: deps.assetSearch } : {}),
       },
       event,
     );
@@ -214,7 +229,23 @@ export async function dispatchEvent(
   // A deleted asset's bytes: the row went with the request, the files go here, so a failed
   // removal comes back with the event. Idempotent, like every removal below.
   if (event.type === 'asset.deleted') {
-    await deleteAssetFiles(ctx, { ...(deps.blob ? { blob: deps.blob } : {}) }, event);
+    await deleteAssetFiles(
+      ctx,
+      {
+        ...(deps.blob ? { blob: deps.blob } : {}),
+        ...(deps.assetSearch ? { search: deps.assetSearch } : {}),
+      },
+      event,
+    );
+  }
+
+  // 2e. Asset search reads the published snapshot of a published asset, so a publish or unpublish
+  // re-indexes it (the asset may never have been ingested, too: an upload from before ingest).
+  if (
+    deps.assetSearch &&
+    (event.type === 'asset.published' || event.type === 'asset.unpublished')
+  ) {
+    await indexAssetForSearch(ctx, deps.assetSearch, deps.blob, scope, event.assetId);
   }
 
   // A deleted environment: its rows are gone, so remove what was derived from them elsewhere.
@@ -225,6 +256,9 @@ export async function dispatchEvent(
       if (deps.rag) await removeEntryEmbeddings(deps.rag, scope, entryId);
       await searchIndex?.remove(scope, entryId);
     }
+    // Asset search documents go in one call per shard; asset vectors, which go only by id, go
+    // with the purge (it pages the assets before their rows are removed).
+    await clearAssetSearch(deps.assetSearch, scope);
     if (deps.cache) await deps.cache.invalidateTag(epochTag(scope));
     // Its media stops at once: every gate entry goes (the engine then purges the environment's
     // cached media, now and once more later). The purge clears the gate again when it finishes.
@@ -245,6 +279,16 @@ export async function dispatchEvent(
         ? (await ctx.store.bulkJobs.getJob(scope, nextId)) !== null
         : false;
       await discardStagedJob(deps.blob, scope, job, { nextStarted });
+    }
+  }
+
+  // A snapshot import's or clone's assets are written by its create phase, each never ingested in
+  // its new environment: send them through ingest so the target's search has them. A redelivered
+  // event finds the reindex still running (and gets it back) or nothing left to do.
+  if (deps.assetIngest && event.type === 'bulk.job_completed' && event.action === 'import') {
+    const job = await ctx.store.bulkJobs.getJob(scope, event.jobId);
+    if (isSnapshotJob(job?.config) && job.config.phase === 'create') {
+      await startAssetReindex(ctx, scope);
     }
   }
 

@@ -56,6 +56,28 @@ export interface AssetPage {
   readonly nextCursor?: string;
 }
 
+/** An asset search: published assets, best match first, with facet counts. */
+export interface AssetSearchPage {
+  readonly items: DeliveredAsset[];
+  readonly total: number;
+  readonly facets: {
+    readonly kind: Readonly<Record<string, number>>;
+    readonly tag: Readonly<Record<string, number>>;
+    /** By folder id; `root` for assets in no folder. */
+    readonly folder: Readonly<Record<string, number>>;
+  };
+}
+
+export interface AssetSearchQuery {
+  /** 1..100, default 20. */
+  readonly limit?: number;
+  readonly kind?: DeliveredAsset['kind'];
+  readonly tag?: string;
+  /** A folder id, or `root` for assets in no folder. */
+  readonly folder?: string;
+  readonly locale?: string;
+}
+
 export interface AssetQuery {
   readonly limit?: number;
   /** `nextCursor` from the previous page. */
@@ -238,6 +260,21 @@ export function createDeliveryClient(opts: ClientOptions) {
         limit: q.limit,
         cursor: q.cursor,
         skip: q.cursor ? undefined : q.skip,
+        kind: q.kind,
+        tag: q.tag,
+        folder: q.folder,
+        locale: q.locale,
+      });
+    },
+
+    /**
+     * Searches published assets (file name, title, caption, alt text, tags, document text; full
+     * text and semantic, fused by rank). Delivery only: Preview has no asset search.
+     */
+    async searchAssets(query: string, q: AssetSearchQuery = {}): Promise<AssetSearchPage> {
+      return get<AssetSearchPage>('/assets', {
+        q: query,
+        limit: q.limit,
         kind: q.kind,
         tag: q.tag,
         folder: q.folder,

@@ -93,6 +93,14 @@ export class SearchShardDO extends DurableObject {
   count(): number {
     return this.sql.exec<{ n: number }>('SELECT count(*) AS n FROM versions').one().n;
   }
+
+  /** Empties the shard (its scope's environment was deleted). */
+  clear(): void {
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec('DELETE FROM docs');
+      this.sql.exec('DELETE FROM versions');
+    });
+  }
 }
 
 /**
@@ -125,15 +133,32 @@ export function shardOf(entryId: string, shards: number): number {
 /** Shards per space:environment unless SEARCH_SHARDS says otherwise. */
 export const DEFAULT_SEARCH_SHARDS = 8;
 
-type ShardStub = Pick<SearchShardDO, 'index' | 'remove' | 'search' | 'count'>;
+type ShardStub = Pick<SearchShardDO, 'index' | 'remove' | 'search' | 'count' | 'clear'>;
+
+/**
+ * Which documents a sharded index holds. Assets live in shards of their own (`…:assets:<n>`, and
+ * `…:pubassets:<n>` for the published ones Delivery searches):
+ * the same class, so no new Durable Object or migration tag, but separate objects, so entry
+ * search never returns an asset id and the entry index's drift count stays a count of entries.
+ */
+export type SearchCorpus = 'entries' | 'assets' | 'published-assets';
+
+/** Each corpus's infix in a shard's name; entries keep the bare name they always had. */
+const CORPUS_INFIX: Record<SearchCorpus, string> = {
+  entries: '',
+  assets: 'assets:',
+  'published-assets': 'pubassets:',
+};
 
 /** The SearchIndex port over the shard namespace. */
 export function createShardedSearchIndex(
   ns: DurableObjectNamespace<SearchShardDO>,
   shards = DEFAULT_SEARCH_SHARDS,
+  corpus: SearchCorpus = 'entries',
 ): SearchIndex {
+  const infix = CORPUS_INFIX[corpus];
   const stub = (scope: Scope, n: number) =>
-    ns.getByName(`${scope.spaceId}:${scope.environmentId}:${n}`) as unknown as ShardStub;
+    ns.getByName(`${scope.spaceId}:${scope.environmentId}:${infix}${n}`) as unknown as ShardStub;
   const all = (scope: Scope) => Array.from({ length: shards }, (_, n) => stub(scope, n));
   return {
     async index(scope, doc) {
@@ -150,6 +175,9 @@ export function createShardedSearchIndex(
         .flat()
         .sort((a, b) => b.score - a.score)
         .slice(0, topK);
+    },
+    async clear(scope) {
+      await Promise.all(all(scope).map((s) => s.clear()));
     },
     async stats(scope): Promise<SearchIndexStats> {
       const counts = await Promise.all(all(scope).map((s) => s.count()));
