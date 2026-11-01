@@ -134,7 +134,7 @@ draft has moved on, the call fails with a **409** and changes nothing, so you ne
 you haven't seen.
 
 Every method maps to one Management route: content types, entries and their versions, assets
-(with direct uploads), releases, scheduled actions, webhooks, environments and keys. The client is
+(with direct uploads, file replacement and versions, rights, and bulk jobs), releases, scheduled actions, webhooks, environments and keys. The client is
 exactly as powerful as its token; the server checks every call. Failures throw `ManagementError`
 with the `status` and the error `body`; see [errors](/reference/rest-api/#errors). Keep the token on
 a server: a Management key never belongs in a browser or app bundle.

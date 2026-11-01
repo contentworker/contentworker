@@ -55,7 +55,9 @@ exports and checks the source (a refused snapshot fails it, and its report names
 Snapshots and clones carry asset metadata, not the files themselves, and never carry API keys,
 OAuth clients or webhook secrets. What processing found about each file (its status, a duplicate
 warning, unsaved AI suggestions) stays behind: the copied assets are processed again in the new
-environment, so its search finds them.
+environment, so its search finds them. Only each asset's current file comes across; its earlier
+versions stay in the source's history. A published asset whose rights no longer allow publishing
+(it expired, or is under embargo) arrives as a draft and is named in the report.
 
 ## Compare and merge
 
@@ -133,7 +135,9 @@ asset metadata. Use it for backups, or to seed an environment elsewhere.
   Add `?dryRun=true` to get a report without writing (`200`). Without it, everything is checked
   first, the model is written, and entries and assets run as a background job (`202` with
   `{ report, job, publishJobId }`, followed at `…/bulk/jobs/{id}`). `?publish=false` skips
-  republishing.
+  republishing. An imported asset may only point at files in the space you import into; one that
+  names another space's file is pointed at its own, empty, location instead. To copy content
+  between spaces with its files, clone instead.
 
 ## Delete an environment
 
