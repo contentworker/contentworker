@@ -1,0 +1,112 @@
+# MCP server
+
+The api Worker serves contentworker's capabilities to agents over MCP, through the same use-cases,
+scopes and validation as the HTTP API.
+
+The MCP server is served by the api Worker, at **`/mcp`** (`https://api.<domain>/mcp`, and on the
+admin origin through the web gateway).
+It is a **stateless streamable-HTTP** server built on the v2 TypeScript SDK
+(`@modelcontextprotocol/server`): tools are defined in `packages/http/src/mcp/server.ts`, and one
+shared handler (`packages/http/src/mcp/http.ts`, `createHandler`) serves both protocol eras:
+
+- **2026-07-28** clients send self-contained requests with no `initialize` handshake. A fresh
+  client makes its first call in two requests instead of four, and it caches `tools/list` for
+  five minutes.
+- **2025-era** clients get the stateless fallback: a fresh server for each request, as before.
+
+Auth is a bearer token resolved like the HTTP API: the MCP root token (`MCP_TOKEN`), a hashed API
+key, an OAuth access token, or a personal access token (`packages/http/src/mcp/routes.ts`). MCP mounts
+only where the management surface does (`ROLE` includes `management`). On a persistent deployment
+it also requires an explicit `MCP_TOKEN`; the in-memory store falls back to `dev-mcp-token`, and
+`pnpm dev` sets `MCP_TOKEN=dev-mcp-token`, so a local client can connect to
+`http://localhost:5173/mcp`. Every tool calls `authorize(principal, scope, space)`
+before delegating to a use-case, and `space`/`environment` default to the seeded values when
+omitted. Request bodies are capped at 32 MiB, which fits the importers' 20 MB payload limit after
+JSON escaping. The SDK answers internal failures with a bare 500, so the Worker logs them through
+the handler's `onerror`.
+
+**Per-request cost.** Each request builds a server bound to the caller's principal, so building it
+has to be cheap. Every tool's Zod input schema, and its JSON Schema conversion, is built once per
+isolate and shared (`toolSchema` in `packages/http/src/mcp/server.ts`). Building a server takes about
+0.1 ms; without the cache it took about 2 ms, and every `tools/list` added another millisecond. As
+a consequence, **a tool's input schema must never depend on the principal or deps**;
+authorization belongs in the handler. `preloadSchemas()` runs at module scope, so the SDK's own
+schemas are built during isolate warm-up rather than on the first request.
+
+**Connecting a client.** With `OAUTH_ISSUER` set, the server is installable as a connector in
+Claude, ChatGPT and MCP-capable IDEs: an unauthenticated request answers with
+`WWW-Authenticate: Bearer resource_metadata="…"` (RFC 9728), the client fetches
+`/.well-known/oauth-protected-resource`, registers itself dynamically, and runs an
+authorization-code + PKCE flow that a human approves on the admin origin after signing in to the
+web app, choosing the space the connection works in (a fleet deployment's issuer and resource are
+`https://<domain>` and `https://<domain>/mcp`). CLI clients that cannot open a browser use
+the device flow, and CI uses a personal access token. Whatever the route, the resulting token is
+an ordinary API key — so an agent can still never exceed the scopes the approving human holds.
+See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
+## Tools
+
+The server exposes **123 tools**, one per major Management/Delivery capability (the canonical list
+is the `registerTool` calls in `packages/http/src/mcp/server.ts`). Each calls `authorize` before
+delegating to the same use-case as the HTTP route.
+
+| Area          | Tools                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Documentation | `docs_list`, `docs_read`, `docs_search` (the maintainer docs; no tenant data, so being authenticated is the only gate)                                                                                                                                                                                                                                                                           |
+| Model         | `model_list_content_types`, `model_get_content_type`, `model_typescript`, `model_create_content_type`, `model_publish_content_type`                                                                                                                                                                                                                                                              |
+| Entries       | `entries_suggest`, `entries_query`, `entries_get`, `entries_create`, `entries_update`, `entries_publish`, `entries_unpublish`, `entries_bulk_action`, `entries_trash`, `entries_list_trashed`, `entries_restore`, `entries_purge`, `entries_duplicate`, `entries_list_versions`, `entries_diff_versions`, `entries_restore_version`, `entries_set_metadata`                                      |
+| Bulk jobs     | `bulk_job_start`, `bulk_job_status`, `bulk_job_report`, `bulk_job_cancel`                                                                                                                                                                                                                                                                                                                        |
+| AI            | `generate_draft`, `entry_from_canvas`, `entry_translate`, `entry_summarize`, `entry_autofill_field`, `entry_suggest_tags`, `entry_apply_tags`, `entry_audit`, `entry_moderate`                                                                                                                                                                                                                   |
+| Search        | `content_search` (hybrid), `content_semantic_search`, `content_related`, `content_duplicates`, `search_index_health`, `content_reindex_embeddings`                                                                                                                                                                                                                                               |
+| Roles         | `roles_list`, `role_create`, `role_update`, `role_delete`                                                                                                                                                                                                                                                                                                                                        |
+| Team          | `role_presets_list`, `team_list`, `role_preset_assign` (first-run setup is HTTP-only)                                                                                                                                                                                                                                                                                                            |
+| Releases      | `releases_list`, `releases_get`, `releases_create`, `releases_add_entry`, `releases_publish`                                                                                                                                                                                                                                                                                                     |
+| Collaboration | `comments_list`, `comments_add`, `tasks_list`, `tasks_create`, `tasks_resolve`, `workflow_transition`                                                                                                                                                                                                                                                                                            |
+| Workflows     | `workflow_save_draft`, `workflow_publish`, `workflow_versions`, `workflow_validate`, `workflow_copilot`, `workflow_run_start`, `workflow_run_list`, `workflow_run_get`, `workflow_run_cancel`, `workflow_event_deliver`, `workflow_task_list`, `workflow_task_decide`, `workflow_settings_set`                                                                                                   |
+| Taxonomy      | `taxonomy_list_tags`, `taxonomy_create_tag`, `taxonomy_list_concepts`, `taxonomy_create_concept`, `taxonomy_create_scheme`                                                                                                                                                                                                                                                                       |
+| Assets        | `assets_list`, `asset_set_metadata`, `asset_usage`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`, `asset_video_create`, `asset_video_refresh`                                                                                                                                                                                                                              |
+| Environments  | `environments_compare`, `environments_merge`, `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environment_export`, `environment_import`, `environment_clone`, `environment_delete`                                                                                                                                                                             |
+| Import        | `import_sources`, `import_analyze` (writes nothing), `import_execute`                                                                                                                                                                                                                                                                                                                            |
+| Plugins       | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities` (can confirm or narrow a grant, never widen it)                                                                                                                                                                                                                                                                              |
+| Connections   | `oauth_connections_list`, `oauth_connection_revoke`                                                                                                                                                                                                                                                                                                                                              |
+| Platform      | `functions_list`, `function_create`, `function_delete`, `app_extensions_list`, `app_extension_create`, `app_extension_delete`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `schedule_action`, `agent_schedule_create`, `agent_schedule_list`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject`, `audit_log_list` |
+
+Gaps against the HTTP API: there are no webhook tools
+([Events & webhooks](./events-and-webhooks.md#webhooks)), and plugin install, install-from-URL and
+delete are HTTP-only ([Plugins](./plugins.md)).
+
+`environment_clone` returns `{ job, createJobId, publishJobId }` and runs in the engine as bulk
+jobs; `environment_delete` is irreversible, refuses `main` and any environment an alias points at,
+and needs `confirm` to repeat the environment id ([Backup & restore](./backup-and-restore.md)).
+
+The workflow tools declare MCP tool annotations (`readOnlyHint` on reads, validate and the
+copilot; `destructiveHint` on `workflow_run_cancel`; `idempotentHint` where a repeat changes
+nothing), and run the same use-cases and scope checks as the `…/workflows`, `…/workflow-runs` and
+`…/workflow-tasks` routes.
+
+## Skills
+
+The server also publishes **agent skills** through the MCP Skills extension (SEP-2640,
+`io.modelcontextprotocol/skills`). A skill is a `SKILL.md` describing a task end to end: which
+tools to call, in what order, and which rules trip agents up. Clients that support the extension
+list skills with `skills/list` and read them as `skill://contentworker/<name>/SKILL.md` resources.
+
+| Skill                | Covers                                                                                   |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| `model-content`      | Creating and publishing content types, choosing field types, `model_typescript`          |
+| `author-and-publish` | Finding and editing entries, versions, releases, scheduling, workflow runs and approvals |
+| `import-content`     | Field mapping, `identityField`, analyze → execute, publishing the result                 |
+
+The sources live in `packages/http/skills/<name>/`. A Worker has no filesystem, so the files
+are embedded into `packages/http/src/mcp/skills.generated.ts`, the same approach as the docs. After
+editing a skill, run `pnpm --filter @contentworker/http generate:skills`; a test fails if the
+embed drifts. The catalog is loaded with `strict: true`, so a malformed skill fails loudly instead
+of being skipped. If loading fails, the error is logged and the tools are served without skills;
+the load is retried on the next request. It is digested once per isolate and then attached to
+each request's server. Like the `docs_*` tools, skills describe the product rather than any
+tenant's content, so being authenticated is the only gate.
+
+Because the tools are thin wrappers over the use-cases, the MCP surface inherits all validation,
+referential integrity, RBAC, and event emission for free.
+
+The admin's assistant calls a subset of these tools in-process as the signed-in person; see
+[Coworker](./ai-agents-and-search.md#coworker-the-admins-assistant).

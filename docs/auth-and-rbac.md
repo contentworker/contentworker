@@ -29,6 +29,9 @@ The web app keeps its own accounts in D1 (`users`, `sessions`, `passkeys`, `reco
 - Failed sign-ins are throttled per address and account (`auth_failures`); sign-in paths without
   a session are also rate-limited (`API_LIMIT`). Sign-ins, failures, and changes to people,
   passkeys, two-factor, SSO and SCIM are written to the hash-chained `admin_audit`.
+- **Sessions** end 30 days after sign-in whatever happens (`SESSION_MAX_MS`), and after 7 days
+  without a request (`SESSION_IDLE_MS`), or 12 hours for a deployment `admin`
+  (`SESSION_IDLE_ADMIN_MS`); all in `packages/security/src/roles.ts`.
 - **SSO-only** (web): admins can require single sign-on; redeeming a setup code turns it off so
   a broken identity provider can't lock everyone out.
 
@@ -41,7 +44,8 @@ For a same-origin browser request with a live session, the web gateway
 - payload `{ sub, email, name, role, sid?, iat, exp, path }`, base64url, then `.`, then
   base64url(HMAC-SHA256(`PRINCIPAL_KEY`, payload)); `sid` is the session the request came on
   (the SHA-256 its `sessions` row is keyed by), absent in open local development;
-- valid for 60 seconds (5 s clock skew) and only for the exact path it was signed for;
+- valid for 60 seconds (5 s clock skew) and only for the exact method and path it was signed for
+  (`principalTarget`: `DELETE /spaces/s1/x` is not `GET /spaces/s1/x`);
 - a caller-supplied `x-cw-principal` is always removed, and a request carrying a bearer token
   never gets one; cross-site requests are forwarded without the session.
 
@@ -58,24 +62,43 @@ resolves the person with `principalForWebUser` (`packages/application/src/web-pr
 The resulting principal has `kind: 'user'` and `subject` = the person's id, so audit attributes
 actions to the person.
 
-**The assistant's socket** (`/agents/assistant-agent/<person>`) carries the same header, signed
+## The assistant's socket
+
+The admin's assistant (see [Architecture](./architecture.md#appsengine-async-and-stateful-work))
+is reached at `/agents/assistant-agent/<person>`. The socket carries the same header, signed
 for that path with the assistant's own key: HKDF-SHA256 of `PRINCIPAL_KEY`
 (`@contentworker/security/assistant-key`), never `PRINCIPAL_KEY` itself. The api forwards it to the
-engine's `AssistantAgent` only when `sub` is the person the path names, and the object verifies the
-signature again itself with `ASSISTANT_PRINCIPAL_KEY` (the engine holds no other). A principal
-signed with the derived key never verifies on the api's REST surface, and one signed with the
-main key never opens the socket ([Deployment](./deployment.md#the-assistants-principal-key)). Because a
-socket outlives its 60 seconds, the object keeps who the claims name per connection and, before
-every frame the socket sends and every turn and page edit, re-reads the person: refused, and the
-socket closed, once they are disabled or their session (`sid`, required for anyone but `local`) is
-deleted, expired or idle past their role's limit. Their access to the page's space is resolved
-again with `principalForWebUser` each time. `local` (open local development) is let in only while
-nobody has an account. The two-factor and password-change "due" states aren't re-read: the
+engine's `AssistantAgent` only when `sub` is the person the path names
+(`@contentworker/http/assistant/gate`, which also drops any SDK-internal `x-agents-*` or
+`x-partykit-*` header a caller sent), and the object verifies the signature again itself with
+`ASSISTANT_PRINCIPAL_KEY` (the engine holds no other). A principal signed with the derived key
+never verifies on the api's REST surface, and one signed with the main key never opens the socket
+([Deployment](./deployment.md#the-assistants-principal-key)).
+
+Because a socket outlives its 60 seconds, the object keeps who the claims name per connection and,
+before every frame the socket sends and every turn and page edit, re-reads the person: refused, and
+the socket closed (code 4401), once they are disabled or their session (`sid`, required for anyone
+but `local`) is deleted, expired or idle past their role's limit. Every other open socket of that
+person is checked the same way before anything is broadcast. Their access to the page's space is
+resolved again with `principalForWebUser` each time. `local` (open local development) is let in only
+while nobody has an account. The two-factor and password-change "due" states aren't re-read: the
 gateway refuses to sign for a person who is due, and a password reset ends their sessions.
 
-An MCP tool that fails with anything REST would answer with a 5xx (a database or binding error)
-reports only `Internal server error`; refusals (not found, forbidden, invalid, conflict) keep their
-own words, as REST shows them.
+What a client sends is held to what the object made:
+
+- only new user text is taken from the messages a client saves (stored messages are kept as
+  stored, client tool results are dropped);
+- a model tool call runs only if the model emitted it, with the input and scope it emitted
+  (`model:` records);
+- a page's action (`act`) waits at a card that `resolve` answers, held to a fingerprint of what the
+  card was made for;
+- writes the model proposes wait for the person's confirm;
+- tool results reach the model inside the untrusted-content delimiter, and only summaries of them
+  are kept once a turn ends.
+
+A person gets at most 30 page edits and turns a minute (`ASSISTANT_RATE`); a conversation untouched
+for 30 days is deleted by an alarm (`RETENTION_MS`), and so is a person's whose account is disabled
+or gone.
 
 ## API key kinds
 
@@ -131,9 +154,10 @@ one before it can:
 
 Each preset grants every content type (`*`): `read` for Viewer and Approver, `read`/`write`/`publish`
 for Editor and up (a role-bound key is denied any type its grants don't name). Presets are seeded when a space is created (or on first use where a space was seeded directly,
-as the in-memory dev store is). `GET …/role-presets` lists them with the role id each was seeded as;
-`POST …/roles/:id/clone` copies any role into a new custom one. Anywhere a role is assigned
-(`POST …/members`, `PATCH …/members/:id`, `PUT …/api-keys/:id/role`, the `role_preset_assign` MCP
+as the in-memory dev store is). `GET /spaces/:space/role-presets` lists them with the role id each was seeded as;
+`POST /spaces/:space/roles/:id/clone` copies any role into a new custom one. Anywhere a role is assigned
+(`POST /spaces/:space/members`, `PATCH /spaces/:space/members/:id`,
+`PUT /spaces/:space/api-keys/:id/role`, the `role_preset_assign` MCP
 tool) the role may be given as a role id or a preset name.
 
 ### `workflow:approve`
@@ -153,14 +177,14 @@ then approver"): the run keeps acting as whoever could write, so its later steps
 team: the people the web principal resolves against. **Keys** are the long-lived API keys with
 their role.
 
-| Endpoint                               |                                                                                    |
-| -------------------------------------- | ---------------------------------------------------------------------------------- |
-| `GET /spaces/:space/team`              | People + long-lived keys with roles, `adminCount`, access settings                 |
-| `POST /spaces/:space/members`          | Add a person `{ email, name?, role }`                                              |
-| `PATCH /spaces/:space/members/:id`     | Change `role`, `name`, `disabled`                                                  |
-| `DELETE /spaces/:space/members/:id`    | Remove a person                                                                    |
-| `PUT /spaces/:space/api-keys/:id/role` | Rebind a key `{ role }` (`null` unbinds it to its kind's defaults)                 |
-| `PUT /spaces/:space/access-settings`   | `{ ssoOnly }`                                                                      |
+| Endpoint                               |                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------ |
+| `GET /spaces/:space/team`              | People + long-lived keys with roles, `adminCount`, access settings |
+| `POST /spaces/:space/members`          | Add a person `{ email, name?, role }`                              |
+| `PATCH /spaces/:space/members/:id`     | Change `role`, `name`, `disabled`                                  |
+| `DELETE /spaces/:space/members/:id`    | Remove a person                                                    |
+| `PUT /spaces/:space/api-keys/:id/role` | Rebind a key `{ role }` (`null` unbinds it to its kind's defaults) |
+| `PUT /spaces/:space/access-settings`   | `{ ssoOnly }`                                                      |
 
 All need `space:admin`. MCP: `role_presets_list`, `team_list`, `role_preset_assign`. In the admin:
 Settings → Access → Space access.
@@ -222,8 +246,8 @@ be repeated; both halves are idempotent. The counts go into the admin audit entr
 
 ## Custom roles (granular RBAC)
 
-A **role** is a named, space-scoped permission set assignable to API keys — the layer below
-coarse scopes. It carries a scope set plus per-content-type grants:
+A **role** is a named, space-scoped permission set assignable to API keys and to people (team members): the layer
+below coarse scopes. It carries a scope set plus per-content-type grants:
 
 ```ts
 interface Role {
@@ -257,7 +281,7 @@ Semantics:
   unrestricted at this layer — coarse scopes alone apply, preserving pre-role behavior.
 - Managed at `GET/POST /spaces/:space/roles`, `GET/PUT/DELETE /spaces/:space/roles/:id`
   (requires `space:admin`) and the `roles_list` / `role_create` / `role_update` /
-  `role_delete` MCP tools. Mint a bound key with `POST …/api-keys { kind, roleId }`. Deleting is
+  `role_delete` MCP tools. Mint a bound key with `POST /spaces/:space/api-keys { kind, roleId }`. Deleting is
   refused while a key or a person holds the role, and for a preset.
 
 Grants govern entry read/write/publish and content-type visibility. **Delivery and Preview**
@@ -271,11 +295,12 @@ interface ApiKey {
   id: string;
   spaceId: string;
   kind: ApiKeyKind;
-  name: string;
+  name?: string; // optional human-readable label
   hashedToken: string; // SHA-256 of the raw token — the raw token is NEVER stored
   scopes: readonly string[]; // display snapshot; role-bound keys resolve live from the role
   revoked: boolean;
   roleId?: string; // custom role binding (granular RBAC)
+  lastUsedAt?: string; // last successful authentication
   expiresAt?: string; // after this instant the key stops authenticating
   issuance?: 'key' | 'oauth' | 'pat' | 'setup'; // how the token came into existence
   subject?: string; // the human it acts for (OAuth grant / PAT owner)
@@ -283,7 +308,7 @@ interface ApiKey {
 }
 ```
 
-The raw token is returned exactly once, at creation (`POST …/api-keys`). Authentication hashes
+The raw token is returned exactly once, at creation (`POST /spaces/:space/api-keys`). Authentication hashes
 the presented bearer token and looks it up by hash (`AuthRepo.findByHash`).
 
 ### One token model, three issuances
@@ -292,12 +317,12 @@ There is exactly one credential type and one authentication path. An OAuth acces
 personal access token are both `ApiKey` rows — so expiry, revocation, live role resolution and
 last-used tracking apply to all three without a second code path. Only the provenance differs:
 
-| `issuance` | Prefix            | Minted by                                                    | Lifetime                              |
-| ---------- | ----------------- | ------------------------------------------------------------ | ------------------------------------- |
+| `issuance` | Prefix            | Minted by                                                                | Lifetime                              |
+| ---------- | ----------------- | ------------------------------------------------------------------------ | ------------------------------------- |
 | `setup`    | `cwsetup_<kind>_` | The api's former setup route (removed; existing ones still authenticate) | Unbounded; stops while SSO-only is on |
-| `key`      | `cwk_<kind>_`     | An operator, via `POST …/api-keys`                           | Unbounded unless `expiresAt` is set   |
-| `oauth`    | `cwo_<kind>_`     | An OAuth grant a human approved                              | `OAUTH_ACCESS_TOKEN_TTL_SECONDS`      |
-| `pat`      | `cwpat_<kind>_`   | A human, via `POST …/personal-access-tokens`                 | Unbounded, or `expiresInDays`         |
+| `key`      | `cwk_<kind>_`     | An operator, via `POST /spaces/:space/api-keys`                          | Unbounded unless `expiresAt` is set   |
+| `oauth`    | `cwo_<kind>_`     | An OAuth grant a human approved                                          | `OAUTH_ACCESS_TOKEN_TTL_SECONDS`      |
+| `pat`      | `cwpat_<kind>_`   | A human, via `POST /spaces/:space/personal-access-tokens`                | Unbounded, or `expiresInDays`         |
 
 **Delegated tokens (`oauth`/`pat`) treat their scopes as a ceiling.** A role-bound operator key
 resolves the live role in both directions, as it always has. For a delegated token the effective
@@ -305,7 +330,7 @@ scopes are `role.scopes ∩ token.scopes`: widening the role later must not retr
 token a human approved for less, while narrowing the role still takes effect immediately. Content
 grants continue to resolve live in every case — only the coarse scopes are capped.
 
-A delegated token also cannot mint a longer-lived one: `POST …/personal-access-tokens` refuses any
+A delegated token also cannot mint a longer-lived one: `POST /spaces/:space/personal-access-tokens` refuses any
 caller carrying a `clientId` (i.e. an OAuth-issued token), so a credential that expires in an hour
 cannot promote itself into one that never does. That route is deliberately **not** exposed as an
 MCP tool for the same reason.
@@ -341,9 +366,12 @@ OAuth client secrets, and OAuth codes/refresh tokens are stored as hashes and ar
   not the dev key) unless `REQUIRE_SECURE_SECRETS=false`, in which case the fixed local dev key is
   used. The in-memory store gets a key generated per isolate.
 
-**Rotating `DATA_KEY`:** set `DATA_KEY_PREVIOUS` to the current key and `DATA_KEY` to a new one
-(`openssl rand -base64 32`) in the deployment's GitHub environment (every Worker receives both on the next deploy), wait for a reseal run that logs `complete: true` and `unreadable: 0`, then remove
-`DATA_KEY_PREVIOUS`. Losing `DATA_KEY` makes stored webhook secrets unrecoverable: re-enter them.
+**Rotating `DATA_KEY`** (the one procedure; [Deployment](./deployment.md#secrets) and
+[Configuration](./configuration.md#secrets-and-keys) link here): set `DATA_KEY_PREVIOUS` to the
+current key and `DATA_KEY` to a new one (`openssl rand -base64 32`) in the deployment's GitHub
+environment (every Worker receives both on the next deploy), wait for a reseal run that logs
+`complete: true` and `unreadable: 0`, then remove `DATA_KEY_PREVIOUS`. Losing `DATA_KEY` makes
+stored webhook secrets unrecoverable: re-enter them.
 
 ## Principals
 
@@ -374,8 +402,20 @@ interface Principal {
 ## OAuth 2.1 for MCP clients
 
 Setting `OAUTH_ISSUER` makes the management API an OAuth 2.1 authorization server, so an MCP
-client (Claude, ChatGPT, an IDE) can be installed as a connector. The endpoint list and env vars
-are in [Configuration](./configuration.md); the implementation is `packages/http/src/api/oauth`.
+client (Claude, ChatGPT, an IDE) can be installed as a connector. The implementation is
+`packages/http/src/api/oauth/routes.ts`; the `OAUTH_*` vars are in
+[Configuration](./configuration.md#oauth-21-for-mcp-clients-api).
+
+| Endpoint                                      | Purpose                                                                                              |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `GET /.well-known/oauth-authorization-server` | Authorization-server metadata                                                                        |
+| `GET /.well-known/oauth-protected-resource`   | Protected-resource metadata (RFC 9728); also served at the path-suffixed URL for the `/mcp` resource |
+| `POST /oauth/register`                        | Dynamic client registration (RFC 7591), unauthenticated                                              |
+| `GET`, `POST /oauth/authorize`                | Authorization-code consent (PKCE `S256`); a signed-in person approves                                |
+| `POST /oauth/device_authorization`            | Starts a device-code grant                                                                           |
+| `GET`, `POST /oauth/device`                   | The page where a person enters the device code and approves                                          |
+| `POST /oauth/token`                           | Exchanges an authorization code, device code or refresh token                                        |
+| `POST /oauth/revoke`                          | Revokes a token (RFC 7009); always answers `200`                                                     |
 
 OAuth is served on the admin's origin. `scripts/fleet.ts` renders `OAUTH_ISSUER=https://<domain>`
 (the admin host, not `api.<domain>`), and the web gateway forwards `/oauth/*`,
@@ -467,13 +507,13 @@ space for scoped keys.
 
 ## Dev credentials
 
-In in-memory mode the store is seeded with keys whose raw tokens are the `CMA_KEY` / `CDA_KEY` /
-`CPA_KEY` config values (defaults `dev-cma-key`, `dev-cda-key`, `dev-cpa-key`) and the
-`ADMIN_TOKEN` (default `dev-admin-token`). These are seeded **through the real auth path** (hashed
-and stored), so dev and production behave identically. On D1, the demo seed (`SEED_DEV=true`)
-writes the same dev keys; `pnpm dev` sets `ADMIN_TOKEN=dev-admin-token` and
-`MCP_TOKEN=dev-mcp-token` (`LOCAL_STACK_VARS`). The MCP endpoint additionally accepts
-`dev-mcp-token` when no `MCP_TOKEN` is set, but only in in-memory demo mode; a persistent
-deployment requires an explicit `MCP_TOKEN` before `/mcp` mounts. Replace all of these in any real
-deployment (`REQUIRE_SECURE_SECRETS=true` refuses to serve with the dev-default admin token and
-keys).
+In in-memory mode (no `DB` bound) the store is seeded with keys whose raw tokens are the
+`CMA_KEY` / `CDA_KEY` / `CPA_KEY` config values (defaults `dev-cma-key`, `dev-cda-key`,
+`dev-cpa-key`) and the `ADMIN_TOKEN` (default `dev-admin-token`). With `DB` bound, an unset one is
+empty (off), never the dev default (`loadConfig`). The keys are seeded **through the real auth
+path** (hashed and stored), so dev and production behave identically. On D1, the demo seed
+(`SEED_DEV=true`) writes the same dev keys. The MCP endpoint additionally accepts `dev-mcp-token`
+when no `MCP_TOKEN` is set, but only in in-memory demo mode; a persistent deployment requires an
+explicit `MCP_TOKEN` before `/mcp` mounts. What `pnpm dev` sets is in
+[Development](./development.md#running-locally). Replace all of these in any real deployment
+(`REQUIRE_SECURE_SECRETS=true` refuses to serve with the dev-default admin token and keys).

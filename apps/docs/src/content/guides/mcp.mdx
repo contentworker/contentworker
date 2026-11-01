@@ -48,23 +48,40 @@ environments its token can reach.
 
 ## Tools
 
-| Area          | Examples                                                                                     |
-| ------------- | -------------------------------------------------------------------------------------------- |
-| Model         | `model_list_content_types`, `model_create_content_type`, `model_publish_content_type`, `model_typescript` |
-| Entries       | `entries_query`, `entries_get`, `entries_create`, `entries_update`, `entries_publish`, `entries_suggest`, `entries_diff_versions`, `entries_restore_version` |
-| AI            | `generate_draft`, `entry_from_canvas`, `entry_translate`, `entry_summarize`, `entry_autofill_field`, `entry_suggest_tags`, `entry_moderate` |
-| Search        | `content_search`, `content_semantic_search`, `content_related`, `content_duplicates`        |
-| Releases      | `releases_create`, `releases_add_entry`, `releases_publish`, `schedule_action`              |
-| Collaboration | `comments_add`, `tasks_create`, `tasks_resolve`, `workflow_transition`                      |
-| Workflows     | `workflow_save_draft`, `workflow_publish`, `workflow_copilot`, `workflow_run_start`, `workflow_run_get`, `workflow_task_list`, `workflow_task_decide`, `workflow_event_deliver`, `workflow_run_cancel` |
-| Assets        | `assets_list`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`           |
-| Reviews       | `agent_review_list`, `agent_review_approve`, `agent_review_reject`                          |
-| Taxonomy      | `taxonomy_list_tags`, `taxonomy_create_tag`, `taxonomy_create_concept`                      |
-| Docs          | `docs_list`, `docs_read`, `docs_search`                                                      |
+There are 123 in all; your client lists every tool with its description and input schema when it
+connects. Each tool checks the token's scopes and role grants before it runs, and writes go
+through the same validation, versioning and events as a person's.
 
-There are 121 in all; your client lists every tool with its description and input
-schema when it connects. Each tool checks the token's scopes and role grants before it runs, and
-writes go through the same validation, versioning and events as a person's.
+| Area | Tools |
+| --- | --- |
+| Content | `entries_query`, `entries_get`, `entries_create`, `entries_update`, `entries_set_metadata`, `entries_publish`, `entries_unpublish`, `entries_trash`, `entries_list_trashed`, `entries_restore`, `entries_purge`, `entries_duplicate`, `entries_list_versions`, `entries_diff_versions`, `entries_restore_version`, `entries_bulk_action`, `entries_suggest`, `entry_apply_tags`, `comments_add`, `comments_list`, `tasks_create`, `tasks_list`, `tasks_resolve`, `workflow_transition` |
+| AI | `generate_draft`, `entry_from_canvas`, `entry_translate`, `entry_summarize`, `entry_autofill_field`, `entry_suggest_tags`, `entry_moderate`, `entry_audit`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `agent_schedule_list`, `agent_schedule_create`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject` |
+| Model and taxonomy | `model_list_content_types`, `model_get_content_type`, `model_create_content_type`, `model_publish_content_type`, `model_typescript`, `taxonomy_list_tags`, `taxonomy_create_tag`, `taxonomy_create_scheme`, `taxonomy_list_concepts`, `taxonomy_create_concept` |
+| Assets | `assets_list`, `asset_set_metadata`, `asset_usage`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`, `asset_video_create`, `asset_video_refresh` |
+| Environments | `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environments_compare`, `environments_merge`, `environment_delete` |
+| Import, export and clone | `import_sources`, `import_analyze`, `import_execute`, `environment_export`, `environment_import`, `environment_clone` |
+| Bulk jobs | `bulk_job_start`, `bulk_job_status`, `bulk_job_report`, `bulk_job_cancel` |
+| Workflows | `workflow_save_draft`, `workflow_validate`, `workflow_publish`, `workflow_versions`, `workflow_settings_set`, `workflow_copilot`, `workflow_run_start`, `workflow_run_get`, `workflow_run_list`, `workflow_run_cancel`, `workflow_task_list`, `workflow_task_decide`, `workflow_event_deliver` |
+| Releases | `releases_create`, `releases_add_entry`, `releases_get`, `releases_list`, `releases_publish`, `schedule_action` |
+| Team and roles | `team_list`, `role_presets_list`, `role_preset_assign`, `roles_list`, `role_create`, `role_update`, `role_delete` |
+| Plugins | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities` |
+| Functions | `functions_list`, `function_create`, `function_delete` |
+| App extensions | `app_extensions_list`, `app_extension_create`, `app_extension_delete` |
+| Audit | `audit_log_list` |
+| Search | `content_search`, `content_semantic_search`, `content_related`, `content_duplicates`, `content_reindex_embeddings`, `search_index_health` |
+| OAuth connections | `oauth_connections_list`, `oauth_connection_revoke` |
+| Docs | `docs_list`, `docs_read`, `docs_search` |
+
+[Webhooks](/guides/webhooks/) and API keys have no MCP tools, and a personal access token can't be
+minted over MCP: an agent can't mint itself a longer-lived credential. Manage those in the admin or
+over the REST API.
+
+## Skills
+
+The server also publishes MCP skills, short task guides a client can load before it works:
+`model-content` (design a content model and get its types), `author-and-publish` (find, edit and
+publish entries, releases, scheduled publishing, workflow runs) and `import-content` (map, dry-run,
+run and publish an import).
 
 ## Working well with agents
 
@@ -77,3 +94,9 @@ writes go through the same validation, versioning and events as a person's.
   which is the most compact way for an agent to learn your fields before it writes.
 - **Point it at the docs.** `docs_search` and `docs_read` let an agent look up conventions with
   the token it already holds.
+
+## Next steps
+
+- [API keys and access](/guides/api-keys/) for tokens, roles and scopes.
+- [Approvals](/guides/approvals/#agent-reviews) for reviewing what an agent drafted.
+- [Permission scopes](/reference/scopes/) for what each tool needs.

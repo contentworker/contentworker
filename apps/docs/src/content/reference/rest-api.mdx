@@ -32,15 +32,43 @@ The [OpenAPI explorer](/api/) lets you browse it and send requests.
 - **Field values** are keyed by field, then by locale, on every write and on reads without
   `locale=`: `{ "title": { "en-US": "Hello" } }`.
 - **Timestamps** are ISO 8601 in UTC.
-- **Lists** return `{ "items": [...] }`, with `total` where it's cheap to count; page with `limit`
-  and `skip`.
-- **Errors** return `{ "error": { "code", "message" } }`, plus `issues` on a 422. See
-  [Errors](/guides/api-keys/#errors).
+- **Lists** return `{ "items": [...] }`; page with `limit` (at most 100) and `skip`. Where a list
+  has a `total`, it is the number of items in the response, not the number of matches, so keep
+  paging until a page comes back with fewer than `limit`.
+- **Errors** are described in [Errors](#errors) below.
 - **Read your writes**: every API response carries an `x-cw-bookmark` header. Send the last value
   back on your next request and its reads are at least that fresh, even when a read replica
   answers.
 - **Scopes**: each operation needs one [permission scope](/reference/scopes/), checked against the
   space in the path.
+
+## Errors
+
+Errors use the HTTP status and a body with a stable `code`:
+
+```json
+{ "error": { "code": "validation_failed", "message": "One or more fields are invalid", "issues": [{ "field": "title", "message": "Required" }] } }
+```
+
+`issues` appears on a 422 for a validation failure and lists each field and why.
+
+| Status | `code` | When |
+| ------ | ------ | ---- |
+| 400 | `invalid_state`, `query_too_broad`, others | The request is understood but the resource's state forbids it (deleting an entry that isn't in the trash, say), or a query matched too many candidates to evaluate exactly: narrow it with `content_type` or a more selective filter |
+| 401 | `unauthorized`, `http_error` | No token, one that isn't valid, or an expired preview token |
+| 403 | `forbidden` | The token lacks the scope, the content-type grant, or the space |
+| 404 | `not_found` | No such entry, type, release… |
+| 409 | `conflict`, `last_admin` | A unique value already taken, a delete blocked by links, an `expectedVersion` that no longer matches, or a change that would leave the space with no administrator (`last_admin`) |
+| 413 | `payload_too_large` | The request body is over the limit (5 MiB by default; the workspace's administrator can change it) |
+| 422 | `validation_failed`, `hook_rejected` | Validation failed (`issues` lists each field), or a hook or plugin refused the change on policy grounds (`hook_rejected`, with the reason as `message`) |
+| 429 | `rate_limited` | Too many requests for the key or address (the response carries `Retry-After`, in seconds), or an AI budget or a reindex cooldown for the space was hit; retry later |
+| 501 | `not_configured` | The workspace doesn't have an optional capability this call needs, such as a video host or image transformer |
+| 500 | `internal`, `secret_unreadable` | A server fault; retry later and report it if it persists |
+
+The 413 and the request-rate 429 are written before a route runs, so their body is flat,
+`{ "code", "message" }`, without the `error` wrapper. Read `code` from either place. The Delivery
+API at the `cdn.` address answers a rate-limited request with `{ "error": "rate limited" }` and
+`Retry-After: 60`, so branch on the status there.
 
 ## Operations
 

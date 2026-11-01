@@ -14,7 +14,9 @@ type ModelTier = 'flagship' | 'balanced' | 'fast';
 
 interface GenerateRequest {
   system?: string;
-  prompt: string;
+  prompt: string; // with `messages`, the final user turn when non-empty ('' sends `messages` alone)
+  messages?: ChatMessage[]; // earlier turns, oldest first (user / assistant / tool)
+  tools?: ToolSpec[]; // { name, description?, inputSchema } the model may call
   tier?: ModelTier; // default 'balanced'
   maxTokens: number;
   outputSchema?: Record<string, unknown>; // when set, provider returns JSON matching this schema
@@ -22,9 +24,12 @@ interface GenerateRequest {
 interface GenerateResult {
   text: string;
   object?: unknown; // parsed when outputSchema was supplied
+  toolCalls?: ToolCall[]; // { id, name, input }; only when `tools` were offered
   usage: { inputTokens: number; outputTokens: number };
 }
 ```
+
+A `tool` message answers an assistant `ToolCall` by its `id`.
 
 ### The Workers AI adapter
 
@@ -49,6 +54,41 @@ its heuristic without calling a model. See [Configuration](./configuration.md) f
 Embeddings are a **separate port** (`EmbeddingsProvider`): Workers AI
 (`createWorkersAIEmbeddings`, `@cf/baai/bge-base-en-v1.5`, 768 dims by default), or the test-kit's
 deterministic `LocalEmbeddingsProvider` (`EMBEDDINGS_PROVIDER=local`) for development.
+
+### Which tier each use-case asks for
+
+A use-case's `tier` input overrides these defaults.
+
+| Use-case                                                      | Default tier                                                                                                                                                    |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `content-ai`: `translateEntry`, `autofillField`               | `balanced`                                                                                                                                                      |
+| `content-ai`: `summarizeEntry`, `suggestEntryTags`            | `fast`                                                                                                                                                          |
+| `media-ai`: alt text, asset auto-tag                          | `fast`                                                                                                                                                          |
+| `draftEntry`, `canvasToEntry` (`generation.ts`), `auditEntry` | `balanced`                                                                                                                                                      |
+| `ai-actions` (`runAIAction`)                                  | the action's own `tier` (default `balanced`)                                                                                                                    |
+| `workflow-copilot` (`workflow_copilot`)                       | `balanced`                                                                                                                                                      |
+| Workflow AI nodes (`workflow-nodes/ai.ts`)                    | `fast` for `ai.classify`, `ai.summarize`, `ai.suggest_tags`, `ai.moderate`, `ai.enrich`; `balanced` for `ai.router`, `ai.assess`, `ai.translate`, `ai.autofill` |
+| Agent runtime activities (`generateFields`, `classify`)       | `fast`                                                                                                                                                          |
+| Coworker (assistant)                                          | `flagship`, falling back to `fast`                                                                                                                              |
+
+### Budget and untrusted content
+
+Every interactive AI call goes through `generateWithBudget` (`packages/application/src/ai-budget.ts`),
+so the HTTP API, MCP and agents are metered the same way. It consults the per-space `CostGuardDO`
+before the call (`consume`: a request against `AI_MAX_REQUESTS_PER_WINDOW`, default 60, and
+`AI_MAX_TOKENS_PER_WINDOW`, default 200 000, per `AI_BUDGET_WINDOW_SECONDS`, default 60), throws a
+`RateLimitedError` (HTTP 429, with a retry-after hint) when the space is over a ceiling, then
+`settle`s the observed tokens. Setting either ceiling to `0` turns metering off, and without the
+binding nothing is metered. Background agent spend has its own `AI_AGENT_*` window (see
+[Agent schedules](#agent-schedules)); the Coworker meters each model step against the interactive
+budget. `AI_MODE=mock` skips the model and the budget. See [Configuration](./configuration.md).
+
+Entry field values are untrusted: any writer, or an agent, can set them, yet they flow into
+prompts. Prompt builders wrap them with `wrapUntrusted` (a `<user_content>` span; a closing tag in
+the content is stripped) and add `UNTRUSTED_CONTENT_GUARD` to the system prompt, telling the model
+to treat that span only as data (`packages/application/src/ai-prompt.ts`). The assistant wraps
+tool results the same way. It blunts instruction hijacks, notably a moderation classifier being
+talked into `flagged: false`; moderation additionally fails closed (see [moderate](#moderate)).
 
 ## Content generation
 
@@ -176,111 +216,63 @@ selects one leg), the GraphQL `search` resolver, and the `content_search` MCP to
 
 ## MCP server
 
-The MCP server is served by the api Worker, at **`/mcp`** (`https://api.<domain>/mcp`, and on the
-admin origin through the web gateway).
-It is a **stateless streamable-HTTP** server built on the v2 TypeScript SDK
-(`@modelcontextprotocol/server`): tools are defined in `packages/http/src/mcp/server.ts`, and one
-shared handler (`packages/http/src/mcp/http.ts`, `createHandler`) serves both protocol eras:
+The api Worker serves MCP at `/mcp`, with 123 tools and published agent skills. Transport, auth,
+connecting a client, the tool catalog and skills are in [MCP server](./mcp.md). The assistant in the
+admin calls the same tools in-process (see [Coworker](#coworker-the-admins-assistant)).
 
-- **2026-07-28** clients send self-contained requests with no `initialize` handshake. A fresh
-  client makes its first call in two requests instead of four, and it caches `tools/list` for
-  five minutes.
-- **2025-era** clients get the stateless fallback: a fresh server for each request, as before.
+## Coworker: the admin's assistant
 
-Auth is a bearer token resolved like the HTTP API: the MCP root token (`MCP_TOKEN`), a hashed API
-key, an OAuth access token, or a personal access token (`packages/http/src/mcp/routes.ts`). MCP mounts
-only where the management surface does (`ROLE` includes `management`). On a persistent deployment
-it also requires an explicit `MCP_TOKEN`; the in-memory store falls back to `dev-mcp-token`, and
-`pnpm dev` sets `MCP_TOKEN=dev-mcp-token`, so a local client can connect to
-`http://localhost:5173/mcp`. Every tool calls `authorize(principal, scope, space)`
-before delegating to a use-case, and `space`/`environment` default to the seeded values when
-omitted. Request bodies are capped at 32 MiB, which fits the importers' 20 MB payload limit after
-JSON escaping. The SDK answers internal failures with a bare 500, so the Worker logs them through
-the handler's `onerror`.
+`AssistantAgent` (`packages/http/src/assistant/agent.ts`) is the chat panel in the admin, one
+Durable Object per person hosted by the engine (binding `ASSISTANT_AGENT`, reached at
+`/agents/assistant-agent/<person>` through the web Worker and the api). It is built on
+`AIChatAgent`, so the conversation lives in the object's SQLite and a reply keeps streaming if the
+tab goes away. User-facing behaviour is in the
+[Coworker guide](https://docs.contentworker.app/guides/coworker/).
 
-**Per-request cost.** Each request builds a server bound to the caller's principal, so building it
-has to be cheap. Every tool's Zod input schema, and its JSON Schema conversion, is built once per
-isolate and shared (`toolSchema` in `packages/http/src/mcp/server.ts`). Building a server takes about
-0.1 ms; without the cache it took about 2 ms, and every `tools/list` added another millisecond. As
-a consequence, **a tool's input schema must never depend on the principal or deps**;
-authorization belongs in the handler. `preloadSchemas()` runs at module scope, so the SDK's own
-schemas are built during isolate warm-up rather than on the first request.
-
-**Connecting a client.** With `OAUTH_ISSUER` set, the server is installable as a connector in
-Claude, ChatGPT and MCP-capable IDEs: an unauthenticated request answers with
-`WWW-Authenticate: Bearer resource_metadata="…"` (RFC 9728), the client fetches
-`/.well-known/oauth-protected-resource`, registers itself dynamically, and runs an
-authorization-code + PKCE flow that a human approves on the admin origin after signing in to the
-web app, choosing the space the connection works in (a fleet deployment's issuer and resource are
-`https://<domain>` and `https://<domain>/mcp`). CLI clients that cannot open a browser use
-the device flow, and CI uses a personal access token. Whatever the route, the resulting token is
-an ordinary API key — so an agent can still never exceed the scopes the approving human holds.
-See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
-
-### Tools
-
-The MCP server exposes **123 tools** — one per major Management/Delivery capability. Each tool
-calls `authorize` before delegating to the same use-case as the HTTP route.
-
-| Category      | Tools                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Model         | `model_list_content_types`, `model_get_content_type`, `model_create_content_type`, `model_publish_content_type`                                                                                                                                                                                                                                                                                  |
-| Entries       | `entries_query`, `entries_get`, `entries_create`, `entries_update`, `entries_publish`, `entries_unpublish`, `entries_bulk_action`, `entries_trash`, `entries_list_trashed`, `entries_restore`, `entries_purge`, `entries_duplicate`, `entries_list_versions`, `entries_diff_versions`, `entries_restore_version`, `entries_set_metadata`                                                         |
-| AI            | `generate_draft`, `entry_from_canvas`, `entry_translate`, `entry_summarize`, `entry_autofill_field`, `entry_suggest_tags`, `entry_apply_tags`, `entry_audit`, `entry_moderate`                                                                                                                                                                                                                   |
-| Search        | `content_search` (hybrid), `content_semantic_search`, `content_related`, `content_duplicates`                                                                                                                                                                                                                                                                                                    |
-| Roles         | `roles_list`, `role_create`, `role_update`, `role_delete`                                                                                                                                                                                                                                                                                                                                        |
-| Team          | `role_presets_list`, `team_list`, `role_preset_assign` (first-run setup is HTTP-only)                                                                                                                                                                                                                                                                                                            |
-| Releases      | `releases_list`, `releases_get`, `releases_create`, `releases_add_entry`, `releases_publish`                                                                                                                                                                                                                                                                                                     |
-| Collaboration | `comments_list`, `comments_add`, `tasks_list`, `tasks_create`, `tasks_resolve`, `workflow_transition`                                                                                                                                                                                                                                                                                            |
-| Workflows     | `workflow_save_draft`, `workflow_publish`, `workflow_versions`, `workflow_validate`, `workflow_copilot`, `workflow_run_start`, `workflow_run_list`, `workflow_run_get`, `workflow_run_cancel`, `workflow_event_deliver`, `workflow_task_list`, `workflow_task_decide`, `workflow_settings_set`                                                                                                   |
-| Taxonomy      | `taxonomy_list_tags`, `taxonomy_create_tag`, `taxonomy_list_concepts`, `taxonomy_create_concept`, `taxonomy_create_scheme`                                                                                                                                                                                                                                                                       |
-| Assets        | `assets_list`, `asset_set_metadata`, `asset_usage`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`, `asset_video_create`, `asset_video_refresh`                                                                                                                                                                                                                              |
-| Branching     | `environments_compare`, `environments_merge`, `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environment_export`, `environment_import`, `environment_clone`, `environment_delete` |
-| Platform      | `functions_list`, `function_create`, `function_delete`, `app_extensions_list`, `app_extension_create`, `app_extension_delete`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `schedule_action`, `agent_schedule_create`, `agent_schedule_list`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject`, `audit_log_list` |
-
-Canonical list: `packages/http/src/mcp/server.ts`. The workflow tools declare MCP tool annotations
-(`readOnlyHint` on reads, validate and the copilot; `destructiveHint` on `workflow_run_cancel`;
-`idempotentHint` where a repeat changes nothing), and run the same use-cases and scope checks as
-the `…/workflows`, `…/workflow-runs` and `…/workflow-tasks` routes.
-
-### Skills
-
-The server also publishes **agent skills** through the MCP Skills extension (SEP-2640,
-`io.modelcontextprotocol/skills`). A skill is a `SKILL.md` describing a task end to end: which
-tools to call, in what order, and which rules trip agents up. Clients that support the extension
-list skills with `skills/list` and read them as `skill://contentworker/<name>/SKILL.md` resources.
-
-| Skill                | Covers                                                                                   |
-| -------------------- | ---------------------------------------------------------------------------------------- |
-| `model-content`      | Creating and publishing content types, choosing field types, `model_typescript`          |
-| `author-and-publish` | Finding and editing entries, versions, releases, scheduling, workflow runs and approvals |
-| `import-content`     | Field mapping, `identityField`, analyze → execute, publishing the result                 |
-
-The sources live in `packages/http/skills/<name>/`. A Worker has no filesystem, so the files
-are embedded into `packages/http/src/mcp/skills.generated.ts`, the same approach as the docs. After
-editing a skill, run `pnpm --filter @contentworker/http generate:skills`; a test fails if the
-embed drifts. The catalog is loaded with `strict: true`, so a malformed skill fails loudly instead
-of being skipped. If loading fails, the error is logged and the tools are served without skills;
-the load is retried on the next request. It is digested once per isolate and then attached to
-each request's server. Like the `docs_*` tools, skills describe the product rather than any
-tenant's content, so being authenticated is the only gate.
-
-Because the tools are thin wrappers over the use-cases, the MCP surface inherits all validation,
-referential integrity, RBAC, and event emission for free.
+- **Model.** `assistantModel` (`model.ts`) uses Workers AI's `flagship` tier (through AI Gateway
+  when `AI_GATEWAY_ID` is set), falls back to `fast`, and behind both sits a deterministic mock that
+  speaks the same tool protocol. The mock answers every turn when `AI_MODE=mock` or the `AI` binding
+  is absent, and takes over a turn when the models error or say nothing within 20 s. Gateway
+  requests carry `NO_LOG_PAYLOAD`, so the gateway keeps no prompt or answer.
+- **Tools are MCP tools, run in-process as the person** (`tools.ts`): each call is a JSON-RPC
+  request to the handler `/mcp` serves, authenticated as the person's own principal and pinned to
+  the page's space and environment, so the assistant can never do what an MCP client with their
+  access couldn't. Only the tools named in `ASSISTANT_TOOLS` (`packages/domain/src/assistant`) are
+  offered. Reads run directly, and every write a model proposes waits for the person's confirm
+  (`needsApproval`). A page edit made through `act` confirms only actions (publish,
+  unpublish, trash, purge, restore a version, bulk change, schedule, publish a release), which stop
+  at a confirm card; plain edits (save a draft, create, tag, comment) run at once. A confirm on `entries_publish`, `entries_unpublish` or
+  `entries_restore_version` is held to the entry's version when the card was made, so a newer
+  draft makes it a 409.
+- **Page edits skip the model.** `act` runs the exact tool call for what was pressed and joins the
+  conversation as a tool call of its own (`direct_` ids); `resolve` answers its confirm card.
+- **Trust.** The object verifies the principal the web Worker signed for its path (the
+  `ASSISTANT_PRINCIPAL_KEY`, see [Auth & RBAC](./auth-and-rbac.md)), re-checks the person (enabled,
+  session live) on every frame, turn and `act`, and runs only tool calls it made itself (`model:`
+  records) or `act` made (`direct:`). Tool results and page labels are wrapped with `wrapUntrusted`.
+- **Limits.** At most 30 page edits and turns per person per minute (`ASSISTANT_RATE`); each model
+  step is one request against the space's interactive AI budget, a refused step aborts the turn,
+  and mock steps are not metered. A conversation untouched for 30 days is deleted
+  (`RETENTION_MS`); an unanswered confirm card lapses after a day.
 
 ## Agent runtime
 
 `packages/agent-runtime` runs durable agent **workflows** behind an engine-agnostic facade.
+Editorial workflow definitions (the graphs authored in the admin) run on a different path: the
+graph interpreter `runGraph` in the same package, hosted by `EditorialWorkflow`; see
+[Architecture](./architecture.md#editorial-workflow-runs).
 
 ```ts
-type WorkflowName = 'enrich' | 'moderate' | 'curate' | 'repurpose';
+type WorkflowName = 'enrich' | 'moderate' | 'curate' | 'repurpose' | 'review';
 interface AgentRuntime {
   run(workflow, input): Promise<AgentRunResult>;
 }
 ```
 
 On-publish hooks (`AGENTS_ENRICH`, `AGENTS_MODERATE`) run `enrich` then `moderate`. `curate` and
-`repurpose` are available for on-demand orchestration (API, MCP, and agent schedules).
+`repurpose` are available for on-demand orchestration (API, MCP, and agent schedules). `review` is
+the detached watcher that waits for a human decision (see
+[Human-in-the-loop reviews](#human-in-the-loop-reviews)); it is not recorded in the agent ledger.
 
 `AGENT_RUNTIME=cloudflare-workflows` (with the `AGENT_WF` Workflow binding) routes on-publish and
 scheduled agent runs through `CloudflareWorkflowsAgentRuntime` (`packages/platform/src/workflows.ts`),
@@ -291,7 +283,8 @@ entries and acks without waiting on the result. Otherwise, and whenever the bind
 agents run on `InProcessAgentRuntime` (non-durable).
 
 The crucial seam is `Activities` — the side-effecting operations (`loadEntry`, `generateFields`,
-`applyFields`, `classify`, `record`). Workflow functions are **pure orchestration** over
+`applyFields`, `classify`, `record`, `createReview`, `armReview`, `recordRun`, `retractEntry`,
+`settleReview`). Workflow functions are **pure orchestration** over
 `Activities`, so the _same_ workflow code runs:
 
 - **`InProcessAgentRuntime`** — directly in the calling isolate (dev, tests, and every
@@ -344,10 +337,11 @@ Derives channel variants (e.g. social, newsletter) from entry text:
 interface AgentRunResult {
   workflow: WorkflowName;
   entryId: string;
-  status: 'completed' | 'needs_review' | 'held' | 'skipped';
+  status: 'completed' | 'needs_review' | 'held' | 'skipped' | 'rejected';
   decisions: string[]; // audit trail
   usage: { inputTokens: number; outputTokens: number };
   proposed?: EntryFields; // present when needs_review
+  reviewId?: string; // the persisted review awaiting a decision (when needs_review)
 }
 ```
 

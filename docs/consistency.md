@@ -17,6 +17,11 @@ replication, Workers Caching, KV, Queues and the one-minute cron. This page is t
   won, the guard fails, D1 rolls back the whole batch, and `withTransaction` throws
   `TransactionConflictError` (`@contentworker/ports`). Callers retry or treat the lost race as a
   no-op. A unique-constraint violation at commit throws `ConflictError`.
+- **A stale write is refused with `expectedVersion`.** A publish, unpublish or version restore can
+  carry the `currentVersion` the caller read (`?expectedVersion=N` on the Management route, the
+  `{ expectedVersion }` option of `@contentworker/sdk-management`, `assertExpectedVersion` in
+  `packages/application/src/publishing.ts`). If a draft was saved since, the write is a 409 that
+  changes nothing; without it, the write acts on the entry as it is.
 - **The outbox row rides in the same batch** as the state change it describes, so an event
   exists iff the commit happened (the transactional outbox).
 - **Event delivery is at-least-once.** The relay claims outbox rows with a 60-second lease
@@ -38,13 +43,13 @@ replication, Workers Caching, KV, Queues and the one-minute cron. This page is t
 
 Every Worker opens its D1 access through `env.DB.withSession(…)` (`wireEdge`):
 
-| Caller                         | Session start                                                                 |
-| ------------------------------ | ----------------------------------------------------------------------------- |
-| api, request with `x-cw-bookmark` | That bookmark: at least as fresh as the client's last response             |
-| api, `POST`/`PUT`/`PATCH`/`DELETE` | `first-primary`                                                           |
-| api, other reads               | `first-unconstrained` (any replica)                                           |
-| delivery (gateway and cache miss) | `first-unconstrained`: delivery tolerates replica lag by design            |
-| engine (queues, cron)          | `first-primary` (the `wireEdge` default)                                      |
+| Caller                             | Session start                                                   |
+| ---------------------------------- | --------------------------------------------------------------- |
+| api, request with `x-cw-bookmark`  | That bookmark: at least as fresh as the client's last response  |
+| api, `POST`/`PUT`/`PATCH`/`DELETE` | `first-primary`                                                 |
+| api, other reads                   | `first-unconstrained` (any replica)                             |
+| delivery (gateway and cache miss)  | `first-unconstrained`: delivery tolerates replica lag by design |
+| engine (queues, cron)              | `first-primary` (the `wireEdge` default)                        |
 
 The web Worker forwards `x-cw-bookmark` both ways untouched, so the admin gets read-your-writes
 through the gateway. Read replication is turned on per database by `scripts/provision.sh`
@@ -62,29 +67,60 @@ through the gateway. Read replication is turned on per database by `scripts/prov
   R2; retention prunes relayed outbox rows and webhook deliveries hourly
   (`EVENT_RETENTION_HOURS`, default 168).
 
+## Delivery cache
+
+Delivery has two cache layers:
+
+- **Workers Caching** in front of the delivery Worker's `Delivery` entrypoint, keyed by visibility
+  profile and canonical URL, purged by tag (the purge path and its pacing are in
+  [Events & webhooks](./events-and-webhooks.md#delivery-cache-purges); the layout in
+  [Architecture](./architecture.md#appsdelivery-the-public-cda)).
+- **The KV `Cache` port** inside the delivery routes: a read-through cache with **tag-based
+  invalidation**. The adapter (`@contentworker/adapters/cache-kv`, bound via `KV_CACHE`) uses
+  tag-version keys: `invalidateTag` writes a new version under the tag, each cached render
+  snapshots the versions of its tags, and a read whose snapshot no longer matches is a miss. Entry
+  TTLs come from `DELIVERY_CACHE_TTL_SECONDS` (single-entry renders) and
+  `DELIVERY_LIST_TTL_SECONDS` (list results); the TTL only bounds garbage collection. The engine
+  invalidates tags after a publish, including for entries that _embed_ the changed one, thanks to
+  the reverse-reference tag set. KV propagates writes to other locations eventually (about 60 s).
+
+## Durable state that is not derived
+
+Most state can be rebuilt (see [Backup & restore](./backup-and-restore.md)). Two Durable Object
+kinds hold state that cannot:
+
+- **`EditorialWorkflow`** (Cloudflare Workflows, `EDITORIAL_WF`): a workflow run is one instance,
+  with its id the run id (`${runId}-g${n}` after a continue-as-new). Each step is persisted and
+  replayed after a crash; approval deadlines, event waits and `control.wait` timers are durable
+  waits, with no cron behind them. Starting is idempotent on the instance id. Without the binding,
+  run actions answer 501 while definitions and reads still work.
+- **`AssistantAgent`** (one Durable Object per person): the Coworker conversation lives in the
+  object's SQLite, and a reply keeps streaming if the tab goes away. A conversation untouched for
+  30 days is deleted (`RETENTION_MS`, `packages/http/src/assistant/agent.ts`).
+
 ## Timing, staleness and failure behavior
 
-| Behavior                                              | Guarantee                                                                                                                                                                                                                                       |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Management/Preview read after your own write          | Fresh when the client echoes `x-cw-bookmark`; otherwise may come from a replica that lags the primary                                                                                                                                           |
-| Delivery read after publish                           | Eventually consistent. The engine enqueues one purge tag per space:environment per consumed batch; the delivery Worker purges at most 5 calls a minute (100 tags each). Until purged, responses are fresh for 60 s, then served stale while revalidating; a missed purge means a stale copy can be served for up to a day (`stale-while-revalidate=86400`) |
-| Delivery read after an alias repoint                  | `environment_alias.changed` purges the alias's tag; responses are tagged with both the path's environment and the resolved one                                                                                                                 |
-| Event latency (webhooks, cache, search) after a write | Sub-second (the api's post-commit `waitUntil` relay); worst case about a minute via the cron sweep after a crash                                                                                                                               |
-| Scheduled publish/unpublish at time T                 | Within about 60 s (one-minute cron)                                                                                                                                                                                                             |
-| Recurring agent schedule (`AGENTS_SCHEDULES=true`)    | Within about 60 s; each firing is claimed by compare-and-set on `nextRunAt`, so overlapping ticks never double-run one                                                                                                                         |
-| Lexical search after publish                          | Indexed by the events consumer into `SearchShardDO`; seconds. Version-checked, so a late older version is ignored                                                                                                                             |
-| Semantic search after publish                         | Vectorize indexes asynchronously: expect seconds of lag. Vectorize caps a query at `MAX_TOP_K` chunks                                                                                                                                         |
-| Revoked API key or changed role                       | The space's cached principals are dropped (`invalidateCachedPrincipals`); the next request re-authenticates                                                                                                                                   |
-| Live Content SSE                                      | `LiveHubDO` per space:environment; an object restart drops streams (clients reconnect)                                                                                                                                                         |
-| On-publish agents                                     | Started on `AgentWorkflow` from `contentworker-agents`, 25 entries per instance, fire-and-forget; a retry can start a duplicate pass (runs are recorded proposals; a duplicate moderation hold re-retracts)                                       |
-| Moderation coverage                                   | `AGENTS_MODERATE_BLOCKING=true` gates single-entry publish only (REST and MCP). Bulk, release and scheduled publishes rely on post-publish moderation                                                                                          |
-| Plugin execution                                      | One Worker Loader isolate per plugin, no network, capabilities passed per call; host timeout 2 s per call. Without `PLUGIN_LOADER`, installed plugins never execute                                                                            |
-| Import chunks                                         | Staged in R2 (`MEDIA_BUCKET`, `imports/`); without the bucket the chunks stay claimable and the job does not progress                                                                                                                         |
-| AI budget metering                                    | `CostGuardDO` per space; absent binding means unmetered                                                                                                                                                                                         |
-| Auth failure limiting                                 | `RateLimiterDO` per client IP; per-isolate fallback without the binding                                                                                                                                                                         |
-| Request-rate limiting                                 | Native `ratelimits` bindings: per Cloudflare location and approximate, an abuse guard rather than quota accounting                                                                                                                             |
-| Reindex cooldown                                      | KV-backed, approximate across locations (slices are idempotent)                                                                                                                                                                                 |
-| Dead letters                                          | `contentworker-events-dlq` is logged and acked; `contentworker-purge-dlq` holds purges that exhausted 10 retries                                                                                                                              |
+| Behavior                                              | Guarantee                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Management/Preview read after your own write          | Fresh when the client echoes `x-cw-bookmark`; otherwise may come from a replica that lags the primary                                                                                                                                                                                                                                                                                                                       |
+| Delivery read after publish                           | Eventually consistent. The engine enqueues one purge tag per space:environment per consumed batch; the delivery Worker drains them at the purge pacing described in [Events & webhooks](./events-and-webhooks.md#delivery-cache-purges). Until purged, responses are fresh for 60 s, then served stale while revalidating; a missed purge means a stale copy can be served for up to a day (`stale-while-revalidate=86400`) |
+| Delivery read after an alias repoint                  | `environment_alias.changed` purges the alias's tag; responses are tagged with both the path's environment and the resolved one                                                                                                                                                                                                                                                                                              |
+| Event latency (webhooks, cache, search) after a write | Sub-second (the api's post-commit `waitUntil` relay); worst case about a minute via the cron sweep after a crash                                                                                                                                                                                                                                                                                                            |
+| Scheduled publish/unpublish at time T                 | Within about 60 s (one-minute cron)                                                                                                                                                                                                                                                                                                                                                                                         |
+| Recurring agent schedule (`AGENTS_SCHEDULES=true`)    | Within about 60 s; each firing is claimed by compare-and-set on `nextRunAt`, so overlapping ticks never double-run one                                                                                                                                                                                                                                                                                                      |
+| Lexical search after publish                          | Indexed by the events consumer into `SearchShardDO`; seconds. Version-checked, so a late older version is ignored                                                                                                                                                                                                                                                                                                           |
+| Semantic search after publish                         | Vectorize indexes asynchronously: expect seconds of lag. Vectorize caps a query at `MAX_TOP_K` chunks                                                                                                                                                                                                                                                                                                                       |
+| Revoked API key or changed role                       | The space's cached principals are dropped (`invalidateCachedPrincipals`); the next request re-authenticates                                                                                                                                                                                                                                                                                                                 |
+| Live Content SSE                                      | `LiveHubDO` per space:environment; an object restart drops streams (clients reconnect)                                                                                                                                                                                                                                                                                                                                      |
+| On-publish agents                                     | Started on `AgentWorkflow` from `contentworker-agents`, 25 entries per instance, fire-and-forget; a retry can start a duplicate pass (runs are recorded proposals; a duplicate moderation hold re-retracts)                                                                                                                                                                                                                 |
+| Moderation coverage                                   | `AGENTS_MODERATE_BLOCKING=true` gates single-entry publish only (REST and MCP). Bulk, release and scheduled publishes rely on post-publish moderation                                                                                                                                                                                                                                                                       |
+| Plugin execution                                      | One Worker Loader isolate per plugin, no network, capabilities passed per call; host timeout 2 s per call. Without `PLUGIN_LOADER`, installed plugins never execute                                                                                                                                                                                                                                                         |
+| Import chunks                                         | Staged in R2 (`MEDIA_BUCKET`, `imports/`); without the bucket the chunks stay claimable and the job does not progress                                                                                                                                                                                                                                                                                                       |
+| AI budget metering                                    | `CostGuardDO` per space; absent binding means unmetered                                                                                                                                                                                                                                                                                                                                                                     |
+| Auth failure limiting                                 | `RateLimiterDO` per client IP; per-isolate fallback without the binding                                                                                                                                                                                                                                                                                                                                                     |
+| Request-rate limiting                                 | Native `ratelimits` bindings: per Cloudflare location and approximate, an abuse guard rather than quota accounting                                                                                                                                                                                                                                                                                                          |
+| Reindex cooldown                                      | KV-backed, approximate across locations (slices are idempotent)                                                                                                                                                                                                                                                                                                                                                             |
+| Dead letters                                          | `contentworker-events-dlq` is logged and acked; `contentworker-purge-dlq` (purges that exhausted 10 retries) is logged, counted in `contentworker_purge_dead_letters_total` and dropped; those responses age out on their `max-age` plus stale-while-revalidate                                                                                                                                                             |
 
 ## Choosing / tuning
 
