@@ -9,6 +9,9 @@
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": false,
   "preview_urls": false,
+  // Minified for a smaller script and a faster cold start; the uploaded source maps keep stack
+  // traces readable.
+  "minify": true,
   "upload_source_maps": true,
   // Edge-facing and cache-first: no Smart Placement (a cache hit should answer from the nearest
   // colo; misses read D1 replicas, which are themselves spread out).
