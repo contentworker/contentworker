@@ -1,4 +1,4 @@
-import { AGENT_WORKFLOWS, BULK_JOB_MAX_ITEMS } from '@contentworker/application';
+import { AGENT_WORKFLOWS, BULK_JOB_MAX_ITEMS, MAX_ASSET_MOVE } from '@contentworker/application';
 import { SPACE_ID_PATTERN, ValidationError } from '@contentworker/domain';
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
@@ -259,6 +259,19 @@ export const createAssetBody = z.object({
   contentType: z.string().min(1).max(256),
   title: zLocalized.optional(),
   description: zLocalized.optional(),
+  folderId: zId.optional().describe('File it in this folder (absent: the library root)'),
+});
+export const moveAssetsBody = z.object({
+  ids: z.array(zId).min(1).max(MAX_ASSET_MOVE),
+  folderId: zId.nullable().describe('The folder to file them in; null takes them to the root'),
+});
+export const assetFolderBody = z.object({
+  name: z.string().min(1).max(128),
+  parentId: zId.nullable().optional().describe('The folder to create it in (absent: the root)'),
+});
+export const assetFolderPatchBody = z.object({
+  name: z.string().min(1).max(128).optional(),
+  parentId: zId.nullable().optional().describe('Move it here; null moves it to the root'),
 });
 export const createVideoAssetBody = z.object({
   fileName: z.string().min(1).max(1024),

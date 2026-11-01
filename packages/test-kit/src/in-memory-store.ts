@@ -3,6 +3,8 @@ import {
   type AgentSchedule,
   type ApiKey,
   type Asset,
+  type AssetFolder,
+  assetKind,
   type Comment,
   type Concept,
   type ConceptScheme,
@@ -28,6 +30,7 @@ import {
   type Tag,
   type Task,
   type UniqueClaim,
+  ValidationError,
   type Webhook,
   type WorkflowDefinition,
   type WorkflowNodeRunRecord,
@@ -46,6 +49,7 @@ import type {
   AIActionRepo,
   AppExtension,
   AppExtensionRepo,
+  AssetFolderRepo,
   AssetRepo,
   AuditEntry,
   AuditRepo,
@@ -94,7 +98,7 @@ import type {
   WorkflowRunRepo,
   WorkflowTaskRepo,
 } from '@contentworker/ports';
-import { TransactionConflictError } from '@contentworker/ports';
+import { DEFAULT_ASSET_SORT, TransactionConflictError } from '@contentworker/ports';
 
 const scopeKey = (s: Scope) => `${s.spaceId}::${s.environmentId}`;
 
@@ -215,6 +219,8 @@ export class InMemoryContentStore implements ContentStore {
         this.publishedData,
         this.assetData,
         this.publishedAssetData,
+        this.assetTouched,
+        this.assetFolderData,
         this.referenceData,
         this.agentRunData,
         this.releaseData,
@@ -512,24 +518,111 @@ export class InMemoryContentStore implements ContentStore {
 
   private readonly assetData = new Map<string, Asset>();
   private readonly publishedAssetData = new Map<string, PublishedAsset>();
+  /** Write order per asset key, standing in for D1's `updated_at` (the clock may be frozen). */
+  private readonly assetTouched = new Map<string, number>();
+  private assetWrites = 0;
+  private readonly assetFolderData = new Map<string, AssetFolder>();
+
+  private touchAsset(scope: Scope, asset: Asset): void {
+    const key = `${scopeKey(scope)}::${asset.id}`;
+    this.assetData.set(key, asset);
+    this.assetTouched.set(key, ++this.assetWrites);
+  }
 
   readonly assets: AssetRepo = {
     get: async (scope, id) => this.assetData.get(`${scopeKey(scope)}::${id}`) ?? null,
     getMany: async (scope, ids) =>
       [...new Set(ids)].flatMap((id) => this.assetData.get(`${scopeKey(scope)}::${id}`) ?? []),
     list: async (scope, query) => {
+      // As the D1 store: filters, then (sort value, id) keyset order, a page plus one.
       const prefix = `${scopeKey(scope)}::`;
+      const f = query.filters ?? {};
+      const sort = query.sort ?? DEFAULT_ASSET_SORT;
+      const sortValue = (key: string, a: Asset): number =>
+        sort.field === 'size'
+          ? (a.file.size ?? -1)
+          : sort.field === 'createdAt'
+            ? Date.parse(a.createdAt ?? '1970-01-01T00:00:00Z')
+            : (this.assetTouched.get(key) ?? 0);
+      const mimeOf = (ct: string) => (ct.split(';')[0] ?? '').trim().toLowerCase();
+      const wanted = f.mime?.trim().toLowerCase();
       const rows = [...this.assetData.entries()]
         .filter(([k]) => k.startsWith(prefix))
-        .map(([, v]) => v);
-      const skip = query.skip ?? 0;
-      return rows.slice(skip, skip + (query.limit ?? 100));
+        .filter(([, a]) =>
+          f.status === undefined
+            ? a.status !== 'archived'
+            : f.status === 'all' || a.status === f.status,
+        )
+        .filter(([, a]) => !f.kind || assetKind(a.file.contentType) === f.kind)
+        .filter(([, a]) =>
+          !wanted
+            ? true
+            : wanted.endsWith('/*')
+              ? mimeOf(a.file.contentType).startsWith(wanted.slice(0, -1))
+              : mimeOf(a.file.contentType) === wanted,
+        )
+        .filter(([, a]) => !f.tag || a.metadata.tags.includes(f.tag))
+        .filter(([, a]) => (f.folderId === undefined ? true : (a.folderId ?? null) === f.folderId))
+        .map(([k, a]) => ({ a, v: sortValue(k, a) }));
+      const dir = sort.direction === 'asc' ? 1 : -1;
+      rows.sort((x, y) => dir * (x.v - y.v || x.a.id.localeCompare(y.a.id)));
+      let start = 0;
+      if (query.cursor) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(query.cursor);
+        } catch {
+          parsed = null;
+        }
+        if (
+          !Array.isArray(parsed) ||
+          typeof parsed[0] !== 'number' ||
+          typeof parsed[1] !== 'string'
+        ) {
+          throw new ValidationError([
+            { field: 'cursor', message: 'cursor is not one this list returned' },
+          ]);
+        }
+        const [v, id] = parsed as [number, string];
+        start = rows.findIndex(
+          (r) => dir * (r.v - v) > 0 || (r.v === v && dir * r.a.id.localeCompare(id) > 0),
+        );
+        if (start < 0) start = rows.length;
+      }
+      const limit = Math.min(Math.max(1, query.limit ?? 100), 1000);
+      const page = rows.slice(start, start + limit);
+      const last = page.at(-1);
+      return {
+        items: page.map((r) => r.a),
+        ...(rows.length > start + limit && last
+          ? { nextCursor: JSON.stringify([last.v, last.a.id]) }
+          : {}),
+      };
     },
-    create: async (scope, asset) => {
-      this.assetData.set(`${scopeKey(scope)}::${asset.id}`, asset);
+    create: async (scope, asset) => this.touchAsset(scope, asset),
+    save: async (scope, asset) => this.touchAsset(scope, asset),
+    moveToFolder: async (scope, ids, folderId) => {
+      if (folderId !== null && !this.assetFolderData.has(`${scopeKey(scope)}::${folderId}`)) {
+        throw new TransactionConflictError();
+      }
+      for (const id of new Set(ids)) {
+        const current = this.assetData.get(`${scopeKey(scope)}::${id}`);
+        if (!current) continue;
+        const { folderId: _old, ...rest } = current;
+        this.touchAsset(scope, folderId === null ? rest : { ...rest, folderId });
+      }
     },
-    save: async (scope, asset) => {
-      this.assetData.set(`${scopeKey(scope)}::${asset.id}`, asset);
+    delete: async (scope, id) => {
+      // As the D1 store's guard: no entry may link to it.
+      const prefix = `${scopeKey(scope)}::`;
+      const linked = [...this.referenceData.entries()].some(
+        ([k, edges]) => k.startsWith(prefix) && edges.some((e) => e.toId === id),
+      );
+      if (linked) throw new TransactionConflictError();
+      const key = `${prefix}${id}`;
+      this.assetData.delete(key);
+      this.assetTouched.delete(key);
+      this.publishedAssetData.delete(key);
     },
     putPublished: async (scope, snapshot) => {
       this.publishedAssetData.set(`${scopeKey(scope)}::${snapshot.assetId}`, snapshot);
@@ -550,6 +643,62 @@ export class InMemoryContentStore implements ContentStore {
         .map(([, v]) => v);
       const skip = query.skip ?? 0;
       return rows.slice(skip, skip + (query.limit ?? 100));
+    },
+  };
+
+  readonly assetFolders: AssetFolderRepo = {
+    get: async (scope, id) => this.assetFolderData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    list: async (scope) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return [...this.assetFolderData.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([, f]) => f)
+        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    },
+    create: async (scope, folder) => {
+      const prefix = `${scopeKey(scope)}::`;
+      // As D1's unique index on (parent, name).
+      for (const [k, f] of this.assetFolderData) {
+        if (k.startsWith(prefix) && f.parentId === folder.parentId && f.name === folder.name) {
+          throw new ConflictError('A unique value is already taken');
+        }
+      }
+      this.assetFolderData.set(`${prefix}${folder.id}`, folder);
+    },
+    save: async (scope, folder, previousPath) => {
+      const prefix = `${scopeKey(scope)}::`;
+      for (const [k, f] of this.assetFolderData) {
+        if (
+          k.startsWith(prefix) &&
+          f.id !== folder.id &&
+          f.parentId === folder.parentId &&
+          f.name === folder.name
+        ) {
+          throw new ConflictError('A unique value is already taken');
+        }
+      }
+      if (folder.path !== previousPath) {
+        for (const [k, f] of this.assetFolderData) {
+          if (k.startsWith(prefix) && f.path.startsWith(previousPath)) {
+            this.assetFolderData.set(k, {
+              ...f,
+              path: folder.path + f.path.slice(previousPath.length),
+            });
+          }
+        }
+      }
+      this.assetFolderData.set(`${prefix}${folder.id}`, folder);
+    },
+    delete: async (scope, id) => {
+      const prefix = `${scopeKey(scope)}::`;
+      const hasChild = [...this.assetFolderData.entries()].some(
+        ([k, f]) => k.startsWith(prefix) && f.parentId === id,
+      );
+      const hasAsset = [...this.assetData.entries()].some(
+        ([k, a]) => k.startsWith(prefix) && a.folderId === id,
+      );
+      if (hasChild || hasAsset) throw new TransactionConflictError();
+      this.assetFolderData.delete(`${prefix}${id}`);
     },
   };
 
@@ -1658,6 +1807,8 @@ export class InMemoryContentStore implements ContentStore {
       this.publishedData,
       this.assetData,
       this.publishedAssetData,
+      this.assetTouched,
+      this.assetFolderData,
       this.referenceData,
       this.releaseData,
       this.releaseItemData,
@@ -1689,6 +1840,7 @@ export class InMemoryContentStore implements ContentStore {
         contentTypes: this.contentTypes,
         entries: this.entries,
         assets: this.assets,
+        assetFolders: this.assetFolders,
         references: this.references,
         releases: this.releases,
         taxonomy: this.taxonomy,

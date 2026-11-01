@@ -1,6 +1,8 @@
 import type {
   AssetFile,
+  AssetKind,
   AssetMetadata,
+  AssetRights,
   ContentTypeGrant,
   DomainEvent,
   EntryFields,
@@ -202,8 +204,72 @@ export const assets = sqliteTable(
       .notNull()
       .default({ altText: {}, tags: [] }),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    // Copied out of `file` on every write (0004_dam), so the library filters and sorts in SQL.
+    kind: text('kind').$type<AssetKind>().notNull().default('other'),
+    mime: text('mime'),
+    size: integer('size'),
+    width: integer('width'),
+    height: integer('height'),
+    contentHash: text('content_hash'),
+    folderId: text('folder_id'),
+    version: integer('version').notNull().default(1),
+    r2Key: text('r2_key'),
+    /** 0 on a row the pre-0004 code inserted during a deploy; read as unknown. */
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`0`),
+    createdBy: text('created_by'),
+    archivedAt: integer('archived_at', { mode: 'timestamp_ms' }),
+    rights: text('rights', { mode: 'json' }).$type<AssetRights>(),
   },
-  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    index('assets_by_updated').on(t.spaceId, t.environmentId, t.updatedAt, t.id),
+    index('assets_by_created').on(t.spaceId, t.environmentId, t.createdAt, t.id),
+    index('assets_by_kind').on(t.spaceId, t.environmentId, t.kind, t.updatedAt),
+    index('assets_by_mime').on(t.spaceId, t.environmentId, t.mime),
+    index('assets_by_folder').on(t.spaceId, t.environmentId, t.folderId, t.updatedAt),
+    index('assets_by_status').on(t.spaceId, t.environmentId, t.status, t.updatedAt),
+    index('assets_by_hash').on(t.spaceId, t.environmentId, t.contentHash),
+  ],
+);
+
+/**
+ * The asset library's folders. `path` is the materialized path of ids (`/a/b/`); `parentId` is
+ * '' at the root so sibling names stay unique there too.
+ */
+export const assetFolders = sqliteTable(
+  'asset_folders',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    parentId: text('parent_id').notNull().default(''),
+    path: text('path').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    uniqueIndex('asset_folders_sibling_name').on(t.spaceId, t.environmentId, t.parentId, t.name),
+    index('asset_folders_by_path').on(t.spaceId, t.environmentId, t.path),
+  ],
+);
+
+/** The files an asset had before its current one, one row per replaced version. */
+export const assetVersions = sqliteTable(
+  'asset_versions',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    assetId: text('asset_id').notNull(),
+    version: integer('version').notNull(),
+    file: text('file', { mode: 'json' }).$type<AssetFile>().notNull(),
+    r2Key: text('r2_key'),
+    contentHash: text('content_hash'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    createdBy: text('created_by'),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.assetId, t.version] })],
 );
 
 export const assetPublished = sqliteTable(

@@ -3,6 +3,9 @@ import type {
   AgentSchedule,
   ApiKey,
   Asset,
+  AssetFolder,
+  AssetKind,
+  AssetStatus,
   Comment,
   Concept,
   ConceptScheme,
@@ -84,6 +87,7 @@ export interface ContentStore {
   readonly contentTypes: ContentTypeRepo;
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
+  readonly assetFolders: AssetFolderRepo;
   readonly references: ReferenceRepo;
   readonly webhooks: WebhookRepo;
   readonly auth: AuthRepo;
@@ -430,20 +434,106 @@ export interface PublishedAsset {
   readonly publishedAt: string;
 }
 
+/**
+ * What an asset listing keeps. Every filter narrows; omitted ones don't apply. `status` omitted
+ * hides archived assets, as the entry trash is hidden: a picker or a library never shows them
+ * unless asked. `all` is every status, for exports and comparisons.
+ */
+export interface AssetFilters {
+  readonly kind?: AssetKind;
+  /** An exact content type (`image/png`) or a whole family (`image/*`). */
+  readonly mime?: string;
+  /** A taxonomy tag id in the asset's metadata. */
+  readonly tag?: string;
+  /** Assets filed directly in this folder; `null` for those at the root (in no folder). */
+  readonly folderId?: string | null;
+  readonly status?: AssetStatus | 'all';
+}
+
+export type AssetSortField = 'updatedAt' | 'createdAt' | 'size';
+
+export interface AssetSort {
+  readonly field: AssetSortField;
+  readonly direction: 'asc' | 'desc';
+}
+
+/** The default order: most recently changed first. */
+export const DEFAULT_ASSET_SORT: AssetSort = { field: 'updatedAt', direction: 'desc' };
+
+export interface AssetListQuery {
+  /** Page size; the store caps it (100 on D1 by default). */
+  readonly limit?: number;
+  /**
+   * Keyset cursor from a previous page's `nextCursor`. Opaque, and only valid with the same
+   * filters and sort; paging with it is stable while assets are added or changed.
+   */
+  readonly cursor?: string;
+  readonly filters?: AssetFilters;
+  readonly sort?: AssetSort;
+}
+
+export interface AssetPage {
+  readonly items: Asset[];
+  /** Present when there may be more: pass it back as `cursor` for the next page. */
+  readonly nextCursor?: string;
+}
+
+/** The denormalized published snapshot of an asset, served by the Delivery API. */
+export interface PublishedAsset {
+  readonly assetId: string;
+  readonly file: Asset['file'];
+  readonly title: LocalizedValue;
+  readonly description: LocalizedValue;
+  readonly metadata: Asset['metadata'];
+  readonly publishedAt: string;
+}
+
 export interface AssetRepo {
   get(scope: Scope, id: string): Promise<Asset | null>;
   /** Batch point-read of assets (draft or published); missing ids are absent. */
   getMany(scope: Scope, ids: readonly string[]): Promise<Asset[]>;
-  /** Lists all assets (draft + published) for the media library. */
-  list(scope: Scope, query: { limit?: number; skip?: number }): Promise<Asset[]>;
+  /** One page of the asset library, filtered and sorted (see {@link AssetListQuery}). */
+  list(scope: Scope, query: AssetListQuery): Promise<AssetPage>;
   create(scope: Scope, asset: Asset): Promise<void>;
   save(scope: Scope, asset: Asset): Promise<void>;
+  /**
+   * Files the given assets in `folderId` (`null`: the root), in one statement whatever the
+   * count: the ids travel as one JSON parameter. Ids that aren't assets in the scope are
+   * skipped. Moving into a folder that is gone by commit throws {@link TransactionConflictError}
+   * (in a unit of work; directly, the move is refused the same way).
+   */
+  moveToFolder(scope: Scope, ids: readonly string[], folderId: string | null): Promise<void>;
+  /**
+   * Deletes the asset row, its published snapshot and its version history. Refused while any
+   * entry links to it: if a link exists at commit, the unit throws
+   * {@link TransactionConflictError} and nothing is deleted.
+   */
+  delete(scope: Scope, id: string): Promise<void>;
   putPublished(scope: Scope, snapshot: PublishedAsset): Promise<void>;
   removePublished(scope: Scope, id: string): Promise<void>;
   getPublished(scope: Scope, id: string): Promise<PublishedAsset | null>;
   /** Batch point-read of published assets; missing ids are absent, order unspecified. */
   getPublishedMany(scope: Scope, ids: readonly string[]): Promise<PublishedAsset[]>;
   listPublished(scope: Scope, query: { limit?: number; skip?: number }): Promise<PublishedAsset[]>;
+}
+
+/** The asset library's folders, environment-scoped like the assets filed in them. */
+export interface AssetFolderRepo {
+  get(scope: Scope, id: string): Promise<AssetFolder | null>;
+  /** Every folder in the scope, in path order (a parent before its children). */
+  list(scope: Scope): Promise<AssetFolder[]>;
+  /** A sibling with the same name under the same parent is a `ConflictError`. */
+  create(scope: Scope, folder: AssetFolder): Promise<void>;
+  /**
+   * Renames and/or moves `folder` (the updated record). When its `path` changed, every
+   * descendant's path is rewritten from `previousPath` in the same statement batch.
+   */
+  save(scope: Scope, folder: AssetFolder, previousPath: string): Promise<void>;
+  /**
+   * Deletes an empty folder. If a subfolder or an asset is in it at commit, the unit throws
+   * {@link TransactionConflictError} and nothing is deleted.
+   */
+  delete(scope: Scope, id: string): Promise<void>;
 }
 
 export interface AuthRepo {
@@ -604,6 +694,7 @@ export interface ContentStoreTx {
   readonly contentTypes: ContentTypeRepo;
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
+  readonly assetFolders: AssetFolderRepo;
   readonly references: ReferenceRepo;
   readonly releases: ReleaseRepo;
   readonly taxonomy: TaxonomyRepo;

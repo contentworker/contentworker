@@ -78,10 +78,65 @@ export const searchHits = z.object({
 
 export const asset = z.object({
   id: z.uuid(),
-  fileName: z.string(),
-  contentType: z.string().describe('MIME type'),
-  status: z.enum(['draft', 'published']).optional(),
-  url: z.string().optional(),
+  status: z.enum(['draft', 'published', 'archived']),
+  file: z.object({
+    url: z.string(),
+    fileName: z.string(),
+    contentType: z.string().describe('MIME type'),
+    size: z.int().optional(),
+    width: z.int().optional(),
+    height: z.int().optional(),
+  }),
+  title: z.record(z.string(), z.unknown()),
+  description: z.record(z.string(), z.unknown()),
+  metadata: z.record(z.string(), z.unknown()),
+  folderId: z.string().optional().describe('The folder it is filed in; absent at the root'),
+  version: z.int().optional(),
+  createdAt: z.iso.datetime().optional(),
+  createdBy: z.string().optional(),
+  archivedAt: z.iso.datetime().optional(),
+  rights: z
+    .object({
+      license: z.string().optional(),
+      credit: z.string().optional(),
+      expiresAt: z.iso.datetime().optional(),
+      embargoUntil: z.iso.datetime().optional(),
+    })
+    .optional(),
+});
+
+export const assetPage = z.object({
+  items: z.array(asset),
+  nextCursor: z
+    .string()
+    .optional()
+    .describe('Pass as ?cursor= for the next page; absent on the last page'),
+});
+
+export const assetFolder = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  parentId: z.string().optional().describe('Absent at the root'),
+  path: z.string().describe('Materialized path of folder ids, e.g. /a/b/'),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const assetFolderList = z.object({ items: z.array(assetFolder) });
+
+export const assetMoved = z.object({
+  moved: z.int().describe('How many of the ids were assets here and were filed'),
+});
+
+export const assetUsage = z.object({
+  items: z.array(
+    z.object({
+      fromEntryId: z.string(),
+      fromField: z.string(),
+      toId: z.string(),
+      toType: z.enum(['Entry', 'Asset']),
+    }),
+  ),
 });
 
 export const uploadTicket = z.object({

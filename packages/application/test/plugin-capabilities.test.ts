@@ -182,7 +182,7 @@ describe('capabilities wired to use-cases', () => {
     await createPluginHookDispatcher(ctx, blob, runtime).dispatch('entry:beforeSave', {}, scope);
 
     expect(tag).toMatchObject({ name: 'news' });
-    expect(assets).toEqual([]);
+    expect(assets).toEqual({ items: [] });
   });
 });
 

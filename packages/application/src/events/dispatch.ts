@@ -6,6 +6,7 @@ import type {
   SearchIndex,
   WebhookSender,
 } from '@contentworker/ports';
+import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
 import { runEnvironmentPurge } from '../environment-purge';
@@ -170,6 +171,12 @@ export async function dispatchEvent(
         for (const t of fresh) deps.invalidatedTags?.add(t);
       }
     }
+  }
+
+  // A deleted asset's bytes: the row went with the request, the files go here, so a failed
+  // removal comes back with the event. Idempotent, like every removal below.
+  if (event.type === 'asset.deleted') {
+    await deleteAssetFiles(ctx, { ...(deps.blob ? { blob: deps.blob } : {}) }, event);
   }
 
   // A deleted environment: its rows are gone, so remove what was derived from them elsewhere.

@@ -13,8 +13,14 @@
  *   - `content_type`, `limit`, `skip`, `since`, `locale`  → as before
  */
 
-import type { FilterOp, QueryFilter, QueryOrder } from '@contentworker/domain';
-import type { EntryQuery } from '@contentworker/ports';
+import {
+  ASSET_KINDS,
+  type FilterOp,
+  type QueryFilter,
+  type QueryOrder,
+  ValidationError,
+} from '@contentworker/domain';
+import type { AssetListQuery, EntryQuery } from '@contentworker/ports';
 
 const OPS: ReadonlySet<string> = new Set([
   'eq',
@@ -161,4 +167,46 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
 /** Convenience: parse straight from a `URLSearchParams`. */
 export function parseEntryQuery(params: URLSearchParams): EntryQuery {
   return entryQueryFrom(params.entries());
+}
+
+const ASSET_STATUSES = ['draft', 'published', 'archived', 'all'] as const;
+const ASSET_SORTS = ['updatedAt', 'createdAt', 'size'] as const;
+
+/** Reads `value` as one of `allowed`, or refuses it naming the choices. */
+function oneOf<T extends string>(
+  field: string,
+  value: string | undefined,
+  allowed: readonly T[],
+): T | undefined {
+  if (value === undefined || value === '') return undefined;
+  if ((allowed as readonly string[]).includes(value)) return value as T;
+  throw new ValidationError([{ field, message: `${field} must be one of ${allowed.join(', ')}` }]);
+}
+
+/**
+ * The asset library's query string: `kind`, `mime` (`image/png` or `image/*`), `tag`, `folder`
+ * (an id, or `root` for assets in no folder), `status` (`all` includes archived), `sort` and
+ * `order`, `limit` and `cursor`.
+ */
+export function parseAssetListQuery(q: Record<string, string | undefined>): AssetListQuery {
+  const kind = oneOf('kind', q.kind, ASSET_KINDS);
+  const status = oneOf('status', q.status, ASSET_STATUSES);
+  const field = oneOf('sort', q.sort, ASSET_SORTS);
+  const direction = oneOf('order', q.order, ['asc', 'desc'] as const);
+  const limit = clampCount(q.limit, MAX_PAGE_LIMIT, { min: 1 });
+  const folder = q.folder === undefined || q.folder === '' ? undefined : q.folder;
+  return {
+    ...(limit !== undefined ? { limit } : {}),
+    ...(q.cursor ? { cursor: q.cursor } : {}),
+    filters: {
+      ...(kind ? { kind } : {}),
+      ...(q.mime ? { mime: q.mime.slice(0, 256) } : {}),
+      ...(q.tag ? { tag: q.tag.slice(0, 128) } : {}),
+      ...(folder !== undefined ? { folderId: folder === 'root' ? null : folder } : {}),
+      ...(status ? { status } : {}),
+    },
+    ...(field || direction
+      ? { sort: { field: field ?? 'updatedAt', direction: direction ?? 'desc' } }
+      : {}),
+  };
 }

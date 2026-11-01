@@ -355,6 +355,15 @@ describe('@contentworker/sdk-management client', () => {
     await c.assets.publish('a1');
     await c.assets.unpublish('a1');
     await c.assets.list({ limit: 5 });
+    await c.assets.list({ kind: 'image', folder: 'root', status: 'all', cursor: 'abc' });
+    await c.assets.archive('a1');
+    await c.assets.restore('a1');
+    await c.assets.delete('a1');
+    await c.assets.move(['a1', 'a2'], 'f1');
+    await c.assets.folders.list();
+    await c.assets.folders.create({ name: 'Brand' });
+    await c.assets.folders.update('f1', { parentId: null });
+    await c.assets.folders.delete('f1');
     await c.webhooks.list();
     await c.webhooks.create({ url: 'https://x.test', topics: ['*'], secret: 's' });
     await c.webhooks.update('w1', { active: false });
@@ -380,6 +389,15 @@ describe('@contentworker/sdk-management client', () => {
       `POST ${env}/assets/a1/published`,
       `DELETE ${env}/assets/a1/published`,
       `GET ${env}/assets?limit=5`,
+      `GET ${env}/assets?kind=image&folder=root&status=all&cursor=abc`,
+      `POST ${env}/assets/a1/archive`,
+      `POST ${env}/assets/a1/restore`,
+      `DELETE ${env}/assets/a1`,
+      `POST ${env}/assets/move`,
+      `GET ${env}/asset-folders`,
+      `POST ${env}/asset-folders`,
+      `PATCH ${env}/asset-folders/f1`,
+      `DELETE ${env}/asset-folders/f1`,
       `GET ${env}/webhooks`,
       `POST ${env}/webhooks`,
       `PUT ${env}/webhooks/w1`,

@@ -17,7 +17,7 @@ import {
   type WorkflowGraph,
   type WorkflowVersion,
 } from '@contentworker/domain';
-import { publishAsset } from './assets';
+import { allAssets, publishAsset } from './assets';
 import { createContentType, publishContentType } from './content-types';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
@@ -159,7 +159,7 @@ export async function exportSnapshot(
       ...(live.has(r.entry.id) ? { publishedFields: live.get(r.entry.id) } : {}),
       metadata: byEntry.get(r.entry.id)?.metadata,
     })),
-    assets: await allPages((skip, limit) => ctx.store.assets.list(scope, { skip, limit })),
+    assets: await allAssets(ctx, scope),
     taxonomy: {
       schemes: await ctx.store.taxonomy.listSchemes(scope),
       concepts: await ctx.store.taxonomy.listConcepts(scope),

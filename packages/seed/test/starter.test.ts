@@ -46,7 +46,7 @@ async function snapshot(ctx: AppContext) {
   return {
     types: (await listContentTypes(ctx, scope)).length,
     entries: (await listPreviewEntries(ctx, scope, { locale: 'en-US', limit: 1000 })).length,
-    assets: (await listAssets(ctx, scope, { limit: 1000 })).length,
+    assets: (await listAssets(ctx, scope, { limit: 1000 })).items.length,
     tags: (await listTags(ctx, scope)).length,
     schemes: (await listSchemes(ctx, scope)).length,
     releases: (await listReleases(ctx, scope)).length,
@@ -76,7 +76,7 @@ describe('installing the starter', { timeout: 30_000 }, () => {
     expect(created.installed).toMatchObject({ contentTypes: 8, entries: starterEntries });
 
     // Images and documents with real bytes, never a video with nothing behind it.
-    const assets = await listAssets(ctx, scope, { limit: 100 });
+    const assets = (await listAssets(ctx, scope, { limit: 100 })).items;
     expect(assets.length).toBe(8);
     expect(blob.keys().length).toBe(8);
     expect(assets.some((a) => a.file?.contentType === 'video/mp4')).toBe(false);
