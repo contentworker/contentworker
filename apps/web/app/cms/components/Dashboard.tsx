@@ -9,7 +9,7 @@ import {
   TableHead as TableHeader,
   Tr as TableRow,
 } from '@contentworker/ui/table';
-import { Bot, SearchX } from 'lucide-react';
+import { SearchX } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
@@ -26,6 +26,7 @@ import {
 } from '~/cms/components/dashboard/WorkCards';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
+import { Mark } from '~/components/mark';
 import { useClient } from '../lib/client-context';
 import { humanize } from '../lib/format';
 import type { SearchHit } from '../lib/management';
@@ -252,7 +253,7 @@ export function Dashboard() {
 
         <Section id="agent-runs" title="Recent agent runs" flush={runs.length > 0}>
           {runs.length === 0 ? (
-            <Empty icon={<Bot />} title="No agent runs yet">
+            <Empty icon={<Mark />} title="No agent runs yet">
               Enable AGENTS_ENRICH on the worker and runs will appear here as content is published.
             </Empty>
           ) : (

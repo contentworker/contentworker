@@ -2,7 +2,7 @@ import type { AgentReview, ContentType, WorkflowTask } from '@contentworker/doma
 import { Button } from '@contentworker/ui/button';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { Textarea } from '@contentworker/ui/textarea';
-import { Bot, Check, Stamp, X } from 'lucide-react';
+import { Check, Stamp, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
@@ -11,6 +11,7 @@ import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
 import { type FieldChange, FieldChanges } from '~/cms/components/EntryDiff';
 import { EmptyState, PageHeader, Section } from '~/cms/components/page';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { Mark } from '~/components/mark';
 import {
   APPROVALS_COUNT_KEY,
   usePendingAgentReviews,
@@ -355,7 +356,7 @@ function ReviewRow({
           </h3>
           <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground text-xs">
             {entryRef ? <span>{entryRef.typeName} ·</span> : null}
-            <Bot className="size-3.5 text-ai" aria-hidden="true" />
+            <Mark className="size-3.5 text-ai" />
             <span>
               Proposed by the {agent} <Ago at={review.createdAt} />
             </span>
