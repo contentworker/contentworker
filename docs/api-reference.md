@@ -548,9 +548,25 @@ that locale; with `?include=N` linked entries embed up to depth N (cycle-guarded
 
 `GET /delivery/:space/:env/live` opens a Server-Sent Events stream. The route authorizes like any
 Delivery route, then hands the connection to the `LiveHubDO` Durable Object for that
-space/environment. After the queue consumer dispatches a domain event, it publishes the event to
-that object, which fans it out to connected clients (filtered by `?types=`). Without a `LIVE_HUB`
-binding the stream yields only keepalives. Use for real-time cache invalidation or live previews on the read side.
+space/environment (named by `liveHubName`, each id percent-encoded so no id can reach another
+scope's hub), stamping the request with the authorized scope and the principal's content grants
+(`x-cw-live-access`; the object refuses a request without it, and sends a subscriber only events
+of its stamped scope). A stream ends after `LIVE_STREAM_MAX_MS` (10 minutes) so the client
+reconnects and is authorized again: a revoked key or narrowed role stops receiving within that
+bound. After the queue consumer
+dispatches a domain event, it publishes the event to that object, which sends each connected
+client only what `liveEventFor` (`packages/application/src/delivery.ts`) allows, filtered by
+`?types=`:
+
+- Published-content facts only (`LIVE_EVENT_TYPES`): entry, asset, bulk-publish, content-type,
+  release and alias events. Workflow runs and tasks, bulk-job control and reindex requests never
+  reach a subscriber.
+- A key with content grants sees entries only of the types it may read, with its denied fields
+  masked, content-type publishes for those types and alias changes, and no asset, bulk or release
+  facts: the same rules as its REST reads.
+
+Without a `LIVE_HUB` binding the in-process stream applies the same rules. Use it for real-time
+cache invalidation or live previews on the read side.
 
 ---
 

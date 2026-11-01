@@ -21,16 +21,37 @@ export function LiveActivityCard(props: { entryById?: (id: string) => EntryRef |
 
   useEffect(() => {
     const ac = new AbortController();
-    setConnected(true);
-    client
-      .subscribeLive((e) => {
-        const data = e.data as { entryId?: string } | undefined;
-        setItems((prev) =>
-          [{ type: e.type, entryId: data?.entryId, at: Date.now() }, ...prev].slice(0, 20),
-        );
-      }, ac.signal)
-      .catch(() => setConnected(false))
-      .finally(() => setConnected(false));
+    // The server ends each stream after a while (so access is re-checked) and a stream can drop:
+    // reconnect until the card unmounts, backing off while it keeps failing.
+    void (async () => {
+      let failures = 0;
+      while (!ac.signal.aborted) {
+        setConnected(true);
+        const opened = Date.now();
+        try {
+          await client.subscribeLive((e) => {
+            const data = e.data as { entryId?: string } | undefined;
+            setItems((prev) =>
+              [{ type: e.type, entryId: data?.entryId, at: Date.now() }, ...prev].slice(0, 20),
+            );
+          }, ac.signal);
+        } catch {
+          // Reconnect below.
+        }
+        setConnected(false);
+        if (ac.signal.aborted) return;
+        // A stream that stayed up a while ended normally; one that failed fast backs off.
+        failures = Date.now() - opened > 30_000 ? 0 : failures + 1;
+        const wait = Math.min(30_000, 1_000 * 2 ** failures);
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, wait);
+          ac.signal.addEventListener('abort', () => {
+            clearTimeout(t);
+            resolve();
+          });
+        });
+      }
+    })();
     return () => ac.abort();
   }, [client]);
 

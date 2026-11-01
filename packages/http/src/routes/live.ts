@@ -1,5 +1,6 @@
 import { SCOPES } from '@contentworker/domain';
-import { LIVE_ACCESS_HEADER, type LiveHubDO } from '@contentworker/platform/do/live-hub';
+import { LIVE_ACCESS_HEADER, liveHubName } from '@contentworker/platform/do/live-access';
+import type { LiveHubDO } from '@contentworker/platform/do/live-hub';
 import { Hono } from 'hono';
 import {
   type AuthDeps,
@@ -26,13 +27,14 @@ export function liveRoutes(deps: AuthDeps, ns: DurableObjectNamespace<LiveHubDO>
     (c) => {
       const spaceId = c.req.param('space');
       const environmentId = c.get('environmentId') ?? c.req.param('env');
-      const stub = ns.get(ns.idFromName(`${spaceId}:${environmentId}`));
+      const scope = { spaceId, environmentId };
+      const stub = ns.get(ns.idFromName(liveHubName(scope)));
       // The hub filters and masks each event for this subscriber by the principal's content
       // grants (no grants: unrestricted), set here and never taken from the caller.
       const headers = new Headers(c.req.raw.headers);
       headers.set(
         LIVE_ACCESS_HEADER,
-        JSON.stringify({ contentGrants: c.get('principal').contentGrants }),
+        JSON.stringify({ scope, contentGrants: c.get('principal').contentGrants }),
       );
       return stub.fetch(new Request(c.req.raw, { headers }));
     },

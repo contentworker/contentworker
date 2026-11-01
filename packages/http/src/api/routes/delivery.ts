@@ -25,6 +25,7 @@ import {
   type DeliveryResolvers,
   type ResolvedEntry,
 } from '@contentworker/graphql-gen';
+import { LIVE_STREAM_MAX_MS } from '@contentworker/platform/do/live-access';
 import {
   type ASTNode,
   execute,
@@ -265,8 +266,10 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
           });
         });
         stream.onAbort(() => void sub.close());
-        // Heartbeat so proxies keep the connection open until the client leaves.
-        while (!stream.aborted) {
+        // Heartbeat so proxies keep the connection open, until the client leaves or the stream's
+        // lifetime ends (the client reconnects and is authorized again, as with LiveHubDO).
+        const until = Date.now() + LIVE_STREAM_MAX_MS;
+        while (!stream.aborted && Date.now() < until) {
           await stream.writeSSE({ event: 'ping', data: '' });
           await stream.sleep(15000);
         }

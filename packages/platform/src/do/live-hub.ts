@@ -3,25 +3,24 @@ import { liveEventFor } from '@contentworker/application';
 import type { DomainEvent, Principal, Scope } from '@contentworker/domain';
 import type { EventBus } from '@contentworker/ports';
 import type { EdgeEnv } from '../env.js';
+import { LIVE_ACCESS_HEADER, LIVE_STREAM_MAX_MS, liveHubName } from './live-access.js';
+
+export { LIVE_ACCESS_HEADER, LIVE_STREAM_MAX_MS, liveHubName };
 
 const HEARTBEAT_MS = 15_000;
 
-const scopeKey = (scope: Scope) => `${scope.spaceId}:${scope.environmentId}`;
-
-/** What a subscriber may see: the content grants of the principal the live route authorized. */
-type LiveAccess = Pick<Principal, 'contentGrants'>;
-
 /**
- * The header the live route sets on the request it forwards here, carrying the authorized
- * principal's access. Only the route can reach this object (it has no public route), and the
- * route always replaces whatever a caller sent.
+ * What a subscriber may see: the scope the live route authorized it for, and that principal's
+ * content grants (absent: unrestricted).
  */
-export const LIVE_ACCESS_HEADER = 'x-cw-live-access';
+type LiveAccess = Pick<Principal, 'contentGrants'> & { readonly scope: Scope };
 
 interface SseClient {
   readonly writer: WritableStreamDefaultWriter<Uint8Array>;
   readonly types: string[];
   readonly access: LiveAccess;
+  /** When the stream ends (see LIVE_STREAM_MAX_MS). */
+  readonly until: number;
 }
 
 const encoder = new TextEncoder();
@@ -44,7 +43,10 @@ function parseAccess(header: string | null): LiveAccess | null {
   if (!header) return null;
   try {
     const parsed = JSON.parse(header) as LiveAccess;
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    const scope = parsed?.scope;
+    return typeof scope?.spaceId === 'string' && typeof scope.environmentId === 'string'
+      ? parsed
+      : null;
   } catch {
     return null;
   }
@@ -70,6 +72,13 @@ export class LiveHubDO extends DurableObject<EdgeEnv> {
     // Unrestricted subscribers share one frame; a restricted one gets its own view (or none).
     let shared: Uint8Array | null | undefined;
     await this.broadcast(event.type, (client) => {
+      // Defence in depth: only events of the scope this subscriber was authorized for.
+      if (
+        client.access.scope.spaceId !== event.scope.spaceId ||
+        client.access.scope.environmentId !== event.scope.environmentId
+      ) {
+        return null;
+      }
       if (!client.access.contentGrants) {
         if (shared === undefined) {
           const visible = liveEventFor(client.access, event);
@@ -95,7 +104,7 @@ export class LiveHubDO extends DurableObject<EdgeEnv> {
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     const id = String(++this.seq);
-    this.clients.set(id, { writer, types, access });
+    this.clients.set(id, { writer, types, access, until: Date.now() + LIVE_STREAM_MAX_MS });
     this.ensureHeartbeat();
 
     // Initial ping so clients observe an open stream immediately.
@@ -144,6 +153,9 @@ export class LiveHubDO extends DurableObject<EdgeEnv> {
     // Heartbeats keep proxies from reaping idle SSE connections and detect
     // departed clients (their write fails → dropped).
     this.heartbeat ??= setInterval(() => {
+      // Streams past their lifetime end here; their clients reconnect and are authorized again.
+      const now = Date.now();
+      for (const [id, client] of this.clients) if (client.until <= now) this.drop(id);
       const ping = sseFrame({ event: 'ping', data: '' });
       void this.broadcast('ping', () => ping);
     }, HEARTBEAT_MS);
@@ -158,7 +170,7 @@ export class LiveHubDO extends DurableObject<EdgeEnv> {
 export function createDoEventBus(ns: DurableObjectNamespace<LiveHubDO>): EventBus {
   return {
     async publish(event) {
-      const stub = ns.get(ns.idFromName(scopeKey(event.scope)));
+      const stub = ns.get(ns.idFromName(liveHubName(event.scope)));
       await stub.publish(event);
     },
     subscribe() {

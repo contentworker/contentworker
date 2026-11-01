@@ -1,6 +1,10 @@
 import { env } from 'cloudflare:test';
 import type { DomainEvent } from '@contentworker/domain';
-import { createDoEventBus, LIVE_ACCESS_HEADER } from '@contentworker/platform/do/live-hub';
+import {
+  createDoEventBus,
+  LIVE_ACCESS_HEADER,
+  liveHubName,
+} from '@contentworker/platform/do/live-hub';
 import { describe, expect, it } from 'vitest';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
@@ -50,13 +54,18 @@ function frameReader(stream: ReadableStream<Uint8Array>) {
 
 const hubStub = (name: string) => env.LIVE_HUB.get(env.LIVE_HUB.idFromName(name));
 
-/** Subscribes as the live route does: with the authorized principal's access (unrestricted by default). */
+/**
+ * Subscribes as the live route does: stamped with the scope it authorized and the principal's
+ * grants (unrestricted by default).
+ */
 function subscribe(
   stub: ReturnType<typeof hubStub>,
   url: string,
   access: object = {},
 ): Promise<Response> {
-  return stub.fetch(url, { headers: { [LIVE_ACCESS_HEADER]: JSON.stringify(access) } });
+  return stub.fetch(url, {
+    headers: { [LIVE_ACCESS_HEADER]: JSON.stringify({ scope, ...access }) },
+  });
 }
 
 describe('LiveHubDO', () => {
@@ -114,8 +123,35 @@ describe('LiveHubDO', () => {
 
 describe('LiveHubDO access', () => {
   it('refuses a subscriber the live route did not stamp with an access policy', async () => {
-    const res = await hubStub('space-1:unstamped').fetch('https://hub/live');
-    expect(res.status).toBe(403);
+    const hub = hubStub('space-1:unstamped');
+    expect((await hub.fetch('https://hub/live')).status).toBe(403);
+    // A stamp without a scope is refused too.
+    const noScope = await hub.fetch('https://hub/live', {
+      headers: { [LIVE_ACCESS_HEADER]: '{}' },
+    });
+    expect(noScope.status).toBe(403);
+  });
+
+  it('sends a subscriber only events of the scope it was authorized for', async () => {
+    const stub = hubStub('space-1:scoped');
+    const frames = frameReader(
+      (await subscribe(stub, 'https://hub/live')).body as ReadableStream<Uint8Array>,
+    );
+    expect(await frames.next()).toContain('event: ping');
+    await stub.publish({
+      ...(publishedEvent('evt-other') as object),
+      scope: { spaceId: 'space-1:eu', environmentId: 'main' },
+    } as DomainEvent);
+    await stub.publish(publishedEvent('evt-mine'));
+    expect(await frames.next()).toContain('id: evt-mine');
+    await frames.cancel();
+  });
+
+  it('names hubs so a separator inside an id can’t reach another scope’s hub', () => {
+    expect(liveHubName({ spaceId: 'acme', environmentId: 'eu:main' })).not.toBe(
+      liveHubName({ spaceId: 'acme:eu', environmentId: 'main' }),
+    );
+    expect(liveHubName(scope)).toBe('space-1:main');
   });
 
   it('never forwards editorial or internal events', async () => {
