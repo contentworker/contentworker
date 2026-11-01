@@ -204,6 +204,11 @@ read paths), 10 GB per database.
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
 | `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost              |
 
+`0004_version_bodies.sql` adds `entry_versions.body_key` (a superseded version's body moves to R2
+under that key, and `fields` becomes `{}`) and `version_archive_queue` (versions waiting to move,
+queued as they are superseded and due a day later), backfilling the queue with every version already
+superseded (see [Consistency](./consistency.md)).
+
 `0003_environment_purges.sql` adds `environment_purges`: deleted environments whose rows the engine
 is still removing in bounded steps (their ids can't be reused until it finishes).
 

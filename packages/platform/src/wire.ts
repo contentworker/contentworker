@@ -143,12 +143,6 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
   const persistent = Boolean(env.DB);
   // Secrets at rest: fails closed (throws) on a persistent deployment without DATA_KEY.
   const sealer = sealerFromEnv(env, persistent);
-  const session = env.DB?.withSession(options.bookmark ?? 'first-primary');
-  const store: ContentStore = withSealedSecrets(
-    session ? createD1Store(session) : inMemoryStore(config),
-    sealer,
-  );
-
   // Fail fast when a persistent (D1-backed) deployment would run
   // behind dev fakes.
   const fakes: FakeAdapterBinding[] = [];
@@ -157,6 +151,12 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     ? createMediaUrlSigner(mediaSigningSecret(env, persistent))
     : undefined;
   const blob = makeBlob(env, fakes, mediaSigner);
+  const session = env.DB?.withSession(options.bookmark ?? 'first-primary');
+  const store: ContentStore = withSealedSecrets(
+    // Archived version bodies live in the media bucket (version-archive.ts).
+    session ? createD1Store(session, { versionBodies: blob }) : inMemoryStore(config),
+    sealer,
+  );
   const ai = makeAI(env, fakes);
   const aiContext = aiContextFromEnv(env, fakes);
   assertNoFakeAdapters({

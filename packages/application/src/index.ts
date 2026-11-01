@@ -58,6 +58,7 @@ export * from './taxonomy';
 export * from './team';
 export * from './token-crypto';
 export * from './url-safety';
+export * from './version-archive';
 export * from './versioning';
 export * from './video-assets';
 export * from './web-principal';

@@ -23,6 +23,9 @@ export interface EntryVersion {
   /** When this version was saved (ISO-8601). Optional: set by use-cases, which
    *  hold the clock; the domain stays time-free. */
   readonly createdAt?: string;
+  /** Set when the body moved to object storage and could not be read back there: `fields` is
+   *  then empty. History lists show such a version without failing the rest. */
+  readonly bodyUnavailable?: true;
 }
 
 /**

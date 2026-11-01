@@ -162,8 +162,30 @@ export const entryVersions = sqliteTable(
     version: integer('version').notNull(),
     fields: text('fields', { mode: 'json' }).$type<EntryFields>().notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** Set once the body has moved to object storage under this key; `fields` is then `{}`
+     *  (0004_version_bodies). */
+    bodyKey: text('body_key'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.entryId, t.version] })],
+);
+
+/**
+ * Superseded versions waiting for their body to move to object storage (0004_version_bodies).
+ * Queued when a newer version is saved, due a day later; the archive sweep drains due rows.
+ */
+export const versionArchiveQueue = sqliteTable(
+  'version_archive_queue',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    entryId: text('entry_id').notNull(),
+    version: integer('version').notNull(),
+    dueAt: integer('due_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.entryId, t.version] }),
+    index('version_archive_queue_due').on(t.dueAt),
+  ],
 );
 
 export const entryPublished = sqliteTable(
