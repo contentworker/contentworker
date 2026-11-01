@@ -6,6 +6,7 @@
   "description": "Dependency-free trust-boundary primitives shared by the web and api Workers: the deployment roles and the signed principal envelope (x-cw-principal) the web gateway forwards to the api.",
   "exports": {
     ".": "./src/index.ts",
+    "./assistant-key": "./src/assistant-key.ts",
     "./principal": "./src/principal.ts",
     "./roles": "./src/roles.ts"
   },

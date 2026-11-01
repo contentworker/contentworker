@@ -23,6 +23,7 @@ import {
 import { NOT_THROUGH } from '@contentworker/http/assistant/tools';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { wireEdge } from '@contentworker/platform/wire';
+import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import {
   PRINCIPAL_HEADER,
   principalTarget,
@@ -113,9 +114,14 @@ const disable = (p: WebPrincipal) =>
 const signOut = (p: WebPrincipal) =>
   env.DB.prepare('delete from sessions where token_hash = ?').bind(p.sid).run();
 
-/** Signed as the web gateway signs: for the method and path (sockets and history are GETs). */
-const signed = (p: WebPrincipal, path: string, key = env.PRINCIPAL_KEY) =>
-  signPrincipal(key, p, principalTarget('GET', path));
+/** Signed as the web gateway signs the assistant's paths: with the key derived for it, for the
+ * method and path (sockets and history are GETs). */
+const signed = async (p: WebPrincipal, path: string, key?: string) =>
+  signPrincipal(
+    key ?? (await deriveAssistantPrincipalKey(env.PRINCIPAL_KEY)),
+    p,
+    principalTarget('GET', path),
+  );
 
 type RpcAnswer = { success: boolean; error?: string; result?: unknown };
 
@@ -270,6 +276,30 @@ describe('who reaches an assistant', () => {
         })
       ).status,
     ).toBe(404);
+  });
+
+  it('opens with the key derived from the current or the previous PRINCIPAL_KEY', async () => {
+    const ada = await person('ada_keys');
+    // Each is verified by the api's gate (deriving from PRINCIPAL_KEY / _PREVIOUS) and by the
+    // object itself (ASSISTANT_PRINCIPAL_KEY / _PREVIOUS): a socket opens only if both accept it.
+    const current = await deriveAssistantPrincipalKey(env.PRINCIPAL_KEY);
+    const previous = await deriveAssistantPrincipalKey(env.PRINCIPAL_KEY_PREVIOUS);
+    expect([env.ASSISTANT_PRINCIPAL_KEY, env.ASSISTANT_PRINCIPAL_KEY_PREVIOUS]).toEqual([
+      current,
+      previous,
+    ]);
+    for (const key of [current, previous]) {
+      const res = await open(ada.sub, ada, key);
+      expect(res.status).toBe(101);
+      res.webSocket!.accept();
+      res.webSocket!.close();
+    }
+  });
+
+  it('refuses a principal signed with the main key: it is good for the REST surface only', async () => {
+    const ada = await person('ada_main_key');
+    const res = await open(ada.sub, ada, env.PRINCIPAL_KEY);
+    expect(res.status).toBe(401);
   });
 
   it('checks the signature itself, not only the gate in front of it', async () => {

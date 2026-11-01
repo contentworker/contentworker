@@ -1,3 +1,4 @@
+import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import {
   BOOKMARK_HEADER,
   DEV_PRINCIPAL_KEY,
@@ -192,7 +193,14 @@ describe('forwardToApi', () => {
     expect(sent?.headers.get('upgrade')).toBe('websocket');
     expect(sent?.headers.get('sec-websocket-key')).toBe('dGhlIHNhbXBsZSBub25jZQ==');
     expect(sent?.headers.get('cookie')).toBeNull();
-    expect(await verifyPrincipal(KEY, sent?.headers.get(PRINCIPAL_HEADER), `GET ${path}`)).toEqual({
+    // Signed with the assistant's derived key, never the main one.
+    const assistantKey = await deriveAssistantPrincipalKey(KEY);
+    expect(
+      await verifyPrincipal(KEY, sent?.headers.get(PRINCIPAL_HEADER), `GET ${path}`),
+    ).toBeNull();
+    expect(
+      await verifyPrincipal(assistantKey, sent?.headers.get(PRINCIPAL_HEADER), `GET ${path}`),
+    ).toEqual({
       sub: 'usr_ada',
       email: 'ada@example.com',
       name: 'Ada',
@@ -201,9 +209,11 @@ describe('forwardToApi', () => {
     });
     // Signed for that person's socket only: not for another's, nor for its message history.
     const header = sent?.headers.get(PRINCIPAL_HEADER);
-    expect(await verifyPrincipal(KEY, header, 'GET /agents/assistant-agent/usr_bob')).toBeNull();
-    expect(await verifyPrincipal(KEY, header, `GET ${path}/get-messages`)).toBeNull();
-    expect(await verifyPrincipal(KEY, header, `POST ${path}`)).toBeNull();
+    expect(
+      await verifyPrincipal(assistantKey, header, 'GET /agents/assistant-agent/usr_bob'),
+    ).toBeNull();
+    expect(await verifyPrincipal(assistantKey, header, `GET ${path}/get-messages`)).toBeNull();
+    expect(await verifyPrincipal(assistantKey, header, `POST ${path}`)).toBeNull();
   });
 
   it('never lends the session to a socket opened from another site', async () => {

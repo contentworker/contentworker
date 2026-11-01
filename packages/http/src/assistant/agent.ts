@@ -52,7 +52,7 @@ import {
 } from 'ai';
 import type { McpDeps } from '../mcp/deps.js';
 import { readContext } from './context.js';
-import { assistantCaller, principalKeys } from './gate.js';
+import { assistantCaller, engineKeys } from './gate.js';
 import { BUDGET_SPENT, meterTurn } from './meter.js';
 import { assistantModel, type EmittedCall, type ModelSource, recordingCalls } from './model.js';
 import {
@@ -187,7 +187,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
    * the same before forwarding; this object doesn't take its word for it.
    */
   override async fetch(request: Request): Promise<Response> {
-    const claims = await assistantCaller(principalKeys(this.env), request);
+    const claims = await assistantCaller(engineKeys(this.env), request);
     if (claims instanceof Response) return claims;
     const now = await this.personNow(socketClaims(claims));
     if (isRefused(now)) {
@@ -209,7 +209,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
 
   /** The socket's own check: signed for this path, naming this person. Kept for the connection. */
   private async admit(connection: Connection, ctx: ConnectionContext): Promise<boolean> {
-    const claims = await assistantCaller(principalKeys(this.env), ctx.request);
+    const claims = await assistantCaller(engineKeys(this.env), ctx.request);
     if (claims instanceof Response || claims.sub !== this.name) {
       connection.close(4403, 'Not your Coworker');
       return false;
