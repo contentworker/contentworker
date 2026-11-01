@@ -1,4 +1,5 @@
 import {
+  createWorkersAIDecisionModel,
   createWorkersAIEmbeddings,
   createWorkersAIProvider,
   type WorkersAiRun,
@@ -44,6 +45,7 @@ import type {
   BlobStore,
   Cache,
   ContentStore,
+  DecisionModel,
   EmailSender,
   EmbeddingsProvider,
   EventBus,
@@ -61,6 +63,7 @@ import {
   InMemoryVectorStore,
   LocalEmbeddingsProvider,
   StubAIProvider,
+  StubDecisionModel,
 } from '@contentworker/test-kit';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
@@ -82,6 +85,8 @@ export interface EdgeWired {
   /** Signs/verifies `/media/*` URLs; present when MEDIA_BUCKET is bound. */
   readonly mediaSigner?: MediaUrlSigner;
   readonly ai: AIProvider;
+  /** Decision model (Clef on Workers AI): typed questions in, probabilities out. */
+  readonly decisions: DecisionModel;
   readonly bus: EventBus;
   readonly cache?: Cache;
   /** Producer onto the contentworker-events queue; absent when the binding is not set. */
@@ -158,6 +163,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     sealer,
   );
   const ai = makeAI(env, fakes);
+  const decisions = makeDecisions(env, fakes);
   const aiContext = aiContextFromEnv(env, fakes);
   assertNoFakeAdapters({
     persistent,
@@ -235,10 +241,16 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     config,
     rag,
     ...(workflowEngine ? { workflowEngine } : {}),
-    workflowNodes: { ai, webhooks: createWebhookSender(), ...(email ? { email } : {}) },
+    workflowNodes: {
+      ai,
+      decisions,
+      webhooks: createWebhookSender(),
+      ...(email ? { email } : {}),
+    },
     blob,
     ...(mediaSigner ? { mediaSigner } : {}),
     ai,
+    decisions,
     bus: new InMemoryEventBus(),
     cache,
     queue,
@@ -347,6 +359,26 @@ export function makeAI(env: EdgeEnv, fakes?: FakeAdapterBinding[]): AIProvider {
     detail: 'StubAIProvider (placeholder generations) — bind AI and set AI_PROVIDER=workers-ai',
   });
   return new StubAIProvider(devGenerate);
+}
+
+/**
+ * The decision model: Clef on Workers AI wherever the AI binding is (it shares the binding and
+ * the AI Gateway settings with generation). Without one, a stub that answers the first option,
+ * no, or the lowest level — refused on a persistent deployment like the other fakes.
+ */
+export function makeDecisions(env: EdgeEnv, fakes?: FakeAdapterBinding[]): DecisionModel {
+  if (env.AI_PROVIDER === 'workers-ai' || (env.AI_PROVIDER === undefined && env.AI)) {
+    return createWorkersAIDecisionModel({
+      run: workersAiRun(env),
+      gatewayId: env.AI_GATEWAY_ID || undefined,
+      ...gatewayLogs(env),
+    });
+  }
+  fakes?.push({
+    key: 'decisions',
+    detail: 'StubDecisionModel (placeholder decisions) — bind AI and set AI_PROVIDER=workers-ai',
+  });
+  return new StubDecisionModel();
 }
 
 /** Placeholder generation from the requested JSON schema (dev/no-key fallback). */

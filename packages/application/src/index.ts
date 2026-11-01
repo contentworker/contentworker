@@ -5,6 +5,7 @@ export * from './agent-reviews';
 export * from './agent-schedules';
 export * from './ai-actions';
 export * from './ai-budget';
+export * from './ai-decide';
 export * from './ai-json';
 export * from './ai-prompt';
 export * from './ai-provenance';

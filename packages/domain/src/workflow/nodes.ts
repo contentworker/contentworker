@@ -56,6 +56,12 @@ const policyCheck = (v: unknown): string[] => {
 const objectCheck = (v: unknown): string[] =>
   typeof v === 'object' && v !== null && !Array.isArray(v) ? [] : ['Expected an object'];
 
+/** A probability strictly between 0 and 1 (at 1, nothing would ever flag). */
+const probabilityCheck = (v: unknown): string[] =>
+  v === undefined || (typeof v === 'number' && v > 0 && v < 1)
+    ? []
+    : ['Expected a probability between 0 and 1, such as 0.5 (not a percentage)'];
+
 /** Router guards: an object of route → JSON Logic expression. */
 const guardsCheck = (v: unknown): string[] => {
   const issues = objectCheck(v);
@@ -779,6 +785,14 @@ export const NODE_SPECS = [
         kind: 'textarea',
         default: '',
         hint: 'Added to the moderation prompt',
+      },
+      {
+        key: 'threshold',
+        label: 'Flag at',
+        kind: 'number',
+        default: 0.5,
+        hint: 'With a decision model: the probability (between 0 and 1) at which a category flags the entry',
+        check: probabilityCheck,
       },
       { key: 'into', label: 'Store as var', kind: 'text', default: 'moderation' },
     ],
