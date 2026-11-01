@@ -1,4 +1,4 @@
-import { createEnvironment } from '@contentworker/application';
+import { createEnvironment, setEnvironmentAlias } from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -49,6 +49,7 @@ describe('webhooks under an environment', () => {
     const { ctx, rag, blob, ai } = wire(config);
     app = createApp(ctx, config, rag, blob, ai);
     await createEnvironment(ctx, 's1', 'staging');
+    await setEnvironmentAlias(ctx, 's1', 'prod', 'staging');
   });
 
   it('scopes a hook to the path environment, or to every one with allEnvironments', async () => {
@@ -90,6 +91,33 @@ describe('webhooks under an environment', () => {
       ((await (await put('main', { allEnvironments: false })).json()) as Summary).environmentId,
     ).toBe('main');
     expect(await list('staging')).toEqual([]);
+  });
+
+  it('makes a hook created through an alias space-wide, and refuses to pin one to it', async () => {
+    const viaAlias = await create('prod', hook);
+    expect(viaAlias.environmentId).toBeNull();
+    const pinned = await app.request(env('prod'), {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({ ...hook, allEnvironments: false }),
+    });
+    expect(pinned.status).toBe(422);
+    expect(JSON.stringify(await pinned.json())).toContain('is an alias');
+
+    const scoped = await create('staging', hook);
+    const repin = await app.request(`${env('prod')}/${scoped.id}`, {
+      method: 'PUT',
+      headers: cma,
+      body: JSON.stringify({ allEnvironments: false }),
+    });
+    expect(repin.status).toBe(422);
+    // Omitted under the alias, the scope stays.
+    const kept = await app.request(`${env('prod')}/${scoped.id}`, {
+      method: 'PUT',
+      headers: cma,
+      body: JSON.stringify({ active: false }),
+    });
+    expect(((await kept.json()) as Summary).environmentId).toBe('staging');
   });
 
   it('refuses a non-boolean allEnvironments, and a private target', async () => {

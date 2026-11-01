@@ -340,6 +340,9 @@ export function buildServer(
   // name as given: deleting refuses an alias name itself, and a deleted environment's audit
   // history stays readable.
   const LITERAL_ENVIRONMENT = new Set(['environment_delete', 'audit_log_list']);
+  // The `environment` each call named, before resolution, keyed by the resolved args object: a tool
+  // that must not pin anything to an alias's current target (the webhook tools) reads it back.
+  const requestedEnvironment = new WeakMap<object, string>();
   const register = server.registerTool.bind(server);
   server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) =>
     register(
@@ -356,6 +359,7 @@ export function buildServer(
               ? await resolveWritableEnvironment(ctx, spaceId, a.environment)
               : await resolveEnvironment(ctx, spaceId, a.environment, { refusePurging: false });
             args = { ...a, environment };
+            requestedEnvironment.set(args as object, a.environment);
           }
           return await handler(args, ...rest);
         } catch (err) {
@@ -1501,7 +1505,8 @@ export function buildServer(
       description:
         'Register a webhook: signed POSTs of the events matching topics ("*" for all) to url. ' +
         "It receives only the given environment's events, or every environment's with " +
-        'allEnvironments: true. secret is yours to choose and is never returned.',
+        'allEnvironments: true. Named through an alias it is space-wide (allEnvironments: false is ' +
+        'refused). secret is yours to choose and is never returned.',
       inputSchema: toolSchema('webhook_create', () => webhookBody.extend(scopeArgs)),
     },
     async (args) => {
@@ -1509,7 +1514,9 @@ export function buildServer(
       const { space: _s, environment: _e, ...input } = args;
       return ok(
         webhookView(
-          await createWebhook(ctx, scopeOf(args), input as Parameters<typeof createWebhook>[2]),
+          await createWebhook(ctx, scopeOf(args), input as Parameters<typeof createWebhook>[2], {
+            requestedEnvironment: requestedEnvironment.get(args),
+          }),
         ),
       );
     },
@@ -1520,7 +1527,8 @@ export function buildServer(
     {
       description:
         'Change a webhook; omitted fields are kept. allEnvironments: true makes it space-wide, ' +
-        'false scopes it to the given environment; omitted, its scope is unchanged.',
+        'false scopes it to the given environment (refused for an alias); omitted, its scope is ' +
+        'unchanged.',
       inputSchema: toolSchema('webhook_update', () =>
         updateWebhookBody.extend({ id: z.string(), ...scopeArgs }),
       ),
@@ -1535,6 +1543,7 @@ export function buildServer(
             scopeOf(args),
             id,
             changes as Parameters<typeof updateWebhook>[3],
+            { requestedEnvironment: requestedEnvironment.get(args) },
           ),
         ),
       );

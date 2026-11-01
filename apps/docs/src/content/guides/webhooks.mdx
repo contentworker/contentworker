@@ -35,6 +35,10 @@ curl -s "$API/spaces/$SPACE/environments/main/webhooks" \
 - **`active: false`** pauses a webhook without deleting it.
 - **`allEnvironments: true`** sends it the events of every environment in the space (see below).
 
+In the admin, **Send events from every environment** is `allEnvironments`: off, the webhook hears
+the environment you're viewing. The table's **Environments** column shows each webhook's scope
+(**All environments**, or the environment's id), and **Edit** can change it.
+
 The URL must be a public `http` or `https` address (use `https`). Loopback, link-local and private
 addresses, and `localhost`, `.local` and `.internal` names, are refused with a 422 on create and
 update.
@@ -45,20 +49,28 @@ A webhook is created for the environment in the route and receives only that env
 events: one made under `/environments/staging` never fires for a publish in `main`. With
 `"allEnvironments": true` it is **space-wide** and receives the events of every environment in the
 space. Responses show which with `environmentId`: the environment's id, or `null` for a space-wide
-webhook. A webhook created through an alias belongs to the environment the alias pointed at then,
-and stays there when the alias moves.
+webhook.
+
+**Through an alias, a webhook is space-wide.** A webhook is never tied to an alias's current
+target: when the alias was repointed it would go quiet, and deleting the old target would delete it.
+So one created under an alias (`/environments/production/webhooks`, where `production` is an alias)
+is space-wide unless you say otherwise, and `"allEnvironments": false` there is refused with a 422.
+To hear one environment only, create the webhook under that environment's own id.
 
 Under an environment, the routes see that environment's webhooks and every space-wide one: the
 list returns both, and a webhook scoped to another environment answers 404 to update, delete and
 the delivery log. To change the scope, send `allEnvironments` on update: `true` makes the webhook
 space-wide, `false` scopes it to the environment in the route (so a space-wide webhook can be moved
-to any environment), and leaving it out keeps the scope as it is.
+to any environment), and leaving it out keeps the scope as it is. Under an alias, `false` is
+refused (422) for the same reason as on create.
 
 Webhooks created before environment scoping existed are space-wide. A space-wide webhook gets
 every environment's events, so if `staging` changes shouldn't rebuild production, read
 `scope.environmentId` in the payload and ignore the events you don't want (or scope the webhook).
 `environment_alias.changed` carries the alias name as `scope.environmentId`, so only space-wide
-webhooks receive it. Deleting an environment deletes the webhooks scoped to it.
+webhooks receive it. Deleting an environment deletes the webhooks scoped to it, so its own
+`environment.deleted` event may or may not reach them: only space-wide webhooks receive it
+reliably.
 
 | Route (under `/spaces/{space}/environments/{env}`) | Does |
 | --- | --- |
@@ -82,7 +94,7 @@ Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
 | `content_type.published` | `contentTypeApiId`, `version`                         | A content type's definition is published |
 | `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
 | `environment_alias.changed` | `targetEnvironmentId` (`null` when removed)        | An alias is created, repointed or removed; `scope.environmentId` is the alias name |
-| `environment.deleted`    | `entryIds`                                            | An environment is deleted; `scope` is the deleted environment, and a large one sends several events splitting `entryIds` |
+| `environment.deleted`    | `entryIds`                                            | An environment is deleted; `scope` is the deleted environment, and a large one sends several events splitting `entryIds`. Reliably delivered only to space-wide webhooks (the deleted environment's own are being removed) |
 | `bulk.job_completed`     | `jobId`, `action` (`publish`, `unpublish`, `import`), `total`, `succeeded`, `failed` | A bulk job finishes |
 | `workflow_run.completed`, `workflow_run.declined`, `workflow_run.cancelled`, `workflow_run.failed`, `workflow_run.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason` | A workflow run ends, one topic per outcome |
 | `workflow.task_opened`   | `taskId`, `runId`, `nodeId`, `kind` (`approval`, `event`, `review`), `entryId`, `contentTypeApiId`, `title`, `assignee`, `requiredScope`, `deadline` | A run opens an approval, event wait or agent review |

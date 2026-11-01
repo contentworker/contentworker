@@ -1,4 +1,4 @@
-import { type DomainEvent, NotFoundError } from '@contentworker/domain';
+import { type DomainEvent, NotFoundError, ValidationError } from '@contentworker/domain';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -154,6 +154,35 @@ describe('webhook environments', () => {
     expect(moved.environmentId).toBe('main');
     expect(await listWebhooks(c, staging)).toEqual([]);
     expect((await listWebhooks(c, scope)).map((w) => w.id)).toEqual([created.id]);
+  });
+
+  it('never pins a hook to the target of the alias it was named through', async () => {
+    const c = ctx();
+    // `prod` is an alias of `blue`: the surfaces resolve it, and hand on the name as given.
+    const blue = { spaceId: 'shop', environmentId: 'blue' };
+    const viaProd = { requestedEnvironment: 'prod' };
+    expect((await createWebhook(c, blue, hook, viaProd)).environmentId).toBeNull();
+    expect(
+      (await createWebhook(c, blue, { ...hook, allEnvironments: true }, viaProd)).environmentId,
+    ).toBeNull();
+    await expect(
+      createWebhook(c, blue, { ...hook, allEnvironments: false }, viaProd),
+    ).rejects.toBeInstanceOf(ValidationError);
+    // Named by its own id, it is scoped as usual.
+    const scoped = await createWebhook(c, blue, hook, { requestedEnvironment: 'blue' });
+    expect(scoped.environmentId).toBe('blue');
+
+    // An update under the alias keeps the scope, can widen it, and can't pin it.
+    expect(
+      (await updateWebhook(c, blue, scoped.id, { active: false }, viaProd)).environmentId,
+    ).toBe('blue');
+    await expect(
+      updateWebhook(c, blue, scoped.id, { allEnvironments: false }, viaProd),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect((await c.store.webhooks.get(blue, scoped.id))?.environmentId).toBe('blue');
+    expect(
+      (await updateWebhook(c, blue, scoped.id, { allEnvironments: true }, viaProd)).environmentId,
+    ).toBeNull();
   });
 
   it("delivers an environment's events to its own hooks and the space-wide ones only", async () => {

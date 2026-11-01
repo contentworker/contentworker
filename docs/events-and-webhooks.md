@@ -191,6 +191,15 @@ that (resolved) environment; `allEnvironments: true` makes it space-wide. On upd
 current scope (`updateWebhook`, `packages/application/src/webhooks.ts`). Rows from before 0005 are
 `NULL`, so they stay space-wide.
 
+A hook is never pinned to an alias's resolved target: after the alias was repointed it would stop
+hearing the environment it was meant for, and the purge of the old target would delete it. Both
+surfaces hand the use-case the environment name as given (`WebhookRequest.requestedEnvironment`:
+the route's raw `:env`, or the MCP wrapper's pre-resolution `environment`, kept in a `WeakMap`
+keyed by the resolved args); a name that differs from `scope.environmentId` was an alias (an alias
+can't share an environment's name). Under an alias, create with `allEnvironments` omitted makes the
+hook space-wide, and `allEnvironments: false` on create or update is a `ValidationError` (422)
+asking for a concrete environment id or `allEnvironments: true`.
+
 Every `WebhookRepo` read, update and delete sees the hooks the scope's environment covers:
 `space_id = ? AND (environment_id IS NULL OR environment_id = ?)` (`webhookVisibleIn` in
 `packages/db/src/store.ts`; `coversEnvironment` in the domain for the in-memory store). So the list
@@ -201,7 +210,9 @@ on `scope.environmentId` if it cares; `environment_alias.changed` (whose scope n
 reaches only space-wide hooks. A retry re-reads the hook through `listByTopic`, so one rescoped
 away from the event's environment gets no further attempts. The environment purge deletes the hooks
 scoped to the environment (`webhooks` is in `ENVIRONMENT_SCOPED_TABLES`; a `NULL` row never matches);
-their delivery rows are left to the retention sweep.
+their delivery rows are left to the retention sweep. The environment's own `environment.deleted`
+events race that purge, so a hook scoped to it may or may not receive them: they are reliably
+delivered only to space-wide hooks.
 
 Webhooks are not part of environment snapshots (export, import, clone): their secrets are
 credentials.

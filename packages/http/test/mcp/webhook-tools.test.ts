@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
-import { type AppContext, createEnvironment, createSpace } from '@contentworker/application';
+import {
+  type AppContext,
+  createEnvironment,
+  createSpace,
+  setEnvironmentAlias,
+} from '@contentworker/application';
 import { type Principal, SCOPES, scopesForKind } from '@contentworker/domain';
 import {
   FixedClock,
@@ -90,9 +95,15 @@ describe('webhook tools over MCP', () => {
     expect(await ids('main')).toEqual([mainHook.id, wide.id].sort());
 
     // Another environment's hook is not found from here.
-    expect((await call('webhook_update', { id: scoped.id, active: false })).isError).toBe(true);
-    expect((await call('webhook_delete', { id: scoped.id })).isError).toBe(true);
-    expect((await call('webhook_deliveries', { id: scoped.id })).isError).toBe(true);
+    for (const [name, args] of [
+      ['webhook_update', { id: scoped.id, active: false }],
+      ['webhook_delete', { id: scoped.id }],
+      ['webhook_deliveries', { id: scoped.id }],
+    ] as const) {
+      const res = await call(name, args);
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain(`Webhook \\"${scoped.id}\\" was not found`);
+    }
 
     const kept = payload(
       await call('webhook_update', { id: scoped.id, active: false, environment: 'staging' }),
@@ -114,6 +125,39 @@ describe('webhook tools over MCP', () => {
       deleted: scoped.id,
     });
     expect(await ids('staging')).toEqual([wide.id]);
+  });
+
+  it('never pins a hook to the target of an alias', async () => {
+    await setEnvironmentAlias(deps.ctx, SPACE, 'prod', 'staging');
+    const viaAlias = payload(
+      await call('webhook_create', { ...hook, environment: 'prod' }),
+    ) as Summary;
+    expect(viaAlias.environmentId).toBeNull();
+    const pinned = await call('webhook_create', {
+      ...hook,
+      allEnvironments: false,
+      environment: 'prod',
+    });
+    expect(pinned.isError).toBe(true);
+    // MCP carries a ValidationError's message, not its field issues (REST's 422 body has those).
+    expect(JSON.stringify(pinned.content)).toContain('One or more fields are invalid');
+
+    const scoped = payload(
+      await call('webhook_create', { ...hook, environment: 'staging' }),
+    ) as Summary;
+    const update = await call('webhook_update', {
+      id: scoped.id,
+      allEnvironments: false,
+      environment: 'prod',
+    });
+    expect(update.isError).toBe(true);
+    expect(JSON.stringify(update.content)).toContain('One or more fields are invalid');
+    expect(
+      (await deps.ctx.store.webhooks.get({ spaceId: SPACE, environmentId: 'staging' }, scoped.id))
+        ?.environmentId,
+    ).toBe('staging');
+    // Listed under the alias as under its target: its own hooks and the space-wide ones.
+    expect(await ids('prod')).toEqual([viaAlias.id, scoped.id].sort());
   });
 
   it('refuses a private target, as REST does', async () => {

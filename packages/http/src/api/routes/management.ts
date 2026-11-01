@@ -1748,7 +1748,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   // --- webhooks (admin) ---------------------------------------------------
   // A hook is scoped to one environment (`environmentId`) or space-wide (`null`). Under an
   // environment, every route sees that environment's hooks and the space-wide ones; a hook scoped to
-  // another environment is a 404 here.
+  // another environment is a 404 here. The raw `:env` goes to the use-case so a hook is never pinned
+  // to an alias's current target.
   app.get(
     `${BASE}/webhooks`,
     doc('Webhooks', 'List webhooks', {
@@ -1768,7 +1769,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Webhooks', 'Create a webhook', {
       description:
         "Receives only the path environment's events, or every environment's with " +
-        '`allEnvironments: true`. The URL must be http(s) and not a loopback, link-local or private address.',
+        '`allEnvironments: true`. Under an alias it is space-wide, and `allEnvironments: false` is ' +
+        'refused (422). The URL must be http(s) and not a loopback, link-local or private address.',
       body: webhookBody,
       ok: docs.webhook,
       status: 201,
@@ -1781,6 +1783,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
             ctx,
             scopeOf(c),
             (await parseBody(c, webhookBody)) as Parameters<typeof createWebhook>[2],
+            { requestedEnvironment: c.req.param('env') },
           ),
         ),
         201,
@@ -1791,7 +1794,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Webhooks', 'Update a webhook', {
       description:
         'Omitted fields are kept. `allEnvironments: true` makes the hook space-wide, `false` ' +
-        "scopes it to the path's environment; omitted, its scope is unchanged.",
+        "scopes it to the path's environment (422 under an alias); omitted, its scope is unchanged.",
       body: updateWebhookBody,
       ok: docs.webhook,
     }),
@@ -1804,6 +1807,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
             scopeOf(c),
             c.req.param('id'),
             (await parseBody(c, updateWebhookBody)) as Parameters<typeof updateWebhook>[3],
+            { requestedEnvironment: c.req.param('env') },
           ),
         ),
       ),

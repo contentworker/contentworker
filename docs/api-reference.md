@@ -474,7 +474,9 @@ A webhook is scoped to the path's environment, or to every environment with
 `allEnvironments: true` in the create body; responses carry `environmentId` (`null` for
 space-wide). Under an environment the routes see its webhooks and the space-wide ones, and another
 environment's webhook is a 404. On update `allEnvironments: true` makes it space-wide, `false`
-scopes it to the path's environment, and omitting it keeps the scope. The MCP tools
+scopes it to the path's environment, and omitting it keeps the scope. Under an alias a new
+webhook is space-wide and `allEnvironments: false` is a 422 on create and update (a webhook is never
+pinned to an alias's current target). The MCP tools
 `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete` and `webhook_deliveries` do
 the same ([Events & webhooks](./events-and-webhooks.md#webhooks)).
 

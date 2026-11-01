@@ -95,6 +95,9 @@ without touching the environment. Delivery caches refresh when an alias is repoi
 **Save alias** button, and a select on each row repoints it. The MCP tools are
 `environment_aliases_list`, `environment_alias_set` and `environment_alias_delete`.
 
+Repointing an alias never moves a [webhook](/guides/webhooks/): one created under an alias is
+space-wide, and a webhook can't be scoped to an alias, only to an environment's own id.
+
 ## Export and import a snapshot
 
 A snapshot is portable JSON of an environment: content model, entries, taxonomy, workflows and
