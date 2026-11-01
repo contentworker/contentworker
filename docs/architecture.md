@@ -50,7 +50,7 @@ The gateway (`apps/web/app/lib/gateway.server.ts`) forwards these paths to the a
 `API` service binding, so the admin, REST, GraphQL, MCP, OAuth and the API docs share one
 origin: `/spaces`, `/spaces/*`, `/preview/*`, `/delivery/*`, `/oauth/*`,
 `/.well-known/oauth-*`, `/media/*`, `/mcp`, `/openapi.json`, `/docs`, `/docs/*`, `/guides*`,
-`/health/api`. Credentials never cross the binding as the browser sent them:
+`/health/api`, `/auth/me`. Credentials never cross the binding as the browser sent them:
 
 1. A request with `Authorization: Bearer …` (API key, personal access token, OAuth token) goes
    through unchanged except that any caller-supplied `x-cw-principal` and cookies are removed. A

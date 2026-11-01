@@ -59,6 +59,8 @@ describe('isApiPath', () => {
       '/guides',
       '/guides/webhooks',
       '/health/api',
+      // Who the token or session is (the Management SDK's `me()`).
+      '/auth/me',
     ])
       expect(isApiPath(p), p).toBe(true);
   });
