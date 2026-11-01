@@ -819,7 +819,11 @@ export const PLUGIN_CAPABILITIES: readonly {
     label: 'Call external services',
     detail: 'Reads from the hosts listed below, and nowhere else. It cannot write to them.',
   },
-  { value: 'kv:storage', label: 'Store its own data', detail: 'A namespace only it can see.' },
+  {
+    value: 'kv:storage',
+    label: 'Store its own data',
+    detail: 'A namespace only it can see, per environment.',
+  },
 ];
 
 /**
@@ -845,7 +849,6 @@ export const UNPROVIDED_PLUGIN_CAPABILITIES: readonly string[] = [
   'assets:write',
   'search:read',
   'ai:generate',
-  'kv:storage',
 ];
 
 /**

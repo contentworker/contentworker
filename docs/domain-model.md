@@ -379,7 +379,7 @@ the old bytes.
 `assertRightsAllowDelivery(id, rights, now)` throws `AssetRightsError` (`asset_embargoed` or
 `asset_expired`, with the deciding instant in `details`), which publishing checks;
 `rightsExpireSoon` backs the admin's "Expires soon" status. The published snapshot's expiry is also
-a column (`asset_published.expires_at`, migration `0012_asset_expiry`) for the expiry sweep.
+a column (`asset_published.expires_at`, migration `0014_asset_expiry`) for the expiry sweep.
 
 `publishAsset` / `unpublishAsset` move between `draft` and `published`; `archiveAsset(asset, at)`
 takes any non-archived asset to `archived`, and `restoreAsset` brings an archived one back as a
@@ -512,6 +512,7 @@ See [API reference](./api-reference.md) for HTTP shapes.
 | **AuditLogEntry**                             | Space-level change audit                                                                                                             |
 | **EnvironmentAlias**                          | Map a path alias to a concrete environment id                                                                                        |
 | **Plugin** (`InstalledPlugin`)                | A sandboxed write-path plugin: manifest, checksum, approved capabilities (see [Plugins](./plugins.md))                               |
+| **PluginSettings**                            | An operator's values for the settings a plugin's manifest declares; secret ones sealed at rest, never returned by a read API         |
 | **BulkJob**                                   | A durable bulk publish, unpublish or import: N items in claimable chunks, with a report                                              |
 | **AgentSchedule**                             | A recurring agent job: workflow, UTC cron, content-type filter, `autoApply`                                                          |
 | **AgentReview**                               | A pending agent proposal a human approves or rejects                                                                                 |

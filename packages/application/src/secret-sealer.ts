@@ -41,6 +41,9 @@ export const DEV_DATA_KEY = 'contentworker-local-dev-data-key-not-for-production
 export const secretContext = {
   webhookSecret: (webhookId: string) => `webhooks.secret:${webhookId}`,
   webhookHeader: (webhookId: string, name: string) => `webhooks.headers:${webhookId}:${name}`,
+  /** One secret plugin setting; bound to the space and plugin, so it never opens in another. */
+  pluginSetting: (spaceId: string, pluginId: string, key: string) =>
+    `plugin_settings.secrets:${spaceId}/${pluginId}:${key}`,
 } as const;
 
 const enc = new TextEncoder();

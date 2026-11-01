@@ -25,12 +25,12 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 
 `ROLE` may also be a comma-separated union. Where each surface is served:
 
-| Host                      | Worker          | `ROLE`                        | Serves                                                                                                                                    |
-| ------------------------- | --------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `api.<domain>`            | `apps/api`      | `management,preview,delivery` | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads                                                    |
-| `cdn.<domain>`            | `apps/delivery` | `delivery`                    | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request                                                     |
+| Host                      | Worker          | `ROLE`                        | Serves                                                                                                                                                                             |
+| ------------------------- | --------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.<domain>`            | `apps/api`      | `management,preview,delivery` | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads                                                                                             |
+| `cdn.<domain>`            | `apps/delivery` | `delivery`                    | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request                                                                                              |
 | `media.<domain>`          | `apps/media`    | `media`                       | Published asset files (`/<space>/<env>/<id>/v<n>/<token>/<variant>/<file>`), cached (immutable unless rights expire); Preview's signed `/media/*` reads (GET only, `exp` required) |
-| `<domain>` (admin origin) | `apps/web`      | —                             | Forwards the api's surfaces to it ([the list](./architecture.md#appsweb-the-admin-and-the-gateway)); OAuth's issuer on a fleet deployment |
+| `<domain>` (admin origin) | `apps/web`      | —                             | Forwards the api's surfaces to it ([the list](./architecture.md#appsweb-the-admin-and-the-gateway)); OAuth's issuer on a fleet deployment                                          |
 
 Public delivery clients should use `cdn.<domain>`; it answers only `GET`/`HEAD` (cached) and
 `POST` for GraphQL (uncached), and anonymous reads get 401 before the cache.
@@ -99,9 +99,20 @@ deleted after its check is refused (`404`).
 
 | Method | Path                    | Auth | Response                                             |
 | ------ | ----------------------- | ---- | ---------------------------------------------------- |
-| GET    | `/health`               | none | `{ "status": "ok" }`                                 |
+| GET    | `/health`               | none | `{ "status": "ok", "scheduler": "ok" }` (below)      |
 | GET    | `/ready`                | none | `{ "status": "ready", "role": "<role>" }`            |
 | GET    | `/graphiql/:space/:env` | none | GraphiQL HTML shell (queries still need a CDA token) |
+
+`/health` always answers `200` with `status: "ok"` while the api runs. `scheduler` says whether the
+engine's per-minute cron is ticking: `ok` when its last tick is at most five minutes old, `stale`
+when it is older or there has never been one, `unknown` when the heartbeat could not be read. It
+names no job and no error, and each isolate reuses the answer for 30 s
+(`HEALTH_SCHEDULER_TTL_MS`). `GET /deployment/scheduler` (deployment administrators: the admin
+or MCP token; anyone else `403`) and the `scheduler_status` MCP tool return the detail:
+`{ scheduler, lastTickAt?, staleAfterSeconds, jobs: [{ job, lastRunAt, lastSuccessAt?, lastErrorAt?, lastError? }] }`,
+one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `event-history-prune`, `secrets-reseal`,
+`bulk-resume`, `environment-purge-resume`, `version-archive`, `agent-schedules`), the error
+redacted and at most 500 characters.
 
 ---
 
@@ -128,24 +139,24 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 
 ### Spaces & environments
 
-| Method | Path                                        | Scope            | Description                                     |
-| ------ | ------------------------------------------- | ---------------- | ----------------------------------------------- |
-| GET    | `/spaces`                                   | auth             | List spaces (admin: all; scoped key: own space) |
-| POST   | `/spaces`                                   | `space:admin`    | Create a space (reserved ids are `422`, below)  |
-| GET    | `/spaces/:space/environments`               | `preview:read`   | List environments                               |
-| POST   | `/spaces/:space/environments`               | `space:admin`    | Create environment `{ id, name }`               |
-| DELETE | `/spaces/:space/environments/:env?confirm=` | `space:admin`    | Delete an environment and everything in it      |
-| GET    | `/spaces/:space/environment-aliases`        | `preview:read`   | List aliases                                    |
-| PUT    | `/spaces/:space/environment-aliases/:alias` | `space:admin`    | Set alias → environment id                      |
-| DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`    | Remove alias                                    |
-| GET    | `/spaces/:space/audit-log`                  | `space:admin`    | Space audit log (`?limit`, `?skip`)             |
-| GET    | `/spaces/:space/compare`                    | `preview:read`   | Compare two environments (`?from`, `?to`)       |
-| POST   | `/spaces/:space/merge`                      | `content:manage` | Merge environment branch                        |
-| POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`) |
-| GET    | `/spaces/:space/promotions`                 | `content:publish` | List promotions, newest first (`?status=`)     |
-| GET    | `/spaces/:space/promotions/:id`             | `content:publish` | A promotion, its risk check and result         |
-| POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish` | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
-| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish` | Reject a waiting promotion                      |
+| Method | Path                                        | Scope                                | Description                                                                               |
+| ------ | ------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| GET    | `/spaces`                                   | auth                                 | List spaces (admin: all; scoped key: own space)                                           |
+| POST   | `/spaces`                                   | `space:admin`                        | Create a space (reserved ids are `422`, below)                                            |
+| GET    | `/spaces/:space/environments`               | `preview:read`                       | List environments                                                                         |
+| POST   | `/spaces/:space/environments`               | `space:admin`                        | Create environment `{ id, name }`                                                         |
+| DELETE | `/spaces/:space/environments/:env?confirm=` | `space:admin`                        | Delete an environment and everything in it                                                |
+| GET    | `/spaces/:space/environment-aliases`        | `preview:read`                       | List aliases                                                                              |
+| PUT    | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Set alias → environment id                                                                |
+| DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Remove alias                                                                              |
+| GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log (`?limit`, `?skip`)                                                       |
+| GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`)                                                 |
+| POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch                                                                  |
+| POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`)      |
+| GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
+| GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |
+| POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish`                    | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
+| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion                                                                |
 
 A space id is 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit, and is
 never one of the media bucket's own prefixes: `versions`, `imports`, `plugins` or `dlq`, in any case
@@ -379,42 +390,42 @@ content grants gets `403`, because the report exposes entry ids across content t
 
 ### Assets
 
-| Method | Path                         | Scope             | Description                                                                       |
-| ------ | ---------------------------- | ----------------- | --------------------------------------------------------------------------------- |
-| GET    | `…/assets`                   | `preview:read`    | List assets: `kind`, `mime` (`image/*`), `tag`, `folder` (id or `root`), `status` (archived hidden unless `archived`/`all`), `sort` (`updatedAt`, `createdAt`, `size`), `order`, `limit`, `cursor` → `{ items, nextCursor? }` |
-| POST   | `…/assets`                   | `content:write`   | Create draft + presigned upload URL (optional `folderId`)                         |
-| GET    | `…/assets/search`            | `preview:read`    | Hybrid search of the library (full text and semantic, fused by rank): `q` (1–256 characters), `kind`, `tag`, `folder` (id or `root`), `status` (archived hidden unless asked), `limit` (≤ 100) → `{ items, total, facets: { kind, tag, folder } }`, each facet counted without its own filter |
-| POST   | `…/assets/reindex`           | `content:write`   | Send assets through ingest as an `asset_reindex` bulk job `{ all? }` (202 `{ assets, job? }`): those never ingested or whose ingest failed, or every asset with a file; while one runs, that job comes back with `running: true`; 501 without the ingest queue |
-| POST   | `…/assets/:id/reingest`      | `content:write`   | Run ingest on the current file again (202, the asset as `pending`); does nothing while it is `pending` or `processing`; 400 for a hosted video; 501 without the ingest queue |
-| POST   | `…/assets/move`              | `content:write`   | `{ ids (≤ 500), folderId \| null }` → `{ moved }`; 404 for an unknown folder      |
-| GET    | `…/assets/:id`               | `preview:read`    | Get asset                                                                         |
-| GET    | `…/asset-renditions`         | `preview:read`    | The space's rendition presets `{ items }` (the same in every environment)         |
-| POST   | `…/asset-renditions`         | `content:manage`  | Create `{ name, width?, height?, fit?, format?, quality? }` (201); 409 for a taken name; at most 20 |
-| GET    | `…/asset-renditions/:name`   | `preview:read`    | Get a preset                                                                      |
-| PUT    | `…/asset-renditions/:name`   | `content:manage`  | Replace what it does (its URLs stay; their cached files are purged)               |
-| DELETE | `…/asset-renditions/:name`   | `content:manage`  | Delete (204); its URLs answer 404 once purged                                     |
-| POST   | `…/assets/:id/archive`       | `content:publish` | Archive (leaves Delivery when published); idempotent                              |
-| POST   | `…/assets/:id/restore`       | `content:write`   | Restore an archived asset as a draft; idempotent                                  |
-| DELETE | `…/assets/:id`               | `content:publish` | Delete permanently (204); `409 asset_in_use` with `error.usage` (first 50, titled) and `error.total` while linked |
-| GET    | `…/asset-folders`            | `preview:read`    | List folders, in path order                                                       |
-| POST   | `…/asset-folders`            | `content:write`   | Create `{ name, parentId? }` (201); 409 for a sibling of the same name            |
-| PATCH  | `…/asset-folders/:id`        | `content:write`   | Rename and/or move `{ name?, parentId? \| null }`, subtree along                  |
-| DELETE | `…/asset-folders/:id`        | `content:write`   | Delete an empty folder (204); 409 when it holds subfolders or assets              |
-| PATCH  | `…/assets/:id/metadata`      | `content:write`   | Update alt text / tags metadata                                                   |
-| GET    | `…/assets/:id/usage`         | `preview:read`    | Reference usage                                                                   |
-| GET    | `…/assets/:id/transform`     | `preview:read`    | Image transform URL (`w,h,fit,fm,q`; `fm=auto` → AVIF/WebP)                       |
-| POST   | `…/assets/videos`            | `content:write`   | Create a video asset + one-time direct upload to the video host (501 without one) |
-| POST   | `…/assets/:id/video/refresh` | `content:write`   | Refresh a video asset's status, playback URLs and poster                          |
-| POST   | `…/assets/:id/alt-text`      | `content:write`   | AI alt-text generation                                                            |
-| POST   | `…/assets/:id/auto-tag`      | `content:write`   | AI auto-tagging                                                                   |
-| POST   | `…/assets/:id/published`     | `content:publish` | Publish asset; `409 asset_embargoed` (with `embargoUntil`) before the embargo lifts, `409 asset_expired` (with `expiresAt`) once its rights expired |
-| POST   | `…/assets/bulk`              | `content:write`   | A resumable bulk job over a selection (202, the job): `{ action, ids, folderId? (move), addTags?, removeTags? (tag) }`; `move` and `tag` need `content:write`, `publish`, `unpublish` and `archive` need `content:publish`. Follow it at `…/bulk/jobs/:id`; the report names each failed asset |
-| POST   | `…/assets/:id/file`          | `content:write`   | Start replacing the file `{ fileName, contentType }` (201): `{ asset, upload, commit }`, a signed PUT for the next version |
-| POST   | `…/assets/:id/file/commit`   | `content:write`   | Commit the uploaded replacement (`commit` from the call above) → the asset at its new version; 422 when nothing was uploaded, 409 when another replace or restore committed first; Delivery keeps the published file until a republish |
-| GET    | `…/assets/:id/versions`      | `preview:read`    | Every file version, newest first `{ items }`: `version`, `file` (short-lived URL), `createdAt`, `createdBy`, `current`, `published`, `restoredFrom?` |
-| POST   | `…/assets/:id/versions/:version/restore` | `content:write` | Make an earlier file current again as a new version (422 for the current one, 404 for one it never had) |
-| PUT    | `…/assets/:id/rights`        | `content:publish` | Replace the rights `{ license?, credit?, expiresAt?, embargoUntil? }` (`{}` clears; dates ISO-8601 with a zone; 422 on a bad value or an expiry before the embargo); on a published asset they apply at once, and an embargo is refused |
-| DELETE | `…/assets/:id/published`     | `content:publish` | Unpublish asset                                                                   |
+| Method | Path                                     | Scope             | Description                                                                                                                                                                                                                                                                                    |
+| ------ | ---------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/assets`                               | `preview:read`    | List assets: `kind`, `mime` (`image/*`), `tag`, `folder` (id or `root`), `status` (archived hidden unless `archived`/`all`), `sort` (`updatedAt`, `createdAt`, `size`), `order`, `limit`, `cursor` → `{ items, nextCursor? }`                                                                  |
+| POST   | `…/assets`                               | `content:write`   | Create draft + presigned upload URL (optional `folderId`)                                                                                                                                                                                                                                      |
+| GET    | `…/assets/search`                        | `preview:read`    | Hybrid search of the library (full text and semantic, fused by rank): `q` (1–256 characters), `kind`, `tag`, `folder` (id or `root`), `status` (archived hidden unless asked), `limit` (≤ 100) → `{ items, total, facets: { kind, tag, folder } }`, each facet counted without its own filter  |
+| POST   | `…/assets/reindex`                       | `content:write`   | Send assets through ingest as an `asset_reindex` bulk job `{ all? }` (202 `{ assets, job? }`): those never ingested or whose ingest failed, or every asset with a file; while one runs, that job comes back with `running: true`; 501 without the ingest queue                                 |
+| POST   | `…/assets/:id/reingest`                  | `content:write`   | Run ingest on the current file again (202, the asset as `pending`); does nothing while it is `pending` or `processing`; 400 for a hosted video; 501 without the ingest queue                                                                                                                   |
+| POST   | `…/assets/move`                          | `content:write`   | `{ ids (≤ 500), folderId \| null }` → `{ moved }`; 404 for an unknown folder                                                                                                                                                                                                                   |
+| GET    | `…/assets/:id`                           | `preview:read`    | Get asset                                                                                                                                                                                                                                                                                      |
+| GET    | `…/asset-renditions`                     | `preview:read`    | The space's rendition presets `{ items }` (the same in every environment)                                                                                                                                                                                                                      |
+| POST   | `…/asset-renditions`                     | `content:manage`  | Create `{ name, width?, height?, fit?, format?, quality? }` (201); 409 for a taken name; at most 20                                                                                                                                                                                            |
+| GET    | `…/asset-renditions/:name`               | `preview:read`    | Get a preset                                                                                                                                                                                                                                                                                   |
+| PUT    | `…/asset-renditions/:name`               | `content:manage`  | Replace what it does (its URLs stay; their cached files are purged)                                                                                                                                                                                                                            |
+| DELETE | `…/asset-renditions/:name`               | `content:manage`  | Delete (204); its URLs answer 404 once purged                                                                                                                                                                                                                                                  |
+| POST   | `…/assets/:id/archive`                   | `content:publish` | Archive (leaves Delivery when published); idempotent                                                                                                                                                                                                                                           |
+| POST   | `…/assets/:id/restore`                   | `content:write`   | Restore an archived asset as a draft; idempotent                                                                                                                                                                                                                                               |
+| DELETE | `…/assets/:id`                           | `content:publish` | Delete permanently (204); `409 asset_in_use` with `error.usage` (first 50, titled) and `error.total` while linked                                                                                                                                                                              |
+| GET    | `…/asset-folders`                        | `preview:read`    | List folders, in path order                                                                                                                                                                                                                                                                    |
+| POST   | `…/asset-folders`                        | `content:write`   | Create `{ name, parentId? }` (201); 409 for a sibling of the same name                                                                                                                                                                                                                         |
+| PATCH  | `…/asset-folders/:id`                    | `content:write`   | Rename and/or move `{ name?, parentId? \| null }`, subtree along                                                                                                                                                                                                                               |
+| DELETE | `…/asset-folders/:id`                    | `content:write`   | Delete an empty folder (204); 409 when it holds subfolders or assets                                                                                                                                                                                                                           |
+| PATCH  | `…/assets/:id/metadata`                  | `content:write`   | Update alt text / tags metadata                                                                                                                                                                                                                                                                |
+| GET    | `…/assets/:id/usage`                     | `preview:read`    | Reference usage                                                                                                                                                                                                                                                                                |
+| GET    | `…/assets/:id/transform`                 | `preview:read`    | Image transform URL (`w,h,fit,fm,q`; `fm=auto` → AVIF/WebP)                                                                                                                                                                                                                                    |
+| POST   | `…/assets/videos`                        | `content:write`   | Create a video asset + one-time direct upload to the video host (501 without one)                                                                                                                                                                                                              |
+| POST   | `…/assets/:id/video/refresh`             | `content:write`   | Refresh a video asset's status, playback URLs and poster                                                                                                                                                                                                                                       |
+| POST   | `…/assets/:id/alt-text`                  | `content:write`   | AI alt-text generation                                                                                                                                                                                                                                                                         |
+| POST   | `…/assets/:id/auto-tag`                  | `content:write`   | AI auto-tagging                                                                                                                                                                                                                                                                                |
+| POST   | `…/assets/:id/published`                 | `content:publish` | Publish asset; `409 asset_embargoed` (with `embargoUntil`) before the embargo lifts, `409 asset_expired` (with `expiresAt`) once its rights expired                                                                                                                                            |
+| POST   | `…/assets/bulk`                          | `content:write`   | A resumable bulk job over a selection (202, the job): `{ action, ids, folderId? (move), addTags?, removeTags? (tag) }`; `move` and `tag` need `content:write`, `publish`, `unpublish` and `archive` need `content:publish`. Follow it at `…/bulk/jobs/:id`; the report names each failed asset |
+| POST   | `…/assets/:id/file`                      | `content:write`   | Start replacing the file `{ fileName, contentType }` (201): `{ asset, upload, commit }`, a signed PUT for the next version                                                                                                                                                                     |
+| POST   | `…/assets/:id/file/commit`               | `content:write`   | Commit the uploaded replacement (`commit` from the call above) → the asset at its new version; 422 when nothing was uploaded, 409 when another replace or restore committed first; Delivery keeps the published file until a republish                                                         |
+| GET    | `…/assets/:id/versions`                  | `preview:read`    | Every file version, newest first `{ items }`: `version`, `file` (short-lived URL), `createdAt`, `createdBy`, `current`, `published`, `restoredFrom?`                                                                                                                                           |
+| POST   | `…/assets/:id/versions/:version/restore` | `content:write`   | Make an earlier file current again as a new version (422 for the current one, 404 for one it never had)                                                                                                                                                                                        |
+| PUT    | `…/assets/:id/rights`                    | `content:publish` | Replace the rights `{ license?, credit?, expiresAt?, embargoUntil? }` (`{}` clears; dates ISO-8601 with a zone; 422 on a bad value or an expiry before the embargo); on a published asset they apply at once, and an embargo is refused                                                        |
+| DELETE | `…/assets/:id/published`                 | `content:publish` | Unpublish asset                                                                                                                                                                                                                                                                                |
 
 Every asset these routes return carries a short-lived signed `file.url` (at least 15 minutes,
 `?exp=…&sig=…`), never the non-expiring URL the asset stores; a hosted video keeps its playback
@@ -512,7 +523,7 @@ caller can't read. A run never exposes its starter's resolved principal, only `s
 | GET    | `…/workflow-tasks`              | `preview:read`  | Approvals, event waits and agent reviews; `status`, `runId`, `entryId`, `kind`, `limit`                                                                                                                                             |
 | GET    | `…/workflow-tasks/:id`          | `preview:read`  | One task                                                                                                                                                                                                                            |
 | POST   | `…/workflow-tasks/:id/decide`   | `preview:read`  | `{ decision: approved\|rejected, note? }`. Also needs the task's `requiredScope` (default `workflow:approve`) and content-type grant; with separation of duties the starter can't decide and an API token can't decide at all (403) |
-| GET    | `…/approvals/count`             | `preview:read`  | `{ workflowTasks, agentReviews, total }`: what waits in Approvals, counted uncapped; items on content types the caller can't read are left out |
+| GET    | `…/approvals/count`             | `preview:read`  | `{ workflowTasks, agentReviews, total }`: what waits in Approvals, counted uncapped; items on content types the caller can't read are left out                                                                                      |
 | GET    | `…/workflow-settings`           | `preview:read`  | `{ separateDuties }`                                                                                                                                                                                                                |
 | PUT    | `…/workflow-settings`           | `space:admin`   | Set the space default for approvals that leave `separateDuties` unset                                                                                                                                                               |
 
@@ -575,16 +586,16 @@ the same ([Events & webhooks](./events-and-webhooks.md#webhooks)).
 Base path: `/delivery/:space/:env`. Reads the denormalized **published** read model (through the Workers KV
 delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness after a publish). List/get responses apply granular RBAC when the key is role-bound.
 
-| Method   | Path                                         | Scope           | Description                    |
-| -------- | -------------------------------------------- | --------------- | ------------------------------ |
-| GET      | `/delivery/:space/:env/entries`              | `delivery:read` | List published entries         |
-| GET      | `/delivery/:space/:env/entries/:id`          | `delivery:read` | Get one published entry        |
+| Method   | Path                                         | Scope           | Description                                                                                                                                                                                                                                                                                                                   |
+| -------- | -------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET      | `/delivery/:space/:env/entries`              | `delivery:read` | List published entries                                                                                                                                                                                                                                                                                                        |
+| GET      | `/delivery/:space/:env/entries/:id`          | `delivery:read` | Get one published entry                                                                                                                                                                                                                                                                                                       |
 | GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets: `limit`, `cursor` (or `skip`), `kind`, `tag`, `folder` (id or `root`), `locale` → `{ items, total, nextCursor? }`. With `q`, a hybrid search of published assets only (needs `search:read` too, else 403) → `{ items, total, facets }`; a content-granted key gets an empty result with empty `facets` |
-| GET      | `/delivery/:space/:env/assets/:id`           | `delivery:read` | Get one published asset (`locale`) |
-| GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default** |
-| GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream    |
-| GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Deprecated: `301` to the media URL of the next width step at or above `w`, or `rendition` (cached); `302` to a signed transform when no media origin is set |
-| GET/POST | `/delivery/:space/:env/graphql`              | `delivery:read` | GraphQL Delivery endpoint      |
+| GET      | `/delivery/:space/:env/assets/:id`           | `delivery:read` | Get one published asset (`locale`)                                                                                                                                                                                                                                                                                            |
+| GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default**                                                                                                                                                                                                                                                                                                 |
+| GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream                                                                                                                                                                                                                                                                                                   |
+| GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Deprecated: `301` to the media URL of the next width step at or above `w`, or `rendition` (cached); `302` to a signed transform when no media origin is set                                                                                                                                                                   |
+| GET/POST | `/delivery/:space/:env/graphql`              | `delivery:read` | GraphQL Delivery endpoint                                                                                                                                                                                                                                                                                                     |
 
 **Common query parameters:** shared [query language](#shared-query-language) plus `locale`,
 `include` (reference depth 0–5), `limit`, `skip`, `since` (delta sync).
@@ -651,13 +662,13 @@ cache invalidation or live previews on the read side.
 Base path: `/preview/:space/:env`. Reads **draft/current** versions. Supports the same
 [query language](#shared-query-language) as Delivery. Granular RBAC applies on list/get.
 
-| Method | Path                               | Scope          | Description                          |
-| ------ | ---------------------------------- | -------------- | ------------------------------------ |
-| GET    | `/preview/:space/:env/entries`     | `preview:read` | List current entries                 |
-| GET    | `/preview/:space/:env/entries/:id` | `preview:read` | Get one current entry                |
-| GET    | `/preview/:space/:env/suggest`     | `preview:read` | Entries matching what is being typed |
+| Method | Path                               | Scope          | Description                                                                                                                   |
+| ------ | ---------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/preview/:space/:env/entries`     | `preview:read` | List current entries                                                                                                          |
+| GET    | `/preview/:space/:env/entries/:id` | `preview:read` | Get one current entry                                                                                                         |
+| GET    | `/preview/:space/:env/suggest`     | `preview:read` | Entries matching what is being typed                                                                                          |
 | GET    | `/preview/:space/:env/assets`      | `preview:read` | Current assets (drafts included, archived left out) in Delivery's shape: `limit`, `cursor`, `kind`, `tag`, `folder`, `locale` |
-| GET    | `/preview/:space/:env/assets/:id`  | `preview:read` | One current asset in Delivery's shape |
+| GET    | `/preview/:space/:env/assets/:id`  | `preview:read` | One current asset in Delivery's shape                                                                                         |
 
 Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
 least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and

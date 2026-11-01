@@ -51,6 +51,7 @@ import {
 } from '@contentworker/platform/wire';
 import { redactCredentials } from '@contentworker/redaction';
 import { AssistantAgent } from './assistant';
+import { CRON_JOBS, finishTick, startTick, sweep } from './heartbeat';
 import { runInLanes } from './lanes';
 import { newPurgePlan, planPurges, sendPurges } from './purges';
 import { AgentWorkflow } from './workflows/agent-workflow';
@@ -444,146 +445,189 @@ export default {
   /**
    * Cron sweeper (every minute): drains any outbox rows the post-commit nudge
    * missed (crash/eviction), fires due scheduled publish/unpublish actions and
-   * unpublishes assets whose rights expired.
+   * unpublishes assets whose rights expired. Each sweep's outcome, and the tick
+   * itself, is written as the scheduler's heartbeat at the end (./heartbeat.ts):
+   * the api's /health reads it.
    */
   async scheduled(ctrl: ScheduledController, rawEnv: EdgeEnv, _exec: ExecutionContext) {
     const env = withJurisdiction(rawEnv);
     const wired = wireEdge(env);
     const metrics = makeMetrics(env.METRICS);
+    const tick = startTick(wired.ctx);
     try {
       // Retention sweep on the top-of-hour tick only (the cron fires every
       // minute): trims relayed outbox rows + old webhook delivery records.
       if (wired.persistent && new Date(ctrl.scheduledTime).getUTCMinutes() === 0) {
-        try {
-          const pruned = await pruneEventHistory(wired.ctx, {
-            ...(env.EVENT_RETENTION_HOURS
-              ? { retentionHours: Number(env.EVENT_RETENTION_HOURS) }
-              : {}),
-          });
-          if (pruned.outboxDeleted > 0 || pruned.webhookDeliveriesDeleted > 0) {
-            console.log(JSON.stringify({ msg: 'event history pruned', ...pruned }));
-            metrics.count('contentworker_events_pruned_total', pruned.outboxDeleted, {
-              table: 'outbox',
+        await sweep(
+          tick,
+          CRON_JOBS.prune,
+          async () => {
+            const pruned = await pruneEventHistory(wired.ctx, {
+              ...(env.EVENT_RETENTION_HOURS
+                ? { retentionHours: Number(env.EVENT_RETENTION_HOURS) }
+                : {}),
             });
-            metrics.count('contentworker_events_pruned_total', pruned.webhookDeliveriesDeleted, {
-              table: 'webhook_deliveries',
-            });
-          }
-        } catch (err) {
-          console.error('event history prune failed', err);
-        }
+            if (pruned.outboxDeleted > 0 || pruned.webhookDeliveriesDeleted > 0) {
+              console.log(JSON.stringify({ msg: 'event history pruned', ...pruned }));
+              metrics.count('contentworker_events_pruned_total', pruned.outboxDeleted, {
+                table: 'outbox',
+              });
+              metrics.count('contentworker_events_pruned_total', pruned.webhookDeliveriesDeleted, {
+                table: 'webhook_deliveries',
+              });
+            }
+          },
+          (err) => console.error('event history prune failed', err),
+        );
       }
       // Secrets-at-rest sweep, once a day (03:30 UTC): reseals values under
       // DATA_KEY_PREVIOUS onto DATA_KEY after a rotation.
       if (wired.persistent && isResealTick(ctrl.scheduledTime)) {
-        try {
-          const r = await resealSecrets({ store: wired.ctx.store, sealer: wired.sealer });
-          console.log(JSON.stringify({ msg: 'secrets resealed', ...r }));
-          metrics.count('contentworker_secrets_resealed_total', r.resealed);
-          if (r.unreadable > 0) {
-            // Never the values: only where they live.
-            console.error(
-              JSON.stringify({
-                msg: 'secrets unreadable with DATA_KEY or DATA_KEY_PREVIOUS',
-                unreadable: r.unreadable,
-                refs: r.unreadableRefs,
-              }),
-            );
-            metrics.count('contentworker_secrets_unreadable_total', r.unreadable);
-          }
-        } catch (err) {
-          console.error('secret reseal failed', err);
-        }
+        await sweep(
+          tick,
+          CRON_JOBS.reseal,
+          async () => {
+            const r = await resealSecrets({ store: wired.ctx.store, sealer: wired.sealer });
+            console.log(JSON.stringify({ msg: 'secrets resealed', ...r }));
+            metrics.count('contentworker_secrets_resealed_total', r.resealed);
+            if (r.unreadable > 0) {
+              // Never the values: only where they live.
+              console.error(
+                JSON.stringify({
+                  msg: 'secrets unreadable with DATA_KEY or DATA_KEY_PREVIOUS',
+                  unreadable: r.unreadable,
+                  refs: r.unreadableRefs,
+                }),
+              );
+              metrics.count('contentworker_secrets_unreadable_total', r.unreadable);
+            }
+          },
+          (err) => console.error('secret reseal failed', err),
+        );
       }
       // Actions first: their outbox events are then picked up by the relay
       // sweep below instead of waiting a full cron interval.
       // A failure here must not skip the rest of the tick (the relay sweep is the crash backstop).
-      try {
-        const { executed, failed } = await runDueScheduledActions(wired.ctx);
-        if (executed > 0)
-          metrics.count('contentworker_scheduled_actions_total', executed, { outcome: 'executed' });
-        if (failed > 0)
-          metrics.count('contentworker_scheduled_actions_total', failed, { outcome: 'failed' });
-        if (executed > 0 || failed > 0) {
-          console.log(JSON.stringify({ msg: 'scheduled actions run', executed, failed }));
-        }
-      } catch (err) {
-        console.error('scheduled actions failed', redactCredentials(err));
-        metrics.count('contentworker_scheduled_actions_total', 1, { outcome: 'error' });
-      }
+      await sweep(
+        tick,
+        CRON_JOBS.scheduledActions,
+        async () => {
+          const { executed, failed } = await runDueScheduledActions(wired.ctx);
+          if (executed > 0)
+            metrics.count('contentworker_scheduled_actions_total', executed, {
+              outcome: 'executed',
+            });
+          if (failed > 0)
+            metrics.count('contentworker_scheduled_actions_total', failed, { outcome: 'failed' });
+          if (executed > 0 || failed > 0) {
+            console.log(JSON.stringify({ msg: 'scheduled actions run', executed, failed }));
+          }
+        },
+        (err) => {
+          console.error('scheduled actions failed', redactCredentials(err));
+          metrics.count('contentworker_scheduled_actions_total', 1, { outcome: 'error' });
+        },
+      );
       // Assets whose rights expired leave Delivery (their outbox events relay below, which purges
       // the media and delivery caches and removes the gate). Before the relay for the same reason.
-      try {
-        const { expired, errors } = await runDueAssetExpiries(wired.ctx);
-        if (expired > 0) {
-          metrics.count('contentworker_asset_expiries_total', expired, { outcome: 'expired' });
-          console.log(JSON.stringify({ msg: 'expired assets unpublished', expired }));
-        }
-        if (errors.length > 0) {
-          metrics.count('contentworker_asset_expiries_total', errors.length, { outcome: 'failed' });
-          console.error(
-            JSON.stringify({
-              msg: 'asset expiry failed',
-              errors: errors.map((e) => ({
-                spaceId: e.scope.spaceId,
-                environmentId: e.scope.environmentId,
-                assetId: e.assetId,
-                error: redactCredentials(e.error),
-              })),
-            }),
-          );
-        }
-      } catch (err) {
-        console.error('asset expiry sweep failed', redactCredentials(err));
-        metrics.count('contentworker_asset_expiries_total', 1, { outcome: 'error' });
-      }
+      await sweep(
+        tick,
+        CRON_JOBS.assetExpiry,
+        async () => {
+          const { expired, errors } = await runDueAssetExpiries(wired.ctx);
+          if (expired > 0) {
+            metrics.count('contentworker_asset_expiries_total', expired, { outcome: 'expired' });
+            console.log(JSON.stringify({ msg: 'expired assets unpublished', expired }));
+          }
+          if (errors.length > 0) {
+            metrics.count('contentworker_asset_expiries_total', errors.length, {
+              outcome: 'failed',
+            });
+            console.error(
+              JSON.stringify({
+                msg: 'asset expiry failed',
+                errors: errors.map((e) => ({
+                  spaceId: e.scope.spaceId,
+                  environmentId: e.scope.environmentId,
+                  assetId: e.assetId,
+                  error: redactCredentials(e.error),
+                })),
+              }),
+            );
+            // Recorded on the heartbeat, so /health and `fleet.ts doctor` show an expiry that
+            // keeps failing (an expired asset still in Delivery), not only the log.
+            throw new Error(`${errors.length} asset expiries failed`);
+          }
+        },
+        (err) => {
+          console.error('asset expiry sweep failed', redactCredentials(err));
+          metrics.count('contentworker_asset_expiries_total', 1, { outcome: 'error' });
+        },
+      );
       // A relay error must not abort the tick (agent schedules still run).
-      if (wired.queue) {
-        try {
-          const total = await drainOutbox(wired.ctx, wired.queue, {
-            maxIterations: 20,
-            routeTopic: wired.routeTopic,
-          });
-          if (total > 0)
-            metrics.count('contentworker_outbox_relayed_total', total, { trigger: 'cron' });
-        } catch (err) {
-          console.error('cron outbox relay failed', err);
-          metrics.count('contentworker_relay_errors_total', 1, { trigger: 'cron' });
-        }
+      const queue = wired.queue;
+      if (queue) {
+        await sweep(
+          tick,
+          CRON_JOBS.relay,
+          async () => {
+            const total = await drainOutbox(wired.ctx, queue, {
+              maxIterations: 20,
+              routeTopic: wired.routeTopic,
+            });
+            if (total > 0)
+              metrics.count('contentworker_outbox_relayed_total', total, { trigger: 'cron' });
+          },
+          (err) => {
+            console.error('cron outbox relay failed', err);
+            metrics.count('contentworker_relay_errors_total', 1, { trigger: 'cron' });
+          },
+        );
       }
       // Bulk-job crash recovery: re-nudge chunks whose claim went stale or
       // whose chunk_due event was lost (normally returns 0 — one cheap
       // indexed query). The re-appended events relay on the next tick's
       // drain (or the following nudge).
       if (wired.persistent) {
-        try {
-          const resumed = await resumeStalledBulkJobs(wired.ctx);
-          if (resumed > 0) {
-            console.log(JSON.stringify({ msg: 'stalled bulk chunks re-nudged', resumed }));
-            metrics.count('contentworker_bulk_chunks_resumed_total', resumed);
-          }
-        } catch (err) {
-          console.error('bulk stall sweep failed', err);
-        }
+        await sweep(
+          tick,
+          CRON_JOBS.bulkResume,
+          async () => {
+            const resumed = await resumeStalledBulkJobs(wired.ctx);
+            if (resumed > 0) {
+              console.log(JSON.stringify({ msg: 'stalled bulk chunks re-nudged', resumed }));
+              metrics.count('contentworker_bulk_chunks_resumed_total', resumed);
+            }
+          },
+          (err) => console.error('bulk stall sweep failed', err),
+        );
         // Deleted environments whose purge lost its step event (normally none).
-        try {
-          const restarted = await resumeStalledEnvironmentPurges(wired.ctx);
-          if (restarted > 0) {
-            console.log(JSON.stringify({ msg: 'stalled environment purges restarted', restarted }));
-            metrics.count('contentworker_environment_purges_resumed_total', restarted);
-          }
-        } catch (err) {
-          console.error('environment purge sweep failed', err);
-        }
+        await sweep(
+          tick,
+          CRON_JOBS.purgeResume,
+          async () => {
+            const restarted = await resumeStalledEnvironmentPurges(wired.ctx);
+            if (restarted > 0) {
+              console.log(
+                JSON.stringify({ msg: 'stalled environment purges restarted', restarted }),
+              );
+              metrics.count('contentworker_environment_purges_resumed_total', restarted);
+            }
+          },
+          (err) => console.error('environment purge sweep failed', err),
+        );
         // Superseded version bodies out of D1 into the media bucket (bounded per tick), once the
         // deployment has turned it on: every Worker must read archived bodies first.
         if (env.VERSION_ARCHIVE === 'true') {
-          try {
-            const moved = await archiveSupersededVersions(wired.ctx, wired.blob);
-            if (moved > 0) metrics.count('contentworker_versions_archived_total', moved);
-          } catch (err) {
-            console.error('version archive sweep failed', err);
-          }
+          await sweep(
+            tick,
+            CRON_JOBS.versionArchive,
+            async () => {
+              const moved = await archiveSupersededVersions(wired.ctx, wired.blob);
+              if (moved > 0) metrics.count('contentworker_versions_archived_total', moved);
+            },
+            (err) => console.error('version archive sweep failed', err),
+          );
         }
       }
       // Recurring agent jobs: due schedules run here on the cron tick, metered
@@ -591,18 +635,26 @@ export default {
       // AI_AGENT_* ceilings when set) so batch spend can't exhaust the
       // interactive budget.
       if (env.AGENTS_SCHEDULES === 'true') {
-        const bgGuard = doAgentCostGuardFromEnv(env);
-        const scheduleCtx = { ...wired.ctx, costGuard: bgGuard ?? wired.ctx.costGuard };
-        const agents = makeAgents(env, scheduleCtx, wired.ai);
-        if (agents) {
-          const s = await runDueAgentSchedules(scheduleCtx, agents, {
-            entriesPerRun: Number(env.AGENT_SCHEDULE_MAX_ENTRIES ?? 25),
-            maxRunTokens: Number(env.AGENT_SCHEDULE_MAX_RUN_TOKENS ?? 100_000),
-          });
-          if (s.schedules > 0) console.log(JSON.stringify({ msg: 'agent schedules run', ...s }));
-        }
+        await sweep(
+          tick,
+          CRON_JOBS.agentSchedules,
+          async () => {
+            const bgGuard = doAgentCostGuardFromEnv(env);
+            const scheduleCtx = { ...wired.ctx, costGuard: bgGuard ?? wired.ctx.costGuard };
+            const agents = makeAgents(env, scheduleCtx, wired.ai);
+            if (!agents) return;
+            const s = await runDueAgentSchedules(scheduleCtx, agents, {
+              entriesPerRun: Number(env.AGENT_SCHEDULE_MAX_ENTRIES ?? 25),
+              maxRunTokens: Number(env.AGENT_SCHEDULE_MAX_RUN_TOKENS ?? 100_000),
+            });
+            if (s.schedules > 0) console.log(JSON.stringify({ msg: 'agent schedules run', ...s }));
+          },
+          (err) => console.error('agent schedules failed', redactCredentials(err)),
+        );
       }
     } finally {
+      // The heartbeat goes to D1 only: an in-memory store would hold it for nobody to read.
+      if (wired.persistent) await finishTick(wired.ctx, tick);
       await wired.close();
     }
   },

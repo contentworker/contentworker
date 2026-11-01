@@ -139,6 +139,27 @@ exactly as powerful as its token; the server checks every call. Failures throw `
 with the `status` and the error `body`; see [errors](/reference/rest-api/#errors). Keep the token on
 a server: a Management key never belongs in a browser or app bundle.
 
+### Reading your own writes
+
+A read right after a write can be answered by a read replica that hasn't caught up yet. The
+Management client and a preview client handle this for you: each one sends back the
+`x-cw-bookmark` the api last answered it with, so its next read is at least that fresh. To carry
+it to another client, say from a server action to the browser's preview client, pass
+`client.bookmark` along and give it to the other client as its `bookmark` option:
+
+```ts
+// Server action
+await cma.entries.update(entryId, { title: { 'en-US': 'Hello again' } });
+return { bookmark: cma.bookmark };
+
+// Browser
+const preview = createDeliveryClient({ ...previewOptions, preview: true, bookmark });
+```
+
+The bookmark only ever goes to the client's own `baseUrl` origin. Pass `readYourWrites: false` to
+turn it off. A Delivery client doesn't use one: Delivery is cached and catches up with a
+publish shortly after, not on the next request.
+
 ## Typed content
 
 Generate TypeScript types from your space's content types, so `entry.fields.title` is a `string`

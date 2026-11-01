@@ -25,6 +25,8 @@ import { getAsset, listAssets } from './assets';
 import type { AppContext } from './context';
 import { listPublishedEntries } from './delivery';
 import { createEntry, updateEntry } from './entries';
+import { resolveSettingsForPlugin } from './plugin-settings';
+import { pluginKvCapability } from './plugin-storage';
 import { loadPluginBundle } from './plugins';
 import { getPreviewEntry, listPreviewEntries } from './preview';
 import { publishEntry } from './publishing';
@@ -102,11 +104,20 @@ function buildCapabilities(
   ctx: AppContext,
   scope: Scope,
   principal: Principal,
-  granted: readonly PluginCapability[],
-  allowedHosts: readonly string[],
+  plugin: InstalledPlugin,
   options: PluginHookOptions,
 ): PluginCapabilities {
-  const capabilities: PluginCapabilities = {};
+  const granted = grantOf(plugin);
+  const allowedHosts = plugin.manifest.allowedHosts;
+  const capabilities: PluginCapabilities = {
+    // No capability: the plugin's own configuration, set by an operator for this
+    // plugin alone. Bound to this plugin's record, so it cannot ask for another's.
+    settings: {
+      async get() {
+        return resolveSettingsForPlugin(ctx, plugin);
+      },
+    },
+  };
   const has = (c: PluginCapability) => granted.includes(c);
 
   if (has('content:read')) {
@@ -177,12 +188,15 @@ function buildCapabilities(
     capabilities.taxonomy = taxonomy;
   }
 
-  // `assets:write`, `search:read`, `ai:generate` and `kv:storage` have no
-  // implementation wired here yet. They stay in the vocabulary so a manifest
-  // can declare them and a human can decide on them, and the sandbox reports
-  // a granted-but-unprovided method as such rather than pretending. kv in
-  // particular waits for a per-plugin storage seam rather than handing over a
-  // shared namespace and calling it isolated.
+  if (has('kv:storage')) {
+    // Namespaced by the installed record's id, never by anything the plugin says.
+    capabilities.kv = pluginKvCapability(ctx, scope, plugin.id);
+  }
+
+  // `assets:write`, `search:read` and `ai:generate` have no implementation
+  // wired here yet. They stay in the vocabulary so a manifest can declare them
+  // and a human can decide on them, and the sandbox reports a
+  // granted-but-unprovided method as such rather than pretending.
 
   return capabilities;
 }
@@ -304,8 +318,7 @@ export function createPluginHookDispatcher(
           ctx,
           scope,
           options.principal ?? derivePrincipal(plugin, scope.spaceId),
-          grantOf(plugin),
-          plugin.manifest.allowedHosts,
+          plugin,
           options,
         ),
       );

@@ -5,6 +5,7 @@
  */
 
 /** Locale-keyed field values, or flattened values when a locale is requested. */
+import { bookmarkTracker } from './bookmark.js';
 import { CONTENT_REF_ATTRIBUTE, formatContentRef } from './content-ref.js';
 
 export type Fields = Record<string, unknown>;
@@ -142,6 +143,17 @@ export interface ClientOptions {
   readonly preview?: boolean;
   /** Locale stamped onto refs from `editable()`. Defaults to `'*'`. */
   readonly locale?: string;
+  /**
+   * Preview only: echo the api's `x-cw-bookmark` so each read is at least as fresh as the last
+   * response, or as `bookmark`. Default `true`. Delivery is cached and reads replicas by design,
+   * so a Delivery client never sends or keeps a bookmark.
+   */
+  readonly readYourWrites?: boolean;
+  /**
+   * Preview only: a bookmark to start from, e.g. the one a server action's write returned
+   * (`managementClient.bookmark`), so this client's first read already sees that write.
+   */
+  readonly bookmark?: string;
 }
 
 /** Comparison operators for a field-level filter. */
@@ -205,6 +217,11 @@ export function createDeliveryClient(opts: ClientOptions) {
   const cache = new Map<string, CacheEntry>();
   const surface = opts.preview ? 'preview' : 'delivery';
   const base = `${opts.baseUrl.replace(/\/$/, '')}/${surface}/${opts.space}/${opts.environment}`;
+  const bookmarks = bookmarkTracker(
+    opts.baseUrl,
+    opts.bookmark,
+    opts.preview === true && opts.readYourWrites !== false,
+  );
 
   async function get<T>(
     path: string,
@@ -221,7 +238,10 @@ export function createDeliveryClient(opts: ClientOptions) {
       if (hit && hit.expires > Date.now()) return hit.value as T;
     }
 
-    const res = await doFetch(url, { headers: { authorization: `Bearer ${opts.token}` } });
+    const res = await doFetch(url, {
+      headers: { authorization: `Bearer ${opts.token}`, ...bookmarks.headersFor(url) },
+    });
+    bookmarks.record(res);
     if (!res.ok) {
       throw new DeliveryError(res.status, `Delivery request failed: ${res.status} ${url}`);
     }
@@ -231,6 +251,19 @@ export function createDeliveryClient(opts: ClientOptions) {
   }
 
   return {
+    /**
+     * The newest `x-cw-bookmark` this preview client has seen (or was given), sent with its next
+     * request; hand it to another client to carry read-your-writes across. Assigning replaces it,
+     * `undefined` clears it, and a value that isn't a D1 bookmark is dropped. Always `undefined`
+     * on a Delivery client or with `readYourWrites: false`.
+     */
+    get bookmark(): string | undefined {
+      return bookmarks.current;
+    },
+    set bookmark(value: string | undefined) {
+      bookmarks.current = value;
+    },
+
     /** Fetch a single published entry by id. */
     async getEntry<F extends Fields = Fields>(
       id: string,

@@ -11,6 +11,7 @@ import type {
   FieldDefinition,
   LocalizedValue,
   PluginManifest,
+  PluginSettingValue,
   PromotedContentType,
   PromotedEntry,
   PromotionResult,
@@ -357,7 +358,7 @@ export const assetPublished = sqliteTable(
     r2Key: text('r2_key'),
     kind: text('kind').$type<AssetKind>().notNull().default('other'),
     rights: text('rights', { mode: 'json' }).$type<AssetRights>(),
-    // `rights.expiresAt` copied out on every write (0012_asset_expiry), for the expiry sweep.
+    // `rights.expiresAt` copied out on every write (0014_asset_expiry), for the expiry sweep.
     expiresAt: integer('expires_at', { mode: 'timestamp_ms' }),
   },
   (t) => [
@@ -484,6 +485,16 @@ export const deploymentSettings = sqliteTable('deployment_settings', {
   value: text('value', { mode: 'json' }).$type<unknown>().notNull(),
   version: integer('version').notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+});
+
+// The engine cron's heartbeat: when each sweep last ran, last succeeded and last failed (0012).
+// Written once a tick by the cron only; `job = 'tick'` is the tick itself.
+export const schedulerJobs = sqliteTable('scheduler_jobs', {
+  job: text('job').primaryKey(),
+  lastRunAt: integer('last_run_at', { mode: 'timestamp_ms' }).notNull(),
+  lastSuccessAt: integer('last_success_at', { mode: 'timestamp_ms' }),
+  lastErrorAt: integer('last_error_at', { mode: 'timestamp_ms' }),
+  lastError: text('last_error'),
 });
 
 export const agentRuns = sqliteTable(
@@ -1035,6 +1046,45 @@ export const plugins = sqliteTable(
     installedAt: integer('installed_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.id] })],
+);
+
+// A plugin's `kv:storage`: one row per key, per plugin, per environment. Every statement filters
+// on the scope and the plugin id, which is the whole of the isolation between plugins; the
+// application caps value size and key count.
+export const pluginKv = sqliteTable(
+  'plugin_kv',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    pluginId: text('plugin_id').notNull(),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.pluginId, t.key] })],
+);
+
+// An installed plugin's settings, per space. `secrets` maps each secret field to its value sealed
+// under DATA_KEY (the `plugin_settings.secrets` column of the reseal sweep); `version` is the
+// compare-and-set token for concurrent edits.
+export const pluginSettings = sqliteTable(
+  'plugin_settings',
+  {
+    spaceId: text('space_id').notNull(),
+    pluginId: text('plugin_id').notNull(),
+    config: text('config', { mode: 'json' })
+      .$type<Record<string, PluginSettingValue>>()
+      .notNull()
+      .default(sql`'{}'`),
+    secrets: text('secrets', { mode: 'json' })
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'`),
+    version: integer('version').notNull().default(1),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedBy: text('updated_by'),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.pluginId] })],
 );
 
 export const oauthClients = sqliteTable(

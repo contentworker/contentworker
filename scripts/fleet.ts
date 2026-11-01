@@ -7,6 +7,9 @@
  *   node scripts/fleet.ts matrix               the deployments of each ring, for CI
  *   node scripts/fleet.ts secrets <app> <out>  write this app's secrets from the environment
  *   node scripts/fleet.ts status               deep health of every deployment
+ *   node scripts/fleet.ts doctor <id>          check a deployment's rendered configs are complete and
+ *                                              agree, then whether its scheduler is ticking
+ *                                              (--offline skips the fetch; --url <api base> overrides)
  *   node scripts/fleet.ts names <id>           resource names as shell variables (provisioning)
  *   node scripts/fleet.ts set-d1 <id> <uuid>   record the D1 database id in the registry
  *   node scripts/fleet.ts set-kv <id> <kv id>  record the shared KV namespace id
@@ -567,6 +570,303 @@ async function status() {
   }
 }
 
+// --- doctor ------------------------------------------------------------------------------------
+
+/** One thing `doctor` found: an `error` fails it, a `warn` is worth a look, `ok` is a pass. */
+export type Finding = { level: 'ok' | 'warn' | 'error'; app: App | 'fleet'; message: string };
+
+/**
+ * The bindings each app's code reads and can't run without, by binding name. The base configs
+ * hold them today; this catches a template edit (or a render) that drops one before a deploy
+ * finds out. Vectorize is left out for a demo, and EMAIL is added for a deployment with a sender.
+ */
+export const REQUIRED_BINDINGS: Record<App, readonly string[]> = {
+  engine: [
+    'DB',
+    'KV_CACHE',
+    'MEDIA_BUCKET',
+    'METRICS',
+    'AI',
+    'VECTORIZE',
+    'EVENTS_QUEUE',
+    'BULK_QUEUE',
+    'AGENTS_QUEUE',
+    'PURGE_QUEUE',
+    'MEDIA_PURGE_QUEUE',
+    'ASSET_EVENTS_QUEUE',
+    'LIVE_HUB',
+    'AI_BUDGET',
+    'SEARCH',
+    'ASSISTANT_AGENT',
+    'AGENT_WF',
+    'EDITORIAL_WF',
+    'ASSET_INGEST_WF',
+  ],
+  media: ['DB', 'KV_CACHE', 'MEDIA_BUCKET'],
+  api: [
+    'DB',
+    'KV_CACHE',
+    'MEDIA_BUCKET',
+    'METRICS',
+    'AI',
+    'VECTORIZE',
+    'EVENTS_QUEUE',
+    'BULK_QUEUE',
+    'AGENTS_QUEUE',
+    'ASSET_EVENTS_QUEUE',
+    'LIVE_HUB',
+    'AUTH_LIMITER',
+    'AI_BUDGET',
+    'SEARCH',
+    'ASSISTANT_AGENT',
+    'AGENT_WF',
+    'EDITORIAL_WF',
+    'RATE_LIMIT_READ',
+    'RATE_LIMIT_WRITE',
+    'RATE_LIMIT_AI',
+  ],
+  delivery: [
+    'DB',
+    'KV_CACHE',
+    'MEDIA_BUCKET',
+    'VECTORIZE',
+    'LIVE_HUB',
+    'SEARCH',
+    'RATE_LIMIT_READ',
+  ],
+  web: ['DB', 'API', 'DELIVERY', 'API_LIMIT'],
+};
+
+/** The queues the engine must consume (base names): without one, its producers fill it forever. */
+const ENGINE_CONSUMES = [
+  'contentworker-events',
+  'contentworker-bulk',
+  'contentworker-agents',
+  'contentworker-asset-events',
+];
+
+/** The cron the scheduler heartbeat expects: every minute (stale after five missed ticks). */
+export const ENGINE_CRON = '* * * * *';
+
+/** Every binding name a rendered config declares. */
+export function bindingNames(c: Config): Set<string> {
+  const out = new Set<string>();
+  const add = (list: unknown, key = 'binding') => {
+    if (Array.isArray(list)) for (const b of list) if (b?.[key]) out.add(b[key]);
+  };
+  add(c.d1_databases);
+  add(c.kv_namespaces);
+  add(c.r2_buckets);
+  add(c.vectorize);
+  add(c.analytics_engine_datasets);
+  add(c.worker_loaders);
+  add(c.services);
+  add(c.workflows);
+  add(c.queues?.producers);
+  add(c.durable_objects?.bindings, 'name');
+  add(c.ratelimits, 'name');
+  add(c.send_email, 'name');
+  for (const single of ['ai', 'images', 'stream'] as const)
+    if (c[single]?.binding) out.add(c[single].binding);
+  return out;
+}
+
+/** The Durable Object classes a config's migrations leave defined. */
+function definedClasses(c: Config): Set<string> {
+  const out = new Set<string>();
+  for (const m of (c.migrations ?? []) as Config[]) {
+    for (const k of ['new_classes', 'new_sqlite_classes'])
+      for (const name of m[k] ?? []) out.add(name);
+    for (const r of m.renamed_classes ?? []) {
+      out.delete(r.from);
+      out.add(r.to);
+    }
+    for (const name of m.deleted_classes ?? []) out.delete(name);
+  }
+  return out;
+}
+
+/**
+ * Read-only checks that a deployment's rendered configs are complete and agree with each other:
+ * provisioned ids, the bindings each app needs, the engine's cron and queue consumers, every
+ * cross-script Durable Object and Workflow binding naming this deployment's engine and a class it
+ * defines, routes on the deployment's hosts, and which secrets its GitHub environment must hold.
+ * `bases` are the apps' wrangler.jsonc, parsed. No network: `doctorHealth` is the part that asks.
+ */
+export function doctor(d: Deployment, bases: Record<App, Config>): Finding[] {
+  const findings: Finding[] = [];
+  const error = (app: Finding['app'], message: string) =>
+    findings.push({ level: 'error', app, message });
+  const warn = (app: Finding['app'], message: string) =>
+    findings.push({ level: 'warn', app, message });
+  const ok = (app: Finding['app'], message: string) => findings.push({ level: 'ok', app, message });
+  const n = names(d);
+
+  if (d.hold) warn('fleet', 'held: CI skips this deployment');
+  const rendered: Partial<Record<App, Config>> = {};
+  for (const app of APPS) {
+    try {
+      rendered[app] = RENDER[app](bases[app], d);
+    } catch (err) {
+      error(app, `does not render: ${(err as Error).message}`);
+    }
+  }
+
+  for (const app of APPS) {
+    const c = rendered[app];
+    if (!c) continue;
+    const have = bindingNames(c);
+    const need = REQUIRED_BINDINGS[app].filter((b) => !(d.demo && b === 'VECTORIZE'));
+    if (app === 'engine' && d.email) need.push('EMAIL');
+    const missing = need.filter((b) => !have.has(b));
+    if (missing.length) error(app, `missing bindings: ${missing.join(', ')}`);
+    else ok(app, `${need.length} required bindings present`);
+
+    for (const db of c.d1_databases ?? [])
+      if (db.database_id !== d.d1Id || db.database_name !== n.d1)
+        error(app, `D1 ${db.binding} is not this deployment's database (${n.d1})`);
+    for (const kv of c.kv_namespaces ?? [])
+      if (kv.binding === 'KV_CACHE' && kv.id !== d.kvId)
+        error(app, `KV_CACHE is not this deployment's namespace`);
+
+    // Routes: each public Worker answers on its own host, as a custom domain.
+    const host = {
+      api: hosts(d).api,
+      delivery: hosts(d).delivery,
+      media: hosts(d).media,
+      web: hosts(d).web,
+    }[app as Exclude<App, 'engine'>];
+    if (app === 'engine') {
+      if (c.routes?.length) error(app, 'the engine has no route, yet one is set');
+    } else if (!c.routes?.some((r: Config) => r.pattern === host && r.custom_domain)) {
+      error(app, `no custom-domain route on ${host}`);
+    }
+
+    // Cross-script bindings: this deployment's engine, and a class or Workflow it defines.
+    if (app !== 'engine' && rendered.engine) {
+      const engine = rendered.engine;
+      const classes = definedClasses(engine);
+      for (const b of c.durable_objects?.bindings ?? []) {
+        if (b.script_name !== n.engine)
+          error(
+            app,
+            `Durable Object ${b.name} binds ${b.script_name ?? 'itself'}, not ${n.engine}`,
+          );
+        else if (!classes.has(b.class_name))
+          error(app, `Durable Object ${b.name}: ${n.engine} defines no class ${b.class_name}`);
+      }
+      for (const w of c.workflows ?? []) {
+        const owned = (engine.workflows ?? []).find((e: Config) => e.name === w.name);
+        if (w.script_name !== n.engine)
+          error(app, `Workflow ${w.binding} binds ${w.script_name ?? 'itself'}, not ${n.engine}`);
+        else if (!owned || owned.class_name !== w.class_name)
+          error(app, `Workflow ${w.binding}: ${n.engine} runs no ${w.name} (${w.class_name})`);
+      }
+    }
+    if (app === 'engine') {
+      const classes = definedClasses(c);
+      for (const b of c.durable_objects?.bindings ?? [])
+        if (b.script_name) error(app, `Durable Object ${b.name} points at ${b.script_name}`);
+        else if (!classes.has(b.class_name))
+          error(app, `Durable Object ${b.name}: no migration defines ${b.class_name}`);
+      const crons: string[] = c.triggers?.crons ?? [];
+      if (!crons.includes(ENGINE_CRON))
+        error(
+          app,
+          `no "${ENGINE_CRON}" cron: the scheduler would never tick (and /health reads it stale)`,
+        );
+      else ok(app, `cron "${ENGINE_CRON}" (scheduler heartbeat)`);
+      const consumed = new Set((c.queues?.consumers ?? []).map((q: Config) => q.queue));
+      const unconsumed = ENGINE_CONSUMES.map(n.queue).filter((q) => !consumed.has(q));
+      if (unconsumed.length) error(app, `consumes no ${unconsumed.join(', ')}`);
+    }
+    if (app === 'web') {
+      for (const s of c.services ?? []) {
+        const want =
+          s.binding === 'API' ? n.api : s.binding === 'DELIVERY' ? n.delivery : undefined;
+        if (want && s.service !== want)
+          error(app, `service ${s.binding} binds ${s.service}, not ${want}`);
+      }
+    }
+
+    // A secret declared as a plain var would ship in the config, or shadow the real one.
+    const asVars = SECRETS[app].filter((k) => c.vars && k in c.vars);
+    if (asVars.length) error(app, `secrets declared as plain vars: ${asVars.join(', ')}`);
+  }
+
+  // Secrets: what the deployment's GitHub environment must hold (derived ones come from another).
+  const sources = new Set(Object.values(DERIVED).map((x) => x.from));
+  const used = new Set(
+    APPS.flatMap((a) => SECRETS[a]).flatMap((k) => (DERIVED[k] ? [DERIVED[k].from] : [k])),
+  );
+  const unused = REQUIRED_SECRETS.filter((k) => !used.has(k) && !sources.has(k));
+  if (unused.length) error('fleet', `required secrets no Worker receives: ${unused.join(', ')}`);
+  ok('fleet', `GitHub environment ${d.environment} must hold ${REQUIRED_SECRETS.join(', ')}`);
+  if (d.sso) warn('fleet', `SSO is on: ${d.environment} must also hold OIDC_CLIENT_SECRET`);
+  return findings;
+}
+
+/** What the api's `/health` says about the engine cron, as a finding. */
+export function healthFinding(status: number | undefined, body: unknown, url: string): Finding {
+  if (status === undefined) return { level: 'error', app: 'api', message: `${url} unreachable` };
+  const scheduler = (body as { scheduler?: unknown } | null)?.scheduler;
+  if (status !== 200) return { level: 'error', app: 'api', message: `${url} answered ${status}` };
+  if (scheduler === 'ok') return { level: 'ok', app: 'engine', message: 'scheduler ticking' };
+  if (scheduler === 'stale')
+    return {
+      level: 'error',
+      app: 'engine',
+      message:
+        'scheduler stale: no cron tick in 5 minutes (GET /deployment/scheduler has each sweep)',
+    };
+  if (scheduler === 'unknown')
+    return {
+      level: 'warn',
+      app: 'engine',
+      message: 'scheduler unknown: the api could not read its heartbeat',
+    };
+  return { level: 'warn', app: 'api', message: `${url} reports no scheduler (an older api?)` };
+}
+
+/** Asks the deployment's api whether its cron is ticking. `fetchImpl` is the test's seam. */
+export async function doctorHealth(
+  d: Deployment,
+  fetchImpl: typeof fetch = fetch,
+  base = `https://${hosts(d).api}`,
+): Promise<Finding> {
+  const url = `${base.replace(/\/$/, '')}/health`;
+  try {
+    const r = await fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
+    return healthFinding(r.status, await r.json().catch(() => null), url);
+  } catch {
+    return healthFinding(undefined, null, url);
+  }
+}
+
+function readBases(): Record<App, Config> {
+  return Object.fromEntries(
+    APPS.map((app) => [app, readJsonc(join(ROOT, 'apps', app, 'wrangler.jsonc'))]),
+  ) as Record<App, Config>;
+}
+
+/**
+ * `doctor <id> [--offline] [--url <api base>]`: the config checks, then (unless offline, and
+ * only for a provisioned deployment CI deploys, or the URL given) the api's health. Exits 1 on
+ * any error.
+ */
+async function runDoctor(args: string[]) {
+  const urlAt = args.indexOf('--url');
+  const url = urlAt >= 0 ? args[urlAt + 1] : undefined;
+  const id = args.filter((a, i) => !a.startsWith('--') && !(urlAt >= 0 && i === urlAt + 1))[0];
+  const d = byId(id);
+  const findings = doctor(d, readBases());
+  if (!args.includes('--offline') && (url || (d.d1Id && !d.hold)))
+    findings.push(await doctorHealth(d, fetch, url));
+  const mark = { ok: 'ok   ', warn: 'warn ', error: 'ERROR' } as const;
+  for (const f of findings) console.log(`${mark[f.level]} ${f.app.padEnd(8)} ${f.message}`);
+  if (findings.some((f) => f.level === 'error')) process.exit(1);
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [cmd, ...args] = process.argv.slice(2);
   try {
@@ -574,6 +874,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'matrix') console.log(JSON.stringify(matrix(loadDeployments())));
     else if (cmd === 'secrets') secrets(args[0], args[1]);
     else if (cmd === 'status') await status();
+    else if (cmd === 'doctor') await runDoctor(args);
     else if (cmd === 'names')
       for (const [k, v] of Object.entries(shellVars(byId(args[0])))) console.log(`${k}='${v}'`);
     else if (cmd === 'set-d1') {
@@ -584,7 +885,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       setField(args[0], 'kvId', args[1]);
     } else if (cmd === 'demos')
       console.log(JSON.stringify(loadDeployments().filter((d) => d.demo && d.d1Id)));
-    else throw new Error('usage: fleet.ts render|matrix|secrets|status|names|set-d1|set-kv|demos');
+    else
+      throw new Error(
+        'usage: fleet.ts render|matrix|secrets|status|doctor|names|set-d1|set-kv|demos',
+      );
   } catch (err) {
     console.error((err as Error).message);
     process.exit(1);

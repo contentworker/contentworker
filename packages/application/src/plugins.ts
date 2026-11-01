@@ -284,11 +284,12 @@ export async function setPluginEnabled(
 }
 
 /**
- * Removes a plugin and its bundle.
+ * Removes a plugin, its bundle, its settings and its `kv:storage` keys.
  *
  * The record goes first: an orphaned object in the blob store is harmless,
  * whereas a plugin record pointing at bytes that no longer exist would fail
- * at load time on the write path.
+ * at load time on the write path. Settings and keys go too, so reinstalling
+ * the same id starts clean rather than inheriting a predecessor's secrets.
  */
 export async function uninstallPlugin(
   ctx: AppContext,
@@ -298,6 +299,8 @@ export async function uninstallPlugin(
 ): Promise<void> {
   const plugin = await getPlugin(ctx, spaceId, id);
   await ctx.store.plugins.delete(spaceId, id);
+  await ctx.store.pluginSettings.delete(spaceId, id);
+  await ctx.store.pluginStorage.deleteAll(spaceId, id);
   await blob.delete(plugin.bundleKey).catch(() => {});
 }
 

@@ -5,7 +5,12 @@ import {
   MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
 } from '@contentworker/application';
-import { MAX_ASSET_RIGHTS_TEXT, SPACE_ID_PATTERN, ValidationError } from '@contentworker/domain';
+import {
+  MAX_ASSET_RIGHTS_TEXT,
+  PLUGIN_SETTING_MAX_STRING,
+  SPACE_ID_PATTERN,
+  ValidationError,
+} from '@contentworker/domain';
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -139,6 +144,17 @@ export const installPluginBody = z.object({
   approvedCapabilities: z.array(z.string().max(64)).max(32),
 });
 export const pluginEnabledBody = z.object({ enabled: z.boolean() });
+// Each value's type is checked against the manifest's field by the domain; this
+// bounds the envelope. `null` clears a setting; a key left out keeps its value.
+export const pluginSettingsBody = z.object({
+  values: z
+    .record(
+      z.string().max(64),
+      z.union([z.string().max(PLUGIN_SETTING_MAX_STRING), z.number(), z.boolean(), z.null()]),
+    )
+    .refine((v) => Object.keys(v).length <= 50, 'At most 50 settings'),
+  expectedVersion: z.number().int().min(0).optional(),
+});
 export const pluginCapabilitiesBody = z.object({
   approvedCapabilities: z.array(z.string().max(64)).max(32),
 });

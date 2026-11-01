@@ -277,6 +277,34 @@ describe('capability enforcement', () => {
     });
   });
 
+  it('binds kv:storage, list included, only when granted', async () => {
+    const list = vi.fn(async () => ({ keys: ['a'] }));
+    const host = {
+      kv: { get: async () => 1, put: async () => {}, delete: async () => true, list },
+    };
+    const granted = await capsFor(invocation({ capabilities: ['kv:storage'] }), host);
+    await expect(granted.caps.kv?.list?.({ prefix: 'a' })).resolves.toEqual({ keys: ['a'] });
+    expect(list).toHaveBeenCalledWith({ prefix: 'a' });
+
+    const denied = await capsFor(invocation({ capabilities: [] }), host);
+    await expect(denied.caps.kv?.list?.()).rejects.toThrow(/was not granted "kv:storage"/);
+    expect(list).toHaveBeenCalledOnce();
+  });
+
+  it('hands every plugin settings.get, with no capability, and only get', async () => {
+    const get = vi.fn(async () => ({ apiKey: 'sk' }));
+    const { caps, onDenied } = await capsFor(invocation({ capabilities: [] }), {
+      settings: { get, set: async () => {} },
+    });
+    await expect(caps.settings?.get?.()).resolves.toEqual({ apiKey: 'sk' });
+    expect(caps.settings?.set).toBeUndefined();
+    expect(onDenied).not.toHaveBeenCalled();
+
+    // A host that provides none still hands over an empty object, not a missing method.
+    const bare = await capsFor(invocation({ capabilities: [] }), {});
+    await expect(bare.caps.settings?.get?.()).resolves.toEqual({});
+  });
+
   it('still refuses when reporting the denial fails', async () => {
     const onDenied = vi.fn<OnDenied>(async () => {
       throw new Error('audit store down');

@@ -68,10 +68,12 @@ import {
   getBulkJob,
   getBulkJobReport,
   getContentType,
+  getPluginSettings,
   getPreviewAsset,
   getPreviewEntry,
   getPromotion,
   getRelease,
+  getSchedulerStatus,
   getVersion,
   getWorkflowRun,
   getWorkflowRunTimeline,
@@ -151,6 +153,7 @@ import {
   setEntryMetadata,
   setEnvironmentAlias,
   setPluginEnabled,
+  setPluginSettings,
   setWorkflowSeparationDefault,
   startAssetBulkJob,
   startAssetReindex,
@@ -774,6 +777,20 @@ export function buildServer(
   );
 
   server.registerTool(
+    'scheduler_status',
+    {
+      description:
+        "Report whether the engine's per-minute cron is ticking (`stale` once its last tick is " +
+        'older than `staleAfterSeconds`) and, for each sweep it runs (outbox relay, scheduled ' +
+        'actions, retention, reseal, bulk and purge recovery, version archive, agent schedules), ' +
+        'when it last ran, last succeeded and last failed, with the redacted error. Read-only. ' +
+        'Deployment administrators only (the admin or MCP token), like GET /deployment/scheduler.',
+      inputSchema: toolSchema('scheduler_status', () => z.object({})),
+    },
+    async () => ok(await getSchedulerStatus(ctx, principal)),
+  );
+
+  server.registerTool(
     'content_reindex_embeddings',
     {
       description:
@@ -1342,6 +1359,53 @@ export function buildServer(
           args.approvedCapabilities as never,
           { narrowOnly: true },
         ),
+      );
+    },
+  );
+
+  // Settings are configuration an operator fills in, not authority: the same
+  // use-cases as the admin's settings form, and a secret is reported as set,
+  // never read back.
+  server.registerTool(
+    'plugin_get_settings',
+    {
+      description:
+        'Read an installed plugin’s settings: the fields its manifest declares, the non-secret ' +
+        'values, and which secret fields are set (secret values are never returned).',
+      inputSchema: toolSchema('plugin_get_settings', () =>
+        z.object({ id: z.string(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      return ok(await getPluginSettings(ctx, scopeOf(args).spaceId, args.id));
+    },
+  );
+
+  server.registerTool(
+    'plugin_set_settings',
+    {
+      description:
+        'Change an installed plugin’s settings. `values` maps a setting key to its new value, ' +
+        'or null to clear it; keys left out keep their value. Values are checked against the ' +
+        'manifest’s fields. Pass `expectedVersion` (from plugin_get_settings) to refuse a ' +
+        'concurrent change instead of overwriting it.',
+      inputSchema: toolSchema('plugin_set_settings', () =>
+        z.object({
+          id: z.string(),
+          values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+          expectedVersion: z.number().int().min(0).optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      return ok(
+        await setPluginSettings(ctx, principal, scopeOf(args).spaceId, args.id, {
+          values: args.values,
+          ...(args.expectedVersion !== undefined ? { expectedVersion: args.expectedVersion } : {}),
+        }),
       );
     },
   );

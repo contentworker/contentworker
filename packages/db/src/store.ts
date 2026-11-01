@@ -19,6 +19,7 @@ import {
   type InstalledPlugin,
   matchesTopic,
   type OAuthClient,
+  type PluginSettings,
   type Promotion,
   projectFields,
   QueryTooBroadError,
@@ -83,6 +84,8 @@ import type {
   OAuthGrantRepo,
   OutboxRepo,
   PluginRepo,
+  PluginSettingsRepo,
+  PluginStorageRepo,
   PreviewTokenRepo,
   PromotionRepo,
   PublishedAsset,
@@ -91,6 +94,7 @@ import type {
   ReleaseRepo,
   RoleRepo,
   ScheduledActionRepo,
+  SchedulerJobRepo,
   ScopedAgentSchedule,
   ScopedScheduledAction,
   SpaceConfig,
@@ -2150,6 +2154,26 @@ function makeStoredSecretRepo(x: Exec): StoredSecretRepo {
         `);
         return rows.map((r) => ({ column, id: r.id, value: r.value }));
       }
+      if (column === 'plugin_settings.secrets') {
+        // Rows are keyed by (space, plugin); the ref's id is `<space>/<plugin>`, and the order
+        // and cursor run on that same string, so pages match the in-memory adapter's.
+        const p = schema.pluginSettings;
+        const id = sql`(p.space_id || '/' || p.plugin_id)`;
+        const rows = await db.all<{ id: string; key: string; value: string }>(sql`
+          SELECT ${id} AS id, h.key AS key, h.value AS value
+          FROM ${p} p, json_each(p.secrets) h
+          WHERE json_type(p.secrets) = 'object' AND h.type = 'text'
+            AND substr(h.value, 1, length(${excludePrefix})) <> ${excludePrefix}
+            ${
+              after
+                ? sql`AND (${id} > ${after.id} OR (${id} = ${after.id} AND h.key > ${after.key ?? ''}))`
+                : sql``
+            }
+          ORDER BY 1, 2
+          LIMIT ${limit}
+        `);
+        return rows.map((r) => ({ column, id: r.id, key: r.key, value: r.value }));
+      }
       const rows = await db.all<{ id: string; key: string; value: string }>(sql`
         SELECT w.id AS id, h.key AS key, h.value AS value
         FROM ${w} w, json_each(w.headers) h
@@ -2174,6 +2198,26 @@ function makeStoredSecretRepo(x: Exec): StoredSecretRepo {
           .set({ secret: next })
           .where(and(eq(w.id, ref.id), eq(w.secret, was)))
           .returning({ id: w.id });
+        return rows.length > 0;
+      }
+      if (ref.column === 'plugin_settings.secrets') {
+        // Setting keys are `[A-Za-z][A-Za-z0-9_]*` (the manifest refuses anything else), so the
+        // path quotes safely. The version is left alone: a reseal changes no value an operator
+        // could be editing, so it must not make their next save lose its compare-and-set.
+        const p = schema.pluginSettings;
+        const slash = ref.id.indexOf('/');
+        const path = `$."${ref.key ?? ''}"`;
+        const rows = await db
+          .update(p)
+          .set({ secrets: sql`json_set(${p.secrets}, ${path}, ${next})` })
+          .where(
+            and(
+              eq(p.spaceId, ref.id.slice(0, slash)),
+              eq(p.pluginId, ref.id.slice(slash + 1)),
+              sql`json_extract(${p.secrets}, ${path}) = ${was}`,
+            ),
+          )
+          .returning({ v: p.version });
         return rows.length > 0;
       }
       const key = ref.key ?? '';
@@ -2767,6 +2811,57 @@ function makeDeploymentSettingsRepo(x: Exec): DeploymentSettingsRepo {
   };
 }
 
+function makeSchedulerJobRepo(x: Exec): SchedulerJobRepo {
+  const db = x.db;
+  const t = schema.schedulerJobs;
+  const iso = (d: Date | null) => (d ? d.toISOString() : undefined);
+  return {
+    async record(runs) {
+      // The merge happens in SQL, so the cron never reads before it writes: a success keeps the
+      // last error, a failure keeps the last success, and an older run never moves a timestamp
+      // back (`excluded.x > t.x` is NULL, so false, when the run didn't set x).
+      const newer = (col: typeof t.lastRunAt | typeof t.lastSuccessAt | typeof t.lastErrorAt) =>
+        sql`CASE WHEN excluded.${sql.identifier(col.name)} > coalesce(${col}, 0) THEN excluded.${sql.identifier(col.name)} ELSE ${col} END`;
+      const errorWins = sql`excluded.${sql.identifier(t.lastErrorAt.name)} > coalesce(${t.lastErrorAt}, 0)`;
+      await writeAll(
+        x,
+        insertChunks(t, runs, (chunk) =>
+          db
+            .insert(t)
+            .values(
+              chunk.map((r) => ({
+                job: r.job,
+                lastRunAt: new Date(r.at),
+                lastSuccessAt: r.error === undefined ? new Date(r.at) : null,
+                lastErrorAt: r.error === undefined ? null : new Date(r.at),
+                lastError: r.error ?? null,
+              })),
+            )
+            .onConflictDoUpdate({
+              target: t.job,
+              set: {
+                lastRunAt: newer(t.lastRunAt),
+                lastSuccessAt: newer(t.lastSuccessAt),
+                lastErrorAt: newer(t.lastErrorAt),
+                lastError: sql`CASE WHEN ${errorWins} THEN excluded.${sql.identifier(t.lastError.name)} ELSE ${t.lastError} END`,
+              },
+            }),
+        ),
+      );
+    },
+    async list() {
+      const rows = await db.select().from(t).orderBy(asc(t.job));
+      return rows.map((r) => ({
+        job: r.job,
+        lastRunAt: r.lastRunAt.toISOString(),
+        ...(r.lastSuccessAt ? { lastSuccessAt: iso(r.lastSuccessAt) } : {}),
+        ...(r.lastErrorAt ? { lastErrorAt: iso(r.lastErrorAt) } : {}),
+        ...(r.lastError !== null ? { lastError: r.lastError } : {}),
+      }));
+    },
+  };
+}
+
 function makePreviewTokenRepo(x: Exec): PreviewTokenRepo {
   const db = x.db;
   return {
@@ -2881,6 +2976,134 @@ function makePluginRepo(x: Exec): PluginRepo {
           .delete(schema.plugins)
           .where(and(eq(schema.plugins.spaceId, spaceId), eq(schema.plugins.id, id))),
       );
+    },
+  };
+}
+
+/**
+ * Plugin settings. `save` is a compare-and-set on `version` (an insert that finds a row, or an
+ * update that finds a different version, writes nothing), so two operators editing at once
+ * cannot silently lose a field each.
+ */
+function makePluginSettingsRepo(x: Exec): PluginSettingsRepo {
+  const db = x.db;
+  const t = schema.pluginSettings;
+  const one = (spaceId: string, pluginId: string) =>
+    and(eq(t.spaceId, spaceId), eq(t.pluginId, pluginId));
+  return {
+    async get(spaceId, pluginId) {
+      const [row] = await db.select().from(t).where(one(spaceId, pluginId));
+      if (!row) return null;
+      return {
+        spaceId: row.spaceId,
+        pluginId: row.pluginId,
+        values: row.config,
+        secrets: row.secrets,
+        version: row.version,
+        updatedAt: row.updatedAt.toISOString(),
+        ...(row.updatedBy ? { updatedBy: row.updatedBy } : {}),
+      } satisfies PluginSettings;
+    },
+    async save(settings, expectedVersion) {
+      directOnly(x, 'pluginSettings.save');
+      const set = {
+        config: { ...settings.values },
+        secrets: { ...settings.secrets },
+        version: settings.version,
+        updatedAt: new Date(settings.updatedAt),
+        updatedBy: settings.updatedBy ?? null,
+      };
+      try {
+        if (expectedVersion === 0) {
+          const rows = await db
+            .insert(t)
+            .values({ spaceId: settings.spaceId, pluginId: settings.pluginId, ...set })
+            .onConflictDoNothing()
+            .returning({ v: t.version });
+          return rows.length > 0;
+        }
+        const rows = await db
+          .update(t)
+          .set(set)
+          .where(and(one(settings.spaceId, settings.pluginId), eq(t.version, expectedVersion)))
+          .returning({ v: t.version });
+        return rows.length > 0;
+      } catch (err) {
+        throw mapD1Error(err);
+      }
+    },
+    async delete(spaceId, pluginId) {
+      await x.write(db.delete(t).where(one(spaceId, pluginId)));
+    },
+  };
+}
+
+/**
+ * `kv:storage`. Every statement filters on (space, environment, plugin): the plugin id comes from
+ * the host's installed-plugin record, never from the plugin, so no statement here can reach
+ * another plugin's keys. Prefixes compare with `substr` rather than LIKE, so `%` and `_` in a
+ * key are ordinary characters.
+ */
+function makePluginStorageRepo(x: Exec): PluginStorageRepo {
+  const db = x.db;
+  const t = schema.pluginKv;
+  const own = (scope: Scope, pluginId: string) =>
+    and(scopeFilter(t, scope), eq(t.pluginId, pluginId));
+  return {
+    async get(scope, pluginId, key) {
+      const [row] = await db
+        .select({ value: t.value })
+        .from(t)
+        .where(and(own(scope, pluginId), eq(t.key, key)));
+      return row?.value ?? null;
+    },
+    async put(scope, pluginId, key, value, { maxKeys, at }) {
+      directOnly(x, 'pluginStorage.put');
+      const { spaceId, environmentId } = scope;
+      // One statement: the cap check and the write cannot be split by a concurrent put. An
+      // existing key always passes (an overwrite adds nothing); a new one only under the cap.
+      const rows = await db.all<{ key: string }>(sql`
+        INSERT INTO ${t} (space_id, environment_id, plugin_id, key, value, updated_at)
+        SELECT ${spaceId}, ${environmentId}, ${pluginId}, ${key}, ${value}, ${at.getTime()}
+        WHERE EXISTS (
+            SELECT 1 FROM ${t} WHERE space_id = ${spaceId} AND environment_id = ${environmentId}
+              AND plugin_id = ${pluginId} AND key = ${key}
+          )
+          OR (
+            SELECT count(*) FROM ${t} WHERE space_id = ${spaceId}
+              AND environment_id = ${environmentId} AND plugin_id = ${pluginId}
+          ) < ${maxKeys}
+        ON CONFLICT (space_id, environment_id, plugin_id, key)
+          DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        RETURNING key
+      `);
+      return rows.length > 0;
+    },
+    async delete(scope, pluginId, key) {
+      directOnly(x, 'pluginStorage.delete');
+      const rows = await db
+        .delete(t)
+        .where(and(own(scope, pluginId), eq(t.key, key)))
+        .returning({ key: t.key });
+      return rows.length > 0;
+    },
+    async list(scope, pluginId, { prefix, after, limit }) {
+      const rows = await db
+        .select({ key: t.key })
+        .from(t)
+        .where(
+          and(
+            own(scope, pluginId),
+            prefix ? sql`substr(${t.key}, 1, length(${prefix})) = ${prefix}` : undefined,
+            after !== undefined ? gt(t.key, after) : undefined,
+          ),
+        )
+        .orderBy(asc(t.key))
+        .limit(limit);
+      return rows.map((r) => r.key);
+    },
+    async deleteAll(spaceId, pluginId) {
+      await x.write(db.delete(t).where(and(eq(t.spaceId, spaceId), eq(t.pluginId, pluginId))));
     },
   };
 }
@@ -3326,6 +3549,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.bulkJobs,
   schema.bulkJobChunks,
   schema.versionArchiveQueue,
+  schema.pluginKv,
   // Only the hooks scoped to it: a space-wide hook (NULL) never matches the environment filter.
   // Their delivery records are left to the retention sweep, as when a hook is deleted.
   schema.webhooks,
@@ -4933,6 +5157,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     roles: makeRoleRepo(x),
     members: makeMemberRepo(x),
     settings: makeDeploymentSettingsRepo(x),
+    schedulerJobs: makeSchedulerJobRepo(x),
     agentRuns: makeAgentRunRepo(x),
     audit: makeAuditRepo(x),
     aiActions: makeAiActionRepo(x),
@@ -4940,6 +5165,8 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     appExtensions: makeAppExtensionRepo(x),
     previewTokens: makePreviewTokenRepo(x),
     plugins: makePluginRepo(x),
+    pluginSettings: makePluginSettingsRepo(x),
+    pluginStorage: makePluginStorageRepo(x),
     oauthClients: makeOAuthClientRepo(x),
     oauthGrants: makeOAuthGrantRepo(x),
     releases: makeReleaseRepo(x),

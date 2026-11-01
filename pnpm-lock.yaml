@@ -738,6 +738,9 @@ importers:
       '@contentworker/application':
         specifier: workspace:*
         version: link:../application
+      '@contentworker/graphql-gen':
+        specifier: workspace:*
+        version: link:../graphql-gen
       '@contentworker/seed':
         specifier: workspace:*
         version: link:../seed
@@ -747,6 +750,9 @@ importers:
       '@contentworker/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
+      graphql:
+        specifier: 'catalog:'
+        version: 17.0.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

@@ -346,18 +346,20 @@ Credentials the platform must _use_ (not merely verify) cannot be hashed, so the
 instead. Hashing stays the rule wherever a value is only compared: API keys, preview tokens,
 OAuth client secrets, and OAuth codes/refresh tokens are stored as hashes and are **not** encrypted.
 
-| Column             | Sealed value                                | Context (AAD)                                 |
-| ------------------ | ------------------------------------------- | --------------------------------------------- |
-| `webhooks.secret`  | The HMAC signing secret                     | `webhooks.secret:<webhook id>`                |
-| `webhooks.headers` | Each header **value** (names stay readable) | `webhooks.headers:<webhook id>:<header name>` |
+| Column                    | Sealed value                                    | Context (AAD)                                          |
+| ------------------------- | ----------------------------------------------- | ------------------------------------------------------ |
+| `webhooks.secret`         | The HMAC signing secret                         | `webhooks.secret:<webhook id>`                         |
+| `webhooks.headers`        | Each header **value** (names stay readable)     | `webhooks.headers:<webhook id>:<header name>`          |
+| `plugin_settings.secrets` | Each secret plugin setting (keys stay readable) | `plugin_settings.secrets:<space id>/<plugin id>:<key>` |
 
 - **Format.** AES-256-GCM under a key derived with HKDF-SHA-256 from `DATA_KEY`. A sealed value
   reads `e1.<kid>.<iv>.<ciphertext>` (base64url parts); `kid` is an HMAC-derived id of the key that
   sealed it. The context is bound as GCM associated data, so a ciphertext copied into another row
   or column fails to decrypt rather than leaking.
 - **Transparent.** `withSealedSecrets` (`@contentworker/application`) decorates the `ContentStore`
-  at the composition root: repos seal on write and open on read, so use-cases, MCP tools and the
-  webhook dispatcher see plaintext and the store adapters persist opaque strings. The crypto is
+  at the composition root: repos seal on write and open on read, so use-cases, MCP tools, the
+  webhook dispatcher and a plugin's `caps.settings.get()` see plaintext and the store adapters
+  persist opaque strings. No read API returns a plugin's secret setting: it reports which are set. The crypto is
   WebCrypto only (`createSecretSealer`, implementing the `SecretSealer` port).
 - **Unreadable values** (not in the sealed format, sealed under a key the deployment no longer
   holds, or altered) raise

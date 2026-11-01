@@ -35,14 +35,14 @@ served and how it is configured. Routes are rendered per deployment by `scripts/
 (`hosts()`): the admin at `<domain>`, the api at `api.<domain>`, delivery at `cdn.<domain>`,
 media at `media.<domain>`.
 
-| Worker          | Route          | Config highlights (`apps/*/wrangler.jsonc`)                                                              |
-| --------------- | -------------- | -------------------------------------------------------------------------------------------------------- |
-| `apps/web`      | `<domain>`     | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery) |
-| `apps/api`      | `api.<domain>` | Smart Placement, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine DOs/Workflows by script |
-| `apps/delivery` | `cdn.<domain>` | No Smart Placement, `cpu_ms` 2000, head sampling 0.05, Workers Caching on the `Delivery` entrypoint      |
+| Worker          | Route            | Config highlights (`apps/*/wrangler.jsonc`)                                                              |
+| --------------- | ---------------- | -------------------------------------------------------------------------------------------------------- |
+| `apps/web`      | `<domain>`       | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery) |
+| `apps/api`      | `api.<domain>`   | Smart Placement, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine DOs/Workflows by script |
+| `apps/delivery` | `cdn.<domain>`   | No Smart Placement, `cpu_ms` 2000, head sampling 0.05, Workers Caching on the `Delivery` entrypoint      |
 | `apps/media`    | `media.<domain>` | No Smart Placement, `cpu_ms` 1000, head sampling 0.01, Workers Caching on the `Media` entrypoint         |
-| `apps/engine`   | none           | Smart Placement, `cpu_ms` 30000; owns DO migrations                                                      |
-| `apps/docs`     | docs host      | Deployed only by the deployment with `docs: true`                                                        |
+| `apps/engine`   | none             | Smart Placement, `cpu_ms` 30000; owns DO migrations                                                      |
+| `apps/docs`     | docs host        | Deployed only by the deployment with `docs: true`                                                        |
 
 ### apps/web: the admin and the gateway
 
@@ -151,7 +151,11 @@ bind them by `script_name`) and handles:
   see [Assets](#assets-r2-images-stream-and-the-media-worker)), the outbox relay sweep, bulk-job stall recovery,
   the restart of deleted-environment purges that stopped progressing, agent schedules
   (`AGENTS_SCHEDULES=true`), retention at the top of each hour, and the daily
-  secret reseal at 03:30 UTC.
+  secret reseal at 03:30 UTC. Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
+  failure is logged and recorded, and never skips the rest of the tick. At the end of the tick one
+  D1 batch writes the heartbeat (`scheduler_jobs`: each sweep's last run, success and redacted
+  error, plus the `tick` row); a failed write is logged and the next tick writes again. The api's
+  `/health` reports `scheduler: stale` once the `tick` row is more than five minutes old.
 
 | Durable Object   | Keyed by                                             | Purpose                                                             |
 | ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |

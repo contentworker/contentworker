@@ -115,7 +115,7 @@ pnpm --filter @contentworker/http generate:skills
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `@contentworker/domain`        | node                                                                                                                                              | Pure rules                                                                                                                                                         |
 | `@contentworker/application`   | node, `@contentworker/test-kit` fakes                                                                                                             | Every use-case                                                                                                                                                     |
-| `@contentworker/db`            | workerd (`@cloudflare/vitest-plugin`), Miniflare D1 with the migrations applied                                                                   | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest                                                                        |
+| `@contentworker/db`            | workerd (`@cloudflare/vitest-plugin`), Miniflare D1 with the migrations applied                                                                   | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest, D1 statements per request                                             |
 | `@contentworker/http`          | node, in-memory fakes                                                                                                                             | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                                                                            |
 | `@contentworker/engine`        | workerd                                                                                                                                           | Durable Objects (search shard, live hub, cost guard, rate limiter), real Workflow runs with `AI_MODE=mock`, the media gate and both purge queues                   |
 | `@contentworker/media`         | workerd, Miniflare KV, R2 and D1, a fake Images binding                                                                                           | The media Worker end to end: gate and replica fallback, 404/410, `Accept` negotiation, purge drain, signed draft reads                                             |
@@ -138,6 +138,24 @@ create what they need; the first-run spec sees a deployment with no spaces by fi
 `GET /spaces` to the space it creates, since the database is shared), so it coexists with a
 `pnpm dev` session. Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
+
+### D1 query counts
+
+`packages/db/test/query-counts.test.ts` runs representative Delivery and Management requests
+(entry by id, with a locale and with `include`, filtered and searched lists, a link list past the
+100-parameter cap, GraphQL entry, collection and asset queries, asset delivery, create, publish,
+get and list entries) through their use-cases over the real D1 store, with no delivery cache, and
+counts the statements and round trips each sends to D1 (a `batch()` is one round trip). The
+counts are compared with the committed `packages/db/test/query-counts.json`; any change fails the
+`@contentworker/db` suite with a report of what moved and, for an increase, the SQL the request now
+runs. When the change is intended, rewrite the snapshot and commit it:
+
+```bash
+pnpm --filter @contentworker/db test:query-counts:update
+```
+
+Delivery read counts may only go down. A PR that raises one says why in its description; a
+decrease is committed the same way, so the next increase is measured from it.
 
 ### MCP smoke scripts
 
@@ -200,7 +218,7 @@ read paths), 10 GB per database.
 | `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                               |
 | `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                   |
 | `api_keys`, `roles`, `space_members`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings`                                    | Access                                                                                    |
-| `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins`                                                                        | Integrations                                                                              |
+| `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins`, `plugin_settings`, `plugin_kv`                                        | Integrations (`plugin_kv`: a plugin's `kv:storage`, per environment)                      |
 | `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks`                                                                  | Publishing at scale                                                                       |
 | `comments`, `tasks`                                                                                                                               | Collaboration                                                                             |
 | `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows                                                                       |
@@ -220,7 +238,13 @@ the indexes `asset_published_by_time` (publish order, keyset paging) and
 for snapshots still holding the column defaults (`kind` `'other'` or no `r2_key`) whose asset row
 knows better, which the pre-0009 api wrote while a deployment rolled out.
 
-`0012_asset_expiry.sql` adds `asset_published.expires_at` (epoch ms, the snapshot's
+`0012_scheduler_jobs.sql` adds `scheduler_jobs` (`job` primary key, `last_run_at`,
+`last_success_at`, `last_error_at`, `last_error`): the engine cron's heartbeat, one row per sweep
+plus `tick`, written in one batch at the end of each tick and nowhere else. Not space-scoped. The
+upsert merges in SQL (a success keeps the last error, and an older run never moves a timestamp
+back), so the cron never reads before it writes.
+
+`0014_asset_expiry.sql` adds `asset_published.expires_at` (epoch ms, the snapshot's
 `rights.expiresAt`, written on every snapshot write), backfills it from existing snapshots' rights,
 and indexes it (`asset_published_by_expiry`, only where set) for the engine's expiry sweep.
 
