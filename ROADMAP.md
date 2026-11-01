@@ -76,3 +76,8 @@ Everything below is built and tested on v2.
 - [ ] **Version bodies in R2.** Keep immutable version bodies in R2 with only the index in D1, so
   an append-heavy space stays well inside D1's per-database size limit.
 - [ ] **Per-environment content promotion tooling** (diff and promote `main` → `staging`).
+- [ ] **Delete an environment.** Remove an environment's rows from D1 (refusing `main` and any
+  alias target) along with its derived state: its SearchShard documents, its vectors, and its
+  delivery cache (purge its scope tag). Until then, a partial import (one stopped by a plugin
+  hook or an infrastructure error, which the import's preflight can't foresee) leaves a
+  half-filled environment that can only be abandoned.
