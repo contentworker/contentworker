@@ -1,4 +1,4 @@
--- 0012_plugin_storage_settings: what a sandboxed plugin keeps (the `kv:storage` capability) and
+-- 0013_plugin_storage_settings: what a sandboxed plugin keeps (the `kv:storage` capability) and
 -- how an operator configures it (manifest-declared settings). Mirrors `plugin_kv` and
 -- `plugin_settings` in packages/db/src/schema.ts.
 --
