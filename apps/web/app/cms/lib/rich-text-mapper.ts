@@ -21,10 +21,17 @@
  *   wins, except inside a link where the link mark wins.
  * - Inline (text) children directly under block containers such as blockquote
  *   are wrapped in a paragraph, as ProseMirror requires block content there.
+ * - Tables map node for node (`table` ⇄ table, `table-row` ⇄ tableRow,
+ *   `table-header-cell` ⇄ tableHeader, `table-cell` ⇄ tableCell). A cell's
+ *   `data.colspan`/`data.rowspan` ride as the cell attrs of the same name, so
+ *   merged cells survive; column widths are not stored and are dropped. A table
+ *   the domain wouldn't accept (`isWellFormedTable`) rides through `unknownBlock`
+ *   instead, since the editor's table plugin would otherwise "fix" it by
+ *   inventing or dropping cells.
  */
 
 import type { RichTextDocument, RichTextNode } from '@contentworker/domain';
-import { isRichTextDocument } from '@contentworker/domain';
+import { isRichTextDocument, isWellFormedTable } from '@contentworker/domain';
 
 /** Minimal ProseMirror JSON shape (matches @tiptap/core's JSONContent). */
 export interface PmNode {
@@ -50,6 +57,18 @@ const PM_CONTAINERS: Record<string, string> = {
   orderedList: 'ordered-list',
   listItem: 'list-item',
 };
+
+const CELL_TO_PM: Record<string, string> = {
+  'table-header-cell': 'tableHeader',
+  'table-cell': 'tableCell',
+};
+const PM_TO_CELL: Record<string, string> = {
+  tableHeader: 'table-header-cell',
+  tableCell: 'table-cell',
+};
+const SPANS = ['colspan', 'rowspan'] as const;
+/** A span worth keeping: a whole number of cells past the one it always covers. */
+const isSpan = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 1;
 
 const EMBED_TO_PM: Record<string, string> = {
   'embedded-entry-block': 'embeddedEntryBlock',
@@ -168,6 +187,8 @@ function blockToPm(node: RichTextNode): PmNode {
     }
     case 'hr':
       return { type: 'horizontalRule' };
+    case 'table':
+      return tableToPm(node) ?? { type: 'unknownBlock', attrs: { raw: node } };
     default: {
       const container = BLOCK_CONTAINERS[node.nodeType];
       if (container) {
@@ -182,6 +203,27 @@ function blockToPm(node: RichTextNode): PmNode {
       return { type: 'unknownBlock', attrs: { raw: node } };
     }
   }
+}
+
+/** The editor's table, or `undefined` when the stored one isn't well formed. */
+function tableToPm(node: RichTextNode): PmNode | undefined {
+  if (!isWellFormedTable(node)) return undefined;
+  return {
+    type: 'table',
+    content: (node.content ?? []).map((row) => ({
+      type: 'tableRow',
+      content: (row.content ?? []).map((cell) => {
+        const attrs = Object.fromEntries(
+          SPANS.filter((s) => isSpan(cell.data?.[s])).map((s) => [s, cell.data?.[s]]),
+        );
+        return {
+          type: CELL_TO_PM[cell.nodeType] as string,
+          ...(Object.keys(attrs).length > 0 ? { attrs } : {}),
+          content: blockChildrenToPm(cell.content ?? []),
+        };
+      }),
+    })),
+  };
 }
 
 function inlineChildrenToPm(nodes: readonly RichTextNode[]): PmNode[] {
@@ -299,6 +341,29 @@ function pmToBlock(node: PmNode): RichTextNode[] {
       return [{ nodeType: 'hr', content: [] }];
     case 'unknownBlock':
       return node.attrs?.raw ? [node.attrs.raw as RichTextNode] : [];
+    case 'table': {
+      const rows = (node.content ?? []).flatMap(pmToBlock);
+      return rows.length > 0 ? [{ nodeType: 'table', data: {}, content: rows }] : [];
+    }
+    case 'tableRow': {
+      // The editor allows a row with no cells; the stored model does not.
+      const cells = (node.content ?? []).flatMap(pmToBlock);
+      return cells.length > 0 ? [{ nodeType: 'table-row', data: {}, content: cells }] : [];
+    }
+    case 'tableHeader':
+    case 'tableCell': {
+      const data = Object.fromEntries(
+        SPANS.filter((s) => isSpan(node.attrs?.[s])).map((s) => [s, node.attrs?.[s]]),
+      );
+      const content = (node.content ?? []).flatMap(pmToBlock);
+      return [
+        {
+          nodeType: PM_TO_CELL[node.type] as string,
+          data,
+          content: content.length > 0 ? content : [{ nodeType: 'paragraph', content: [] }],
+        },
+      ];
+    }
     default: {
       const container = PM_CONTAINERS[node.type];
       if (container) {

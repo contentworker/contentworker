@@ -94,13 +94,16 @@ A `RichText` value is a document tree (`packages/domain/src/rich-text/rich-text.
 `document` root whose `content` is block and inline nodes. Text lives in `text` nodes carrying
 `marks`; reference nodes carry a `data.target` link so the reference graph can be extracted from
 rich text exactly as from `Link` fields (`extractRichTextTargets`). `richTextToPlainText`
-flattens a document for search/embedding.
+flattens a document for search/embedding; a table reads as one block, a line per row with its
+cells separated by ` | `.
 
 The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`):
 
 - **Blocks** — `paragraph`, `heading-1`…`heading-6`, `blockquote`, `unordered-list`,
-  `ordered-list`, `list-item`, `code-block` (optional `data.language`), `hr`, and the table
-  nodes `table`, `table-row`, `table-header-cell`, `table-cell`.
+  `ordered-list`, `list-item`, `code-block` (optional `data.language`), `hr`.
+- **Tables** — `table` → `table-row` → `table-header-cell` | `table-cell` → blocks (normally a
+  `paragraph`), each with `data: {}`. A merged cell carries `data.colspan` / `data.rowspan`
+  (integers above 1); column widths are not stored.
 - **Inline** — `text` (with `marks`), `hard-break`, `hyperlink` (`data.uri`, text children).
 - **References** (`REFERENCE_NODE_TYPES`, each with `data.target: { id, linkType }`) —
   `embedded-entry-block`, `embedded-asset-block`, `embedded-entry-inline`, `entry-hyperlink`,
@@ -119,9 +122,16 @@ The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`
   the path (`javascript&colon;`). The HTML import applies the same rule, keeping an unsafe link's
   text and dropping its target;
 - a document over `MAX_RICH_TEXT_BYTES` (512 KiB serialized, twice the `JSON` field cap) or
-  nested more than `MAX_RICH_TEXT_DEPTH` (64) nodes below the root.
+  nested more than `MAX_RICH_TEXT_DEPTH` (64) nodes below the root;
+- table structure: a table must hold at least one `table-row`, and only rows; a row at least
+  one cell, and only cells; a cell at least one block, and no bare inline nodes (wrap text in a
+  `paragraph`). Rows and cells outside their parent are refused, as is a table over
+  `MAX_TABLE_ROWS` (500) rows or a row over `MAX_TABLE_COLUMNS` (50) cells. Spans must be
+  integers within those bounds. Tables may nest inside a cell.
 
-Which node may hold which (blocks inside inline nodes, table structure) is not yet constrained.
+Beyond tables, which node may hold which (for example blocks inside inline nodes) is not yet
+constrained. The admin editor carries a table it can't draw as a grid (`isWellFormedTable`)
+through unchanged.
 
 In Delivery, `?include=` resolves rich-text references like `Link` fields: each reference node's
 `data.target` becomes the embedded entry or asset (the node and its `nodeType` stay), and a

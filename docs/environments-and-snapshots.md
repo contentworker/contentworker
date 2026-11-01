@@ -167,12 +167,14 @@ validation is skipped and reported rather than aborting the run, and trashed ent
 matched as conflicts: an import must not silently revive something someone deleted.
 
 **Text for a RichText field is read as HTML.** Paragraphs, headings, lists, quotes, code blocks,
-rules, links and inline marks map to their rich-text nodes; a blank-line-separated block of plain text
-becomes paragraphs, as WordPress renders it. The reader is lenient (unclosed tags and stray end tags
-are recovered the way a browser recovers them) and keeps the text of any element it does not know.
-Images and embeds become **links to their source**, since there is no asset to point an embed at yet;
-a link is visible and fixable, where a dropped image is neither. A value that is already a rich-text
-document is left alone.
+rules, tables, links and inline marks map to their rich-text nodes; a blank-line-separated block of
+plain text becomes paragraphs, as WordPress renders it. The reader is lenient (unclosed tags and stray
+end tags are recovered the way a browser recovers them) and keeps the text of any element it does not
+know. Images and embeds become **links to their source**, since there is no asset to point an embed at
+yet; a link is visible and fixable, where a dropped image is neither. A `<table>` becomes a `table`
+(rows from `thead`, `tbody` and `tfoot` alike, `th` as header cells, `colspan`/`rowspan` kept); its
+caption becomes a paragraph before it, and a table with no cells or over the size limits keeps its
+text as paragraphs instead. A value that is already a rich-text document is left alone.
 
 ### WordPress exports (`wxr`)
 

@@ -459,7 +459,10 @@ for code and data blocks only.
 - **Install hint** (`components/install-hint.tsx`): on an iPhone or iPad in Safari, in More and on
   Connection, until it's dismissed.
 - **Rich text editor** (signature): TipTap styled as content, not chrome; entry and asset
-  reference links in the work blue with dotted underlines; code in mono on muted.
+  reference links in the work blue with dotted underlines; code in mono on muted; tables in
+  hairline cells, header cells semibold on muted, scrolling inside their wrapper when wide. Table
+  controls (icon and words, since "delete row" isn't something an icon says alone) appear in a
+  second toolbar row only while the cursor is in a table.
 
 ## Installed
 
