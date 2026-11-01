@@ -112,6 +112,19 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
   ).toBeVisible();
   await scan(page, testInfo);
 
+  // A delete confirm in place on a card: the tinted destructive pill on the confirm's tile, in
+  // both themes (its red is tuned per theme to hold 4.5:1 on that tint).
+  await library.getByRole('button', { name: `Delete “A11y ${stamp} root”` }).click();
+  const confirm = library.getByRole('alertdialog', { name: `Delete “A11y ${stamp} root”?` });
+  await expect(confirm.getByRole('button', { name: 'Delete' })).toBeVisible();
+  await scan(page, testInfo);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await scan(page, testInfo);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  await expect(confirm).toBeHidden();
+
   await library.getByRole('radio', { name: 'List' }).click();
   await expect(library.getByRole('table')).toBeVisible();
   await scan(page, testInfo);

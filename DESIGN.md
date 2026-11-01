@@ -13,7 +13,7 @@ rule: "oklch(0.922 0 0)"
 input: "oklch(0.922 0 0)"
 ring: "oklch(0.556 0 0)"
 link: "oklch(0.47 0.13 256)"
-destructive: "oklch(0.577 0.245 27.325)"
+destructive: "oklch(0.48 0.185 27.325)"
 ok: "oklch(0.455 0.105 152)"
 wait: "oklch(0.49 0.115 62)"
 bad: "oklch(0.5 0.185 28)"
@@ -28,6 +28,7 @@ ink-dark: "oklch(0.985 0 0)"
 muted-dark: "oklch(0.269 0 0)"
 muted-foreground-dark: "oklch(0.708 0 0)"
 link-dark: "oklch(0.76 0.11 250)"
+destructive-dark: "oklch(0.78 0.12 22.216)"
 typography:
 title:
 fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif"
@@ -132,6 +133,14 @@ Neutral greys with no tint carry everything; colour is reserved for one blue and
 
 - **Work blue** (`link`): links, live work (`run`), the slow-page bar and the caret. Never a fill
   for a button.
+
+### Destructive
+
+- **Destructive** (`destructive`): the red of an act that removes something for good: the tinted
+  pill that confirms it (an inline confirm, a destructive menu item), field errors. It is an
+  action's colour, not a status (failed is `bad`). Set so the pill's words hold 4.5:1 on their own
+  tint over a tile, at rest and on hover, in both themes, on paper and on a dark card (5.70:1 light,
+  5.09:1 dark at rest); the preset's red read 3.76:1.
 
 ### Neutral
 

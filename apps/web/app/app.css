@@ -115,7 +115,9 @@
   --muted-foreground: oklch(0.52 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  /* Deeper than the preset's 0.577 so the destructive pill's words hold 4.5:1 on their own tint
+     over a tile (an inline confirm), at rest and on hover; the preset's red read 3.76:1. */
+  --destructive: oklch(0.48 0.185 27.325);
   --destructive-foreground: oklch(0.985 0 0);
   --rule: oklch(0.922 0 0);
   --border: var(--rule);
@@ -182,7 +184,8 @@
   --muted-foreground: oklch(0.708 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
+  /* Lighter and calmer than the preset's 0.704 for the same reason, on a card as well as paper. */
+  --destructive: oklch(0.78 0.12 22.216);
   --rule: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --link: oklch(0.76 0.11 250);
