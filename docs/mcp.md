@@ -45,7 +45,7 @@ an ordinary API key — so an agent can still never exceed the scopes the approv
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 ## Tools
 
-The server exposes **155 tools**, one per major Management/Delivery capability (the canonical list
+The server exposes **158 tools**, one per major Management/Delivery capability (the canonical list
 is the `registerTool` calls in `packages/http/src/mcp/server.ts`). Each calls `authorize` before
 delegating to the same use-case as the HTTP route.
 
