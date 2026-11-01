@@ -14,7 +14,10 @@ pnpm db:migrate:local   # applies packages/db/migrations to the local D1, via th
 pnpm dev                # the api seeds the demo dataset into space-1 on its first request
 ```
 
-`pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173). The web
+`pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173; `PORT=5174 pnpm
+dev` for another port). The port is fixed rather than "the next free one": the local OAuth issuer
+(`OAUTH_ISSUER`, so MCP clients can connect with OAuth as on a deployment), the MCP smoke scripts
+and these docs all name it, so a busy port fails fast. The web
 Worker's Vite config (`apps/web/vite.config.ts`) starts the **api, engine and delivery Workers as
 auxiliary Workers** in the same session, all on one local D1, with the queues, cron, Durable
 Objects and Workflows emulated. Their vars are overridden with `LOCAL_STACK_VARS`:

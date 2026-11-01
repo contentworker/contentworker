@@ -11,6 +11,13 @@ import { defineConfig } from 'vite';
 const e2e = process.env.CONTENTWORKER_E2E === '1';
 
 /**
+ * The dev server's port: PORT, else 5173. Fixed (strictPort), never "the next free one", because
+ * the local stack's OAuth issuer, the MCP smoke scripts and the docs all name this origin; a busy
+ * port fails fast instead of moving the admin somewhere they don't point.
+ */
+const port = Number(process.env.PORT) || 5173;
+
+/**
  * Local-only settings for the auxiliary Workers: dev secrets (never a deployment's), mocked
  * models, hash embeddings, KV-backed vectors that every Worker shares (Vectorize has no local
  * emulator), and fakes allowed. The principal key matches the web Worker's own dev key
@@ -37,9 +44,12 @@ const LOCAL_STACK_VARS = {
   // Config validation refuses SEED_DEV wherever secure secrets are required.
   SEED_DEV: e2e ? 'false' : 'true',
   SEED_SCALE: '1',
+  // OAuth for MCP clients, served on the admin origin like a deployment's (OAUTH_ISSUER).
+  OAUTH_ISSUER: `http://localhost:${port}`,
 };
 
 export default defineConfig({
+  server: { port, strictPort: true },
   plugins: [
     cloudflare({
       viteEnvironment: { name: 'ssr' },

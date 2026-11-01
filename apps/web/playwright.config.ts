@@ -57,7 +57,7 @@ export default defineConfig({
     command: [
       `rm -rf ${state}`,
       `wrangler d1 migrations apply contentworker --local --persist-to ${state}`,
-      `CONTENTWORKER_E2E=1 react-router dev --port ${PORT} --strictPort`,
+      `CONTENTWORKER_E2E=1 PORT=${PORT} react-router dev`,
     ].join(' && '),
     url: `http://localhost:${PORT}/health`,
     reuseExistingServer: !process.env.CI,
