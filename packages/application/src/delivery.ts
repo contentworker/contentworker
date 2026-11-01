@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { LocaleConfig } from '@contentworker/domain';
+import type { DomainEvent, LocaleConfig } from '@contentworker/domain';
 import {
   canAccessContentType,
+  deniedFieldsFor,
   fallbackChain,
   maskDeniedFields,
   NotFoundError,
@@ -454,4 +455,80 @@ export function maskDeliveredFields(
   };
   const masked = maskDeniedFields(principal, contentType, fields);
   return Object.fromEntries(Object.entries(masked).map(([k, v]) => [k, walk(v, true)]));
+}
+
+/**
+ * The search hits `principal` may see: hits on types they can read, and none on a type where they
+ * have field restrictions (a hit there may exist only because the query matched a hidden field,
+ * and its snippet could quote it). Unrestricted principals see every hit unchanged.
+ */
+export async function visibleSearchHits<T extends { readonly entryId: string }>(
+  ctx: AppContext,
+  scope: Scope,
+  principal: Principal,
+  hits: readonly T[],
+): Promise<T[]> {
+  if (!principal.contentGrants) return [...hits];
+  const visible: T[] = [];
+  for (const hit of hits) {
+    try {
+      const entry = await getPublishedEntry(ctx, scope, hit.entryId);
+      if (
+        canAccessContentType(principal, 'read', entry.contentType) &&
+        deniedFieldsFor(principal, entry.contentType).length === 0
+      ) {
+        visible.push(hit);
+      }
+    } catch {
+      // Unpublished since it was indexed: not visible.
+    }
+  }
+  return visible;
+}
+
+/**
+ * The event types the Live Content API carries: facts about published content. Editorial and
+ * internal events (workflow runs and tasks, bulk-job control, reindex requests) never reach a
+ * delivery subscriber.
+ */
+export const LIVE_EVENT_TYPES: ReadonlySet<DomainEvent['type']> = new Set([
+  'entry.published',
+  'entry.unpublished',
+  'entries.published_bulk',
+  'asset.published',
+  'asset.unpublished',
+  'content_type.published',
+  'release.published',
+  'environment_alias.changed',
+]);
+
+/**
+ * What `principal` may see of `event` on the live stream, or null for nothing: the same rules as
+ * a delivery read. An unrestricted key sees every published-content fact. A key with content
+ * grants sees entries only of types it may read, with its denied fields masked; a content type's
+ * publish only for those types; alias changes; and no asset, bulk or release facts (asset reads
+ * are refused to it, and a bulk or release fact lists entry ids of every type).
+ */
+export function liveEventFor(
+  principal: Pick<Principal, 'contentGrants'>,
+  event: DomainEvent,
+): DomainEvent | null {
+  if (!LIVE_EVENT_TYPES.has(event.type)) return null;
+  if (!principal.contentGrants) return event;
+  const p = principal as Principal;
+  switch (event.type) {
+    case 'entry.published':
+      if (!canAccessContentType(p, 'read', event.contentTypeApiId)) return null;
+      return {
+        ...event,
+        fields: maskDeliveredFields(p, event.contentTypeApiId, event.fields) as typeof event.fields,
+      };
+    case 'entry.unpublished':
+    case 'content_type.published':
+      return canAccessContentType(p, 'read', event.contentTypeApiId) ? event : null;
+    case 'environment_alias.changed':
+      return event;
+    default:
+      return null;
+  }
 }

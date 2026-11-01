@@ -28,6 +28,11 @@ export function db(): AuthDb {
 }
 
 /** The api Worker, over the `API` service binding. */
+/** The delivery Worker's binding (bearer-key /delivery/* calls go through its cache). */
+export function delivery(): Fetcher | undefined {
+  return env.DELIVERY;
+}
+
 export function api(): Fetcher {
   return env.API;
 }

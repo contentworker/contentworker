@@ -109,12 +109,15 @@ padding: "0.125rem 0.5rem"
 ## Overview
 
 The console where editors write, review and publish content, and developers model it and wire it
-up. Its visual system is **Ledger**, ported from OrderLoop (the same owner's product; its
-`apps/web/DESIGN.md` and `app/app.css` are the source): shadcn's base-maia preset (neutral greys,
-Inter, pill buttons and fields) on Radix primitives in `apps/admin/src/components/ui`, with status
-tokens (`ok`, `wait`, `bad`, `undo`, `run`, `idle`, `ai`) that mean one thing each. The tokens live
-in `apps/admin/src/index.css`; this file is about how the admin is laid out and operated across
-screens. PRODUCT.md holds the users, register and principles.
+up. Its visual system is **Ledger**: shadcn's base-maia preset (neutral greys, Inter, pill buttons
+and fields) on Radix primitives in `packages/ui`, with status tokens (`ok`, `wait`, `bad`, `undo`,
+`run`, `idle`, `ai`) that mean one thing each. The tokens live in `apps/web/app/app.css`, mirrored
+as data in `packages/design` (a test holds them together). This file is about how the admin is
+laid out and operated across screens; PRODUCT.md holds the users, register and principles.
+
+Paths below are under `apps/web/app/`: the shell and sign-in pages in `routes/` and
+`components/`, the CMS screens in `cms/routes/`, `cms/components/` and `cms/lib/`. Primitives
+(`Table`, `Sidebar`, `Dialog`, …) are `@contentworker/ui/*` from `packages/ui/src`.
 
 ## Colors
 
@@ -145,7 +148,7 @@ Neutral greys with no tint carry everything; colour is reserved for one blue and
 
 ### Status
 
-Each contentworker status maps to one token (`lib/format.ts` `statusTone`), and every badge, dot
+Each contentworker status maps to one token (`cms/lib/format.ts` `statusTone`), and every badge, dot
 and chart series for a status reads it through `var()`, so it switches with the theme:
 
 | Token             | Means                       | contentworker statuses                                                      |
@@ -214,11 +217,11 @@ mouse or trackpad. `short:` is a phone on its side (landscape, under 32rem tall,
 
 ## The shell
 
-`components/layout/AppShell.tsx`, a port of OrderLoop's `routes/shell.tsx`; `components/layout/
-nav.ts` is the one source of the pages, their order, names, icons and G-letters.
+`routes/shell.tsx` (with `routes/in-app.tsx` as the error boundary inside it); `cms/components/
+layout/nav.ts` is the one source of the pages, their order, names, icons and G-letters.
 
-- **Sidebar (from md):** shadcn's Sidebar (radix-maia, as adapted by OrderLoop), in
-  `components/ui/sidebar.tsx`. Full height on its own ground, with a rule. From the top: the brand
+- **Sidebar (from md):** shadcn's Sidebar (radix-maia), in
+  `packages/ui/src/sidebar.tsx`. Full height on its own ground, with a rule. From the top: the brand
   row on the header's line, whose mark is the `SidebarTrigger` (named "Sidebar", ⌘\ or Ctrl+\);
   the day's work (Overview, Content, Approvals when on, Releases) with no label; then groups
   labelled as captions: **Build** (Workflows), **Library** (Media, Taxonomy) and **Settings**
@@ -239,7 +242,7 @@ nav.ts` is the one source of the pages, their order, names, icons and G-letters.
   From xl the three switchers sit in the header; below xl a pill names the environment (the space
   and locale in its accessible name and `title`) and opens them in a sheet; the phone's More sheet
   holds them too. It is never more than one press away.
-- **New entry:** in the place OrderLoop gives New order. An entry needs a content type: on a content
+- **New entry:** in the header's primary-action place. An entry needs a content type: on a content
   type's pages it links straight to that type's new entry; anywhere else it opens a menu of the
   space's content types. Ink, except on Approvals and Workflows, where it steps back to an outline.
   On a phone it is a floating pill (`shadow-float`) above the tab bar on Overview and the Content
@@ -301,7 +304,7 @@ through the variables, never `env()` directly.
 
 ## Tables
 
-Every data table is `Table` from `components/ui/table.tsx` (OrderLoop's, with shadcn's part names
+Every data table is `Table` from `packages/ui/src/table.tsx` (with shadcn's part names
 kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `TableCell`,
 `TableEmpty`; `Th`/`Td`/`Tr` are aliases).
 
@@ -326,13 +329,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 
 ## Screens
 
-- **Overview** (`components/Dashboard.tsx`): what needs attention as cards (not yet published,
+- **Overview** (`cms/components/Dashboard.tsx`): what needs attention as cards (not yet published,
   coming up, agent proposals, live activity), then search, AI usage and recent agent runs.
 - **Content:** the content types as cards (`PageHeader` with New content type); a content type's
   entries beside the list of types (from md); the entry editor: the title wraps, the status, version
   and save state sit under it, and the actions wrap beside it; below md the secondary actions fold
-  into a ghost ⋯ menu ("More entry actions"). From lg the editor's panels sit beside the form, as
-  OrderLoop's order page puts its panels beside the graph.
+  into a ghost ⋯ menu ("More entry actions"). From lg the editor's panels sit beside the form.
 - **Releases, Workflows, Taxonomy, Media:** `PageHeader` with the page's one "New …" (a `Plus` and
   the noun), then cards or a stacked table. A media card's name is its control, stretched over the
   card, with the card's own actions above it.
@@ -346,7 +348,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 
 ## Screens that change shape
 
-- **Workflow editor** (`routes/WorkflowEditor.tsx`, from OrderLoop's flow editor): at lg it builds,
+- **Workflow editor** (`cms/routes/WorkflowEditor.tsx`): at lg it builds,
   palette | canvas | inspector. On touch, a palette item is tapped in (dragging is offered only to
   a fine pointer: iPadOS drag is unreliable), node handles grow and carry a 32px target, and a
   connection snaps from 40px. Below lg it is review-only, saying so in place ("Building workflows
@@ -385,7 +387,7 @@ are a muted step. Shadows are kept for what floats over the page.
 Quiet and exact. Things move only when state changes, and only to say what changed and where:
 opacity, colour and a few pixels of travel.
 
-- **Durations** (index.css, mirrored in `lib/motion.ts`, a test keeps them equal):
+- **Durations** (`app.css` motion tokens):
   `--motion-instant` 100ms (feedback, anything leaving), `--motion-move` 180ms (something appearing
   or changing state), `--motion-travel` 240ms (pages and panels).
 - **Easing:** `ease-arrive` (`cubic-bezier(0.16,1,0.3,1)`) for arrivals, `ease-leave` for exits.
@@ -423,22 +425,21 @@ for code and data blocks only.
   actions), `Body`, `Section`, `Empty` (with an `icon` and `title` where the empty state is the
   news).
 - **Item, Field, Kbd, Spinner, Badge, Skeleton, Separator, Breadcrumb, Tooltip, Sheet, Dropdown
-  menu, Alert, Alert dialog** (`components/ui`): OrderLoop's radix-maia ports, unchanged but for
-  import paths. Dialog, Select, Tabs, Checkbox and Avatar are contentworker's own, on the same
-  tokens.
+  menu, Alert, Alert dialog, Dialog, Select, Tabs, Checkbox, Avatar** (`packages/ui`): radix-maia
+  primitives on the Ledger tokens.
 - **Status badge** (`components/status.tsx`): a pill tinted 11% in the status colour with a dot; an
   ending that went badly is ruled in the colour with a mark (✕ or undo) instead of tinted, so it
   reads apart without colour. `ToneBadge` for another vocabulary (a diff's change, a finding's
   severity); `StatusDot` alone where the word sits beside it.
-- **Inline confirm** (`components/InlineConfirm.tsx`): an "are you sure?" where the action was,
+- **Inline confirm** (`cms/components/InlineConfirm.tsx`): an "are you sure?" where the action was,
   never a modal. The safe choice has focus, Escape backs out of the newest one, and focus goes back
   to what asked.
-- **Toasts** (`lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
+- **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
   toast carries its Undo action.
-- **Form sheet** (`components/form-sheet.tsx`): a list page's create form behind one "New …"
+- **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"
   button, in a sheet from the side (from the bottom on a phone).
 - **Relative time** (`components/ago.tsx`): "3m ago" that stays true, the full time in its tooltip.
-- **Copy and share** (`components/copy-button.tsx`, `components/share-button.tsx`): copy says so
+- **Copy and share** (`components/copy-button.tsx`, `cms/components/share-button.tsx`): copy says so
   for a moment; share uses the system sheet where there is one.
 - **Install hint** (`components/install-hint.tsx`): on an iPhone or iPad in Safari, in More and on
   Connection, until it's dismissed.
@@ -448,7 +449,7 @@ for code and data blocks only.
 ## Installed
 
 `public/manifest.webmanifest` and the apple-touch-icon put the admin on the Home Screen as its own
-app (`standalone`). The icons are rendered from the mark by `apps/admin/scripts/icons.sh`, ink on
+app (`standalone`). The icons are rendered from the mark by `apps/web/scripts/icons.sh`, ink on
 paper and opaque. `theme-color` follows the chosen theme (`public/theme.js`, a file so the CSP's
 `script-src 'self'` allows it). There is no service worker: actions must reach the API.
 

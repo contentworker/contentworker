@@ -146,9 +146,11 @@ The `VectorStore` is Cloudflare Vectorize (`@contentworker/adapters/vector-vecto
 `VECTORIZE`; 768 dimensions, cosine, metadata-indexed on `spaceId` and `environmentId`). Vectorize
 indexes mutations asynchronously, so search-after-publish lags by a few seconds, and caps a query
 at 50 matches (`MAX_TOP_K`, honored by the over-fetch). Without a `VECTORIZE` binding, or with
-`VECTOR_STORE=memory` (local dev), the Worker uses a per-isolate, non-durable in-memory vector
-store, which the fail-closed adapter guard refuses on a persistent deployment unless
-`ALLOW_FAKE_ADAPTERS` includes `vectors`.
+`VECTOR_STORE=memory`, the Worker uses a per-isolate, non-durable in-memory vector store. The local
+stack sets `VECTOR_STORE=kv` instead: vectors live in `KV_CACHE`, which every Worker in the dev
+session shares, so what the engine embeds the api can search (brute-force cosine; dev scale only).
+The fail-closed adapter guard refuses both on a persistent deployment unless `ALLOW_FAKE_ADAPTERS`
+includes `vectors`.
 
 **Hybrid search** (`hybridSearch(deps, ctx, scope, query, { topK = 10 })`) fuses two legs with
 Reciprocal Rank Fusion (`score = Σ 1/(60 + rank)`; rank-based, so the legs' incomparable
@@ -208,7 +210,9 @@ schemas are built during isolate warm-up rather than on the first request.
 Claude, ChatGPT and MCP-capable IDEs: an unauthenticated request answers with
 `WWW-Authenticate: Bearer resource_metadata="…"` (RFC 9728), the client fetches
 `/.well-known/oauth-protected-resource`, registers itself dynamically, and runs an
-authorization-code + PKCE flow that a human approves. CLI clients that cannot open a browser use
+authorization-code + PKCE flow that a human approves on the admin origin after signing in to the
+web app, choosing the space the connection works in (a fleet deployment's issuer and resource are
+`https://<domain>` and `https://<domain>/mcp`). CLI clients that cannot open a browser use
 the device flow, and CI uses a personal access token. Whatever the route, the resulting token is
 an ordinary API key — so an agent can still never exceed the scopes the approving human holds.
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).

@@ -23,7 +23,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `BlobStore`           | R2 (`MEDIA_BUCKET`) + signed `/media/*` URLs                        | `FakeBlobStore` (fake `blob`)                       |
 | `AIProvider`          | Workers AI (`AI`, `AI_PROVIDER=workers-ai`), via AI Gateway if set  | Stub provider (fake `ai`)                           |
 | `EmbeddingsProvider`  | Workers AI (`EMBEDDINGS_PROVIDER=workers-ai`)                       | Hash embeddings (fake `embeddings`; `local` accepts it explicitly) |
-| `VectorStore`         | Vectorize (`VECTORIZE`), unless `VECTOR_STORE=memory`               | In-memory (fake `vectors`)                          |
+| `VectorStore`         | Vectorize (`VECTORIZE`), unless `VECTOR_STORE=kv` or `memory`      | KV-backed or in-memory (fake `vectors`)             |
 | `SearchIndex`         | `SearchShardDO` shards (`SEARCH`)                                   | Bounded substring scan in the store                 |
 | `Cache`               | KV (`KV_CACHE`)                                                     | No delivery cache                                   |
 | `Queue`               | `EVENTS_QUEUE` (+ `BULK_QUEUE`, `AGENTS_QUEUE`, `PURGE_QUEUE`)      | Outbox stays pending; no async dispatch             |
@@ -37,6 +37,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | --------------------------------------------------- | - | - | - | - | ----------------------------------------------------------------------------------------- |
 | `DB` (D1)                                           | ✓ | ✓ | ✓ | ✓ | One database per deployment; web uses the auth tables, delivery reads only                |
 | `API` (service)                                     | ✓ |   |   |   | The api Worker, for the gateway                                                           |
+| `DELIVERY` (service)                                | ✓ |   |   |   | The delivery Worker, for bearer-key `/delivery/*` calls on the admin origin               |
 | `KV_CACHE` (KV)                                     |   | ✓ | ✓ | ✓ | Delivery cache and cached principals                                                      |
 | `MEDIA_BUCKET` (R2)                                 |   | ✓ | ✓ | ✓ | Asset bytes, import staging, plugin bundles, dead letters                                 |
 | `VECTORIZE`                                         |   | ✓ | ✓ | ✓ | 768-dim cosine index; dropped from a demo's rendered config                               |
@@ -63,7 +64,8 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `ALLOW_FAKE_ADAPTERS`    |   | ✓ |   | ✓ | empty                       | Comma-separated fakes a persistent deployment accepts: `ai`, `blob`, `embeddings`, `vectors`, or `all`                           |
 | `MAX_BODY_BYTES`         |   | ✓ |   |   | `5242880`                   | Request body cap; oversized → 413                                                                                              |
 | `TRUSTED_PROXY_COUNT`    |   | ✓ |   |   | `1`                         | Only used without `cf-connecting-ip`: hops of `X-Forwarded-For` to trust                                                       |
-| `DATA_JURISDICTION`, `AI_GATEWAY_LOGS`, `DEMO_MODE` | ✓ | ✓ | ✓ | ✓ | — | Rendered by `fleet.ts` from the registry (`jurisdiction`; `aiGatewayLogs` on the engine; `demo` on web). No code reads them yet; the resources themselves carry the setting |
+| `DATA_JURISDICTION`      | ✓ | ✓ | ✓ | ✓ | empty                       | `eu` or `fedramp`, rendered by `fleet.ts` from the registry's `jurisdiction`. The api, delivery and engine pin every Durable Object namespace there at each entry point and in `wireEdge` (`withJurisdiction`, `packages/platform/src/env.ts`); D1 and R2 carry it from creation. The web Worker binds no Durable Objects |
+| `AI_GATEWAY_LOGS`        |   | ✓ | ✓ | ✓ | empty                       | `true`/`false`: whether AI Gateway logs each call (`cf-aig-collect-log`, set per call by the Workers AI adapter). Prompts and answers are never logged (`cf-aig-collect-log-payload: false`). Rendered from the registry's `aiGatewayLogs` for every Worker that sets `AI_GATEWAY_ID`; empty leaves the gateway's own setting |
 
 ## Secrets and keys
 
@@ -81,7 +83,6 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `ADMIN_TOKEN`            |   | ✓ |   |   | Root bearer token: all scopes, all spaces. Dev default `dev-admin-token`, refused when secure secrets are required                                              |
 | `MCP_TOKEN`              |   | ✓ |   |   | Admin bearer for `/mcp`. On a persistent deployment there is no default: without it MCP is not mounted                                                         |
 | `STREAM_WEBHOOK_SECRET`  |   | ✓ |   |   | Enables `POST /webhooks/stream`                                                                                                                                 |
-| `SESSION_SECRET`         |   | ✓ |   |   | HMAC for the api's own OIDC session cookie (`/auth/oidc/*`, used by OAuth consent). Not in `fleet.ts SECRETS`                                                   |
 
 Keys are at least 32 characters (`openssl rand -hex 32`); `scripts/fleet.ts` refuses shorter
 ones at deploy.
@@ -122,24 +123,17 @@ Rendered from the registry's `sso` field. Passwords, passkeys, TOTP and SCIM nee
 The native `ratelimits` bindings are per Cloudflare location and approximate. The delivery
 gateway always applies `RATE_LIMIT_READ` by client IP.
 
-## OAuth 2.1 and OIDC on the api
+## OAuth 2.1 for MCP clients (api)
 
 | Var                               | Default                           | Purpose                                                                                                     |
 | --------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `OAUTH_ISSUER`                    | empty; rendered `https://api.<domain>` | Enables the authorization server (`/oauth/*`, `/.well-known/oauth-*`)                                 |
-| `OAUTH_RESOURCE`                  | `<issuer>/mcp`                    | Canonical URI of the protected MCP resource                                                                 |
+| `OAUTH_ISSUER`                    | empty; rendered `https://<domain>` (the admin host) | Enables the authorization server (`/oauth/*`, `/.well-known/oauth-*`). The web gateway forwards those paths and `/mcp`, so consent uses the person's web sign-in |
+| `OAUTH_RESOURCE`                  | `<issuer>/mcp`                    | Canonical URI of the protected MCP resource (empty, as the templates declare it, means the default)          |
 | `OAUTH_ACCESS_TOKEN_TTL_SECONDS`  | `3600`                            | Access-token lifetime                                                                                       |
 | `OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000`                         | Refresh-token lifetime                                                                                      |
-| `OAUTH_DEV_AUTO_APPROVE`          | `false`                           | Dev only: approve with no human, as `OIDC_DEFAULT_SPACE` / `OIDC_DEFAULT_ROLE`. Refused with secure secrets |
-| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | — | The api's own OIDC login (`/auth/oidc/login`, `/auth/oidc/callback`), which `/oauth/authorize` and `/oauth/device` redirect to for consent |
-| `OIDC_DEFAULT_SPACE`              | `SEED_SPACE_ID`, else `space-1`   | Space for OIDC-delegated keys and for first-run setup's administrator                                       |
-| `OIDC_GROUP_ROLE_MAP`             | `{}`                              | JSON map of IdP group → role id                                                                             |
-| `OIDC_DEFAULT_ROLE`               | —                                 | Role for unmapped users; unset refuses them                                                                 |
-| `SESSION_TTL_HOURS`               | `8`                               | The api OIDC session's lifetime                                                                             |
-| `ADMIN_UI_URL`                    | `http://localhost:5173/dashboard` | Post-login redirect of the api's OIDC flow                                                                  |
 
-The fleet renders the OIDC vars only for the web Worker, so on a fleet deployment the api's
-consent screen has no sign-in to redirect to; see [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
+Consent forms are signed with a key derived from `PRINCIPAL_KEY`. See
+[Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 
 ## Media (api)
 
@@ -162,7 +156,7 @@ consent screen has no sign-in to redirect to; see [Auth & RBAC](./auth-and-rbac.
 | `EMBEDDINGS_PROVIDER`                |   | ✓ | ✓ | ✓ | `workers-ai` when `AI` is bound | `workers-ai` or `local` (hash embeddings; `pnpm dev`). The engine indexes vectors only when it is set |
 | `EMBEDDINGS_MODEL`                   |   | ✓ | ✓ | ✓ | `@cf/baai/bge-base-en-v1.5`    | Workers AI embeddings model                                                                   |
 | `EMBEDDINGS_DIM`                     |   | ✓ | ✓ | ✓ | `768`                          | Must match the Vectorize index                                                                |
-| `VECTOR_STORE`                       |   |   |   |   | —                              | `memory` ignores `VECTORIZE` (local dev: no local Vectorize emulator)                         |
+| `VECTOR_STORE`                       |   |   |   |   | —                              | `kv` (local stack: vectors in `KV_CACHE`, shared across Workers) or `memory` (one isolate) ignore `VECTORIZE`; dev only |
 | `SEARCH_SHARDS`                      |   |   |   |   | `8`                            | Search shards per space:environment; changing it requires a reindex                           |
 | `AI_MAX_REQUESTS_PER_WINDOW`         |   | ✓ |   | ✓ | `60`                           | Per-space interactive AI requests per window (`CostGuardDO`); `0` disables metering           |
 | `AI_MAX_TOKENS_PER_WINDOW`           |   | ✓ |   | ✓ | `200000`                       | Per-space interactive AI tokens per window                                                    |
@@ -206,5 +200,5 @@ and overrides their vars with `LOCAL_STACK_VARS` (`apps/web/vite.config.ts`):
 `REQUIRE_SECURE_SECRETS=false`, `ADMIN_TOKEN=dev-admin-token`, `MCP_TOKEN=dev-mcp-token`,
 `TOKEN_PEPPER=dev-pepper`, `MEDIA_SIGNING_SECRET=dev-media-signing-secret`,
 `PRINCIPAL_KEY=contentworker-local-dev-principal-key`, `AI_MODE=mock`, `AI_GATEWAY_ID=` (empty),
-`EMBEDDINGS_PROVIDER=local`, `VECTOR_STORE=memory`, `ALLOW_FAKE_ADAPTERS=all`. See
+`EMBEDDINGS_PROVIDER=local`, `VECTOR_STORE=kv`, `ALLOW_FAKE_ADAPTERS=all`. See
 [Development](./development.md).

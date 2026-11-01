@@ -45,6 +45,11 @@ async function requireContentType(
 export interface CreateEntryInput {
   readonly contentTypeApiId: string;
   readonly fields: EntryFields;
+  /**
+   * Keep this id instead of minting one: an environment import copies entries with their ids,
+   * so every link between them still resolves in the target. Not accepted over the API.
+   */
+  readonly id?: string;
 }
 
 export interface EntryView {
@@ -73,7 +78,7 @@ export async function createEntry(
   const fields = normalizeSlugFields(contentType, hooked.fields);
   assertEntryFieldsValid(contentType, fields, vctx);
 
-  const id = ctx.ids.newId();
+  const id = input.id ?? ctx.ids.newId();
   const entry: Entry = {
     id,
     contentTypeApiId: input.contentTypeApiId,

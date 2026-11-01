@@ -39,5 +39,10 @@ export function principalKey() {
     (env as { PRINCIPAL_KEY?: string }).PRINCIPAL_KEY ||
     (import.meta.env.DEV ? DEV_PRINCIPAL_KEY : undefined);
   if (!key) throw new Error('PRINCIPAL_KEY is not set: the api would refuse every forwarded call');
+  // The dev key is public (it is in the repo): a deployed build that has it would let anyone sign
+  // as anyone, so refuse rather than run.
+  if (!import.meta.env.DEV && key === DEV_PRINCIPAL_KEY) {
+    throw new Error('PRINCIPAL_KEY is the public development key: set a real one');
+  }
   return key;
 }

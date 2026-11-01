@@ -1,5 +1,6 @@
 import type { Principal } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
+import { CLIENT_CACHE, clientCacheControl, hasGraphqlErrors } from '../src/client-cache.js';
 import { canonicalUrl, fromCanonical, visibilityProfile } from '../src/profile.js';
 import { backoff, drain, PURGE_CALLS, PURGE_TAGS } from '../src/purge.js';
 
@@ -118,5 +119,31 @@ describe('purge drain', () => {
     expect(calls).toBe(PURGE_CALLS);
     expect(ms.filter((m) => m.acked)).toHaveLength(PURGE_CALLS);
     expect(ms.filter((m) => m.retried !== undefined)).toHaveLength(2);
+  });
+});
+
+describe('client cache policy', () => {
+  it('keeps a success privately for a minute and never keeps an error', () => {
+    expect(clientCacheControl(200)).toBe(CLIENT_CACHE);
+    expect(clientCacheControl(304)).toBe(CLIENT_CACHE);
+    for (const status of [400, 401, 403, 404, 429, 500]) {
+      expect(clientCacheControl(status), String(status)).toBe('no-store');
+    }
+    // A success the entrypoint marked no-store (a GraphQL answer with errors) stays no-store.
+    expect(clientCacheControl(200, 'private, no-store')).toBe('no-store');
+    expect(clientCacheControl(200, 'public, max-age=60, stale-while-revalidate=300')).toBe(
+      CLIENT_CACHE,
+    );
+  });
+});
+
+describe('GraphQL answers with errors', () => {
+  const body = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).buffer as ArrayBuffer;
+  it('are recognised so they are never cached', () => {
+    expect(hasGraphqlErrors(body({ errors: [{ message: 'boom' }], data: null }))).toBe(true);
+    expect(hasGraphqlErrors(body({ data: { a: 1 } }))).toBe(false);
+    expect(hasGraphqlErrors(body({ data: { a: 1 }, errors: [] }))).toBe(false);
+    // Unreadable: not something to keep either.
+    expect(hasGraphqlErrors(new TextEncoder().encode('not json').buffer as ArrayBuffer)).toBe(true);
   });
 });

@@ -2,11 +2,11 @@ import { type AuthRateLimit, clientIp } from '@contentworker/platform/auth-rate-
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
-const config: ApiConfig = {
+const config: ApiConfig = testConfig({
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -18,7 +18,7 @@ const config: ApiConfig = {
     locales: ['en-US'],
     scale: 1,
   },
-} as ApiConfig;
+}) as ApiConfig;
 
 /** Recording fake for the injected (distributed) limiter seam. */
 function fakeLimiter(blocked = false) {

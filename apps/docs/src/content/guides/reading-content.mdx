@@ -84,13 +84,17 @@ curl -s "$CDN/delivery/$SPACE/main/graphql" \
   -d '{ "query": "{ articleCollection(limit: 5, locale: \"en-US\") { id title } }" }'
 ```
 
-The schema changes when a content type is published. A GraphiQL page at
+Each field resolves to one value, in the `locale` you pass or, without one, the space's default
+locale. The schema changes when a content type is published. A GraphiQL page at
 `/graphiql/{space}/{env}` lets you explore it (queries still need a key).
 
 ## Live updates
 
 `GET /delivery/{space}/{env}/live` is a Server-Sent Events stream of publish and unpublish events
-for the environment. Use it to refresh a page or invalidate a cache the moment content changes,
+for the environment. A key sees only what it could read: with a role that limits content types or
+hides fields, it gets events for its types only, with those fields left out. The server ends each
+stream after ten minutes, so reconnect when it closes (as `EventSource` does on its own); that is
+also when a revoked key or a changed role takes effect. Use it to refresh a page or invalidate a cache the moment content changes,
 instead of polling. For server-to-server notifications, use [webhooks](/guides/webhooks/).
 
 ## Caching

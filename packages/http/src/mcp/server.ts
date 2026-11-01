@@ -123,10 +123,12 @@ import {
   updateEntry,
   updateRole,
   validateWorkflowGraph,
+  visibleSearchHits,
   workflowRunView,
 } from '@contentworker/application';
 import { listDocs, readDoc, searchDocs } from '@contentworker/docs';
 import {
+  assertQueryRespectsFieldRules,
   assertWritableFields,
   authorize,
   authorizeContent,
@@ -488,6 +490,13 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      assertQueryRespectsFieldRules(principal, {
+        contentTypeApiId: args.contentType,
+        filters: args.filters,
+        order: args.order,
+        select: args.select,
+        search: args.search,
+      });
       const items = await listPreviewEntries(ctx, scopeOf(args), {
         contentTypeApiId: args.contentType,
         limit: args.limit,
@@ -540,7 +549,8 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.searchRead, scopeOf(args));
-      return ok(await hybridSearch(rag, ctx, scopeOf(args), args.query, { topK: args.topK }));
+      const hits = await hybridSearch(rag, ctx, scopeOf(args), args.query, { topK: args.topK });
+      return ok(await visibleSearchHits(ctx, scopeOf(args), principal, hits));
     },
   );
 
@@ -560,7 +570,8 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.searchRead, scopeOf(args));
-      return ok(await semanticSearch(rag, scopeOf(args), args.query, { topK: args.topK }));
+      const hits = await semanticSearch(rag, scopeOf(args), args.query, { topK: args.topK });
+      return ok(await visibleSearchHits(ctx, scopeOf(args), principal, hits));
     },
   );
 

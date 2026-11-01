@@ -5,8 +5,8 @@
   "type": "module",
   "description": "The contentworker admin: React Router on Workers. Human sign-in (passwords, two-factor, passkeys, SSO, SCIM), the app shell, and the gateway that forwards API traffic to the api Worker with a signed principal.",
   "scripts": {
-    "dev": "react-router dev",
-    "build": "react-router build",
+    "dev": "node scripts/vendor-scalar.mjs && react-router dev",
+    "build": "node scripts/vendor-scalar.mjs && react-router build",
     "deploy": "pnpm build && wrangler deploy",
     "types": "wrangler types && react-router typegen",
     "db:migrate:local": "wrangler d1 migrations apply contentworker --local",
@@ -54,6 +54,7 @@
     "@contentworker/typescript-config": "workspace:*",
     "@playwright/test": "catalog:",
     "@react-router/dev": "catalog:",
+    "@scalar/api-reference": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@testing-library/dom": "catalog:",
     "@testing-library/react": "catalog:",

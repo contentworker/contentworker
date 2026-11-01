@@ -36,7 +36,11 @@ import type {
   RemoteFetcher,
   WorkflowEngine,
 } from '@contentworker/ports';
-import { PRINCIPAL_HEADER, verifyPrincipal } from '@contentworker/security/principal';
+import {
+  PRINCIPAL_HEADER,
+  principalTarget,
+  verifyPrincipal,
+} from '@contentworker/security/principal';
 import { logger } from '@contentworker/telemetry';
 import type { Context, MiddlewareHandler } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -180,7 +184,11 @@ export async function resolveWebPrincipal(deps: AuthDeps, c: Context): Promise<P
   const forwarded = c.req.header(PRINCIPAL_HEADER);
   if (!forwarded || !deps.webPrincipalKeys?.length) return null;
   const url = new URL(c.req.url);
-  const user = await verifyPrincipal(deps.webPrincipalKeys, forwarded, url.pathname);
+  const user = await verifyPrincipal(
+    deps.webPrincipalKeys,
+    forwarded,
+    principalTarget(c.req.method, url.pathname),
+  );
   if (!user) throw new HTTPException(401, { message: 'Invalid or expired web session' });
   try {
     return await principalForWebUser(deps.ctx, spaceFromPath(url.pathname), {
@@ -217,6 +225,11 @@ export async function throttleAuth<T>(
     await limiter.clear(ip);
     return result;
   } catch (err) {
+    // Only failed authentication counts against the IP: a signed-in person refused a space
+    // (403) authenticated fine, and counting it would lock out everyone behind their NAT.
+    const forbidden =
+      err instanceof ForbiddenError || (err instanceof HTTPException && err.status === 403);
+    if (forbidden) throw err;
     const limited = await limiter.recordFailure(ip);
     logger.warn({ ip, path: c.req.path, method: c.req.method }, 'auth: invalid credentials');
     if (limited) throw new HTTPException(429, { message: 'Too many authentication attempts' });

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
   createContentType,
@@ -72,7 +73,10 @@ describe('MCP workflow tools', () => {
       hasher: { hash: (v) => createHash('sha256').update(v).digest('hex') },
       adminToken: 'admin',
       workflowEngine: harness.engine,
-    } as McpDeps;
+      agents: new InProcessAgentRuntime(
+        makeActivities({ ctx, ai: new StubAIProvider(() => ({})) }),
+      ),
+    };
     await createSpace(ctx, { spaceId: SPACE, name: 'Blog', defaultLocale: 'en-US' });
     await createContentType(ctx, scope, {
       apiId: 'article',
@@ -112,8 +116,9 @@ describe('MCP workflow tools', () => {
           content?: { type: string; text?: string }[];
         };
         const text = res.content?.find((c) => c.type === 'text')?.text ?? 'null';
-        if (res.isError) return { error: text };
-        return JSON.parse(text) as Json & { error?: undefined };
+        // Errors come back as `{ error }`; tests assert on whichever shape they expect.
+        if (res.isError) return { error: text } as Json;
+        return JSON.parse(text) as Json;
       },
     };
   }

@@ -2,7 +2,7 @@
 // lists tools, calls a read tool, and checks bearer auth.
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
-const url = new URL(process.env.MCP_URL ?? 'http://localhost:8788/mcp');
+const url = new URL(process.env.MCP_URL ?? 'http://localhost:5173/mcp');
 const token = process.env.MCP_TOKEN ?? 'dev-mcp-token';
 
 async function connect(bearer) {

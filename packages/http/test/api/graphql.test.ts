@@ -1,11 +1,11 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
-const config: ApiConfig = {
+const config: ApiConfig = testConfig({
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -17,7 +17,7 @@ const config: ApiConfig = {
     locales: ['en-US'],
     scale: 1,
   },
-};
+});
 
 const cma = { Authorization: 'Bearer cma', 'Content-Type': 'application/json' };
 const M = '/spaces/s1/environments/main';
@@ -93,6 +93,19 @@ describe('GraphQL Delivery (generated from content types)', () => {
 
     const list = await gql(app, '{ articleCollection(locale: "en-US") { _sys { id } title } }');
     expect((list.body.data as { articleCollection: unknown[] }).articleCollection).toHaveLength(1);
+
+    // Naming no locale reads the space's default one: a String field is never a locale map.
+    const plain = await gql(
+      app,
+      `{ article(id: "${entry.id}") { title } articleCollection { title } }`,
+    );
+    expect(plain.body.errors).toBeUndefined();
+    const data = plain.body.data as {
+      article: { title: unknown };
+      articleCollection: { title: unknown }[];
+    };
+    expect(data.article.title).toBe('GraphQL works');
+    expect(data.articleCollection.map((e) => e.title)).toEqual(['GraphQL works']);
   });
 
   it('never serves one principal the resolvers of another (cache is principal-free)', async () => {
@@ -219,6 +232,27 @@ describe('GraphQL Delivery (generated from content types)', () => {
     expect(
       res.body.errors?.some((e) => /maximum depth/i.test((e as { message: string }).message)),
     ).toBe(true);
+  });
+
+  it('serves GraphiQL from pinned, integrity-checked assets', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app = createApp(ctx, config, rag, blob, ai);
+    const html = await (await app.request('/graphiql/s1/main')).text();
+    const assets = [...html.matchAll(/(?:src|href)="(https:[^"]+)"/g)].map((m) => m[1] as string);
+    expect(assets.length).toBe(4);
+    // Exact versions only (a bare package name or a major tag can change under the page).
+    for (const url of assets) expect(url, url).toMatch(/@\d+\.\d+\.\d+\//);
+    expect(html.match(/integrity="sha384-/g)?.length).toBe(4);
+  });
+
+  it('keeps a hostile space or environment name inside the GraphiQL script', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app = createApp(ctx, config, rag, blob, ai);
+    const html = await (
+      await app.request('/graphiql/s1/%3C%2Fscript%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E')
+    ).text();
+    expect(html).not.toContain('<script>alert(1)');
+    expect(html).toContain('\\u003c/script>');
   });
 
   it('sets baseline security headers', async () => {

@@ -64,7 +64,7 @@ export interface BlobStore {
    * server must also read back and verify, where presigning a URL for
    * ourselves to then fetch is a round-trip through the network for no reason.
    */
-  put(key: string, body: string, contentType: string): Promise<void>;
+  put(key: string, body: string | Uint8Array, contentType: string): Promise<void>;
   /** Server-side read. `null` when the object does not exist. */
   get(key: string): Promise<string | null>;
 }

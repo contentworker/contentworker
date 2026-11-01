@@ -1,7 +1,7 @@
 import { createRequestHandler } from 'react-router';
 import { awaitingSetup, principal, setupDue } from '../app/lib/auth.server';
 import { withSecurityHeaders } from '../app/lib/csp';
-import { api } from '../app/lib/env.server';
+import { api, delivery } from '../app/lib/env.server';
 import { forwardToApi, hasBearer, isApiPath } from '../app/lib/gateway.server';
 import { runHealthChecks } from '../app/lib/health';
 import { crossOrigin } from '../app/lib/origin';
@@ -50,8 +50,10 @@ async function route(request: Request, env: Env, _ctx: ExecutionContext): Promis
   if (isApiPath(url.pathname)) {
     if (!hasBearer(request) && (await awaitingSetup(url)))
       return Response.json({ error: 'This deployment is not set up yet.' }, { status: 503 });
+    const deliveryWorker = delivery();
     return forwardToApi(request, {
       api: api(),
+      ...(deliveryWorker ? { delivery: deliveryWorker } : {}),
       principal: async (r) => {
         const p = await principal(r);
         return p ? { ...p, due: setupDue(p) } : null;

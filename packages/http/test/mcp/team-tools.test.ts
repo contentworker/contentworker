@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
   createApiKey,
@@ -35,6 +36,7 @@ function makeDeps(): McpDeps {
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
     hasher,
     adminToken: 'admin',
+    agents: new InProcessAgentRuntime(makeActivities({ ctx, ai: new StubAIProvider(() => ({})) })),
   };
 }
 

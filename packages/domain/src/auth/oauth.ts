@@ -275,11 +275,6 @@ export interface NormalizedRegistration {
   readonly softwareId?: string;
 }
 
-/** Scopes granted to a client that registers without asking for any. */
-export function defaultClientScopes(): readonly string[] {
-  return [SCOPES.deliveryRead, SCOPES.previewRead, SCOPES.searchRead];
-}
-
 /**
  * Validates and normalizes an RFC 7591 dynamic client registration.
  *
@@ -333,10 +328,11 @@ export function normalizeClientRegistration(
     );
   }
 
+  // A client that asks for nothing at registration (as MCP clients commonly do, choosing scopes
+  // at authorization instead) may later ask for anything under the ceiling. That is no grant of
+  // authority: the person approving sees every scope, and a token never exceeds their role.
   const requested = parseScopeString(input.scope);
-  const scopes = requested.length
-    ? assertScopesAllowed(requested, maxScopes)
-    : defaultClientScopes();
+  const scopes = requested.length ? assertScopesAllowed(requested, maxScopes) : maxScopes;
 
   return {
     clientName,

@@ -1,21 +1,27 @@
 import {
   type Asset,
+  applyDefaults,
   type Concept,
   type ConceptScheme,
   type ContentType,
   type EntryFields,
   type EntryMetadata,
+  extractReferences,
+  type FieldIssue,
   NotFoundError,
   type Scope,
   type Tag,
   ValidationError,
+  validateEntryFields,
   type WorkflowDefinition,
   type WorkflowGraph,
   type WorkflowVersion,
 } from '@contentworker/domain';
+import { publishAsset } from './assets.js';
 import { createContentType, publishContentType } from './content-types.js';
 import type { AppContext } from './context.js';
-import { createEntry } from './entries.js';
+import { createEntry, updateEntry } from './entries.js';
+import { allPages } from './paging.js';
 import { publishEntry } from './publishing.js';
 import { createConcept, createScheme, createTag, setEntryMetadata } from './taxonomy.js';
 import {
@@ -51,7 +57,14 @@ export interface SnapshotEntry {
   readonly contentTypeApiId: string;
   /** `published` entries are republished on import; everything else lands as a draft. */
   readonly status: string;
+  /** The current (draft) fields. */
   readonly fields: EntryFields;
+  /**
+   * For a `changed` entry (published, with edits since), the live version's fields: the import
+   * publishes these, then lays the draft on top, as the source has it. Absent in older snapshots,
+   * whose changed entries import as drafts.
+   */
+  readonly publishedFields?: EntryFields;
   readonly metadata?: EntryMetadata;
 }
 
@@ -116,12 +129,22 @@ export async function exportSnapshot(
   if (!config) throw new NotFoundError('Space', scope.spaceId);
 
   const contentTypes = await ctx.store.contentTypes.list(scope);
-  const rows = await ctx.store.entries.list(scope, { limit: options.limit });
+  // Every page, not the store's default first page (100 on D1): a snapshot that silently stopped
+  // at 100 entries made exports and clones of any real environment incomplete.
+  const rows =
+    options.limit !== undefined
+      ? await ctx.store.entries.list(scope, { limit: options.limit })
+      : await allPages((skip, limit) => ctx.store.entries.list(scope, { skip, limit }));
   const metadata = await ctx.store.taxonomy.getEntryMetadataMany(
     scope,
     rows.map((r) => r.entry.id),
   );
   const byEntry = new Map(metadata.map((m) => [m.entryId, m]));
+  // The live version of every entry with unpublished edits, so the copy keeps both.
+  const changedIds = rows.filter((r) => r.entry.status === 'changed').map((r) => r.entry.id);
+  const live = new Map(
+    (await ctx.store.entries.getPublishedMany(scope, changedIds)).map((p) => [p.entryId, p.fields]),
+  );
 
   return {
     snapshotVersion: SNAPSHOT_VERSION,
@@ -133,9 +156,10 @@ export async function exportSnapshot(
       contentTypeApiId: r.entry.contentTypeApiId,
       status: r.entry.status,
       fields: r.fields,
+      ...(live.has(r.entry.id) ? { publishedFields: live.get(r.entry.id) } : {}),
       metadata: byEntry.get(r.entry.id)?.metadata,
     })),
-    assets: await ctx.store.assets.list(scope, {}),
+    assets: await allPages((skip, limit) => ctx.store.assets.list(scope, { skip, limit })),
     taxonomy: {
       schemes: await ctx.store.taxonomy.listSchemes(scope),
       concepts: await ctx.store.taxonomy.listConcepts(scope),
@@ -274,16 +298,24 @@ export async function importSnapshot(
     ]);
   }
 
+  // Everything that would fail part-way is checked before anything is written: an import that
+  // stopped in the middle left a half-filled environment that refused a retry (not empty).
+  const problems = preflight(snapshot, config, options.publish !== false);
+  if (problems.length > 0) throw new ValidationError(problems);
+
   const skipped: string[] = [];
   if (snapshot.assets.length > 0) {
     // Named rather than silently dropped: an operator restoring content should
     // know the binaries did not travel with it.
     skipped.push(
-      `${snapshot.assets.length} asset(s): metadata only, binaries stay in the source blob store`,
+      `${snapshot.assets.length} asset(s): records copied, binaries stay in the source blob store`,
     );
   }
 
-  const publishable = snapshot.entries.filter((e) => e.status === 'published');
+  // Published entries, and changed ones whose live version the snapshot carries.
+  const publishable = snapshot.entries.filter(
+    (e) => e.status === 'published' || (e.status === 'changed' && e.publishedFields),
+  );
   const report: ImportReport = {
     dryRun: options.dryRun === true,
     contentTypes: snapshot.contentTypes.length,
@@ -332,13 +364,28 @@ export async function importSnapshot(
     await importWorkflow(ctx, target, workflow, skipped);
   }
 
+  // Asset records keep their ids (and their files, which stay where they are), so the entries'
+  // asset links resolve; published ones are published again below, before the entries.
+  for (const asset of snapshot.assets) {
+    await ctx.store.assets.create(target, { ...asset, status: 'draft' });
+  }
+  if (options.publish !== false) {
+    for (const asset of snapshot.assets) {
+      if (asset.status === 'published') await publishAsset(ctx, target, asset.id);
+    }
+  }
+
   // Entries are created through the real use-case, so a snapshot cannot
-  // introduce content that would fail today's validation.
+  // introduce content that would fail today's validation. They keep their ids:
+  // links between entries carry those ids, so new ones would leave every
+  // reference pointing at the source environment.
   const created = new Map<string, string>();
   for (const entry of snapshot.entries) {
+    // A changed entry starts from its live version; the draft goes on top after publishing.
     const result = await createEntry(ctx, target, {
       contentTypeApiId: entry.contentTypeApiId,
-      fields: entry.fields,
+      fields: (options.publish !== false && entry.publishedFields) || entry.fields,
+      id: entry.id,
     });
     created.set(entry.id, result.entry.id);
 
@@ -357,8 +404,67 @@ export async function importSnapshot(
       // would have by being published normally.
       if (id) await publishEntry(ctx, target, id);
     }
+    // The pending edits of changed entries, on top of what was just published.
+    for (const entry of publishable) {
+      const id = created.get(entry.id);
+      if (id && entry.publishedFields) await updateEntry(ctx, target, id, entry.fields);
+    }
   }
   return report;
+}
+
+/** Shown at most, so a broken snapshot's error stays readable. */
+const MAX_PREFLIGHT_ISSUES = 50;
+
+/**
+ * What would stop this snapshot importing into a space with `config`'s locales, found without
+ * writing: an entry of a type the snapshot lacks, fields the content model rejects (validated as
+ * `createEntry` does, defaults first), and links from what will be published to entries or assets
+ * the snapshot doesn't carry (publishing refuses a dangling link). Each issue names the entry.
+ */
+function preflight(
+  snapshot: EnvironmentSnapshot,
+  config: { defaultLocale: string; locales: readonly string[] },
+  publishing: boolean,
+): FieldIssue[] {
+  const types = new Map(snapshot.contentTypes.map((t) => [t.apiId, t]));
+  const entryIds = new Set(snapshot.entries.map((e) => e.id));
+  const assetIds = new Set(snapshot.assets.map((a) => a.id));
+  const vctx = { defaultLocale: config.defaultLocale, locales: config.locales };
+  const issues: FieldIssue[] = [];
+  const add = (entryId: string, issue: FieldIssue) =>
+    issues.push({ ...issue, message: `Entry ${entryId}: ${issue.message}` });
+
+  for (const entry of snapshot.entries) {
+    if (issues.length >= MAX_PREFLIGHT_ISSUES) break;
+    const type = types.get(entry.contentTypeApiId);
+    if (!type) {
+      add(entry.id, {
+        field: '',
+        message: `content type "${entry.contentTypeApiId}" is not in the snapshot`,
+      });
+      continue;
+    }
+    const versions =
+      publishing && entry.publishedFields ? [entry.publishedFields, entry.fields] : [entry.fields];
+    for (const fields of versions) {
+      const withDefaults = applyDefaults(type, fields, vctx.locales, vctx.defaultLocale);
+      for (const issue of validateEntryFields(type, withDefaults, vctx)) add(entry.id, issue);
+    }
+    const published = entry.status === 'published' ? entry.fields : entry.publishedFields;
+    if (publishing && published && (entry.status === 'published' || entry.status === 'changed')) {
+      for (const edge of extractReferences(entry.id, published, type)) {
+        const known = edge.toType === 'Entry' ? entryIds.has(edge.toId) : assetIds.has(edge.toId);
+        if (!known) {
+          add(entry.id, {
+            field: edge.fromField,
+            message: `links ${edge.toType.toLowerCase()} "${edge.toId}", which the snapshot doesn't carry`,
+          });
+        }
+      }
+    }
+  }
+  return issues.slice(0, MAX_PREFLIGHT_ISSUES);
 }
 
 /**

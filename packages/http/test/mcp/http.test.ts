@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import type { AppContext } from '@contentworker/application';
 import type { Principal } from '@contentworker/domain';
 import { SCOPES } from '@contentworker/domain';
@@ -37,6 +38,7 @@ function makeDeps(): McpDeps {
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
     hasher: { hash: (v) => createHash('sha256').update(v).digest('hex') },
     adminToken: 'admin',
+    agents: new InProcessAgentRuntime(makeActivities({ ctx, ai: new StubAIProvider(() => ({})) })),
   };
 }
 

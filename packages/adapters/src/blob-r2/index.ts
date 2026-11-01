@@ -17,7 +17,7 @@ export interface R2BucketLike {
   get(key: string): Promise<R2ObjectBodyLike | null>;
   put(
     key: string,
-    value: ReadableStream | ArrayBuffer | string,
+    value: ReadableStream | ArrayBuffer | ArrayBufferView | string,
     options?: { httpMetadata?: { contentType?: string } },
   ): Promise<unknown>;
   delete(key: string): Promise<void>;

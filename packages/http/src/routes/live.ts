@@ -1,4 +1,5 @@
 import { SCOPES } from '@contentworker/domain';
+import { LIVE_ACCESS_HEADER, liveHubName } from '@contentworker/platform/do/live-access';
 import type { LiveHubDO } from '@contentworker/platform/do/live-hub';
 import { Hono } from 'hono';
 import {
@@ -12,7 +13,8 @@ import {
 /**
  * Cloudflare-native Live Content API: authorizes exactly like the stock
  * delivery route (same middleware chain, same path), then forwards the request
- * to the scope's LiveHubDO, which serves the SSE stream itself. Mounted BEFORE
+ * to the scope's LiveHubDO, which serves the SSE stream itself, showing each
+ * subscriber only what its principal may read (`liveEventFor`). Mounted BEFORE
  * the stock delivery routes so it wins first-match.
  */
 export function liveRoutes(deps: AuthDeps, ns: DurableObjectNamespace<LiveHubDO>): Hono<AuthVars> {
@@ -25,8 +27,16 @@ export function liveRoutes(deps: AuthDeps, ns: DurableObjectNamespace<LiveHubDO>
     (c) => {
       const spaceId = c.req.param('space');
       const environmentId = c.get('environmentId') ?? c.req.param('env');
-      const stub = ns.get(ns.idFromName(`${spaceId}:${environmentId}`));
-      return stub.fetch(c.req.raw);
+      const scope = { spaceId, environmentId };
+      const stub = ns.get(ns.idFromName(liveHubName(scope)));
+      // The hub filters and masks each event for this subscriber by the principal's content
+      // grants (no grants: unrestricted), set here and never taken from the caller.
+      const headers = new Headers(c.req.raw.headers);
+      headers.set(
+        LIVE_ACCESS_HEADER,
+        JSON.stringify({ scope, contentGrants: c.get('principal').contentGrants }),
+      );
+      return stub.fetch(new Request(c.req.raw, { headers }));
     },
   );
   return app;

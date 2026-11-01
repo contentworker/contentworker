@@ -1,6 +1,6 @@
 // Test-only worker entry: exports the Durable Object classes under test with a
 // minimal fetch handler, so the vitest-pool-workers runtime can bind them
-// without pulling src/main.ts's full adapter graph into the test bundle.
+// without pulling src/index.ts's full adapter graph into the test bundle.
 export { CostGuardDO } from '@contentworker/platform/do/cost-guard';
 export { LiveHubDO } from '@contentworker/platform/do/live-hub';
 export { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';

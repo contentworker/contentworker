@@ -74,3 +74,17 @@ describe('lastUsedAt throttling', () => {
     expect(touch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('assertSecureSecrets and the principal key', () => {
+  it('refuses the repo’s public dev principal key, and a short one', async () => {
+    const { assertSecureSecrets } = await import('../src/index.js');
+    const base = { requireSecureSecrets: true, seedDev: false, adminToken: '' };
+    expect(() =>
+      assertSecureSecrets({ ...base, principalKeys: ['contentworker-local-dev-principal-key'] }),
+    ).toThrow(/PRINCIPAL_KEY must not use a known dev default/);
+    expect(() => assertSecureSecrets({ ...base, principalKeys: ['short'] })).toThrow(
+      /PRINCIPAL_KEY must be at least 32/,
+    );
+    expect(() => assertSecureSecrets({ ...base, principalKeys: ['k'.repeat(64)] })).not.toThrow();
+  });
+});

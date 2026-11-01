@@ -233,6 +233,8 @@ describe('SSO people and SSO-only sign-in', () => {
       issues: [{ field: 'ssoOnly', message: expect.stringMatching(/Administrator/) }],
     });
     await addMember(ctx, 's1', { email: 'ada@example.com', role: 'admin' });
+    // Her first sign-in links her subject to the membership her credentials are checked against.
+    await findMemberForSignIn(ctx, 's1', 'ada@example.com', 'ada@example.com');
     const adminRole = await presetRoleId(ctx, 's1', 'admin');
     const { token } = await createApiKey(ctx, hasher, {
       spaceId: 's1',

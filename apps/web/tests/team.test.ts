@@ -89,7 +89,7 @@ describe('endAccess', () => {
   });
 
   it('ends the api’s tokens for them through the signed people route', async () => {
-    const { verifyPrincipal, DEV_PRINCIPAL_KEY } = await import(
+    const { verifyPrincipal, DEV_PRINCIPAL_KEY, principalTarget } = await import(
       '@contentworker/security/principal'
     );
     const ended = await endAccess(
@@ -103,7 +103,9 @@ describe('endAccess', () => {
     expect(url).toBe(`https://api${path}`);
     expect(init.method).toBe('DELETE');
     const signed = new Headers(init.headers).get('x-cw-principal');
-    expect(await verifyPrincipal(DEV_PRINCIPAL_KEY, signed, path)).toMatchObject({ role: 'admin' });
+    expect(
+      await verifyPrincipal(DEV_PRINCIPAL_KEY, signed, principalTarget('DELETE', path)),
+    ).toMatchObject({ role: 'admin' });
   });
 
   it('fails visibly when the api refuses, so the action can be repeated', async () => {

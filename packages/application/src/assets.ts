@@ -46,6 +46,11 @@ function safeObjectName(fileName: string): string {
   return base.slice(0, 200);
 }
 
+/** Where an asset's bytes live in blob storage. */
+export function assetObjectKey(scope: Scope, assetId: string, fileName: string): string {
+  return `${scope.spaceId}/${scope.environmentId}/${assetId}/${safeObjectName(fileName)}`;
+}
+
 /**
  * Creates a draft asset and returns a presigned upload URL. The client uploads
  * the bytes straight to blob storage (they never transit the API), then
@@ -62,7 +67,7 @@ export async function createAsset(
   const checked = await runHook(ctx, 'asset:beforeCreate', scope, input);
 
   const id = ctx.ids.newId();
-  const key = `${scope.spaceId}/${scope.environmentId}/${id}/${safeObjectName(checked.fileName)}`;
+  const key = assetObjectKey(scope, id, checked.fileName);
   const upload = await blob.getUploadUrl(key, checked.contentType);
   const url = await blob.getDownloadUrl(key);
   const asset: Asset = {

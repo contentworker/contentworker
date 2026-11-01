@@ -3,11 +3,11 @@ import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runt
 import { createHasher, resolveEnvironment } from '@contentworker/application';
 import type { Principal } from '@contentworker/domain';
 import type { AuthDeps } from '@contentworker/http/api/auth';
-import { deliveryRoutes } from '@contentworker/http/api/routes/delivery';
+import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/delivery';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { deliveryScopeTag } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
-import { Hono } from 'hono';
+import { hasGraphqlErrors } from './client-cache.js';
 import { fromCanonical } from './profile.js';
 
 /** Header the gateway uses to hand the authenticated principal to this entrypoint. */
@@ -47,7 +47,8 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
     const deps: AuthDeps = {
       ctx: wired.ctx,
       hasher: createHasher(wired.config.tokenPepper),
-      adminToken: wired.config.adminToken,
+      // Delivery serves API keys only: no admin token, ever (not even a configured one).
+      adminToken: '',
       rag: wired.rag,
       blob: wired.blob,
       ai: wired.ai,
@@ -55,13 +56,19 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
       agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
       trustedPrincipal: () => principal,
     };
-    const app = new Hono().route('/', deliveryRoutes(deps));
+    const app = deliveryApp(deliveryRoutes(deps));
     const res = await app.fetch(new Request(parsed.path.toString(), { method: 'GET' }));
 
     const m = /^\/delivery\/([^/]+)\/([^/]+)\//.exec(parsed.path.pathname);
     const headers = new Headers(res.headers);
     if (res.status === 200 && m) {
       const body = await res.arrayBuffer();
+      // A GraphQL answer carrying errors is still a 200 (GraphQL over HTTP), but it must not be
+      // kept: the cause (a field rule, a bug) can change without any publish to purge it.
+      if (parsed.path.pathname.endsWith('/graphql') && hasGraphqlErrors(body)) {
+        headers.set('cache-control', NO_STORE);
+        return new Response(body, { status: 200, headers });
+      }
       const etag = await bodyEtag(body);
       headers.set('etag', etag);
       headers.set('cache-control', FRESH);
@@ -75,9 +82,8 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
         'cache-tag',
         [...new Set([deliveryScopeTag(space, named), deliveryScopeTag(space, concrete)])].join(','),
       );
-      if (matches(request.headers.get('if-none-match'), etag)) {
-        return new Response(null, { status: 304, headers });
-      }
+      // Always the full body: this response is what Workers Caching stores, so a 304 here would
+      // be cached as an empty answer. Conditional requests are answered by the gateway.
       return new Response(body, { status: 200, headers });
     }
     // Errors and empty answers are not cached: a 404 for an entry about to be published must not

@@ -15,12 +15,12 @@
  * `x-cw-bookmark` (read-your-writes) passes through both ways untouched.
  */
 
-import { PRINCIPAL_HEADER } from '@contentworker/security/principal';
+import { PRINCIPAL_HEADER, principalTarget } from '@contentworker/security/principal';
 import { crossOrigin } from './origin';
 import type { Principal } from './roles';
 
 /** Exact paths the api serves. */
-const EXACT = new Set(['/spaces', '/mcp', '/openapi.json', '/docs', '/health/api']);
+const EXACT = new Set(['/spaces', '/mcp', '/openapi.json', '/docs', '/health/api', '/auth/me']);
 
 /** Path prefixes the api serves (each already ends in `/` or names a family, like `/guides`). */
 const PREFIXES = [
@@ -46,6 +46,12 @@ export const hasBearer = (request: Request) =>
 export type GatewayDeps = {
   /** The api Worker's binding. */
   api: Pick<Fetcher, 'fetch'>;
+  /**
+   * The delivery Worker's binding, when bound: a bearer-key `/delivery/*` call goes there, through
+   * the same cache and gateway as on the cdn host. It trusts API keys only, so a session call
+   * (signed principal) still goes to the api.
+   */
+  delivery?: Pick<Fetcher, 'fetch'>;
   /** The signed-in person for a browser request, or null. */
   principal: (request: Request) => Promise<(Principal & { due?: string | null }) | null>;
   /** Sets the signed principal header for `path`. */
@@ -60,16 +66,21 @@ export async function forwardToApi(request: Request, deps: GatewayDeps): Promise
   const url = new URL(request.url);
   const headers = new Headers(request.headers);
   headers.delete(PRINCIPAL_HEADER);
-
-  if (hasBearer(request)) return deps.api.fetch(new Request(request, { headers }));
-
+  // Cookies never cross the binding, whatever else the request carries.
   headers.delete('cookie');
+
+  if (hasBearer(request)) {
+    const target =
+      deps.delivery && url.pathname.startsWith('/delivery/') ? deps.delivery : deps.api;
+    return target.fetch(new Request(request, { headers }));
+  }
+
   // A cross-site request is forwarded without the session: there is nothing ambient to forge.
   const who = crossOrigin(request, url.origin) ? null : await deps.principal(request);
   if (who?.due) return Response.json({ error: who.due }, { status: 403 });
   if (who) {
     const { due: _due, ...p } = who;
-    await deps.sign(headers, p, url.pathname);
+    await deps.sign(headers, p, principalTarget(request.method, url.pathname));
   }
   return deps.api.fetch(new Request(request, { headers }));
 }

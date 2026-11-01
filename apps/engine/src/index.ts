@@ -13,6 +13,7 @@ import {
   consumeEvent,
   drainOutbox,
   pruneEventHistory,
+  redeliverWebhook,
   resealSecrets,
   resumeStalledBulkJobs,
   runDueAgentSchedules,
@@ -25,13 +26,15 @@ import { CostGuardDO, doAgentCostGuardFromEnv } from '@contentworker/platform/do
 import { createDoEventBus, LiveHubDO } from '@contentworker/platform/do/live-hub';
 import { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 import { SearchShardDO } from '@contentworker/platform/do/search-shard';
-import { type EdgeEnv, withJurisdiction } from '@contentworker/platform/env';
+import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import {
   type AgentJobMessage,
   deliveryScopeTag,
   isAgentJob,
   isDomainEvent,
+  isWebhookRetryMessage,
   type PurgeMessage,
+  type WebhookRetryMessage,
 } from '@contentworker/platform/messages';
 import { makeMetrics } from '@contentworker/platform/metrics';
 import {
@@ -41,6 +44,7 @@ import {
   wireEdge,
 } from '@contentworker/platform/wire';
 import { redactCredentials } from '@contentworker/redaction';
+import { runInLanes } from './lanes.js';
 import { AgentWorkflow } from './workflows/agent-workflow.js';
 import { EditorialWorkflow } from './workflows/editorial-workflow.js';
 
@@ -69,6 +73,25 @@ const PURGING_EVENTS = new Set<string>([
  * awaiting workflows inline — a batch of 25 published entries then costs 25
  * cheap sends, not up to 25×2 polled Workflow runs in one invocation.
  */
+/** Lanes a batch of events runs in at once (see runInLanes). */
+const EVENT_LANES = 6;
+
+/**
+ * The lane a queued event runs in: its entry, so one entry's events keep their order; anything
+ * else (asset, content type, release, workflow, bulk events) shares one lane per scope, in order.
+ */
+function eventLane(msg: Message<unknown>): string {
+  const body = payloadOf(msg);
+  // A webhook retry touches that webhook only: its own lane.
+  if (isWebhookRetryMessage(body)) return `webhook:${body.webhookId}`;
+  const event = body as {
+    scope?: { spaceId?: string; environmentId?: string };
+    entryId?: unknown;
+  };
+  const scope = `${event?.scope?.spaceId ?? ''}:${event?.scope?.environmentId ?? ''}`;
+  return typeof event?.entryId === 'string' ? `${scope}:entry:${event.entryId}` : `${scope}:other`;
+}
+
 async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired): Promise<void> {
   const metrics = makeMetrics(env.METRICS);
   const agentConfig = agentConfigFromEnv(env);
@@ -79,6 +102,20 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     // cache tag once instead of once per message (KV rate-limits per key).
     invalidatedTags: new Set<string>(),
     sender: createWebhookSender(),
+    // A failed webhook delivery comes back later for that webhook alone.
+    ...(env.EVENTS_QUEUE
+      ? {
+          scheduleWebhookRetry: async ({ webhookId, event, attempt, delaySeconds }) => {
+            const message: WebhookRetryMessage = {
+              kind: 'webhook.retry',
+              webhookId,
+              event,
+              attempt,
+            };
+            await env.EVENTS_QUEUE?.send(message, { delaySeconds });
+          },
+        }
+      : {}),
     invoker: createHttpFunctionInvoker(),
     cache: wired.cache,
     // RAG indexing only when embeddings are
@@ -98,10 +135,24 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
   // Delivery cache tags made stale by this batch, sent as ONE purge message after it (purges are
   // rationed, so a burst of publishes in one space costs one tag, not one call per entry).
   const stale = new Set<string>();
-  for (const msg of batch.messages) {
+  const handle = async (msg: Message<unknown>): Promise<void> => {
+    const body = payloadOf(msg);
+    if (isWebhookRetryMessage(body)) {
+      try {
+        const outcome = await redeliverWebhook(wired.ctx, deps, body);
+        metrics.count('contentworker_webhook_retries_total', 1, {
+          outcome: outcome === null ? 'dropped' : outcome.delivered ? 'delivered' : 'failed',
+        });
+        msg.ack();
+      } catch (err) {
+        console.error('webhook retry failed; retrying', err);
+        msg.retry();
+      }
+      return;
+    }
     // Validate the message shape before treating it as a DomainEvent. A
     // malformed/poison message is acked (dropped) rather than retried forever.
-    const event = payloadOf(msg);
+    const event = body;
     if (!isDomainEvent(event)) {
       console.error('dropping malformed queue message', { id: msg.id });
       metrics.count('contentworker_events_consumed_total', 1, {
@@ -109,7 +160,7 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
         outcome: 'dropped',
       });
       msg.ack();
-      continue;
+      return;
     }
     try {
       const runs = await consumeEvent(wired.ctx, deps, event);
@@ -140,7 +191,9 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
       });
       msg.retry();
     }
-  }
+  };
+  // One entry's events in order; different entries (and scopes) side by side.
+  await runInLanes(batch.messages, eventLane, handle, EVENT_LANES);
   if (stale.size > 0 && env.PURGE_QUEUE) {
     const message: PurgeMessage = { tags: [...stale] };
     await env.PURGE_QUEUE.send(message).catch((err: unknown) => {
@@ -272,7 +325,7 @@ export default {
    */
   async queue(batch: MessageBatch, rawEnv: EdgeEnv, _exec: ExecutionContext): Promise<void> {
     const env = withJurisdiction(rawEnv);
-    if (batch.queue === 'contentworker-events-dlq') {
+    if (batch.queue === queueName(env, 'contentworker-events-dlq')) {
       const metrics = makeMetrics(env.METRICS);
       for (const msg of batch.messages) {
         console.error(
@@ -290,7 +343,7 @@ export default {
 
     const wired = wireEdge(env);
     try {
-      if (batch.queue === 'contentworker-agents') {
+      if (batch.queue === queueName(env, 'contentworker-agents')) {
         await consumeAgentJobs(batch, env, wired);
       } else {
         await consumeEvents(batch, env, wired);
@@ -373,13 +426,19 @@ export default {
       }
       // Actions first: their outbox events are then picked up by the relay
       // sweep below instead of waiting a full cron interval.
-      const { executed, failed } = await runDueScheduledActions(wired.ctx);
-      if (executed > 0)
-        metrics.count('contentworker_scheduled_actions_total', executed, { outcome: 'executed' });
-      if (failed > 0)
-        metrics.count('contentworker_scheduled_actions_total', failed, { outcome: 'failed' });
-      if (executed > 0 || failed > 0) {
-        console.log(JSON.stringify({ msg: 'scheduled actions run', executed, failed }));
+      // A failure here must not skip the rest of the tick (the relay sweep is the crash backstop).
+      try {
+        const { executed, failed } = await runDueScheduledActions(wired.ctx);
+        if (executed > 0)
+          metrics.count('contentworker_scheduled_actions_total', executed, { outcome: 'executed' });
+        if (failed > 0)
+          metrics.count('contentworker_scheduled_actions_total', failed, { outcome: 'failed' });
+        if (executed > 0 || failed > 0) {
+          console.log(JSON.stringify({ msg: 'scheduled actions run', executed, failed }));
+        }
+      } catch (err) {
+        console.error('scheduled actions failed', redactCredentials(err));
+        metrics.count('contentworker_scheduled_actions_total', 1, { outcome: 'error' });
       }
       // A relay error must not abort the tick (agent schedules still run).
       if (wired.queue) {

@@ -35,6 +35,11 @@ export interface DispatchDeps {
   /** Optional observer for webhook delivery outcomes (host-side metrics). */
   readonly onWebhookDelivery?: (result: { delivered: boolean }) => void;
   /**
+   * Schedules another attempt at one webhook after a failed delivery (the engine enqueues a
+   * delayed `webhook.retry` message). Without it a failed delivery is recorded and not retried.
+   */
+  readonly scheduleWebhookRetry?: (retry: WebhookRetry) => Promise<void>;
+  /**
    * Optional lexical index (the FTS5 SearchShard Durable Objects), kept fresh on
    * publish/unpublish. Independent of `rag` so lexical-at-scale works without
    * embeddings configured.
@@ -98,19 +103,11 @@ export async function dispatchEvent(
     return;
   }
 
-  // 1. Webhook fan-out.
+  // 1. Webhook fan-out. A failed delivery is retried for that webhook alone, later, so a down
+  // receiver neither loses the event nor re-drives the rest of this dispatch.
   const webhooks = await ctx.store.webhooks.listByTopic(scope, event.type);
   for (const webhook of webhooks) {
-    const result = await deps.sender.send(webhook, event);
-    deps.onWebhookDelivery?.({ delivered: result.delivered });
-    await ctx.store.webhooks.recordDelivery(scope, {
-      webhookId: webhook.id,
-      eventId: event.id,
-      status: result.delivered ? 'success' : 'failed',
-      statusCode: result.statusCode,
-      attempts: 1,
-      error: result.error,
-    });
+    await deliverWebhook(ctx, deps, webhook, event, 1);
   }
 
   // 2. Cache invalidation for entry events: the entry itself plus every entry
@@ -209,6 +206,68 @@ export async function dispatchEvent(
 
 /** Concurrent webhook POSTs per bulk event (bounds subrequest burst). */
 const BULK_WEBHOOK_CONCURRENCY = 5;
+
+/** Attempts at one webhook delivery before it is given up (logged as failed with this count). */
+export const WEBHOOK_MAX_ATTEMPTS = 8;
+
+/** Seconds before attempt `attempt + 1`: 30 s, 2 min, 8 min, 32 min, ~2 h, then 6 h. */
+export function webhookRetryDelay(attempt: number): number {
+  return Math.min(30 * 4 ** (attempt - 1), 6 * 3600);
+}
+
+/** Another attempt at delivering `event` to one webhook. */
+export interface WebhookRetry {
+  readonly webhookId: string;
+  readonly event: DomainEvent;
+  /** The attempt this will be (2 for the first retry). */
+  readonly attempt: number;
+  readonly delaySeconds: number;
+}
+
+async function deliverWebhook(
+  ctx: AppContext,
+  deps: Pick<DispatchDeps, 'sender' | 'onWebhookDelivery' | 'scheduleWebhookRetry'>,
+  webhook: Webhook,
+  event: DomainEvent,
+  attempt: number,
+): Promise<boolean> {
+  const result = await deps.sender.send(webhook, event);
+  deps.onWebhookDelivery?.({ delivered: result.delivered });
+  await ctx.store.webhooks.recordDelivery(event.scope, {
+    webhookId: webhook.id,
+    eventId: event.id,
+    status: result.delivered ? 'success' : 'failed',
+    statusCode: result.statusCode,
+    attempts: attempt,
+    error: result.error,
+  });
+  if (!result.delivered && attempt < WEBHOOK_MAX_ATTEMPTS && deps.scheduleWebhookRetry) {
+    await deps.scheduleWebhookRetry({
+      webhookId: webhook.id,
+      event,
+      attempt: attempt + 1,
+      delaySeconds: webhookRetryDelay(attempt),
+    });
+  }
+  return result.delivered;
+}
+
+/**
+ * One retry of one webhook (the `webhook.retry` queue message's body): delivered again as it
+ * would have been, recorded with its attempt number, and scheduled once more on failure until
+ * {@link WEBHOOK_MAX_ATTEMPTS}. A webhook since deleted, deactivated or unsubscribed from the
+ * event's type gets nothing.
+ */
+export async function redeliverWebhook(
+  ctx: AppContext,
+  deps: Pick<DispatchDeps, 'sender' | 'onWebhookDelivery' | 'scheduleWebhookRetry'>,
+  retry: Pick<WebhookRetry, 'webhookId' | 'event' | 'attempt'>,
+): Promise<{ delivered: boolean } | null> {
+  const current = await ctx.store.webhooks.listByTopic(retry.event.scope, retry.event.type);
+  const webhook = current.find((w) => w.id === retry.webhookId);
+  if (!webhook) return null;
+  return { delivered: await deliverWebhook(ctx, deps, webhook, retry.event, retry.attempt) };
+}
 
 /**
  * Fan-out for one coalesced `entries.published_bulk` chunk event.

@@ -18,11 +18,9 @@ import '@fontsource-variable/inter/wght.css';
 import { FONTS, palette, scalarThemeCss } from '@contentworker/design/tokens';
 
 // Biome parses only the frontmatter, so constants used in the markup read as dead.
+// Served from this site (scripts/vendor-scalar.mjs copies the pinned bundle at build).
 // biome-ignore lint/correctness/noUnusedVariables: used in the <script> below
-const SCALAR_JS_URL =
-  'https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.67.0/dist/browser/standalone.js';
-// biome-ignore lint/correctness/noUnusedVariables: used in the <script> below
-const SCALAR_JS_SRI = 'sha384-6c7Vmx+i0yi8gBbltn0x1cavD+zsMGw2xmXXVyacPJLIGBxwaVimW5TW0WiW17Ir';
+const SCALAR_JS_URL = '/vendor/scalar/standalone.js';
 
 // biome-ignore lint/correctness/noUnusedVariables: passed to the page via define:vars
 const config = {
@@ -129,7 +127,7 @@ html, body { margin: 0; background: var(--bg); }
       </p>
     </header>
     <div id="app"></div>
-    <script is:inline src={SCALAR_JS_URL} integrity={SCALAR_JS_SRI} crossorigin="anonymous"></script>
+    <script is:inline src={SCALAR_JS_URL}></script>
     <script is:inline define:vars={{ config }}>
       Scalar.createApiReference('#app', {
         ...config,

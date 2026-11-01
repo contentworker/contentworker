@@ -5,7 +5,7 @@
   "type": "module",
   "description": "contentworker's public docs: a Starlight static site deployed as a Workers static-assets Worker. Reference pages render from @contentworker/domain and the API's OpenAPI document at build time.",
   "scripts": {
-    "prepare:data": "tsx scripts/openapi.ts",
+    "prepare:data": "tsx scripts/openapi.ts && node scripts/vendor-scalar.mjs",
     "dev": "pnpm prepare:data && astro dev",
     "build": "pnpm prepare:data && astro build && node scripts/check-links.mjs",
     "preview": "astro preview",
@@ -25,6 +25,7 @@
     "@contentworker/http": "workspace:*",
     "@contentworker/platform": "workspace:*",
     "@contentworker/typescript-config": "workspace:*",
+    "@scalar/api-reference": "catalog:",
     "@types/node": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",

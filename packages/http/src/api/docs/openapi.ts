@@ -275,5 +275,29 @@ export function mountDocs(app: Hono, config: ApiConfig): void {
     })).filter((group) => group.tags.length > 0);
     return c.json(spec);
   });
-  app.get('/docs', Scalar({ url: '/openapi.json', pageTitle: 'contentworker API' }));
+  app.get(
+    '/docs',
+    Scalar({
+      url: '/openapi.json',
+      pageTitle: 'contentworker API',
+      cdn: scalarBundleUrl(config),
+      // No fonts from Scalar's own host either, and no "Ask AI" (it sends the spec to Scalar's
+      // service): the page makes no third-party requests.
+      withDefaultFonts: false,
+      agent: { disabled: true },
+    }),
+  );
+}
+
+/**
+ * Where /docs loads the Scalar explorer from: the copy the web Worker serves from its own static
+ * assets (`apps/web/scripts/vendor-scalar.mjs`), pinned by the lockfile. Never Scalar's default, an
+ * unversioned third-party CDN: /docs is also served on the admin origin, where a script runs with
+ * the signed-in person's session. The admin origin is the OAuth issuer's (`OAUTH_ISSUER`, which
+ * the fleet sets to it); with none configured, as in local dev, /docs is only reached through the
+ * admin origin, so a same-origin path is right.
+ */
+export function scalarBundleUrl(config: Pick<ApiConfig, 'oauthIssuer'>): string {
+  const origin = config.oauthIssuer ? new URL(config.oauthIssuer).origin : '';
+  return `${origin}/vendor/scalar/standalone.js`;
 }

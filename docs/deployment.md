@@ -26,8 +26,8 @@ One file per deployment, parsed by `toDeployment` in `scripts/fleet.ts`:
 | `jurisdiction`  | `eu` or `fedramp`, for D1, R2 and Durable Objects (set at creation)                                         |
 | `hold`          | Skipped by CI: stays on what it runs now                                                                     |
 | `docs`          | Also deploys the public docs site                                                                            |
-| `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI Gateway), no Vectorize, `DEMO_MODE=true` on web; never in `general` |
-| `aiGatewayLogs` | Whether the AI Gateway keeps request logs                                                                    |
+| `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI Gateway), no Vectorize; never in `general`                 |
+| `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether AI Gateway logs each call (prompts and answers never)                 |
 | `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`) |
 | `email`         | `{ from, fromName? }`: Email Sending sender; adds the engine's `send_email` binding                          |
 
@@ -44,9 +44,10 @@ node scripts/fleet.ts status               # /health/deep of every deployment
 ```
 
 A rendered config is the app's `wrangler.jsonc` with the deployment's names, ids, routes
-(custom domains) and vars filled in: `OAUTH_ISSUER=https://api.<domain>` and
-`MEDIA_BASE_URL=https://api.<domain>`, the AI Gateway id, `DATA_JURISDICTION`, SSO vars on web,
-and Email Sending on the engine.
+(custom domains) and vars filled in: `OAUTH_ISSUER=https://<domain>` on the api (OAuth for MCP
+clients is served on the admin host, so its consent screen can use the person's web sign-in) and
+`MEDIA_BASE_URL=https://api.<domain>`, the AI Gateway id with `AI_GATEWAY_LOGS` on every Worker
+that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and Email Sending on the engine.
 
 ## Provisioning a deployment
 

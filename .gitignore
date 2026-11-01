@@ -23,3 +23,5 @@ apps/*/wrangler.*.json
 # Playwright (apps/web/e2e)
 test-results/
 playwright-report/
+apps/docs/public/vendor/
+apps/web/public/vendor/

@@ -52,12 +52,19 @@ export default defineConfig({
       // Chromium: it keeps the `Secure` session cookie on http://localhost, which WebKit drops.
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      // OAuth for MCP clients, signed in as the admin the `auth` project created.
+      name: 'oauth',
+      testMatch: 'oauth.spec.ts',
+      dependencies: ['auth'],
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
   webServer: {
     command: [
       `rm -rf ${state}`,
       `wrangler d1 migrations apply contentworker --local --persist-to ${state}`,
-      `CONTENTWORKER_E2E=1 react-router dev --port ${PORT} --strictPort`,
+      `CONTENTWORKER_E2E=1 PORT=${PORT} react-router dev`,
     ].join(' && '),
     url: `http://localhost:${PORT}/health`,
     reuseExistingServer: !process.env.CI,

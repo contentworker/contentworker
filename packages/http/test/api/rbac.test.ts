@@ -1,11 +1,11 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
-const config: ApiConfig = {
+const config: ApiConfig = testConfig({
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -17,7 +17,7 @@ const config: ApiConfig = {
     locales: ['en-US'],
     scale: 1,
   },
-};
+});
 
 const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
 const M = '/spaces/s1/environments/main';
@@ -162,6 +162,35 @@ describe('granular RBAC over HTTP', () => {
       headers: editor,
     });
     expect(deniedGet.status).toBe(403);
+  });
+
+  it('refuses queries that would reveal a hidden field, on every read surface', async () => {
+    for (const url of [
+      // A filter answers "does internalNotes match?" even though the value is masked.
+      '/delivery/s1/main/entries?content_type=post&fields.internalNotes[match]=secret',
+      '/preview/s1/main/entries?content_type=post&fields.internalNotes=secret',
+      // Ordering by it leaks its order; free-text search runs over every field.
+      '/delivery/s1/main/entries?content_type=post&order=fields.internalNotes',
+      '/delivery/s1/main/entries?content_type=post&query=secret',
+      // Naming no type is judged against every type's rules.
+      '/delivery/s1/main/entries?fields.internalNotes[exists]=true',
+    ]) {
+      expect((await app.request(url, { headers: editor })).status, url).toBe(403);
+    }
+    // Queries over readable fields still work.
+    const ok = await app.request(
+      '/delivery/s1/main/entries?content_type=post&fields.title[match]=post&order=-sys.publishedAt',
+      { headers: editor },
+    );
+    expect(ok.status).toBe(200);
+    // The admin token has no field rules.
+    expect(
+      (
+        await app.request('/delivery/s1/main/entries?content_type=post&query=secret', {
+          headers: admin,
+        })
+      ).status,
+    ).toBe(200);
   });
 
   it('kind-based keys and the admin token are unaffected', async () => {

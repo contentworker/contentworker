@@ -44,7 +44,7 @@ of the way; the content being edited is the star, not the chrome around it.
   leaking into a work tool.
 - The unthemed gray shadcn default that reads as a template rather than a product.
   The admin's look is Ledger (DESIGN.md), a named system with its own status tokens,
-  shared with the owner's other product, OrderLoop.
+  shared across the owner's products through `packages/design` and `packages/ui`.
 - AI-everything clutter: sparkle icons and "AI" buttons on every surface. AI is
   woven into flows (generation dialogs, enrichment review, assist panel), never
   shouting for attention.

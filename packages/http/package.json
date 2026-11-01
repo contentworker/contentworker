@@ -33,7 +33,6 @@
     "graphql": "catalog:",
     "hono": "catalog:",
     "hono-openapi": "catalog:",
-    "openid-client": "catalog:",
     "zod": "catalog:",
     "zod-openapi": "catalog:"
   },
