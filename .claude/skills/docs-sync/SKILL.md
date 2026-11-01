@@ -56,8 +56,9 @@ to check.
    component instead.
 6. **New page?** Follow `docs-page`. A site page is invisible until it is in `sidebar` in
    `apps/docs/astro.config.mjs`; a maintainer page needs a row in `docs/README.md`.
-7. **Regenerate the embed** after any `docs/*.md` edit: `pnpm --filter @contentworker/docs generate`
-   (the `@contentworker/docs` test fails on drift). Never hand-edit `generated.ts`.
+7. **The embed rebuilds itself.** `packages/docs/src/generated.ts` is gitignored; turbo's
+   `generate` task rewrites it before every check-types, test and build (`pnpm generate` by hand).
+   Never hand-edit or commit it.
 8. **Ledger tokens.** If `apps/web/app/app.css` changed a token, make the same change in
    `packages/design/src/tokens.ts` and run `pnpm sync:theme`; `pnpm --filter @contentworker/design test`
    fails until both agree. If an admin component the docs mirror changed, update its counterpart in

@@ -7,9 +7,9 @@ file=$(field .tool_input.file_path)
 [ -z "$file" ] && exit 0
 case "$file" in
   */packages/docs/src/generated.ts)
-    deny PreToolUse "packages/docs/src/generated.ts embeds docs/*.md for the MCP and HTTP docs tools. Edit the page in docs/, then run \`pnpm --filter @contentworker/docs generate\` and commit both; the @contentworker/docs test fails on drift." ;;
+    deny PreToolUse "packages/docs/src/generated.ts embeds docs/*.md for the MCP and HTTP docs tools. It is gitignored and never committed: edit the page in docs/, and \`pnpm install\`, turbo's generate task or \`pnpm --filter @contentworker/docs generate\` rebuilds it." ;;
   */packages/http/src/mcp/skills.generated.ts)
-    deny PreToolUse "packages/http/src/mcp/skills.generated.ts embeds packages/http/skills/** for the MCP server. Edit the skill under packages/http/skills/, then run \`pnpm --filter @contentworker/http generate:skills\` and commit both; a test fails on drift." ;;
+    deny PreToolUse "packages/http/src/mcp/skills.generated.ts embeds packages/http/skills/** for the MCP server. Edit the skill under packages/http/skills/, and \`pnpm install\`, turbo's generate task or \`pnpm --filter @contentworker/http generate:skills\` rebuilds it. It is gitignored and never committed." ;;
   */apps/docs/src/styles/theme.css)
     deny PreToolUse "apps/docs/src/styles/theme.css is generated from packages/design/src/tokens.ts (which mirrors apps/web/app/app.css; packages/design's tests hold the two together). Change the tokens, then run \`pnpm sync:theme\`. Hand-written docs styling goes in apps/docs/src/styles/brand.css." ;;
   */apps/docs/src/generated/openapi.json)
