@@ -5,6 +5,18 @@
 
 /** Identifier of a space, the isolation boundary inside a deployment. A space holds many environments. */
 export type SpaceId = string;
+
+/**
+ * The shape a new space's id must have. It sits in every URL path, cache key and object key under
+ * the space, so: ASCII letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most
+ * 64 characters. That also keeps out `*`, which the deployment's root tokens use for "every space".
+ */
+export const SPACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** True when `value` can be a space's id. */
+export function isSpaceId(value: string): boolean {
+  return SPACE_ID_PATTERN.test(value);
+}
 /** An environment is a branch within a space (e.g. "main", "staging"). */
 export type EnvironmentId = string;
 

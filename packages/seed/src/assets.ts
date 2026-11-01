@@ -11,7 +11,7 @@ import { localized, pick } from './helpers';
 import { placeholderPdf, placeholderPng } from './placeholders';
 import type { SeedRun } from './types';
 
-const FILES = [
+export const FILES = [
   { fileName: 'hero-coastline.png', contentType: 'image/png', title: 'Coastline at dawn' },
   { fileName: 'team-offsite.png', contentType: 'image/png', title: 'Team offsite' },
   { fileName: 'product-shot-01.png', contentType: 'image/png', title: 'Product shot 1' },
@@ -77,7 +77,9 @@ const PALETTE: readonly (readonly [
  * The bytes for a demo file, generated (no fixtures): a gradient PNG for images, a one-page PDF
  * for documents. Videos stay metadata only: they live on the video host, not in blob storage.
  */
-function placeholderFor(file: (typeof FILES)[number], i: number): string | Uint8Array | undefined {
+type DemoFile = (typeof FILES)[number];
+
+function placeholderFor(file: DemoFile, i: number): string | Uint8Array | undefined {
   if (file.contentType === 'image/png') {
     const [from, to] = PALETTE[i % PALETTE.length] as (typeof PALETTE)[number];
     return placeholderPng(480, 300, from, to);
@@ -92,16 +94,20 @@ function placeholderFor(file: (typeof FILES)[number], i: number): string | Uint8
  * videos stay metadata only. The last two stay drafts so the media library shows both statuses.
  * Returns published asset ids for links.
  */
-export async function seedAssets(run: SeedRun, blob: BlobStore): Promise<string[]> {
+export async function seedAssets(
+  run: SeedRun,
+  blob: BlobStore,
+  files: readonly DemoFile[] = FILES,
+): Promise<string[]> {
   const { ctx, scope, locale, hasDe } = run;
 
-  const existing = await listAssets(ctx, scope, { limit: FILES.length + 10 });
+  const existing = await listAssets(ctx, scope, { limit: files.length + 10 });
   if (existing.length > 0) {
     return existing.filter((a) => a.status === 'published').map((a) => a.id);
   }
 
   const publishedIds: string[] = [];
-  for (const [i, file] of FILES.entries()) {
+  for (const [i, file] of files.entries()) {
     const de = hasDe ? DE_TITLES[file.title] : undefined;
     const { asset } = await createAsset(ctx, blob, scope, {
       fileName: file.fileName,
@@ -110,10 +116,7 @@ export async function seedAssets(run: SeedRun, blob: BlobStore): Promise<string[
         string,
         string
       >,
-      description: localized(
-        locale,
-        `${file.title} — demo media seeded for local development.`,
-      ) as Record<string, string>,
+      description: localized(locale, `${file.title}: sample media.`) as Record<string, string>,
     });
     const bytes = placeholderFor(file, i);
     if (bytes !== undefined) {
@@ -130,12 +133,12 @@ export async function seedAssets(run: SeedRun, blob: BlobStore): Promise<string[
         focalPoint: { x: 0.25 + (i % 3) * 0.25, y: 0.35 + (i % 2) * 0.3 },
       });
     }
-    const publish = i < FILES.length - 2;
+    const publish = i < files.length - 2;
     if (publish) {
       await publishAsset(ctx, scope, asset.id);
       publishedIds.push(asset.id);
     }
   }
-  logger.info({ assets: FILES.length }, 'seed: created assets');
+  logger.info({ assets: files.length }, 'seed: created assets');
   return publishedIds;
 }

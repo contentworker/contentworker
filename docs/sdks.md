@@ -222,6 +222,7 @@ cma.releases.list() / .get(id) / .publish(id) / .delete(id)
 
 cma.scheduledActions.list({ status? }) / .create(input) / .cancel(id)
 
+cma.spaces.list() / .create({ spaceId, name, defaultLocale, starter? })  // deployment-wide
 cma.environments.list() / .create(id, name)           // space-level
 cma.environments.aliases.list() / .set(alias, envId) / .delete(alias)
 cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
@@ -232,6 +233,8 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
 - `assets.create` returns a presigned upload target: PUT the bytes to `upload.url` with
   `upload.headers`, then `assets.publish(id)` to make it deliverable.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
+- `spaces.create` takes the deployment's admin token (a space's own keys are refused);
+  `starter: 'sample'` installs the sample content before it returns.
 - Failed requests throw `ManagementError` with `status` and the parsed error `body`.
 
 ## `@contentworker/sdk-codegen` — typed field shapes from your content model

@@ -181,6 +181,39 @@ export interface CreateApiKeyInput {
   readonly roleId?: string;
 }
 
+export interface SpaceRef {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** `sample` installs sample content into the new space's first environment; `empty` doesn't. */
+export type SpaceStarter = 'empty' | 'sample';
+
+export interface CreateSpaceInput {
+  /** 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit. */
+  readonly spaceId: string;
+  readonly name: string;
+  readonly defaultLocale: string;
+  readonly locales?: readonly string[];
+  readonly fallbacks?: Record<string, string | null>;
+  /** Environments to create; defaults to `["main"]`. */
+  readonly environments?: readonly string[];
+  readonly starter?: SpaceStarter;
+}
+
+export interface CreatedSpace extends SpaceRef {
+  readonly starter: SpaceStarter;
+  /** What the sample starter holds once installed (absent for `empty`). */
+  readonly installed?: {
+    readonly contentTypes: number;
+    readonly entries: number;
+    readonly assets: number;
+    readonly tags: number;
+    readonly concepts: number;
+    readonly releases: number;
+  };
+}
+
 /** The raw token is returned exactly once; only its hash is stored. */
 export interface CreatedApiKey {
   readonly id: string;
@@ -378,6 +411,14 @@ export function createManagementClient(opts: ManagementClientOptions) {
         scheduledFor: string;
       }) => post<ScheduledAction>(`${envBase}/scheduled-actions`, input),
       cancel: (id: string) => del<ScheduledAction>(`${envBase}/scheduled-actions/${e(id)}`),
+    },
+
+    /** Deployment-wide: not bound to the client's space. */
+    spaces: {
+      /** The spaces this token can reach (all of them for a deployment admin, else its own). */
+      list: () => items(get<{ items: SpaceRef[] }>(`${root}/spaces`)),
+      /** Creates a space, optionally with sample content. Deployment administrators only. */
+      create: (input: CreateSpaceInput) => post<CreatedSpace>(`${root}/spaces`, input),
     },
 
     environments: {

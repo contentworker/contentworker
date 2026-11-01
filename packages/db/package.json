@@ -23,6 +23,7 @@
     "@cloudflare/vitest-plugin": "catalog:",
     "@cloudflare/workers-types": "catalog:",
     "@contentworker/application": "workspace:*",
+    "@contentworker/seed": "workspace:*",
     "@contentworker/test-kit": "workspace:*",
     "@contentworker/typescript-config": "workspace:*",
     "typescript": "catalog:",
