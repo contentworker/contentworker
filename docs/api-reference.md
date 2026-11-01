@@ -477,7 +477,7 @@ to the link's path for at most 12 hours and never past the expiry. The MCP tools
 `asset_collections_list`, `asset_collections_get`, `asset_collections_create`,
 `asset_collections_update`, `asset_collections_delete`, `asset_collection_assets_list`,
 `asset_collection_assets_add`, `asset_collection_assets_remove`, `asset_collection_reorder`,
-`share_links_list`, `share_link_create`, `share_link_revoke`, `asset_upload_start`,
+`share_links_list`, `share_link_create`, `share_link_get`, `share_link_revoke`, `asset_upload_start`,
 `asset_upload_parts`, `asset_upload_complete`, `asset_upload_abort`, `asset_zip_create`,
 `asset_zip_get` and `asset_zips_list`, with the same scopes. See
 [Architecture](./architecture.md#collections-share-links-multipart-uploads-and-zips).

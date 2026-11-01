@@ -22,7 +22,7 @@ live inside that deployment's D1.
 - **Hexagonal core.** `domain` depends on nothing; `application` depends only on `ports`;
   Cloudflare adapters (`@contentworker/adapters`, one subpath each) and the D1 store
   (`@contentworker/db`) are bound in one place, `@contentworker/platform`'s `wire.ts`.
-- **One set of use-cases, every caller.** The HTTP API, the MCP server (183 tools), the queue
+- **One set of use-cases, every caller.** The HTTP API, the MCP server (184 tools), the queue
   consumers and the agents call the _same_ application use-cases, so an AI agent can never do
   what a human API client couldn't, and every write goes through the same validation and RBAC.
 - **Structured content model.** Typed fields with validations, localization with fallback
