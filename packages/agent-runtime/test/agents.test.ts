@@ -12,7 +12,7 @@ import {
   StubAIProvider,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { InProcessAgentRuntime, makeActivities } from '../src/index.js';
+import { InProcessAgentRuntime, makeActivities, UNCLASSIFIED, verdictOf } from '../src/index.js';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
 
@@ -293,5 +293,42 @@ describe('P8: durable agents (in-process executor)', () => {
       { scope, entryId: id },
     );
     expect(clean.status).toBe('completed');
+  });
+
+  it('holds content when the classifier gives no usable verdict (fails closed)', async () => {
+    const id = await seed(ctx);
+    for (const answer of [
+      'Looks fine to me.',
+      {},
+      { categories: [] },
+      { flagged: 'no', categories: [] },
+      null,
+    ]) {
+      const ai = new StubAIProvider(() => answer);
+      const run = await new InProcessAgentRuntime(makeActivities({ ctx, ai })).run('moderate', {
+        scope,
+        entryId: id,
+      });
+      expect(run.status, JSON.stringify(answer)).toBe('held');
+      expect(run.decisions[0]).toContain(UNCLASSIFIED);
+    }
+  });
+});
+
+describe('verdictOf', () => {
+  it('passes only an explicit flagged: false, and keeps only string categories', () => {
+    expect(verdictOf({ flagged: false, categories: ['ignored'] })).toEqual({
+      flagged: false,
+      categories: [],
+    });
+    expect(verdictOf({ flagged: true, categories: ['hate', 3] })).toEqual({
+      flagged: true,
+      categories: ['hate'],
+    });
+    expect(verdictOf({ flagged: true, categories: 'hate' })).toEqual({
+      flagged: true,
+      categories: [],
+    });
+    expect(verdictOf(undefined)).toEqual({ flagged: true, categories: [UNCLASSIFIED] });
   });
 });

@@ -1676,7 +1676,18 @@ export function buildServer(
     'entries_publish',
     {
       description: 'Publish an entry (validates references; emits an entry.published event).',
-      inputSchema: toolSchema('entries_publish', () => z.object({ id: z.string(), ...scopeArgs })),
+      inputSchema: toolSchema('entries_publish', () =>
+        z.object({
+          id: z.string(),
+          expectedVersion: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("The entry's currentVersion as you read it; refused if it has changed since"),
+          ...scopeArgs,
+        }),
+      ),
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
@@ -1692,7 +1703,9 @@ export function buildServer(
           ]);
         }
       }
-      return ok(await publishEntry(ctx, scopeOf(args), args.id));
+      return ok(
+        await publishEntry(ctx, scopeOf(args), args.id, { expectedVersion: args.expectedVersion }),
+      );
     },
   );
 
@@ -1701,13 +1714,26 @@ export function buildServer(
     {
       description: 'Withdraw an entry from the Delivery API.',
       inputSchema: toolSchema('entries_unpublish', () =>
-        z.object({ id: z.string(), ...scopeArgs }),
+        z.object({
+          id: z.string(),
+          expectedVersion: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("The entry's currentVersion as you read it; refused if it has changed since"),
+          ...scopeArgs,
+        }),
       ),
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
       await guardEntry(scopeOf(args), args.id, 'publish');
-      return ok(await unpublishEntry(ctx, scopeOf(args), args.id));
+      return ok(
+        await unpublishEntry(ctx, scopeOf(args), args.id, {
+          expectedVersion: args.expectedVersion,
+        }),
+      );
     },
   );
 
@@ -1848,7 +1874,17 @@ export function buildServer(
     {
       description: 'Restore an older version by copying its fields into a new draft version.',
       inputSchema: toolSchema('entries_restore_version', () =>
-        z.object({ id: z.string(), version: z.number(), ...scopeArgs }),
+        z.object({
+          id: z.string(),
+          version: z.number(),
+          expectedVersion: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("The entry's currentVersion as you read it; refused if it has changed since"),
+          ...scopeArgs,
+        }),
       ),
     },
     async (args) => {
@@ -1857,7 +1893,11 @@ export function buildServer(
       authorizeContent(principal, 'write', entry.contentType);
       const target = await getVersion(ctx, scopeOf(args), args.id, args.version);
       assertWritableFields(principal, entry.contentType, target.fields);
-      return ok(await restoreVersion(ctx, scopeOf(args), args.id, args.version));
+      return ok(
+        await restoreVersion(ctx, scopeOf(args), args.id, args.version, {
+          expectedVersion: args.expectedVersion,
+        }),
+      );
     },
   );
 

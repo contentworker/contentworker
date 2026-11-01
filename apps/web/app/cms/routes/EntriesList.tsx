@@ -323,7 +323,10 @@ export function EntriesList() {
     toastOptions?: ToastOptions,
   ) =>
     mutateEntries(async () => {
-      const r = await orDirect(await edit(tool, { id }, titleOf(id)), async () => {
+      // Held to the version the row shows: confirmed after a newer draft was saved, it is refused.
+      const version = entries.find((e) => e.id === id)?.version;
+      const input = { id, ...(version ? { expectedVersion: version } : {}) };
+      const r = await orDirect(await edit(tool, input, titleOf(id)), async () => {
         const optimistic = !entriesQuery.isPlaceholderData;
         const snapshot = entries;
         if (optimistic) optimisticStatus(new Set([id]), status);

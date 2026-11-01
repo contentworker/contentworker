@@ -317,7 +317,10 @@ Fills empty text/symbol fields (excluding the display field) on a freshly-publis
 
 1. Load the entry; if missing → `skipped`.
 2. `classify` the concatenated text (tier `fast`, strict `{ flagged, categories }` schema).
-3. If flagged → `record` a hold → `held`; else → `completed`.
+3. If flagged → `record` a hold → `held`; else → `completed`. Only an explicit
+   `flagged: false` passes: an answer that is missing, off the schema or not a boolean holds the
+   entry as `unclassified`, so a model that errs (or is talked out of its schema by the content)
+   never waves content through.
 
 ### curate
 
