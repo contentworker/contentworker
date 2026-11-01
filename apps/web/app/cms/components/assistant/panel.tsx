@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
 import { Button } from '@contentworker/ui/button';
+import { ComposeLoader, composeSequences } from '@contentworker/ui/compose-loader';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -545,7 +546,7 @@ function ChatView({ agent, link }: { agent: Agent; link: Link }) {
           )}
           {thinking ? (
             <div role="status" className="flex items-center gap-2 text-ui">
-              <span aria-hidden="true" className="size-1.5 rounded-full bg-ai" />
+              <ComposeLoader icon={composeSequences.working} className="size-3.5 text-ai" />
               <Shimmer as="span">
                 {chat.isRecovering ? 'Picking up where it left off' : 'Working on it'}
               </Shimmer>

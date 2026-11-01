@@ -40,10 +40,67 @@ Delivery API serves only entries whose content type is published.
 | Reference to another entry or an asset | `Link` with `linkType: 'Entry' \| 'Asset'`      |
 | Reusable group of nested fields        | `Component`                                     |
 | List of tags, references or components | `Array` with `items`                            |
+| Page of mixed sections (blocks)        | `Array` with `items.variants` (see below)       |
 | Anything else                          | `JSON` (last resort: no field-level validation) |
 
 `unique` is allowed only on `Symbol`, `Slug`, `Text`, `Integer`, `Number` and `Date`, and never on a
 field nested inside a `Component`.
+
+## Blocks: a list of mixed shapes
+
+When editors assemble a page from sections of different kinds (a hero, then rich text, then a call
+to action), declare one `Array` field whose `items` lists the shapes as `variants` instead of
+`fields`:
+
+```json
+{
+  "apiId": "body",
+  "name": "Body",
+  "type": "Array",
+  "position": 2,
+  "items": {
+    "type": "Component",
+    "variants": [
+      {
+        "apiId": "hero",
+        "name": "Hero",
+        "fields": [
+          {
+            "apiId": "heading",
+            "name": "Heading",
+            "type": "Symbol",
+            "required": true,
+            "position": 0
+          },
+          { "apiId": "image", "name": "Image", "type": "Link", "linkType": "Asset", "position": 1 }
+        ]
+      },
+      {
+        "apiId": "cta",
+        "name": "Call to action",
+        "fields": [
+          { "apiId": "label", "name": "Label", "type": "Symbol", "required": true, "position": 0 },
+          {
+            "apiId": "target",
+            "name": "Target",
+            "type": "Link",
+            "linkType": "Entry",
+            "position": 1
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+- Each value is `{ "_type": "<variant apiId>", ...fields }`. The server adds a stable `_key` to
+  every block that lacks one; send existing blocks back with their `_key` so they keep it.
+- A variant's fields follow the component rules: not `localized`, not `unique`, no `Slug`, and
+  they count toward the nesting limit.
+- One optional block slot is the same field with `validations: { size: { max: 1 } }`.
+- Adding a variant or an optional field is always safe. Removing a variant is refused while any
+  entry still has a block of it; the error lists those entries.
 
 ## Rules worth knowing
 

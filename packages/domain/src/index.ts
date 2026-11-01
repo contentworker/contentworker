@@ -9,6 +9,7 @@ export * from './auth/team';
 export * from './collaboration/comment';
 export * from './collaboration/task';
 export * from './collaboration/workflow';
+export * from './content-type/blocks';
 export * from './content-type/content-type';
 export * from './content-type/field';
 export * from './content-type/field-values';

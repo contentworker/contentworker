@@ -410,3 +410,78 @@ describe('MCP writes held to expectedVersion', () => {
     ).toBeFalsy();
   });
 });
+
+describe('blocks fields over MCP', () => {
+  it('defines a blocks type, then creates, publishes and reads an entry with keyed blocks', async () => {
+    const deps = makeDeps();
+    await seed(deps);
+    const client = await connect(deps, adminPrincipal);
+    const call = (name: string, args: Record<string, unknown>) =>
+      client.callTool({ name, arguments: { space: SPACE, environment: 'main', ...args } });
+    const leaf = (apiId: string) => ({
+      apiId,
+      name: apiId,
+      type: 'Symbol',
+      localized: false,
+      required: true,
+      position: 0,
+    });
+
+    const defined = await call('model_create_content_type', {
+      apiId: 'promo',
+      name: 'Promo',
+      displayField: 'title',
+      fields: [
+        leaf('title'),
+        {
+          apiId: 'body',
+          name: 'Body',
+          type: 'Array',
+          position: 1,
+          items: {
+            type: 'Component',
+            variants: [
+              { apiId: 'hero', name: 'Hero', fields: [leaf('heading')] },
+              { apiId: 'cta', name: 'CTA', fields: [leaf('label')] },
+            ],
+          },
+        },
+        // A plain component keeps its nested fields through the tool's schema.
+        { apiId: 'meta', name: 'Meta', type: 'Component', position: 2, fields: [leaf('kicker')] },
+      ],
+    });
+    expect(defined.isError).toBeFalsy();
+    const type = payload(defined) as { fields: { apiId: string; fields?: unknown[] }[] };
+    expect(type.fields.find((f) => f.apiId === 'meta')?.fields).toHaveLength(1);
+    await call('model_publish_content_type', { apiId: 'promo' });
+
+    const bad = await call('entries_create', {
+      contentType: 'promo',
+      fields: { title: { 'en-US': 'x' }, body: { 'en-US': [{ _type: 'quote' }] } },
+    });
+    // Refused by the same validator the API uses (which names `body[0]` there).
+    expect(bad.isError).toBe(true);
+
+    const { entry } = payload(
+      await call('entries_create', {
+        contentType: 'promo',
+        fields: {
+          title: { 'en-US': 'Spring' },
+          body: {
+            'en-US': [
+              { _type: 'hero', heading: 'Hi' },
+              { _type: 'cta', label: 'Go' },
+            ],
+          },
+        },
+      }),
+    ) as { entry: { id: string } };
+    expect((await call('entries_publish', { id: entry.id })).isError).toBeFalsy();
+    const read = payload(await call('entries_get', { id: entry.id })) as {
+      fields: { body: Record<string, { _type: string; _key: string }[]> };
+    };
+    const blocks = read.fields.body['en-US'] ?? [];
+    expect(blocks.map((b) => b._type)).toEqual(['hero', 'cta']);
+    expect(blocks.every((b) => typeof b._key === 'string' && b._key.length > 0)).toBe(true);
+  });
+});

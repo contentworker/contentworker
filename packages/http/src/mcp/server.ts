@@ -299,7 +299,17 @@ const fieldSchema = z.object({
   defaultValue: z.any().optional().describe('applied on create when the field is omitted'),
   validations: z.record(z.string(), z.any()).optional(),
   linkType: z.enum(['Entry', 'Asset']).optional(),
-  items: z.record(z.string(), z.any()).optional(),
+  items: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe(
+      'Array: { type: Symbol|Link|Component, linkType?, validations?, fields? } — or, for a ' +
+        'blocks field, { type: "Component", variants: [{ apiId, name, fields }] } instead of fields',
+    ),
+  fields: z
+    .array(z.record(z.string(), z.any()))
+    .optional()
+    .describe('Component: the nested field definitions'),
 });
 const entryFields = z
   .record(z.string(), z.record(z.string(), z.any()))

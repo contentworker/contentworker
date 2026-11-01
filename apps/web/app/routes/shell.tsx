@@ -525,7 +525,7 @@ function ShellFrame() {
               )}
               aria-label="contentworker overview"
             >
-              <Mark className="size-5" />
+              <Mark className="size-5 text-brand" />
               <span>contentworker</span>
             </Link>
             {/* Where you are, from md (below it the page's own title says so). */}
@@ -623,7 +623,7 @@ function AppSidebar({
             title={`${expanded ? 'Collapse' : 'Expand'} the sidebar (${shortcut})`}
             className="hit-area"
           >
-            <Mark className="size-5" />
+            <Mark className="size-5 text-brand" />
           </SidebarTrigger>
           <span className="truncate font-semibold text-base tracking-title transition-opacity duration-(--motion-instant) @max-[8rem]:opacity-0">
             contentworker
@@ -660,7 +660,7 @@ function AppSidebar({
                           >
                             {Icon ? (
                               <Icon
-                                className={here ? undefined : 'text-muted-foreground'}
+                                className={here ? 'text-brand' : 'text-muted-foreground'}
                                 aria-hidden="true"
                               />
                             ) : null}
@@ -765,7 +765,7 @@ function TabBar({
   );
   const state = (active: boolean) =>
     active
-      ? 'font-medium text-foreground before:absolute before:inset-x-3 before:top-0 before:h-0.5 before:bg-foreground'
+      ? 'font-medium text-foreground before:absolute before:inset-x-3 before:top-0 before:h-0.5 before:bg-brand'
       : 'text-muted-foreground';
   return (
     <>

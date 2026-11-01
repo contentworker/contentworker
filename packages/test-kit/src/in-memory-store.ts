@@ -395,6 +395,13 @@ export class InMemoryContentStore implements ContentStore {
       entries = entries.filter((e) =>
         query.archived ? e.status === 'archived' : e.status !== 'archived',
       );
+      // Keyset paging by entry id, as the D1 store.
+      if (query.afterEntryId !== undefined) {
+        const cursor = query.afterEntryId;
+        entries = entries
+          .filter((e) => cursor === '' || e.id > cursor)
+          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      }
       const withFields: EntryWithFields[] = entries.map((entry) => {
         const versions = this.versionData.get(`${scopeKey(scope)}::${entry.id}`) ?? [];
         const current = versions.find((v) => v.version === entry.currentVersion);

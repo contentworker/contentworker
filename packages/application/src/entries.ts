@@ -3,6 +3,7 @@ import {
   applyDefaults,
   archive,
   assertEntryFieldsValid,
+  assignBlockKeys,
   ConflictError,
   deriveStatus,
   EMPTY_METADATA,
@@ -76,7 +77,10 @@ export async function createEntry(
     contentTypeApiId: input.contentTypeApiId,
     fields: withDefaults,
   });
-  const fields = normalizeSlugFields(contentType, hooked.fields);
+  // Blocks get their `_key` last, so a block a hook added is keyed too.
+  const fields = assignBlockKeys(contentType, normalizeSlugFields(contentType, hooked.fields), () =>
+    ctx.ids.newId(),
+  );
   assertEntryFieldsValid(contentType, fields, vctx);
 
   const id = input.id ?? ctx.ids.newId();
@@ -157,7 +161,11 @@ export async function updateEntry(
     entryId: id,
     fields,
   });
-  const normalized = normalizeSlugFields(contentType, hooked.fields);
+  const normalized = assignBlockKeys(
+    contentType,
+    normalizeSlugFields(contentType, hooked.fields),
+    () => ctx.ids.newId(),
+  );
   assertEntryFieldsValid(contentType, normalized, vctx);
 
   const { entry, version } = saveDraft(found.entry, normalized);

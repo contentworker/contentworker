@@ -72,6 +72,7 @@ const ids = {
   authors: [] as string[],
   articles: [] as string[],
   roundup: '',
+  landing: '',
   /** Left a draft, so the publish request has one to publish. */
   draft: '',
 };
@@ -126,7 +127,44 @@ async function seed(): Promise<void> {
       }),
     ],
   });
-  for (const apiId of ['author', 'article', 'roundup']) await publishContentType(ctx, scope, apiId);
+  // A blocks field: links inside blocks resolve like any other.
+  await createContentType(ctx, scope, {
+    apiId: 'landing',
+    name: 'Landing',
+    displayField: 'title',
+    fields: [
+      field({ apiId: 'title', type: 'Symbol', required: true }),
+      field({
+        apiId: 'body',
+        type: 'Array',
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [
+            {
+              apiId: 'hero',
+              name: 'Hero',
+              fields: [
+                field({ apiId: 'heading', type: 'Symbol' }),
+                field({ apiId: 'image', type: 'Link', linkType: 'Asset', position: 1 }),
+              ],
+            },
+            {
+              apiId: 'cta',
+              name: 'Call to action',
+              fields: [
+                field({ apiId: 'label', type: 'Symbol' }),
+                field({ apiId: 'target', type: 'Link', linkType: 'Entry', position: 1 }),
+              ],
+            },
+          ],
+        },
+      }),
+    ],
+  });
+  for (const apiId of ['author', 'article', 'roundup', 'landing']) {
+    await publishContentType(ctx, scope, apiId);
+  }
 
   const { asset } = await createAsset(ctx, blob, scope, {
     fileName: 'hero.jpg',
@@ -189,6 +227,27 @@ async function seed(): Promise<void> {
   });
   await publishEntry(ctx, scope, roundup.id);
   ids.roundup = roundup.id;
+
+  const { entry: landing } = await createEntry(ctx, scope, landingFields());
+  await publishEntry(ctx, scope, landing.id);
+  ids.landing = landing.id;
+}
+
+/** A landing page of three blocks, linking an asset and two entries from inside them. */
+function landingFields() {
+  return {
+    contentTypeApiId: 'landing',
+    fields: {
+      title: { 'en-US': 'Launch' },
+      body: {
+        'en-US': [
+          { _type: 'hero', heading: 'Launch', image: assetLink(ids.heroAsset) },
+          { _type: 'cta', label: 'Read', target: entryLink(ids.articles[0] as string) },
+          { _type: 'cta', label: 'Meet', target: entryLink(ids.authors[0] as string) },
+        ],
+      },
+    },
+  };
 }
 
 /**
@@ -304,6 +363,17 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     'delivery: POST /graphql asset',
     () => graphql(`{ asset(id: "${ids.heroAsset}") { id title url } }`),
   ],
+  [
+    'delivery: GET /entries/:id?include=1 (blocks)',
+    () => getPublishedEntry(ctx, scope, ids.landing, { include: 1 }),
+  ],
+  [
+    'delivery: POST /graphql blocks',
+    () =>
+      graphql(
+        `{ landing(id: "${ids.landing}") { title body { __typename ... on LandingBodyHero { _key heading image } ... on LandingBodyCta { _key label target } } } }`,
+      ),
+  ],
   ['delivery: GET /assets/:id', () => getDeliveredAsset(ctx, scope, ids.heroAsset)],
   [
     'delivery: GET /assets/:id?locale=de',
@@ -327,6 +397,7 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
         },
       }),
   ],
+  ['management: POST /entries (blocks)', () => createEntry(ctx, scope, landingFields())],
   ['management: POST /entries/:id/published', () => publishEntry(ctx, scope, ids.draft)],
 ];
 

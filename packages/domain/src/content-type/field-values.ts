@@ -1,6 +1,12 @@
 import type { EntryFields, LocaleCode, LocalizedValue } from '../types';
 import type { ContentType } from './content-type';
-import { type FieldDefinition, UNIQUE_FIELD_TYPES } from './field';
+import {
+  BLOCK_KEY,
+  blockVariants,
+  type FieldDefinition,
+  nestedFieldsFor,
+  UNIQUE_FIELD_TYPES,
+} from './field';
 import { normalizeSlug } from './slug';
 
 /**
@@ -43,22 +49,39 @@ export function applyDefaults(
     // keep ("each new card starts as the primary variant"). A component the
     // author never supplied stays absent: materializing one from its nested
     // defaults would invent content nobody asked for.
-    const nested = field.type === 'Component' ? field.fields : field.items?.fields;
-    const localized = nested ? out[field.apiId] : undefined;
-    if (nested && localized) {
+    const localized = holdsComponents(field) ? out[field.apiId] : undefined;
+    if (localized) {
       out[field.apiId] = Object.fromEntries(
         Object.entries(localized).map(([locale, value]) => [
           locale,
-          field.type === 'Component'
-            ? withComponentDefaults(nested, value)
-            : Array.isArray(value)
-              ? value.map((item) => withComponentDefaults(nested, item))
-              : value,
+          withNestedDefaults(field, value),
         ]),
       );
     }
   }
   return out;
+}
+
+/** True when a field's values are components (one, or an array of them). */
+function holdsComponents(field: FieldDefinition): boolean {
+  return (
+    field.type === 'Component' || (field.type === 'Array' && field.items?.type === 'Component')
+  );
+}
+
+/**
+ * Fills nested defaults in one value of a component-holding field: the
+ * component itself, or each element of an array of them. A blocks element gets
+ * its own variant's defaults; one naming no known variant is left alone for
+ * validation to report.
+ */
+function withNestedDefaults(field: FieldDefinition, value: unknown): unknown {
+  if (field.type === 'Component') return withComponentDefaults(field.fields ?? [], value);
+  if (!Array.isArray(value)) return value;
+  return value.map((item) => {
+    const nested = nestedFieldsFor(field, item);
+    return nested ? withComponentDefaults(nested, item) : item;
+  });
 }
 
 /** Fills absent nested keys from their definitions' defaults, recursively. */
@@ -69,14 +92,75 @@ function withComponentDefaults(nested: readonly FieldDefinition[], value: unknow
     if (out[f.apiId] === undefined && f.defaultValue !== undefined) {
       out[f.apiId] = f.defaultValue;
     }
-    const deeper = f.type === 'Component' ? f.fields : f.items?.fields;
-    if (!deeper || out[f.apiId] === undefined) continue;
-    out[f.apiId] =
-      f.type === 'Component'
-        ? withComponentDefaults(deeper, out[f.apiId])
-        : Array.isArray(out[f.apiId])
-          ? (out[f.apiId] as unknown[]).map((item) => withComponentDefaults(deeper, item))
-          : out[f.apiId];
+    if (!holdsComponents(f) || out[f.apiId] === undefined) continue;
+    out[f.apiId] = withNestedDefaults(f, out[f.apiId]);
+  }
+  return out;
+}
+
+/**
+ * Gives every blocks element that lacks one a `_key`, however deep the blocks
+ * field sits; keys already present are kept, so a block keeps its identity
+ * across edits and reorders. Ids come from the caller (`ctx.ids.newId`), so the
+ * use-case stays deterministic under test. Values are copied, never mutated.
+ *
+ * Runs before validation on every entry write; a duplicate key the caller sent
+ * is left for validation to refuse rather than silently re-keyed, since the
+ * caller may be addressing one of the two by it.
+ */
+export function assignBlockKeys(
+  contentType: ContentType,
+  fields: EntryFields,
+  newId: () => string,
+): EntryFields {
+  if (!contentType.fields.some(mayHoldBlocks)) return fields;
+  const out: EntryFields = { ...fields };
+  for (const field of contentType.fields) {
+    const localized = out[field.apiId];
+    if (!localized || !mayHoldBlocks(field)) continue;
+    out[field.apiId] = Object.fromEntries(
+      Object.entries(localized).map(([locale, value]) => [locale, keyed(field, value, newId)]),
+    );
+  }
+  return out;
+}
+
+/** True when a blocks field sits at or anywhere under `field`. */
+function mayHoldBlocks(field: FieldDefinition): boolean {
+  if (blockVariants(field)) return true;
+  if (field.type === 'Component') return (field.fields ?? []).some(mayHoldBlocks);
+  if (field.type === 'Array' && field.items?.type === 'Component') {
+    return (field.items.fields ?? []).some(mayHoldBlocks);
+  }
+  return false;
+}
+
+function keyed(field: FieldDefinition, value: unknown, newId: () => string): unknown {
+  if (field.type === 'Component') return keyedComponent(field.fields ?? [], value, newId);
+  if (!Array.isArray(value)) return value;
+  const variants = blockVariants(field);
+  return value.map((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return item;
+    const nested = nestedFieldsFor(field, item);
+    const filled = nested ? keyedComponent(nested, item, newId) : item;
+    if (!variants) return filled;
+    const key = (item as Record<string, unknown>)[BLOCK_KEY];
+    return typeof key === 'string' && key !== ''
+      ? filled
+      : { ...(filled as Record<string, unknown>), [BLOCK_KEY]: newId() };
+  });
+}
+
+function keyedComponent(
+  nested: readonly FieldDefinition[],
+  value: unknown,
+  newId: () => string,
+): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  const out = { ...(value as Record<string, unknown>) };
+  for (const f of nested) {
+    if (out[f.apiId] !== undefined && mayHoldBlocks(f))
+      out[f.apiId] = keyed(f, out[f.apiId], newId);
   }
   return out;
 }

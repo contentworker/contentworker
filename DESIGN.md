@@ -19,7 +19,9 @@ wait: "oklch(0.49 0.115 62)"
 bad: "oklch(0.5 0.185 28)"
 undo: "oklch(0.485 0.135 42)"
 idle: "oklch(0.48 0 0)"
-ai: "oklch(0.49 0.16 310)"
+brand: "oklch(0.49 0.16 310)"
+brand-foreground: "oklch(0.985 0 0)"
+ai: "var(--brand)"
 sidebar: "oklch(0.985 0 0)"
 sidebar-accent: "oklch(0.945 0 0)"
 paper-dark: "oklch(0.145 0 0)"
@@ -28,6 +30,7 @@ ink-dark: "oklch(0.985 0 0)"
 muted-dark: "oklch(0.269 0 0)"
 muted-foreground-dark: "oklch(0.708 0 0)"
 link-dark: "oklch(0.76 0.11 250)"
+brand-dark: "oklch(0.75 0.09 305)"
 destructive-dark: "oklch(0.78 0.12 22.216)"
 typography:
 title:
@@ -122,16 +125,28 @@ Paths below are under `apps/web/app/`: the shell and sign-in pages in `routes/` 
 
 ## Colors
 
-Neutral greys with no tint carry everything; colour is reserved for one blue and for status.
+Neutral greys with no tint carry everything; colour is reserved for the brand purple, one blue and
+status.
 
 ### Primary
 
-- **Ink** (`primary`, near-black): primary buttons, the New entry button, the current page's
-  marker. Ink is the brand; there is no accent colour behind it.
+- **Ink** (`primary`, near-black): primary buttons and the New entry button. The big fills stay
+  ink, so the accent never shouts.
+
+### Accent
+
+- **Brand** (`brand`, purple): contentworker's accent, the colour of its mark. It marks where you
+  are and what you chose: the mark (sidebar, top bar, sign-in), the current page's tick and icon
+  (sidebar and tab bar), focus (`ring` and the page-wide outline), checked checkboxes and switches
+  and the chosen option card, the text selection and the caret. A model's work wears it too: `ai`
+  is the brand, so the AI loader (`ComposeLoader`), the AI stamp and agent proposals read as
+  contentworker at work. Never a button fill, never a background wash. Its edge holds 3:1 and its
+  words 4.5:1 on paper and muted fills in both themes; on a brand fill, words are
+  `brand-foreground`.
 
 ### Secondary
 
-- **Work blue** (`link`): links, live work (`run`), the slow-page bar and the caret. Never a fill
+- **Work blue** (`link`): links, live work (`run`) and the slow-page bar. Never a fill
   for a button.
 
 ### Destructive
@@ -152,8 +167,8 @@ Neutral greys with no tint carry everything; colour is reserved for one blue and
 - **Muted text** (`muted-foreground`): secondary text and captions. Set to hold 4.5:1 on paper,
   on muted and on a tile.
 - **Rule** and **Input** (`rule`, `input`): hairlines, and the edge and faint fill of fields.
-- **Ring** (`ring`): the focus edge on fields and buttons, dark enough to hold 3:1 on paper and on
-  muted fills. The page-wide focus outline is ink.
+- **Ring** (`ring`): the brand, as the focus edge on fields and buttons and the page-wide focus
+  outline; it holds 3:1 on paper and on muted fills.
 
 ### Status
 
@@ -176,7 +191,9 @@ and chart series for a status reads it through `var()`, so it switches with the 
 brand, no green button, no green decoration.
 
 **The One Meaning Rule.** A status colour is never used decoratively. If it isn't a status, it is
-grey.
+grey. The one shared hue is deliberate: `ai` is the brand, because a model's work is contentworker
+at work. Purple means "contentworker: here, chosen, or the model", and a status never relies on it
+alone (an AI badge says so in words).
 
 ## Typography
 
@@ -237,7 +254,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   (Access, Automation, Extensions, Workspace: Settings' own section groups, each opening its first
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
   on its edge (for a mouse; on touch the mark is the toggle). The page you're on is
-  `sidebar-accent`, 500 and a short ink tick at the row's start (the tab bar marks its tab along
+  `sidebar-accent`, 500, its icon in brand and a short brand tick at the row's start (the tab bar marks its tab along
   its top), with `aria-current`, marked as soon as it is chosen, not when its page arrives. Group
   labels are captions. On touch every row is 44px.
 - **Expanded or a rail:** 16rem, or a 3.25rem rail of icons. The reader's choice is the
@@ -612,6 +629,13 @@ for code and data blocks only.
 - **Page** (`components/page.tsx`): `PageHeader` (the h1, an intro held to the measure, the page's
   actions), `Body`, `Section`, `Empty` (with an `icon` and `title` where the empty state is the
   news).
+- **ComposeLoader** (`ui/compose-loader.tsx`, `cw-compose` in `app.css`): the AI loader, for a
+  model at work (never for plain loading, which is a skeleton). The mark composes itself in
+  reading order (strokes draw, blocks are revealed from their leading edge), holds, then clears as
+  the icon fades, in one 2.8s cycle, in `text-ai`. Icons: `aiMark` (the default), `write`,
+  `schema`, `asset`, `search`, `workflow`; sequences (`drafting`, `enriching`, `working`) play one
+  per cycle and open on the mark. Decoration beside a status line, unless `label` makes it the
+  status. Where motion is reduced it is drawn whole and holds still.
 - **Skeleton** (`ui/skeleton.tsx`): `Skeleton` (a block, tile radius), `SkeletonText` (lines one
   line-height tall in the surrounding type), `SkeletonPill` (a badge, or a button with `h-8`). The
   CMS's regions compose them with `LoadingStatus`, `Refreshing`, `PageSkeleton` and the
@@ -644,8 +668,10 @@ for code and data blocks only.
 ## Installed
 
 `public/manifest.webmanifest` and the apple-touch-icon put the admin on the Home Screen as its own
-app (`standalone`). The icons are rendered from the mark by `apps/web/scripts/icons.sh`, ink on
-paper and opaque. `theme-color` follows the chosen theme: the inline theme script in `root.tsx`
+app (`standalone`). The icons are rendered from the mark by `apps/web/scripts/icons.sh`: the mark
+in white on a full-bleed brand tile, opaque, inside the central 60% so the same art is maskable. The
+favicon (`favicon.svg`, shared with the docs, and `favicon.ico`) is the mark itself in brand, the
+lighter dark-theme brand where the browser is dark. `theme-color` follows the chosen theme: the inline theme script in `root.tsx`
 (run before first paint under the CSP's nonce) keeps a `theme-color` meta of its own in step. The
 theme follows the system until the reader picks Light or Dark. There is no service worker: actions must reach the API.
 

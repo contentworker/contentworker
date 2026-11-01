@@ -1432,6 +1432,8 @@ export interface EntryQuery {
    * `entryId` (`''` = from the start, still entryId-ordered). IDs are UUIDv7
    * (time-ordered), so paging with this cursor is stable under concurrent
    * publishes/unpublishes, unlike `skip` (used by the resumable reindex job).
+   * Honoured by both `list` and `listPublished`; on `list` it is stable under
+   * concurrent edits, which reorder the default `updatedAt` order.
    */
   readonly afterEntryId?: string;
   /**

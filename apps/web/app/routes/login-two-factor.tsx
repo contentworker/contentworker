@@ -72,7 +72,7 @@ export default function LoginTwoFactor() {
   return (
     <main className="grid min-h-dvh justify-items-center bg-background px-4 pt-[16vh]">
       <Form method="post" className="h-fit w-full max-w-sm card p-6">
-        <Mark className="size-7" />
+        <Mark className="size-7 text-brand" />
         <h1 className="mt-4 font-semibold tracking-title text-2xl">Two-factor sign-in</h1>
         <p className="mt-1 text-muted-foreground text-sm">
           {recovery

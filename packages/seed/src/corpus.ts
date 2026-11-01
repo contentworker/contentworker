@@ -420,6 +420,29 @@ export async function seedCorpus(
           entryLink(pick(pageIds, i)),
         ]),
         ...(asset(i) ? { hero: localized(locale, asset(i)) } : {}),
+        // The same page as blocks: a hero, a section of copy, a call to
+        // action. No `_key`s here: the server assigns them on create.
+        blocks: localized(locale, [
+          {
+            _type: 'hero',
+            heading: title,
+            subheading: `Everything ${pick(WORDS.audiences, i)} need for ${pick(WORDS.topics, i)}.`,
+            ...(asset(i) ? { image: asset(i) } : {}),
+          },
+          {
+            _type: 'richText',
+            body: richTextGuide(
+              `Why ${pick(WORDS.topics, i)}`,
+              ['Start small.', 'Ship weekly.'],
+              i,
+            ),
+          },
+          {
+            _type: 'callToAction',
+            label: 'Read the guide',
+            target: entryLink(pick(pageIds, i)),
+          },
+        ]),
       },
       patch: {},
     };
