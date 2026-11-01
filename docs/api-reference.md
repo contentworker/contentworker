@@ -99,9 +99,20 @@ deleted after its check is refused (`404`).
 
 | Method | Path                    | Auth | Response                                             |
 | ------ | ----------------------- | ---- | ---------------------------------------------------- |
-| GET    | `/health`               | none | `{ "status": "ok" }`                                 |
+| GET    | `/health`               | none | `{ "status": "ok", "scheduler": "ok" }` (below)      |
 | GET    | `/ready`                | none | `{ "status": "ready", "role": "<role>" }`            |
 | GET    | `/graphiql/:space/:env` | none | GraphiQL HTML shell (queries still need a CDA token) |
+
+`/health` always answers `200` with `status: "ok"` while the api runs. `scheduler` says whether the
+engine's per-minute cron is ticking: `ok` when its last tick is at most five minutes old, `stale`
+when it is older or there has never been one, `unknown` when the heartbeat could not be read. It
+names no job and no error, and each isolate reuses the answer for 30 s
+(`HEALTH_SCHEDULER_TTL_MS`). `GET /deployment/scheduler` (deployment administrators: the admin
+or MCP token; anyone else `403`) and the `scheduler_status` MCP tool return the detail:
+`{ scheduler, lastTickAt?, staleAfterSeconds, jobs: [{ job, lastRunAt, lastSuccessAt?, lastErrorAt?, lastError? }] }`,
+one job per sweep (`outbox-relay`, `scheduled-actions`, `event-history-prune`, `secrets-reseal`,
+`bulk-resume`, `environment-purge-resume`, `version-archive`, `agent-schedules`), the error
+redacted and at most 500 characters.
 
 ---
 

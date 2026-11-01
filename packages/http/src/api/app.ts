@@ -1,7 +1,12 @@
 import { createRemoteFetcher } from '@contentworker/adapters/http-effects';
 import { structuredImportSources } from '@contentworker/adapters/import-structured';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
-import type { AppContext, RagDeps } from '@contentworker/application';
+import {
+  type AppContext,
+  type RagDeps,
+  type SchedulerState,
+  schedulerState,
+} from '@contentworker/application';
 import { type ApiConfig, mountsRole } from '@contentworker/platform/config';
 import type { AIProvider, BlobStore, EventBus } from '@contentworker/ports';
 import { Hono } from 'hono';
@@ -25,6 +30,9 @@ import { deliveryRoutes } from './routes/delivery';
 import { managementRoutes } from './routes/management';
 import { previewRoutes } from './routes/preview';
 import { teamRoutes } from './routes/team';
+
+/** How long one isolate reuses the scheduler state it read for `/health`. */
+export const HEALTH_SCHEDULER_TTL_MS = 30_000;
 
 /** A bus that never emits — the Live Content API then yields only keepalives. */
 const noopBus: EventBus = {
@@ -105,8 +113,21 @@ export function createApp(
     }),
   );
 
-  app.get('/health', doc('System', 'Liveness probe', { ok: health }), (c) =>
-    c.json({ status: 'ok' }),
+  // The probe also says whether the engine's cron is ticking (`scheduler`), and only that: it is
+  // public, so it names no job and no error (GET /deployment/scheduler has those). The answer is
+  // kept for HEALTH_SCHEDULER_TTL_MS per isolate, so a probe flood costs one D1 read a window,
+  // and the api stays live (200) whatever the scheduler is doing.
+  let schedulerSeen: { state: SchedulerState; at: number } | undefined;
+  app.get(
+    '/health',
+    doc('System', 'Liveness probe, with whether the engine cron is ticking', { ok: health }),
+    async (c) => {
+      const now = ctx.clock.now().getTime();
+      if (!schedulerSeen || now - schedulerSeen.at >= HEALTH_SCHEDULER_TTL_MS) {
+        schedulerSeen = { state: await schedulerState(ctx), at: now };
+      }
+      return c.json({ status: 'ok' as const, scheduler: schedulerSeen.state });
+    },
   );
   app.get(
     '/ready',

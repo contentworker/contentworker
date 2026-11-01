@@ -90,6 +90,7 @@ import type {
   ReleaseRepo,
   RoleRepo,
   ScheduledActionRepo,
+  SchedulerJobRepo,
   ScopedAgentSchedule,
   ScopedScheduledAction,
   SpaceConfig,
@@ -2637,6 +2638,57 @@ function makeDeploymentSettingsRepo(x: Exec): DeploymentSettingsRepo {
   };
 }
 
+function makeSchedulerJobRepo(x: Exec): SchedulerJobRepo {
+  const db = x.db;
+  const t = schema.schedulerJobs;
+  const iso = (d: Date | null) => (d ? d.toISOString() : undefined);
+  return {
+    async record(runs) {
+      // The merge happens in SQL, so the cron never reads before it writes: a success keeps the
+      // last error, a failure keeps the last success, and an older run never moves a timestamp
+      // back (`excluded.x > t.x` is NULL, so false, when the run didn't set x).
+      const newer = (col: typeof t.lastRunAt | typeof t.lastSuccessAt | typeof t.lastErrorAt) =>
+        sql`CASE WHEN excluded.${sql.identifier(col.name)} > coalesce(${col}, 0) THEN excluded.${sql.identifier(col.name)} ELSE ${col} END`;
+      const errorWins = sql`excluded.${sql.identifier(t.lastErrorAt.name)} > coalesce(${t.lastErrorAt}, 0)`;
+      await writeAll(
+        x,
+        insertChunks(t, runs, (chunk) =>
+          db
+            .insert(t)
+            .values(
+              chunk.map((r) => ({
+                job: r.job,
+                lastRunAt: new Date(r.at),
+                lastSuccessAt: r.error === undefined ? new Date(r.at) : null,
+                lastErrorAt: r.error === undefined ? null : new Date(r.at),
+                lastError: r.error ?? null,
+              })),
+            )
+            .onConflictDoUpdate({
+              target: t.job,
+              set: {
+                lastRunAt: newer(t.lastRunAt),
+                lastSuccessAt: newer(t.lastSuccessAt),
+                lastErrorAt: newer(t.lastErrorAt),
+                lastError: sql`CASE WHEN ${errorWins} THEN excluded.${sql.identifier(t.lastError.name)} ELSE ${t.lastError} END`,
+              },
+            }),
+        ),
+      );
+    },
+    async list() {
+      const rows = await db.select().from(t).orderBy(asc(t.job));
+      return rows.map((r) => ({
+        job: r.job,
+        lastRunAt: r.lastRunAt.toISOString(),
+        ...(r.lastSuccessAt ? { lastSuccessAt: iso(r.lastSuccessAt) } : {}),
+        ...(r.lastErrorAt ? { lastErrorAt: iso(r.lastErrorAt) } : {}),
+        ...(r.lastError !== null ? { lastError: r.lastError } : {}),
+      }));
+    },
+  };
+}
+
 function makePreviewTokenRepo(x: Exec): PreviewTokenRepo {
   const db = x.db;
   return {
@@ -4803,6 +4855,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     roles: makeRoleRepo(x),
     members: makeMemberRepo(x),
     settings: makeDeploymentSettingsRepo(x),
+    schedulerJobs: makeSchedulerJobRepo(x),
     agentRuns: makeAgentRunRepo(x),
     audit: makeAuditRepo(x),
     aiActions: makeAiActionRepo(x),

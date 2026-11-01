@@ -102,6 +102,8 @@ export interface ContentStore {
   readonly roles: RoleRepo;
   readonly members: MemberRepo;
   readonly settings: DeploymentSettingsRepo;
+  /** The engine cron's heartbeat (deployment-wide). */
+  readonly schedulerJobs: SchedulerJobRepo;
   readonly agentRuns: AgentRunRepo;
   readonly releases: ReleaseRepo;
   readonly promotions: PromotionRepo;
@@ -796,6 +798,41 @@ export interface DeploymentSettingsRepo {
    * whether the write happened, so two racing writers can't both win.
    */
   put(key: string, value: unknown, expectedVersion: number | null): Promise<boolean>;
+}
+
+/** One cron job's outcome on one tick, as the engine records it. */
+export interface SchedulerJobRun {
+  /** The sweep's name (`outbox-relay`, `scheduled-actions`, …); `tick` is the cron tick itself. */
+  readonly job: string;
+  /** When the job finished (ISO 8601). */
+  readonly at: string;
+  /** Why it failed, already redacted and bounded; absent when it succeeded. */
+  readonly error?: string;
+}
+
+/** What the store keeps about one cron job: when it last ran, last succeeded and last failed. */
+export interface SchedulerJobStatus {
+  readonly job: string;
+  readonly lastRunAt: string;
+  readonly lastSuccessAt?: string;
+  readonly lastErrorAt?: string;
+  readonly lastError?: string;
+}
+
+/**
+ * The engine cron's heartbeat, one row per job. Deployment-wide, not space-scoped: the cron
+ * sweeps every space at once. Written once a tick by the cron only (one batch a minute, never on a
+ * request path) and read by the health probe and the admin's scheduler status.
+ */
+export interface SchedulerJobRepo {
+  /**
+   * Merges each run into its job's row. A success keeps the job's last error (and a failure its
+   * last success), and a run older than what the row holds never moves a timestamp back, so a
+   * slow tick finishing after the next one, or a retried write, leaves the newer outcome.
+   */
+  record(runs: readonly SchedulerJobRun[]): Promise<void>;
+  /** Every job's row, by name. */
+  list(): Promise<SchedulerJobStatus[]>;
 }
 
 /** The transactional view of the store handed to `withTransaction`. */

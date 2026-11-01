@@ -48,7 +48,7 @@ environments its token can reach.
 
 ## Tools
 
-There are 154 in all; your client lists every tool with its description and input schema when it
+There are 155 in all; your client lists every tool with its description and input schema when it
 connects. Each tool checks the token's scopes and role grants before it runs, and writes go
 through the same validation, versioning and events as a person's.
 
@@ -70,6 +70,7 @@ through the same validation, versioning and events as a person's.
 | Functions | `functions_list`, `function_create`, `function_delete` |
 | App extensions | `app_extensions_list`, `app_extension_create`, `app_extension_delete` |
 | Audit | `audit_log_list` |
+| Scheduler | `scheduler_status` (workspace admins: whether the engine's cron is ticking, and each sweep's last success and error) |
 | Search | `content_search`, `content_semantic_search`, `content_related`, `content_duplicates`, `content_reindex_embeddings`, `search_index_health` |
 | OAuth connections | `oauth_connections_list`, `oauth_connection_revoke` |
 | Docs | `docs_list`, `docs_read`, `docs_search` |

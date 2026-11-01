@@ -84,6 +84,7 @@ import {
   getRelease,
   getReverseReferences,
   getRole,
+  getSchedulerStatus,
   getSpaceConfig,
   getVersion,
   getWorkflow,
@@ -418,6 +419,21 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       if (principal.spaceId !== '*') throw new ForbiddenError('Deployment administrators only');
       return c.json(await revokeEverythingFor(ctx, c.req.param('subject')));
     },
+  );
+
+  // --- scheduler (deployment-wide) ---------------------------------------
+  app.get(
+    '/deployment/scheduler',
+    doc('System', 'Report the engine cron and each sweep', {
+      ok: docs.schedulerStatus,
+      description:
+        'Whether the engine cron is ticking (`stale` once its last tick is more than ' +
+        '`staleAfterSeconds` old), and for each sweep it runs (outbox relay, scheduled actions, ' +
+        'retention, reseal, bulk and purge recovery, version archive, agent schedules) when it ' +
+        'last ran, last succeeded and last failed, with the redacted error. The public ' +
+        '`/health` says only `scheduler: ok|stale`. Deployment administrators only.',
+    }),
+    async (c) => c.json(await getSchedulerStatus(ctx, c.get('principal'))),
   );
 
   /** Lightweight principal probe for admin connection UI and SSO sessions. */

@@ -8,11 +8,17 @@ import { parse } from 'jsonc-parser';
 import { deriveAssistantKey } from './derive-assistant-key.ts';
 import {
   APPS,
+  bindingNames,
+  doctor,
+  doctorHealth,
+  ENGINE_CRON,
+  healthFinding,
   hosts,
   keysProblem,
   loadDeployments,
   matrix,
   names,
+  REQUIRED_BINDINGS,
   renderApi,
   renderDelivery,
   renderEngine,
@@ -269,4 +275,129 @@ test('`secrets` derives the assistant’s pair from PRINCIPAL_KEY and its previo
   const webOut = join(mkdtempSync(join(tmpdir(), 'fleet-secrets-')), 'web.json');
   execFileSync(process.execPath, ['scripts/fleet.ts', 'secrets', 'web', webOut], { env });
   assert.ok(!('ASSISTANT_PRINCIPAL_KEY' in JSON.parse(readFileSync(webOut, 'utf8'))));
+});
+
+// --- doctor ---
+
+const bases = () =>
+  Object.fromEntries(APPS.map((app) => [app, base(app)])) as Parameters<typeof doctor>[1];
+const errors = (findings: ReturnType<typeof doctor>) =>
+  findings.filter((f) => f.level === 'error').map((f) => `${f.app}: ${f.message}`);
+
+test('doctor passes a provisioned deployment rendered from the checked-in configs', () => {
+  assert.deepEqual(errors(doctor(acme, bases())), []);
+  for (const d of loadDeployments().filter((x) => x.d1Id && x.kvId))
+    assert.deepEqual(errors(doctor(d, bases())), [], d.id);
+});
+
+test('doctor requires every app’s bindings, and the template holds them', () => {
+  for (const app of APPS) {
+    const have = bindingNames(base(app));
+    for (const b of REQUIRED_BINDINGS[app]) assert.ok(have.has(b), `${app} lacks ${b}`);
+  }
+  const b = bases();
+  b.api.kv_namespaces = [];
+  b.delivery.durable_objects.bindings = b.delivery.durable_objects.bindings.filter(
+    (x: { name: string }) => x.name !== 'SEARCH',
+  );
+  assert.deepEqual(errors(doctor(acme, b)), [
+    'api: missing bindings: KV_CACHE',
+    'delivery: missing bindings: SEARCH',
+  ]);
+});
+
+test('doctor refuses an engine with no per-minute cron or a lost queue consumer', () => {
+  const b = bases();
+  b.engine.triggers = { crons: ['*/5 * * * *'] };
+  b.engine.queues.consumers = b.engine.queues.consumers.filter(
+    (q: { queue: string }) => q.queue !== 'contentworker-bulk',
+  );
+  const found = errors(doctor(acme, b));
+  assert.ok(
+    found.some((e) => e.startsWith('engine: no "* * * * *" cron')),
+    found.join('\n'),
+  );
+  assert.ok(found.includes('engine: consumes no contentworker-bulk-acme'), found.join('\n'));
+  assert.equal(ENGINE_CRON, '* * * * *');
+});
+
+test('doctor checks cross-script Durable Object and Workflow bindings against the engine', () => {
+  const b = bases();
+  // A class the engine never defined, and a Workflow it doesn't run.
+  b.delivery.durable_objects.bindings.push({
+    name: 'GHOST',
+    class_name: 'GhostDO',
+    script_name: 'contentworker-engine',
+  });
+  b.api.workflows.push({
+    binding: 'PUBLISH_WF',
+    name: 'contentworker-publish',
+    class_name: 'PublishWorkflow',
+    script_name: 'contentworker-engine',
+  });
+  // A binding that forgot it lives in the engine.
+  b.api.durable_objects.bindings[0].script_name = undefined;
+  assert.deepEqual(errors(doctor(acme, b)), [
+    'api: Durable Object LIVE_HUB binds itself, not contentworker-engine-acme',
+    'api: Workflow PUBLISH_WF: contentworker-engine-acme runs no contentworker-publish-acme (PublishWorkflow)',
+    'delivery: Durable Object GHOST: contentworker-engine-acme defines no class GhostDO',
+  ]);
+});
+
+test('doctor reports an unprovisioned deployment, a secret declared as a var, and SSO’s secret', () => {
+  const raw = toDeployment({ id: 'fresh', ring: 'staging', slot: 9 });
+  assert.ok(errors(doctor(raw, bases())).every((e) => e.includes('run scripts/provision.sh')));
+  const b = bases();
+  b.api.vars.ADMIN_TOKEN = 'oops';
+  assert.deepEqual(errors(doctor(acme, b)), ['api: secrets declared as plain vars: ADMIN_TOKEN']);
+  const sso = toDeployment({
+    ...{ id: 'acme', ring: 'canary', slot: 2, d1Id: acme.d1Id, kvId: acme.kvId },
+    sso: { issuer: 'https://idp.example', clientId: 'cw' },
+  });
+  assert.ok(
+    doctor(sso, bases()).some(
+      (f) => f.level === 'warn' && f.message.includes('OIDC_CLIENT_SECRET'),
+    ),
+  );
+});
+
+test('doctor reads the scheduler from the api’s /health, without the network', async () => {
+  const seen: string[] = [];
+  const fake = (status: number, body: unknown) =>
+    (async (url: string | URL | Request) => {
+      seen.push(String(url));
+      return new Response(JSON.stringify(body), { status });
+    }) as typeof fetch;
+
+  assert.equal(
+    (await doctorHealth(acme, fake(200, { status: 'ok', scheduler: 'ok' }))).level,
+    'ok',
+  );
+  assert.equal(seen[0], 'https://api.acme.contentworker.app/health');
+  const stale = await doctorHealth(
+    acme,
+    fake(200, { status: 'ok', scheduler: 'stale' }),
+    'http://localhost:8787/',
+  );
+  assert.equal(stale.level, 'error');
+  assert.match(stale.message, /scheduler stale/);
+  assert.equal(seen[1], 'http://localhost:8787/health');
+
+  const down = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+  assert.equal((await doctorHealth(acme, down)).level, 'error');
+  assert.equal(healthFinding(503, { status: 'ok' }, 'u').level, 'error');
+  assert.equal(healthFinding(200, { status: 'ok', scheduler: 'unknown' }, 'u').level, 'warn');
+  assert.equal(healthFinding(200, { status: 'ok' }, 'u').level, 'warn');
+});
+
+test('`doctor --offline` checks the checked-in deployment and asks nothing of the network', () => {
+  const out = execFileSync(
+    process.execPath,
+    [join(import.meta.dirname, 'fleet.ts'), 'doctor', 'contentworker', '--offline'],
+    { encoding: 'utf8' },
+  );
+  assert.match(out, /cron "\* \* \* \* \*"/);
+  assert.doesNotMatch(out, /ERROR|scheduler (ticking|stale|unknown)|unreachable/);
 });

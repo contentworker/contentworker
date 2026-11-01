@@ -483,6 +483,16 @@ export const deploymentSettings = sqliteTable('deployment_settings', {
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
 });
 
+// The engine cron's heartbeat: when each sweep last ran, last succeeded and last failed (0012).
+// Written once a tick by the cron only; `job = 'tick'` is the tick itself.
+export const schedulerJobs = sqliteTable('scheduler_jobs', {
+  job: text('job').primaryKey(),
+  lastRunAt: integer('last_run_at', { mode: 'timestamp_ms' }).notNull(),
+  lastSuccessAt: integer('last_success_at', { mode: 'timestamp_ms' }),
+  lastErrorAt: integer('last_error_at', { mode: 'timestamp_ms' }),
+  lastError: text('last_error'),
+});
+
 export const agentRuns = sqliteTable(
   'agent_runs',
   {

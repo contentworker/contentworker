@@ -150,7 +150,11 @@ bind them by `script_name`) and handles:
 - **Cron** (`* * * * *`): due scheduled actions, the outbox relay sweep, bulk-job stall recovery,
   the restart of deleted-environment purges that stopped progressing, agent schedules
   (`AGENTS_SCHEDULES=true`), retention at the top of each hour, and the daily
-  secret reseal at 03:30 UTC.
+  secret reseal at 03:30 UTC. Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
+  failure is logged and recorded, and never skips the rest of the tick. At the end of the tick one
+  D1 batch writes the heartbeat (`scheduler_jobs`: each sweep's last run, success and redacted
+  error, plus the `tick` row); a failed write is logged and the next tick writes again. The api's
+  `/health` reports `scheduler: stale` once the `tick` row is more than five minutes old.
 
 | Durable Object   | Keyed by                                             | Purpose                                                             |
 | ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |

@@ -41,6 +41,7 @@ node scripts/fleet.ts names <id>           # resource names as shell variables
 node scripts/fleet.ts set-d1 <id> <uuid>   # record the D1 id in the registry
 node scripts/fleet.ts set-kv <id> <kv id>  # record the KV namespace id
 node scripts/fleet.ts status               # /health/deep of every deployment
+node scripts/fleet.ts doctor <id>          # check one deployment's configs, then its scheduler
 node scripts/fleet.ts demos                # provisioned demo deployments (those with a D1 id), as JSON
 ```
 
@@ -49,6 +50,16 @@ A rendered config is the app's `wrangler.jsonc` with the deployment's names, ids
 clients is served on the admin host, so its consent screen can use the person's web sign-in) and
 `MEDIA_BASE_URL=https://api.<domain>`, the AI Gateway id with `AI_GATEWAY_LOGS` on every Worker
 that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and Email Sending on the engine.
+
+`doctor <id>` is read-only. It renders every app for the deployment and checks that each has the
+bindings its code reads (`REQUIRED_BINDINGS` in `scripts/fleet.ts`), the D1 and KV ids are the
+deployment's, the engine has its `* * * * *` cron and consumes its queues, every Durable Object
+and Workflow bound by `script_name` names this deployment's engine and a class or Workflow it
+defines, each public Worker has its custom-domain route, and no secret is declared as a plain var;
+it lists the secrets the deployment's GitHub environment must hold. Then, for a provisioned
+deployment CI deploys (or with `--url <api base>`, e.g. `http://localhost:8787`), it reads
+`https://api.<domain>/health` and fails on `scheduler: stale`. `--offline` skips the fetch. It
+exits `1` on any error.
 
 ## Provisioning a deployment
 
