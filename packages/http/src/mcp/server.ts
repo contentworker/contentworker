@@ -68,6 +68,7 @@ import {
   getPreviewEntry,
   getPromotion,
   getRelease,
+  getSchedulerStatus,
   getVersion,
   getWorkflowRun,
   getWorkflowRunTimeline,
@@ -760,6 +761,20 @@ export function buildServer(
         }),
       );
     },
+  );
+
+  server.registerTool(
+    'scheduler_status',
+    {
+      description:
+        "Report whether the engine's per-minute cron is ticking (`stale` once its last tick is " +
+        'older than `staleAfterSeconds`) and, for each sweep it runs (outbox relay, scheduled ' +
+        'actions, retention, reseal, bulk and purge recovery, version archive, agent schedules), ' +
+        'when it last ran, last succeeded and last failed, with the redacted error. Read-only. ' +
+        'Deployment administrators only (the admin or MCP token), like GET /deployment/scheduler.',
+      inputSchema: toolSchema('scheduler_status', () => z.object({})),
+    },
+    async () => ok(await getSchedulerStatus(ctx, principal)),
   );
 
   server.registerTool(

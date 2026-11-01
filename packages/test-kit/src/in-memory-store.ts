@@ -93,6 +93,8 @@ import type {
   ReleaseRepo,
   RoleRepo,
   ScheduledActionRepo,
+  SchedulerJobRepo,
+  SchedulerJobStatus,
   ScopedScheduledAction,
   SpaceConfig,
   SpaceRepo,
@@ -1204,6 +1206,38 @@ export class InMemoryContentStore implements ContentStore {
       this.settingData.set(key, { value, version: (current?.version ?? 0) + 1 });
       return true;
     },
+  };
+
+  private readonly schedulerJobData = new Map<string, SchedulerJobStatus>();
+
+  readonly schedulerJobs: SchedulerJobRepo = {
+    record: async (runs) => {
+      for (const run of runs) {
+        const row = this.schedulerJobData.get(run.job);
+        const later = (a: string | undefined, b: string) => (a !== undefined && a >= b ? a : b);
+        const next: SchedulerJobStatus = {
+          job: run.job,
+          lastRunAt: later(row?.lastRunAt, run.at),
+          ...(row?.lastSuccessAt ? { lastSuccessAt: row.lastSuccessAt } : {}),
+          ...(row?.lastErrorAt ? { lastErrorAt: row.lastErrorAt, lastError: row.lastError } : {}),
+        };
+        if (run.error === undefined) {
+          this.schedulerJobData.set(run.job, {
+            ...next,
+            lastSuccessAt: later(row?.lastSuccessAt, run.at),
+          });
+        } else if (row?.lastErrorAt === undefined || run.at > row.lastErrorAt) {
+          this.schedulerJobData.set(run.job, {
+            ...next,
+            lastErrorAt: run.at,
+            lastError: run.error,
+          });
+        } else {
+          this.schedulerJobData.set(run.job, next);
+        }
+      }
+    },
+    list: async () => [...this.schedulerJobData.values()].sort((a, b) => (a.job < b.job ? -1 : 1)),
   };
 
   private readonly agentRunData = new Map<string, AgentRunRecord[]>();

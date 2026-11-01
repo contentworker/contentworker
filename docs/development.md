@@ -238,6 +238,12 @@ the indexes `asset_published_by_time` (publish order, keyset paging) and
 for snapshots still holding the column defaults (`kind` `'other'` or no `r2_key`) whose asset row
 knows better, which the pre-0009 api wrote while a deployment rolled out.
 
+`0012_scheduler_jobs.sql` adds `scheduler_jobs` (`job` primary key, `last_run_at`,
+`last_success_at`, `last_error_at`, `last_error`): the engine cron's heartbeat, one row per sweep
+plus `tick`, written in one batch at the end of each tick and nowhere else. Not space-scoped. The
+upsert merges in SQL (a success keeps the last error, and an older run never moves a timestamp
+back), so the cron never reads before it writes.
+
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
 `archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)

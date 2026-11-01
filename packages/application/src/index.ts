@@ -55,6 +55,7 @@ export * from './rag';
 export * from './releases';
 export * from './render';
 export * from './roles';
+export * from './scheduler-health';
 export * from './scheduling';
 export * from './search-index';
 export * from './secret-sealer';
