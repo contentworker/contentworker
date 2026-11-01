@@ -372,7 +372,6 @@ export interface WorkflowTaskQuery {
   readonly limit?: number;
 }
 
-/** Approvals, event waits and agent reviews a run holds open. */
 /**
  * How many pending items one content type holds, for the Approvals count. `contentTypeApiId` is
  * null for an agent review whose entry no longer exists.
@@ -382,6 +381,7 @@ export interface PendingCount {
   readonly count: number;
 }
 
+/** Approvals, event waits and agent reviews a run holds open. */
 export interface WorkflowTaskRepo {
   /** False (and nothing written) when the run already has a task for `eventType`. */
   create(scope: Scope, task: WorkflowTask): Promise<boolean>;
@@ -1115,6 +1115,12 @@ export interface EntryRepo {
    * the whole id set (bulk publish). Missing ids are absent; order unspecified.
    */
   getMany(scope: Scope, ids: readonly string[]): Promise<EntryWithFields[]>;
+  /**
+   * Each existing entry's content type, by id: one narrow read with no fields or bodies (it
+   * never touches R2), for callers that only need to know what type an entry is. Missing ids
+   * are absent.
+   */
+  contentTypesOf(scope: Scope, ids: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /** Lists draft/current entries (the Preview read path), newest-affected first. */
   list(scope: Scope, query: EntryQuery): Promise<EntryWithFields[]>;
   /**

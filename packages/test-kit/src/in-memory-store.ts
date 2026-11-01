@@ -350,6 +350,13 @@ export class InMemoryContentStore implements ContentStore {
         const current = versions.find((v) => v.version === entry.currentVersion);
         return [{ entry, fields: current?.fields ?? {} }];
       }),
+    contentTypesOf: async (scope, ids) =>
+      new Map(
+        ids.flatMap((id) => {
+          const entry = this.entryData.get(`${scopeKey(scope)}::${id}`);
+          return entry ? [[id, entry.contentTypeApiId] as const] : [];
+        }),
+      ),
     list: async (scope, query: EntryQuery) => {
       const prefix = `${scopeKey(scope)}::`;
       let entries = [...this.entryData.entries()]

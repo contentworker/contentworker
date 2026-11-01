@@ -703,6 +703,18 @@ describe('D1 store (contract)', () => {
     const elsewhere = { spaceId, environmentId: 'count-elsewhere' };
     expect(await store.workflowTasks.countPending(elsewhere)).toEqual([]);
     expect(await store.agentReviews.countPending(elsewhere)).toEqual([]);
+
+    // The narrow type lookup listAgentReviews filters with: past one chunk of bound parameters,
+    // duplicates folded, missing ids absent, scoped.
+    const ids = [
+      entry.id,
+      entry.id,
+      'count-gone',
+      ...Array.from({ length: 150 }, (_, n) => `x${n}`),
+    ];
+    const types = await store.entries.contentTypesOf(scope, ids);
+    expect([...types]).toEqual([[entry.id, 'article']]);
+    expect((await store.entries.contentTypesOf(elsewhere, [entry.id])).size).toBe(0);
   });
 
   it('round-trips the functions repo', async () => {

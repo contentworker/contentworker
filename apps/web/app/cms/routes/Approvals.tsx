@@ -3,7 +3,7 @@ import { Button } from '@contentworker/ui/button';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { Textarea } from '@contentworker/ui/textarea';
 import { Bot, Check, Stamp, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { type EntryRef, entryPath } from '~/cms/components/dashboard/entry-titles';
@@ -33,6 +33,12 @@ import { useToast } from '../lib/toast';
 export function Approvals() {
   const tasks = usePendingWorkflowTasks();
   const reviews = usePendingAgentReviews();
+  // The shell's count is its own query: whenever these lists refresh, it does too, so the
+  // badge never disagrees with the inbox it opens.
+  const invalidateCount = useInvalidate();
+  useEffect(() => {
+    if (tasks.dataUpdatedAt || reviews.dataUpdatedAt) void invalidateCount(APPROVALS_COUNT_KEY);
+  }, [tasks.dataUpdatedAt, reviews.dataUpdatedAt, invalidateCount]);
   const types = useContentTypesQuery().data;
   const taskItems = useMemo(
     () =>

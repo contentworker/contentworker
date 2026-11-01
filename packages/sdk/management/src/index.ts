@@ -41,7 +41,6 @@ export interface ContentType {
   readonly status: ContentTypeStatus;
 }
 
-/** How many entries a content type holds, by status; `total` is the live ones (not the trash). */
 /** What waits on a human decision in the environment (`GET …/approvals/count`). */
 export interface PendingApprovalsCount {
   /** Workflow steps paused for a person (approvals, reviews, event waits). */
@@ -51,6 +50,7 @@ export interface PendingApprovalsCount {
   readonly total: number;
 }
 
+/** How many entries a content type holds, by status; `total` is the live ones (not the trash). */
 export interface ContentTypeEntryCounts {
   readonly contentType: string;
   readonly total: number;

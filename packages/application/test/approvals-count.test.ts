@@ -167,19 +167,22 @@ describe('listAgentReviews for a role-bound caller', () => {
     await review(scope, 'deleted-entry');
     const get = vi.spyOn(store.entries, 'get');
     const getMany = vi.spyOn(store.entries, 'getMany');
+    const typesOf = vi.spyOn(store.entries, 'contentTypesOf');
     const items = await listAgentReviews(ctx, scope, { status: 'pending' }, postsOnly);
-    expect(getMany).toHaveBeenCalledTimes(1);
+    // One narrow read of the entries' types: no per-review lookups, no field bodies.
+    expect(typesOf).toHaveBeenCalledTimes(1);
     expect(get).not.toHaveBeenCalled();
+    expect(getMany).not.toHaveBeenCalled();
     expect(items.map((r) => r.entryId)).toEqual([post]);
     expect(items[0]?.proposed).toEqual({ title: { 'en-US': 'Better' } });
   });
 
   it('leaves an unrestricted caller’s list as the store returns it', async () => {
     await review(scope, 'deleted-entry');
-    const getMany = vi.spyOn(store.entries, 'getMany');
+    const typesOf = vi.spyOn(store.entries, 'contentTypesOf');
     const items = await listAgentReviews(ctx, scope, {}, unrestricted);
     expect(items).toHaveLength(1);
     expect(items[0]?.proposed.summary).toEqual({ 'en-US': 'Secret' });
-    expect(getMany).not.toHaveBeenCalled();
+    expect(typesOf).not.toHaveBeenCalled();
   });
 });

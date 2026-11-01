@@ -423,6 +423,20 @@ function makeEntryRepo(
       );
       return toEntriesWithFields(rows);
     },
+    async contentTypesOf(scope, ids) {
+      const e = schema.entries;
+      const rows = await selectChunked(
+        [...new Set(ids)],
+        (chunk) =>
+          db
+            .select({ id: e.id, contentTypeApiId: e.contentTypeApiId })
+            .from(e)
+            .where(and(scopeFilter(e, scope), inArray(e.id, chunk))),
+        1,
+        RESERVED,
+      );
+      return new Map(rows.map((r) => [r.id, r.contentTypeApiId]));
+    },
     async list(scope, query: EntryQuery) {
       const advanced = isAdvancedQuery(query);
       const conditions = [scopeFilter(schema.entries, scope)];
