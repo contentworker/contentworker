@@ -59,12 +59,15 @@ export function partsLine(p: PartsProgress): string {
  * The files of a drop or a pick, each with where its upload stands, and the batch's progress. A
  * large file goes up in parts: its row shows the bytes stored and the parts done in a progress bar
  * of its own, says when a part is retrying, and can be cancelled (as can a file still waiting).
+ * A batch dropped on an open collection says it goes into that collection.
  * The summary is a polite live region, so a screen reader hears the batch move and finish.
  */
 export function AssetUploadList(props: {
   items: readonly UploadItem[];
   onDismiss: () => void;
   onCancel?: (id: string) => void;
+  /** The collection the batch goes into (uploaded at the library root, then added to it). */
+  into?: string;
 }) {
   const { items } = props;
   if (items.length === 0) return null;
@@ -88,6 +91,11 @@ export function AssetUploadList(props: {
           </Button>
         )}
       </div>
+      {props.into && (
+        <p className="text-muted-foreground text-xs">
+          Into the collection “{props.into}”: filed at the library root, then added to it.
+        </p>
+      )}
       <Progress
         value={Math.round((ended / items.length) * 100)}
         aria-label="Upload progress"

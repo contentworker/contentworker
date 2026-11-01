@@ -8,6 +8,7 @@ import {
   createManagementClient,
   currentBookmark,
   resetBookmark,
+  sameOriginUpload,
   UploadPartError,
 } from '~/cms/lib/management';
 
@@ -651,5 +652,34 @@ describe('collections, share links, multipart uploads and zips', () => {
     ]);
     expect(body(calls[0])).toEqual({ assetIds: ['a1', 'a2'] });
     expect(body(calls[1])).toEqual({ collectionId: 'c1', name: 'Launch' });
+  });
+
+  it('PUTs a signed /media/ URL on the api’s host to the same path on the admin’s origin', async () => {
+    const { fn, calls } = fakeFetch(
+      () => new Response(null, { status: 200, headers: { etag: '"p1"' } }),
+    );
+    const client = createManagementClient(conn, fn);
+    await client.putUploadPart(
+      'https://api.example/media/s1/main/a1/v1/film.mov?uploadId=u1&part=1&sig=abc',
+      new Blob(['x']),
+    );
+    expect(calls[0]?.url).toBe('/media/s1/main/a1/v1/film.mov?uploadId=u1&part=1&sig=abc');
+  });
+
+  it('PUTs a single upload’s signed /media/ URL same-origin too', async () => {
+    const { fn, calls } = fakeFetch((url) =>
+      url.endsWith('/assets')
+        ? { asset: { id: 'a1' }, upload: { url: 'https://api.example/media/x?sig=1', headers: {} } }
+        : { id: 'a1' },
+    );
+    await createManagementClient(conn, fn).uploadAsset(new File(['x'], 'x.png'));
+    expect(calls[1]?.url).toBe('/media/x?sig=1');
+  });
+
+  it('leaves any URL that isn’t the api’s /media/ route alone', () => {
+    expect(sameOriginUpload('https://upload.videodelivery.net/abc')).toBe(
+      'https://upload.videodelivery.net/abc',
+    );
+    expect(sameOriginUpload('/media/a?b=1')).toBe('/media/a?b=1');
   });
 });

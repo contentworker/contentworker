@@ -1029,6 +1029,18 @@ export type AssetZipInput = (
  */
 export class UploadPartError extends ApiError {}
 
+/**
+ * A signed upload URL as the admin PUTs it: a `/media/…` URL (absolute on the api's host in a
+ * deployment, `MEDIA_BASE_URL`) becomes its same-origin path, which the web Worker's gateway
+ * forwards to the api. The api sends no CORS headers, so a cross-origin PUT's ETag couldn't be
+ * read; the signature covers the path and query, not the host, so the two are the same request.
+ * Any other URL (a video host's) is left alone.
+ */
+export function sameOriginUpload(url: string): string {
+  const u = new URL(url, 'http://same-origin.invalid');
+  return u.pathname.startsWith('/media/') ? `${u.pathname}${u.search}` : url;
+}
+
 /** The query string for an {@link AssetListQuery}, without the empty parts. */
 export function assetQueryParams(query: AssetListQuery | AssetSearchQuery): URLSearchParams {
   const params = new URLSearchParams();
@@ -1075,9 +1087,14 @@ export function createManagementClient(
     }
     return (res.status === 204 ? undefined : await res.json()) as T;
   }
-  // The bytes go straight to storage on the signed URL the API handed out, not through the API.
+  // The bytes go on the signed URL the API handed out, to the api's /media/ route through the web
+  // Worker (same origin), not through the JSON API.
   async function putFile(upload: { url: string; headers: Record<string, string> }, file: File) {
-    const put = await fetchImpl(upload.url, { method: 'PUT', headers: upload.headers, body: file });
+    const put = await fetchImpl(sameOriginUpload(upload.url), {
+      method: 'PUT',
+      headers: upload.headers,
+      body: file,
+    });
     if (!put.ok) throw new ApiError(put.status, `upload failed: ${put.status}`);
   }
 
@@ -1530,7 +1547,7 @@ export function createManagementClient(
      * it. A failure is an {@link UploadPartError}.
      */
     async putUploadPart(url: string, bytes: Blob, signal?: AbortSignal): Promise<string> {
-      const res = await fetchImpl(url, {
+      const res = await fetchImpl(sameOriginUpload(url), {
         method: 'PUT',
         body: bytes,
         ...(signal ? { signal } : {}),

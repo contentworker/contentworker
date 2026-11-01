@@ -33,9 +33,11 @@ test.beforeEach(async ({ page }) => {
   await useCmsScope(page);
 });
 
-async function scan(page: Page, testInfo: TestInfo) {
+async function scan(page: Page, testInfo: TestInfo, include: readonly string[] = []) {
   await settle(page);
-  const results = await new AxeBuilder({ page }).withTags(WCAG).analyze();
+  let builder = new AxeBuilder({ page }).withTags(WCAG);
+  for (const selector of include) builder = builder.include(selector);
+  const results = await builder.analyze();
   if (results.violations.length > 0) {
     await testInfo.attach('axe-violations.json', {
       body: JSON.stringify(results.violations, null, 2),
@@ -183,7 +185,7 @@ test('an asset collection, its zip and its share dialog have no accessibility vi
   await expect(page.getByRole('region', { name: 'Zip download' })).toBeVisible();
   await scan(page, testInfo);
 
-  await page.getByRole('button', { name: 'Share' }).click();
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: `Share “${name}”` });
   const form = dialog.getByRole('form', { name: 'New share link' });
   await form.getByRole('radio', { name: 'Custom' }).click();
@@ -202,19 +204,55 @@ test('an asset collection, its zip and its share dialog have no accessibility vi
   await page.emulateMedia({ colorScheme: 'light' });
 });
 
+// The collection view at phone width: the collections select, rows whose actions wrap under
+// the name, and the header's actions.
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
+
+  test('an asset collection has no accessibility violations', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const stamp = Date.now();
+    const id = await uploadAssetBytes(request, `a11y-phone-${stamp}.txt`, Buffer.from('x'));
+    const name = `A11y phone ${stamp}`;
+    const made = await api(request, 'POST', `${MGMT}/asset-collections`, { name });
+    expect(made.ok(), await made.text()).toBe(true);
+    const collection = (await made.json()) as { id: string };
+    const added = await api(request, 'POST', `${MGMT}/asset-collections/${collection.id}/assets`, {
+      assetIds: [id],
+    });
+    expect(added.ok(), await added.text()).toBe(true);
+    await openCms(page, '/assets');
+    await page
+      .getByRole('navigation', { name: 'Collections' })
+      .getByRole('combobox', { name: 'Collection' })
+      .selectOption({ label: name });
+    await expect(
+      page.getByRole('list', { name: `Assets in “${name}”, in order` }).getByRole('listitem'),
+    ).toHaveCount(1);
+    // The collection's own surfaces: the shell's tab bar has a finding of its own (its Approvals
+    // link's name, "Approvals, 1 waiting"), outside this change, reported rather than hidden here.
+    await scan(page, testInfo, ['nav[aria-label="Collections"]', 'section[aria-labelledby]']);
+  });
+});
+
 // An unpublished asset's share dialog: the warning in place of the form, over the sheet.
 test('the share dialog for an unpublished asset has no accessibility violations', async ({
   page,
   request,
 }, testInfo) => {
   const name = `a11y-draft-${Date.now()}.txt`;
-  await uploadAssetBytes(request, name, Buffer.from('draft'));
+  await uploadAssetBytes(request, name, Buffer.from(name));
   await openCms(page, '/assets');
   await page
     .getByRole('region', { name: 'Asset library' })
     .getByRole('button', { name: `Open “${name}”` })
     .click();
-  await page.getByRole('dialog', { name }).getByRole('button', { name: 'Share' }).click();
+  await page
+    .getByRole('dialog', { name })
+    .getByRole('button', { name: 'Share', exact: true })
+    .click();
   const dialog = page.getByRole('dialog', { name: `Share “${name}”` });
   await expect(dialog.getByText('Publish it to share it')).toBeVisible();
   await scan(page, testInfo);

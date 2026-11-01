@@ -1,4 +1,9 @@
-import type { Asset, AssetCollection, AssetFolder } from '@contentworker/domain';
+import {
+  type Asset,
+  type AssetCollection,
+  type AssetFolder,
+  MAX_COLLECTION_CHANGE,
+} from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Card } from '@contentworker/ui/card';
@@ -47,7 +52,6 @@ import {
   assetSearchQuery,
   BULK_VERBS,
   bulkSummary,
-  COLLECTION_CHANGE_MAX,
   chunked,
   type FacetChip,
   type FolderSelection,
@@ -168,8 +172,12 @@ export function AssetLibrary(props: { locale: string }) {
   const [collectionId, setCollectionId] = useState<string | null>(null);
   // A collection just made: its heading takes focus when it opens.
   const [createdCollection, setCreatedCollection] = useState<string | null>(null);
-  // A zip of the selection, followed until it is built.
+  // Zips, followed until they are built: the selection's, and a collection's (held here, not in
+  // the collection's view, so a zip started there can still be downloaded after leaving it).
   const zip = useAssetZip();
+  const collectionZip = useAssetZip();
+  // Where the last batch of uploads went, when that wasn't the open folder: a collection.
+  const [uploadInto, setUploadInto] = useState<string | null>(null);
   // Each upload's cancel: a file still waiting is skipped, a multipart upload aborted.
   const uploadControls = useRef(new Map<string, AbortController>());
   const fileRef = useRef<HTMLInputElement>(null);
@@ -341,7 +349,7 @@ export function AssetLibrary(props: { locale: string }) {
     folderId: string | undefined,
     itemId: string,
     signal: AbortSignal,
-  ) => {
+  ): Promise<string> => {
     // Only a multipart upload can be stopped part way; any other is offered Cancel while it waits.
     if (!uploadsInParts(file.size) || file.type.startsWith('video/')) {
       patchUpload(itemId, { cancellable: false });
@@ -352,7 +360,7 @@ export function AssetLibrary(props: { locale: string }) {
         // video upload starts on the host, not with a folder.
         const asset = await client.uploadVideo(file);
         if (folderId) await client.moveAssets([asset.id], folderId);
-        return;
+        return asset.id;
       } catch (e) {
         // 501: no video host bound on this deployment; store it as a plain file.
         if (!(e instanceof ApiError && e.status === 501)) throw e;
@@ -372,9 +380,9 @@ export function AssetLibrary(props: { locale: string }) {
           }),
       });
       await client.publishAsset(asset.id);
-      return;
+      return asset.id;
     }
-    await client.uploadAsset(file, folderId ? { folderId } : {});
+    return (await client.uploadAsset(file, folderId ? { folderId } : {})).id;
   };
 
   const cancelUpload = (id: string) => {
@@ -387,7 +395,12 @@ export function AssetLibrary(props: { locale: string }) {
 
   const upload = async (files: readonly File[]) => {
     if (files.length === 0) return;
-    const folderId = openFolder?.id;
+    // With a collection open, the files land at the library root (the folder tree isn't in view)
+    // and go into the collection once uploaded.
+    const into = collectionId !== null ? openCollection : undefined;
+    const folderId = into ? undefined : openFolder?.id;
+    setUploadInto(into ? into.name : null);
+    const uploaded: string[] = [];
     const batch = files.map((file, i) => ({
       file,
       item: {
@@ -411,7 +424,7 @@ export function AssetLibrary(props: { locale: string }) {
         }
         patchUpload(item.id, { state: 'uploading' });
         try {
-          await uploadOne(file, folderId, item.id, signal);
+          uploaded.push(await uploadOne(file, folderId, item.id, signal));
           patchUpload(item.id, { state: 'done' });
           outcome.set(item.id, { ...item, state: 'done' });
         } catch (e) {
@@ -434,7 +447,28 @@ export function AssetLibrary(props: { locale: string }) {
     const summary = uploadSummary(finished);
     if (finished.some((u) => u.state === 'failed')) toast.error(summary);
     else toast.success(summary);
+    if (into && uploaded.length > 0) await addUploadsTo(into, uploaded);
     await reload();
+  };
+
+  /** Puts what a batch uploaded into the collection that was open, in turns the API takes. */
+  const addUploadsTo = async (into: AssetCollection, ids: readonly string[]) => {
+    try {
+      let added = 0;
+      let skipped = 0;
+      for (const part of chunked(ids, MAX_COLLECTION_CHANGE)) {
+        const r = await client.addToAssetCollection(into.id, part);
+        added += r.added;
+        skipped += r.skipped.length;
+      }
+      toast.success(addedSummary(into.name, { requested: ids.length, added, skipped }));
+    } catch (e) {
+      toast.error(
+        `Uploaded, but not added to “${into.name}”: ${message(e)}. They are at the library root.`,
+      );
+    } finally {
+      void invalidate(['asset-collections'], ['assets', 'collection', into.id]);
+    }
   };
 
   const onDrop = (e: DragEvent) => {
@@ -708,14 +742,14 @@ export function AssetLibrary(props: { locale: string }) {
       return undefined;
     }
   };
-  // Up to COLLECTION_CHANGE_MAX ids a request: a bigger selection goes in turns.
+  // Up to MAX_COLLECTION_CHANGE ids a request: a bigger selection goes in turns.
   const addSelectedTo = async (id: string) => {
     const target = collections.find((c) => c.id === id);
     setBulkBusy(true);
     try {
       let added = 0;
       let skipped = 0;
-      for (const part of chunked(ids, COLLECTION_CHANGE_MAX)) {
+      for (const part of chunked(ids, MAX_COLLECTION_CHANGE)) {
         const r = await client.addToAssetCollection(id, part);
         added += r.added;
         skipped += r.skipped.length;
@@ -998,7 +1032,11 @@ export function AssetLibrary(props: { locale: string }) {
         />
         <Button type="button" size="sm" onClick={pick}>
           <Upload aria-hidden="true" />
-          {openFolder ? `Upload to “${openFolder.name}”` : 'Upload'}
+          {openCollection && collectionId !== null
+            ? `Upload to “${openCollection.name}”`
+            : openFolder
+              ? `Upload to “${openFolder.name}”`
+              : 'Upload'}
         </Button>
       </PageHeader>
 
@@ -1027,6 +1065,7 @@ export function AssetLibrary(props: { locale: string }) {
               items={uploads}
               onDismiss={() => setUploads([])}
               onCancel={cancelUpload}
+              {...(uploadInto ? { into: uploadInto } : {})}
             />
             {openCollection ? (
               <AssetCollectionView
@@ -1040,6 +1079,7 @@ export function AssetLibrary(props: { locale: string }) {
                   showCollection(null);
                   void reloadCollections();
                 }}
+                zip={collectionZip}
               />
             ) : (
               <LoadingStatus>Loading the collection…</LoadingStatus>
@@ -1087,6 +1127,7 @@ export function AssetLibrary(props: { locale: string }) {
               items={uploads}
               onDismiss={() => setUploads([])}
               onCancel={cancelUpload}
+              {...(uploadInto ? { into: uploadInto } : {})}
             />
             {bulkFailures && (
               <Alert variant="destructive">
@@ -1150,6 +1191,14 @@ export function AssetLibrary(props: { locale: string }) {
                 onDismiss={zip.dismiss}
               />
             )}
+            {/* A collection's zip, still followed (and downloadable) back in the library. */}
+            {collectionZip.zip && (
+              <AssetZipProgress
+                zip={collectionZip.zip}
+                onRefresh={() => void collectionZip.refresh()}
+                onDismiss={collectionZip.dismiss}
+              />
+            )}
             <AssetBulkBar
               count={selected.size}
               folders={folders}
@@ -1163,6 +1212,7 @@ export function AssetLibrary(props: { locale: string }) {
               collections={collections}
               onAddToCollection={(id) => void addSelectedTo(id)}
               onZip={() => void zip.start({ assetIds: ids })}
+              zipStarting={zip.starting}
               onClear={() => {
                 setSelected(new Set());
                 setBulkFailures(null);

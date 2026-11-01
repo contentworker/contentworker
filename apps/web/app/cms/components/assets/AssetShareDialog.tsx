@@ -1,4 +1,11 @@
-import type { AssetShareLink, AssetShareTargetType } from '@contentworker/domain';
+import {
+  type AssetShareLink,
+  type AssetShareTargetType,
+  MAX_SHARE_LINK_SECONDS,
+  MAX_SHARE_PASSWORD,
+  MIN_SHARE_LINK_SECONDS,
+  MIN_SHARE_PASSWORD,
+} from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import {
@@ -21,7 +28,6 @@ import { ToneBadge } from '~/cms/components/status';
 import {
   isoToLocalInput,
   SHARE_EXPIRY_CHOICES,
-  SHARE_LINK_MAX_MS,
   type ShareExpiryChoice,
   shareExpiresAt,
   timeUntil,
@@ -169,9 +175,10 @@ export function AssetShareDialog(props: {
     }
   };
 
+  // A field's error is an alert: heard when it appears, wherever focus is (the submit button).
   const issue = (field: 'expiresAt' | 'password') =>
     issues[field] ? (
-      <p id={`${id}-${field}-error`} className="text-destructive text-xs">
+      <p id={`${id}-${field}-error`} role="alert" className="text-destructive text-xs">
         {issues[field]}
       </p>
     ) : null;
@@ -189,6 +196,8 @@ export function AssetShareDialog(props: {
         <Label id={`${id}-expiry`}>Expires after</Label>
         <Segmented
           aria-labelledby={`${id}-expiry`}
+          aria-describedby={issues.expiresAt ? `${id}-expiresAt-error` : undefined}
+          aria-invalid={issues.expiresAt && choice !== 'custom' ? true : undefined}
           value={choice}
           onValueChange={(v) => setChoice(v as ShareExpiryChoice)}
           className="w-full"
@@ -208,8 +217,8 @@ export function AssetShareDialog(props: {
               id={`${id}-custom`}
               type="datetime-local"
               value={custom}
-              min={isoToLocalInput(new Date(now + 5 * 60_000).toISOString())}
-              max={isoToLocalInput(new Date(now + SHARE_LINK_MAX_MS).toISOString())}
+              min={isoToLocalInput(new Date(now + MIN_SHARE_LINK_SECONDS * 1000).toISOString())}
+              max={isoToLocalInput(new Date(now + MAX_SHARE_LINK_SECONDS * 1000).toISOString())}
               onChange={(e) => setCustom(e.target.value)}
               aria-invalid={issues.expiresAt ? true : undefined}
               aria-describedby={`${id}-custom-hint${issues.expiresAt ? ` ${id}-expiresAt-error` : ''}`}
@@ -244,13 +253,15 @@ export function AssetShareDialog(props: {
           type="password"
           autoComplete="new-password"
           value={password}
-          maxLength={256}
+          minLength={MIN_SHARE_PASSWORD}
+          maxLength={MAX_SHARE_PASSWORD}
           onChange={(e) => setPassword(e.target.value)}
           aria-invalid={issues.password ? true : undefined}
           aria-describedby={`${id}-password-hint${issues.password ? ` ${id}-password-error` : ''}`}
         />
         <p id={`${id}-password-hint`} className="text-muted-foreground text-xs">
-          At least 8 characters. Asked for before the page opens; send it separately from the link.
+          At least {MIN_SHARE_PASSWORD} characters. Asked for before the page opens; send it
+          separately from the link.
         </p>
         {issue('password')}
       </div>

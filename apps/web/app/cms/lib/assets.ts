@@ -489,9 +489,6 @@ const PRESET_MS: Record<Exclude<ShareExpiryChoice, 'custom'>, number> = {
   '30d': 30 * DAY_MS,
 };
 
-/** The longest a link may live (the API's bound), for the custom date's `max`. */
-export const SHARE_LINK_MAX_MS = 90 * DAY_MS;
-
 /**
  * The instant a link expires: a preset counted from `now`, or the custom `datetime-local` value
  * on the reader's clock. Null when the custom date is empty or unreadable. Whether it is in range

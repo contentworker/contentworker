@@ -1,4 +1,4 @@
-import type { Asset, AssetCollection } from '@contentworker/domain';
+import { type Asset, type AssetCollection, MAX_COLLECTION_ITEMS } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
@@ -19,7 +19,7 @@ import { type DragEvent, useEffect, useId, useMemo, useRef, useState } from 'rea
 import { AssetPreview } from '~/cms/components/AssetPreview';
 import { CollectionForm } from '~/cms/components/assets/AssetCollectionList';
 import { AssetShareDialog } from '~/cms/components/assets/AssetShareDialog';
-import { AssetZipProgress, useAssetZip } from '~/cms/components/assets/AssetZipProgress';
+import { AssetZipProgress, type AssetZipState } from '~/cms/components/assets/AssetZipProgress';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { EmptyState } from '~/cms/components/page';
@@ -50,6 +50,11 @@ export function AssetCollectionView(props: {
   /** The collection changed (renamed, an asset removed): the sidebar's counts go stale. */
   onChanged: () => void;
   onDeleted: () => void;
+  /**
+   * The library's zip of a collection: it outlives this view, so a zip started here can still be
+   * downloaded after a look at the library. Shown here while it is of this collection.
+   */
+  zip: AssetZipState;
 }) {
   const { collection, locale } = props;
   const { client, conn } = useClient();
@@ -64,8 +69,12 @@ export function AssetCollectionView(props: {
   const [over, setOver] = useState<number | null>(null);
   // After a move by button: the row and the button that should keep focus.
   const [focusAfter, setFocusAfter] = useState<{ id: string; dir: 'up' | 'down' } | null>(null);
-  const zip = useAssetZip();
-  // Reorders go one after another, so the last order sent is the one that stands.
+  const { zip } = props;
+  const zipHere =
+    zip.zip?.source.kind === 'collection' && zip.zip.source.collectionId === collection.id
+      ? zip.zip
+      : null;
+  // Reorders and removes go one after another, so the last order sent is the one that stands.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
 
   // Under the library's `assets` key, so a publish or archive elsewhere refreshes it too. Every
@@ -83,8 +92,8 @@ export function AssetCollectionView(props: {
   });
   const fetched = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
   const [items, setItems] = useState<Asset[]>([]);
-  // The order the server holds as far as this screen knows: what loaded, then each reorder it
-  // took. A refused reorder goes back to it.
+  // The order the server holds as far as this screen knows: what loaded, then each reorder and
+  // remove it took.
   const saved = useRef<Asset[]>([]);
   useEffect(() => {
     saved.current = fetched;
@@ -117,7 +126,8 @@ export function AssetCollectionView(props: {
     setItems(next);
     setAnnouncement(movedAnnouncement(assetName(moved, locale), to, next.length));
     if (dir) setFocusAfter({ id: moved.id, dir });
-    const order = next.map((a) => a.id);
+    // The whole loaded order: one reorder takes as many ids as a collection holds.
+    const order = next.map((a) => a.id).slice(0, MAX_COLLECTION_ITEMS);
     queue.current = queue.current.then(() =>
       client.reorderAssetCollection(collection.id, order).then(
         () => {
@@ -125,17 +135,32 @@ export function AssetCollectionView(props: {
         },
         (e) => {
           toast.error(`The new order wasn’t saved: ${apiErrorMessage(e)}`);
-          // Back to the order the server holds.
-          setItems(saved.current);
+          // Read the order back rather than guess it: moves queued after this one may have landed.
+          void resync();
         },
       ),
     );
   };
 
+  /** Puts the screen back on the server's order (a refetch with the same data changes nothing). */
+  const resync = async () => {
+    const r = await pages.refetch();
+    const fresh = r.data?.pages.flatMap((p) => p.items);
+    if (!fresh) return;
+    saved.current = fresh;
+    setItems(fresh);
+  };
+
   const remove = async (asset: Asset, index: number) => {
     const name = assetName(asset, locale);
+    // In the queue with the reorders: a remove never races a move sent before it.
+    const done = queue.current.then(() =>
+      client.removeFromAssetCollection(collection.id, [asset.id]),
+    );
+    queue.current = done.catch(() => undefined);
     try {
-      await client.removeFromAssetCollection(collection.id, [asset.id]);
+      await done;
+      saved.current = saved.current.filter((a) => a.id !== asset.id);
       setItems((list) => list.filter((a) => a.id !== asset.id));
       toast.success(`Removed “${name}” from “${collection.name}”`);
       props.onChanged();
@@ -279,9 +304,9 @@ export function AssetCollectionView(props: {
         </div>
       )}
 
-      {zip.zip && (
+      {zipHere && (
         <AssetZipProgress
-          zip={zip.zip}
+          zip={zipHere}
           onRefresh={() => void zip.refresh()}
           onDismiss={zip.dismiss}
         />
@@ -354,7 +379,8 @@ export function AssetCollectionView(props: {
                     setOver(null);
                   }}
                   className={cn(
-                    'flex items-center gap-2 px-3 py-2 transition-[background-color]',
+                    // On a phone the actions take a line of their own under the name.
+                    'flex items-center gap-2 px-3 py-2 transition-[background-color] max-md:flex-wrap',
                     dragging === a.id && 'opacity-60',
                     over === i && dragging !== a.id && 'bg-muted',
                   )}
@@ -380,7 +406,9 @@ export function AssetCollectionView(props: {
                     {name}
                   </button>
                   <StatusBadge status={a.status} />
-                  <div className="flex shrink-0 items-center gap-0.5">
+                  {/* A finger's 44px targets (hit-area) must not overlap: icon-xs is 24px, so 20px
+                      apart on a coarse pointer. */}
+                  <div className="flex shrink-0 items-center gap-0.5 max-md:ml-auto max-md:w-full max-md:justify-end pointer-coarse:gap-5">
                     <Button
                       type="button"
                       size="icon-xs"

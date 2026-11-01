@@ -2,7 +2,7 @@ import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Progress } from '@contentworker/ui/progress';
 import { Download } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StatusBadge } from '~/cms/components/status';
 import { zipPercent, zipRunning, zipSummary } from '~/cms/lib/assets';
 import { useClient } from '~/cms/lib/client-context';
@@ -21,15 +21,20 @@ export function useAssetZip() {
   const toast = useToast();
   const [zip, setZip] = useState<AssetZip | null>(null);
   const [starting, setStarting] = useState(false);
+  // A second press before the first answer would start a second zip: one at a time.
+  const pending = useRef(false);
 
   const start = useCallback(
     async (input: AssetZipInput) => {
+      if (pending.current) return;
+      pending.current = true;
       setStarting(true);
       try {
         setZip(await client.startAssetZip(input));
       } catch (e) {
         toast.error(apiErrorMessage(e));
       } finally {
+        pending.current = false;
         setStarting(false);
       }
     },
@@ -70,6 +75,9 @@ export function useAssetZip() {
 
   return { zip, starting, start, refresh, dismiss: () => setZip(null) };
 }
+
+/** What {@link useAssetZip} gives a screen: the zip it follows and what can be done with it. */
+export type AssetZipState = ReturnType<typeof useAssetZip>;
 
 /**
  * A zip download on its way, shaped like the bulk job card: a polite status line ("Zipping 12

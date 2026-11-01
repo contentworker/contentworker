@@ -273,4 +273,26 @@ describe('sharing an asset or a collection', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(share));
   });
+
+  it('announces an expiry the API refused and ties it to the expiry choice', async () => {
+    client.createShareLink.mockRejectedValueOnce(
+      new ApiError(422, 'POST → 422', {
+        error: {
+          issues: [
+            {
+              field: 'expiresAt',
+              message: 'A share link expires between 5 minutes and 90 days from now',
+            },
+          ],
+        },
+      }),
+    );
+    renderDialog();
+    const form = await screen.findByRole('form', { name: 'New share link' });
+    fireEvent.click(within(form).getByRole('button', { name: 'Create link' }));
+    const alert = await within(form).findByRole('alert');
+    expect(alert.textContent).toMatch(/between 5 minutes and 90 days/);
+    const choice = within(form).getByRole('radiogroup', { name: 'Expires after' });
+    expect(choice.getAttribute('aria-describedby')).toBe(alert.id);
+  });
 });

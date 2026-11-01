@@ -395,7 +395,14 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   keyboard's way, and focus stays on the moved row (on the other arrow at an end). Each move is
   said in an sr-only polite line ("“Logo” moved to position 2 of 5") and sends the whole order
   loaded; a refused one puts the last saved order back with a toast. Remove takes it out of the
-  collection only, and focus goes to the row that takes its place. Empty, it says how to fill it
+  collection only, and focus goes to the row that takes its place; removes wait their turn behind
+  the moves sent before them, and a refused move reads the order back from the server. On a phone a
+  row's actions take a line of their own under the name, and on a coarse pointer they stand 20px
+  apart (`pointer-coarse:gap-5`), so their 44px `hit-area` targets don't overlap. Upload while a
+  collection is open names it ("Upload to “Launch”"): the files land at the library root (the
+  folder tree isn't in view) and are added to the collection once uploaded, which the upload card
+  says ("Into the collection “Launch”: filed at the library root, then added to it"). Empty, it says
+  how to fill it
   (select in the library, then Add to collection). On a phone the collections are a select beside
   an icon New collection. Then the **filter bar**, as the entries' (kind, status, tag,
   sort) with the Grid/List segmented switch at its end, kept per browser, under the **search
@@ -412,7 +419,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   out under it in the `bad` colour (read once, never only on hover); and a `wait` "Possible
   duplicate" stamp that is a button opening the original. Badges that are buttons, and the
   sheet's tag toggles, take `hit-area` and the full `ring` edge. **The sheet** opens on one asset
-  (Share, outline, under its title) in tabs (`Tabs`, the row scrolling rather than squeezing a word on a phone): **Details** (a
+  (Share, outline, under its title) in tabs (`Tabs`, the row scrolling rather than squeezing a word
+  on a phone): **Details** (a
   hosted video's status, the focal point, alt text and tags; Save metadata, the footer's one
   button, shows on this tab only), **Versions**, **Usage** (the entries using it), **Renditions**
   (the transform preview; a non-image says it is delivered as uploaded) and **Rights**; what
@@ -434,7 +442,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   instants) and Save rights; an expiry already past on a published asset asks in place first
   ("Expire it now?", destructive "Expire now"), and on a published asset the embargo hint says
   it can't be set until it is unpublished. Versions and Rights stay mounted while another tab
-  shows, so an upload under way or rights not yet saved survive a look elsewhere. A field the API refused is `aria-invalid` with its message under it;
+  shows, so an upload under way or rights not yet saved survive a look elsewhere. A field the API
+  refused is `aria-invalid` with its message under it;
   a role without content:publish gets a warning Alert in place saying who can set rights; a
   refusal of the whole asset is a destructive Alert with the server's words. **Rights on cards and
   rows**: beside the status, "Expires soon" in `wait` (a person must renew or replace it; a week
@@ -452,7 +461,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   shows a bulk bar (`role="group"`, "2 selected · Publish selected · Unpublish selected · Archive
   selected · Move selected · Add tag · Remove tag · Add to collection · Download as zip"; Add to
   collection, a select and an outline button, shows once a collection exists, and the add goes in
-  turns of 500, toasting what went in and what was already there); archiving or unpublishing several asks in
+  turns of 500, toasting what went in and what was already there); archiving or unpublishing several
+  asks in
   place ("Archive 2 assets?"), and what failed stays selected and is named in an inline Alert, as
   in the entries list. Past 50 selected (one page, `ASSET_BULK_JOB_THRESHOLD`), and for tagging
   at any count, the action runs as a **bulk job** on the server: a card shaped like the upload
@@ -470,7 +480,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   12 files, 48 MB"), its status stamp, a `Progress` of the parts written (its value text "3 of 8
   parts written") and "this keeps going if you close the tab", polled every 2 s. Built, a primary
   Download “Launch.zip” (a link with `download`) and a ghost Get a new link (each link lasts 15
-  minutes); failed, a destructive Alert with the reason, so it is heard. The **upload queue**
+  minutes); failed, a destructive Alert with the reason, so it is heard. The library holds a
+  collection's zip, not the collection's view, so after leaving the collection its card is still
+  in the library to download from; Download as zip waits (disabled) while a zip is being asked
+  for, so a second press can't start another. The **upload queue**
   lists each file with a badge and the batch's progress, its summary a live region ("Uploading 1
   of 3", then "Uploaded 2 files; 1 failed, 1 cancelled"), and a toast at the end of the batch. A
   file past 100 MiB goes up **in parts**: its row grows a thin `Progress` of bytes stored
@@ -488,7 +501,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   (outline) and Revoke (ghost, in-place confirm; focus goes to the heading). An unpublished asset
   gets a warning Alert ("Publish it to share it") in place of the form; a role without
   content:publish, a warning Alert saying who can share, and no form; a refusal is a destructive
-  Alert in the server's words, a field's beside the field. Archiving one asset is an
+  Alert in the server's words, a field's beside the field as an alert (heard at once), tied to the
+  expiry choice or the field by `aria-describedby`. Archiving one asset is an
   Undo toast that restores it; an archived one shows Restore (back as a draft). **Delete** asks in
   place, and one an entry still links to is refused: a warning Alert takes focus, names the first
   five entries (each a link) and counts the rest ("and 12 more"), and offers Archive instead. A

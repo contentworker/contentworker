@@ -30,9 +30,11 @@ const collection = (over: Partial<AssetCollection> = {}): AssetCollection => ({
 let library: Asset[] = [];
 let collections: AssetCollection[] = [];
 let members: Asset[] = [];
+let folders: { id: string; name: string; path: string; createdAt: string; updatedAt: string }[] =
+  [];
 const client = {
   listAssets: vi.fn(async (_q?: unknown) => ({ items: library })),
-  listAssetFolders: vi.fn(async () => []),
+  listAssetFolders: vi.fn(async () => folders),
   listTags: vi.fn(async () => []),
   listAssetCollections: vi.fn(async (_q?: unknown) => ({ items: collections })),
   listAssetCollectionAssets: vi.fn(async (_id: string, _q?: unknown) => ({ items: members })),
@@ -52,7 +54,10 @@ const client = {
     added: ids.length,
     skipped: [] as string[],
   })),
-  removeFromAssetCollection: vi.fn(async () => ({ removed: 1 })),
+  removeFromAssetCollection: vi.fn(async (_id: string, ids: readonly string[]) => {
+    members = members.filter((a) => !ids.includes(a.id));
+    return { removed: ids.length };
+  }),
   reorderAssetCollection: vi.fn(async (_id: string, _ids: readonly string[]) => {}),
   startAssetZip: vi.fn(),
   getAssetZip: vi.fn(),
@@ -61,6 +66,7 @@ const client = {
   listAssetVersions: vi.fn(async () => []),
   getTeam: vi.fn(async () => ({ people: [], keys: [], adminCount: 1, settings: {} })),
   searchAssets: vi.fn(),
+  uploadAsset: vi.fn(async (_file: File, _opts?: { folderId?: string }) => asset('n1', 'new.pdf')),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -80,6 +86,9 @@ afterEach(() => {
   library = [];
   collections = [];
   members = [];
+  folders = [];
+  client.reorderAssetCollection.mockReset();
+  client.reorderAssetCollection.mockImplementation(async () => {});
   try {
     localStorage.clear();
   } catch {}
@@ -302,5 +311,81 @@ describe('asset collections', () => {
     fireEvent.click(within(bar).getByRole('button', { name: 'Add to collection' }));
     expect(await screen.findByText('A collection holds at most 1000 assets')).toBeTruthy();
     expect(within(bar).getByText('1 selected')).toBeTruthy();
+  });
+
+  it('sends the whole loaded order in one reorder, past the 500 an add takes', async () => {
+    collections = [collection({ itemCount: 600 })];
+    members = Array.from({ length: 600 }, (_, i) => asset(`m${i}`, `m-${i}.pdf`));
+    renderLibrary();
+    const nav = screen.getByRole('navigation', { name: 'Collections' });
+    fireEvent.click(await within(nav).findByRole('button', { name: 'Launch, 600 assets' }));
+    const list = await screen.findByRole('list', { name: 'Assets in “Launch”, in order' });
+    fireEvent.click(within(list).getByRole('button', { name: 'Move “m-0.pdf” down' }));
+    await waitFor(() => expect(client.reorderAssetCollection).toHaveBeenCalledTimes(1));
+    const sent = client.reorderAssetCollection.mock.calls[0]?.[1] as string[];
+    expect(sent).toHaveLength(600);
+    expect(sent.slice(0, 3)).toEqual(['m1', 'm0', 'm2']);
+  });
+
+  it('reads the order back from the server when a reorder is refused', async () => {
+    const list = await openLaunch();
+    client.reorderAssetCollection.mockImplementationOnce(async () => {
+      // Someone else reordered it meanwhile: the server's order is neither the old nor the new.
+      members = [members[2], members[1], members[0]] as Asset[];
+      throw new ApiError(409, 'PUT → 409');
+    });
+    fireEvent.click(within(list).getByRole('button', { name: 'Move “a.pdf” down' }));
+    expect(await screen.findByText(/The new order wasn’t saved/)).toBeTruthy();
+    await waitFor(() => expect(names(list)).toEqual(['c.pdf', 'b.pdf', 'a.pdf']));
+  });
+
+  it('never brings a removed asset back when a later reorder is refused', async () => {
+    const list = await openLaunch();
+    fireEvent.click(within(list).getByRole('button', { name: 'Remove “a.pdf” from “Launch”' }));
+    await waitFor(() => expect(names(list)).toEqual(['b.pdf', 'c.pdf']));
+    client.reorderAssetCollection.mockRejectedValueOnce(new ApiError(503, 'PUT → 503'));
+    fireEvent.click(within(list).getByRole('button', { name: 'Move “c.pdf” up' }));
+    expect(await screen.findByText(/The new order wasn’t saved/)).toBeTruthy();
+    await waitFor(() => expect(names(list)).toEqual(['b.pdf', 'c.pdf']));
+  });
+
+  it('sends a remove only after the reorder before it has been answered', async () => {
+    const list = await openLaunch();
+    let answer!: () => void;
+    client.reorderAssetCollection.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (answer = resolve)),
+    );
+    fireEvent.click(within(list).getByRole('button', { name: 'Move “a.pdf” down' }));
+    await waitFor(() => expect(client.reorderAssetCollection).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(list).getByRole('button', { name: 'Remove “c.pdf” from “Launch”' }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(client.removeFromAssetCollection).not.toHaveBeenCalled();
+    answer();
+    await waitFor(() =>
+      expect(client.removeFromAssetCollection).toHaveBeenCalledWith('c1', ['a3']),
+    );
+    await waitFor(() => expect(names(list)).toEqual(['b.pdf', 'a.pdf']));
+  });
+
+  it('uploads into the open collection: filed at the root, then added to it', async () => {
+    folders = [{ id: 'f1', name: 'Campaigns', path: '/f1/', createdAt: '', updatedAt: '' }];
+    collections = [collection()];
+    members = [asset('a1', 'a.pdf')];
+    renderLibrary();
+    // A folder was open before the collection: the upload must not land in it, out of sight.
+    const tree = screen.getByRole('navigation', { name: 'Folders' });
+    fireEvent.click(await within(tree).findByRole('button', { name: 'Campaigns' }));
+    const nav = screen.getByRole('navigation', { name: 'Collections' });
+    fireEvent.click(await within(nav).findByRole('button', { name: 'Launch, 3 assets' }));
+    await screen.findByRole('list', { name: 'Assets in “Launch”, in order' });
+    expect(screen.getByRole('button', { name: 'Upload to “Launch”' })).toBeTruthy();
+
+    const file = new File(['x'], 'new.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Upload asset files'), { target: { files: [file] } });
+    const region = await screen.findByRole('region', { name: 'Uploads' });
+    expect(within(region).getByText(/Into the collection “Launch”/)).toBeTruthy();
+    await waitFor(() => expect(client.addToAssetCollection).toHaveBeenCalledWith('c1', ['n1']));
+    expect(client.uploadAsset).toHaveBeenCalledWith(file, {});
+    expect(await screen.findByText('Added 1 asset to “Launch”')).toBeTruthy();
   });
 });

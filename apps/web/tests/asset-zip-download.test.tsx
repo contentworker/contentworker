@@ -201,4 +201,50 @@ describe('downloading assets as a zip', () => {
     const region = await screen.findByRole('region', { name: 'Zip download' });
     expect(within(region).getByRole('status').textContent).toBe('Preparing “Launch.zip”…');
   });
+
+  it('keeps a collection’s zip in sight after leaving the collection, so it can be downloaded', async () => {
+    collections = [{ id: 'c1', name: 'Launch', itemCount: 1, createdAt: '', updatedAt: '' }];
+    client.startAssetZip.mockResolvedValueOnce(
+      zip({
+        status: 'completed',
+        fileName: 'Launch.zip',
+        source: { kind: 'collection', collectionId: 'c1' },
+        downloadUrl: 'https://r2.example/Launch.zip?sig',
+      }),
+    );
+    renderLibrary();
+    const nav = screen.getByRole('navigation', { name: 'Collections' });
+    fireEvent.click(await within(nav).findByRole('button', { name: 'Launch, 1 asset' }));
+    await screen.findByRole('list', { name: 'Assets in “Launch”, in order' });
+    fireEvent.click(screen.getByRole('button', { name: 'Download as zip' }));
+    await screen.findByRole('link', { name: 'Download “Launch.zip”' });
+
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Folders' })).getByRole('button', {
+        name: 'All assets',
+      }),
+    );
+    await screen.findByRole('region', { name: 'Asset library' });
+    const region = screen.getByRole('region', { name: 'Zip download' });
+    expect(within(region).getByRole('link', { name: 'Download “Launch.zip”' })).toBeTruthy();
+  });
+
+  it('starts one zip however often Download as zip is pressed while it is asked for', async () => {
+    let answer!: (z: AssetZip) => void;
+    client.startAssetZip.mockImplementationOnce(
+      () => new Promise<AssetZip>((resolve) => (answer = resolve)),
+    );
+    localStorage.setItem('cw.assets.view', 'list');
+    renderLibrary();
+    await screen.findByRole('button', { name: 'Open “a.pdf”' });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all shown' }));
+    const button = screen.getByRole('button', { name: 'Download as zip' });
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toHaveProperty('disabled', true));
+    fireEvent.click(button);
+    expect(client.startAssetZip).toHaveBeenCalledTimes(1);
+    answer(zip());
+    await screen.findByRole('region', { name: 'Zip download' });
+    expect(client.startAssetZip).toHaveBeenCalledTimes(1);
+  });
 });

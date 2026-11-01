@@ -20,8 +20,8 @@ const ROOT = '__root__';
 
 /**
  * What can be done to the selected assets at once: publish or unpublish them, archive them, file
- * them, tag or untag them, add them to a collection, or download them as one zip. Labelled as the entries list labels its selection ("2 selected",
- * "Publish selected"). Archiving and unpublishing several ask first, in place: both take assets
+ * them, tag or untag them, add them to a collection, or download them as one zip. Labelled as the
+ * entries list labels its selection ("2 selected", "Publish selected"). Archiving and unpublishing several ask first, in place: both take assets
  * out of Delivery at once, and undoing either means acting on each again.
  */
 export function AssetBulkBar(props: {
@@ -37,6 +37,8 @@ export function AssetBulkBar(props: {
   collections?: readonly AssetCollection[];
   onAddToCollection?: (collectionId: string) => void;
   onZip?: () => void;
+  /** A zip is being asked for: Download as zip waits for the answer (no second zip). */
+  zipStarting?: boolean;
   onClear: () => void;
 }) {
   const [target, setTarget] = useState(ROOT);
@@ -178,7 +180,8 @@ export function AssetBulkBar(props: {
           type="button"
           size="sm"
           variant="outline"
-          disabled={props.busy}
+          disabled={props.busy || props.zipStarting}
+          aria-busy={props.zipStarting || undefined}
           onClick={props.onZip}
         >
           <Download aria-hidden="true" />

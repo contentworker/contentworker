@@ -431,8 +431,13 @@ test('the asset library searches: a match by name, facet chips, and back to the 
   );
 
   await library.getByRole('button', { name: 'Clear search' }).click();
-  await expect(library.getByRole('button', { name: `Open “${other}”` })).toBeVisible();
+  // Back to the library: no facets, no search summary, the library's own list. (Not the seeded
+  // asset by name: specs running alongside add assets during the ingest wait above, which can
+  // push it past the first page.)
   await expect(library.getByRole('group', { name: 'Kind' })).toHaveCount(0);
+  await expect(library.getByRole('searchbox', { name: 'Search assets' })).toHaveValue('');
+  await expect(library.getByText(/ for “/)).toHaveCount(0);
+  await expect(library.getByRole('button', { name: /^Open “/ }).first()).toBeVisible();
 });
 
 test('the asset library: a folder, uploads into it, a move, a bulk archive, a restore and a guarded delete', async ({
@@ -851,7 +856,7 @@ test('an asset collection: made beside the folders, filled from the library, reo
     .toEqual([files[2], files[1], files[0]]);
 
   // Shared: a link for a day, without downloads; listed, then revoked in place.
-  await page.getByRole('button', { name: 'Share' }).click();
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: `Share “${name}”` });
   await expect(dialog.getByText(/drafts in the collection stay off the page/)).toBeVisible();
   const share = dialog.getByRole('form', { name: 'New share link' });
@@ -897,7 +902,8 @@ test('an asset collection: made beside the folders, filled from the library, reo
 test('an asset is shared from its sheet once it is published', async ({ page, request }) => {
   const stamp = Date.now();
   const draft = `share-draft-${stamp}.txt`;
-  await uploadAssetBytes(request, draft, Buffer.from('draft'));
+  // Bytes of its own: a file another spec uploaded would be flagged a possible duplicate.
+  await uploadAssetBytes(request, draft, Buffer.from(`draft ${stamp}`));
   const live = `share-live-${stamp}.txt`;
   await publishedFile(request, live);
 
@@ -905,7 +911,7 @@ test('an asset is shared from its sheet once it is published', async ({ page, re
   const library = page.getByRole('region', { name: 'Asset library' });
   await library.getByRole('button', { name: `Open “${draft}”` }).click();
   const sheet = page.getByRole('dialog', { name: draft });
-  const share = sheet.getByRole('button', { name: 'Share' });
+  const share = sheet.getByRole('button', { name: 'Share', exact: true });
   await share.click();
   const dialog = page.getByRole('dialog', { name: `Share “${draft}”` });
   await expect(dialog.getByText('Publish it to share it')).toBeVisible();
@@ -916,7 +922,10 @@ test('an asset is shared from its sheet once it is published', async ({ page, re
   await page.keyboard.press('Escape');
 
   await library.getByRole('button', { name: `Open “${live}”` }).click();
-  await page.getByRole('dialog', { name: live }).getByRole('button', { name: 'Share' }).click();
+  await page
+    .getByRole('dialog', { name: live })
+    .getByRole('button', { name: 'Share', exact: true })
+    .click();
   const liveDialog = page.getByRole('dialog', { name: `Share “${live}”` });
   await liveDialog.getByRole('button', { name: 'Create link' }).click();
   await expect(
@@ -941,4 +950,60 @@ test('a file past 100 MiB goes up in parts, with its bytes and parts as progress
   await expect(uploads.getByRole('status')).toHaveText('Uploaded 1 file', { timeout: 150_000 });
   const library = page.getByRole('region', { name: 'Asset library' });
   await expect(library.getByRole('button', { name: `Open “${name}”` })).toBeVisible();
+});
+
+// A phone: the collections are a select, the row's actions sit on a line of their own, and a
+// finger's 44px targets for Move up, Move down and Remove don't overlap.
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
+
+  test('a collection is opened, reordered with its buttons and shared', async ({
+    page,
+    request,
+  }) => {
+    const stamp = Date.now();
+    const files = ['a', 'b'].map((n) => `phone-${stamp}-${n}.txt`);
+    const ids = [];
+    for (const name of files) ids.push(await publishedFile(request, name));
+    const name = `Phone ${stamp}`;
+    const made = await api(request, 'POST', `${MGMT}/asset-collections`, { name });
+    expect(made.ok(), await made.text()).toBe(true);
+    const { id } = (await made.json()) as { id: string };
+    const added = await api(request, 'POST', `${MGMT}/asset-collections/${id}/assets`, {
+      assetIds: ids,
+    });
+    expect(added.ok(), await added.text()).toBe(true);
+
+    await openCms(page, '/assets');
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    await page
+      .getByRole('navigation', { name: 'Collections' })
+      .getByRole('combobox', { name: 'Collection' })
+      .selectOption({ label: name });
+    const list = page.getByRole('list', { name: `Assets in “${name}”, in order` });
+    const order = () => list.getByRole('button', { name: /^Open/ }).allTextContents();
+    await expect.poll(order).toEqual(files);
+
+    // The three targets of a row, centre to centre, at least a finger's 44px apart.
+    const centres = await Promise.all(
+      [
+        `Move “${files[1]}” up`,
+        `Move “${files[1]}” down`,
+        `Remove “${files[1]}” from “${name}”`,
+      ].map(async (label) => {
+        const box = await list.getByRole('button', { name: label }).boundingBox();
+        return (box?.x ?? 0) + (box?.width ?? 0) / 2;
+      }),
+    );
+    expect(centres[1]! - centres[0]!).toBeGreaterThanOrEqual(44);
+    expect(centres[2]! - centres[1]!).toBeGreaterThanOrEqual(44);
+
+    await list.getByRole('button', { name: `Move “${files[1]}” up` }).tap();
+    await expect.poll(order).toEqual([files[1], files[0]]);
+
+    await page.getByRole('button', { name: 'Share', exact: true }).tap();
+    const dialog = page.getByRole('dialog', { name: `Share “${name}”` });
+    await expect(dialog.getByRole('form', { name: 'New share link' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Create link' })).toBeInViewport();
+  });
 });
