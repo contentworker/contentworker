@@ -75,6 +75,14 @@ describe('installing the starter', { timeout: 30_000 }, () => {
     );
     expect(created.installed).toMatchObject({ contentTypes: 8, entries: starterEntries });
 
+    // Landing pages are built from blocks, each keyed by the server on create.
+    const landing = entries.find((e) => e.contentType === 'landingPage');
+    const blocks = (landing?.fields.blocks as Record<string, unknown> | undefined)?.['en-US'] as
+      | { _type: string; _key?: string }[]
+      | undefined;
+    expect(blocks?.map((b) => b._type)).toEqual(['hero', 'richText', 'callToAction']);
+    expect(blocks?.every((b) => typeof b._key === 'string')).toBe(true);
+
     // Images and documents with real bytes, never a video with nothing behind it.
     const assets = (await listAssets(ctx, scope, { limit: 100 })).items;
     expect(assets.length).toBe(8);

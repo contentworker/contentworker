@@ -1,5 +1,11 @@
 import type { EntryFields, Scope, SearchReindexRequestedEvent } from '@contentworker/domain';
-import { isRichTextDocument, RateLimitedError, richTextToPlainText } from '@contentworker/domain';
+import {
+  BLOCK_KEY,
+  BLOCK_TYPE_KEY,
+  isRichTextDocument,
+  RateLimitedError,
+  richTextToPlainText,
+} from '@contentworker/domain';
 import type { EmbeddingsProvider, SearchIndex, VectorRow, VectorStore } from '@contentworker/ports';
 import type { AppContext } from './context';
 
@@ -68,7 +74,11 @@ function textIn(value: unknown, depth: number): string[] {
   const obj = value as Record<string, unknown>;
   // A link is a pointer, not prose. What it points at gets embedded on its own.
   if (typeof obj.id === 'string' && typeof obj.linkType === 'string') return [];
-  return Object.values(obj).flatMap((v) => textIn(v, depth + 1));
+  // A block's `_type` and `_key` are identifiers, not prose: embedding them
+  // would only teach search that every hero block mentions "hero".
+  return Object.entries(obj)
+    .filter(([k]) => k !== BLOCK_TYPE_KEY && k !== BLOCK_KEY)
+    .flatMap(([, v]) => textIn(v, depth + 1));
 }
 
 /** Splits text into word-bounded chunks of at most `maxWords` words. */

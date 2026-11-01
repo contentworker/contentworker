@@ -94,6 +94,14 @@ export interface FieldDefinition {
     readonly validations?: FieldValidations;
     /** For Array-of-Component: the shape of each element. */
     readonly fields?: readonly FieldDefinition[];
+    /**
+     * For Array-of-Component: the shapes an element may take, declared instead
+     * of `fields` (never both). This is a blocks field: a page body made of a
+     * hero, then a rich-text section, then a call to action, in whatever order
+     * the editor chooses. Each stored element names its shape in `_type` and
+     * carries a stable `_key`; see {@link ComponentVariant}.
+     */
+    readonly variants?: readonly ComponentVariant[];
   };
   /**
    * For Component fields: the nested field definitions.
@@ -103,6 +111,69 @@ export interface FieldDefinition {
    * "spec rows") is an `Array` whose `items.type` is `Component`.
    */
   readonly fields?: readonly FieldDefinition[];
+}
+
+/**
+ * One shape an element of a blocks field may take.
+ *
+ * A variant is a component definition with a name: its `fields` follow the
+ * same rules as any component's (see {@link COMPONENT_NESTED_RULES}) and count
+ * toward {@link MAX_COMPONENT_DEPTH}. A stored element looks like
+ * `{ "_type": "hero", "_key": "<uuidv7>", "heading": "…" }`. The `_` prefix
+ * cannot collide with a field apiId, which must start with a letter.
+ *
+ * A single polymorphic slot is the same field with `validations.size.max: 1`;
+ * a plain `Component` field has exactly one shape.
+ */
+export interface ComponentVariant {
+  /** Stable machine identifier, unique within the field; stored as `_type`. */
+  readonly apiId: string;
+  /** Human-facing name, shown in the editor's "Add block" menu. */
+  readonly name: string;
+  readonly fields: readonly FieldDefinition[];
+}
+
+/** The key a blocks element names its variant under. */
+export const BLOCK_TYPE_KEY = '_type';
+/**
+ * The key a blocks element is identified by within its field value. Assigned
+ * on write when absent, kept when present, so a client can address one block
+ * across reorders and edits (a comment anchor, a live-preview patch, a React
+ * key) without relying on its position.
+ */
+export const BLOCK_KEY = '_key';
+
+/** The variants of a blocks field (Array-of-Component declaring `items.variants`), else undefined. */
+export function blockVariants(field: FieldDefinition): readonly ComponentVariant[] | undefined {
+  return field.type === 'Array' && field.items?.type === 'Component'
+    ? field.items.variants
+    : undefined;
+}
+
+/** The variant a stored blocks element names in `_type`, if it names one that exists. */
+export function variantOf(
+  variants: readonly ComponentVariant[],
+  item: unknown,
+): ComponentVariant | undefined {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) return undefined;
+  const type = (item as Record<string, unknown>)[BLOCK_TYPE_KEY];
+  return typeof type === 'string' ? variants.find((v) => v.apiId === type) : undefined;
+}
+
+/**
+ * The nested definitions that describe one value held by `field`: a component's
+ * fields, or for an element of an Array-of-Component, the shared shape or the
+ * shape its `_type` names. Undefined when the field holds no component, or the
+ * element names no known variant.
+ */
+export function nestedFieldsFor(
+  field: FieldDefinition,
+  item: unknown,
+): readonly FieldDefinition[] | undefined {
+  if (field.type === 'Component') return field.fields;
+  if (field.type !== 'Array' || field.items?.type !== 'Component') return undefined;
+  const variants = field.items.variants;
+  return variants ? variantOf(variants, item)?.fields : field.items.fields;
 }
 
 /**

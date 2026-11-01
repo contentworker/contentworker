@@ -269,6 +269,10 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 
+Saving a content type that drops a blocks variant some entry still uses answers `409 conflict`
+naming each `location: variant` and its entries (`details.variantsInUse`); see
+[domain-model.md](domain-model.md#blocks).
+
 #### Types from the live model
 
 `GET …/content-types?format=typescript` returns the content model as a TypeScript module, one type
@@ -605,7 +609,7 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 
 A delivered entry is `{ id, contentType, fields, publishedAt }`; with `?locale=` fields flatten to
 that locale; with `?include=N` linked entries embed up to depth N (cycle-guarded). Links are
-resolved wherever they sit: `Link` and array fields, `Component` values, and rich-text reference
+resolved wherever they sit: `Link` and array fields, `Component` values and blocks, and rich-text reference
 nodes, whose `data.target` is replaced by the embedded entry or asset. An unpublished, missing or
 cyclic target stays a `{ id, linkType }` stub.
 

@@ -1,5 +1,5 @@
 import type { ContentType } from '../content-type/content-type';
-import type { FieldDefinition, LinkType } from '../content-type/field';
+import { type FieldDefinition, type LinkType, nestedFieldsFor } from '../content-type/field';
 import { extractRichTextTargets } from '../rich-text/rich-text';
 import type { EntryFields } from '../types';
 
@@ -84,7 +84,9 @@ function collect(field: FieldDefinition, value: unknown, add: (link: LinkValue) 
           const link = asLink(item);
           if (link) add(link);
         } else if (field.items?.type === 'Component') {
-          collectFromComponent(field.items.fields, item, add);
+          // A blocks element is read with the variant its `_type` names, so a
+          // link inside the third block counts like any other.
+          collectFromComponent(nestedFieldsFor(field, item), item, add);
         }
       }
       break;

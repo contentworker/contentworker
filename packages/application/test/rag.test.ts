@@ -64,6 +64,13 @@ describe('P7: RAG indexing + semantic search', () => {
     expect(text['en-US'] ?? '').not.toContain('a-77');
   });
 
+  it("leaves a block's _type and _key out, keeping its text", () => {
+    const text = extractTextByLocale({
+      body: { 'en-US': [{ _type: 'hero', _key: '0192f4a1-key', heading: 'Big news' }] },
+    });
+    expect(text['en-US']).toBe('Big news');
+  });
+
   it('extracts plain text from rich-text values per locale', () => {
     const body = {
       nodeType: 'document',

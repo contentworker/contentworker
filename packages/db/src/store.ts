@@ -456,6 +456,12 @@ function makeEntryRepo(
           ? eq(schema.entries.status, 'archived')
           : ne(schema.entries.status, 'archived'),
       );
+      // Keyset paging by entry id, as on the published path: stable while
+      // entries are edited mid-scan, which an updatedAt offset is not.
+      const keyset = query.afterEntryId !== undefined;
+      if (keyset && query.afterEntryId !== '') {
+        conditions.push(gt(schema.entries.id, query.afterEntryId as string));
+      }
       if (advanced) {
         // Draft field values live in entry_versions, so the superset prefilter
         // runs against the joined CURRENT version. Same contract as the
@@ -475,7 +481,7 @@ function makeEntryRepo(
       }
       let select = withFields()
         .where(and(...conditions))
-        .orderBy(asc(schema.entries.updatedAt))
+        .orderBy(keyset ? asc(schema.entries.id) : asc(schema.entries.updatedAt))
         .$dynamic();
       // SQL pagination is only valid when there are no JS-side field predicates;
       // otherwise bound the candidate scan (+1 to detect overflow).

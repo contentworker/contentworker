@@ -1,6 +1,7 @@
 import { ConflictError, ValidationError } from '../errors';
 import type { ContentTypeStatus } from '../types';
 import {
+  type ComponentVariant,
   type FieldDefinition,
   isValidApiId,
   MAX_COMPONENT_DEPTH,
@@ -118,9 +119,9 @@ function assertFieldSetValid(
     const isComponent = f.type === 'Component' || f.items?.type === 'Component';
     if (!isComponent) {
       // Declaring a shape on a field that is not a component means the author
-      // expected nesting they will not get. Checked on both places it could be
-      // written, so neither is silently dropped.
-      if (f.fields || f.items?.fields) {
+      // expected nesting they will not get. Checked on every place it could be
+      // written, so none is silently dropped.
+      if (f.fields || f.items?.fields || f.items?.variants) {
         throw new ValidationError([
           { field: where, message: `A ${f.type} field cannot define nested fields` },
         ]);
@@ -129,7 +130,7 @@ function assertFieldSetValid(
     }
 
     const nested = f.type === 'Component' ? f.fields : f.items?.fields;
-    if (!nested || nested.length === 0) {
+    if (f.items?.variants === undefined && (!nested || nested.length === 0)) {
       throw new ValidationError([
         { field: where, message: 'A component must define at least one field' },
       ]);
@@ -142,9 +143,56 @@ function assertFieldSetValid(
         },
       ]);
     }
-    assertFieldSetValid(nested, where, depth + 1);
+    if (f.items?.variants !== undefined) {
+      assertVariantsValid(f, where, depth);
+      continue;
+    }
+    assertFieldSetValid(nested ?? [], where, depth + 1);
   }
   return seen;
+}
+
+/**
+ * A blocks field's variants: at least one, each a legal apiId used once, each
+ * a component in its own right. A variant's fields sit one level deeper, so
+ * they obey the nested rules and count toward the depth cap like any
+ * component's.
+ *
+ * A field declares `items.fields` or `items.variants`, never both: with both,
+ * an element without a `_type` would have two plausible shapes, and which one
+ * wins would be a guess the author never made.
+ */
+function assertVariantsValid(f: FieldDefinition, where: string, depth: number): void {
+  const fail = (message: string, at = where): never => {
+    throw new ValidationError([{ field: at, message }]);
+  };
+  if (f.type !== 'Array') {
+    fail(
+      'Only an Array of Component can declare variants. For a single block, use an Array with validations.size.max of 1.',
+    );
+  }
+  if (f.items?.fields !== undefined) {
+    fail('Declare items.fields or items.variants, not both');
+  }
+  const variants = f.items?.variants;
+  if (!Array.isArray(variants) || variants.length === 0) {
+    fail('A blocks field must define at least one variant');
+  }
+  const seen = new Set<string>();
+  for (const v of variants as readonly ComponentVariant[]) {
+    const apiId = (v as { apiId?: unknown } | null)?.apiId;
+    if (typeof apiId !== 'string' || !isValidApiId(apiId)) {
+      fail(`Invalid variant apiId "${String(apiId)}"`);
+    }
+    const at = `${where}[${apiId}]`;
+    if (seen.has(apiId as string)) fail(`Duplicate variant apiId "${apiId}"`, at);
+    seen.add(apiId as string);
+    if (typeof v.name !== 'string' || v.name.trim() === '') fail('A variant needs a name', at);
+    if (!Array.isArray(v.fields) || v.fields.length === 0) {
+      fail('A variant must define at least one field', at);
+    }
+    assertFieldSetValid(v.fields, at, depth + 1);
+  }
 }
 
 /** The attributes a nested field may not carry. See COMPONENT_NESTED_RULES. */

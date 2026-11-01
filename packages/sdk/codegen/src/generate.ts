@@ -28,9 +28,18 @@ export interface FieldInput {
     readonly linkType?: 'Entry' | 'Asset';
     readonly validations?: { readonly in?: readonly (string | number)[] };
     readonly fields?: readonly FieldInput[];
+    /** For a blocks field (Array-of-Component): the shapes an element may take. */
+    readonly variants?: readonly VariantInput[];
   };
   /** For Component fields: the nested definitions. */
   readonly fields?: readonly FieldInput[];
+}
+
+/** One variant of a blocks field: an element `{ _type: apiId, _key, ...fields }`. */
+export interface VariantInput {
+  readonly apiId: string;
+  readonly name?: string;
+  readonly fields: readonly FieldInput[];
 }
 
 export interface GenerateOptions {
@@ -211,6 +220,9 @@ export function fieldValueType(field: FieldInput, opts: { delivered?: boolean } 
             : 'AssetLink[]'
           : 'EntryLink[]';
       }
+      if (items?.type === 'Component' && items.variants?.length) {
+        return `(${items.variants.map((v) => blockType(v, opts)).join(' | ')})[]`;
+      }
       if (items?.type === 'Component') return `${componentType(items.fields, opts)}[]`;
       return 'string[]';
     }
@@ -231,6 +243,18 @@ function componentType(
   // No `Localized<>` on nested values: a component is localized as a whole, so
   // the locale is resolved one level up and every leaf here is a bare value.
   return `{ ${rows} }`;
+}
+
+/**
+ * One blocks variant as an inline object type, discriminated on `_type`, so a
+ * `switch (block._type)` narrows to the variant's fields. `_key` is always
+ * present on a stored block: the server assigns one on write.
+ */
+function blockType(variant: VariantInput, opts: { delivered?: boolean } = {}): string {
+  const rows = variant.fields
+    .map((f) => `${propertyKey(f.apiId)}${f.required ? '' : '?'}: ${fieldValueType(f, opts)}`)
+    .join('; ');
+  return `{ _type: ${literal(variant.apiId)}; _key: string${rows ? `; ${rows}` : ''} }`;
 }
 
 /** An `in` validation becomes a literal union (`'a' | 'b'`); absent → null. */

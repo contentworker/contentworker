@@ -1,17 +1,35 @@
 import type {
+  ComponentVariant,
   ContentType,
   EntryFields,
   FieldDefinition,
   LocaleConfig,
 } from '@contentworker/domain';
-import { fallbackChain, resolveLocalizedValue, validateEntryFields } from '@contentworker/domain';
+import {
+  BLOCK_KEY,
+  BLOCK_TYPE_KEY,
+  blockVariants,
+  fallbackChain,
+  nestedFieldsFor,
+  resolveLocalizedValue,
+  validateEntryFields,
+  variantOf,
+} from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent } from '@contentworker/ui/card';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { Textarea } from '@contentworker/ui/textarea';
+import { Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AppExtension } from '../lib/management';
 import { EntityPicker } from './EntityPicker';
@@ -112,23 +130,35 @@ function fallbackHint(
  *
  * The domain reports `cards[2].title`; the summary says "Cards 3 › Title". A
  * path is a precise address and a poor instruction — and the summary exists to
- * send someone to the right place, so it has to read like directions. Falls
- * back to the raw segment wherever the definition cannot be resolved.
+ * send someone to the right place, so it has to read like directions. A block
+ * is named by its type as well ("Body 2 (Hero) › Heading"), read from the
+ * value being edited, since which shape sits at an index is up to the editor.
+ * Falls back to the raw segment wherever the definition cannot be resolved.
  */
-function labelForPath(fields: readonly FieldDefinition[], path: string): string {
+function labelForPath(
+  fields: readonly FieldDefinition[],
+  path: string,
+  values: Record<string, unknown> = {},
+): string {
   const parts: string[] = [];
   let defs: readonly FieldDefinition[] | undefined = fields;
+  let value: unknown = values;
 
   for (const segment of path.split('.')) {
     const match = /^([^[]+)(?:\[(\d+)\])?$/.exec(segment);
     const apiId = match?.[1] ?? segment;
     const found: FieldDefinition | undefined = defs?.find((f) => f.apiId === apiId);
     const index = match?.[2];
+    value = asObject(value)[apiId];
+    if (index !== undefined) value = Array.isArray(value) ? value[+index] : undefined;
+    const name = found?.name ?? apiId;
+    const variants = found ? blockVariants(found) : undefined;
+    const variant = variants && index !== undefined ? variantOf(variants, value) : undefined;
     // 1-based: the third card is "3" to everyone except a programmer.
     parts.push(
-      index === undefined ? (found?.name ?? apiId) : `${found?.name ?? apiId} ${+index + 1}`,
+      index === undefined ? name : `${name} ${+index + 1}${variant ? ` (${variant.name})` : ''}`,
     );
-    defs = found?.type === 'Component' ? found.fields : found?.items?.fields;
+    defs = found ? nestedFieldsFor(found, value) : undefined;
   }
   return parts.join(' › ');
 }
@@ -308,7 +338,14 @@ export function EntryForm(props: {
     return out;
   }, [fieldErrors, defaultLocale]);
 
-  const fieldName = (path: string) => labelForPath(contentType.fields, path);
+  const fieldName = (path: string, locale: string) =>
+    labelForPath(
+      contentType.fields,
+      path,
+      Object.fromEntries(
+        Object.entries(values).map(([apiId, byLocale]) => [apiId, byLocale[locale]]),
+      ),
+    );
 
   return (
     <form id={props.formId} onSubmit={submit} className="max-w-2xl space-y-4">
@@ -428,7 +465,7 @@ export function EntryForm(props: {
                 <li key={key} className="text-destructive">
                   {loc === activeLocale ? (
                     <span>
-                      {fieldName(apiId)} ({loc}): {message}
+                      {fieldName(apiId, loc)} ({loc}): {message}
                     </span>
                   ) : (
                     <button
@@ -436,7 +473,7 @@ export function EntryForm(props: {
                       className="underline underline-offset-2"
                       onClick={() => setActiveLocale(loc)}
                     >
-                      {fieldName(apiId)} ({loc}): {message}
+                      {fieldName(apiId, loc)} ({loc}): {message}
                     </button>
                   )}
                 </li>
@@ -513,6 +550,25 @@ function FieldInput(props: {
       <ComponentInput
         id={id}
         fields={field.fields ?? []}
+        value={value}
+        path={props.path ?? field.apiId}
+        errorFor={props.errorFor}
+        onEdited={props.onEdited}
+        pickers={pickers}
+        locale={locale}
+        onChange={onChange}
+      />
+    );
+  }
+
+  const variants = blockVariants(field);
+  if (variants) {
+    return (
+      <BlocksInput
+        id={id}
+        label={field.name}
+        variants={variants}
+        max={field.validations?.size?.max}
         value={value}
         path={props.path ?? field.apiId}
         errorFor={props.errorFor}
@@ -826,6 +882,167 @@ function RepeaterInput(props: NestedProps & { label: string }) {
       <Button type="button" variant="outline" size="sm" onClick={() => onChange([...items, {}])}>
         Add {noun.toLowerCase()}
       </Button>
+    </div>
+  );
+}
+
+/** A new block of a variant, starting from its fields' defaults. */
+function newBlock(variant: ComponentVariant): Record<string, unknown> {
+  const block: Record<string, unknown> = { [BLOCK_TYPE_KEY]: variant.apiId };
+  for (const f of variant.fields) {
+    if (f.defaultValue !== undefined) block[f.apiId] = f.defaultValue;
+  }
+  return block;
+}
+
+/**
+ * A blocks field: an ordered list of mixed shapes (a hero, then copy, then a
+ * call to action), each edited with its own variant's fields.
+ *
+ * Like the repeater, every control names the block it acts on ("Remove Hero
+ * block 1"). A block keeps its `_type` and `_key` through edits because the
+ * nested editor spreads the value it was given; a new block has no key until
+ * the server assigns one on save. Blocks are keyed by `_key` where they have
+ * one, so a reorder moves an editor's state (a rich-text editor's undo history)
+ * with its block.
+ */
+function BlocksInput(
+  props: Omit<NestedProps, 'fields'> & {
+    label: string;
+    variants: readonly ComponentVariant[];
+    /** `validations.size.max`: at the cap, adding is turned off rather than refused on save. */
+    max?: number;
+  },
+) {
+  const { variants, path, errorFor, onEdited, pickers, locale, onChange, label, max } = props;
+  const items = Array.isArray(props.value) ? (props.value as unknown[]) : [];
+  const full = max !== undefined && items.length >= max;
+
+  const replace = (index: number, item: unknown) =>
+    onChange(items.map((existing, i) => (i === index ? item : existing)));
+
+  const move = (index: number, by: number) => {
+    const to = index + by;
+    if (to < 0 || to >= items.length) return;
+    const next = [...items];
+    const [moved] = next.splice(index, 1);
+    next.splice(to, 0, moved);
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-2">
+      {items.length === 0 && <p className="text-muted-foreground text-sm">No blocks yet.</p>}
+      {items.map((item, index) => {
+        const at = `${path}[${index}]`;
+        const variant = variantOf(variants, item);
+        const type = asObject(item)[BLOCK_TYPE_KEY];
+        const key = asObject(item)[BLOCK_KEY];
+        const noun = `${variant?.name ?? 'Unknown'} block ${index + 1}`;
+        const err = errorFor?.(at);
+        return (
+          <div
+            key={typeof key === 'string' ? key : `${path}-${index}`}
+            className="space-y-2 rounded-xl bg-secondary/40 p-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-sm">
+                {variant?.name ?? 'Unknown block'}
+                <span className="ml-1.5 font-normal text-muted-foreground">{index + 1}</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Move ${noun} up`}
+                  disabled={index === 0}
+                  onClick={() => move(index, -1)}
+                >
+                  ↑
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Move ${noun} down`}
+                  disabled={index === items.length - 1}
+                  onClick={() => move(index, 1)}
+                >
+                  ↓
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive"
+                  aria-label={`Remove ${noun}`}
+                  onClick={() => {
+                    onEdited?.(at);
+                    onChange(items.filter((_, i) => i !== index));
+                  }}
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+            {variant ? (
+              <ComponentInput
+                id={`${props.id}-${index}`}
+                fields={variant.fields}
+                value={item}
+                path={at}
+                errorFor={errorFor}
+                onEdited={onEdited}
+                pickers={pickers}
+                locale={locale}
+                onChange={(v) => replace(index, v)}
+              />
+            ) : (
+              // A block whose type the model no longer declares: there is no
+              // shape to edit it by, so it is said plainly and can be removed.
+              <p className="text-muted-foreground text-sm">
+                {typeof type === 'string'
+                  ? `This block’s type “${type}” is not in the content model, so it can’t be edited here.`
+                  : 'This block has no type, so it can’t be edited here.'}
+              </p>
+            )}
+            {err && <p className="text-xs text-destructive">{err}</p>}
+          </div>
+        );
+      })}
+      {variants.length === 1 && variants[0] ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={full}
+          onClick={() => onChange([...items, newBlock(variants[0] as ComponentVariant)])}
+        >
+          <Plus className="size-4" aria-hidden="true" /> Add {variants[0].name.toLowerCase()}
+        </Button>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild disabled={full}>
+            <Button type="button" variant="outline" size="sm" aria-label={`Add block to ${label}`}>
+              <Plus className="size-4" aria-hidden="true" /> Add block
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuLabel className="caption">Add to {label}</DropdownMenuLabel>
+            {variants.map((v) => (
+              <DropdownMenuItem key={v.apiId} onSelect={() => onChange([...items, newBlock(v)])}>
+                {v.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {full && (
+        <p className="text-muted-foreground text-xs">
+          {max === 1 ? 'Holds one block.' : `Holds up to ${max} blocks.`}
+        </p>
+      )}
     </div>
   );
 }
