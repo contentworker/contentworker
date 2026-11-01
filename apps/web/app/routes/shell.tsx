@@ -35,6 +35,7 @@ import {
   ChevronsUpDown,
   Ellipsis,
   type LucideIcon,
+  MessageSquareText,
   Monitor,
   Moon,
   ScrollText,
@@ -43,7 +44,7 @@ import {
   UserRound,
   UsersRound,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import {
   Link,
   NavLink,
@@ -63,6 +64,7 @@ import {
   visibleNav,
 } from '~/cms/components/layout/nav';
 import { SpaceSwitcher } from '~/cms/components/layout/SpaceSwitcher';
+import { AssistantProvider, useAssistant } from '~/cms/lib/assistant';
 import { useOptionalClient } from '~/cms/lib/client-context';
 import { useFeatures } from '~/cms/lib/features';
 import { useModKeyLabel, usePageShortcutGroups, useShortcutLabel } from '~/cms/lib/shortcuts';
@@ -228,6 +230,8 @@ function ShortcutsSheet({
   const pageGroups = usePageShortcutGroups();
   const mod = useModKeyLabel();
   const sidebar = useShortcutLabel('\\');
+  const assistant = useShortcutLabel('J');
+  const { enabled: assistantOn } = useAssistant();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="gap-0 overflow-y-auto">
@@ -252,6 +256,12 @@ function ShortcutsSheet({
               Search and run commands
               <Keys keys={[mod, 'K']} chord />
             </li>
+            {assistantOn ? (
+              <li className={row}>
+                Open or close Coworker
+                <Keys keys={[assistant]} />
+              </li>
+            ) : null}
             <li className={`${row} max-md:hidden`}>
               Collapse or expand the sidebar
               <Keys keys={[sidebar]} />
@@ -319,10 +329,83 @@ function PendingBar() {
 export default function Shell() {
   return (
     <CmsProviders>
-      <TooltipProvider>
-        <ShellFrame />
-      </TooltipProvider>
+      <AssistantProvider>
+        <TooltipProvider>
+          <ShellFrame />
+        </TooltipProvider>
+      </AssistantProvider>
     </CmsProviders>
+  );
+}
+
+/**
+ * The assistant (with its markdown renderer) is a large chunk most page views never use: it loads
+ * on first open, and is fetched ahead while the browser is idle so opening it stays instant.
+ */
+const loadPanel = () => import('~/cms/components/assistant/panel');
+const AssistantPanel = lazy(() => loadPanel().then((m) => ({ default: m.AssistantPanel })));
+
+/** Mounts the assistant panel once it has been opened, and preloads it when the page is idle. */
+function LazyAssistantPanel() {
+  // A page's edit goes through the assistant too, so it mounts the panel (closed) to send it.
+  const { enabled, open, acts } = useAssistant();
+  const [wanted, setWanted] = useState(open);
+  useEffect(() => {
+    if (open || acts.length) setWanted(true);
+  }, [open, acts.length]);
+  useEffect(() => {
+    if (!enabled) return;
+    const preload = () => void loadPanel();
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(preload, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(preload, 2000);
+    return () => clearTimeout(t);
+  }, [enabled]);
+  return enabled && wanted ? (
+    <Suspense fallback={null}>
+      <AssistantPanel />
+    </Suspense>
+  ) : null;
+}
+
+/** Opens and closes the assistant, from the header or with ⌘J (Ctrl+J) anywhere. */
+function AssistantToggle() {
+  const { enabled, open, setOpen, focus } = useAssistant();
+  const shortcut = useShortcutLabel('J');
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        if (open) setOpen(false);
+        else focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [enabled, open, setOpen, focus]);
+  if (!enabled) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => (open ? setOpen(false) : focus())}
+      aria-pressed={open}
+      aria-keyshortcuts="Meta+J Control+J"
+      title={open ? `Close Coworker (${shortcut})` : `Ask Coworker (${shortcut})`}
+      className={cn(
+        'hit-area flex h-8 items-center gap-2 rounded-4xl border px-3 text-ui',
+        tint,
+        open
+          ? 'border-foreground/25 bg-accent font-medium text-foreground'
+          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+      )}
+    >
+      <MessageSquareText className="size-4" aria-hidden="true" />
+      {/* Named by its word (visible from sm), so a voice command can say it. */}
+      <span className="max-sm:sr-only">Coworker</span>
+    </button>
   );
 }
 
@@ -344,10 +427,13 @@ function ShellFrame() {
     window.addEventListener(OPEN_SHORTCUTS_EVENT, openShortcuts);
     return () => window.removeEventListener(OPEN_SHORTCUTS_EVENT, openShortcuts);
   }, [openShortcuts]);
-  // Below lg and on a canvas the sidebar is a rail that opens over the page. Asked as "narrow" so
-  // the server (which can't see the viewport) assumes wide; CSS keeps it a rail below lg anyway.
+  // Below lg, on a canvas and beside the assistant's column below xl, the sidebar is a rail that
+  // opens over the page. Asked as "narrow" so the server (which can't see the viewport) assumes
+  // wide; CSS keeps it a rail below lg anyway.
   const narrow = useMedia('(max-width: 1023.98px)');
-  const overlay = narrow || canvasAt(path);
+  const xl = useMedia('(min-width: 1280px)');
+  const assistantOpen = useAssistant().open;
+  const overlay = narrow || canvasAt(path) || (assistantOpen && !xl);
   return (
     <SidebarProvider
       defaultOpen={sidebarOpen}
@@ -396,8 +482,9 @@ function ShellFrame() {
               </div>
             ) : null}
             <div className="ml-auto flex shrink-0 items-center gap-2">
-              {showNav ? <ShellNewEntry path={path} /> : null}
+              {showNav ? <ShellNewEntry path={path} covered={assistantOpen} /> : null}
               {showNav ? <SearchButton /> : null}
+              {showNav ? <AssistantToggle /> : null}
               {/* Without the sidebar (two-factor still due), the account menu stays up here. */}
               {showNav ? null : (
                 <DropdownMenu>
@@ -423,14 +510,18 @@ function ShellFrame() {
           </div>
           <PendingBar />
         </header>
-        <main
-          id="main"
-          tabIndex={-1}
-          aria-busy={slow || undefined}
-          className="min-w-0 flex-1 pb-[var(--tabbar-h)] outline-none md:pb-0"
-        >
-          <Outlet />
-        </main>
+        {/* The page, and the assistant's column beside it from lg (a sheet over it below). */}
+        <div className="flex min-h-0 flex-1">
+          <main
+            id="main"
+            tabIndex={-1}
+            aria-busy={slow || undefined}
+            className="min-w-0 flex-1 pb-[var(--tabbar-h)] outline-none md:pb-0"
+          >
+            <Outlet />
+          </main>
+          {showNav ? <LazyAssistantPanel /> : null}
+        </div>
       </SidebarInset>
       {showNav ? <TabBar path={path} pages={pages} deployment={deployment} /> : null}
       {showNav ? <ShortcutsSheet open={shortcuts} onOpenChange={setShortcuts} /> : null}
@@ -801,12 +892,13 @@ function SearchButton() {
  * New entry, in the header once the space is known: an outline on Approvals and Workflows, where
  * starting an entry isn't the page's point (cms/components/layout/NewEntry).
  */
-function ShellNewEntry({ path }: { path: string }) {
+function ShellNewEntry({ path, covered }: { path: string; covered: boolean }) {
   if (!useOptionalClient()?.ready) return null;
   const quiet = path.startsWith('/approvals') || path.startsWith('/workflows');
   // Phones: a floating pill above the tab bar on Content's lists, where it's the page's next step
-  // (not in the editor, which keeps its own actions there).
-  const float = /^\/content(\/[^/]+)?$/.test(path);
+  // (not in the editor, which keeps its own actions there). Not over the assistant's sheet, where
+  // it would sit on the send button.
+  const float = !covered && /^\/content(\/[^/]+)?$/.test(path);
   return (
     <>
       <span className="hidden md:contents">

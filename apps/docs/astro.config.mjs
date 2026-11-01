@@ -82,6 +82,7 @@ export default defineConfig({
             { label: 'Workflows', slug: 'guides/workflows' },
             { label: 'Approvals and reviews', slug: 'guides/approvals' },
             { label: 'AI features', slug: 'guides/ai' },
+            { label: 'Coworker', slug: 'guides/coworker' },
           ],
         },
         {

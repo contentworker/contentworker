@@ -4,7 +4,8 @@ import { api, EDITOR_READY, MGMT, openCms, SPACE, seedCms, useCmsScope } from '.
 /*
  * The CMS screens end to end against the local stack (web + api + engine on one local D1):
  * author and publish, rich text, the unsaved-changes guards, bulk actions, trash and duplicate,
- * and the settings sections. Ported from the Vite admin's admin.spec.ts.
+ * and the settings sections. Ported from the Vite admin's admin.spec.ts. A page's actions go through
+ * the assistant (its agent runs in the engine here): they stop at a confirm card in its panel.
  */
 
 test.beforeAll(async ({ request }) => {
@@ -16,12 +17,31 @@ test.beforeEach(async ({ page }) => {
 });
 
 /** The seeded content type's entries list, from the Content section's own sub-nav. */
+/**
+ * Confirms a page's action at its card in the assistant's panel; the page waits on the answer. The
+ * newest card: the conversation is the one person's, kept across tests.
+ */
+async function confirmCard(page: Page, title: string) {
+  const card = page
+    .getByRole('complementary', { name: 'Coworker' })
+    .getByRole('region', { name: title })
+    .last();
+  await card.getByRole('button', { name: 'Confirm' }).click();
+}
+
+/**
+ * The Article list, from the Content overview's card: the content-type list beside the page gives
+ * way while the assistant's column is open.
+ */
 async function toArticles(page: Page) {
   await page
-    .getByRole('main')
-    .getByRole('link', { name: /Article/ })
+    .getByRole('navigation', { name: 'Main' })
+    .getByRole('link', { name: 'Content', exact: true })
     .first()
     .click();
+  // The seeded space has one content type: Article.
+  await page.getByRole('main').getByRole('link', { name: 'View entries' }).first().click();
+  await expect(page).toHaveURL(/\/content\/article$/);
 }
 
 /** A new article's editor. */
@@ -46,9 +66,9 @@ test('authors and publishes an entry end-to-end', async ({ page }) => {
   await expect(page.getByText('Entry created')).toBeVisible();
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
 
-  // Publish from the editor header: save-then-confirm with a summary dialog.
+  // Publish from the editor header: confirmed at the assistant's card.
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
-  await page.getByRole('button', { name: 'Publish entry' }).click();
+  await confirmCard(page, 'Publish this entry');
   await expect(page.getByText(/Published v\d+/)).toBeVisible();
 
   // Back on the list, the entry shows as published (in words, not only colour).
@@ -117,10 +137,10 @@ test('publishing with unsaved edits saves first, then confirms', async ({ page }
 
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
   await expect(page.getByText('Draft updated')).toBeVisible();
-  await page.getByRole('button', { name: 'Publish entry' }).click();
+  await confirmCard(page, 'Publish this entry');
   await expect(page.getByText(/Published v\d+/)).toBeVisible();
 
-  // Publish with an INVALID form: feedback at the button, no dialog.
+  // Publish with an INVALID form: feedback at the button, no confirm.
   await page.getByRole('textbox', { name: /Title/ }).fill('');
   await expect(page.getByText('Unsaved changes')).toBeVisible();
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
@@ -167,8 +187,7 @@ test('bulk unpublish confirms once and surfaces per-entry failures by title', as
       .check();
   }
   await page.getByRole('button', { name: 'Unpublish selected' }).click();
-  await expect(page.getByText('Unpublish 2 entries?')).toBeVisible();
-  await page.getByRole('button', { name: 'Unpublish entries' }).click();
+  await confirmCard(page, 'Change these entries');
 
   const failures = page.getByRole('alert').filter({ hasText: 'entries failed' });
   await expect(failures).toBeVisible();
@@ -189,6 +208,7 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
   const row = page.getByRole('row', { name: new RegExp(title) });
   await row.getByRole('button', { name: /^More actions for / }).click();
   await page.getByRole('menuitem', { name: 'Move to trash' }).click();
+  await confirmCard(page, 'Move this entry to the trash');
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
 
   await page.getByRole('button', { name: 'View trash' }).click();
@@ -204,14 +224,15 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
     .getByRole('button', { name: /^More actions for / })
     .click();
   await page.getByRole('menuitem', { name: 'Move to trash' }).click();
+  await confirmCard(page, 'Move this entry to the trash');
+  await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
   await page.getByRole('button', { name: 'View trash' }).click();
   await page
     .getByRole('row', { name: new RegExp(title) })
     .getByRole('button', { name: /^More actions for / })
     .click();
   await page.getByRole('menuitem', { name: 'Delete permanently…' }).click();
-  await expect(page.getByText(`Permanently delete “${title}”?`)).toBeVisible();
-  await page.getByRole('button', { name: 'Delete permanently' }).last().click();
+  await confirmCard(page, 'Delete this entry for good');
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
 });
 

@@ -7,6 +7,9 @@ import {
 } from '@contentworker/security/principal';
 import type { Principal } from './roles';
 
+/** A person as the gateway signs them: with the session the request came on, when there is one. */
+export type SignedPrincipal = Principal & { sid?: string };
+
 /**
  * Sets the signed principal header (`x-cw-principal`) on a request the web gateway forwards to
  * the api at `path`, replacing whatever the caller sent. The api checks it with the same
@@ -15,19 +18,23 @@ import type { Principal } from './roles';
  */
 export async function setPrincipalHeader(
   headers: Headers,
-  p: Principal,
+  p: SignedPrincipal,
   path: string,
   now = Date.now(),
 ) {
   headers.set(PRINCIPAL_HEADER, await signPrincipal(principalKey(), webPrincipal(p), path, now));
 }
 
-/** What the api is told about a person: who, how to name them, and their deployment role. */
-export const webPrincipal = (p: Principal): WebPrincipal => ({
+/**
+ * What the api is told about a person: who, how to name them, their deployment role, and the
+ * session it came on (the assistant's socket outlives the request, and checks it is still live).
+ */
+export const webPrincipal = (p: SignedPrincipal): WebPrincipal => ({
   sub: p.id,
   email: p.email ?? '',
   name: p.name,
   role: p.role,
+  ...(p.sid ? { sid: p.sid } : {}),
 });
 
 /**

@@ -1,5 +1,5 @@
 import { createRequestHandler } from 'react-router';
-import { awaitingSetup, principal, setupDue } from '../app/lib/auth.server';
+import { awaitingSetup, principal, sessionId, setupDue } from '../app/lib/auth.server';
 import { withSecurityHeaders } from '../app/lib/csp';
 import { api } from '../app/lib/env.server';
 import { forwardToApi, hasBearer, isApiPath } from '../app/lib/gateway.server';
@@ -54,7 +54,11 @@ async function route(request: Request, env: Env, _ctx: ExecutionContext): Promis
       api: api(),
       principal: async (r) => {
         const p = await principal(r);
-        return p ? { ...p, due: setupDue(p) } : null;
+        if (!p) return null;
+        // The session it came on, so what outlives this request (the assistant's socket) can
+        // check that session is still live; open local development has none.
+        const sid = p.kind === 'user' ? await sessionId(r) : undefined;
+        return { ...p, due: setupDue(p), ...(sid ? { sid } : {}) };
       },
       sign: (headers, p, path) => setPrincipalHeader(headers, p, path),
     });

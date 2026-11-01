@@ -98,6 +98,13 @@ export interface EdgeEnv {
   readonly RATE_LIMIT_AI?: CfRateLimiter;
   /** AI budget governor (one object per space). */
   readonly AI_BUDGET?: DurableObjectNamespace<CostGuardDO>;
+  /**
+   * The admin's assistant (`AssistantAgent`, one object per person, named for them). The api
+   * forwards `/agents/assistant-agent/<person>` to it after checking the signed principal names
+   * that person. Untyped here: the class lives in `@contentworker/http`, above this package.
+   * Absent → the api answers 404 there.
+   */
+  readonly ASSISTANT_AGENT?: DurableObjectNamespace;
   /** Agent workflows (enrich/moderate/curate/repurpose) on Cloudflare Workflows. */
   readonly AGENT_WF?: Workflow;
   /**
@@ -140,7 +147,10 @@ export interface EdgeEnv {
   readonly SETUP_TOKEN?: string;
   readonly TOKEN_PEPPER?: string;
   readonly SESSION_SECRET?: string;
-  /** Secret shared with the web Worker: verifies its signed `x-cw-principal` header. */
+  /**
+   * Secret shared with the web Worker: verifies its signed `x-cw-principal` header (the api, and
+   * the engine's assistant, which checks the socket's principal itself).
+   */
   readonly PRINCIPAL_KEY?: string;
   /** Rotation only: the key PRINCIPAL_KEY replaced, accepted until the web Worker has moved. */
   readonly PRINCIPAL_KEY_PREVIOUS?: string;
@@ -237,7 +247,7 @@ export type BindingShapeChecks = [
 ];
 
 /** Durable Object namespaces an EdgeEnv may carry. */
-const DO_BINDINGS = ['LIVE_HUB', 'AUTH_LIMITER', 'AI_BUDGET', 'SEARCH'] as const;
+const DO_BINDINGS = ['LIVE_HUB', 'AUTH_LIMITER', 'AI_BUDGET', 'SEARCH', 'ASSISTANT_AGENT'] as const;
 const pinned = new WeakSet<object>();
 
 /**

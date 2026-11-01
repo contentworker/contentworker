@@ -12,12 +12,14 @@
  * 3. Otherwise it goes through with no credentials at all, and the api answers 401 where it needs
  *    one.
  *
- * `x-cw-bookmark` (read-your-writes) passes through both ways untouched.
+ * `x-cw-bookmark` (read-your-writes) passes through both ways untouched. A WebSocket upgrade
+ * (the assistant's socket, `/agents/…`) goes the same way: the binding carries the upgrade and
+ * hands back the api's socket.
  */
 
 import { PRINCIPAL_HEADER } from '@contentworker/security/principal';
 import { crossOrigin } from './origin';
-import type { Principal } from './roles';
+import type { SignedPrincipal } from './principal.server';
 
 /** Exact paths the api serves. */
 const EXACT = new Set(['/spaces', '/mcp', '/openapi.json', '/docs', '/health/api']);
@@ -32,6 +34,8 @@ const PREFIXES = [
   '/media/',
   '/docs/',
   '/guides',
+  // The assistant's socket and its message history (`/agents/assistant-agent/<person>`).
+  '/agents/',
 ];
 
 /** Whether the gateway forwards `pathname` to the api rather than rendering a page. */
@@ -46,10 +50,10 @@ export const hasBearer = (request: Request) =>
 export type GatewayDeps = {
   /** The api Worker's binding. */
   api: Pick<Fetcher, 'fetch'>;
-  /** The signed-in person for a browser request, or null. */
-  principal: (request: Request) => Promise<(Principal & { due?: string | null }) | null>;
+  /** The signed-in person for a browser request (with their session's id), or null. */
+  principal: (request: Request) => Promise<(SignedPrincipal & { due?: string | null }) | null>;
   /** Sets the signed principal header for `path`. */
-  sign: (headers: Headers, p: Principal, path: string) => Promise<void>;
+  sign: (headers: Headers, p: SignedPrincipal, path: string) => Promise<void>;
 };
 
 /**

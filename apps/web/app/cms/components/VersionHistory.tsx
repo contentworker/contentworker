@@ -15,6 +15,7 @@ import { History, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { ToneBadge } from '~/cms/components/status';
+import { useAssistantEdit } from '../lib/assistant';
 import { useClient, useLocalRun } from '../lib/client-context';
 import type { VersionDiff } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
@@ -27,10 +28,14 @@ const show = (v: unknown): string =>
 /**
  * Timeline of an entry's saved versions with diff-against-current and restore.
  * Restore appends a NEW version carrying the old fields, so history is never
- * rewritten — after it runs, the parent reloads the form via `onRestored`.
+ * rewritten — after it runs, the parent reloads the form via `onRestored`. It goes through the
+ * assistant, as a confirm card in its panel; when the assistant can't be reached, it confirms in
+ * its own dialog and restores through the API.
  */
 export function VersionHistory(props: {
   entryId: string;
+  /** What the assistant's card calls the entry: its title. */
+  about?: string;
   /** Current draft version, to flag "current" and pick a diff baseline. */
   currentVersion: number;
   /** Published version (if any), to flag "live". */
@@ -44,6 +49,7 @@ export function VersionHistory(props: {
   const { busy, run } = useLocalRun();
   const toast = useToast();
   const invalidate = useInvalidate();
+  const edit = useAssistantEdit();
   const versionsQuery = useScopedQuery(['versions', props.entryId], () =>
     client.listVersions(props.entryId),
   );
@@ -65,16 +71,37 @@ export function VersionHistory(props: {
       setDiffWith(version);
     });
 
+  // Asks through the assistant's card; without it, through this panel's own dialog.
+  const requestRestore = (version: number) =>
+    run(async () => {
+      // The card says what the dialog warned of: restoring discards the form's unsaved edits.
+      const what = props.about ? `Version ${version} of ${props.about}` : `Version ${version}`;
+      const unsaved = props.hasUnsavedChanges?.()
+        ? ' · unsaved edits in the form are discarded'
+        : '';
+      const r = await edit(
+        'entries_restore_version',
+        { id: props.entryId, version },
+        what + unsaved,
+      );
+      if (r === null) setConfirmRestore(version);
+      else if ('output' in r) await restored(version);
+    });
+
   const restore = (version: number) =>
     run(async () => {
       await client.restoreVersion(props.entryId, version);
-      toast.success(`Restored version ${version} as a new draft`);
-      setDiff(null);
-      setDiffWith(null);
-      setConfirmRestore(null);
-      await invalidate(['versions', props.entryId]);
-      props.onRestored();
+      await restored(version);
     });
+
+  const restored = async (version: number) => {
+    toast.success(`Restored version ${version} as a new draft`);
+    setDiff(null);
+    setDiffWith(null);
+    setConfirmRestore(null);
+    await invalidate(['versions', props.entryId]);
+    props.onRestored();
+  };
 
   return (
     <CollapsibleCard
@@ -121,7 +148,7 @@ export function VersionHistory(props: {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => setConfirmRestore(v.version)}
+                        onClick={() => void requestRestore(v.version)}
                         disabled={busy}
                       >
                         <RotateCcw className="size-3.5" />

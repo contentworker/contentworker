@@ -38,8 +38,9 @@ For a same-origin browser request with a live session, the web gateway
 (`apps/web/app/lib/gateway.server.ts`) removes the cookies and adds `x-cw-principal`
 (`@contentworker/security/principal`):
 
-- payload `{ sub, email, name, role, iat, exp, path }`, base64url, then `.`, then
-  base64url(HMAC-SHA256(`PRINCIPAL_KEY`, payload));
+- payload `{ sub, email, name, role, sid?, iat, exp, path }`, base64url, then `.`, then
+  base64url(HMAC-SHA256(`PRINCIPAL_KEY`, payload)); `sid` is the session the request came on
+  (the SHA-256 its `sessions` row is keyed by), absent in open local development;
 - valid for 60 seconds (5 s clock skew) and only for the exact path it was signed for;
 - a caller-supplied `x-cw-principal` is always removed, and a request carrying a bearer token
   never gets one; cross-site requests are forwarded without the session.
@@ -56,6 +57,21 @@ resolves the person with `principalForWebUser` (`packages/application/src/web-pr
 
 The resulting principal has `kind: 'user'` and `subject` = the person's id, so audit attributes
 actions to the person.
+
+**The assistant's socket** (`/agents/assistant-agent/<person>`) carries the same header, signed
+for that path. The api forwards it to the engine's `AssistantAgent` only when `sub` is the person
+the path names, and the object verifies the signature again itself with `PRINCIPAL_KEY`. Because a
+socket outlives its 60 seconds, the object keeps who the claims name per connection and, before
+every frame the socket sends and every turn and page edit, re-reads the person: refused, and the
+socket closed, once they are disabled or their session (`sid`, required for anyone but `local`) is
+deleted, expired or idle past their role's limit. Their access to the page's space is resolved
+again with `principalForWebUser` each time. `local` (open local development) is let in only while
+nobody has an account. The two-factor and password-change "due" states aren't re-read: the
+gateway refuses to sign for a person who is due, and a password reset ends their sessions.
+
+An MCP tool that fails with anything REST would answer with a 5xx (a database or binding error)
+reports only `Internal server error`; refusals (not found, forbidden, invalid, conflict) keep their
+own words, as REST shows them.
 
 ## API key kinds
 

@@ -1,14 +1,21 @@
 // Test-only worker entry: exports the Durable Object classes under test with a
 // minimal fetch handler, so the vitest-pool-workers runtime can bind them
-// without pulling src/main.ts's full adapter graph into the test bundle.
+// without pulling src/main.ts's full adapter graph into the test bundle. Its
+// fetch handler is the api's forward to the assistant, so the socket tests go
+// through the same gate a deployment does.
+import { isAssistantPath, routeAssistant } from '@contentworker/http/assistant/gate';
+import type { EdgeEnv } from '@contentworker/platform/env';
+
 export { CostGuardDO } from '@contentworker/platform/do/cost-guard';
 export { LiveHubDO } from '@contentworker/platform/do/live-hub';
 export { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 export { SearchShardDO } from '@contentworker/platform/do/search-shard';
+export { AssistantAgent } from '../../src/assistant.js';
 export { EditorialTestWorkflow } from './editorial.js';
 
 export default {
-  fetch(): Response {
+  fetch(request: Request, env: EdgeEnv): Promise<Response> | Response {
+    if (isAssistantPath(new URL(request.url).pathname)) return routeAssistant(request, env);
     return new Response('test fixture');
   },
 };

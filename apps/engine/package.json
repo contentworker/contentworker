@@ -23,6 +23,7 @@
     "@contentworker/platform": "workspace:*",
     "@contentworker/ports": "workspace:*",
     "@contentworker/redaction": "workspace:*",
+    "@contentworker/security": "workspace:*",
     "@contentworker/test-kit": "workspace:*",
     "agents": "catalog:"
   },

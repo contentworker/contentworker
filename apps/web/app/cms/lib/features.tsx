@@ -1,9 +1,10 @@
 import { createContext, type ReactNode, useContext } from 'react';
 
 /**
- * Surfaces that ship ahead of their server side. `assistant` (the assistant's column and its ⌘J
- * toggle) stays off: it has no server side yet. `approvals` (the Approvals inbox) is on. Set per
- * tree with <FeaturesProvider> (tests, previews).
+ * Surfaces that can be switched off. `assistant` (the assistant's column, its ⌘J toggle, and pages'
+ * edits going through it) is on; off, pages make their edits straight through the API, as they also
+ * do whenever the assistant can't be reached. `approvals` (the Approvals inbox) is on. Set per tree
+ * with <FeaturesProvider> (tests, previews).
  */
 export interface Features {
   readonly assistant: boolean;
@@ -11,7 +12,7 @@ export interface Features {
 }
 
 export const DEFAULT_FEATURES: Features = {
-  assistant: false,
+  assistant: true,
   approvals: true,
 };
 

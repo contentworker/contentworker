@@ -169,3 +169,61 @@ test('G then a letter goes to a page, and ? lists the shortcuts', async ({ page 
   await page.keyboard.press('Shift+?');
   await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
 });
+
+test('the assistant opens beside the page from lg, as a sheet below, and never breaks it', async ({
+  page,
+}, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await open(page, '/content');
+  const toggle = page.getByRole('button', { name: 'Coworker', exact: true });
+  await expect(toggle).toHaveAttribute('aria-keyshortcuts', 'Meta+J Control+J');
+  await toggle.click();
+  const panel = page.getByRole('complementary', { name: 'Coworker' });
+  await expect(panel.getByRole('heading', { name: 'Coworker', level: 2 })).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  // Whether or not the agent answers here, the panel opens on its prompt or says it can't reach it.
+  await expect(
+    panel
+      .getByRole('textbox', { name: 'Message Coworker' })
+      .or(panel.getByText(/Can’t reach Coworker/))
+      .first(),
+  ).toBeVisible();
+  const wide = (page.viewportSize()?.width ?? 0) >= 1024;
+  if (wide) {
+    // A column: the page narrows beside it, and nothing is covered.
+    await expect.poll(() => panel.evaluate((el) => el.getBoundingClientRect().width)).toBe(400);
+    const [main, aside] = await Promise.all([
+      page.locator('#main').evaluate((el) => el.getBoundingClientRect().right),
+      panel.evaluate((el) => el.getBoundingClientRect().left),
+    ]);
+    expect(main).toBeLessThanOrEqual(aside + 1);
+  } else {
+    // A sheet over the page: Escape closes it and hands focus back to the page.
+    await panel.getByRole('button', { name: /Close Coworker/ }).focus();
+    await page.keyboard.press('Escape');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#main')).toBeFocused();
+  }
+  const [scroll, width] = await page.evaluate(() => [
+    document.documentElement.scrollWidth,
+    window.innerWidth,
+  ]);
+  expect(scroll, `page is ${scroll}px wide in a ${width}px viewport`).toBeLessThanOrEqual(width);
+  expect(errors).toEqual([]);
+  if (isTouch(info)) return;
+  // ⌘J (Ctrl+J) closes it from anywhere, and opens it again.
+  await page.locator('main h1').click();
+  await page.keyboard.press('ControlOrMeta+j');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await page.keyboard.press('ControlOrMeta+j');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('the sidebar is a rail beside the assistant’s column below xl', async ({ page }, info) => {
+  test.skip(info.project.name !== 'ipad-landscape', 'lg to xl');
+  await open(page, '/content');
+  expect(await sidebarWidth(page)).toBeGreaterThan(200);
+  await page.getByRole('button', { name: 'Coworker', exact: true }).click();
+  await expect.poll(() => sidebarWidth(page)).toBeLessThan(80);
+});

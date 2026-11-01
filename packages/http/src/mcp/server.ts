@@ -149,11 +149,29 @@ import {
   WORKFLOW_RUN_STATUSES,
   type WorkflowRunStatus,
 } from '@contentworker/domain';
+import { redactCredentials } from '@contentworker/redaction';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
+import { toHttpError } from '../api/http.js';
 import type { McpDeps } from './deps.js';
+
+/**
+ * What a tool call that failed inside the server says, in place of the failure, as REST does: a
+ * domain error (not found, forbidden, invalid, a conflict, not configured) keeps its own words,
+ * which REST shows too; anything else (a database's, a binding's error) is REST's
+ * "Internal server error", and its words never reach the caller.
+ */
+export const INTERNAL_TOOL_ERROR = 'Internal server error';
+
+/** A tool handler's failure as the caller may see it; internal ones are logged here instead. */
+function toolFailure(tool: string, err: unknown): unknown {
+  if ((toHttpError(err).body as { error?: { code?: string } }).error?.code !== 'internal')
+    return err;
+  console.error(JSON.stringify({ msg: 'mcp: tool failed', tool, error: redactCredentials(err) }));
+  return new Error(INTERNAL_TOOL_ERROR);
+}
 
 const DEFAULT_SPACE = process.env.SEED_SPACE_ID ?? 'space-1';
 const DEFAULT_ENV = process.env.SEED_ENV_ID ?? 'main';
@@ -295,6 +313,20 @@ export function buildServer(
     { name: 'contentworker', version: '0.1.0' },
     { cacheHints: CACHE_HINTS },
   );
+  // Every tool's failures pass through `toolFailure`, so no handler can leak an internal error.
+  const register = server.registerTool.bind(server);
+  server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) =>
+    register(
+      name,
+      config as never,
+      (async (...args: unknown[]) => {
+        try {
+          return await handler(...args);
+        } catch (err) {
+          throw toolFailure(name, err);
+        }
+      }) as never,
+    )) as typeof server.registerTool;
   const guard = (scope: PermissionScope, s: Scope) => authorize(principal, scope, s.spaceId);
   // Granular RBAC: content-level check for role-bound principals (unrestricted
   // principals short-circuit inside the domain helpers). Same enforcement as

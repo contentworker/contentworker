@@ -40,8 +40,9 @@ import { CanvasDialog } from '../components/CanvasDialog';
 import type { Pickers, PickOption } from '../components/EntryForm';
 import { EntryForm } from '../components/EntryForm';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
+import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
-import type { EntryAggregate, FieldChange, ModelTier } from '../lib/management';
+import type { EntryAggregate, EntryView, FieldChange, ModelTier } from '../lib/management';
 import {
   useAllEntriesQuery,
   useAppExtensionsQuery,
@@ -63,7 +64,12 @@ const submitForm = () =>
  * The editor is a place you stay: saving keeps you here (a new entry navigates
  * to its edit URL), the header always shows status/version/unsaved state, and
  * Publish lives next to Save — with unsaved edits it saves first, then asks for
- * confirmation with a changed-fields summary.
+ * confirmation.
+ *
+ * Its edits go through the assistant (`useAssistantEdit`): Save draft runs at once and leaves a
+ * line in the conversation; Publish stops at a confirm card in the panel and waits for the answer.
+ * When the assistant can't be reached they go straight to the API, Publish confirming in its own
+ * dialog with a changed-fields summary, as it did before.
  */
 export function EntryEditor() {
   const { typeId, entryId } = useParams();
@@ -74,6 +80,7 @@ export function EntryEditor() {
   const { types, locales, defaultLocale, fallbacks } = useContentOutlet();
   const queryClient = useQueryClient();
   const keys = useQueryKeys();
+  const edit = useAssistantEdit();
 
   // An inline-edit deep link from a previewed page: which field it came from,
   // and which space it was rendered against.
@@ -163,6 +170,15 @@ export function EntryEditor() {
   const pageTitle =
     displayTitle ??
     (selectedType ? `${isEdit ? 'Edit' : 'New'} ${selectedType.name}` : 'Entry editor');
+  // What the assistant's chip, cards and lines call this entry.
+  const about = displayTitle ?? 'Untitled entry';
+  usePageContext(
+    () =>
+      entryId && typeId
+        ? { kind: 'entry', entryId, contentType: typeId, label: about }
+        : { kind: 'content-type', contentType: typeId ?? '', label: selectedType?.name ?? '' },
+    [entryId, typeId, about, selectedType?.name],
+  );
   useEffect(() => {
     const prev = document.title;
     document.title = `${pageTitle} · contentworker admin`;
@@ -274,10 +290,23 @@ export function EntryEditor() {
     return run(async () => {
       if (!selectedType) return;
       const genAtSubmit = dirtyGen.current;
-      const view =
+      const r =
         isEdit && entryId
-          ? await client.updateEntry(entryId, fields)
-          : await client.createEntry(selectedType.apiId, fields);
+          ? await orDirect(
+              await edit<EntryView>('entries_update', { id: entryId, fields }, about),
+              () => client.updateEntry(entryId, fields),
+            )
+          : await orDirect(
+              await edit<EntryView>(
+                'entries_create',
+                { contentType: selectedType.apiId, fields },
+                titleOf(fields) ?? `New ${selectedType.name.toLowerCase()}`,
+              ),
+              () => client.createEntry(selectedType.apiId, fields),
+            );
+      // A save runs at once; it is never a card to decline.
+      if (!('output' in r)) return;
+      const view = r.output;
       setLastAggregate(view.entry);
       // Edit mode: only clear dirty if nothing was typed while the request was
       // in flight — those keystrokes are NOT in the saved payload. Create mode
@@ -296,8 +325,32 @@ export function EntryEditor() {
         return;
       }
       toast.success('Draft updated');
-      if (chainPublish) await computePublishConfirm(view.entry);
+      if (chainPublish) await publish(view.entry);
     });
+  };
+
+  // The display field's value in the fields being saved (a new entry has no title until then).
+  function titleOf(fields: EntryFields): string | null {
+    const df = selectedType?.displayField;
+    const v = df ? (fields[df] as Record<string, unknown> | undefined)?.[defaultLocale] : undefined;
+    return typeof v === 'string' && v.trim() ? v : null;
+  }
+
+  // Publishing: a card in the assistant, or, when it can't be reached, the page's own dialog. No
+  // `run` here: callers wrap it, and `run` doesn't nest.
+  const publish = async (agg: EntryAggregate | null) => {
+    if (!entryId) return;
+    const r = await edit<EntryAggregate>('entries_publish', { id: entryId }, about);
+    if (r === null) return computePublishConfirm(agg);
+    if ('output' in r) published(r.output);
+  };
+
+  const published = (agg: EntryAggregate) => {
+    if (!entryId) return;
+    setLastAggregate(agg);
+    void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+    void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
+    toast.success(`Published v${agg.publishedVersion ?? agg.currentVersion}`);
   };
 
   const requestPublish = () => {
@@ -310,17 +363,14 @@ export function EntryEditor() {
       publishAfterSaveRef.current = false;
       return;
     }
-    void run(() => computePublishConfirm(lastAggregate?.id === entryId ? lastAggregate : null));
+    void run(() => publish(lastAggregate?.id === entryId ? lastAggregate : null));
   };
 
+  // The page's own confirm, when the assistant isn't there to show its card.
   const confirmPublish = () =>
     run(async () => {
       if (!entryId) return;
-      const agg = await client.publishEntry(entryId);
-      setLastAggregate(agg);
-      void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
-      void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
-      toast.success(`Published v${agg.publishedVersion ?? agg.currentVersion}`);
+      published(await client.publishEntry(entryId));
       setPublishConfirm(null);
     });
 
@@ -554,6 +604,7 @@ export function EntryEditor() {
                 <VersionHistory
                   key={`versions:${entryId}`}
                   entryId={entryId}
+                  about={about}
                   currentVersion={meta.version}
                   publishedVersion={
                     lastAggregate?.id === entryId

@@ -87,7 +87,9 @@
       { "name": "LIVE_HUB", "class_name": "LiveHubDO" },
       { "name": "AUTH_LIMITER", "class_name": "RateLimiterDO" },
       { "name": "AI_BUDGET", "class_name": "CostGuardDO" },
-      { "name": "SEARCH", "class_name": "SearchShardDO" }
+      { "name": "SEARCH", "class_name": "SearchShardDO" },
+      // The admin's assistant, one object per person (the api forwards its socket here).
+      { "name": "ASSISTANT_AGENT", "class_name": "AssistantAgent" }
     ]
   },
   // Applied DO migration tags are frozen (scripts/do-migrations.test.ts): add, never edit.
@@ -95,7 +97,8 @@
     { "tag": "v1", "new_sqlite_classes": ["LiveHubDO"] },
     { "tag": "v2", "new_sqlite_classes": ["RateLimiterDO"] },
     { "tag": "v3", "new_sqlite_classes": ["CostGuardDO"] },
-    { "tag": "v4", "new_sqlite_classes": ["SearchShardDO"] }
+    { "tag": "v4", "new_sqlite_classes": ["SearchShardDO"] },
+    { "tag": "v5", "new_sqlite_classes": ["AssistantAgent"] }
   ],
   "workflows": [
     { "binding": "AGENT_WF", "name": "contentworker-agent", "class_name": "AgentWorkflow" },
@@ -109,7 +112,8 @@
   // Email Sending sender (EMAIL_FROM); a bound EMAIL without a sender is refused at boot.
 
   // ---- Vars (secrets: DATA_KEY, TOKEN_PEPPER, SETUP_TOKEN, ADMIN_TOKEN, MCP_TOKEN,
-  // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, SESSION_SECRET, OIDC_CLIENT_SECRET) -----------
+  // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, SESSION_SECRET, OIDC_CLIENT_SECRET, and
+  // PRINCIPAL_KEY, with which the assistant checks its socket's signed principal) --------------
   "vars": {
     "ROLE": "all",
     "REQUIRE_SECURE_SECRETS": "true",

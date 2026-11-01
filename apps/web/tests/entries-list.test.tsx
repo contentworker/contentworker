@@ -42,12 +42,27 @@ vi.mock('~/cms/lib/client-context', () => ({
   }),
 }));
 
+// The assistant, when a test stands one in: `edit` answers each page edit as the panel would (its
+// output, or declined). Null by default: no shell here, so the page edits through the API itself.
+const assistant = vi.hoisted(() => ({
+  edit: null as null | ((tool: string, input: unknown, about?: string) => Promise<unknown>),
+}));
+vi.mock('~/cms/lib/assistant', async (importOriginal) => {
+  const real = await importOriginal<typeof import('~/cms/lib/assistant')>();
+  return {
+    ...real,
+    useAssistantEdit: () => (tool: string, input: unknown, about?: string) =>
+      assistant.edit ? assistant.edit(tool, input, about) : Promise.resolve(null),
+  };
+});
+
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { EntriesList } = await import('~/cms/routes/EntriesList');
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  assistant.edit = null;
 });
 
 const article: ContentType = {
@@ -173,7 +188,8 @@ describe('EntriesList unpublish and Undo', () => {
       fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${t}”` }));
     }
     fireEvent.click(screen.getByRole('button', { name: 'Unpublish selected' }));
-    const dialog = screen.getByRole('alertdialog', {
+    // Without the assistant (no shell here), the page confirms in its own dialog, once it knows.
+    const dialog = await screen.findByRole('alertdialog', {
       name: `Unpublish ${titles.length} entries?`,
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unpublish entries' }));
@@ -219,5 +235,69 @@ describe('EntriesList optimistic status', () => {
     await waitFor(() => expect(within(rowOf('About us')).getByText('Published')).toBeTruthy());
     expect(within(rowOf('About us')).queryByText('Draft')).toBeNull();
     expect(screen.queryByText('“About us” unpublished')).toBeNull();
+  });
+});
+
+describe('EntriesList through the assistant', () => {
+  it('publishes a row through its card, and changes nothing through the API itself', async () => {
+    const edit = vi.fn(async () => ({ output: { id: 'e-draft', status: 'published' } }));
+    assistant.edit = edit;
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish “Spring launch”' }));
+    await screen.findByText('Entry published');
+    expect(edit).toHaveBeenCalledExactlyOnceWith(
+      'entries_publish',
+      { id: 'e-draft' },
+      'Spring launch',
+    );
+    expect(client.publishEntry).not.toHaveBeenCalled();
+  });
+
+  it('leaves the row as it was when the card is declined', async () => {
+    assistant.edit = vi.fn(async () => ({ declined: true }));
+    setup();
+    await rowMenu('About us', 'Move to trash');
+    await waitFor(() => expect(assistant.edit).toHaveBeenCalledOnce());
+    expect(assistant.edit).toHaveBeenCalledWith('entries_trash', { id: 'e-live' }, 'About us');
+    expect(client.trashEntry).not.toHaveBeenCalled();
+    expect(screen.queryByText(/moved to the trash/)).toBeNull();
+  });
+
+  it('sends a bulk change as one card, with no dialog of its own', async () => {
+    const edit = vi.fn(async (_tool: string, input: unknown) => {
+      const ids = (input as { ids: string[] }).ids;
+      return {
+        output: {
+          total: ids.length,
+          succeeded: ids.length,
+          failed: 0,
+          results: ids.map((id) => ({ id, ok: true })),
+        },
+      };
+    });
+    assistant.edit = edit;
+    setup();
+    for (const t of ['About us', 'Careers'])
+      fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${t}”` }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unpublish selected' }));
+    await screen.findByText('Unpublished 2 entries');
+    expect(edit).toHaveBeenCalledExactlyOnceWith(
+      'entries_bulk_action',
+      { action: 'unpublish', ids: ['e-live', 'e-live2'] },
+      'Unpublish 2 entries',
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(client.bulkEntryAction).not.toHaveBeenCalled();
+  });
+
+  it('duplicates at once and opens the copy', async () => {
+    assistant.edit = vi.fn(async () => ({
+      output: { entry: { id: 'e-copy', contentTypeApiId: 'article' } },
+    }));
+    setup();
+    await rowMenu('About us', 'Duplicate');
+    await screen.findByText('Entry duplicated');
+    expect(assistant.edit).toHaveBeenCalledWith('entries_duplicate', { id: 'e-live' }, 'About us');
+    expect(client.duplicateEntry).not.toHaveBeenCalled();
   });
 });

@@ -389,6 +389,9 @@ importers:
       '@contentworker/redaction':
         specifier: workspace:*
         version: link:../../packages/redaction
+      '@contentworker/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       '@contentworker/test-kit':
         specifier: workspace:*
         version: link:../../packages/test-kit

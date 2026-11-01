@@ -9,6 +9,7 @@ import { WEB_SIGN_IN } from '@contentworker/http/api/access-policy';
 import { createApp } from '@contentworker/http/api/app';
 import { type AuthDeps, createApiHasher } from '@contentworker/http/api/auth';
 import { validateApiSecrets } from '@contentworker/http/api/secure-secrets';
+import { isAssistantPath, routeAssistant } from '@contentworker/http/assistant/gate';
 import type { McpDeps } from '@contentworker/http/mcp/deps';
 import { mcpRoutes } from '@contentworker/http/mcp/routes';
 import { createCfRequestRateLimiter } from '@contentworker/http/rate-limit';
@@ -141,6 +142,14 @@ export default {
    */
   async fetch(req: Request, rawEnv: EdgeEnv, exec: ExecutionContext): Promise<Response> {
     const env = withJurisdiction(rawEnv);
+    // The admin's assistant: its socket (and message history) goes to the engine's
+    // AssistantAgent once the signed principal names that assistant's own person. Before any
+    // wiring: it needs none here, and a WebSocket's response can't be rebuilt with a bookmark.
+    if (
+      isAssistantPath(new URL(req.url).pathname) &&
+      mountsRole({ role: env.ROLE ?? 'all' }, 'management')
+    )
+      return routeAssistant(req, env);
     // Writes start at the primary; reads may start at any replica unless the client brings a
     // bookmark, which pins them to at least the state it last saw.
     const bookmark =

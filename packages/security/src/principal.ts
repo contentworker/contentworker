@@ -9,7 +9,7 @@
  * the api with a bearer token carries no principal at all.
  *
  * Format: `base64url(JSON payload)` `.` `base64url(HMAC-SHA256(key, <the base64url payload>))`,
- * with payload `{ sub, email, name, role, iat, exp, path }`; `iat` and `exp` are Unix seconds.
+ * with payload `{ sub, email, name, role, sid?, iat, exp, path }`; `iat` and `exp` are Unix seconds.
  *
  * Dependency-free (Web Crypto only), so it runs unchanged in Workers, Node and the browser.
  */
@@ -39,6 +39,12 @@ export type WebPrincipal = {
   name: string;
   /** Their deployment role. Content permissions are the api's to resolve from `sub`. */
   role: Role;
+  /**
+   * The web session this was signed from (the SHA-256 its `sessions` row is keyed by), when there
+   * is one. What keeps acting after the request it came with (the assistant's socket) checks that
+   * session is still live before each thing it does; open local development has none.
+   */
+  sid?: string;
 };
 
 /** The signed claims: the principal plus when and where it is good. */
@@ -91,6 +97,7 @@ export async function signPrincipal(
     email: p.email,
     name: p.name,
     role: p.role,
+    ...(p.sid ? { sid: p.sid } : {}),
     iat,
     exp: iat + PRINCIPAL_TTL_S,
     path,
@@ -136,7 +143,14 @@ export async function verifyPrincipal(
     if (c.iat > now + MAX_SKEW_S || c.exp <= now || c.exp - c.iat > PRINCIPAL_TTL_S) return null;
     if (typeof c.sub !== 'string' || !c.sub) return null;
     if (typeof c.email !== 'string' || typeof c.name !== 'string' || !isRole(c.role)) return null;
-    return { sub: c.sub, email: c.email, name: c.name, role: c.role };
+    if (c.sid !== undefined && (typeof c.sid !== 'string' || !c.sid)) return null;
+    return {
+      sub: c.sub,
+      email: c.email,
+      name: c.name,
+      role: c.role,
+      ...(c.sid ? { sid: c.sid } : {}),
+    };
   } catch {
     return null;
   }
