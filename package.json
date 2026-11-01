@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
-    "dev": "pnpm --filter @contentworker/web dev",
+    "dev": "pnpm db:migrate:local && pnpm --filter @contentworker/web dev",
     "test": "turbo run test",
     "lint": "turbo run lint",
     "format": "biome format --write .",
@@ -17,7 +17,8 @@
     "db:migrate:local": "pnpm --filter @contentworker/web exec wrangler d1 migrations apply DB --local",
     "test:fleet": "node --test scripts/*.test.ts",
     "test:toolkit": ".claude/scripts/toolkit-check.sh && .claude/hooks/tests/docs-hooks.test.sh && .claude/hooks/tests/guard-hooks.test.sh",
-    "fleet": "node scripts/fleet.ts"
+    "fleet": "node scripts/fleet.ts",
+    "dev:reset": "rm -rf apps/web/.wrangler/state && pnpm db:migrate:local"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",

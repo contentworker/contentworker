@@ -58,10 +58,13 @@
         "max_retries": 10,
         "retry_delay": 30,
         "dead_letter_queue": "contentworker-purge-dlq"
-      }
+      },
+      { "queue": "contentworker-purge-dlq", "max_batch_size": 100, "max_batch_timeout": 30 }
     ]
   },
   "vars": {
+    // Rendered per deployment (scripts/fleet.ts): queue consumers route by the suffixed queue name.
+    "QUEUE_SUFFIX": "",
     "ROLE": "delivery",
     "REQUIRE_SECURE_SECRETS": "true",
     "AI_PROVIDER": "workers-ai",

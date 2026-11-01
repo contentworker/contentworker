@@ -8,8 +8,10 @@
  * 3. forwards a canonical URL (profile + path + sorted query) and nothing else to the cached
  *    `Delivery` entrypoint, so equal readers share one Workers Caching entry.
  *
- * Authorization therefore runs on every request even when the content comes from cache; caching
- * never extends a revoked key's access. Requests that cannot be cached (the live SSE stream,
+ * Authorization therefore runs on every request even when the content comes from cache. A revoked
+ * key or changed role is dropped from the principal cache at once (its space's tag is
+ * invalidated); KV's edge propagation and the 60s principal TTL bound how long another colo may
+ * still accept it. Requests that cannot be cached (the live SSE stream,
  * GraphQL POSTs) are answered here directly. Its queue consumer drains the purge queue, rationed
  * to Cloudflare's purge limits.
  */
@@ -19,11 +21,11 @@ import type { Principal } from '@contentworker/domain';
 import type { AuthDeps } from '@contentworker/http/api/auth';
 import { deliveryRoutes } from '@contentworker/http/api/routes/delivery';
 import { liveRoutes } from '@contentworker/http/routes/live';
-import { type EdgeEnv, withJurisdiction } from '@contentworker/platform/env';
+import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import type { PurgeMessage } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
 import { Hono } from 'hono';
-import { type Delivery, PRINCIPAL_HEADER } from './delivery.js';
+import { type Delivery, matches, PRINCIPAL_HEADER } from './delivery.js';
 import { canonicalUrl, visibilityProfile } from './profile.js';
 import { drain } from './purge.js';
 
@@ -80,7 +82,8 @@ export default {
     const deps = (principal?: Principal): AuthDeps => ({
       ctx: wired.ctx,
       hasher: createHasher(wired.config.tokenPepper),
-      adminToken: wired.config.adminToken,
+      // Delivery serves API keys only: no admin token, ever (not even a configured one).
+      adminToken: '',
       rag: wired.rag,
       blob: wired.blob,
       ai: wired.ai,
@@ -123,21 +126,52 @@ export default {
     }
 
     const profile = await visibilityProfile(principal);
+    // Only the canonical URL (and the principal, which is not part of the cache key) goes to the
+    // cache; conditional headers are evaluated here, against the cached response's ETag.
     const headers = new Headers({ [PRINCIPAL_HEADER]: JSON.stringify(principal) });
-    const inm = request.headers.get('if-none-match');
-    if (inm) headers.set('if-none-match', inm);
     const exports = (ctx as unknown as { exports: Exports }).exports;
     const upstream = await exports.Delivery.fetch(
       new Request(canonicalUrl(profile, url), { headers }),
     );
-    const response = new Response(request.method === 'HEAD' ? null : upstream.body, upstream);
+    const etag = upstream.headers.get('etag');
+    const notModified =
+      upstream.status === 200 &&
+      etag !== null &&
+      matches(request.headers.get('if-none-match'), etag);
+    if (notModified) await upstream.body?.cancel();
+    const response = notModified
+      ? new Response(null, { status: 304, headers: upstream.headers })
+      : new Response(request.method === 'HEAD' ? null : upstream.body, upstream);
     for (const [k, v] of Object.entries(PUBLIC)) response.headers.set(k, v);
-    // Shared caches downstream must not reuse an authorized response for another caller.
+    // Workers Caching keeps its own (public) policy for the cached entrypoint; to clients the
+    // response is private: it was authorized for this key, and no shared cache downstream may
+    // reuse it for another caller.
+    if (response.headers.has('cache-control')) {
+      response.headers.set('cache-control', 'private, max-age=60, must-revalidate');
+    }
     response.headers.set('vary', 'authorization');
     return response;
   },
 
-  async queue(batch, _env, ctx) {
+  async queue(batch, env, ctx) {
+    if (batch.queue === queueName(env, 'contentworker-purge-dlq')) {
+      // Purges that failed every retry: their responses age out on max-age (60s) plus
+      // stale-while-revalidate, so nothing is served stale forever; say so loudly, then drop them.
+      for (const msg of batch.messages) {
+        console.error(
+          JSON.stringify({
+            msg: 'delivery purge dead-lettered',
+            tags: (msg.body as PurgeMessage).tags,
+          }),
+        );
+        env.METRICS?.writeDataPoint({
+          blobs: ['contentworker_purge_dead_letters_total'],
+          doubles: [1],
+        });
+        msg.ack();
+      }
+      return;
+    }
     const exports = (ctx as unknown as { exports: Exports }).exports;
     await drain(batch as MessageBatch<PurgeMessage>, (tags) => exports.Delivery.purge(tags));
   },

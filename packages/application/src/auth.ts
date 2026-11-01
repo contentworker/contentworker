@@ -6,6 +6,7 @@ import {
   scopesForKind,
   type TokenIssuance,
   UnauthorizedError,
+  ValidationError,
 } from '@contentworker/domain';
 import type { Hasher } from '@contentworker/ports';
 import type { AppContext } from './context.js';
@@ -64,6 +65,10 @@ export async function createApiKey(
   hasher: Hasher,
   input: CreateApiKeyInput,
 ): Promise<CreatedApiKey> {
+  if (!input.spaceId || input.spaceId === '*') {
+    // Only the deployment's root tokens act across spaces; a stored key never does.
+    throw new ValidationError([{ field: 'spaceId', message: 'A key belongs to one space' }]);
+  }
   let roleScopes: readonly string[] | undefined;
   if (input.roleId) {
     const role = await ctx.store.roles.get(input.spaceId, input.roleId);
@@ -132,6 +137,26 @@ export async function authenticate(
   const identity = delegated
     ? { kind: 'user' as const, subject: key.subject, clientId: key.clientId }
     : { kind: key.kind };
+
+  if (delegated) {
+    // A token a person holds is only as good as their place on the space's team, checked on every
+    // use: disabled or removed → refused; re-roled → their current role, capped by the scopes they
+    // consented to. So a person losing access loses every token at once, whatever minted it.
+    const member = key.subject
+      ? (await ctx.store.members.list(key.spaceId)).find((m) => m.subject === key.subject)
+      : undefined;
+    if (!member || member.disabled || !member.roleId) {
+      throw new UnauthorizedError('The person this token acts for no longer has access');
+    }
+    const role = await ctx.store.roles.get(key.spaceId, member.roleId);
+    if (!role) throw new UnauthorizedError('The person this token acts for no longer has access');
+    return {
+      spaceId: key.spaceId,
+      ...identity,
+      scopes: key.scopes.filter((s) => role.scopes.includes(s)),
+      contentGrants: role.contentGrants,
+    };
+  }
 
   if (key.roleId) {
     // Role-bound key: the role is the live source of truth. A dangling

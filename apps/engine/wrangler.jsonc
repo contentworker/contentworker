@@ -85,7 +85,6 @@
   "durable_objects": {
     "bindings": [
       { "name": "LIVE_HUB", "class_name": "LiveHubDO" },
-      { "name": "AUTH_LIMITER", "class_name": "RateLimiterDO" },
       { "name": "AI_BUDGET", "class_name": "CostGuardDO" },
       { "name": "SEARCH", "class_name": "SearchShardDO" }
     ]
@@ -109,8 +108,10 @@
   // Email Sending sender (EMAIL_FROM); a bound EMAIL without a sender is refused at boot.
 
   // ---- Vars (secrets: DATA_KEY, TOKEN_PEPPER, SETUP_TOKEN, ADMIN_TOKEN, MCP_TOKEN,
-  // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, SESSION_SECRET, OIDC_CLIENT_SECRET) -----------
+  // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET) -----------
   "vars": {
+    // Rendered per deployment (scripts/fleet.ts): queue consumers route by the suffixed queue name.
+    "QUEUE_SUFFIX": "",
     "ROLE": "all",
     "REQUIRE_SECURE_SECRETS": "true",
     "SEED_DEV": "false",
@@ -141,10 +142,6 @@
     "DELIVERY_CACHE_TTL_SECONDS": "86400",
     "DELIVERY_LIST_TTL_SECONDS": "3600",
     "EVENT_RETENTION_HOURS": "168",
-    "OAUTH_ISSUER": "",
-    "OAUTH_RESOURCE": "",
-    "OAUTH_ACCESS_TOKEN_TTL_SECONDS": "3600",
-    "OAUTH_REFRESH_TOKEN_TTL_SECONDS": "2592000",
     "EMAIL_FROM": "",
     "EMAIL_FROM_NAME": ""
   }

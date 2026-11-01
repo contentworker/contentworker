@@ -39,12 +39,6 @@ export interface ApiConfig {
   /** Optional server-side pepper mixed into API key hashes at rest. */
   readonly tokenPepper?: string;
   /**
-   * One-time setup code (SETUP_TOKEN, a secret). On a deployed host with no administrator yet,
-   * `/setup` redeems it to create the first one; once used, its hash is recorded and it never
-   * works again. Setting a new one (`scripts/setup-code.sh`) is how admin access is recovered.
-   */
-  readonly setupToken?: string;
-  /**
    * Dev seeding. The in-memory store always seeds space + keys; SEED_DEV=true
    * additionally runs the @contentworker/seed demo dataset (all content types, a scaled
    * entry corpus, and every platform surface) so a fresh stack is usable out
@@ -60,28 +54,16 @@ export interface ApiConfig {
     /** Corpus multiplier (SEED_SCALE): 1 = demo (~550 entries), 100 = bench. */
     scale: number;
   };
-  /** HMAC secret for admin SSO session cookies. */
+  /**
+   * Signs OAuth consent forms when no PRINCIPAL_KEY is set (local and test wiring only; a
+   * deployment signs them with a key derived from PRINCIPAL_KEY).
+   */
   readonly sessionSecret: string;
   /**
    * Keys that verify the web Worker's signed principal (`x-cw-principal`): PRINCIPAL_KEY, then
    * PRINCIPAL_KEY_PREVIOUS during a rotation. Empty → browser sessions can't reach the api.
    */
   readonly principalKeys: readonly string[];
-  readonly sessionTtlHours: number;
-  /** Post-login redirect for OIDC (admin SPA URL). */
-  readonly adminUiUrl: string;
-  readonly oidcDefaultSpace: string;
-  readonly oidcIssuer?: string;
-  readonly oidcClientId?: string;
-  readonly oidcClientSecret?: string;
-  readonly oidcRedirectUri?: string;
-  readonly oidcGroupRoleMap: Record<string, string>;
-  /**
-   * Role assigned to an OIDC-authenticated user whose IdP groups match no entry
-   * in {@link oidcGroupRoleMap}. When unset, unmapped logins are refused rather
-   * than falling through to a full-privilege CMA key (fail closed).
-   */
-  readonly oidcDefaultRole?: string;
   /**
    * OAuth 2.1 authorization server. Enabled by setting {@link oauthIssuer} to
    * this deployment's public base URL — it must be the externally reachable
@@ -94,11 +76,15 @@ export interface ApiConfig {
   readonly oauthAccessTokenTtlSeconds: number;
   readonly oauthRefreshTokenTtlSeconds: number;
   /**
-   * Dev-only: auto-approve authorization requests without a human, using
-   * {@link oidcDefaultSpace} and {@link oidcDefaultRole}. Refused when secure
+   * Dev-only: auto-approve authorization requests without a person, as
+   * {@link oauthDevSpace} with {@link oauthDevRole}. Refused when secure
    * secrets are required, since it turns consent into a formality.
    */
   readonly oauthDevAutoApprove: boolean;
+  /** The space dev auto-approve grants into (OAUTH_DEV_SPACE; default the seed space). */
+  readonly oauthDevSpace: string;
+  /** The role dev auto-approve binds (OAUTH_DEV_ROLE); unset grants CMA scopes. */
+  readonly oauthDevRole?: string;
   /** Max accepted request body size in bytes (DoS guard). Default 5 MiB. */
   readonly maxBodyBytes?: number;
   /** Trusted reverse proxies in front (spoof-resistant X-Forwarded-For parsing). */
@@ -146,18 +132,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   ) {
     throw new Error(`Invalid ROLE "${role}"`);
   }
-  let oidcGroupRoleMap: Record<string, string> = {};
-  if (env.OIDC_GROUP_ROLE_MAP) {
-    oidcGroupRoleMap = JSON.parse(env.OIDC_GROUP_ROLE_MAP) as Record<string, string>;
-  }
+  // The dev keys exist to seed the in-memory store (demo, tests, local without D1). A Worker with a
+  // database bound never gets them: an unset ADMIN_TOKEN is then '' (off; every check is guarded
+  // on it being non-empty), never a well-known token that would grant wildcard admin.
+  const persistent = Boolean((env as Record<string, unknown>).DB);
+  const dev = (value: string | undefined, fallback: string) =>
+    value ?? (persistent ? '' : fallback);
   return {
     role,
-    cmaKey: env.CMA_KEY ?? 'dev-cma-key',
-    cdaKey: env.CDA_KEY ?? 'dev-cda-key',
-    cpaKey: env.CPA_KEY ?? 'dev-cpa-key',
-    adminToken: env.ADMIN_TOKEN ?? 'dev-admin-token',
+    cmaKey: dev(env.CMA_KEY, 'dev-cma-key'),
+    cdaKey: dev(env.CDA_KEY, 'dev-cda-key'),
+    cpaKey: dev(env.CPA_KEY, 'dev-cpa-key'),
+    adminToken: dev(env.ADMIN_TOKEN, 'dev-admin-token'),
     tokenPepper: env.TOKEN_PEPPER,
-    ...(env.SETUP_TOKEN ? { setupToken: env.SETUP_TOKEN } : {}),
     seedDev: env.SEED_DEV === 'true',
     seed: {
       spaceId: env.SEED_SPACE_ID ?? 'space-1',
@@ -170,15 +157,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     principalKeys: [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS].filter((k): k is string =>
       Boolean(k),
     ),
-    sessionTtlHours: Number(env.SESSION_TTL_HOURS ?? 8),
-    adminUiUrl: env.ADMIN_UI_URL ?? 'http://localhost:5173/dashboard',
-    oidcDefaultSpace: env.OIDC_DEFAULT_SPACE ?? env.SEED_SPACE_ID ?? 'space-1',
-    oidcIssuer: env.OIDC_ISSUER,
-    oidcClientId: env.OIDC_CLIENT_ID,
-    oidcClientSecret: env.OIDC_CLIENT_SECRET,
-    oidcRedirectUri: env.OIDC_REDIRECT_URI,
-    oidcGroupRoleMap,
-    oidcDefaultRole: env.OIDC_DEFAULT_ROLE,
+    oauthDevSpace: env.OAUTH_DEV_SPACE ?? env.SEED_SPACE_ID ?? 'space-1',
+    oauthDevRole: env.OAUTH_DEV_ROLE,
     oauthIssuer: env.OAUTH_ISSUER,
     oauthResource: env.OAUTH_RESOURCE,
     oauthAccessTokenTtlSeconds: Number(env.OAUTH_ACCESS_TOKEN_TTL_SECONDS ?? 3600),

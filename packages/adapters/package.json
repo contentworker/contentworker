@@ -14,6 +14,7 @@
     "./import-structured": "./src/import-structured/index.ts",
     "./plugins-cf-loader": "./src/plugins-cf-loader/index.ts",
     "./queue-cf": "./src/queue-cf/index.ts",
+    "./vector-kv-dev": "./src/vector-kv-dev/index.ts",
     "./vector-vectorize": "./src/vector-vectorize/index.ts",
     "./video-stream": "./src/video-stream/index.ts"
   },

@@ -15,6 +15,7 @@ import { createRemoteFetcher, createWebhookSender } from '@contentworker/adapter
 import { createCfImageTransformer } from '@contentworker/adapters/images-cf';
 import { createWorkerLoaderRuntime } from '@contentworker/adapters/plugins-cf-loader';
 import { createCfQueueProducer } from '@contentworker/adapters/queue-cf';
+import { createKvDevVectorStore } from '@contentworker/adapters/vector-kv-dev';
 import { createVectorizeStore } from '@contentworker/adapters/vector-vectorize';
 import { createStreamVideoHost } from '@contentworker/adapters/video-stream';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
@@ -429,13 +430,19 @@ function makeRag(env: EdgeEnv, fakes: FakeAdapterBinding[]): RagDeps {
           dimensions: dim,
         })
       : new LocalEmbeddingsProvider(dim);
-  // Local dev: Vectorize has no local emulator, so `VECTOR_STORE=memory` (.dev.vars) keeps the
-  // binding declared but unused. A persistent deployment still refuses the fake (guard below).
-  const vectorize = env.VECTOR_STORE === 'memory' ? undefined : env.VECTORIZE;
+  // Local dev: Vectorize has no local emulator, so `VECTOR_STORE=kv` (the local stack) or `memory`
+  // keeps the binding declared but unused. `kv` is the one that works across Workers: the engine
+  // embeds and the api searches the same local KV, where an in-memory store would split them.
+  // A persistent deployment still refuses either fake (guard below).
+  const devKv = env.VECTOR_STORE === 'kv' ? env.KV_CACHE : undefined;
+  const vectorize =
+    env.VECTOR_STORE === 'memory' || env.VECTOR_STORE === 'kv' ? undefined : env.VECTORIZE;
   if (!vectorize) {
     fakes.push({
       key: 'vectors',
-      detail: 'in-memory vector store (per-isolate, non-durable) — bind VECTORIZE',
+      detail: devKv
+        ? 'KV-backed brute-force vector store (local dev only) — bind VECTORIZE'
+        : 'in-memory vector store (per-isolate, non-durable) — bind VECTORIZE',
     });
   }
   const vectors: VectorStore = vectorize
@@ -443,7 +450,9 @@ function makeRag(env: EdgeEnv, fakes: FakeAdapterBinding[]): RagDeps {
         dimensions: embeddings.dimensions,
         modelId: embeddings.modelId,
       })
-    : memoInMemoryVectors();
+    : devKv
+      ? createKvDevVectorStore(devKv)
+      : memoInMemoryVectors();
   const shards = Number(env.SEARCH_SHARDS) || DEFAULT_SEARCH_SHARDS;
   const searchIndex = env.SEARCH ? createShardedSearchIndex(env.SEARCH, shards) : undefined;
   return { embeddings, vectors, ...(searchIndex ? { searchIndex } : {}) };

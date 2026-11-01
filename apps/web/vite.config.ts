@@ -12,12 +12,17 @@ const e2e = process.env.CONTENTWORKER_E2E === '1';
 
 /**
  * Local-only settings for the auxiliary Workers: dev secrets (never a deployment's), mocked
- * models, hash embeddings and in-memory vectors (Vectorize has no local emulator), and fakes
- * allowed. The principal key matches the web Worker's own dev key (DEV_PRINCIPAL_KEY).
+ * models, hash embeddings, KV-backed vectors that every Worker shares (Vectorize has no local
+ * emulator), and fakes allowed. The principal key matches the web Worker's own dev key
+ * (DEV_PRINCIPAL_KEY).
  */
 const LOCAL_STACK_VARS = {
   REQUIRE_SECURE_SECRETS: 'false',
   ADMIN_TOKEN: 'dev-admin-token',
+  // The seeded space's dev keys (space-1): Management, Delivery and Preview.
+  CMA_KEY: 'dev-cma-key',
+  CDA_KEY: 'dev-cda-key',
+  CPA_KEY: 'dev-cpa-key',
   MCP_TOKEN: 'dev-mcp-token',
   TOKEN_PEPPER: 'dev-pepper',
   MEDIA_SIGNING_SECRET: 'dev-media-signing-secret',
@@ -25,7 +30,7 @@ const LOCAL_STACK_VARS = {
   AI_MODE: 'mock',
   AI_GATEWAY_ID: '',
   EMBEDDINGS_PROVIDER: 'local',
-  VECTOR_STORE: 'memory',
+  VECTOR_STORE: 'kv',
   ALLOW_FAKE_ADAPTERS: 'all',
   // Local dev always runs on the demo dataset (@contentworker/seed), loaded on the api's first
   // request. The device tests keep their fresh, empty database: they create what they need.

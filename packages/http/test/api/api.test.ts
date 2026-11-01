@@ -1,11 +1,11 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
-const config: ApiConfig = {
+const config: ApiConfig = testConfig({
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -17,7 +17,7 @@ const config: ApiConfig = {
     locales: ['en-US'],
     scale: 1,
   },
-};
+});
 
 function makeApp() {
   const { ctx, rag, blob, ai } = wire(config);
@@ -171,7 +171,11 @@ describe('API vertical slice over HTTP', () => {
     const app = makeApp();
 
     // API key list must not expose the stored hash.
-    const keys = (await (await app.request('/spaces/s1/api-keys', { headers: cma })).json()).items;
+    const keys = (
+      (await (await app.request('/spaces/s1/api-keys', { headers: cma })).json()) as {
+        items: unknown[];
+      }
+    ).items;
     expect(keys.length).toBeGreaterThan(0);
     for (const k of keys) expect(k).not.toHaveProperty('hashedToken');
 
@@ -184,7 +188,9 @@ describe('API vertical slice over HTTP', () => {
       })
     ).json();
     expect(created).not.toHaveProperty('secret');
-    const hooks = (await (await app.request(`${M}/webhooks`, { headers: cma })).json()).items;
+    const hooks = (
+      (await (await app.request(`${M}/webhooks`, { headers: cma })).json()) as { items: unknown[] }
+    ).items;
     for (const h of hooks) expect(h).not.toHaveProperty('secret');
   });
 

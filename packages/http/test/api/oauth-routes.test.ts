@@ -1,15 +1,8 @@
-import {
-  addMember,
-  createApiKey,
-  createHasher,
-  createRole,
-  createSpace,
-  updateMember,
-} from '@contentworker/application';
+import { addMember, createRole, createSpace, updateMember } from '@contentworker/application';
 import { SCOPES } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
-import { signPrincipal } from '@contentworker/security/principal';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { principalTarget, signPrincipal } from '@contentworker/security/principal';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/api/app.js';
 import { wire } from './wire.js';
 
@@ -20,14 +13,12 @@ const ISSUER = 'https://cms.example.com';
 
 const config = {
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
   adminToken: 'admin',
   sessionSecret: SESSION_SECRET,
   principalKeys: [PRINCIPAL_KEY],
-  sessionTtlHours: 8,
   seed: {
     spaceId: 's1',
     environmentId: 'main',
@@ -40,8 +31,6 @@ const config = {
   oauthRefreshTokenTtlSeconds: 2592000,
   oauthDevAutoApprove: false,
 } as unknown as ApiConfig;
-
-const hasher = createHasher();
 
 type App = ReturnType<typeof createApp>;
 
@@ -61,7 +50,8 @@ function makeApp() {
       headers.delete('cookie');
       const person = JSON.parse(cookie.slice('principal:'.length));
       const path = new URL(input, 'http://localhost').pathname;
-      headers.set('x-cw-principal', await signPrincipal(PRINCIPAL_KEY, person, path));
+      const target = principalTarget(init.method ?? 'GET', path);
+      headers.set('x-cw-principal', await signPrincipal(PRINCIPAL_KEY, person, target));
     }
     return request(input, { ...init, headers });
   }) as typeof app.request;
@@ -308,6 +298,28 @@ describe('OAuth authorization endpoint', () => {
     expect(((await res.json()) as Record<string, string>).error).toBe('invalid_request');
   });
 
+  it('rejects a consent form submitted after it expired', async () => {
+    const cookie = await sessionCookie(ctx);
+    const { body: client } = await register(app);
+    const consent = await app.request(authorizeUrl(client.client_id as string), {
+      headers: { Cookie: cookie },
+    });
+    const fields = hiddenFields(await consent.text());
+    const later = Date.now() + 11 * 60_000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(later);
+    try {
+      const res = await app.request('/oauth/authorize', {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ ...fields, decision: 'approve' }).toString(),
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as Record<string, string>).error).toBe('invalid_request');
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('rejects a consent POST with no session', async () => {
     const cookie = await sessionCookie(ctx);
     const { body: client } = await register(app);
@@ -450,21 +462,37 @@ describe('OAuth token endpoint', () => {
 });
 
 describe('Personal access tokens', () => {
-  it('mints a token for the caller that authenticates on the delivery API', async () => {
-    const { app } = makeApp();
+  it('mints a token for the person asking that authenticates on the delivery API', async () => {
+    const { app, ctx } = makeApp();
+    await createSpace(ctx, { spaceId: 's1', name: 'One', defaultLocale: 'en-US' }).catch(() => {});
+    const cookie = await sessionCookie(ctx, [
+      SCOPES.spaceAdmin,
+      SCOPES.deliveryRead,
+      SCOPES.searchRead,
+    ]);
     const res = await app.request('/spaces/s1/personal-access-tokens', {
       method: 'POST',
-      headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'ci', scopes: [SCOPES.deliveryRead, SCOPES.searchRead] }),
     });
     expect(res.status).toBe(201);
-    const created = (await res.json()) as Record<string, string>;
+    const created = (await res.json()) as { token: string };
     expect(created.token.startsWith('cwpat_')).toBe(true);
 
     const delivery = await app.request('/delivery/s1/main/entries', {
       headers: { Authorization: `Bearer ${created.token}` },
     });
     expect(delivery.status).toBe(200);
+  });
+
+  it('refuses to mint one for a key or the admin token: a personal token belongs to a person', async () => {
+    const { app } = makeApp();
+    const res = await app.request('/spaces/s1/personal-access-tokens', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'ci', scopes: [SCOPES.deliveryRead] }),
+    });
+    expect(res.status).toBe(403);
   });
 
   it('refuses to let an OAuth token mint a longer-lived credential than itself', async () => {
@@ -489,18 +517,10 @@ describe('Personal access tokens', () => {
   it('drops scopes the caller does not hold', async () => {
     const { app, ctx } = makeApp();
     await createSpace(ctx, { spaceId: 's1', name: 'One', defaultLocale: 'en-US' }).catch(() => {});
-    const role = await createRole(ctx, 's1', {
-      name: 'limited',
-      scopes: [SCOPES.spaceAdmin, SCOPES.deliveryRead],
-    });
-    const { token } = await createApiKey(ctx, hasher, {
-      spaceId: 's1',
-      kind: 'cma',
-      roleId: role.id,
-    });
+    const cookie = await sessionCookie(ctx, [SCOPES.spaceAdmin, SCOPES.deliveryRead]);
     const res = await app.request('/spaces/s1/personal-access-tokens', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: 'ci',
         scopes: [SCOPES.deliveryRead, SCOPES.contentPublish],

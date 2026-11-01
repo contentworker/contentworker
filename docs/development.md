@@ -10,8 +10,8 @@
 
 ```bash
 pnpm install
-cd apps/web && npx wrangler d1 migrations apply DB --local && cd ../..
-pnpm dev   # the api seeds the demo dataset into space-1 on its first request
+pnpm db:migrate:local   # applies packages/db/migrations to the local D1, via the web Worker's config
+pnpm dev                # the api seeds the demo dataset into space-1 on its first request
 ```
 
 `pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173). The web
@@ -30,7 +30,7 @@ Objects and Workflows emulated. Their vars are overridden with `LOCAL_STACK_VARS
 | `AI_MODE`                | `mock`                                  | No model calls                                               |
 | `AI_GATEWAY_ID`          | empty                                   | No AI Gateway                                                |
 | `EMBEDDINGS_PROVIDER`    | `local`                                 | Hash embeddings                                              |
-| `VECTOR_STORE`           | `memory`                                | Vectorize has no local emulator                              |
+| `VECTOR_STORE`           | `kv`                                    | Vectorize has no local emulator; KV is shared by the Workers |
 | `ALLOW_FAKE_ADAPTERS`    | `all`                                   | Accept every dev fake                                        |
 | `SEED_DEV`               | `true`                                  | Load the demo dataset                                        |
 | `SEED_SCALE`             | `1`                                     | Demo size (~550 entries); raise it for a benchmark corpus    |
@@ -91,11 +91,12 @@ create what they need), so it coexists with a
 
 ### MCP smoke scripts
 
-Against a running stack (override the default URL with `MCP_URL`, the token with `MCP_TOKEN`):
+Against a running `pnpm dev` stack; both default to `http://localhost:5173/mcp` (override the URL
+with `MCP_URL`, the token with `MCP_TOKEN`):
 
 ```bash
-MCP_URL=http://localhost:5173/mcp node apps/api/scripts/mcp-smoke.mjs          # tool surface end-to-end
-MCP_URL=http://localhost:5173/mcp node apps/api/scripts/mcp-search-smoke.mjs   # search tools
+node apps/api/scripts/mcp-smoke.mjs          # tool surface end-to-end
+node apps/api/scripts/mcp-search-smoke.mjs   # search tools
 ```
 
 ## Conventions

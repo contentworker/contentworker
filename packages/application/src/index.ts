@@ -49,7 +49,6 @@ export * from './search-index.js';
 export * from './secret-sealer.js';
 export * from './secrets-at-rest.js';
 export * from './semantics.js';
-export * from './setup.js';
 export * from './snapshots.js';
 export * from './spaces.js';
 export * from './tasks.js';

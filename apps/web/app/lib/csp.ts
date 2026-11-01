@@ -111,7 +111,10 @@ export function withSecurityHeaders(res: Response, url: URL): Response {
   if (!/frame-ancestors (?!'none')/.test(out.headers.get('content-security-policy') ?? ''))
     set('x-frame-options', 'DENY');
   set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  // Always this origin's own policy, never a forwarded Worker's (the delivery Worker's omits
+  // includeSubDomains): a browser keeps the last HSTS header it saw for the host, and the api and
+  // cdn hosts are subdomains of this one.
   if (url.protocol === 'https:')
-    set('strict-transport-security', 'max-age=31536000; includeSubDomains');
+    out.headers.set('strict-transport-security', 'max-age=31536000; includeSubDomains');
   return out;
 }

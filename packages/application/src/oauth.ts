@@ -3,6 +3,7 @@ import {
   assertPkcePresent,
   assertScopesAllowed,
   type ClientRegistrationInput,
+  ForbiddenError,
   formatScopeString,
   normalizeClientRegistration,
   normalizeUserCode,
@@ -279,6 +280,9 @@ export async function approveAuthorization(
   request: ValidatedAuthorization,
   approval: OAuthApproval,
 ): Promise<AuthorizationCodeIssued> {
+  if (!approval.spaceId || approval.spaceId === '*') {
+    throw new OAuthError('access_denied', 'A grant belongs to one space');
+  }
   const grantedScopes = grantableScopes(request.scopes, approval);
   const code = `cwc_${randomSecret()}`;
   const now = ctx.clock.now();
@@ -663,6 +667,7 @@ async function revokeGrantFamily(ctx: AppContext, familyId: string): Promise<voi
     for (const keyId of record.issuedKeyIds ?? []) {
       await ctx.store.auth.revoke(keyId).catch(() => {});
     }
+    if (record.spaceId) await invalidateCachedPrincipals(ctx, record.spaceId);
   }
 }
 
@@ -684,7 +689,10 @@ export async function revokeOAuthToken(
     return;
   }
   const key = await ctx.store.auth.findByHash(hashed);
-  if (key) await ctx.store.auth.revoke(key.id).catch(() => {});
+  if (key) {
+    await ctx.store.auth.revoke(key.id).catch(() => {});
+    await invalidateCachedPrincipals(ctx, key.spaceId);
+  }
 }
 
 /** Drops grants that expired before `olderThan`. Runs from the worker's retention tick. */
@@ -781,6 +789,7 @@ export async function revokeConnectedApp(
     if (grant.status === 'revoked') continue;
     await ctx.store.oauthGrants.save({ ...grant, status: 'revoked' });
   }
+  await invalidateCachedPrincipals(ctx, spaceId);
   return { revokedTokens: keys.length };
 }
 
@@ -879,6 +888,16 @@ export async function createPersonalAccessToken(
   const scopes = input.scopes.filter((s) => input.issuerScopes.includes(s));
   if (scopes.length === 0) {
     throw new OAuthError('invalid_scope', 'A token cannot exceed your own permissions');
+  }
+  // A personal token is checked against its owner's team membership on every use, so it can
+  // only be minted for an enabled member of this space.
+  const owner = (await ctx.store.members.list(input.spaceId)).find(
+    (m) => m.subject === input.subject && !m.disabled,
+  );
+  if (!owner) {
+    throw new ForbiddenError(
+      `Join space ${input.spaceId}'s team to create a personal access token`,
+    );
   }
   const expiresAt = input.expiresInDays
     ? new Date(ctx.clock.now().getTime() + input.expiresInDays * 24 * 3600 * 1000).toISOString()

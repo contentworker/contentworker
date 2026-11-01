@@ -3,7 +3,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
-const url = new URL(process.env.MCP_URL ?? 'http://localhost:8791/mcp');
+const url = new URL(process.env.MCP_URL ?? 'http://localhost:5173/mcp');
 const token = process.env.MCP_TOKEN ?? 'dev-mcp-token';
 
 const transport = new StreamableHTTPClientTransport(url, {
@@ -59,17 +59,18 @@ for (const d of docs) {
 // shares vocabulary with the target doc. A real model (Workers AI embeddings) matches
 // semantically and wouldn't need shared tokens.
 const query = 'relational database indexes and queries';
+// Poll for the target doc itself, not for any hit: a seeded space always has some (noise), and the
+// new docs queue behind whatever the engine is still relaying (a fresh seed is ~450 events).
+const relevant = (hs) => hs[0]?.snippet.includes('SQLite');
 let hits = [];
-for (let i = 0; i < 20; i++) {
-  await sleep(500);
+for (let i = 0; i < 60 && !relevant(hits); i++) {
+  await sleep(1000);
   hits = await call('content_semantic_search', { query, topK: 5 });
-  if (hits.length > 0) break;
 }
 console.log(`search "${query}" ->`);
 for (const h of hits) console.log(`  ${h.score.toFixed(3)}  ${h.snippet.slice(0, 60)}`);
 
 await client.close();
 await transport.close();
-console.log(
-  hits[0]?.snippet.includes('SQLite') ? 'OK: relevant result ranked first' : 'NO RELEVANT RESULT',
-);
+console.log(relevant(hits) ? 'OK: relevant result ranked first' : 'NO RELEVANT RESULT');
+if (!relevant(hits)) process.exitCode = 1;

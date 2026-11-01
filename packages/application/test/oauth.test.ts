@@ -30,13 +30,40 @@ const RESOURCE = 'https://cms.example.com/mcp';
 
 let clock: FixedClock;
 
+/**
+ * Delegated tokens are re-checked against the space's team on every use, so every person these
+ * tests approve as is a member of s1: most with a full-scope role, `u@example.com` with the
+ * `r1` role the ceiling tests edit. (`nobody@example.com` is deliberately not on the team.)
+ */
 function ctx(): AppContext {
   clock = new FixedClock();
-  return {
-    store: new InMemoryContentStore(),
-    clock,
-    ids: new SequenceIdGenerator('o'),
-  };
+  const store = new InMemoryContentStore();
+  store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
+  void store.roles.save({
+    id: 'r-full',
+    spaceId: 's1',
+    name: 'admin',
+    scopes: [...fullApproval.approverScopes],
+  });
+  const at = clock.now().toISOString();
+  for (const [subject, roleId] of [
+    ['user@example.com', 'r-full'],
+    ['limited@example.com', 'r-full'],
+    ['me@example.com', 'r-full'],
+    ['u@example.com', 'r1'],
+  ] as const) {
+    void store.members.save({
+      id: `m-${subject}`,
+      spaceId: 's1',
+      email: subject,
+      subject,
+      roleId,
+      disabled: false,
+      createdAt: at,
+      updatedAt: at,
+    });
+  }
+  return { store, clock, ids: new SequenceIdGenerator('o') };
 }
 
 function config(overrides: Partial<OAuthConfig> = {}): OAuthConfig {

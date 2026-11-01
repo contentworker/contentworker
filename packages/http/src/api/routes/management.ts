@@ -135,6 +135,7 @@ import {
   setEntryMetadata,
   setEnvironmentAlias,
   setPluginEnabled,
+  spacesForSubject,
   startBulkJob,
   startImportJob,
   suggestEntryTags,
@@ -434,9 +435,14 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       const items = await listSpaces(ctx);
       return c.json({ items: items.map((s) => ({ id: s.spaceId, name: s.name })) });
     }
+    // A signed-in member without a space in the path: the spaces they're on the team of.
+    const own =
+      principal.kind === 'user' && !principal.spaceId && principal.subject
+        ? new Set(await spacesForSubject(ctx, principal.subject))
+        : new Set([principal.spaceId]);
     // Through the application layer like every other route (no direct store
     // access, no hard-coded environment): list, then keep the principal's own.
-    const items = (await listSpaces(ctx)).filter((s) => s.spaceId === principal.spaceId);
+    const items = (await listSpaces(ctx)).filter((s) => own.has(s.spaceId));
     return c.json({ items: items.map((s) => ({ id: s.spaceId, name: s.name })) });
   });
   app.post(
@@ -588,13 +594,15 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.spaceAdmin),
     async (c) => {
       const principal = c.get('principal');
-      if (principal.clientId) {
+      // Minted by a person for themselves (it acts as them, checked against their membership on
+      // every use), never by a key or by a token another application holds.
+      if (principal.clientId || principal.kind !== 'user' || !principal.subject) {
         throw new ForbiddenError('personal-access-token:create');
       }
       const body = await parseBody(c, createPatBody);
       const created = await createPersonalAccessToken(ctx, hasher, {
         spaceId: c.req.param('space'),
-        subject: principal.subject ?? `key:${principal.kind}`,
+        subject: principal.subject,
         name: body.name,
         scopes: body.scopes,
         expiresInDays: body.expiresInDays,

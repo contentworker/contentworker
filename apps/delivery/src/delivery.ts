@@ -47,7 +47,8 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
     const deps: AuthDeps = {
       ctx: wired.ctx,
       hasher: createHasher(wired.config.tokenPepper),
-      adminToken: wired.config.adminToken,
+      // Delivery serves API keys only: no admin token, ever (not even a configured one).
+      adminToken: '',
       rag: wired.rag,
       blob: wired.blob,
       ai: wired.ai,
@@ -75,9 +76,8 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
         'cache-tag',
         [...new Set([deliveryScopeTag(space, named), deliveryScopeTag(space, concrete)])].join(','),
       );
-      if (matches(request.headers.get('if-none-match'), etag)) {
-        return new Response(null, { status: 304, headers });
-      }
+      // Always the full body: this response is what Workers Caching stores, so a 304 here would
+      // be cached as an empty answer. Conditional requests are answered by the gateway.
       return new Response(body, { status: 200, headers });
     }
     // Errors and empty answers are not cached: a 404 for an entry about to be published must not

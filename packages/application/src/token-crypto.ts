@@ -52,6 +52,8 @@ export const DEV_TOKEN_DEFAULTS = new Set([
   'dev-admin-token',
   'dev-mcp-token',
   'dev-session-secret-change-me-in-production',
+  // packages/security's DEV_PRINCIPAL_KEY: public in the repo, so it must never sign for real.
+  'contentworker-local-dev-principal-key',
 ]);
 
 const MIN_SECRET_LENGTH = 32;
@@ -87,6 +89,8 @@ export interface SecureSecretsInput {
   readonly cpaKey?: string;
   /** HMAC secret for admin SSO session cookies; pass only when OIDC is enabled. */
   readonly sessionSecret?: string;
+  /** PRINCIPAL_KEY and PRINCIPAL_KEY_PREVIOUS: anyone holding one can act as any person. */
+  readonly principalKeys?: readonly string[];
 }
 
 /**
@@ -109,6 +113,9 @@ export function assertSecureSecrets(input: SecureSecretsInput): void {
     ['CDA_KEY', input.cdaKey],
     ['CPA_KEY', input.cpaKey],
     ['SESSION_SECRET', input.sessionSecret],
+    ...(input.principalKeys ?? []).map(
+      (k, i) => [i === 0 ? 'PRINCIPAL_KEY' : 'PRINCIPAL_KEY_PREVIOUS', k] as const,
+    ),
   ] as const) {
     if (!value) continue;
     if (DEV_TOKEN_DEFAULTS.has(value)) {

@@ -84,6 +84,11 @@ export interface EdgeEnv {
   readonly SEARCH?: DurableObjectNamespace<SearchShardDO>;
   /** Shards per space:environment (default 8). Changing it requires a reindex. */
   readonly SEARCH_SHARDS?: string;
+  /**
+   * The deployment's resource suffix (scripts/fleet.ts renders it; `""` for the base names). Queue
+   * consumers route by queue name, and a deployment's queues are named `<base><suffix>`.
+   */
+  readonly QUEUE_SUFFIX?: string;
   /** `eu` or `fedramp`: Durable Objects are pinned there with D1 and R2 (see withJurisdiction). */
   readonly DATA_JURISDICTION?: string;
   /** Distributed failed-auth rate limiter (one object per client IP). */
@@ -169,7 +174,10 @@ export interface EdgeEnv {
   readonly EMBEDDINGS_PROVIDER?: string;
   readonly EMBEDDINGS_DIM?: string;
   readonly EMBEDDINGS_MODEL?: string;
-  /** `memory` ignores the VECTORIZE binding (local dev: Vectorize has no local emulator). */
+  /**
+   * Local dev only (Vectorize has no local emulator): `kv` keeps vectors in KV_CACHE, which every
+   * Worker in a dev session shares; `memory` keeps them in one isolate. Both ignore VECTORIZE.
+   */
   readonly VECTOR_STORE?: string;
   /**
    * Public origin of this Worker for signed `/media/*` URLs (e.g.
@@ -258,3 +266,6 @@ export function withJurisdiction(env: EdgeEnv): EdgeEnv {
   pinned.add(out);
   return out as unknown as EdgeEnv;
 }
+
+/** The deployment's name for a base queue name (`contentworker-agents` → `…-agents<suffix>`). */
+export const queueName = (env: EdgeEnv, base: string): string => `${base}${env.QUEUE_SUFFIX ?? ''}`;

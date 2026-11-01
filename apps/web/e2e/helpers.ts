@@ -6,11 +6,12 @@ export const isTouch = (info: TestInfo) => info.project.name !== 'desktop';
 
 /**
  * Opens `path` and waits until it is usable: app.css applied (the dev server injects it with
- * script) and the page hydrated, so a tap reaches React.
+ * script) and the page hydrated, so a tap reaches React. Not `networkidle`: the overview holds the
+ * Live Content API's event stream open, so the network goes idle only if that stream drops.
  */
 export async function open(page: Page, path: string) {
   for (let tries = 0; ; tries++) {
-    const res = await page.goto(path, { waitUntil: 'networkidle' }).catch((err: Error) => err);
+    const res = await page.goto(path, { waitUntil: 'load' }).catch((err: Error) => err);
     // The dev server's Workers runtime restarts if it crashes; meanwhile a request fails outright
     // or comes back 5xx. Wait for it to answer again and load the page once more.
     const down =

@@ -10,5 +10,7 @@ export function validateApiSecrets(config: ApiConfig, env: NodeJS.ProcessEnv = p
     cmaKey: config.cmaKey,
     cdaKey: config.cdaKey,
     cpaKey: config.cpaKey,
+    mcpToken: env.MCP_TOKEN,
+    principalKeys: config.principalKeys,
   });
 }

@@ -9,8 +9,15 @@ import {
   parseImageTransform,
   semanticSearch,
   transformPublishedAssetUrl,
+  visibleSearchHits,
 } from '@contentworker/application';
-import { authorizeContent, canAccessContentType, SCOPES, type Scope } from '@contentworker/domain';
+import {
+  assertQueryRespectsFieldRules,
+  authorizeContent,
+  canAccessContentType,
+  SCOPES,
+  type Scope,
+} from '@contentworker/domain';
 import {
   buildDeliverySchema,
   type DeliveryContext,
@@ -131,19 +138,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
               ...opts,
               lexicalOnly: mode === 'lexical',
             });
-      const principal = c.get('principal');
-      if (principal.contentGrants) {
-        const visible = [];
-        for (const hit of hits) {
-          try {
-            const entry = await getPublishedEntry(ctx, scope, hit.entryId);
-            if (canAccessContentType(principal, 'read', entry.contentType)) visible.push(hit);
-          } catch {
-            /* skip inaccessible */
-          }
-        }
-        hits = visible;
-      }
+      hits = await visibleSearchHits(ctx, scope, c.get('principal'), hits);
       return c.json({ hits });
     },
   );
@@ -161,6 +156,8 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       const query = parseEntryQuery(new URL(c.req.url).searchParams);
+      // Filters, ordering and search over a field the caller can't read would reveal it.
+      assertQueryRespectsFieldRules(c.get('principal'), query);
       const items = await listPublishedEntries(ctx, scopeOf(c), query, {
         locale: c.req.query('locale'),
         include: clampCount(c.req.query('include'), MAX_INCLUDE_DEPTH, { min: 0 }),
@@ -346,6 +343,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
         if (args.order?.length) raw.push(['order', args.order.join(',')]);
         if (args.search) raw.push(['query', args.search]);
         const parsed = entryQueryFrom(raw);
+        assertQueryRespectsFieldRules(principal, { ...parsed, contentTypeApiId: contentType });
         return listPublishedEntries(
           ctx,
           scope,
@@ -369,17 +367,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
       },
       search: async (query, topK) => {
         const raw = await hybridSearch(rag, ctx, scope, query, { topK });
-        if (!principal.contentGrants) return raw;
-        const visible = [];
-        for (const hit of raw) {
-          try {
-            const entry = await getPublishedEntry(ctx, scope, hit.entryId);
-            if (canAccessContentType(principal, 'read', entry.contentType)) visible.push(hit);
-          } catch {
-            /* skip */
-          }
-        }
-        return visible;
+        return visibleSearchHits(ctx, scope, principal, raw);
       },
     };
   }

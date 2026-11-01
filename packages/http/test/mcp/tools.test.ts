@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { structuredImportSources } from '@contentworker/adapters/import-structured';
+import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
   createContentType,
@@ -51,6 +52,7 @@ function makeDeps(): McpDeps {
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
     hasher: { hash: (v) => createHash('sha256').update(v).digest('hex') },
     adminToken: 'admin',
+    agents: new InProcessAgentRuntime(makeActivities({ ctx, ai: new StubAIProvider(() => ({})) })),
   };
 }
 

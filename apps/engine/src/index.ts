@@ -25,7 +25,7 @@ import { CostGuardDO, doAgentCostGuardFromEnv } from '@contentworker/platform/do
 import { createDoEventBus, LiveHubDO } from '@contentworker/platform/do/live-hub';
 import { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 import { SearchShardDO } from '@contentworker/platform/do/search-shard';
-import { type EdgeEnv, withJurisdiction } from '@contentworker/platform/env';
+import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import {
   type AgentJobMessage,
   deliveryScopeTag,
@@ -272,7 +272,7 @@ export default {
    */
   async queue(batch: MessageBatch, rawEnv: EdgeEnv, _exec: ExecutionContext): Promise<void> {
     const env = withJurisdiction(rawEnv);
-    if (batch.queue === 'contentworker-events-dlq') {
+    if (batch.queue === queueName(env, 'contentworker-events-dlq')) {
       const metrics = makeMetrics(env.METRICS);
       for (const msg of batch.messages) {
         console.error(
@@ -290,7 +290,7 @@ export default {
 
     const wired = wireEdge(env);
     try {
-      if (batch.queue === 'contentworker-agents') {
+      if (batch.queue === queueName(env, 'contentworker-agents')) {
         await consumeAgentJobs(batch, env, wired);
       } else {
         await consumeEvents(batch, env, wired);
@@ -373,13 +373,19 @@ export default {
       }
       // Actions first: their outbox events are then picked up by the relay
       // sweep below instead of waiting a full cron interval.
-      const { executed, failed } = await runDueScheduledActions(wired.ctx);
-      if (executed > 0)
-        metrics.count('contentworker_scheduled_actions_total', executed, { outcome: 'executed' });
-      if (failed > 0)
-        metrics.count('contentworker_scheduled_actions_total', failed, { outcome: 'failed' });
-      if (executed > 0 || failed > 0) {
-        console.log(JSON.stringify({ msg: 'scheduled actions run', executed, failed }));
+      // A failure here must not skip the rest of the tick (the relay sweep is the crash backstop).
+      try {
+        const { executed, failed } = await runDueScheduledActions(wired.ctx);
+        if (executed > 0)
+          metrics.count('contentworker_scheduled_actions_total', executed, { outcome: 'executed' });
+        if (failed > 0)
+          metrics.count('contentworker_scheduled_actions_total', failed, { outcome: 'failed' });
+        if (executed > 0 || failed > 0) {
+          console.log(JSON.stringify({ msg: 'scheduled actions run', executed, failed }));
+        }
+      } catch (err) {
+        console.error('scheduled actions failed', redactCredentials(err));
+        metrics.count('contentworker_scheduled_actions_total', 1, { outcome: 'error' });
       }
       // A relay error must not abort the tick (agent schedules still run).
       if (wired.queue) {

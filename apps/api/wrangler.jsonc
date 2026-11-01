@@ -7,7 +7,7 @@
   // consumers, cron, Durable Objects and Workflows live in the engine Worker, bound here by
   // script name (deploy order: engine first).
   "name": "contentworker-api",
-  "main": "src/main.ts",
+  "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   // nodejs_compat: node:crypto (token hashing, webhook HMAC). global_fetch_strictly_public: a
   // webhook, function or plugin fetch can never reach a private address (SSRF backstop under the
@@ -92,7 +92,7 @@
   // Email Sending sender (EMAIL_FROM); a bound EMAIL without a sender is refused at boot.
 
   // ---- Vars (secrets: DATA_KEY, TOKEN_PEPPER, SETUP_TOKEN, ADMIN_TOKEN, MCP_TOKEN,
-  // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, SESSION_SECRET, OIDC_CLIENT_SECRET) -----------
+  // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, PRINCIPAL_KEY) -----------
   "vars": {
     // delivery: the admin's own reads of published content (compare, search, live), signed by the
     // web principal. Public delivery clients use the cached delivery Worker at cdn.<domain>.

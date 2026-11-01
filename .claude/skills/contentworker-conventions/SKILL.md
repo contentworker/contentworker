@@ -20,7 +20,7 @@ the system of record, four Workers split by traffic profile:
 | Worker          | Entry                    | Job                                                                                                      |
 | --------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `apps/web`      | `workers/app.ts`, `app/` | Admin UI (React Router 8 SSR) and human auth; fronts the api over the `API` binding, signs `x-cw-principal` |
-| `apps/api`      | `src/main.ts`            | Management + Preview REST, MCP, OAuth, media, live. HTTP only, Smart Placement                            |
+| `apps/api`      | `src/index.ts`           | Management + Preview REST, MCP, OAuth, media, live. HTTP only, Smart Placement                            |
 | `apps/delivery` | `src/index.ts`           | Public Delivery API: uncached gateway (auth every request) → cached `Delivery` entrypoint on D1 replicas  |
 | `apps/engine`   | `src/index.ts`           | Queue consumers, cron, every Durable Object and Workflow class; no route                                 |
 

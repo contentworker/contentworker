@@ -29,6 +29,8 @@ import { Hono } from 'hono';
  * (read-your-writes), and every response carries the bookmark after its own queries.
  */
 const BOOKMARK_HEADER = 'x-cw-bookmark';
+/** D1 Sessions bookmarks are hex groups joined by dashes (e.g. `00000000-00000033-…`). */
+const BOOKMARK_SHAPE = /^[0-9a-f]+(?:-[0-9a-f]+){2,8}$/i;
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -143,9 +145,15 @@ export default {
     const env = withJurisdiction(rawEnv);
     // Writes start at the primary; reads may start at any replica unless the client brings a
     // bookmark, which pins them to at least the state it last saw.
+    // A client-sent bookmark is used only when it has D1's shape; anything else would make every
+    // query in the request fail, so it is ignored rather than trusted.
+    const sent = req.headers.get(BOOKMARK_HEADER);
     const bookmark =
-      req.headers.get(BOOKMARK_HEADER) ??
-      (MUTATING.has(req.method) ? 'first-primary' : 'first-unconstrained');
+      sent && BOOKMARK_SHAPE.test(sent)
+        ? sent
+        : MUTATING.has(req.method)
+          ? 'first-primary'
+          : 'first-unconstrained';
     const wired = wireEdge(env, { bookmark });
     try {
       validateApiSecrets(wired.config, env as unknown as NodeJS.ProcessEnv);
@@ -160,10 +168,23 @@ export default {
         res = new Response(res.body, res);
         res.headers.set(BOOKMARK_HEADER, after);
       }
+      // A streamed reply (MCP over SSE) returns before its handler has committed: the write lands
+      // while the body streams. The relay nudge waits for the body to finish, or it would find an
+      // empty outbox and leave the event to the cron sweeper.
+      let bodyDone: Promise<void> = Promise.resolve();
+      if (res.body && MUTATING.has(req.method)) {
+        const { readable, writable } = new TransformStream();
+        bodyDone = res.body.pipeTo(writable).catch(() => {
+          // The client went away mid-stream; whatever committed still gets relayed.
+        });
+        exec.waitUntil(bodyDone);
+        res = new Response(readable, res);
+      }
       exec.waitUntil(
         (async () => {
           const metrics = makeMetrics(env.METRICS);
           try {
+            await bodyDone;
             if (wired.queue && MUTATING.has(req.method)) {
               // Loop-until-drained: a bulk mutation can append far more rows
               // than one relay batch; its own nudge should clear them rather

@@ -13,7 +13,6 @@ import { wire } from './wire.js';
 
 const base = {
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -218,9 +217,9 @@ describe('budget configuration', () => {
       RATE_LIMIT_WRITE_PER_WINDOW: '-5',
       RATE_LIMIT_WINDOW_SECONDS: '0',
     } as NodeJS.ProcessEnv);
-    expect(config.rateLimit.read).toBe(0);
-    expect(config.rateLimit.write).toBe(0);
+    expect(config.rateLimit?.read).toBe(0);
+    expect(config.rateLimit?.write).toBe(0);
     // A zero-length window would make every budget instantly expire.
-    expect(config.rateLimit.windowSeconds).toBe(60);
+    expect(config.rateLimit?.windowSeconds).toBe(60);
   });
 });

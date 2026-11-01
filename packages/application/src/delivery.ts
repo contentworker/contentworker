@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { LocaleConfig } from '@contentworker/domain';
 import {
   canAccessContentType,
+  deniedFieldsFor,
   fallbackChain,
   maskDeniedFields,
   NotFoundError,
@@ -454,4 +455,33 @@ export function maskDeliveredFields(
   };
   const masked = maskDeniedFields(principal, contentType, fields);
   return Object.fromEntries(Object.entries(masked).map(([k, v]) => [k, walk(v, true)]));
+}
+
+/**
+ * The search hits `principal` may see: hits on types they can read, and none on a type where they
+ * have field restrictions (a hit there may exist only because the query matched a hidden field,
+ * and its snippet could quote it). Unrestricted principals see every hit unchanged.
+ */
+export async function visibleSearchHits<T extends { readonly entryId: string }>(
+  ctx: AppContext,
+  scope: Scope,
+  principal: Principal,
+  hits: readonly T[],
+): Promise<T[]> {
+  if (!principal.contentGrants) return [...hits];
+  const visible: T[] = [];
+  for (const hit of hits) {
+    try {
+      const entry = await getPublishedEntry(ctx, scope, hit.entryId);
+      if (
+        canAccessContentType(principal, 'read', entry.contentType) &&
+        deniedFieldsFor(principal, entry.contentType).length === 0
+      ) {
+        visible.push(hit);
+      }
+    } catch {
+      // Unpublished since it was indexed: not visible.
+    }
+  }
+  return visible;
 }

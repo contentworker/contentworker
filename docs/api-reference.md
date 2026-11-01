@@ -26,7 +26,7 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 | ---------------------------- | --------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
 | `api.<domain>`               | `apps/api`      | `management,preview,delivery`   | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads   |
 | `cdn.<domain>`               | `apps/delivery` | `delivery`                      | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request    |
-| `<domain>` (admin origin)    | `apps/web`      | —                               | Forwards `/spaces*`, `/preview/*`, `/delivery/*`, `/mcp`, `/oauth/*`, `/media/*`, `/docs*`, `/openapi.json` to the api |
+| `<domain>` (admin origin)    | `apps/web`      | —                               | Forwards `/spaces*`, `/preview/*`, `/delivery/*`, `/mcp`, `/oauth/*`, `/.well-known/oauth-*`, `/media/*`, `/docs*`, `/guides*`, `/openapi.json` to the api; OAuth's issuer on a fleet deployment |
 
 Public delivery clients should use `cdn.<domain>`; it answers only `GET`/`HEAD` (cached) and
 `POST` for GraphQL (uncached), and anonymous reads get 401 before the cache.
@@ -51,7 +51,9 @@ Every endpoint except `/health`, `/ready`, and `/graphiql/:space/:env` requires
 
 When `OAUTH_ISSUER` is configured the API also runs an OAuth 2.1 authorization server at
 `/oauth/*` plus `/.well-known/oauth-authorization-server`, so MCP clients authenticate through a
-consent flow rather than a static key. See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
+consent flow rather than a static key. A fleet deployment serves it on the admin host
+(`OAUTH_ISSUER=https://<domain>`, forwarded by the web gateway), and a person approves after
+signing in to the web app. See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 
 Each route then calls `requireScope(scope)`, which runs `authorize(principal, scope, :space)`.
 Delivery and Preview list/get endpoints additionally filter by granular `contentGrants` when the
@@ -265,6 +267,12 @@ cannot cross a tenancy boundary.
 | GET    | `/spaces/:space/roles/:id`    | `space:admin` | Get role                                                |
 | PUT    | `/spaces/:space/roles/:id`    | `space:admin` | Update role                                             |
 | DELETE | `/spaces/:space/roles/:id`    | `space:admin` | Delete role (refused if keys bound)                     |
+
+`DELETE /deployment/people/:subject/credentials` revokes every OAuth grant and token, personal
+access token and setup credential a person (`subject`, their web user id) holds, in every space,
+and answers `{ revokedTokens, revokedGrants }`. Only a deployment administrator (a wildcard
+principal) may call it; the web app does when it ends a person's access (see
+[Auth & RBAC](./auth-and-rbac.md#ending-a-persons-access)).
 
 ### Space config & content types
 

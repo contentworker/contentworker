@@ -1,11 +1,11 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
-const config: ApiConfig = {
+const config: ApiConfig = testConfig({
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -17,7 +17,7 @@ const config: ApiConfig = {
     locales: ['en-US'],
     scale: 1,
   },
-};
+});
 
 const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
 const M = '/spaces/s1/environments/main';

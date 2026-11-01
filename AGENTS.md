@@ -110,6 +110,6 @@ pnpm docs:build
 
 ## Design context
 
-The admin's design context is `PRODUCT.md` and `DESIGN.md` ("Ledger", shared with OrderLoop via
+The admin's design context is `PRODUCT.md` and `DESIGN.md` ("Ledger", shared through
 `packages/design` and `packages/ui`). Read both before designing any `apps/web` surface; compose
 the existing tokens and components, never stock shadcn defaults.

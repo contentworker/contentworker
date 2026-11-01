@@ -3,13 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The api Worker: Management and Preview REST (Hono + OpenAPI), the MCP server, OAuth, setup/OIDC, media and the live route. HTTP only; async work and stateful objects are the engine's.",
+  "description": "The api Worker: Management and Preview REST (Hono + OpenAPI), the MCP server, OAuth, media and the live route. HTTP only; human sign-in is the web Worker's, async work and stateful objects the engine's.",
   "scripts": {
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run --outdir dist",
     "deploy": "wrangler deploy",
     "lint": "biome check .",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "smoke:mcp": "node scripts/mcp-smoke.mjs",
+    "smoke:mcp-search": "node scripts/mcp-search-smoke.mjs"
   },
   "dependencies": {
     "@contentworker/agent-runtime": "workspace:*",
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
     "@contentworker/typescript-config": "workspace:*",
+    "@modelcontextprotocol/client": "catalog:",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "wrangler": "catalog:"

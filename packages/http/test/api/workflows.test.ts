@@ -4,11 +4,11 @@ import { RecordingEmailSender } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
 import { makeTestWorkflowEngine } from '../workflow-engine-harness.js';
+import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
-const config: ApiConfig = {
+const config: ApiConfig = testConfig({
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -20,7 +20,7 @@ const config: ApiConfig = {
     locales: ['en-US'],
     scale: 1,
   },
-};
+});
 
 const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
 const cpa = { Authorization: 'Bearer cpa', 'Content-Type': 'application/json' };
