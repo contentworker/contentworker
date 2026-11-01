@@ -7,6 +7,8 @@
  * scopes per operation, so a client is only as powerful as its token.
  */
 
+import { bookmarkTracker } from './bookmark.js';
+
 /** Locale-keyed values, e.g. `{ 'en-US': 'Hello' }`. */
 export type LocalizedValue = Readonly<Record<string, unknown>>;
 
@@ -361,6 +363,13 @@ export interface ManagementClientOptions {
   readonly token: string;
   /** Override fetch (SSR/edge/tests). Defaults to the global `fetch`. */
   readonly fetch?: typeof fetch;
+  /**
+   * Echo the api's `x-cw-bookmark` so each request reads at least as fresh as the last response,
+   * a write included, even from a read replica. Default `true`.
+   */
+  readonly readYourWrites?: boolean;
+  /** A bookmark to start from, e.g. one another client's write returned. */
+  readonly bookmark?: string;
 }
 
 export class ManagementError extends Error {
@@ -382,6 +391,7 @@ type Query = Record<string, string | number | undefined>;
 export function createManagementClient(opts: ManagementClientOptions) {
   const doFetch = opts.fetch ?? globalThis.fetch;
   const root = opts.baseUrl.replace(/\/$/, '');
+  const bookmarks = bookmarkTracker(opts.baseUrl, opts.bookmark, opts.readYourWrites !== false);
   const spaceBase = `${root}/spaces/${encodeURIComponent(opts.space)}`;
   const envBase = `${spaceBase}/environments/${encodeURIComponent(opts.environment)}`;
 
@@ -396,13 +406,18 @@ export function createManagementClient(opts: ManagementClientOptions) {
       if (v !== undefined && v !== '') qs.set(k, String(v));
     }
     const full = `${url}${qs.size ? `?${qs}` : ''}`;
-    const headers: Record<string, string> = { authorization: `Bearer ${opts.token}` };
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${opts.token}`,
+      ...bookmarks.headersFor(full),
+    };
     if (body !== undefined) headers['content-type'] = 'application/json';
     const res = await doFetch(full, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    // Before the status check: an error response's bookmark is as current as any other's.
+    bookmarks.record(res);
     if (!res.ok) {
       const detail = await res.json().catch(() => undefined);
       throw new ManagementError(
@@ -426,6 +441,19 @@ export function createManagementClient(opts: ManagementClientOptions) {
   const e = encodeURIComponent;
 
   return {
+    /**
+     * The newest `x-cw-bookmark` this client has seen (or was given), sent with its next request.
+     * Pass it on, e.g. from a server action to the browser's preview client, so that client reads
+     * this client's writes. Assigning replaces it, `undefined` clears it, and a value that isn't a
+     * D1 bookmark is dropped. Always `undefined` with `readYourWrites: false`.
+     */
+    get bookmark(): string | undefined {
+      return bookmarks.current;
+    },
+    set bookmark(value: string | undefined) {
+      bookmarks.current = value;
+    },
+
     /** Who am I: the principal resolved from this client's token. */
     me: () => get<Principal>(`${root}/auth/me`),
 

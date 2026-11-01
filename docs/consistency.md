@@ -155,7 +155,9 @@ kinds hold state that cannot:
 
 - **Strict read-after-publish for a delivery client** is not what the CDA offers. Read the
   Preview API (served by the api, not the delivery cache) and send the `x-cw-bookmark` from the
-  write when a client needs to see it immediately.
+  write when a client needs to see it immediately. `sdk-management` and a `preview: true`
+  `sdk-core` client echo it by default and expose it as `client.bookmark` to hand between
+  clients ([SDKs](./sdks.md#read-your-writes)).
 - **Second-precision scheduled publishing** is not available; the cron fires once a minute.
 - **Durable agents** are fire-and-observe: read the outcome from the agent ledger.
 
