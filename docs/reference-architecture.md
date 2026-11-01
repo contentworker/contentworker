@@ -15,12 +15,12 @@ three paths that matter most: publishing, public reads and assets. Each diagram 
 callouts explained in the text, and the text is a complete equivalent of the picture. For how
 the code is layered, see [Architecture](./architecture.md); this page is about the runtime.
 
-Shapes and line weights mean the same thing in every diagram, which are monochrome and follow
-the reader's light or dark setting. A rectangle is a Worker or entrypoint
+Shapes and line weights mean the same thing in every diagram. The diagrams are grey, with one
+purple accent, and follow the reader's light or dark setting. A rectangle is a Worker or entrypoint
 contentworker owns. A cylinder is durable state (D1, KV, R2, a queue, a Durable Object's storage,
 an index). A stadium with a dashed border is a client or a Cloudflare service contentworker calls
 but does not run (Workers AI, Images, Stream). A double-bordered box is a step detailed elsewhere.
-A bold label with a heavy border marks the one or two nodes each diagram is about. A subgraph is a boundary: the customer
+Purple, with a bold label, marks the one or two nodes each diagram is about. A subgraph is a boundary: the customer
 deployment, or the line between what is publicly routed and what is reachable only from inside
 the Worker.
 

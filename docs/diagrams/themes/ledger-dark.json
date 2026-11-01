@@ -50,5 +50,5 @@
   "sequence": {
     "useMaxWidth": true
   },
-  "themeCSS": "g[data-et=\"note\"] rect, .note { fill: #171717 !important; stroke: #525252 !important; }"
+  "themeCSS": "g[data-et=\"note\"] rect, .note { fill: #171717 !important; stroke: #525252 !important; } .node.focal rect, .node.focal path, .node.focal polygon, .node.focal circle { fill: #3f3947 !important; stroke: #bba0dc !important; } rect.rect { fill: #2b2630 !important; }"
 }

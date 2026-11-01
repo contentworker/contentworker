@@ -16,10 +16,12 @@ Change a source and both its SVGs in the same commit, and the page's callout tex
 
 ## Checking and rendering
 
-The diagrams are monochrome, in Ledger's greys (`packages/design`), and ship as a light and a dark
-SVG; the page picks one with `<picture>` and `prefers-color-scheme`. Sources carry no colours:
-`classDef`s set only stroke weight and dashes (focal nodes are bold with a 3px stroke, external
-systems dashed), and the themes in `../themes/` supply every colour.
+The diagrams are grey (Ledger's achromatic tokens) with one accent, Ledger's purple `brand`
+(`oklch(0.49 0.16 310)` light, `oklch(0.75 0.09 305)` dark), on the focal nodes and the shaded
+sequence block only. Each ships as a light and a dark SVG, and the page picks one with `<picture>`
+and `prefers-color-scheme`. Sources carry no colours: `classDef`s set only stroke weight, dashes
+and bold, and the themes in `../themes/` supply every colour, the accent through `themeCSS`
+(`.node.focal`, `rect.rect`), which also overrides Mermaid 12's hard-coded yellow notes.
 
 ```sh
 # lint and slop need the marmalade Claude Code plugin; rendering needs only Node
