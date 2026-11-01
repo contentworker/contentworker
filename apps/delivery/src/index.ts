@@ -19,12 +19,12 @@ import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runt
 import { authenticateCached, createHasher } from '@contentworker/application';
 import type { Principal } from '@contentworker/domain';
 import type { AuthDeps } from '@contentworker/http/api/auth';
-import { deliveryRoutes } from '@contentworker/http/api/routes/delivery';
+import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/delivery';
 import { liveRoutes } from '@contentworker/http/routes/live';
 import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import type { PurgeMessage } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
-import { Hono } from 'hono';
+import { clientCacheControl } from './client-cache.js';
 import { type Delivery, matches, PRINCIPAL_HEADER } from './delivery.js';
 import { canonicalUrl, visibilityProfile } from './profile.js';
 import { drain } from './purge.js';
@@ -94,10 +94,10 @@ export default {
 
     // The live stream authenticates itself (same chain as the api) and is served by LiveHub.
     if (/^\/delivery\/[^/]+\/[^/]+\/live$/.test(url.pathname) && env.LIVE_HUB) {
-      return new Hono().route('/', liveRoutes(deps(), env.LIVE_HUB)).fetch(request, env, ctx);
+      return deliveryApp(liveRoutes(deps(), env.LIVE_HUB)).fetch(request, env, ctx);
     }
     if (isGraphiql) {
-      return new Hono().route('/', deliveryRoutes(deps())).fetch(request, env, ctx);
+      return deliveryApp(deliveryRoutes(deps())).fetch(request, env, ctx);
     }
 
     let principal: Principal;
@@ -113,9 +113,7 @@ export default {
 
     // GraphQL over POST can't be cached by URL: answered here, uncached, same routes.
     if (request.method === 'POST') {
-      const res = await new Hono()
-        .route('/', deliveryRoutes(deps(principal)))
-        .fetch(request, env, ctx);
+      const res = await deliveryApp(deliveryRoutes(deps(principal))).fetch(request, env, ctx);
       const out = new Response(res.body, res);
       for (const [k, v] of Object.entries(PUBLIC)) out.headers.set(k, v);
       out.headers.set('cache-control', 'private, no-store');
@@ -143,12 +141,7 @@ export default {
       ? new Response(null, { status: 304, headers: upstream.headers })
       : new Response(request.method === 'HEAD' ? null : upstream.body, upstream);
     for (const [k, v] of Object.entries(PUBLIC)) response.headers.set(k, v);
-    // Workers Caching keeps its own (public) policy for the cached entrypoint; to clients the
-    // response is private: it was authorized for this key, and no shared cache downstream may
-    // reuse it for another caller.
-    if (response.headers.has('cache-control')) {
-      response.headers.set('cache-control', 'private, max-age=60, must-revalidate');
-    }
+    response.headers.set('cache-control', clientCacheControl(response.status));
     response.headers.set('vary', 'authorization');
     return response;
   },

@@ -1,5 +1,6 @@
 import type { Principal } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
+import { CLIENT_CACHE, clientCacheControl } from '../src/client-cache.js';
 import { canonicalUrl, fromCanonical, visibilityProfile } from '../src/profile.js';
 import { backoff, drain, PURGE_CALLS, PURGE_TAGS } from '../src/purge.js';
 
@@ -118,5 +119,15 @@ describe('purge drain', () => {
     expect(calls).toBe(PURGE_CALLS);
     expect(ms.filter((m) => m.acked)).toHaveLength(PURGE_CALLS);
     expect(ms.filter((m) => m.retried !== undefined)).toHaveLength(2);
+  });
+});
+
+describe('client cache policy', () => {
+  it('keeps a success privately for a minute and never keeps an error', () => {
+    expect(clientCacheControl(200)).toBe(CLIENT_CACHE);
+    expect(clientCacheControl(304)).toBe(CLIENT_CACHE);
+    for (const status of [400, 401, 403, 404, 429, 500]) {
+      expect(clientCacheControl(status), String(status)).toBe('no-store');
+    }
   });
 });

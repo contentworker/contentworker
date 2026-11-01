@@ -48,6 +48,7 @@ import {
 } from '../auth.js';
 import { doc } from '../docs/openapi.js';
 import { asset, publishedEntry, publishedEntryList, searchHits } from '../docs/schemas.js';
+import { onError } from '../http.js';
 import { clampCount, entryQueryFrom, MAX_PAGE_LIMIT, parseEntryQuery } from '../query.js';
 
 /** Max reference-resolution depth a delivery client may request. */
@@ -105,6 +106,19 @@ const scopeOf = (c: Context<AuthVars>): Scope => ({
 const BASE = '/delivery/:space/:env';
 
 /** Delivery API (CDA): read-only published content. Requires delivery:read. */
+/**
+ * The delivery routes as a standalone app, for a Worker that serves them on their own (the
+ * delivery Worker's cached entrypoint and gateway). It carries the api's error mapping, so a
+ * domain error answers as it does on the api (an unpublished or unknown entry is a 404), never as
+ * Hono's bare 500.
+ */
+export function deliveryApp(routes: Hono<AuthVars>): Hono {
+  const app = new Hono();
+  app.onError(onError);
+  app.route('/', routes);
+  return app;
+}
+
 export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, rag, bus } = deps;
   const app = new Hono<AuthVars>();

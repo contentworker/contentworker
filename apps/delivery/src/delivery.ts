@@ -3,11 +3,10 @@ import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runt
 import { createHasher, resolveEnvironment } from '@contentworker/application';
 import type { Principal } from '@contentworker/domain';
 import type { AuthDeps } from '@contentworker/http/api/auth';
-import { deliveryRoutes } from '@contentworker/http/api/routes/delivery';
+import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/delivery';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { deliveryScopeTag } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
-import { Hono } from 'hono';
 import { fromCanonical } from './profile.js';
 
 /** Header the gateway uses to hand the authenticated principal to this entrypoint. */
@@ -56,7 +55,7 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
       agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
       trustedPrincipal: () => principal,
     };
-    const app = new Hono().route('/', deliveryRoutes(deps));
+    const app = deliveryApp(deliveryRoutes(deps));
     const res = await app.fetch(new Request(parsed.path.toString(), { method: 'GET' }));
 
     const m = /^\/delivery\/([^/]+)\/([^/]+)\//.exec(parsed.path.pathname);
