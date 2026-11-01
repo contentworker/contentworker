@@ -17,8 +17,8 @@ defines the structured-content model and the rules that govern it.
 A space id (`SPACE_ID_PATTERN`) is 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a
 letter or digit. It is the first segment of the space's asset keys in the media bucket
 (`<space>/<environment>/<assetId>/<file>`), which also holds archived version bodies, staged import
-chunks, plugin bundles and dead letters under their own top-level prefixes. Those prefixes are
-`RESERVED_SPACE_IDS` (`versions`, `imports`, `plugins`, `dlq`): `createSpace` refuses each, in any
+chunks, plugin bundles, dead letters and zip downloads under their own top-level prefixes. Those prefixes are
+`RESERVED_SPACE_IDS` (`versions`, `imports`, `plugins`, `dlq`, `zips`): `createSpace` refuses each, in any
 case, with a `ValidationError`, so deleting a space's files never reaches them.
 
 Non-localized fields still use `LocalizedValue` with a single entry under the space's default
@@ -402,6 +402,34 @@ and the bytes go to the blob store (see [Architecture](./architecture.md#media-r
 set by a client. Deleting an asset that entries still link to throws `AssetInUseError`
 (`asset_in_use`), whose `usage` lists the links (`AssetUsage`: the edge plus the entry's
 `contentTypeApiId` and `entryTitle`, at most `MAX_ASSET_USAGE_SHOWN`, 50) and `total` counts them.
+
+### Asset collections, share links and zip jobs
+
+`packages/domain/src/asset/collection.ts`. An `AssetCollection` is a named (`name` 1 to 128 characters,
+`assetCollectionName`), ordered set of assets of one environment, with an optional `description`
+(at most `MAX_COLLECTION_DESCRIPTION`, 1,000) and an `itemCount`. Membership is many-to-many
+(`AssetCollectionItem`: `assetId`, `position`), unlike a folder. A collection holds at most
+`MAX_COLLECTION_ITEMS` (1,000) assets, and one change names at most `MAX_COLLECTION_CHANGE` (500)
+ids (`collectionChangeIds`). Deleting an asset removes its memberships in the same unit.
+
+An `AssetShareLink` (`id`, `targetType` `asset | collection`, `targetId`, `expiresAt`,
+`allowDownload`, `hasPassword`, `createdAt`, `createdBy?`, `revokedAt?`, `url?`) is an expiring,
+revocable link; the store keeps `StoredAssetShareLink`, with the PBKDF2 `passwordHash` only the
+media origin reads. `shareLinkExpiry` requires an expiry `MIN_SHARE_LINK_SECONDS` (5 minutes) to
+`MAX_SHARE_LINK_SECONDS` (90 days) out; `shareLinkPassword` requires `MIN_SHARE_PASSWORD` (8) to
+`MAX_SHARE_PASSWORD` (256) characters. `shareLinkState(link, nowMs)` is `active`, `expired` or
+`revoked` (revoking is permanent). `parseShareLinkPath` reads `/s/<space>/<env>/<link>/<token>`,
+`…/unlock` or `…/f/<assetId>/<fileName>`; the token is 22 base64url characters and is checked by the
+caller before any lookup.
+
+An `AssetZipJob` (`id`, `status` `pending | running | completed | failed`, `source` (a selection of
+`assetIds` or a `collectionId`), `fileName`, `fileCount?`, `totalBytes?`, `partsDone`, `partCount?`,
+`error?`, `createdAt`, `completedAt?`, `expiresAt`, and a read-time `downloadUrl?`) describes a zip
+being built. A job covers at most `MAX_ZIP_ASSETS` (1,000) assets and lives
+`ZIP_RETENTION_SECONDS` (a day); `zipFileName` makes the archive's name safe. The events are
+`asset_collection.changed`, `asset_share.created`, `asset_share.revoked` and `asset_zip.requested`
+([Events](./events-and-webhooks.md#event-payloads)); how it all runs is in
+[Architecture](./architecture.md#collections-share-links-multipart-uploads-and-zips).
 
 ### Asset folders
 

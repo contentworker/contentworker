@@ -12,9 +12,9 @@ import type {
 } from '@contentworker/ports';
 import { assetBulkChunkRunner } from '../asset-bulk';
 import { syncAssetGate } from '../asset-gate';
-import { syncShareLinkGate } from '../asset-shares';
 import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
 import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../asset-search';
+import { syncShareLinkGate } from '../asset-shares';
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';

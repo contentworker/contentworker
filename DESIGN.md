@@ -381,7 +381,23 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   library: All assets, Not in a folder, then each folder as a list nested in its parent's list,
   the open one `aria-current`; New folder (or subfolder), Rename and Delete (in-place confirm, empty
   folders only) sit under it, and the name form hands focus back to the button that opened it (a
-  created folder takes focus itself). Then the **filter bar**, as the entries' (kind, status, tag,
+  created folder takes focus itself). Under the tree, captioned **Collections**
+  (`assets/AssetCollectionList.tsx`, its own `nav`): each collection a row like a folder's
+  (`TreeButton`, named with its count, "Launch, 3 assets"), then New collection, whose form takes
+  a name and an optional description. A collection opens **in place of the library**
+  (`assets/AssetCollectionView.tsx`), no folder current while it shows: a "Collection" caption over
+  its name (an h2 that takes focus when the collection was just made), its description and count,
+  then Share and Download as zip (outline), Edit (the same form, in a card) and Delete (in-place
+  confirm: its assets stay in the library, links to it stop opening). Its assets are an ordered
+  list in a card, every status included: a grip, the position in muted tabular figures, the
+  thumbnail, the name as the open button, the status stamp, then Move up, Move down and Remove
+  (ghost icon buttons, each named for its asset). A row drags onto another; the buttons are the
+  keyboard's way, and focus stays on the moved row (on the other arrow at an end). Each move is
+  said in an sr-only polite line ("“Logo” moved to position 2 of 5") and sends the whole order
+  loaded; a refused one puts the last saved order back with a toast. Remove takes it out of the
+  collection only, and focus goes to the row that takes its place. Empty, it says how to fill it
+  (select in the library, then Add to collection). On a phone the collections are a select beside
+  an icon New collection. Then the **filter bar**, as the entries' (kind, status, tag,
   sort) with the Grid/List segmented switch at its end, kept per browser, under the **search
   box** (`type="search"`, Escape or the clear button puts the library back; no autocorrect, a
   search Enter key). Typing searches once it pauses: results rank by relevance, all at once (up to
@@ -396,7 +412,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   out under it in the `bad` colour (read once, never only on hover); and a `wait` "Possible
   duplicate" stamp that is a button opening the original. Badges that are buttons, and the
   sheet's tag toggles, take `hit-area` and the full `ring` edge. **The sheet** opens on one asset
-  in tabs (`Tabs`, the row scrolling rather than squeezing a word on a phone): **Details** (a
+  (Share, outline, under its title) in tabs (`Tabs`, the row scrolling rather than squeezing a word on a phone): **Details** (a
   hosted video's status, the focal point, alt text and tags; Save metadata, the footer's one
   button, shows on this tab only), **Versions**, **Usage** (the entries using it), **Renditions**
   (the transform preview; a non-image says it is delivered as uploaded) and **Rights**; what
@@ -434,7 +450,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   the name the open button over the card, the checkbox top-left, status badges and the actions
   below. **List**: a table, `stack="rows"` laid out like the entries rows on a phone. **Selecting**
   shows a bulk bar (`role="group"`, "2 selected · Publish selected · Unpublish selected · Archive
-  selected · Move selected · Add tag · Remove tag"); archiving or unpublishing several asks in
+  selected · Move selected · Add tag · Remove tag · Add to collection · Download as zip"; Add to
+  collection, a select and an outline button, shows once a collection exists, and the add goes in
+  turns of 500, toasting what went in and what was already there); archiving or unpublishing several asks in
   place ("Archive 2 assets?"), and what failed stays selected and is named in an inline Alert, as
   in the entries list. Past 50 selected (one page, `ASSET_BULK_JOB_THRESHOLD`), and for tagging
   at any count, the action runs as a **bulk job** on the server: a card shaped like the upload
@@ -446,9 +464,31 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   When it ends the failures are read from the job's report and named in the same Alert by the
   asset's title or file name (the library's name for one a failed batch left unnamed), still
   selected; a role that can't read the report gets the count
-  and why they can't be named. The **upload queue** lists each
-  file with a badge and the batch's progress, its summary a live region ("Uploading 1 of 3", then
-  "Uploaded 2 files; 1 failed"), and a toast at the end of the batch. Archiving one asset is an
+  and why they can't be named. A **zip download** (`assets/AssetZipProgress.tsx`, from the bulk
+  bar or a collection) is a card shaped like the bulk job's ("Zip download"): a polite status line
+  ("Preparing “Launch.zip”…", "Zipping 12 files into “Launch.zip”…", then "“Launch.zip” is ready:
+  12 files, 48 MB"), its status stamp, a `Progress` of the parts written (its value text "3 of 8
+  parts written") and "this keeps going if you close the tab", polled every 2 s. Built, a primary
+  Download “Launch.zip” (a link with `download`) and a ghost Get a new link (each link lasts 15
+  minutes); failed, a destructive Alert with the reason, so it is heard. The **upload queue**
+  lists each file with a badge and the batch's progress, its summary a live region ("Uploading 1
+  of 3", then "Uploaded 2 files; 1 failed, 1 cancelled"), and a toast at the end of the batch. A
+  file past 100 MiB goes up **in parts**: its row grows a thin `Progress` of bytes stored
+  ("Uploading “film.mov”", value text and a muted tabular line "64 MB of 150 MB · 1 of 3 parts",
+  "· retrying part 2" while one waits to try again, its badge then a `run` "Retrying"), and an
+  icon Cancel ("Cancel uploading “film.mov”"), which a file still waiting has too; a cancelled file
+  is an `idle` "Cancelled". **Share** (`assets/AssetShareDialog.tsx`, from the sheet's header and
+  a collection's) is a dialog, "Share “x”", saying anyone with the link sees the published files
+  until it expires or is revoked (for a collection, that its drafts stay off the page). Then a
+  form: Expires after (a `Segmented` of 1 day, 7 days, 30 days and Custom, which adds a
+  `datetime-local` on the reader's clock), an Allow downloads `Switch` with its hint, an optional
+  password with its hint, and Create link; the new link's Copy takes focus. Active links follow
+  under their own heading: the URL in mono (or that the deployment has no media origin), "Expires
+  in 3 days (date)", `idle` stamps for Password and Downloads allowed or View only, then Copy
+  (outline) and Revoke (ghost, in-place confirm; focus goes to the heading). An unpublished asset
+  gets a warning Alert ("Publish it to share it") in place of the form; a role without
+  content:publish, a warning Alert saying who can share, and no form; a refusal is a destructive
+  Alert in the server's words, a field's beside the field. Archiving one asset is an
   Undo toast that restores it; an archived one shows Restore (back as a draft). **Delete** asks in
   place, and one an entry still links to is refused: a warning Alert takes focus, names the first
   five entries (each a link) and counts the rest ("and 12 more"), and offers Archive instead. A

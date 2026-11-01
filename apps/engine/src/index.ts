@@ -517,9 +517,13 @@ export default {
             const swept = await sweepExpiredZips(wired.ctx, wired.blob);
             if (swept.removed + swept.failed > 0) {
               console.log(JSON.stringify({ msg: 'expired zips swept', ...swept }));
-              metrics.count('contentworker_zips_swept_total', swept.removed, { outcome: 'removed' });
+              metrics.count('contentworker_zips_swept_total', swept.removed, {
+                outcome: 'removed',
+              });
               if (swept.failed > 0) {
-                metrics.count('contentworker_zips_swept_total', swept.failed, { outcome: 'failed' });
+                metrics.count('contentworker_zips_swept_total', swept.failed, {
+                  outcome: 'failed',
+                });
               }
             }
           },

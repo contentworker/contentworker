@@ -1,6 +1,11 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { type AppContext, runAssetZip } from '@contentworker/application';
-import type { AssetZipParams, AssetZipStarter, BlobStore, WorkflowSteps } from '@contentworker/ports';
+import type {
+  AssetZipParams,
+  AssetZipStarter,
+  BlobStore,
+  WorkflowSteps,
+} from '@contentworker/ports';
 import { WORKFLOW_INSTANCE_EXISTS } from './asset-ingest';
 
 /** The slice of the Workflows binding the starter uses. */

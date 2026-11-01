@@ -97,7 +97,11 @@ export async function startMultipartAssetUpload(
   input: CreateAssetInput & { readonly size: number },
   opts: { readonly createdBy?: string; readonly folderId?: string } = {},
 ): Promise<MultipartUploadStarted> {
-  const max = ctx.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
+  // Never past what 10,000 parts of one request each (100 MiB) can carry, whatever is configured.
+  const max = Math.min(
+    ctx.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES,
+    MAX_PARTS * SINGLE_UPLOAD_MAX_BYTES,
+  );
   if (!Number.isSafeInteger(input.size) || input.size < 1 || input.size > max) {
     throw new ValidationError([
       {
@@ -247,7 +251,7 @@ export async function abortMultipartAssetUpload(
   await multipartOf(blob).abort(upload.r2Key, uploadId);
   await ctx.store.assetUploads.delete(scope, assetId, uploadId);
   const asset = await ctx.store.assets.get(scope, assetId);
-  if (!asset || asset.status !== 'draft' || asset.file.size !== undefined) return;
+  if (asset?.status !== 'draft' || asset.file.size !== undefined) return;
   if (blob.head && (await blob.head(upload.r2Key))) return;
   try {
     await deleteAsset(ctx, scope, assetId);

@@ -117,7 +117,11 @@ export function shareLinkState(
 export function shareLinkExpiry(expiresAt: string, now: Date): string {
   const at = Date.parse(expiresAt);
   const seconds = (at - now.getTime()) / 1000;
-  if (!Number.isFinite(at) || seconds < MIN_SHARE_LINK_SECONDS || seconds > MAX_SHARE_LINK_SECONDS) {
+  if (
+    !Number.isFinite(at) ||
+    seconds < MIN_SHARE_LINK_SECONDS ||
+    seconds > MAX_SHARE_LINK_SECONDS
+  ) {
     throw new ValidationError([
       {
         field: 'expiresAt',
@@ -222,11 +226,12 @@ export function parseShareLinkPath(pathname: string): ShareLinkAddress | null {
   let request: ShareLinkRequest;
   if (rest.length === 0) request = { kind: 'page' };
   else if (rest.length === 1 && rest[0] === 'unlock') request = { kind: 'unlock' };
-  else if (rest.length === 3 && rest[0] === 'f') request = { kind: 'file', assetId: '', fileName: '' };
+  else if (rest.length === 3 && rest[0] === 'f')
+    request = { kind: 'file', assetId: '', fileName: '' };
   else return null;
   try {
-    const decoded = [space, env, link, ...(request.kind === 'file' ? rest.slice(1) : [])].map(
-      (s) => decodeURIComponent(s ?? ''),
+    const decoded = [space, env, link, ...(request.kind === 'file' ? rest.slice(1) : [])].map((s) =>
+      decodeURIComponent(s ?? ''),
     );
     if (decoded.some((s) => s === '' || s === '.' || s === '..')) return null;
     const [spaceId, environmentId, linkId, assetId, fileName] = decoded as [

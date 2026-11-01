@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
 import {
@@ -770,4 +771,174 @@ test('publishing more assets than a page shows runs as a job and names the one i
   await expect(failures.getByText(/under embargo/)).toBeVisible();
   await expect(bar.getByText('1 selected')).toBeVisible();
   await expect(library.getByRole('checkbox', { name: `Select “${embargoed}”` })).toBeChecked();
+});
+
+/** Uploads a small text file through the signed PUT, publishes it, and returns its id. */
+async function publishedFile(request: Parameters<typeof uploadAssetBytes>[0], name: string) {
+  const id = await uploadAssetBytes(request, name, Buffer.from(`bytes of ${name}`));
+  const pub = await api(request, 'POST', `${MGMT}/assets/${id}/published`);
+  expect(pub.ok(), await pub.text()).toBe(true);
+  return id;
+}
+
+test('an asset collection: made beside the folders, filled from the library, reordered, shared and zipped', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const stamp = Date.now();
+  const files = ['a', 'b', 'c'].map((n) => `coll-${stamp}-${n}.txt`);
+  for (const name of files) await publishedFile(request, name);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('radio', { name: 'List' }).click();
+  await expect(library.getByRole('button', { name: `Open “${files[0]}”` })).toBeVisible();
+
+  // Made in the sidebar, under the folders: it opens in place of the library, heading focused.
+  const name = `Launch ${stamp}`;
+  const nav = page.getByRole('navigation', { name: 'Collections' });
+  await nav.getByRole('button', { name: 'New collection' }).click();
+  const form = nav.getByRole('form', { name: 'New collection' });
+  await form.getByLabel('Name').fill(name);
+  await form.getByLabel(/Description/).fill('Spring launch');
+  await form.getByRole('button', { name: 'Create collection' }).click();
+  const heading = page.getByRole('heading', { name, exact: true });
+  await expect(heading).toBeFocused();
+  await expect(page.getByText('Nothing in this collection yet')).toBeVisible();
+
+  // Filled from the library's selection, through the bulk bar.
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: 'All assets' })
+    .click();
+  for (const f of files) {
+    await library.getByRole('checkbox', { name: `Select “${f}”` }).check();
+  }
+  const bar = page.getByRole('group', { name: 'Selected assets' });
+  await bar.getByRole('combobox', { name: 'Collection to add to' }).selectOption({ label: name });
+  await bar.getByRole('button', { name: 'Add to collection' }).click();
+  await expect(page.getByText(`Added 3 assets to “${name}”`)).toBeVisible();
+
+  // Its assets in order; c moved up with the keyboard's buttons keeps focus, and is said.
+  await nav.getByRole('button', { name: `${name}, 3 assets` }).click();
+  const list = page.getByRole('list', { name: `Assets in “${name}”, in order` });
+  const order = () => list.getByRole('button', { name: /^Open/ }).allTextContents();
+  await expect.poll(order).toEqual(files);
+  const up = list.getByRole('button', { name: `Move “${files[2]}” up` });
+  await up.focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(order).toEqual([files[0], files[2], files[1]]);
+  await expect(list.getByRole('button', { name: `Move “${files[2]}” up` })).toBeFocused();
+  await expect(page.getByText(`“${files[2]}” moved to position 2 of 3`)).toBeAttached();
+
+  // Dragged: the first row onto the last.
+  const rows = list.getByRole('listitem');
+  await rows.nth(0).dragTo(rows.nth(2));
+  await expect.poll(order).toEqual([files[2], files[1], files[0]]);
+  // The order is the server's now, not just the screen's.
+  const collections = (await (await api(request, 'GET', `${MGMT}/asset-collections`)).json()) as {
+    items: { id: string; name: string }[];
+  };
+  const id = collections.items.find((c) => c.name === name)?.id as string;
+  await expect
+    .poll(async () => {
+      const page = (await (
+        await api(request, 'GET', `${MGMT}/asset-collections/${id}/assets`)
+      ).json()) as { items: { title: Record<string, string> }[] };
+      return page.items.map((a) => a.title['en-US']);
+    })
+    .toEqual([files[2], files[1], files[0]]);
+
+  // Shared: a link for a day, without downloads; listed, then revoked in place.
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: `Share “${name}”` });
+  await expect(dialog.getByText(/drafts in the collection stay off the page/)).toBeVisible();
+  const share = dialog.getByRole('form', { name: 'New share link' });
+  await share.getByRole('radio', { name: '1 day' }).click();
+  await share.getByRole('switch', { name: 'Allow downloads' }).click();
+  await share.getByRole('button', { name: 'Create link' }).click();
+  await expect(page.getByText('Share link created')).toBeVisible();
+  const active = dialog.getByRole('list', { name: 'Active links' });
+  await expect(active.getByRole('listitem')).toHaveCount(1);
+  await expect(active.getByText('View only')).toBeVisible();
+  await active.getByRole('button', { name: /Revoke the link/ }).click();
+  await active
+    .getByRole('alertdialog', { name: /Revoke this link\?/ })
+    .getByRole('button', { name: 'Revoke link' })
+    .click();
+  await expect(dialog.getByText('No link opens it now.')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+
+  // Zipped: the job is created and followed; the engine's Workflow builds it on the local stack.
+  await page.getByRole('button', { name: 'Download as zip' }).click();
+  const zip = page.getByRole('region', { name: 'Zip download' });
+  await expect(zip.getByRole('status')).toContainText(`${name}.zip`);
+  await expect(zip.getByRole('progressbar', { name: 'Zip progress' })).toBeAttached();
+  await expect(zip.getByRole('link', { name: `Download “${name}.zip”` })).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(zip.getByRole('status')).toContainText(`“${name}.zip” is ready: 3 files`);
+
+  // One taken out (it stays in the library), then the collection deleted after asking in place.
+  await list.getByRole('button', { name: `Remove “${files[1]}” from “${name}”` }).click();
+  await expect(page.getByText(`Removed “${files[1]}” from “${name}”`)).toBeVisible();
+  await expect.poll(order).toEqual([files[2], files[0]]);
+  await page.getByRole('button', { name: `Delete “${name}”` }).click();
+  await page
+    .getByRole('alertdialog', { name: new RegExp(`Delete “${name}”\\?`) })
+    .getByRole('button', { name: 'Delete collection' })
+    .click();
+  await expect(page.getByText(`Deleted collection “${name}”`)).toBeVisible();
+  await expect(library.getByRole('button', { name: `Open “${files[1]}”` })).toBeVisible();
+});
+
+test('an asset is shared from its sheet once it is published', async ({ page, request }) => {
+  const stamp = Date.now();
+  const draft = `share-draft-${stamp}.txt`;
+  await uploadAssetBytes(request, draft, Buffer.from('draft'));
+  const live = `share-live-${stamp}.txt`;
+  await publishedFile(request, live);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('button', { name: `Open “${draft}”` }).click();
+  const sheet = page.getByRole('dialog', { name: draft });
+  const share = sheet.getByRole('button', { name: 'Share' });
+  await share.click();
+  const dialog = page.getByRole('dialog', { name: `Share “${draft}”` });
+  await expect(dialog.getByText('Publish it to share it')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Create link' })).toHaveCount(0);
+  // Closing hands focus back to Share, in the sheet.
+  await page.keyboard.press('Escape');
+  await expect(share).toBeFocused();
+  await page.keyboard.press('Escape');
+
+  await library.getByRole('button', { name: `Open “${live}”` }).click();
+  await page.getByRole('dialog', { name: live }).getByRole('button', { name: 'Share' }).click();
+  const liveDialog = page.getByRole('dialog', { name: `Share “${live}”` });
+  await liveDialog.getByRole('button', { name: 'Create link' }).click();
+  await expect(
+    liveDialog.getByRole('list', { name: 'Active links' }).getByRole('listitem'),
+  ).toHaveCount(1);
+});
+
+test('a file past 100 MiB goes up in parts, with its bytes and parts as progress', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const name = `big-${Date.now()}.bin`;
+  // 101 MiB: one past what a single signed PUT takes, so 13 parts of 8 MiB.
+  const path = testInfo.outputPath(name);
+  await writeFile(path, Buffer.alloc(101 * 1024 * 1024, 7));
+
+  await openCms(page, '/assets');
+  await page.getByLabel('Upload asset files').setInputFiles(path);
+  const uploads = page.getByRole('region', { name: 'Uploads' });
+  await expect(uploads.getByRole('progressbar', { name: `Uploading “${name}”` })).toBeVisible();
+  await expect(uploads.getByText(/ of 101 MB · \d+ of 13 parts/)).toBeVisible();
+  await expect(uploads.getByRole('status')).toHaveText('Uploaded 1 file', { timeout: 150_000 });
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await expect(library.getByRole('button', { name: `Open “${name}”` })).toBeVisible();
 });

@@ -24,16 +24,20 @@ const toOption = (v: FolderSelection) => (v.kind === 'all' ? ALL : v.kind === 'r
 const fromOption = (v: string): FolderSelection =>
   v === ALL ? { kind: 'all' } : v === ROOT ? { kind: 'root' } : { kind: 'folder', id: v };
 
-function TreeButton(props: {
+/** One row of the sidebar's lists (folders, collections): the open one is `aria-current`. */
+export function TreeButton(props: {
   current: boolean;
   folderId?: string;
   icon: ReactNode;
   children: ReactNode;
+  /** An accessible name that says more than the visible text (and starts with it). */
+  label?: string;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
+      aria-label={props.label}
       aria-current={props.current ? 'true' : undefined}
       data-folder-id={props.folderId}
       onClick={props.onClick}
@@ -223,8 +227,12 @@ export function AssetFolderTree(props: {
   onCreate: (name: string, parentId?: string) => Promise<AssetFolder | undefined>;
   onRename: (folder: AssetFolder, name: string) => Promise<void>;
   onDelete: (folder: AssetFolder) => Promise<void>;
+  /** A collection is open instead: no folder is current, and the folder actions wait. */
+  inactive?: boolean;
 }) {
-  const { folders, value, onChange } = props;
+  const { folders, onChange } = props;
+  // While a collection is open nothing here is current (a selection matching no row).
+  const value: FolderSelection = props.inactive ? { kind: 'folder', id: '' } : props.value;
   const open = value.kind === 'folder' ? folders.find((f) => f.id === value.id) : undefined;
   const [sheetOpen, setSheetOpen] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -296,10 +304,15 @@ export function AssetFolderTree(props: {
         <NativeSelect
           ref={select}
           aria-label="Folder"
-          value={toOption(value)}
+          value={props.inactive ? '' : toOption(value)}
           onChange={(e) => onChange(fromOption(e.target.value))}
           wrapperClassName="min-w-0 flex-1"
         >
+          {props.inactive && (
+            <NativeSelectOption value="" disabled>
+              Choose a folder
+            </NativeSelectOption>
+          )}
           <NativeSelectOption value={ALL}>All assets</NativeSelectOption>
           <NativeSelectOption value={ROOT}>Not in a folder</NativeSelectOption>
           {folderRows(folders).map(({ folder }) => (

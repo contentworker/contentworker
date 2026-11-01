@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   ASSET_BULK_JOB_THRESHOLD,
   activeFilterCount,
+  addedSummary,
+  allPages,
   assetLibraryQuery,
   assetSearchQuery,
   bulkSummary,
+  chunked,
   facetChips,
   fileSize,
   folderLabel,
@@ -14,13 +17,20 @@ import {
   isoToLocalInput,
   jobFailures,
   localInputToIso,
+  movedAnnouncement,
+  moveItem,
   RIGHTS_EXPIRE_SOON_MS,
   rightsState,
   runBulk,
   runsAsJob,
+  shareExpiresAt,
   timeUntil,
   versionAuthor,
+  zipPercent,
+  zipRunning,
+  zipSummary,
 } from '~/cms/lib/assets';
+import type { AssetZip } from '~/cms/lib/management';
 
 const folder = (id: string, name: string, path: string, parentId?: string): AssetFolder => ({
   id,
@@ -257,5 +267,102 @@ describe('asset bulk jobs', () => {
     expect(versionAuthor('cma')).toBe('an API key');
     expect(versionAuthor('admin-token')).toBe('the admin token');
     expect(versionAuthor('0193f1e2-7c4a-7000-8000-000000000000')).toBe('a teammate');
+  });
+});
+
+describe('collections', () => {
+  it('splits a selection into requests the API takes', () => {
+    expect(chunked(['a', 'b', 'c', 'd', 'e'], 2)).toEqual([['a', 'b'], ['c', 'd'], ['e']]);
+    expect(chunked([], 500)).toEqual([]);
+  });
+
+  it('follows every page of a list, and stops at its cap', async () => {
+    const pages: Record<string, { items: number[]; nextCursor?: string }> = {
+      '': { items: [1, 2], nextCursor: 'b' },
+      b: { items: [3], nextCursor: 'c' },
+      c: { items: [4] },
+    };
+    expect(
+      await allPages((cursor) => Promise.resolve(pages[cursor ?? ''] ?? { items: [] })),
+    ).toEqual([1, 2, 3, 4]);
+    let calls = 0;
+    const endless = () => {
+      calls += 1;
+      return Promise.resolve({ items: [calls], nextCursor: 'again' });
+    };
+    expect(await allPages(endless, 3)).toEqual([1, 2, 3]);
+  });
+
+  it('moves one item and keeps the rest in their order', () => {
+    expect(moveItem(['a', 'b', 'c', 'd'], 0, 2)).toEqual(['b', 'c', 'a', 'd']);
+    expect(moveItem(['a', 'b', 'c', 'd'], 3, 0)).toEqual(['d', 'a', 'b', 'c']);
+    expect(moveItem(['a', 'b'], 1, 9)).toEqual(['a', 'b']);
+    expect(moveItem(['a', 'b'], 5, 0)).toEqual(['a', 'b']);
+  });
+
+  it('says where a move put an asset, counting from one', () => {
+    expect(movedAnnouncement('Logo', 0, 4)).toBe('“Logo” moved to position 1 of 4');
+  });
+
+  it('sums up an add, naming what was already there and what is gone', () => {
+    expect(addedSummary('Launch', { requested: 3, added: 3, skipped: 0 })).toBe(
+      'Added 3 assets to “Launch”',
+    );
+    expect(addedSummary('Launch', { requested: 4, added: 1, skipped: 1 })).toBe(
+      'Added 1 asset to “Launch”; 2 already in it, 1 no longer in the library',
+    );
+  });
+});
+
+describe('share link expiry', () => {
+  const now = Date.parse('2026-11-01T12:00:00.000Z');
+  it('counts a preset from now', () => {
+    expect(shareExpiresAt('1d', '', now)).toBe('2026-11-02T12:00:00.000Z');
+    expect(shareExpiresAt('7d', '', now)).toBe('2026-11-08T12:00:00.000Z');
+    expect(shareExpiresAt('30d', '', now)).toBe('2026-12-01T12:00:00.000Z');
+  });
+
+  it('reads a custom date on the reader’s clock, and nothing from an empty one', () => {
+    expect(shareExpiresAt('custom', '', now)).toBeNull();
+    expect(shareExpiresAt('custom', '2026-11-05T09:30', now)).toBe(
+      new Date('2026-11-05T09:30').toISOString(),
+    );
+  });
+});
+
+describe('zip progress', () => {
+  const zip = (over: Partial<AssetZip>): AssetZip => ({
+    id: 'z1',
+    status: 'pending',
+    source: { kind: 'selection', assetIds: ['a1'] },
+    fileName: 'Launch.zip',
+    partsDone: 0,
+    createdAt: '',
+    expiresAt: '',
+    ...over,
+  });
+
+  it('runs until it is built or has failed', () => {
+    expect(zipRunning(zip({ status: 'pending' }))).toBe(true);
+    expect(zipRunning(zip({ status: 'running' }))).toBe(true);
+    expect(zipRunning(zip({ status: 'completed' }))).toBe(false);
+    expect(zipRunning(zip({ status: 'failed' }))).toBe(false);
+  });
+
+  it('counts parts written, from nothing until it is planned', () => {
+    expect(zipPercent(zip({ status: 'running' }))).toBe(0);
+    expect(zipPercent(zip({ status: 'running', partsDone: 3, partCount: 4 }))).toBe(75);
+    expect(zipPercent(zip({ status: 'completed', partsDone: 0 }))).toBe(100);
+  });
+
+  it('says what it is doing in words', () => {
+    expect(zipSummary(zip({}))).toBe('Preparing “Launch.zip”…');
+    expect(zipSummary(zip({ status: 'running', fileCount: 12 }))).toBe(
+      'Zipping 12 files into “Launch.zip”…',
+    );
+    expect(zipSummary(zip({ status: 'completed', fileCount: 1, totalBytes: 2048 }))).toBe(
+      '“Launch.zip” is ready: 1 file, 2.0 KB',
+    );
+    expect(zipSummary(zip({ status: 'failed' }))).toBe('“Launch.zip” wasn’t built');
   });
 });

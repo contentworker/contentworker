@@ -2229,7 +2229,10 @@ function makeAssetUploadRepo(x: Exec): AssetUploadRepo {
     and(scopeFilter(u, scope), eq(u.assetId, assetId), eq(u.uploadId, uploadId));
   return {
     async get(scope, assetId, uploadId) {
-      const [row] = await db.select().from(u).where(one(scope, assetId, uploadId));
+      const [row] = await db
+        .select()
+        .from(u)
+        .where(one(scope, assetId, uploadId));
       return row ? toAssetUpload(row) : null;
     },
     async create(scope, upload) {

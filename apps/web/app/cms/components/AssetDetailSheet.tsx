@@ -21,10 +21,12 @@ import {
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
 import { Textarea } from '@contentworker/ui/textarea';
+import { Share2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AssetPreview, FallbackTile } from '~/cms/components/AssetPreview';
 import { AssetIngestBadges, BADGE_BUTTON_FOCUS } from '~/cms/components/assets/AssetIngestBadges';
 import { AssetRightsForm } from '~/cms/components/assets/AssetRightsForm';
+import { AssetShareDialog } from '~/cms/components/assets/AssetShareDialog';
 import { AssetVersions } from '~/cms/components/assets/AssetVersions';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
@@ -70,6 +72,7 @@ export function AssetDetailSheet(props: {
   const [imageFailed, setImageFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<SheetTab>('details');
+  const [sharing, setSharing] = useState(false);
   // The original a possible duplicate points at, waiting on "discard your edits?".
   const [confirmOpen, setConfirmOpen] = useState<string | null>(null);
   const imgRef = useRef<HTMLButtonElement>(null);
@@ -90,6 +93,7 @@ export function AssetDetailSheet(props: {
     setFocal(values.focal);
     setTagIds([...values.tagIds]);
     setConfirmOpen(null);
+    setSharing(false);
     setTab('details');
     setUsage(null);
     setPreview(null);
@@ -230,7 +234,27 @@ export function AssetDetailSheet(props: {
           <SheetDescription className="font-mono text-xs">
             {asset.file.contentType} · v{asset.version ?? 1}
           </SheetDescription>
+          {/* Sharing opens the share dialog over the sheet; it explains when the asset can't be
+              shared (not published) or the role can't share, rather than hiding the way in. */}
+          <div className="pt-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              aria-haspopup="dialog"
+              onClick={() => setSharing(true)}
+            >
+              <Share2 aria-hidden="true" />
+              Share
+            </Button>
+          </div>
         </SheetHeader>
+        <AssetShareDialog
+          open={sharing}
+          onOpenChange={setSharing}
+          target={{ type: 'asset', id: asset.id, name: asset.file.fileName }}
+          published={asset.status === 'published'}
+        />
 
         <div className="space-y-5 px-4 pb-4">
           {showIngest && (

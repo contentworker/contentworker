@@ -254,6 +254,13 @@ placeholder ingest computes lives in the `file` JSON, so it needs no migration.
 `rights.expiresAt`, written on every snapshot write), backfills it from existing snapshots' rights,
 and indexes it (`asset_published_by_expiry`, only where set) for the engine's expiry sweep.
 
+`0016_asset_collections.sql` adds five new tables and touches no existing one: `asset_collections`,
+`asset_collection_items` (a membership per row, ordered by `position`), `asset_share_links`
+(`password_hash` is PBKDF2, `revoked_at` is set once), `asset_zip_jobs` (indexed by `expires_at`
+for the engine's hourly zip sweep) and `asset_uploads` (multipart uploads in progress, indexed by
+`created_at` for the abandoned-upload sweep). Every table is environment-scoped, and the environment purge clears it. Nothing is backfilled (see
+[Architecture](./architecture.md#collections-share-links-multipart-uploads-and-zips)).
+
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
 `archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)

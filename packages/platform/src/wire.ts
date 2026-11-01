@@ -45,7 +45,6 @@ import {
   withSealedSecrets,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
-import { hashPassword, verifyPassword } from '@contentworker/security/credentials';
 import { type ApiKeyKind, type DomainEvent, scopesForKind } from '@contentworker/domain';
 import type {
   AIProvider,
@@ -71,6 +70,7 @@ import type {
   VectorStore,
   WorkflowEngine,
 } from '@contentworker/ports';
+import { hashPassword, verifyPassword } from '@contentworker/security/credentials';
 import {
   FakeBlobStore,
   InMemoryContentStore,

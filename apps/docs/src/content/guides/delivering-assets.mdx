@@ -153,6 +153,19 @@ results are cached like any delivery read, refreshed when an asset is published,
 processed while published. In `@contentworker/sdk-core`:
 `client.searchAssets('coffee', { kind: 'image' })`.
 
+## Collections
+
+`GET /delivery/{space}/{env}/collections/{id}` returns a [collection](/guides/media/#collections)
+by name with its **published** members in the collection's order, each in the delivered asset
+shape above. Drafts and archived members are left out, so a collection can list fewer assets than
+it holds. `limit` (at most 100), `cursor` and `locale` work as on the asset listing, and
+`nextCursor` pages. It needs `delivery:read`; a key restricted by content grants gets a **403**, as
+it does for assets, and an unknown collection is a **404**. The response is cached like any
+delivery read and refreshed when the collection changes (webhooks get `asset_collection.changed`)
+or when a member is published or unpublished. In `@contentworker/sdk-core`:
+`client.getCollection(id, { limit, cursor, locale })` returns `{ id, name, description?, items,
+nextCursor? }`.
+
 ## Unpublishing and expiry
 
 Unpublishing, archiving or deleting an asset stops its URLs: they answer `404` once the edge

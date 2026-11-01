@@ -1,7 +1,16 @@
-import type { AssetFolder } from '@contentworker/domain';
+import type { AssetCollection, AssetFolder } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import { Archive, CircleSlash, FolderInput, Send, Tag as TagIcon, X } from 'lucide-react';
+import {
+  Archive,
+  CircleSlash,
+  Download,
+  FolderInput,
+  GalleryVerticalEnd,
+  Send,
+  Tag as TagIcon,
+  X,
+} from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { folderLabel, folderRows } from '~/cms/lib/assets';
@@ -11,7 +20,7 @@ const ROOT = '__root__';
 
 /**
  * What can be done to the selected assets at once: publish or unpublish them, archive them, file
- * them, tag or untag them. Labelled as the entries list labels its selection ("2 selected",
+ * them, tag or untag them, add them to a collection, or download them as one zip. Labelled as the entries list labels its selection ("2 selected",
  * "Publish selected"). Archiving and unpublishing several ask first, in place: both take assets
  * out of Delivery at once, and undoing either means acting on each again.
  */
@@ -25,10 +34,15 @@ export function AssetBulkBar(props: {
   onPublish: () => void;
   onUnpublish: () => void;
   onArchive: () => void;
+  collections?: readonly AssetCollection[];
+  onAddToCollection?: (collectionId: string) => void;
+  onZip?: () => void;
   onClear: () => void;
 }) {
   const [target, setTarget] = useState(ROOT);
   const [tag, setTag] = useState('');
+  const [collection, setCollection] = useState('');
+  const collections = props.collections ?? [];
   if (props.count === 0) return null;
   const noun = plural(props.count, 'asset');
   return (
@@ -131,6 +145,45 @@ export function AssetBulkBar(props: {
             Remove tag
           </Button>
         </div>
+      )}
+      {props.onAddToCollection && collections.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <NativeSelect
+            size="sm"
+            aria-label="Collection to add to"
+            value={collection}
+            onChange={(e) => setCollection(e.target.value)}
+          >
+            <NativeSelectOption value="">Choose a collection</NativeSelectOption>
+            {collections.map((c) => (
+              <NativeSelectOption key={c.id} value={c.id}>
+                {c.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={props.busy || !collection}
+            onClick={() => props.onAddToCollection?.(collection)}
+          >
+            <GalleryVerticalEnd aria-hidden="true" />
+            Add to collection
+          </Button>
+        </div>
+      )}
+      {props.onZip && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={props.busy}
+          onClick={props.onZip}
+        >
+          <Download aria-hidden="true" />
+          Download as zip
+        </Button>
       )}
       <Button
         type="button"

@@ -161,7 +161,11 @@ export class FakeBlobStore implements BlobStore {
       }
       this.uploadsInProgress.delete(uploadId);
       await this.put(key, out, upload.contentType);
-      return { size: total, contentType: upload.contentType, etag: `${this.etags.get(key)}-${chunks.length}` };
+      return {
+        size: total,
+        contentType: upload.contentType,
+        etag: `${this.etags.get(key)}-${chunks.length}`,
+      };
     },
     abort: async (_key, uploadId) => {
       this.aborted.push(uploadId);

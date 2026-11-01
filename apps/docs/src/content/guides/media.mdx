@@ -40,9 +40,32 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/published
 
 Send every header in `upload.headers` with the `PUT`. A new asset is a draft until you publish
 it, and `DELETE …/assets/{id}/published` unpublishes it. Title and description are localized maps
-set at creation, and an optional `folderId` files the asset in a folder. MCP has no tool to create
-an image asset; it can list, file, archive and delete assets, replace their files, edit metadata
-and rights, and create videos (below).
+set at creation, and an optional `folderId` files the asset in a folder. MCP creates an asset with
+`asset_upload_start` (below); it can also list, file, archive and delete assets, replace their
+files, edit metadata and rights, and create videos.
+
+### Upload a large file
+
+One signed upload takes a file of up to 100 MiB. Past that, upload in parts, up to the
+workspace's limit (5 GiB unless its administrator changed it):
+
+1. `POST …/assets/uploads` with `fileName`, `contentType`, the file's exact `size` in bytes and the
+   optional `title`, `description` and `folderId`. The response (`201`) has the draft `asset` and
+   `upload: { uploadId, partSize, partCount }`. Parts are 8 MiB, larger for a very large file so the
+   count stays within 10,000; every part but the last is exactly `partSize` bytes. A `size` past the
+   limit is a `422`.
+2. `POST …/assets/{id}/uploads/{uploadId}/parts` with `{ "partNumbers": [1, 2, 3] }` (up to 100 at
+   a time) returns a signed `PUT` URL per part. Each URL is good for that upload, that part number
+   and that exact length only. `PUT` each part, keep the `ETag` response header, and sign a part
+   again to retry it.
+3. `POST …/assets/{id}/uploads/{uploadId}/complete` with `{ "parts": [{ "partNumber": 1, "etag": "…" }, …] }`,
+   naming parts 1 to `partCount` once each. Processing then starts as it does after any upload.
+
+`DELETE …/assets/{id}/uploads/{uploadId}` gives up: the parts are discarded and the empty draft is
+deleted. An upload nobody finishes is aborted automatically after a day. The MCP tools are
+`asset_upload_start`, `asset_upload_parts`, `asset_upload_complete` and `asset_upload_abort`, and
+the Management SDK's `assets.upload(...)` does all of it for any size, retrying each part and
+reporting progress ([SDKs](/guides/sdks/#writing-content)). All four calls need `content:write`.
 
 ## Upload a video
 
@@ -163,7 +186,48 @@ as a draft. Select several to archive them together. The routes are `POST …/as
 
 **Delete** removes an asset and its files for good (`DELETE …/assets/{id}`, `content:publish`; MCP
 `asset_delete`). It is refused with `409 asset_in_use` while any entry links to it, and the answer
-names those entries, so archive the asset or remove the links first.
+names those entries, so archive the asset or remove the links first. The asset also leaves every
+collection it was in.
+
+### Collections
+
+A **collection** is a named, ordered set of assets: a campaign's images, a press kit. An asset can
+be in any number of collections (unlike a folder, which holds it in one place), and a collection
+holds up to 1,000 assets. Collections don't change an asset or what delivery serves. Reading them
+needs `preview:read`; changing them needs `content:write`.
+
+| Route | What it does |
+| --- | --- |
+| `GET …/asset-collections` | Lists collections by name (`nextCursor` pages) |
+| `POST …/asset-collections` | Creates one: `{ name, description? }` |
+| `GET`, `PATCH`, `DELETE …/asset-collections/{id}` | Reads, renames (an empty `description` clears it) or deletes one; its assets stay in the library |
+| `GET …/asset-collections/{id}/assets` | Lists its members in order, filtered as the library is (archived members are left out unless `status` asks) |
+| `POST …/asset-collections/{id}/assets` | Appends `{ assetIds }` (up to 500 per call) in the order given; past 1,000 members the whole call is a `409` |
+| `POST …/asset-collections/{id}/assets/remove` | Removes `{ assetIds }`; ids that aren't members are ignored |
+| `PUT …/asset-collections/{id}/order` | Moves the named ids to the front in that order; the rest follow as they were. Name every member to set the whole order |
+
+The MCP tools are `asset_collections_list`, `asset_collections_get`, `asset_collections_create`,
+`asset_collections_update`, `asset_collections_delete`, `asset_collection_assets_list`,
+`asset_collection_assets_add`, `asset_collection_assets_remove` and `asset_collection_reorder`; the
+Management SDK has `assets.collections`. Environment export, import and clone carry collections
+and their order; a member is kept when its asset is in the snapshot or already in the target.
+Delivery reads a collection's published members at
+[`GET /delivery/{space}/{env}/collections/{id}`](/guides/delivering-assets/#collections).
+
+### Download as a zip
+
+`POST …/asset-zips` with `{ "assetIds": [...] }` (1 to 1,000 assets) or `{ "collectionId": "..." }`,
+and an optional `name` for the archive, starts a background job (`202`) that puts the assets'
+current files, drafts included, in one `.zip` of up to 20 GiB. Files are stored uncompressed,
+named for their file names (made unique), and a hosted video, which has no file here, is left
+out. Follow the job at `GET …/asset-zips/{id}`: `status` is `pending`, `running`, `completed` or
+`failed` (with `error`), and `partsDone` of `partCount` shows progress. Once `completed` it has a
+`downloadUrl` that works for 15 minutes (ask again for a fresh one). The archive is kept for a day,
+then removed. `GET …/asset-zips` lists the latest jobs. These need `preview:read`; the MCP tools
+are `asset_zip_create`, `asset_zip_get` and `asset_zips_list`, and the SDK's `assets.zips`.
+
+To give someone outside your team a file or a collection without an account, see
+[Share assets with a link](/guides/share-links/).
 
 **Act on many at once.** Select assets and use the bulk bar to publish, unpublish, archive, move,
 or add and remove a tag. Past about 50 assets, and for tagging at any count, the admin runs the

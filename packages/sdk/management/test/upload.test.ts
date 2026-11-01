@@ -36,8 +36,8 @@ function api(opts: { failures?: Record<number, number>; partSize?: number } = {}
     }
     if (url.endsWith('/parts')) {
       const [n] = body.partNumbers as number[];
-      const total = (calls.find((c) => c.url === `${M}/assets/uploads`)?.body as { size: number })
-        .size;
+      const started = calls.find((c) => c.url === `${M}/assets/uploads`);
+      const total = (started?.body as { size: number } | undefined)?.size ?? 0;
       const count = Math.ceil(total / partSize);
       const length = n === count ? total - partSize * (count - 1) : partSize;
       return json({

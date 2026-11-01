@@ -188,8 +188,8 @@ export async function removeFromAssetCollection(
   assetIds: readonly string[],
 ): Promise<{ readonly removed: number }> {
   const ids = collectionChangeIds(assetIds);
-  const members = new Set(await ctx.store.assetCollections.listItemIds(scope, id));
   await collectionOrThrow(ctx, scope, id);
+  const members = new Set(await ctx.store.assetCollections.listItemIds(scope, id));
   const removing = ids.filter((a) => members.has(a));
   if (removing.length > 0) {
     await ctx.store.withTransaction(async (tx) => {

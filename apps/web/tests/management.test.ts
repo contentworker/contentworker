@@ -8,6 +8,7 @@ import {
   createManagementClient,
   currentBookmark,
   resetBookmark,
+  UploadPartError,
 } from '~/cms/lib/management';
 
 beforeEach(() => resetBookmark());
@@ -492,5 +493,163 @@ describe('read-your-writes bookmark', () => {
     expect(currentBookmark()).toBe('bm-err');
     await client.listAssets();
     expect(currentBookmark()).toBe('bm-err');
+  });
+});
+
+describe('collections, share links, multipart uploads and zips', () => {
+  const body = (call: { init?: RequestInit } | undefined) =>
+    JSON.parse((call?.init?.body as string | undefined) ?? 'null');
+  const MGMT = '/spaces/s1/environments/main';
+
+  it('manages collections and their members at the environment base', async () => {
+    const { fn, calls } = fakeFetch((url, init) =>
+      init?.method === 'DELETE' || url.endsWith('/order')
+        ? new Response(null, { status: 204 })
+        : url.endsWith('/assets') && init?.method === 'POST'
+          ? { added: 2, skipped: ['gone'] }
+          : { items: [], id: 'c1' },
+    );
+    const client = createManagementClient(conn, fn);
+    await client.listAssetCollections({ limit: 100, cursor: 'next' });
+    await client.createAssetCollection({ name: 'Launch', description: 'Spring' });
+    await client.updateAssetCollection('c1', { description: '' });
+    await client.listAssetCollectionAssets('c1', { status: 'all', limit: 100 });
+    const added = await client.addToAssetCollection('c1', ['a1', 'a2', 'gone']);
+    await client.removeFromAssetCollection('c1', ['a1']);
+    await client.reorderAssetCollection('c1', ['a2', 'a1']);
+    await client.deleteAssetCollection('c1');
+    expect(added).toEqual({ added: 2, skipped: ['gone'] });
+    expect(calls.map((c) => `${c.init?.method} ${c.url}`)).toEqual([
+      `GET ${MGMT}/asset-collections?limit=100&cursor=next`,
+      `POST ${MGMT}/asset-collections`,
+      `PATCH ${MGMT}/asset-collections/c1`,
+      `GET ${MGMT}/asset-collections/c1/assets?status=all&limit=100`,
+      `POST ${MGMT}/asset-collections/c1/assets`,
+      `POST ${MGMT}/asset-collections/c1/assets/remove`,
+      `PUT ${MGMT}/asset-collections/c1/order`,
+      `DELETE ${MGMT}/asset-collections/c1`,
+    ]);
+    expect(body(calls[1])).toEqual({ name: 'Launch', description: 'Spring' });
+    // An empty description is sent, not dropped: it is how a description is cleared.
+    expect(body(calls[2])).toEqual({ description: '' });
+    expect(body(calls[4])).toEqual({ assetIds: ['a1', 'a2', 'gone'] });
+    expect(body(calls[6])).toEqual({ assetIds: ['a2', 'a1'] });
+  });
+
+  it('lists share links for one target, makes one and revokes it', async () => {
+    const link = { id: 'l1', targetType: 'asset', targetId: 'a1', hasPassword: true };
+    const { fn, calls } = fakeFetch((url) => (url.includes('?') ? { items: [link] } : link));
+    const client = createManagementClient(conn, fn);
+    expect(await client.listShareLinks({ targetType: 'asset', targetId: 'a1' })).toEqual([link]);
+    await client.listShareLinks({
+      targetType: 'collection',
+      targetId: 'c1',
+      includeInactive: true,
+    });
+    await client.createShareLink({
+      targetType: 'asset',
+      targetId: 'a1',
+      expiresAt: '2026-11-08T00:00:00.000Z',
+      allowDownload: false,
+      password: 'correct horse',
+    });
+    await client.revokeShareLink('l1');
+    expect(calls.map((c) => `${c.init?.method} ${c.url}`)).toEqual([
+      `GET ${MGMT}/share-links?targetType=asset&targetId=a1`,
+      `GET ${MGMT}/share-links?targetType=collection&targetId=c1&includeInactive=true`,
+      `POST ${MGMT}/share-links`,
+      `DELETE ${MGMT}/share-links/l1`,
+    ]);
+    expect(body(calls[2])).toEqual({
+      targetType: 'asset',
+      targetId: 'a1',
+      expiresAt: '2026-11-08T00:00:00.000Z',
+      allowDownload: false,
+      password: 'correct horse',
+    });
+  });
+
+  it('starts a multipart upload with a localized title, signs parts, completes and aborts', async () => {
+    const { fn, calls } = fakeFetch((_url, init) =>
+      init?.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : { asset: { id: 'a1' }, upload: { uploadId: 'u1', partSize: 8, partCount: 2 } },
+    );
+    const client = createManagementClient(conn, fn);
+    await client.startAssetUpload({
+      fileName: 'film.mov',
+      contentType: 'video/quicktime',
+      size: 12,
+      title: 'film.mov',
+      folderId: 'f1',
+    });
+    await client.signAssetUploadParts('a1', 'u/1', [1, 2]);
+    await client.completeAssetUpload('a1', 'u/1', [{ partNumber: 1, etag: '"e1"' }]);
+    await client.abortAssetUpload('a1', 'u/1');
+    expect(calls.map((c) => `${c.init?.method} ${c.url}`)).toEqual([
+      `POST ${MGMT}/assets/uploads`,
+      // The upload id is a path segment, escaped as one.
+      `POST ${MGMT}/assets/a1/uploads/u%2F1/parts`,
+      `POST ${MGMT}/assets/a1/uploads/u%2F1/complete`,
+      `DELETE ${MGMT}/assets/a1/uploads/u%2F1`,
+    ]);
+    expect(body(calls[0])).toEqual({
+      fileName: 'film.mov',
+      contentType: 'video/quicktime',
+      size: 12,
+      title: { 'en-US': 'film.mov' },
+      folderId: 'f1',
+    });
+    expect(body(calls[1])).toEqual({ partNumbers: [1, 2] });
+    expect(body(calls[2])).toEqual({ parts: [{ partNumber: 1, etag: '"e1"' }] });
+  });
+
+  it('PUTs a part straight to its signed URL and returns the ETag storage named it by', async () => {
+    const { fn, calls } = fakeFetch(
+      () => new Response(null, { status: 200, headers: { etag: '"part-1"' } }),
+    );
+    const client = createManagementClient(conn, fn);
+    const bytes = new Blob(['12345678']);
+    expect(await client.putUploadPart('https://r2.example/p1?sig', bytes)).toBe('"part-1"');
+    expect(calls[0]?.url).toBe('https://r2.example/p1?sig');
+    expect(calls[0]?.init?.method).toBe('PUT');
+    expect(calls[0]?.init?.body).toBe(bytes);
+    // Storage authenticates by the signature: no session cookie, no JSON headers.
+    expect(calls[0]?.init?.headers).toBeUndefined();
+  });
+
+  it('fails a part as an UploadPartError when storage refuses it or names no ETag', async () => {
+    const refused = createManagementClient(
+      conn,
+      fakeFetch(() => new Response('expired', { status: 403 })).fn,
+    );
+    const err = await refused
+      .putUploadPart('https://r2.example/p1', new Blob(['x']))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(UploadPartError);
+    expect(err.status).toBe(403);
+    const unnamed = createManagementClient(conn, fakeFetch(() => new Response(null)).fn);
+    await expect(unnamed.putUploadPart('https://r2.example/p1', new Blob(['x']))).rejects.toThrow(
+      /without an ETag/,
+    );
+  });
+
+  it('starts a zip of a selection or a collection and follows it', async () => {
+    const { fn, calls } = fakeFetch((url) =>
+      url.endsWith('/asset-zips') ? { id: 'z1', items: [] } : { id: 'z1', status: 'running' },
+    );
+    const client = createManagementClient(conn, fn);
+    await client.startAssetZip({ assetIds: ['a1', 'a2'] });
+    await client.startAssetZip({ collectionId: 'c1', name: 'Launch' });
+    await client.getAssetZip('z1');
+    await client.listAssetZips();
+    expect(calls.map((c) => `${c.init?.method} ${c.url}`)).toEqual([
+      `POST ${MGMT}/asset-zips`,
+      `POST ${MGMT}/asset-zips`,
+      `GET ${MGMT}/asset-zips/z1`,
+      `GET ${MGMT}/asset-zips`,
+    ]);
+    expect(body(calls[0])).toEqual({ assetIds: ['a1', 'a2'] });
+    expect(body(calls[1])).toEqual({ collectionId: 'c1', name: 'Launch' });
   });
 });
