@@ -257,7 +257,8 @@ way state changes: the HTTP API, MCP, and the queue consumers all call them.
   `migrations/0001_init.sql` (content), `0002_auth.sql` (the web app's users, sessions,
   passkeys, SCIM groups, admin audit), `0003_environment_purges.sql` (deleted environments
   still being purged) and `0004_version_bodies.sql` (`entry_versions.body_key`, for superseded
-  version bodies moved to R2). Timestamps are epoch milliseconds; JSON is `TEXT`.
+  version bodies moved to R2) and `0006_environment_promotions.sql` (promotions between
+  environments). Timestamps are epoch milliseconds; JSON is `TEXT`.
 - `exec.ts`: `directExec` and the `UnitOfWork` behind `withTransaction`: writes are buffered and
   sent as one `db.batch()`; `expectChanged()` adds a guard statement
   (`INSERT INTO _guard SELECT changes() = n`, with `CHECK (ok = 1)`) so a lost compare-and-set

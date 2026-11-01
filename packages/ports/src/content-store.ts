@@ -21,6 +21,8 @@ import type {
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
+  Promotion,
+  PromotionStatus,
   PublishGate,
   QueryFilter,
   QueryOrder,
@@ -94,6 +96,7 @@ export interface ContentStore {
   readonly settings: DeploymentSettingsRepo;
   readonly agentRuns: AgentRunRepo;
   readonly releases: ReleaseRepo;
+  readonly promotions: PromotionRepo;
   readonly scheduledActions: ScheduledActionRepo;
   readonly agentSchedules: AgentScheduleRepo;
   readonly agentReviews: AgentReviewRepo;
@@ -627,6 +630,33 @@ export interface ContentStoreTx {
   /** Read-only: a publish inside the unit checks the workflows gating it. */
   readonly workflowGraphs: Pick<WorkflowGraphRepo, 'listPublishGates'>;
   readonly outbox: OutboxRepo;
+  /** A promotion's record is created in the same unit as the event that announces it. */
+  readonly promotions: PromotionRepo;
+}
+
+/** Promotion fields a status change may set. */
+export type PromotionPatch = Partial<
+  Pick<Promotion, 'status' | 'decidedBy' | 'decidedAt' | 'result' | 'error' | 'completedAt'>
+>;
+
+export interface PromotionRepo {
+  create(promotion: Promotion): Promise<void>;
+  get(spaceId: string, id: string): Promise<Promotion | null>;
+  /** Newest first; optionally only one status. */
+  list(
+    spaceId: string,
+    opts?: { readonly status?: PromotionStatus; readonly limit?: number },
+  ): Promise<Promotion[]>;
+  /**
+   * Moves a promotion out of `from`, applying `patch`: a compare-and-set, so exactly one caller
+   * wins. Returns the promotion as it now is, or null when it was not in `from` (or not there).
+   */
+  transition(
+    spaceId: string,
+    id: string,
+    from: PromotionStatus,
+    patch: PromotionPatch,
+  ): Promise<Promotion | null>;
 }
 
 export interface ReleaseRepo {

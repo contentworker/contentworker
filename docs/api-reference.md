@@ -140,6 +140,47 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/audit-log`                  | `space:admin`    | Space audit log (`?limit`, `?skip`)             |
 | GET    | `/spaces/:space/compare`                    | `preview:read`   | Compare two environments (`?from`, `?to`)       |
 | POST   | `/spaces/:space/merge`                      | `content:manage` | Merge environment branch                        |
+| POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`) |
+| GET    | `/spaces/:space/promotions`                 | `content:publish` | List promotions, newest first (`?status=`)     |
+| GET    | `/spaces/:space/promotions/:id`             | `content:publish` | A promotion, its risk check and result         |
+| POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish` | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
+| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish` | Reject a waiting promotion                      |
+
+**Promotions** carry content from one environment to another and, unlike merge, go live and
+check first.
+
+1. **Pinning.** A request pins what it copies, each entry and each content type by version, so
+   nothing edited in the source afterwards gets in. A content type changed since fails the apply
+   with a 409. What's live in the source goes live in the target, and a draft goes as a draft. Omit
+   `contentTypes` and `entries` to promote everything that differs (at most 200 entries and 100
+   content types). Promotions take a role without content-type or field restrictions (`403`
+   otherwise), since they write and publish whole entries across types. An entry that a workflow
+   gates in the target (`gatesPublish`) goes as a draft, and the reasons say which workflow: that
+   workflow's run publishes it there, not the promotion. A gate added after the request leaves that
+   entry a draft too (`result.gated`) rather than failing the rest.
+2. **The risk check.** The rules come first. Approval is required when:
+   - the target is `main`, or an alias points at it;
+   - a promoted content type would remove a field, change a field's type, or make one required.
+
+   Then the decision model (Clef) answers `review`, `breaking` and `risk` over a summary of the
+   change. It can only add a requirement, at `review` ≥ 0.5 or `risk` Significant or above, never
+   waive one. If it should answer and can't, approval is required too. The record keeps the
+   reasons and the probabilities (`risk`).
+3. **Deciding.** A promotion that needs no approval applies at once (`completed`). One that does
+   waits as `awaiting_approval` (event `promotion.awaiting_approval`). It's then approved or
+   rejected by a person, or the deployment admin token, other than whoever requested it:
+   - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
+     request a promotion but not decide one;
+   - approving one with content types also takes `content:manage`;
+   - both environments must still exist when it's approved.
+
+   Approving moves it to `applying` with a compare-and-set, so it applies exactly once. The
+   request, the decision and the outcome are each written to the audit log.
+4. **Applying.** Applying goes through the use-cases (`createEntry`/`updateEntry`, then
+   `publishEntry`), so validation, references, events and the delivery cache behave as they would
+   for a person's edits. Afterwards it checks that the target holds the pinned fields
+   (`result.mismatched`) and emits `environment.promoted`. A failure marks it `failed` with the
+   error; whatever was applied before it stays.
 
 ### Environment snapshots
 

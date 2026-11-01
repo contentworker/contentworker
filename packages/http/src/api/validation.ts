@@ -82,6 +82,12 @@ export const mergeBody = z.object({
   contentTypes: z.array(zId).max(1000).optional(),
   entries: zIdList.optional(),
 });
+export const promotionBody = z.object({
+  source: zId,
+  target: zId,
+  contentTypes: z.array(zId).max(1000).optional(),
+  entries: zIdList.optional(),
+});
 export const createApiKeyBody = z.object({
   kind: z.enum(['cma', 'cda', 'cpa']),
   name: zShort.optional(),

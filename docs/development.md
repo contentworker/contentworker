@@ -212,6 +212,9 @@ receives events from; `NULL`, as every existing row stays, means every environme
 `webhooks_by_environment` index on `(space_id, environment_id)` (see
 [Events & webhooks](./events-and-webhooks.md#webhooks)).
 
+`0006_environment_promotions.sql` adds `environment_promotions`: promotions between environments
+with their pinned entries, risk check, status and result (see [API reference](./api-reference.md)).
+
 `0004_version_bodies.sql` adds `entry_versions.body_key` (a superseded version's body moves to R2
 under that key, and `fields` becomes `{}`) and `version_archive_queue` (versions waiting to move,
 queued as they are superseded and due a day later), backfilling the queue with every version already

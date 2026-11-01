@@ -42,6 +42,7 @@ export * from './plugins';
 export * from './preview';
 export * from './preview-tokens';
 export * from './principal-cache';
+export * from './promotion';
 export * from './publishing';
 export * from './rag';
 export * from './releases';

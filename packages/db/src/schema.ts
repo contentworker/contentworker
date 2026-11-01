@@ -7,6 +7,11 @@ import type {
   FieldDefinition,
   LocalizedValue,
   PluginManifest,
+  PromotedContentType,
+  PromotedEntry,
+  PromotionResult,
+  PromotionRisk,
+  PromotionStatus,
   RolePreset,
   WorkflowGraph,
   WorkflowGraphDefinition,
@@ -91,6 +96,35 @@ export const environmentPurges = sqliteTable(
     nudgedAt: integer('nudged_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
+);
+
+/**
+ * Content promoted from one environment to another, with its risk check and approval
+ * (0006_environment_promotions). Space-level: it keeps its history when an environment goes.
+ */
+export const environmentPromotions = sqliteTable(
+  'environment_promotions',
+  {
+    spaceId: text('space_id').notNull(),
+    id: text('id').notNull(),
+    sourceEnvironmentId: text('source_environment_id').notNull(),
+    targetEnvironmentId: text('target_environment_id').notNull(),
+    contentTypes: text('content_types', { mode: 'json' }).$type<PromotedContentType[]>().notNull(),
+    entries: text('entries', { mode: 'json' }).$type<PromotedEntry[]>().notNull(),
+    status: text('status').$type<PromotionStatus>().notNull(),
+    risk: text('risk', { mode: 'json' }).$type<PromotionRisk>().notNull(),
+    requestedBy: text('requested_by').notNull(),
+    decidedBy: text('decided_by'),
+    result: text('result', { mode: 'json' }).$type<PromotionResult>(),
+    error: text('error'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    decidedAt: integer('decided_at', { mode: 'timestamp_ms' }),
+    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.id] }),
+    index('environment_promotions_by_created').on(t.spaceId, t.createdAt),
+  ],
 );
 
 export const contentTypes = sqliteTable(
