@@ -14,6 +14,7 @@
     "generate:skills": "node scripts/generate-skills.ts"
   },
   "dependencies": {
+    "@cloudflare/ai-chat": "catalog:",
     "@contentworker/adapters": "workspace:*",
     "@contentworker/agent-runtime": "workspace:*",
     "@contentworker/application": "workspace:*",
@@ -30,6 +31,8 @@
     "@hono/standard-validator": "catalog:",
     "@modelcontextprotocol/server": "catalog:",
     "@scalar/hono-api-reference": "catalog:",
+    "agents": "catalog:",
+    "ai": "catalog:",
     "graphql": "catalog:",
     "hono": "catalog:",
     "hono-openapi": "catalog:",

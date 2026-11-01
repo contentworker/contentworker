@@ -112,8 +112,10 @@ export function ToastProvider(props: { children: React.ReactNode }) {
   return (
     <ToastCtx.Provider value={api}>
       {props.children}
+      {/* With the assistant's column open (`--assistant-w`, set by its panel), toasts stay inside
+          the column, above its composer, rather than over the page's row actions beside it. */}
       <div
-        className="fixed right-[max(1rem,var(--safe-right))] bottom-[calc(var(--tabbar-h)+1rem)] left-[max(1rem,var(--safe-left))] z-50 flex flex-col items-end gap-2 sm:left-auto"
+        className="fixed right-[max(1rem,var(--safe-right))] bottom-[calc(var(--tabbar-h)+1rem+var(--assistant-lift,0px))] left-[max(1rem,var(--safe-left))] z-50 flex flex-col items-end gap-2 sm:left-auto sm:max-w-[calc(var(--assistant-w,100vw)-2rem)]"
         aria-live="polite"
         aria-atomic="false"
       >

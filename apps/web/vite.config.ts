@@ -1,6 +1,7 @@
 import { cloudflare } from '@cloudflare/vite-plugin';
 import { reactRouter } from '@react-router/dev/vite';
 import tailwindcss from '@tailwindcss/vite';
+import agents from 'agents/vite';
 import { defineConfig } from 'vite';
 
 /**
@@ -53,6 +54,9 @@ const LOCAL_STACK_VARS = {
 export default defineConfig({
   server: { port, strictPort: true },
   plugins: [
+    // TC39 decorators (`@callable()` on the engine's AssistantAgent, run here as an auxiliary
+    // Worker), which Vite's Oxc transform doesn't lower yet.
+    ...agents(),
     cloudflare({
       viteEnvironment: { name: 'ssr' },
       // A fleet deploy builds against its rendered config.
@@ -81,15 +85,22 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   // The CMS screens' heavy client dependencies, pre-bundled up front: discovered mid-session they
-  // trigger a re-optimization that can leave two copies of React in the page (dev only).
+  // trigger a re-optimization that can leave two copies of React in the page (dev only). The
+  // assistant panel's are among them: it loads lazily, on whichever page is open when it does.
   optimizeDeps: {
     include: [
+      '@ai-sdk/react',
+      '@cloudflare/ai-chat/react',
       '@tanstack/react-query',
       '@tiptap/core',
       '@tiptap/react',
       '@tiptap/starter-kit',
       '@xyflow/react',
+      'agents/react',
+      'ai',
       'recharts',
+      'streamdown',
+      'use-stick-to-bottom',
     ],
   },
 });

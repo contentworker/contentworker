@@ -209,7 +209,7 @@ Tailwind's default breakpoints, read as devices:
 | below `sm` (640px)        | iPhone upright            | Header shows the mark, the scope pill and Search as icons                                                                            |
 | below `md` (768px)        | phones, either way up     | Bottom tab bar, no sidebar; tables stack into cards; the content-type list leaves the Content pages (their overview lists the types) |
 | `md` to `lg` (768–1023px) | iPad upright              | The sidebar is an icon rail beside the page and opens over it                                                                        |
-| `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the entry editor's panels beside the form; the assistant as a column                  |
+| `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the entry editor's side pane beside the form; the assistant as a column               |
 | `xl` and up (1280px)      | desktop                   | The space, environment and locale switchers sit in the header; the full sidebar and the assistant's column side by side              |
 
 Size and hint by what is pointing, not by width: `touch:` is a coarse pointer (a finger), `fine:` a
@@ -237,7 +237,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
 - **Header:** 3rem plus the status bar's inset (`--shell-h`), sticky, with a rule under it. Below
   md it starts with the mark (a link to Overview). From md it holds the breadcrumbs (where you are:
   an entry reads as its title, never its id), then what acts on the page: the scope, Search (⌘K),
-  Assistant (when on) and New entry.
+  Coworker (the assistant, when on) and New entry.
 - **Scope (contentworker's):** every page works in a space, an environment (a branch) and a locale.
   From xl the three switchers sit in the header; below xl a pill names the environment (the space
   and locale in its accessible name and `title`) and opens them in a sheet; the phone's More sheet
@@ -253,7 +253,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
 - **Shortcuts** are written for the device (⌘ on Apple, Ctrl elsewhere). G then a letter goes to a
   page (H Overview, C Content, A Approvals, R Releases, W Workflows, M Media, T Taxonomy, S
   Settings); ? opens the list of every shortcut (a sheet, with whatever the page registers); ⌘K is
-  the command palette; ⌘J the assistant when it is on; ⌘\ the sidebar. Single keys go through
+  the command palette; ⌘J Coworker when it is on; ⌘\ the sidebar. Single keys go through
   `plainKeyAllowed` (not with a modifier, while typing, or with a dialog, menu or inline confirm
   open) and run before a page's own keys.
 - **Transitions** in the bars name their properties (`tint`), never `transition-colors`. The
@@ -272,13 +272,21 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   `approvals` feature (`VITE_CW_APPROVALS`) until its inbox ships.
 - **Main** pads its foot by `--tabbar-h` and lays every page in `Body` (the page width and
   gutters). Never hard-code the bar heights.
-- **Assistant:** behind the `assistant` feature (`VITE_CW_ASSISTANT`, off until its server side
-  ships). A column beside the page at lg; below that a sheet between the header and the tab bar,
+- **Coworker (the assistant):** named Coworker everywhere a person sees it (the button, the panel's
+  heading and accessible name, its messages, the shortcuts list); `assistant` in code. Behind the `assistant` feature (`cms/lib/features.tsx`, on). A column beside the
+  page at lg; below that a sheet between the header and the tab bar,
   taking exactly the area above an on-screen keyboard. Both slide in 200ms on
   `cubic-bezier(0.16,1,0.3,1)` by transform and opacity only: the column takes its 400px at once
   and slides its content in, and gives the width back only after the content has slid out.
   Reduced motion shows and hides it at once. An action waiting for confirmation is pinned above the
-  composer in the `wait` tint. ⌘J toggles it (`aria-keyshortcuts`).
+  composer in the `wait` tint. ⌘J toggles it (`aria-keyshortcuts`). Escape closes the sheet (the
+  column stays) and hands focus back to the page. A page's edits go through it: an action (publish,
+  unpublish, the trash, restoring a version, a bulk change) opens the panel at its confirm card
+  (Confirm, or Not now, focused) and the page waits; any other edit (saving, duplicating) runs at
+  once and leaves a line ("Published · Spring launch notes") linking to the entry. When its socket
+  is down the panel says so in one quiet line and the page makes the edit itself, confirming in its
+  own dialog as before. Beside the column a page is narrower than the screen, so the Content pages'
+  content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
 - **Slow pages:** a navigation that takes over 400ms draws a link-blue rule sweeping under the
   header and marks main `aria-busy`. Quicker ones show nothing.
 - **Route announcer:** after a client-side navigation, the new page's h1 is read out in a polite
@@ -334,7 +342,14 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Content:** the content types as cards (`PageHeader` with New content type); a content type's
   entries beside the list of types (from md); the entry editor: the title wraps, the status, version
   and save state sit under it, and the actions wrap beside it; below md the secondary actions fold
-  into a ghost ⋯ menu ("More entry actions"). From lg the editor's panels sit beside the form.
+  into a ghost ⋯ menu ("More entry actions"). Beside the form sits the **side pane** (after felix's):
+  where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
+  the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
+  narrower, it stacks under the form. The divider is an ARIA splitter (drag, arrows, Shift for a
+  bigger step, Home and End, Enter or a double click to reset), and its share is kept per browser.
+  A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
+  as you type, in the form's locale with delivery's fallbacks, references by name, and links shown
+  but never followed. A new entry's pane is its preview alone.
 - **Releases, Workflows, Taxonomy, Media:** `PageHeader` with the page's one "New …" (a `Plus` and
   the noun), then cards or a stacked table. A media card's name is its control, stretched over the
   card, with the card's own actions above it.

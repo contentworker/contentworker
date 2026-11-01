@@ -2,7 +2,8 @@
  * The engine Worker: everything asynchronous and stateful. Queue consumers (domain events, bulk
  * chunks, agent jobs, dead letters), the cron sweeper (outbox relay, scheduled actions, bulk-stall
  * recovery, retention, secret reseal, agent schedules), and the owner of every Durable Object and
- * Workflow class. It has no public route; the api and delivery Workers reach it through bindings.
+ * Workflow class (the admin's assistant among them). It has no public route; the api and delivery
+ * Workers reach it through bindings.
  */
 import {
   createHttpFunctionInvoker,
@@ -44,6 +45,7 @@ import {
   wireEdge,
 } from '@contentworker/platform/wire';
 import { redactCredentials } from '@contentworker/redaction';
+import { AssistantAgent } from './assistant.js';
 import { runInLanes } from './lanes.js';
 import { AgentWorkflow } from './workflows/agent-workflow.js';
 import { EditorialWorkflow } from './workflows/editorial-workflow.js';
@@ -53,7 +55,15 @@ const payloadOf = (m: { body: unknown }): unknown => m.body;
 
 // Worker-entrypoint classes must be exported from the deployed script: the engine owns every
 // Durable Object and Workflow; the api and delivery Workers bind them by script name.
-export { AgentWorkflow, CostGuardDO, EditorialWorkflow, LiveHubDO, RateLimiterDO, SearchShardDO };
+export {
+  AgentWorkflow,
+  AssistantAgent,
+  CostGuardDO,
+  EditorialWorkflow,
+  LiveHubDO,
+  RateLimiterDO,
+  SearchShardDO,
+};
 
 /** Events after which a space:environment's delivery responses may be stale. */
 const PURGING_EVENTS = new Set<string>([

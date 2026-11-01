@@ -50,7 +50,8 @@ The gateway (`apps/web/app/lib/gateway.server.ts`) forwards these paths to the a
 `API` service binding, so the admin, REST, GraphQL, MCP, OAuth and the API docs share one
 origin: `/spaces`, `/spaces/*`, `/preview/*`, `/delivery/*`, `/oauth/*`,
 `/.well-known/oauth-*`, `/media/*`, `/mcp`, `/openapi.json`, `/docs`, `/docs/*`, `/guides*`,
-`/health/api`, `/auth/me`. Credentials never cross the binding as the browser sent them:
+`/agents/*` (the assistant's WebSocket and its message history), `/health/api`, `/auth/me`.
+Credentials never cross the binding as the browser sent them:
 
 1. A request with `Authorization: Bearer …` (API key, personal access token, OAuth token) goes
    through unchanged except that any caller-supplied `x-cw-principal` and cookies are removed. A
@@ -58,8 +59,8 @@ origin: `/spaces`, `/spaces/*`, `/preview/*`, `/delivery/*`, `/oauth/*`,
    gets the same gateway, cache, ETag and purge as on the `cdn.` host.
 2. Otherwise a same-origin request with a live web session has its cookies removed and a signed
    `x-cw-principal` added (`@contentworker/security/principal`): HMAC-SHA256 under
-   `PRINCIPAL_KEY`, payload `{ sub, email, name, role, iat, exp, path }`, valid for 60 seconds
-   and for that exact path.
+   `PRINCIPAL_KEY`, payload `{ sub, email, name, role, sid?, iat, exp, path }` (`sid`: the
+   session it came on), valid for 60 seconds and for that exact path.
 3. Otherwise it goes through with no credentials, and the api answers 401 where it needs one.
 
 `x-cw-bookmark` passes through both ways untouched. While a deployment has no people yet, every
@@ -138,6 +139,30 @@ bind them by `script_name`) and handles:
 | `SearchShardDO` | space:environment:shard (8 default, `SEARCH_SHARDS`) | FTS5 lexical index (`packages/platform/src/do/search-shard.ts`) |
 | `CostGuardDO`   | space                            | AI request/token budget windows (interactive and background)             |
 | `RateLimiterDO` | client IP                        | Failed-authentication limiter                                            |
+| `AssistantAgent` | person (`usr_…`, or `local`)    | The admin's assistant: its conversation, model turns and page edits      |
+
+The assistant (`packages/http/src/assistant/`, hosted by `apps/engine/src/assistant.ts`) is an
+AIChatAgent whose tools are the MCP tools `ASSISTANT_TOOLS` names (`@contentworker/domain`), run
+in-process through the `/mcp` handler as the person's own principal, always in the space and
+environment the page sent. The api forwards `/agents/assistant-agent/<person>` to it only when
+the signed `x-cw-principal` names that person (`@contentworker/http/assistant/gate`, which also
+drops any SDK-internal `x-agents-*`/`x-partykit-*` header a caller sent); the object verifies the
+signature again itself and keeps who it names per connection. Every frame a socket sends, and every
+turn and page edit, first re-reads the person (enabled, their session live): a socket whose person
+no longer is is closed (4401), and every other socket is checked the same way before anything is
+broadcast. Their access to the page's space is resolved with `principalForWebUser` for each call.
+
+What a client sends is held to what the object made: only new user text is taken from the
+messages a client saves (stored messages are kept as stored, client tool results are dropped); a
+model tool call runs only if the model emitted it, with the input and scope it emitted (`model:`
+records); a page's action (`act`) waits at a card that `resolve` answers, held to a fingerprint of
+what the card was made for. Writes the model proposes wait for the person's confirm. Tool results
+reach the model inside the untrusted-content delimiter, and only summaries of them are kept once a
+turn ends. The model is Workers AI's flagship tier through AI Gateway, then its fast tier, then a
+deterministic mock (always, under `AI_MODE=mock`); each model step is a request against
+`CostGuardDO` and the turn's tokens are settled however it ends. A person gets at most 30 page
+edits and turns a minute; a conversation untouched for 30 days is deleted (an alarm), and so is a
+person's whose account is disabled or gone.
 
 Workflows: `AgentWorkflow` (`contentworker-agent`) and `EditorialWorkflow`
 (`contentworker-editorial`), in `apps/engine/src/workflows/`.

@@ -12,20 +12,39 @@ import {
 import { cn } from '@contentworker/ui/lib/utils';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@contentworker/ui/sheet';
+import {
+  SIDEBAR_COOKIE_NAME,
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from '@contentworker/ui/sidebar';
+import { TooltipProvider } from '@contentworker/ui/tooltip';
 import { and, eq, isNull } from 'drizzle-orm';
 import {
+  ChevronsUpDown,
   Ellipsis,
-  FileText,
-  LayoutDashboard,
+  type LucideIcon,
+  MessageSquareText,
   Monitor,
   Moon,
-  Rocket,
+  ScrollText,
   Search,
-  Stamp,
   Sun,
   UserRound,
+  UsersRound,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import {
   Link,
   NavLink,
@@ -38,23 +57,39 @@ import {
 import { CommandPalette, openCommandPalette } from '~/cms/components/layout/CommandPalette';
 import { OPEN_SHORTCUTS_EVENT } from '~/cms/components/layout/KeyboardShortcuts';
 import { NewEntry } from '~/cms/components/layout/NewEntry';
+import {
+  DEFAULT_SETTINGS_SECTION,
+  NAV as PAGES,
+  SETTINGS_GROUPS,
+  visibleNav,
+} from '~/cms/components/layout/nav';
 import { SpaceSwitcher } from '~/cms/components/layout/SpaceSwitcher';
+import { AssistantProvider, useAssistant } from '~/cms/lib/assistant';
 import { useOptionalClient } from '~/cms/lib/client-context';
-import { useModKeyLabel, usePageShortcutGroups } from '~/cms/lib/shortcuts';
+import { useFeatures } from '~/cms/lib/features';
+import { useModKeyLabel, usePageShortcutGroups, useShortcutLabel } from '~/cms/lib/shortcuts';
 import { CmsProviders } from '~/cms/providers';
 import { Mark } from '~/components/mark';
 import { authEnabled, requireUser } from '~/lib/auth.server';
+import { useMedia } from '~/lib/device';
 import { db } from '~/lib/env.server';
 import { atLeast, type Principal, ROLE_LABELS } from '~/lib/roles';
-import { SCREENS } from '~/lib/screens';
 import { pageShortcut } from '~/lib/shortcuts';
 import { type ThemeChoice, useTheme } from '~/lib/theme';
 import type { Route } from './+types/shell';
 
+/** The sidebar as it was left (the `cw_sidebar_state` cookie), so the server draws its width. */
+const sidebarOpenFrom = (request: Request) =>
+  !new RegExp(`(?:^|;\\s*)${SIDEBAR_COOKIE_NAME}=false(?:;|$)`).test(
+    request.headers.get('Cookie') ?? '',
+  );
+
 export async function loader({ request }: Route.LoaderArgs) {
   const me = await requireUser(request);
+  const sidebarOpen = sidebarOpenFrom(request);
   // Until their two-factor sign-in or own password is set, a person sees only their Account page.
-  if (me.twoFactorDue || me.passwordChangeDue) return { auth: true, me, nav: false, admins: [] };
+  if (me.twoFactorDue || me.passwordChangeDue)
+    return { auth: true, me, nav: false, admins: [], sidebarOpen };
   const [admins, auth] = await Promise.all([
     // Who to ask when a page needs a higher role: up to three active admins.
     atLeast(me.role, 'admin')
@@ -67,44 +102,48 @@ export async function loader({ request }: Route.LoaderArgs) {
           .limit(3),
     authEnabled(),
   ]);
-  return { auth, me, nav: true, admins };
+  return { auth, me, nav: true, admins, sidebarOpen };
 }
 
-type NavItem = { to: string; label: string; end?: boolean };
+/** A link in the shell; `match` overrides "this path or under it" for the page reading as current. */
+type NavItem = {
+  to: string;
+  label: string;
+  icon?: LucideIcon;
+  end?: boolean;
+  match?: (path: string) => boolean;
+};
 
-/** The CMS, in this order everywhere: the day's work, then the library, then settings. */
-const NAV: { title?: string; items: NavItem[] }[] = [
-  {
-    items: [
-      { to: '/dashboard', label: 'Overview' },
-      { to: SCREENS.content.to, label: SCREENS.content.label },
-      { to: SCREENS.approvals.to, label: SCREENS.approvals.label },
-      { to: SCREENS.releases.to, label: SCREENS.releases.label },
-    ],
-  },
-  {
-    title: 'Library',
-    items: [
-      { to: SCREENS.media.to, label: SCREENS.media.label },
-      { to: SCREENS.taxonomy.to, label: SCREENS.taxonomy.label },
-      { to: SCREENS.workflows.to, label: SCREENS.workflows.label },
-    ],
-  },
-  { title: 'Space', items: [{ to: SCREENS.settings.to, label: SCREENS.settings.label }] },
-];
+const settingsPath = (id: string) => `/settings/${id}`;
 
-/** The deployment's own pages, for admins. */
-const WORKSPACE: NavItem[] = [
-  { to: '/team', label: 'People and sign-in' },
-  { to: '/audit', label: 'Audit log' },
-];
+/**
+ * The sidebar's groups, in nav.ts's order: the day's work (no label), Build, Library, then
+ * Settings as Settings' own section groups (Access, Automation, Extensions, Workspace), each opening
+ * its first section and reading as current on any of them.
+ */
+function navGroups(pages: typeof PAGES): { title?: string; items: NavItem[] }[] {
+  const of = (section?: string) =>
+    pages.filter((p) => p.section === section).map(({ to, label, icon }) => ({ to, label, icon }));
+  const settings = SETTINGS_GROUPS.map((g, i) => ({
+    to: settingsPath(g.sections[0]?.id ?? DEFAULT_SETTINGS_SECTION),
+    label: g.label,
+    icon: g.icon,
+    match: (path: string) =>
+      (i === 0 && path === '/settings') ||
+      g.sections.some((s) => isAt(path, { to: settingsPath(s.id) })),
+  }));
+  return [
+    { items: of(undefined) },
+    { title: 'Build', items: of('Build') },
+    { title: 'Library', items: of('Library') },
+    { title: 'Settings', items: pages.some((p) => p.section === 'Settings') ? settings : [] },
+  ].filter((g) => g.items.length > 0);
+}
 
-/** Phones: the day's work as tabs, everything else under More. */
-const TABS: (NavItem & { icon: typeof Sun })[] = [
-  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
-  { to: '/content', label: 'Content', icon: FileText },
-  { to: '/approvals', label: 'Approvals', icon: Stamp },
-  { to: '/releases', label: 'Releases', icon: Rocket },
+/** The deployment's own pages, for admins: the sidebar's last group, and More's on a phone. */
+const DEPLOYMENT: NavItem[] = [
+  { to: '/team', label: 'People and sign-in', icon: UsersRound },
+  { to: '/audit', label: 'Audit log', icon: ScrollText },
 ];
 
 const THEMES: { value: ThemeChoice; label: string; icon: typeof Sun }[] = [
@@ -113,20 +152,16 @@ const THEMES: { value: ThemeChoice; label: string; icon: typeof Sun }[] = [
   { value: 'system', label: 'Match system', icon: Monitor },
 ];
 
-/** Go-to keys: G, then a letter. */
-const GO: { key: string; to: string; label: string }[] = [
-  { key: 'h', to: '/dashboard', label: 'Overview' },
-  { key: 'c', to: '/content', label: 'Content' },
-  { key: 'a', to: '/approvals', label: 'Approvals' },
-  { key: 'r', to: '/releases', label: 'Releases' },
-  { key: 'w', to: '/workflows', label: 'Workflows' },
-  { key: 'm', to: '/media', label: 'Media' },
-  { key: 't', to: '/taxonomy', label: 'Taxonomy' },
-  { key: 's', to: SCREENS.settings.to, label: 'Settings' },
-];
+/** Go-to keys: G, then the page's letter (nav.ts). Settings opens on its first section. */
+const GO: { key: string; to: string; label: string }[] = PAGES.map((p) => ({
+  key: p.shortcutKey,
+  to: p.section === 'Settings' ? settingsPath(DEFAULT_SETTINGS_SECTION) : p.to,
+  label: p.label,
+}));
 
 /** Whether `path` is the link's page or under it. Settings' sections all count as Settings. */
-const isAt = (path: string, { to, end }: NavItem) => {
+const isAt = (path: string, { to, end, match }: Pick<NavItem, 'to' | 'end' | 'match'>) => {
+  if (match) return match(path);
   const base = to.startsWith('/settings/') ? '/settings' : to;
   return end ? path === base : path === base || path.startsWith(`${base}/`);
 };
@@ -194,6 +229,9 @@ function ShortcutsSheet({
   // The page's own keys (J/K/X in a table, the editor's ⌘S), as the screen registers them.
   const pageGroups = usePageShortcutGroups();
   const mod = useModKeyLabel();
+  const sidebar = useShortcutLabel('\\');
+  const assistant = useShortcutLabel('J');
+  const { enabled: assistantOn } = useAssistant();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="gap-0 overflow-y-auto">
@@ -217,6 +255,16 @@ function ShortcutsSheet({
             <li className={row}>
               Search and run commands
               <Keys keys={[mod, 'K']} chord />
+            </li>
+            {assistantOn ? (
+              <li className={row}>
+                Open or close Coworker
+                <Keys keys={[assistant]} />
+              </li>
+            ) : null}
+            <li className={`${row} max-md:hidden`}>
+              Collapse or expand the sidebar
+              <Keys keys={[sidebar]} />
             </li>
             <li className={row}>
               This list
@@ -279,9 +327,97 @@ function PendingBar() {
 }
 
 export default function Shell() {
+  return (
+    <CmsProviders>
+      <AssistantProvider>
+        <TooltipProvider>
+          <ShellFrame />
+        </TooltipProvider>
+      </AssistantProvider>
+    </CmsProviders>
+  );
+}
+
+/**
+ * The assistant (with its markdown renderer) is a large chunk most page views never use: it loads
+ * on first open, and is fetched ahead while the browser is idle so opening it stays instant.
+ */
+const loadPanel = () => import('~/cms/components/assistant/panel');
+const AssistantPanel = lazy(() => loadPanel().then((m) => ({ default: m.AssistantPanel })));
+
+/** Mounts the assistant panel once it has been opened, and preloads it when the page is idle. */
+function LazyAssistantPanel() {
+  // A page's edit goes through the assistant too, so it mounts the panel (closed) to send it.
+  const { enabled, open, acts } = useAssistant();
+  const [wanted, setWanted] = useState(open);
+  useEffect(() => {
+    if (open || acts.length) setWanted(true);
+  }, [open, acts.length]);
+  useEffect(() => {
+    if (!enabled) return;
+    const preload = () => void loadPanel();
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(preload, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(preload, 2000);
+    return () => clearTimeout(t);
+  }, [enabled]);
+  return enabled && wanted ? (
+    <Suspense fallback={null}>
+      <AssistantPanel />
+    </Suspense>
+  ) : null;
+}
+
+/** Opens and closes the assistant, from the header or with ⌘J (Ctrl+J) anywhere. */
+function AssistantToggle() {
+  const { enabled, open, setOpen, focus } = useAssistant();
+  const shortcut = useShortcutLabel('J');
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        if (open) setOpen(false);
+        else focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [enabled, open, setOpen, focus]);
+  if (!enabled) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => (open ? setOpen(false) : focus())}
+      aria-pressed={open}
+      aria-keyshortcuts="Meta+J Control+J"
+      title={open ? `Close Coworker (${shortcut})` : `Ask Coworker (${shortcut})`}
+      className={cn(
+        'hit-area flex h-8 items-center gap-2 rounded-4xl border px-3 text-ui',
+        tint,
+        open
+          ? 'border-foreground/25 bg-accent font-medium text-foreground'
+          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+      )}
+    >
+      <MessageSquareText className="size-4" aria-hidden="true" />
+      {/* Named by its word (visible from sm), so a voice command can say it. */}
+      <span className="max-sm:sr-only">Coworker</span>
+    </button>
+  );
+}
+
+/** Canvas pages, whose graph wants the width: the workflow editor. */
+const canvasAt = (path: string) => /^\/workflows\/[^/]+$/.test(path);
+
+function ShellFrame() {
   const slow = useSlowNavigation();
-  const { auth, me, nav: showNav } = useLoaderData<typeof loader>();
-  const workspace = showNav && atLeast(me.role, 'admin') ? WORKSPACE : [];
+  const { auth, me, nav: showNav, sidebarOpen } = useLoaderData<typeof loader>();
+  const pages = visibleNav(useFeatures());
+  const groups = showNav ? navGroups(pages) : [];
+  const deployment = showNav && atLeast(me.role, 'admin') ? DEPLOYMENT : [];
   const path = useCurrentPath();
   const [shortcuts, setShortcuts] = useState(false);
   const openShortcuts = useCallback(() => setShortcuts(true), []);
@@ -291,22 +427,49 @@ export default function Shell() {
     window.addEventListener(OPEN_SHORTCUTS_EVENT, openShortcuts);
     return () => window.removeEventListener(OPEN_SHORTCUTS_EVENT, openShortcuts);
   }, [openShortcuts]);
+  // Below lg, on a canvas and beside the assistant's column below xl, the sidebar is a rail that
+  // opens over the page. Asked as "narrow" so the server (which can't see the viewport) assumes
+  // wide; CSS keeps it a rail below lg anyway.
+  const narrow = useMedia('(max-width: 1023.98px)');
+  const xl = useMedia('(min-width: 1280px)');
+  const assistantOpen = useAssistant().open;
+  const overlay = narrow || canvasAt(path) || (assistantOpen && !xl);
   return (
-    <CmsProviders>
-      <div className="flex min-h-dvh flex-col">
-        <a
-          href="#main"
-          className="sr-only z-50 rounded-md bg-card px-3 py-2 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
-        >
-          Skip to content
-        </a>
+    <SidebarProvider
+      defaultOpen={sidebarOpen}
+      overlay={overlay}
+      // The rail clears a phone's notch on its side.
+      style={{ '--sidebar-width-icon': 'calc(3.25rem + var(--safe-left))' } as React.CSSProperties}
+      className="min-h-dvh"
+    >
+      <ClosePeekOnNavigation />
+      <a
+        href="#main"
+        className="sr-only z-50 rounded-md bg-card px-3 py-2 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+      >
+        Skip to content
+      </a>
+      {showNav ? (
+        <AppSidebar
+          groups={
+            deployment.length ? [...groups, { title: 'Deployment', items: deployment }] : groups
+          }
+          path={path}
+          onShortcuts={openShortcuts}
+        />
+      ) : null}
+      <SidebarInset>
         {/* 3rem tall with its rule, under the status bar's inset: full-height pages subtract
-          --shell-h (app.css). */}
+            --shell-h (app.css). From md the sidebar holds the brand, the pages and the account, so
+            this holds the scope and what acts on the page. */}
         <header className="sticky top-0 z-40 border-b bg-background pt-safe-0">
-          <div className="flex h-[calc(3rem-1px)] items-center gap-3 px-safe-4 sm:px-safe-5">
+          <div className="flex h-[calc(3rem-1px)] items-center gap-3 px-safe-4 sm:px-safe-5 md:pl-5">
             <Link
               to="/dashboard"
-              className="hit-area -mx-1.5 flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 font-semibold tracking-title text-base"
+              className={cn(
+                'hit-area -mx-1.5 flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 font-semibold tracking-title text-base',
+                showNav && 'md:hidden',
+              )}
               aria-label="contentworker overview"
             >
               <Mark className="size-5" />
@@ -319,32 +482,36 @@ export default function Shell() {
               </div>
             ) : null}
             <div className="ml-auto flex shrink-0 items-center gap-2">
-              {showNav ? <ShellNewEntry path={path} /> : null}
+              {showNav ? <ShellNewEntry path={path} covered={assistantOpen} /> : null}
               {showNav ? <SearchButton /> : null}
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  aria-label={`${shortWho(me)}, account menu`}
-                  title={who(me)}
-                  className={cn(
-                    'hit-area hidden h-8 items-center gap-2 rounded-4xl border px-3 text-ui text-muted-foreground hover:bg-accent hover:text-foreground md:flex data-[state=open]:bg-accent data-[state=open]:text-foreground',
-                    tint,
-                  )}
-                >
-                  <UserRound className="size-4" aria-hidden="true" />
-                  <span className="max-w-40 truncate">{shortWho(me)}</span>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <AccountItems me={me} auth={auth} onShortcuts={openShortcuts} />
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {showNav ? <AssistantToggle /> : null}
+              {/* Without the sidebar (two-factor still due), the account menu stays up here. */}
+              {showNav ? null : (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    aria-label={`${shortWho(me)}, account menu`}
+                    title={who(me)}
+                    className={cn(
+                      'hit-area hidden h-8 items-center gap-2 rounded-4xl border px-3 text-ui text-muted-foreground hover:bg-accent hover:text-foreground md:flex data-[state=open]:bg-accent data-[state=open]:text-foreground',
+                      tint,
+                    )}
+                  >
+                    <UserRound className="size-4" aria-hidden="true" />
+                    <span className="max-w-40 truncate">{shortWho(me)}</span>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <AccountItems me={me} auth={auth} onShortcuts={openShortcuts} />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
               {/* Signing out is a POST; the account menu's item submits this. */}
               <form id="sign-out" method="post" action="/logout" hidden />
             </div>
           </div>
           <PendingBar />
         </header>
+        {/* The page, and the assistant's column beside it from lg (a sheet over it below). */}
         <div className="flex min-h-0 flex-1">
-          {showNav ? <Sidebar path={path} workspace={workspace} /> : null}
           <main
             id="main"
             tabIndex={-1}
@@ -353,64 +520,161 @@ export default function Shell() {
           >
             <Outlet />
           </main>
+          {showNav ? <LazyAssistantPanel /> : null}
         </div>
-        {showNav ? <TabBar path={path} workspace={workspace} /> : null}
-        {showNav ? <ShortcutsSheet open={shortcuts} onOpenChange={setShortcuts} /> : null}
-        {showNav ? <CommandPalette /> : null}
-      </div>
-    </CmsProviders>
+      </SidebarInset>
+      {showNav ? <TabBar path={path} pages={pages} deployment={deployment} /> : null}
+      {showNav ? <ShortcutsSheet open={shortcuts} onOpenChange={setShortcuts} /> : null}
+      {showNav ? <CommandPalette /> : null}
+    </SidebarProvider>
   );
 }
 
-/** Tablets and up: every page in a column on the left, grouped as NAV groups them. */
-function Sidebar({ path, workspace }: { path: string; workspace: NavItem[] }) {
-  const link = (item: NavItem) => {
-    const here = isAt(path, item);
-    return (
-      <li key={item.to}>
-        <NavLink
-          to={item.to}
-          end={item.end}
-          aria-current={here ? 'page' : undefined}
-          className={cn(
-            'flex min-h-8 items-center rounded-md px-2.5 text-ui touch:min-h-11',
-            tint,
-            here
-              ? 'bg-accent font-medium text-foreground'
-              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-          )}
-        >
-          {item.label}
-        </NavLink>
-      </li>
-    );
-  };
-  const groups = workspace.length ? [...NAV, { title: 'Deployment', items: workspace }] : NAV;
+/** Rows a finger can hit: 44px on touch, the preset's 36px otherwise. */
+const ROW = 'touch:h-11';
+
+/**
+ * Every page, from md, on shadcn's Sidebar (`@contentworker/ui/sidebar`): the brand row on the
+ * header's line, whose mark is the toggle (⌘\); the day's work; Build, Library, Settings and,
+ * for admins, Deployment; the account at its foot.
+ */
+function AppSidebar({
+  groups,
+  path,
+  onShortcuts,
+}: {
+  groups: { title?: string; items: NavItem[] }[];
+  path: string;
+  onShortcuts: () => void;
+}) {
+  const { me, auth } = useLoaderData<typeof loader>();
+  const { state } = useSidebar();
+  const expanded = state === 'expanded';
+  const shortcut = useShortcutLabel('\\');
   return (
-    <nav
-      aria-label="Main"
-      className="sticky top-[var(--shell-h)] hidden h-[calc(100dvh-var(--shell-h))] w-56 shrink-0 overflow-y-auto border-r px-3 py-4 md:block"
-    >
-      {groups.map((g, i) => (
-        <div key={g.title ?? 'main'} className={cn(i > 0 && 'mt-5')}>
-          {g.title ? <h2 className="caption mb-1 px-2.5">{g.title}</h2> : null}
-          <ul className="space-y-0.5">{g.items.map(link)}</ul>
+    <Sidebar className="pl-(--safe-left)">
+      {/* On the header's line: its height, its inset and its rule. */}
+      <SidebarHeader className="h-(--shell-h) shrink-0 justify-end gap-0 border-sidebar-border border-b px-2 pt-safe-0 pb-0">
+        <div className="flex h-[calc(3rem-1px)] items-center gap-2 px-0.5">
+          <SidebarTrigger
+            aria-label="Sidebar"
+            aria-controls="sidebar-nav"
+            aria-keyshortcuts="Meta+\ Control+\"
+            title={`${expanded ? 'Collapse' : 'Expand'} the sidebar (${shortcut})`}
+            className="hit-area"
+          >
+            <Mark className="size-5" />
+          </SidebarTrigger>
+          <span className="truncate font-semibold text-base tracking-title transition-opacity duration-(--motion-instant) @max-[8rem]:opacity-0">
+            contentworker
+          </span>
         </div>
-      ))}
-    </nav>
+      </SidebarHeader>
+      <SidebarContent id="sidebar-nav" role="navigation" aria-label="Main" className="py-1">
+        {groups.map(({ title, items }) => {
+          const id = title ? `sidebar-${title.toLowerCase().replace(/\W+/g, '-')}` : undefined;
+          return (
+            <SidebarGroup key={title ?? 'work'} className="py-1">
+              {title ? (
+                <SidebarGroupLabel id={id} className="caption">
+                  {title}
+                </SidebarGroupLabel>
+              ) : null}
+              <SidebarMenu aria-labelledby={id}>
+                {items.map((item) => {
+                  const here = isAt(path, item);
+                  const Icon = item.icon;
+                  return (
+                    <SidebarMenuItem key={item.to}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={here}
+                        tooltip={item.label}
+                        className={ROW}
+                      >
+                        <NavLink
+                          to={item.to}
+                          end={item.end}
+                          aria-current={here ? 'page' : undefined}
+                        >
+                          {Icon ? (
+                            <Icon
+                              className={here ? undefined : 'text-muted-foreground'}
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                          <span>{item.label}</span>
+                        </NavLink>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroup>
+          );
+        })}
+      </SidebarContent>
+      {/* Who is signed in, their account, the shortcuts, the theme, and signing in or out. */}
+      <SidebarFooter className="border-sidebar-border border-t pb-safe-2">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <DropdownMenu>
+              <SidebarMenuButton asChild tooltip={shortWho(me)} className={ROW}>
+                <DropdownMenuTrigger
+                  aria-label={`${shortWho(me)}, account menu`}
+                  title={expanded ? who(me) : undefined}
+                >
+                  <UserRound className="text-muted-foreground" aria-hidden="true" />
+                  <ChevronsUpDown
+                    className="absolute right-2.5 text-muted-foreground @max-[8rem]:hidden"
+                    aria-hidden="true"
+                  />
+                  <span className="pr-5">{shortWho(me)}</span>
+                </DropdownMenuTrigger>
+              </SidebarMenuButton>
+              <DropdownMenuContent
+                side={expanded ? 'top' : 'right'}
+                align={expanded ? 'start' : 'end'}
+                className="w-56"
+              >
+                <AccountItems me={me} auth={auth} onShortcuts={onShortcuts} />
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+      <SidebarRail />
+    </Sidebar>
   );
+}
+
+/** Closes the sidebar opened over the page when a navigation lands. */
+function ClosePeekOnNavigation() {
+  const { pathname } = useLocation();
+  const { setPeek } = useSidebar();
+  useEffect(() => setPeek(false), [pathname, setPeek]);
+  return null;
 }
 
 /**
  * Phones: the main pages as tabs along the bottom, in thumb reach and clear of the home
  * indicator, and More for everything else.
  */
-function TabBar({ path, workspace }: { path: string; workspace: NavItem[] }) {
+function TabBar({
+  path,
+  pages,
+  deployment,
+}: {
+  path: string;
+  pages: typeof PAGES;
+  deployment: NavItem[];
+}) {
   const { pathname } = useLocation();
   const [more, setMore] = useState(false);
   // A link in the sheet closes it by navigating; so does the back button (pathname is the trigger).
   useEffect(() => setMore(false), [pathname]);
-  const inTab = TABS.some((t) => isAt(path, t));
+  const tabs = pages.filter((p) => p.tab);
+  const inTab = tabs.some((t) => isAt(path, t));
   const item = cn(
     'relative flex flex-col items-center justify-center gap-0.5 text-2xs short:gap-0',
     tint,
@@ -427,9 +691,9 @@ function TabBar({ path, workspace }: { path: string; workspace: NavItem[] }) {
       >
         <ul
           className="grid h-full"
-          style={{ gridTemplateColumns: `repeat(${TABS.length + 1}, 1fr)` }}
+          style={{ gridTemplateColumns: `repeat(${tabs.length + 1}, 1fr)` }}
         >
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <li key={t.to} className="contents">
               <NavLink to={t.to} className={cn(item, state(isAt(path, t)))}>
                 <t.icon className="size-5" aria-hidden="true" />
@@ -453,7 +717,15 @@ function TabBar({ path, workspace }: { path: string; workspace: NavItem[] }) {
       </nav>
       <Sheet open={more} onOpenChange={setMore}>
         <SheetContent side="bottom" className="gap-0 md:hidden">
-          <MoreMenu workspace={workspace} />
+          <MoreMenu
+            pages={pages
+              .filter((p) => !p.tab)
+              .map(({ to, label, section }) => ({
+                to: section === 'Settings' ? settingsPath(DEFAULT_SETTINGS_SECTION) : to,
+                label,
+              }))}
+            deployment={deployment}
+          />
         </SheetContent>
       </Sheet>
     </>
@@ -461,7 +733,7 @@ function TabBar({ path, workspace }: { path: string; workspace: NavItem[] }) {
 }
 
 /** The More sheet: the pages without a tab, the deployment's, then account, theme and sign-out. */
-function MoreMenu({ workspace }: { workspace: NavItem[] }) {
+function MoreMenu({ pages, deployment }: { pages: NavItem[]; deployment: NavItem[] }) {
   const { me, auth } = useLoaderData<typeof loader>();
   const theme = useTheme();
   const row =
@@ -478,7 +750,6 @@ function MoreMenu({ workspace }: { workspace: NavItem[] }) {
       ))}
     </ul>
   );
-  const pages = NAV.flatMap((g) => g.items).filter((n) => !TABS.some((t) => t.to === n.to));
   return (
     <>
       <div className="border-b px-4 pt-4 pb-3 pr-14">
@@ -494,10 +765,10 @@ function MoreMenu({ workspace }: { workspace: NavItem[] }) {
       <div className="max-h-[50dvh] overflow-y-auto p-2">
         <h2 className={heading}>Pages</h2>
         {list(pages)}
-        {workspace.length ? (
+        {deployment.length ? (
           <>
             <h2 className={cn(heading, 'pt-3')}>Deployment</h2>
-            {list(workspace)}
+            {list(deployment)}
           </>
         ) : null}
       </div>
@@ -621,12 +892,13 @@ function SearchButton() {
  * New entry, in the header once the space is known: an outline on Approvals and Workflows, where
  * starting an entry isn't the page's point (cms/components/layout/NewEntry).
  */
-function ShellNewEntry({ path }: { path: string }) {
+function ShellNewEntry({ path, covered }: { path: string; covered: boolean }) {
   if (!useOptionalClient()?.ready) return null;
   const quiet = path.startsWith('/approvals') || path.startsWith('/workflows');
   // Phones: a floating pill above the tab bar on Content's lists, where it's the page's next step
-  // (not in the editor, which keeps its own actions there).
-  const float = /^\/content(\/[^/]+)?$/.test(path);
+  // (not in the editor, which keeps its own actions there). Not over the assistant's sheet, where
+  // it would sit on the send button.
+  const float = !covered && /^\/content(\/[^/]+)?$/.test(path);
   return (
     <>
       <span className="hidden md:contents">

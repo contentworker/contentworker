@@ -31,6 +31,17 @@ describe('signed principal', () => {
     expect(PRINCIPAL_TTL_S).toBe(60);
   });
 
+  it('carries the session it was signed from, when there is one', async () => {
+    const withSession = { ...ada, sid: 'a1b2c3' };
+    const h = await signPrincipal(KEY, withSession, '/agents/assistant-agent/usr_ada', NOW);
+    expect(await verifyPrincipal(KEY, h, '/agents/assistant-agent/usr_ada', NOW)).toEqual(
+      withSession,
+    );
+    // Without one, the claims say nothing about a session.
+    const bare = await signPrincipal(KEY, ada, '/mcp', NOW);
+    expect(decode(bare.split('.')[0]!)).not.toHaveProperty('sid');
+  });
+
   it('refuses another path', async () => {
     const h = await signPrincipal(KEY, ada, '/spaces/s1', NOW);
     expect(await verifyPrincipal(KEY, h, '/spaces/s2', NOW)).toBeNull();

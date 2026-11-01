@@ -49,6 +49,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `PURGE_QUEUE`                                       |   |   |   | ✓ | Producer; delivery consumes `contentworker-purge`                                         |
 | `LIVE_HUB`, `SEARCH` (DOs)                          |   | ✓ | ✓ | ✓ | Classes owned by the engine; api and delivery bind by `script_name`                       |
 | `AUTH_LIMITER`, `AI_BUDGET` (DOs)                   |   | ✓ |   | ✓ |                                                                                           |
+| `ASSISTANT_AGENT` (DO)                              |   | ✓ |   | ✓ | The admin's assistant, one object per person; the api forwards `/agents/assistant-agent/*` |
 | `AGENT_WF`, `EDITORIAL_WF` (Workflows)              |   | ✓ |   | ✓ | Absent `EDITORIAL_WF` → run operations answer 501                                         |
 | `EMAIL` (`send_email`)                              |   |   |   | ✓ | Added by fleet render only when the deployment sets `email`                               |
 | `METRICS` (Analytics Engine)                        |   | ✓ | ✓ | ✓ | Absent → counters fall back to log lines                                                  |
@@ -71,8 +72,8 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 
 | Secret                   | W | A | D | E | Purpose                                                                                                                                                         |
 | ------------------------ | - | - | - | - | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PRINCIPAL_KEY`          | ✓ | ✓ |   |   | Signs (web) and verifies (api) `x-cw-principal`. Required. Same value on both                                                                                   |
-| `PRINCIPAL_KEY_PREVIOUS` | ✓ | ✓ |   |   | Rotation only: accepted by the api until the web Worker has moved                                                                                              |
+| `PRINCIPAL_KEY`          | ✓ | ✓ |   | ✓ | Signs (web) and verifies (api, and the engine's assistant for its socket) `x-cw-principal`. Required. Same value on all three                                   |
+| `PRINCIPAL_KEY_PREVIOUS` | ✓ | ✓ |   | ✓ | Rotation only: accepted by the api and the engine until the web Worker has moved                                                                               |
 | `DATA_KEY`               | ✓ | ✓ | ✓ | ✓ | AES-256-GCM key sealing secrets in D1 (webhook secrets, header values; web: authenticator secrets). Required on persistent deployments. Never changes            |
 | `DATA_KEY_PREVIOUS`      | ✓ | ✓ | ✓ | ✓ | Rotation only: opens values sealed under the old key until the daily 03:30 UTC reseal has moved them                                                            |
 | `TOKEN_PEPPER`           |   | ✓ | ✓ | ✓ | Mixed into every API key hash. Required. Never changes                                                                                                          |

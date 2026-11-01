@@ -1,5 +1,6 @@
 export * from './agents/agent-review.js';
 export * from './asset/asset.js';
+export * from './assistant/assistant.js';
 export * from './auth/auth.js';
 export * from './auth/oauth.js';
 export * from './auth/team.js';

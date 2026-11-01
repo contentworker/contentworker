@@ -59,6 +59,8 @@ describe('isApiPath', () => {
       '/guides',
       '/guides/webhooks',
       '/health/api',
+      '/agents/assistant-agent/usr_ada',
+      '/agents/assistant-agent/usr_ada/get-messages',
       // Who the token or session is (the Management SDK's `me()`).
       '/auth/me',
     ])
@@ -76,6 +78,8 @@ describe('isApiPath', () => {
       '/health/deep',
       '/spacesuit',
       '/mcpx',
+      '/agents',
+      '/agentsx/assistant-agent/usr_ada',
       '/scim/v2/Users',
       '/.well-known/security.txt',
     ])
@@ -170,6 +174,49 @@ describe('forwardToApi', () => {
     const { res, api } = await forward(request, { ...ada, due: 'Set up two-factor first.' });
     expect(res.status).toBe(403);
     expect(api.fetch).not.toHaveBeenCalled();
+  });
+
+  it('passes the assistant’s socket through, signed for its path with the session it came on', async () => {
+    const path = '/agents/assistant-agent/usr_ada';
+    const request = new Request(`${ORIGIN}${path}`, {
+      headers: {
+        upgrade: 'websocket',
+        connection: 'Upgrade',
+        'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+        'sec-websocket-version': '13',
+        origin: ORIGIN,
+        cookie: '__Host-cw_session=secret',
+      },
+    });
+    const { sent } = await forward(request, { ...ada, sid: 'sess-hash' });
+    expect(sent?.headers.get('upgrade')).toBe('websocket');
+    expect(sent?.headers.get('sec-websocket-key')).toBe('dGhlIHNhbXBsZSBub25jZQ==');
+    expect(sent?.headers.get('cookie')).toBeNull();
+    expect(await verifyPrincipal(KEY, sent?.headers.get(PRINCIPAL_HEADER), `GET ${path}`)).toEqual({
+      sub: 'usr_ada',
+      email: 'ada@example.com',
+      name: 'Ada',
+      role: 'admin',
+      sid: 'sess-hash',
+    });
+    // Signed for that person's socket only: not for another's, nor for its message history.
+    const header = sent?.headers.get(PRINCIPAL_HEADER);
+    expect(await verifyPrincipal(KEY, header, 'GET /agents/assistant-agent/usr_bob')).toBeNull();
+    expect(await verifyPrincipal(KEY, header, `GET ${path}/get-messages`)).toBeNull();
+    expect(await verifyPrincipal(KEY, header, `POST ${path}`)).toBeNull();
+  });
+
+  it('never lends the session to a socket opened from another site', async () => {
+    const request = new Request(`${ORIGIN}/agents/assistant-agent/usr_ada`, {
+      headers: {
+        upgrade: 'websocket',
+        origin: 'https://evil.example',
+        cookie: '__Host-cw_session=secret',
+      },
+    });
+    const { sent, principal } = await forward(request, ada);
+    expect(principal).not.toHaveBeenCalled();
+    expect(sent?.headers.get(PRINCIPAL_HEADER)).toBeNull();
   });
 
   it('signs as `local` in open local development', async () => {

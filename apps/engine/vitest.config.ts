@@ -1,15 +1,23 @@
-import { cloudflareTest } from '@cloudflare/vitest-plugin';
+import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
+import agents from 'agents/vite';
 import { defineConfig } from 'vitest/config';
+
+// The principal key the assistant tests sign the web Worker's header with.
+export const TEST_PRINCIPAL_KEY = 'engine-test-principal-key-0123456789abcdef';
 
 // Runs inside workerd so the Durable Objects and the editorial Workflow execute for real
 // (storage, alarms, RPC, Miniflare's Workflows engine). The fixture worker exports only the
-// classes under test, keeping the test module graph free of the queue/AI adapters.
-export default defineConfig({
+// classes under test. The assistant needs the content store and the web app's people, so a D1
+// with every migration applied (test/setup.ts) is bound too.
+export default defineConfig(async () => ({
   test: {
     name: 'workers',
     include: ['test/**/*.test.ts'],
+    setupFiles: ['./test/setup.ts'],
   },
   plugins: [
+    // TC39 decorators (`@callable()` on the assistant), which Vite's Oxc transform doesn't lower.
+    ...agents(),
     cloudflareTest({
       main: './test/fixtures/worker.ts',
       miniflare: {
@@ -31,7 +39,9 @@ export default defineConfig({
           AUTH_LIMITER: 'RateLimiterDO',
           AI_BUDGET: 'CostGuardDO',
           SEARCH: { className: 'SearchShardDO', useSQLite: true },
+          ASSISTANT_AGENT: { className: 'AssistantAgent', useSQLite: true },
         },
+        d1Databases: { DB: 'contentworker-engine-test' },
         // The editorial workflow host, run by miniflare's real Workflows engine over the
         // fixture's in-memory context (test/fixtures/editorial.ts).
         workflows: {
@@ -50,8 +60,16 @@ export default defineConfig({
           AI_BUDGET_WINDOW_SECONDS: '2',
           // Background (`agent:`) windows enforce the stricter agent ceiling.
           AI_AGENT_MAX_REQUESTS_PER_WINDOW: '1',
+          TEST_MIGRATIONS: await readD1Migrations('../../packages/db/migrations'),
+          // The assistant: the web Worker's key, the mock model, and the dev fallbacks a
+          // persistent (D1-backed) wiring otherwise refuses.
+          PRINCIPAL_KEY: TEST_PRINCIPAL_KEY,
+          AI_MODE: 'mock',
+          REQUIRE_SECURE_SECRETS: 'false',
+          ALLOW_FAKE_ADAPTERS: 'all',
+          EMBEDDINGS_PROVIDER: 'local',
         },
       },
     }),
   ],
-});
+}));

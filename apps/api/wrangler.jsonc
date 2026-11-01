@@ -74,7 +74,14 @@
         "script_name": "contentworker-engine"
       },
       { "name": "AI_BUDGET", "class_name": "CostGuardDO", "script_name": "contentworker-engine" },
-      { "name": "SEARCH", "class_name": "SearchShardDO", "script_name": "contentworker-engine" }
+      { "name": "SEARCH", "class_name": "SearchShardDO", "script_name": "contentworker-engine" },
+      // The admin's assistant: /agents/assistant-agent/<person> is forwarded to it once the
+      // signed principal names that person (@contentworker/http/assistant/gate).
+      {
+        "name": "ASSISTANT_AGENT",
+        "class_name": "AssistantAgent",
+        "script_name": "contentworker-engine"
+      }
     ]
   },
   "workflows": [
