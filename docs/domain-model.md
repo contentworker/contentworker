@@ -340,7 +340,8 @@ via a presigned URL — they never transit the API.
 `assetKind(contentType)` derives an `AssetKind` (`image`, `video`, `audio`, `document`, `other`;
 `ASSET_KINDS`) from the content type; the store keeps it in a column for filtering, so it is never
 set by a client. Deleting an asset that entries still link to throws `AssetInUseError`
-(`asset_in_use`), whose `usage` lists the links.
+(`asset_in_use`), whose `usage` lists the links (`AssetUsage`: the edge plus the entry's
+`contentTypeApiId` and `entryTitle`, at most `MAX_ASSET_USAGE_SHOWN`, 50) and `total` counts them.
 
 ### Asset folders
 
@@ -483,7 +484,7 @@ All extend `DomainError` (`{ code, message, details? }`) and carry a stable, cli
 | `ValidationError(issues)`          | `validation_failed` | Carries `issues: FieldIssue[]`              |
 | `ConflictError(message, details?)` | `conflict`          | Uniqueness violation (e.g. duplicate apiId) |
 | `InvalidStateError(message)`       | `invalid_state`     | Illegal state-machine transition            |
-| `AssetInUseError(assetId, usage)`  | `asset_in_use`      | Entries still link to the asset (`usage`)   |
+| `AssetInUseError(assetId, usage)`  | `asset_in_use`      | Entries still link to the asset (`usage`, `total`) |
 | `UnauthorizedError(message?)`      | `unauthorized`      | Invalid/missing credentials                 |
 | `ForbiddenError(scope)`            | `forbidden`         | Missing the required scope                  |
 

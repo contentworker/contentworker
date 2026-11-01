@@ -203,9 +203,20 @@ describe('the asset library over HTTP', () => {
 
     const refused = await app.request(`${M}/assets/${a.id}`, { method: 'DELETE', headers: cma });
     expect(refused.status).toBe(409);
-    const body = await json<{ error: { code: string; usage: { fromEntryId: string }[] } }>(refused);
+    const body = await json<{ error: { code: string; usage: unknown[]; total: number } }>(refused);
     expect(body.error.code).toBe('asset_in_use');
-    expect(body.error.usage.map((u) => u.fromEntryId)).toEqual([entry.id]);
+    // Each link names its entry, so a client shows the list without reading every entry.
+    expect(body.error.usage).toEqual([
+      {
+        fromEntryId: entry.id,
+        fromField: 'image',
+        toId: a.id,
+        toType: 'Asset',
+        contentTypeApiId: 'banner',
+        entryTitle: 'B',
+      },
+    ]);
+    expect(body.error.total).toBe(1);
 
     const b = await upload(app, { fileName: 'free.png', contentType: 'image/png' });
     const cpaDenied = await app.request(`${M}/assets/${b.id}`, { method: 'DELETE', headers: cpa });

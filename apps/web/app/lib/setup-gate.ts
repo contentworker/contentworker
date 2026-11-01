@@ -1,7 +1,7 @@
 /**
  * What a deployed workspace answers before its first admin exists (`awaitingSetup`): the setup
- * page, the requests that page itself makes, and the built assets. Everything else redirects a
- * browser to /setup or answers 503 (workers/app.ts).
+ * page, the requests that page itself makes, and the built files (`/_static/`, vite.config.ts).
+ * Everything else redirects a browser to /setup or answers 503 (workers/app.ts).
  *
  * The setup page is a React Router route, so besides `/setup` itself it loads and submits through
  * `/setup.data` (single fetch: the loader's data and the form's action) and discovers routes
@@ -13,6 +13,6 @@ export function answersBeforeSetup(pathname: string): boolean {
     pathname === '/setup' ||
     pathname === '/setup.data' ||
     pathname === '/__manifest' ||
-    pathname.startsWith('/assets/')
+    pathname.startsWith('/_static/')
   );
 }

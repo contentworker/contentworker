@@ -75,7 +75,7 @@ describe('bulk actions', () => {
     const outcome = await runBulk(['a', 'b', 'c'], async (id) => {
       if (id === 'b') throw new Error('nope');
     });
-    expect(outcome).toEqual({ done: 2, failed: 1 });
+    expect(outcome).toEqual({ done: 2, failed: 1, failures: [{ id: 'b', error: 'nope' }] });
     expect(bulkSummary('Published', outcome)).toBe('Published 2 of 3 assets; 1 failed');
     expect(bulkSummary('Archived', { done: 1, failed: 0 })).toBe('Archived 1 asset');
   });

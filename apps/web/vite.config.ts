@@ -56,6 +56,10 @@ const LOCAL_STACK_VARS = {
 
 export default defineConfig({
   server: { port, strictPort: true },
+  // Fingerprinted build output goes under /_static/, not Vite's default /assets/: /assets is the
+  // admin's asset library (and /assets/:id its pages), so the two must never share a prefix that
+  // public/_headers caches as immutable and the setup gate lets through.
+  build: { assetsDir: '_static' },
   plugins: [
     // TC39 decorators (`@callable()` on the engine's AssistantAgent, run here as an auxiliary
     // Worker), which Vite's Oxc transform doesn't lower yet.

@@ -3065,7 +3065,9 @@ export function buildServer(
       } catch (err) {
         if (!(err instanceof AssetInUseError)) throw err;
         return {
-          ...ok({ error: { code: err.code, message: err.message, usage: err.usage } }),
+          ...ok({
+            error: { code: err.code, message: err.message, usage: err.usage, total: err.total },
+          }),
           isError: true,
         };
       }

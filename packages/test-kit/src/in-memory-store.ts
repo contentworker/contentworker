@@ -601,7 +601,13 @@ export class InMemoryContentStore implements ContentStore {
           : {}),
       };
     },
-    create: async (scope, asset) => this.touchAsset(scope, asset),
+    create: async (scope, asset) => {
+      // As the D1 store's guard: its folder must still exist.
+      if (asset.folderId && !this.assetFolderData.has(`${scopeKey(scope)}::${asset.folderId}`)) {
+        throw new TransactionConflictError();
+      }
+      this.touchAsset(scope, asset);
+    },
     save: async (scope, asset) => this.touchAsset(scope, asset),
     moveToFolder: async (scope, ids, folderId) => {
       if (folderId !== null && !this.assetFolderData.has(`${scopeKey(scope)}::${folderId}`)) {
@@ -720,6 +726,10 @@ export class InMemoryContentStore implements ContentStore {
     },
     create: async (scope, folder) => {
       const prefix = `${scopeKey(scope)}::`;
+      // As the D1 store's guard: the parent must still exist.
+      if (folder.parentId && !this.assetFolderData.has(`${prefix}${folder.parentId}`)) {
+        throw new TransactionConflictError();
+      }
       // As D1's unique index on (parent, name).
       for (const [k, f] of this.assetFolderData) {
         if (k.startsWith(prefix) && f.parentId === folder.parentId && f.name === folder.name) {

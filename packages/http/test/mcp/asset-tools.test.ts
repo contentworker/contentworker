@@ -171,7 +171,13 @@ describe('asset library tools (MCP), on the same use-cases as the HTTP routes', 
     const refused = await call('asset_delete', linked.id);
     expect(refused.isError).toBe(true);
     expect(payload(refused)).toMatchObject({
-      error: { code: 'asset_in_use', usage: [{ fromEntryId: entry.id, toId: linked.id }] },
+      error: {
+        code: 'asset_in_use',
+        usage: [
+          { fromEntryId: entry.id, toId: linked.id, contentTypeApiId: 'page', entryTitle: 'P' },
+        ],
+        total: 1,
+      },
     });
 
     const free = await add('free.png', 'image/png');

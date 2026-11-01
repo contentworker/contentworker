@@ -1,4 +1,9 @@
-import { AssetInUseError, type DomainEvent, InvalidStateError } from '@contentworker/domain';
+import {
+  AssetInUseError,
+  type DomainEvent,
+  InvalidStateError,
+  MAX_ASSET_USAGE_SHOWN,
+} from '@contentworker/domain';
 import {
   FakeBlobStore,
   FakeVideoHost,
@@ -118,13 +123,38 @@ describe('archiving and restoring an asset', () => {
     ]);
   });
 
-  it('archives a draft without an event, and a second archive changes nothing', async () => {
+  it('archives a draft with an unpublish event, and a second archive changes nothing', async () => {
     const asset = await upload(h);
     const before = h.store.allEvents().length;
     await archiveAsset(h.ctx, scope, asset.id);
     const again = await archiveAsset(h.ctx, scope, asset.id);
     expect(again.status).toBe('archived');
-    expect(h.store.allEvents().length).toBe(before);
+    // Sent whatever the read saw (see the race below); a no-op downstream for a draft.
+    expect(h.store.allEvents().slice(before)).toEqual([
+      expect.objectContaining({ type: 'asset.unpublished', assetId: asset.id }),
+    ]);
+  });
+
+  it('takes the asset out of Delivery when a publish lands between its read and its commit', async () => {
+    const asset = await upload(h);
+    // The unit reads a draft; a publish commits before the archive does.
+    const get = h.store.assets.get.bind(h.store.assets);
+    h.store.assets.get = async (s, id) => {
+      h.store.assets.get = get;
+      const read = await get(s, id);
+      await publishAsset(h.ctx, scope, asset.id);
+      return read;
+    };
+    const before = h.store.allEvents().length;
+
+    await archiveAsset(h.ctx, scope, asset.id);
+
+    expect(await getAsset(h.ctx, scope, asset.id)).toMatchObject({ status: 'archived' });
+    await expect(getPublishedAsset(h.ctx, scope, asset.id)).rejects.toThrow(/not.*found/i);
+    expect(h.store.allEvents().slice(before).at(-1)).toMatchObject({
+      type: 'asset.unpublished',
+      assetId: asset.id,
+    });
   });
 
   it('cannot publish while archived, and restores as a draft', async () => {
@@ -158,6 +188,39 @@ describe('deleting an asset', () => {
       expect.objectContaining({ fromEntryId: entryId, toId: asset.id }),
     ]);
     expect(await getAsset(h.ctx, scope, asset.id)).toMatchObject({ id: asset.id });
+  });
+
+  it('names each linking entry by type and title, and caps the list while counting all', async () => {
+    const asset = await upload(h);
+    await publishAsset(h.ctx, scope, asset.id);
+    const entryId = await linkFromEntry(h, asset.id);
+    const edges = Array.from({ length: 60 }, (_, i) => ({
+      fromEntryId: `gone-${String(i).padStart(2, '0')}`,
+      fromField: 'hero',
+      toId: asset.id,
+      toType: 'Asset' as const,
+    }));
+    for (const edge of edges)
+      await h.store.references.replaceForEntry(scope, edge.fromEntryId, [edge]);
+
+    const refused = (await deleteAsset(h.ctx, scope, asset.id).catch(
+      (e: unknown) => e,
+    )) as AssetInUseError;
+    expect(refused).toBeInstanceOf(AssetInUseError);
+    expect(refused.total).toBe(61);
+    expect(refused.usage).toHaveLength(MAX_ASSET_USAGE_SHOWN);
+    expect(refused.usage).toContainEqual({
+      fromEntryId: entryId,
+      fromField: 'hero',
+      toId: asset.id,
+      toType: 'Asset',
+      contentTypeApiId: 'page',
+      entryTitle: 'Home',
+    });
+    // An entry the store no longer has keeps the bare edge.
+    expect(refused.usage.find((u) => u.fromEntryId.startsWith('gone-'))).not.toHaveProperty(
+      'entryTitle',
+    );
   });
 
   it('refuses a link made after the check: the store re-checks at commit', async () => {

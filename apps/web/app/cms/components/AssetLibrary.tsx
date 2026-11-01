@@ -1,8 +1,10 @@
-import type { Asset, AssetFolder, ReferenceEdge } from '@contentworker/domain';
+import type { Asset, AssetFolder } from '@contentworker/domain';
+import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Card } from '@contentworker/ui/card';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import { cn } from '@contentworker/ui/lib/utils';
+import { Skeleton } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, ImageIcon, Trash2, Upload } from 'lucide-react';
@@ -13,7 +15,11 @@ import { AssetBulkBar } from '~/cms/components/assets/AssetBulkBar';
 import { AssetFilterBar, type AssetView } from '~/cms/components/assets/AssetFilterBar';
 import { AssetFolderTree } from '~/cms/components/assets/AssetFolderTree';
 import { AssetInUseNotice } from '~/cms/components/assets/AssetInUseNotice';
-import { AssetUploadList, type UploadItem } from '~/cms/components/assets/AssetUploadList';
+import {
+  AssetUploadList,
+  type UploadItem,
+  uploadSummary,
+} from '~/cms/components/assets/AssetUploadList';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
@@ -30,8 +36,8 @@ import {
 } from '~/cms/lib/assets';
 import { humanize } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import { ApiError, assetUsageOf } from '../lib/management';
-import { useContentTypesQuery, useInvalidate, useQueryKeys, useScopedQuery } from '../lib/queries';
+import { ApiError, type AssetInUse, assetUsageOf } from '../lib/management';
+import { useInvalidate, useQueryKeys, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
 /** Label for a hosted video's processing state, shown beside the asset status. */
@@ -87,7 +93,12 @@ export function AssetLibrary(props: { locale: string }) {
   const [dragging, setDragging] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [inUse, setInUse] = useState<{ asset: Asset; usage: ReferenceEdge[] } | null>(null);
+  const [inUse, setInUse] = useState<({ asset: Asset } & AssetInUse) | null>(null);
+  // A bulk action's failures, by asset: named in place, and still selected to try again.
+  const [bulkFailures, setBulkFailures] = useState<{
+    readonly verb: string;
+    readonly items: readonly { name: string; error: string }[];
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const query = useMemo(() => assetLibraryQuery(folder, filters), [folder, filters]);
@@ -101,7 +112,6 @@ export function AssetLibrary(props: { locale: string }) {
   const assets = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
   const folders = useScopedQuery(['asset-folders'], () => client.listAssetFolders()).data ?? [];
   const tags = useScopedQuery(['tags'], () => client.listTags(), { silent: true }).data ?? [];
-  const types = useContentTypesQuery().data ?? [];
 
   const reload = () => invalidate(['assets']);
   const reloadFolders = () => invalidate(['asset-folders']);
@@ -111,10 +121,12 @@ export function AssetLibrary(props: { locale: string }) {
   const changeFolder = (next: FolderSelection) => {
     setFolder(next);
     setSelected(new Set());
+    setBulkFailures(null);
   };
   const changeFilters = (next: AssetFilterState) => {
     setFilters(next);
     setSelected(new Set());
+    setBulkFailures(null);
   };
 
   // --- uploads ------------------------------------------------------------
@@ -149,6 +161,7 @@ export function AssetLibrary(props: { locale: string }) {
       } as UploadItem,
     }));
     setUploads((list) => [...list.filter((u) => u.state !== 'done'), ...batch.map((b) => b.item)]);
+    const outcome = new Map<string, UploadItem>();
     let next = 0;
     const lane = async () => {
       while (next < batch.length) {
@@ -157,13 +170,20 @@ export function AssetLibrary(props: { locale: string }) {
         try {
           await uploadOne(file, folderId);
           patchUpload(item.id, { state: 'done' });
+          outcome.set(item.id, { ...item, state: 'done' });
         } catch (e) {
           patchUpload(item.id, { state: 'failed', error: message(e) });
+          outcome.set(item.id, { ...item, state: 'failed', error: message(e) });
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(3, batch.length) }, lane));
     if (fileRef.current) fileRef.current.value = '';
+    // The batch's end is said once, in a toast, beside the list's own live summary.
+    const finished = [...outcome.values()];
+    const summary = uploadSummary(finished);
+    if (finished.some((u) => u.state === 'failed')) toast.error(summary);
+    else toast.success(summary);
     await reload();
   };
 
@@ -236,8 +256,8 @@ export function AssetLibrary(props: { locale: string }) {
       toast.success(`Deleted “${assetName(asset, locale)}”`);
       await reload();
     } catch (e) {
-      const usage = assetUsageOf(e);
-      if (usage) setInUse({ asset, usage });
+      const used = assetUsageOf(e);
+      if (used) setInUse({ asset, ...used });
       else fail(e);
     }
   };
@@ -253,12 +273,26 @@ export function AssetLibrary(props: { locale: string }) {
   const allSelected = assets.length > 0 && assets.every((a) => selected.has(a.id));
   const ids = [...selected];
 
+  // A failure never stops the rest. The ones that failed stay selected and are named in place, as
+  // the entries list names its bulk failures, so they can be tried again.
   const bulk = async (verb: string, act: (id: string) => Promise<unknown>) => {
     setBulkBusy(true);
+    setBulkFailures(null);
     try {
       const outcome = await runBulk(ids, act);
       (outcome.failed ? toast.error : toast.success)(bulkSummary(verb, outcome));
-      setSelected(new Set());
+      const failures = outcome.failures ?? [];
+      setSelected(new Set(failures.map((f) => f.id)));
+      if (failures.length > 0) {
+        const byId = new Map(assets.map((a) => [a.id, a]));
+        setBulkFailures({
+          verb,
+          items: failures.map((f) => {
+            const a = byId.get(f.id);
+            return { name: a ? assetName(a, locale) : f.id, error: f.error };
+          }),
+        });
+      }
       await reload();
     } finally {
       setBulkBusy(false);
@@ -288,10 +322,12 @@ export function AssetLibrary(props: { locale: string }) {
       const created = await client.createAssetFolder({ name, ...(parentId ? { parentId } : {}) });
       await reloadFolders();
       changeFolder({ kind: 'folder', id: created.id });
+      return created;
     } catch (e) {
       fail(
         e instanceof ApiError && e.status === 409 ? `A folder named “${name}” is already here` : e,
       );
+      return undefined;
     }
   };
   const renameFolder = async (f: AssetFolder, name: string) => {
@@ -432,21 +468,23 @@ export function AssetLibrary(props: { locale: string }) {
               <div className="absolute top-3 left-3 z-10 rounded-[5px] bg-background">
                 {selectBox(a, name)}
               </div>
+              <AssetPreview
+                asset={a}
+                alt={String(a.metadata.altText?.[locale] ?? a.file.fileName)}
+                className="h-28 w-full"
+              />
+              {/* The name is the card's control, stretched over it; its visible text is only the
+                  name, which its label carries (WCAG 2.5.3). */}
               <button
                 type="button"
                 data-open-asset=""
                 onClick={() => setOpen(a)}
                 aria-label={`Open “${name}”`}
-                className="-m-1 flex flex-col gap-2 rounded-xl p-1 text-left outline-none"
+                className="truncate text-left font-medium text-sm outline-none after:absolute after:inset-0 after:rounded-[inherit] after:content-['']"
               >
-                <AssetPreview
-                  asset={a}
-                  alt={String(a.metadata.altText?.[locale] ?? a.file.fileName)}
-                  className="h-28 w-full"
-                />
-                <span className="truncate font-medium text-sm">{name}</span>
+                {name}
               </button>
-              <div className="flex flex-wrap items-center justify-between gap-1">
+              <div className="relative z-10 flex flex-wrap items-center justify-between gap-1">
                 {confirmDelete === a.id ? null : badges(a)}
                 {actions(a, name)}
               </div>
@@ -457,9 +495,19 @@ export function AssetLibrary(props: { locale: string }) {
     </ul>
   );
 
+  // On a phone each row lays itself out as the entries rows do: the checkbox beside the name, the
+  // type, size and status under it, the actions at the end. The cells keep their table roles.
+  const ROW_STACK =
+    'max-md:grid max-md:grid-cols-[auto_minmax(0,1fr)_auto] max-md:items-center max-md:gap-x-2 max-md:gap-y-1.5 max-md:px-3 max-md:py-2';
+  const CELL_STACK = 'max-md:block max-md:p-0';
+  const phoneLabel = (label: string) => (
+    <span aria-hidden="true" className="text-muted-foreground md:hidden">
+      {label}{' '}
+    </span>
+  );
   const list = (
     <div className="card overflow-clip">
-      <Table caption="Assets" stack="cards">
+      <Table caption="Assets" stack="rows" className="max-md:block">
         <TableHead>
           <Tr>
             <Th className="w-8">
@@ -480,31 +528,46 @@ export function AssetLibrary(props: { locale: string }) {
             </Th>
           </Tr>
         </TableHead>
-        <TableBody>
+        <TableBody className="max-md:block">
           {assets.map((a) => {
             const name = assetName(a, locale);
             return (
-              <Tr key={a.id}>
-                <Td>{selectBox(a, name)}</Td>
-                <Td>
-                  <button
-                    type="button"
-                    onClick={() => setOpen(a)}
-                    aria-label={`Open “${name}”`}
-                    className="flex min-w-0 items-center gap-2 rounded-full text-left font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
-                  >
-                    <AssetPreview asset={a} alt="" className="size-8 shrink-0 rounded-lg" />
-                    <span className="truncate">{name}</span>
-                  </button>
+              <Tr key={a.id} className={ROW_STACK}>
+                <Td label="Select" className={`${CELL_STACK} max-md:row-span-2 max-md:self-start`}>
+                  {selectBox(a, name)}
                 </Td>
-                <Td label="Type" className="font-mono text-xs">
+                <Td label="Name" className={`${CELL_STACK} max-md:col-span-2`}>
+                  {/* The thumbnail beside the button, not in it: the button's visible text is the
+                      name alone (a fallback tile would add the file name to it). */}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <AssetPreview asset={a} alt="" className="size-8 shrink-0 rounded-lg" />
+                    <button
+                      type="button"
+                      onClick={() => setOpen(a)}
+                      aria-label={`Open “${name}”`}
+                      className="hit-area min-w-0 truncate rounded-full text-left font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+                    >
+                      {name}
+                    </button>
+                  </div>
+                </Td>
+                <Td
+                  label="Type"
+                  className={`font-mono text-xs ${CELL_STACK} max-md:col-start-2 max-md:truncate`}
+                >
+                  {phoneLabel('Type')}
                   {a.file.contentType}
                 </Td>
-                <Td label="Size" numeric>
+                <Td label="Size" numeric className={`${CELL_STACK} max-md:text-left`}>
+                  {phoneLabel('Size')}
                   {fileSize(a.file.size)}
                 </Td>
-                <Td label="Status">{badges(a)}</Td>
-                <Td className="text-right">{actions(a, name)}</Td>
+                <Td label="Status" className={`${CELL_STACK} max-md:col-start-2`}>
+                  {badges(a)}
+                </Td>
+                <Td label="Actions" className={`text-right ${CELL_STACK}`}>
+                  {actions(a, name)}
+                </Td>
               </Tr>
             );
           })}
@@ -571,11 +634,39 @@ export function AssetLibrary(props: { locale: string }) {
             </p>
           )}
           <AssetUploadList items={uploads} onDismiss={() => setUploads([])} />
+          {bulkFailures && (
+            <Alert variant="destructive">
+              <AlertTitle>
+                {bulkFailures.items.length} {bulkFailures.items.length === 1 ? 'asset' : 'assets'}{' '}
+                not {bulkFailures.verb.toLowerCase()}
+              </AlertTitle>
+              <AlertDescription>
+                <p>They are still selected, to try again.</p>
+                <ul className="space-y-0.5">
+                  {bulkFailures.items.map((f, i) => (
+                    <li key={i}>
+                      <span className="font-medium">{f.name}</span>
+                      {f.error ? `: ${f.error}` : ''}
+                    </li>
+                  ))}
+                </ul>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => setBulkFailures(null)}
+                >
+                  Dismiss
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
           {inUse && (
             <AssetInUseNotice
               name={assetName(inUse.asset, locale)}
               usage={inUse.usage}
-              types={types}
+              total={inUse.total}
               onArchive={
                 inUse.asset.status === 'archived'
                   ? undefined
@@ -594,10 +685,49 @@ export function AssetLibrary(props: { locale: string }) {
             onMove={(f) => void moveSelected(f)}
             onPublish={() => void bulk('Published', (id) => client.publishAsset(id))}
             onArchive={() => void bulk('Archived', (id) => client.archiveAsset(id))}
-            onClear={() => setSelected(new Set())}
+            onClear={() => {
+              setSelected(new Set());
+              setBulkFailures(null);
+            }}
           />
+          {pages.isPending && (
+            <p role="status" className="sr-only">
+              Loading assets…
+            </p>
+          )}
           {pages.isPending ? (
-            <p className="text-muted-foreground text-sm">Loading…</p>
+            view === 'grid' ? (
+              <ul className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3">
+                {[0, 1, 2, 3].map((i) => (
+                  <li key={i}>
+                    <Skeleton className="h-44 w-full" />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="space-y-2">
+                {[0, 1, 2].map((i) => (
+                  <Skeleton key={i} className="h-12 w-full" />
+                ))}
+              </div>
+            )
+          ) : pages.isError && assets.length === 0 ? (
+            // A failed load is said as one, never as an empty library.
+            <Alert variant="destructive">
+              <AlertTitle>The assets didn’t load</AlertTitle>
+              <AlertDescription>
+                <p>{message(pages.error)}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => void pages.refetch()}
+                >
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
           ) : assets.length === 0 ? (
             filtered ? (
               <EmptyState

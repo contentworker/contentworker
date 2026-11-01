@@ -1,91 +1,64 @@
-import type { ContentType, ReferenceEdge } from '@contentworker/domain';
+import type { AssetUsage } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Link2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router';
-import { useClient } from '~/cms/lib/client-context';
 import { plural } from '~/cms/lib/format';
 
-interface UsedIn {
-  readonly entryId: string;
-  readonly field: string;
-  readonly contentType?: string;
-  readonly title: string;
-}
+/** Links listed at most; the rest are counted ("and 12 more"). */
+export const IN_USE_SHOWN = 5;
 
 /**
  * Why an asset wasn't deleted: the entries that still link to it, each a link to the entry, with
- * archiving offered instead (it stops delivery without breaking those links).
+ * archiving offered instead (it stops delivery without breaking those links). The API names each
+ * entry's type and title in the refusal, so nothing is fetched here. It takes focus when it
+ * appears: the delete that caused it was confirmed somewhere else on the page.
  */
 export function AssetInUseNotice(props: {
   name: string;
-  usage: readonly ReferenceEdge[];
-  types: readonly ContentType[];
+  usage: readonly AssetUsage[];
+  /** Every link, counted; `usage` may carry only the first of them. */
+  total: number;
   onArchive?: () => void;
   onDismiss: () => void;
 }) {
-  const { client, conn } = useClient();
-  const [rows, setRows] = useState<UsedIn[] | null>(null);
-
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    let live = true;
-    const displayOf = new Map(props.types.map((t) => [t.apiId, t.displayField]));
-    void Promise.all(
-      props.usage.map(async (u): Promise<UsedIn> => {
-        try {
-          const entry = await client.getEntry(u.fromEntryId);
-          const df = displayOf.get(entry.contentType);
-          const title = df
-            ? (entry.fields[df] as Record<string, unknown> | undefined)?.[conn.locale]
-            : undefined;
-          return {
-            entryId: u.fromEntryId,
-            field: u.fromField,
-            contentType: entry.contentType,
-            title: String(title ?? u.fromEntryId),
-          };
-        } catch {
-          return { entryId: u.fromEntryId, field: u.fromField, title: u.fromEntryId };
-        }
-      }),
-    ).then((resolved) => live && setRows(resolved));
-    return () => {
-      live = false;
-    };
-  }, [client, conn.locale, props.usage, props.types]);
+    const el = ref.current;
+    if (!el) return;
+    el.scrollIntoView?.({ block: 'nearest' });
+    el.focus({ preventScroll: true });
+  }, []);
 
+  const shown = props.usage.slice(0, IN_USE_SHOWN);
+  const more = props.total - shown.length;
   return (
-    <Alert variant="warning">
+    <Alert ref={ref} tabIndex={-1} variant="warning" className="outline-none">
       <Link2 aria-hidden="true" />
       <AlertTitle>
-        “{props.name}” is used by {plural(props.usage.length, 'entry', 'entries')}
+        “{props.name}” is used by {plural(props.total, 'entry', 'entries')}
       </AlertTitle>
       <AlertDescription>
         <p>Remove it from these entries before deleting it, or archive it to stop delivering it.</p>
         <ul className="space-y-1">
-          {(
-            rows ??
-            props.usage.map(
-              (u) =>
-                ({ entryId: u.fromEntryId, field: u.fromField, title: u.fromEntryId }) as UsedIn,
-            )
-          ).map((r) => (
-            <li key={`${r.entryId}:${r.field}`} className="flex items-center gap-2">
-              {r.contentType ? (
+          {shown.map((u) => (
+            <li key={`${u.fromEntryId}:${u.fromField}`} className="flex items-center gap-2">
+              {u.contentTypeApiId ? (
                 <Link
-                  to={`/content/${r.contentType}/${r.entryId}`}
+                  to={`/content/${u.contentTypeApiId}/${u.fromEntryId}`}
                   className="font-medium text-link hover:underline"
                 >
-                  {r.title}
+                  {u.entryTitle || u.fromEntryId}
                 </Link>
               ) : (
-                <span className="font-mono text-xs">{r.entryId}</span>
+                <span className="font-mono text-xs">{u.entryTitle || u.fromEntryId}</span>
               )}
               <span className="text-muted-foreground">in</span>
-              <span className="font-mono text-xs">{r.field}</span>
+              <span className="font-mono text-xs">{u.fromField}</span>
             </li>
           ))}
+          {more > 0 && <li className="text-muted-foreground">and {more} more</li>}
         </ul>
         <div className="flex gap-2 pt-1">
           {props.onArchive && (

@@ -28,7 +28,6 @@ export function useQueryKeys() {
       /** Prefix for every asset list (the picker's and the library's filtered pages). */
       assets: [...scope, 'assets'] as const,
       assetLibrary: (query: object) => [...scope, 'assets', 'library', query] as const,
-      assetFolders: [...scope, 'asset-folders'] as const,
       appExtensions: [...scope, 'app-extensions'] as const,
       agentRuns: [...scope, 'agent-runs'] as const,
     };

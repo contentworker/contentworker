@@ -164,6 +164,22 @@ async function writeAll(x: Exec, queries: readonly Query[]): Promise<void> {
 }
 
 /**
+ * Guard statements that abort the batch (TransactionConflictError) unless the asset folder exists
+ * in the scope when it runs: put them in front of a write that files something in it.
+ */
+function folderExists(x: Exec, scope: Scope, folderId: string): Query[] {
+  const f = schema.assetFolders;
+  return [
+    x.db
+      .insert(schema.guard)
+      .select(
+        sql`SELECT EXISTS (SELECT 1 FROM ${f} WHERE ${f.spaceId} = ${scope.spaceId} AND ${f.environmentId} = ${scope.environmentId} AND ${f.id} = ${folderId}) AS ok`,
+      ),
+    x.db.delete(schema.guard),
+  ];
+}
+
+/**
  * A write whose result drives control flow (a `.returning()` compare-and-set) has no answer
  * until a unit of work commits. The methods the application calls inside `withTransaction`
  * have an in-unit branch; every other one refuses loudly instead of misreporting.
@@ -837,7 +853,8 @@ function assetFilterConditions(filters: AssetFilters): SQL[] {
 
 function makeAssetRepo(x: Exec): AssetRepo {
   const db = x.db;
-  const upsertDraft = async (scope: Scope, asset: Asset) => {
+  /** The asset's upsert, as one statement (a caller may put a guard in front of it). */
+  const upsertDraft = (scope: Scope, asset: Asset) => {
     const columns = {
       status: asset.status,
       file: asset.file,
@@ -860,20 +877,18 @@ function makeAssetRepo(x: Exec): AssetRepo {
       archivedAt: asset.archivedAt ? new Date(asset.archivedAt) : null,
       rights: asset.rights ?? null,
     };
-    await x.write(
-      db
-        .insert(schema.assets)
-        .values({
-          spaceId: scope.spaceId,
-          environmentId: scope.environmentId,
-          id: asset.id,
-          ...columns,
-        })
-        .onConflictDoUpdate({
-          target: [schema.assets.spaceId, schema.assets.environmentId, schema.assets.id],
-          set: columns,
-        }),
-    );
+    return db
+      .insert(schema.assets)
+      .values({
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        id: asset.id,
+        ...columns,
+      })
+      .onConflictDoUpdate({
+        target: [schema.assets.spaceId, schema.assets.environmentId, schema.assets.id],
+        set: columns,
+      });
   };
   return {
     async get(scope, id) {
@@ -928,12 +943,22 @@ function makeAssetRepo(x: Exec): AssetRepo {
           : {}),
       };
     },
-    create: upsertDraft,
-    save: upsertDraft,
+    async create(scope, asset) {
+      const write = upsertDraft(scope, asset);
+      if (!asset.folderId) {
+        await x.write(write);
+        return;
+      }
+      // Its folder must still exist when the batch runs: one deleted since the use-case read it
+      // aborts the create (TransactionConflictError) instead of filing the asset nowhere.
+      await writeAll(x, [...folderExists(x, scope, asset.folderId), write]);
+    },
+    async save(scope, asset) {
+      await x.write(upsertDraft(scope, asset));
+    },
     async moveToFolder(scope, ids, folderId) {
       if (ids.length === 0) return;
       const t = schema.assets;
-      const f = schema.assetFolders;
       // The ids ride as ONE JSON parameter, so a move of any size is one statement under D1's
       // 100-parameter cap.
       const move = db
@@ -951,15 +976,7 @@ function makeAssetRepo(x: Exec): AssetRepo {
       }
       // The folder must still exist when the batch runs: one deleted since the use-case read it
       // aborts the move (TransactionConflictError) instead of filing assets nowhere.
-      await writeAll(x, [
-        db
-          .insert(schema.guard)
-          .select(
-            sql`SELECT EXISTS (SELECT 1 FROM ${f} WHERE ${f.spaceId} = ${scope.spaceId} AND ${f.environmentId} = ${scope.environmentId} AND ${f.id} = ${folderId}) AS ok`,
-          ),
-        db.delete(schema.guard),
-        move,
-      ]);
+      await writeAll(x, [...folderExists(x, scope, folderId), move]);
     },
     async delete(scope, id) {
       const r = schema.references;
@@ -1174,18 +1191,23 @@ function makeAssetFolderRepo(x: Exec): AssetFolderRepo {
       return rows.map(toAssetFolder);
     },
     async create(scope, folder) {
-      await x.write(
-        db.insert(f).values({
-          spaceId: scope.spaceId,
-          environmentId: scope.environmentId,
-          id: folder.id,
-          name: folder.name,
-          parentId: folder.parentId ?? '',
-          path: folder.path,
-          createdAt: new Date(folder.createdAt),
-          updatedAt: new Date(folder.updatedAt),
-        }),
-      );
+      const insert = db.insert(f).values({
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        id: folder.id,
+        name: folder.name,
+        parentId: folder.parentId ?? '',
+        path: folder.path,
+        createdAt: new Date(folder.createdAt),
+        updatedAt: new Date(folder.updatedAt),
+      });
+      if (!folder.parentId) {
+        await x.write(insert);
+        return;
+      }
+      // The parent must still exist when the batch runs: one deleted since the use-case read it
+      // aborts the create (TransactionConflictError) rather than leaving an orphan.
+      await writeAll(x, [...folderExists(x, scope, folder.parentId), insert]);
     },
     async save(scope, folder, previousPath) {
       const statements: Query[] = [];

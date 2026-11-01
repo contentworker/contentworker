@@ -1788,8 +1788,9 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Assets', 'Delete an asset permanently', {
       status: 204,
       description:
-        'Irreversible. Refuses with 409 asset_in_use, listing the links in error.usage, while ' +
-        'entries link to it (archive it instead). Its files are removed in the background. ' +
+        'Irreversible. Refuses with 409 asset_in_use while entries link to it (archive it ' +
+        "instead): error.usage lists the first 50 links, each with the entry's contentTypeApiId " +
+        'and entryTitle, and error.total counts them all. Its files are removed in the background. ' +
         'Requires content:publish, as deleting an entry permanently does.',
     }),
     requireScope(SCOPES.contentPublish),

@@ -137,8 +137,8 @@ Base paths: `/spaces` and `…` = `/spaces/:space/environments/:env`.
 | POST   | `…/import` | `content:manage` | Replay a snapshot into this environment, as a job (`202`; `?dryRun=true` reports, `200`; `?publish=false`) |
 | POST   | `…/clone`  | `content:manage` | Copy this environment into another, entirely as jobs (`202`) `{ targetSpaceId?, targetEnvironmentId, publish? }` |
 
-A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows, and
-asset **metadata**. It deliberately never carries **credentials** — API keys, OAuth clients and
+A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows,
+asset **metadata** and the asset folders. It deliberately never carries **credentials** — API keys, OAuth clients and
 grants, preview tokens, webhook signing secrets — because a snapshot is a file people move around.
 Asset **binaries** stay in the blob store: a restore into a space pointing at the same bucket
 works, and one pointing elsewhere has dangling files, which is visible rather than silent. The
@@ -160,7 +160,10 @@ What an import preserves:
   version's fields too: the import publishes those, then applies the draft, so the copy has the
   same live content and the same pending edits. Snapshots from before this carry no live version,
   and their changed entries land as drafts.
-- **Assets** as records, published as they were; their files stay where they are.
+- **Assets** as records, published as they were; their files stay where they are. An archived
+  asset arrives as a draft.
+- **Asset folders**, with their ids and paths, so each asset lands in the same folder. A snapshot
+  from before folders carries none, and its assets land at the library root.
 
 **Deleting an environment** (`DELETE …/environments/:env?confirm=:env`, MCP `environment_delete`)
 removes it and everything in it (content model, entries and versions, assets, references,
@@ -187,15 +190,16 @@ creating an environment with that id is refused (`409`). A purge whose event is 
 the engine's cron after five minutes without progress.
 
 **An import checks before it writes.** Every entry is validated against the snapshot's content
-model and the target space's locales, and every link in what will be published must point at an
-entry or asset the snapshot carries. Any problem refuses the import with a `422` that lists them
+model and the target space's locales, every link in what will be published must point at an
+entry or asset the snapshot carries, and every asset folder needs a valid name and a parent the
+snapshot carries. Any problem refuses the import with a `422` that lists them
 (up to 50, each naming its entry) and writes nothing, so the target stays empty and a corrected
 retry works. `?dryRun=true` runs the same checks. A failure the checks can't foresee (a plugin
 hook refusing an entry, an infrastructure error) is reported per entry in the job's report.
 
 **Import and clone run as jobs.** Replaying every entry through the use-cases is far more than one
 request can hold for an environment of any size. After the checks, the request writes the content
-model, taxonomy and workflows (small, and everything else depends on them) and answers `202` with
+model, asset folders, taxonomy and workflows (small, and everything else depends on them) and answers `202` with
 `{ report, job, publishJobId }`. The assets and entries are staged in the blob store in chunks of
 100 before the model is written (so a staging failure leaves the target empty and a retry works),
 and written by bulk jobs, with progress at `…/bulk/jobs/:id` and per-item failures at
@@ -470,7 +474,7 @@ time, so a link from an unpublished draft does not block the delete.
 | DELETE | `…/asset-renditions/:name`   | `content:manage`  | Delete (204); its URLs answer 404 once purged                                     |
 | POST   | `…/assets/:id/archive`       | `content:publish` | Archive (leaves Delivery when published); idempotent                              |
 | POST   | `…/assets/:id/restore`       | `content:write`   | Restore an archived asset as a draft; idempotent                                  |
-| DELETE | `…/assets/:id`               | `content:publish` | Delete permanently (204); `409 asset_in_use` with `error.usage` while linked      |
+| DELETE | `…/assets/:id`               | `content:publish` | Delete permanently (204); `409 asset_in_use` with `error.usage` (first 50, titled) and `error.total` while linked |
 | GET    | `…/asset-folders`            | `preview:read`    | List folders, in path order                                                       |
 | POST   | `…/asset-folders`            | `content:write`   | Create `{ name, parentId? }` (201); 409 for a sibling of the same name            |
 | PATCH  | `…/asset-folders/:id`        | `content:write`   | Rename and/or move `{ name?, parentId? \| null }`, subtree along                  |

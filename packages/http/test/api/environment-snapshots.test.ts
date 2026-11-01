@@ -117,4 +117,23 @@ describe('environment clone and import over HTTP', () => {
     expect(res.status).toBe(202);
     expect(((await res.json()) as Started).job?.status).toBe('running');
   });
+
+  it('carries the asset folders through the import envelope, with their ids', async () => {
+    const created = await app.request(`${MAIN}/asset-folders`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ name: 'Brand' }),
+    });
+    const folder = (await created.json()) as { id: string; path: string };
+    const snapshot = await (await app.request(`${MAIN}/export`, { headers: admin })).json();
+    expect((snapshot as { assetFolders: unknown[] }).assetFolders).toHaveLength(1);
+    const res = await app.request(`${COPY}/import`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify(snapshot),
+    });
+    expect(res.status).toBe(202);
+    const folders = await (await app.request(`${COPY}/asset-folders`, { headers: admin })).json();
+    expect(folders).toMatchObject({ items: [{ id: folder.id, name: 'Brand', path: folder.path }] });
+  });
 });
