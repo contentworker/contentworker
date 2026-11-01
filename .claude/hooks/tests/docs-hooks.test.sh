@@ -35,6 +35,7 @@ check "a wrangler config names the configuration page" "docs/configuration.md" "
 # ── block-generated: generated files are denied, everything else allowed ─────
 guard() { printf '{"tool_input":{"file_path":"%s"}}' "$1" | "$hooks/block-generated.sh"; }
 check "hand edit of the generated docs theme is denied" '"permissionDecision":"deny"' "$(guard "$root/apps/docs/src/styles/theme.css")"
+check "hand edit of a generated diagram theme is denied" '"permissionDecision":"deny"' "$(guard "$root/docs/diagrams/themes/ledger-dark.json")"
 check "the docs embed is denied" '"permissionDecision":"deny"' "$(guard "$root/packages/docs/src/generated.ts")"
 check "and the reason names its generator" "@contentworker/docs generate" "$(guard "$root/packages/docs/src/generated.ts")"
 check "the MCP skills embed is denied" '"permissionDecision":"deny"' "$(guard "$root/packages/http/src/mcp/skills.generated.ts")"

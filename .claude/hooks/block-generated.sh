@@ -12,6 +12,8 @@ case "$file" in
     deny PreToolUse "packages/http/src/mcp/skills.generated.ts embeds packages/http/skills/** for the MCP server. Edit the skill under packages/http/skills/, and \`pnpm install\`, turbo's generate task or \`pnpm --filter @contentworker/http generate:skills\` rebuilds it. It is gitignored and never committed." ;;
   */apps/docs/src/styles/theme.css)
     deny PreToolUse "apps/docs/src/styles/theme.css is generated from packages/design/src/tokens.ts (which mirrors apps/web/app/app.css; packages/design's tests hold the two together). Change the tokens, then run \`pnpm sync:theme\`. Hand-written docs styling goes in apps/docs/src/styles/brand.css." ;;
+  */docs/diagrams/themes/ledger-light.json|*/docs/diagrams/themes/ledger-dark.json)
+    deny PreToolUse "docs/diagrams/themes/ledger-{light,dark}.json are generated from packages/design/src/tokens.ts by packages/design/src/mermaid.ts. Change the tokens or mermaid.ts, then run \`pnpm sync:theme\` and re-render the diagrams (docs/diagrams/reference-architecture/README.md)." ;;
   */apps/docs/src/generated/openapi.json)
     deny PreToolUse "apps/docs/src/generated/openapi.json is written by \`pnpm --filter @contentworker/docs-site prepare:data\` (every docs build) from the routes the api registers. Change the route or its OpenAPI description in packages/http/src/api, then rebuild the docs." ;;
   */worker-configuration.d.ts)
