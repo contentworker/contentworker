@@ -58,7 +58,7 @@ export const PAGES = [
   '/workflows',
   '/workflows/wf_1',
   '/taxonomy',
-  '/media',
+  '/assets',
   '/settings/general',
   '/account',
   '/team',

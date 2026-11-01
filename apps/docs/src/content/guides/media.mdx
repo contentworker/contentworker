@@ -17,8 +17,8 @@ entries.
 
 ## Upload a file
 
-In the admin, open **Media** and press **Upload asset**. Images and other files are uploaded and
-published in one go. A video is uploaded to the video host and stays a draft until it finishes
+In the admin, open **Assets** and press **Upload** (or drop files on the library); with a folder
+open, the files go into it. Images and other files are uploaded and published in one go. A video is uploaded to the video host and stays a draft until it finishes
 processing (see [Upload a video](#upload-a-video)).
 
 Over the API, an upload is three calls, because the bytes go straight to storage rather than
@@ -40,8 +40,9 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/published
 
 Send every header in `upload.headers` with the `PUT`. A new asset is a draft until you publish
 it, and `DELETE …/assets/{id}/published` unpublishes it. Title and description are localized maps
-set at creation. There is no route to delete an asset yet; unpublish it instead. MCP has no tool to
-create an image asset; it can list assets, edit metadata and create videos (below).
+set at creation, and an optional `folderId` files the asset in a folder. MCP has no tool to create
+an image asset; it can list, file, archive and delete assets, edit metadata and create videos
+(below).
 
 ## Upload a video
 
@@ -61,7 +62,7 @@ The MCP tools are `asset_video_create` and `asset_video_refresh`.
 
 ## Add alt text, a focal point and tags
 
-Click an asset in **Media** to open its details. The metadata is:
+Click an asset in **Assets** to open its details. The metadata is:
 
 | Field         | What it is                                                                 |
 | ------------- | -------------------------------------------------------------------------- |
@@ -90,6 +91,33 @@ tools are `asset_generate_alt_text` and `asset_auto_tag`). Both work from the fi
 description (and a `context` hint for alt text), not from the image itself, so give the asset a
 meaningful title first. Auto-tag matches your existing tags and lists new tag ideas to add in
 **Taxonomy**. See [AI features](/guides/ai/).
+
+## Organize the library
+
+**Folders** nest up to 16 deep, and a name is unique among its siblings. Create one in the folder
+tree with **New folder**, or with `POST …/asset-folders` (`{ name, parentId? }`); rename or move one
+with `PATCH …/asset-folders/{id}`, its subfolders along with it. A folder is deleted only when it is
+empty. The MCP tools are `asset_folders_list`, `asset_folders_create`, `asset_folders_update` and
+`asset_folders_delete`.
+
+**Filter and sort** the list with `GET …/assets?kind=image&folder={id}&tag={id}&sort=size&order=desc`:
+`kind` (`image`, `video`, `audio`, `document`, `other`), `mime` (`image/*` works), `tag`, `folder`
+(an id, or `root`), `status`, `sort` (`updatedAt`, `createdAt`, `size`) and `order`. Results come a
+page at a time; pass the response's `nextCursor` as `cursor` for the next one.
+
+**Move** up to 500 assets at once: select them and choose **Move to folder**, or
+`POST …/assets/move` with `{ "ids": [...], "folderId": "..." }` (`null` for the root; MCP
+`assets_move`).
+
+**Archive** what you no longer use: an archived asset is hidden from the list (filter on
+`status=archived` to see it) and leaves delivery if it was published. **Restore** brings it back
+as a draft. Select several to archive them together. The routes are `POST …/assets/{id}/archive`
+(`content:publish`) and `…/restore` (`content:write`); the MCP tools are `asset_archive` and
+`asset_restore`.
+
+**Delete** removes an asset and its files for good (`DELETE …/assets/{id}`, `content:publish`; MCP
+`asset_delete`). It is refused with `409 asset_in_use` while any entry links to it, and the answer
+names those entries, so archive the asset or remove the links first.
 
 ## See where an asset is used
 

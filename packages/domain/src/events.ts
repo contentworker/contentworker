@@ -12,6 +12,7 @@ export type DomainEvent =
   | ReleasePublishedEvent
   | AssetPublishedEvent
   | AssetUnpublishedEvent
+  | AssetDeletedEvent
   | SearchReindexRequestedEvent
   | BulkChunkDueEvent
   | EntriesPublishedBulkEvent
@@ -59,6 +60,18 @@ export interface AssetPublishedEvent extends BaseEvent {
 export interface AssetUnpublishedEvent extends BaseEvent {
   readonly type: 'asset.unpublished';
   readonly assetId: string;
+}
+
+/**
+ * An asset's record was deleted. Its bytes outlive the row on purpose: the engine removes them
+ * from blob storage (`r2Key`) and the video host (`videoId`) when it handles this event, so a
+ * failed removal is retried with the event instead of being lost with the request.
+ */
+export interface AssetDeletedEvent extends BaseEvent {
+  readonly type: 'asset.deleted';
+  readonly assetId: string;
+  readonly r2Key?: string;
+  readonly videoId?: string;
 }
 
 /**

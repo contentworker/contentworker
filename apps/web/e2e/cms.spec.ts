@@ -7,6 +7,7 @@ import {
   MGMT,
   openCms,
   SPACE,
+  seedAsset,
   seedCms,
   statusOf,
   useCmsScope,
@@ -376,6 +377,124 @@ test('typing right after creating an entry lands in the created entry, never a f
   await page.getByRole('button', { name: 'Save draft' }).click();
   await expect(page.getByText('Draft updated')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: `${title} v2` })).toBeVisible();
+});
+
+test('the asset library: a folder, uploads into it, a move, a bulk archive, a restore and a guarded delete', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  const seeded = [`Seed ${stamp} 1`, `Seed ${stamp} 2`];
+  for (const title of seeded) await seedAsset(request, title);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await expect(library.getByRole('button', { name: `Open “${seeded[0]}”` })).toBeVisible();
+
+  // A folder, created in the tree: it opens, and takes focus.
+  const folderName = `Folder ${stamp}`;
+  const folders = page.getByRole('navigation', { name: 'Folders' });
+  await folders.getByRole('button', { name: 'New folder' }).click();
+  await folders.getByRole('textbox', { name: 'New folder name' }).fill(folderName);
+  await folders.getByRole('button', { name: 'Create folder' }).click();
+  await expect(folders.getByRole('button', { name: folderName, exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: `Upload to “${folderName}”` })).toBeVisible();
+
+  // Several files uploaded into it; the queue says how the batch went.
+  const files = [1, 2, 3].map((n) => ({
+    name: `upload-${stamp}-${n}.txt`,
+    mimeType: 'text/plain',
+    buffer: Buffer.from(`file ${n}`),
+  }));
+  await page.getByLabel('Upload asset files').setInputFiles(files);
+  const uploads = page.getByRole('region', { name: 'Uploads' });
+  await expect(uploads.getByRole('status')).toHaveText('Uploaded 3 files', { timeout: 30_000 });
+  for (const f of files) {
+    await expect(library.getByRole('button', { name: `Open “${f.name}”` })).toBeVisible();
+  }
+
+  // The seeded assets, selected from everything and moved into the folder.
+  await folders.getByRole('button', { name: 'All assets' }).click();
+  for (const title of seeded) {
+    await library.getByRole('checkbox', { name: `Select “${title}”` }).check();
+  }
+  const bar = page.getByRole('group', { name: 'Selected assets' });
+  await expect(bar.getByText('2 selected')).toBeVisible();
+  await bar.getByRole('combobox', { name: 'Move to folder' }).selectOption({ label: folderName });
+  await bar.getByRole('button', { name: 'Move selected' }).click();
+  await expect(page.getByText(`Moved 2 assets to “${folderName}”`)).toBeVisible();
+
+  // In the folder: all five, archived together after an in-place confirm.
+  await folders.getByRole('button', { name: folderName, exact: true }).click();
+  await library.getByRole('radio', { name: 'List' }).click();
+  await expect(library.getByRole('row')).toHaveCount(6); // the header and five assets
+  await library.getByRole('checkbox', { name: 'Select all shown' }).check();
+  await expect(bar.getByText('5 selected')).toBeVisible();
+  await bar.getByRole('button', { name: 'Archive selected' }).click();
+  await bar
+    .getByRole('alertdialog', { name: /Archive 5 assets\?/ })
+    .getByRole('button', { name: 'Archive 5 assets' })
+    .click();
+  await expect(page.getByText('Archived 5 assets')).toBeVisible();
+  await expect(library.getByText('Nothing here')).toBeVisible();
+
+  // One restored, from the archived filter: it comes back as a draft.
+  await library.getByRole('combobox', { name: 'Status' }).selectOption('archived');
+  await library.getByRole('button', { name: `Restore “${seeded[0]}”` }).click();
+  await expect(page.getByText(`Restored “${seeded[0]}” as a draft`)).toBeVisible();
+  await library.getByRole('combobox', { name: 'Status' }).selectOption('draft');
+  await expect(library.getByRole('button', { name: `Open “${seeded[0]}”` })).toBeVisible();
+});
+
+test('deleting an asset an entry uses names that entry and links to it', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  const assetTitle = `Hero ${stamp}`;
+  const assetId = await seedAsset(request, assetTitle, { publish: true });
+  const entryTitle = `Uses hero ${stamp}`;
+  const created = await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: 'article',
+    fields: {
+      title: { 'en-US': entryTitle },
+      content: {
+        'en-US': {
+          nodeType: 'document',
+          data: {},
+          content: [
+            {
+              nodeType: 'embedded-asset-block',
+              data: { target: { id: assetId, linkType: 'Asset' } },
+              content: [],
+            },
+          ],
+        },
+      },
+    },
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  const { entry } = (await created.json()) as { entry: { id: string } };
+  const published = await api(request, 'POST', `${MGMT}/entries/${entry.id}/published`);
+  expect(published.ok(), await published.text()).toBe(true);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('button', { name: `Delete “${assetTitle}”` }).click();
+  await library
+    .getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) })
+    .getByRole('button', { name: 'Delete' })
+    .click();
+
+  const notice = library
+    .getByRole('alert')
+    .filter({ hasText: `“${assetTitle}” is used by 1 entry` });
+  await expect(notice).toBeVisible();
+  await expect(notice).toBeFocused();
+  const link = notice.getByRole('link', { name: entryTitle });
+  await expect(link).toHaveAttribute('href', `/content/article/${entry.id}`);
+  // Still there: the delete was refused.
+  await expect(library.getByRole('button', { name: `Open “${assetTitle}”` })).toBeVisible();
 });
 
 test.describe('publishing from a row, without the assistant', () => {

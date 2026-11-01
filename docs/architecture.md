@@ -134,7 +134,7 @@ bind them by `script_name`) and handles:
   It forwards `entry.published` to the agents queue when it is bound, and sends one coalesced purge message
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-  `asset.unpublished`, `content_type.published`, `release.published`,
+  `asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
   `environment_alias.changed`, `environment.deleted`).
 - **Cron** (`* * * * *`): due scheduled actions, the outbox relay sweep, bulk-job stall recovery,
   the restart of deleted-environment purges that stopped progressing, agent schedules
@@ -204,6 +204,13 @@ Served by the api (`packages/http/src/routes/media.ts`, `@contentworker/adapters
   upload; `POST /webhooks/stream` (mounted only with both `STREAM` and `STREAM_WEBHOOK_SECRET`)
   verifies `Webhook-Signature` and then re-reads the video from the Stream API; `POST …/assets/:id/video/refresh` does the same on
   demand.
+- **Deleting** an asset (`DELETE …/assets/:id`, refused with `409 asset_in_use` while entries link
+  to it) removes the row in one unit with an `asset.deleted` event; the engine then deletes the
+  bytes under the asset's key prefix and its Stream video, unless another environment of the space
+  still holds an asset with that id (an environment import shares files).
+
+The admin's **Assets** screen (`/assets`; `/media` redirects there) is the library over these
+routes: folders, filters, archive and delete. The api's `/media/*` byte route keeps its name.
 
 ## Data placement
 
@@ -256,9 +263,10 @@ way state changes: the HTTP API, MCP, and the queue consumers all call them.
 - `schema.ts` and `auth-schema.ts` (drizzle `sqlite-core`) mirror the hand-written migrations
   `migrations/0001_init.sql` (content), `0002_auth.sql` (the web app's users, sessions,
   passkeys, SCIM groups, admin audit), `0003_environment_purges.sql` (deleted environments
-  still being purged) and `0004_version_bodies.sql` (`entry_versions.body_key`, for superseded
-  version bodies moved to R2) and `0006_environment_promotions.sql` (promotions between
-  environments). Timestamps are epoch milliseconds; JSON is `TEXT`.
+  still being purged), `0004_version_bodies.sql` (`entry_versions.body_key`, for superseded
+  version bodies moved to R2), `0005_webhook_environments.sql` (`webhooks.environment_id`),
+  `0006_environment_promotions.sql` (promotions between environments) and `0007_dam.sql` (the
+  asset library's columns, `asset_folders` and `asset_versions`). Timestamps are epoch milliseconds; JSON is `TEXT`.
 - `exec.ts`: `directExec` and the `UnitOfWork` behind `withTransaction`: writes are buffered and
   sent as one `db.batch()`; `expectChanged()` adds a guard statement
   (`INSERT INTO _guard SELECT changes() = n`, with `CHECK (ok = 1)`) so a lost compare-and-set

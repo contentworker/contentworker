@@ -10,6 +10,7 @@ export * from './ai-json';
 export * from './ai-prompt';
 export * from './ai-provenance';
 export * from './app-extensions';
+export * from './asset-folders';
 export * from './assets';
 export * from './audit';
 export * from './auth';

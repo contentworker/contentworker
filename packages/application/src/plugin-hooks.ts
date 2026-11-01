@@ -12,6 +12,7 @@ import {
   scopeForCapability,
 } from '@contentworker/domain';
 import type {
+  AssetListQuery,
   BlobStore,
   HookDispatcher,
   HookName,
@@ -149,7 +150,7 @@ function buildCapabilities(
 
   if (has('assets:read')) {
     capabilities.assets = {
-      async list(query: { limit?: number; skip?: number } = {}) {
+      async list(query: AssetListQuery = {}) {
         return listAssets(ctx, scope, query);
       },
       async get(id: string) {

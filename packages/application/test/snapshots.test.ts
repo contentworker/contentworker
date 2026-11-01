@@ -9,7 +9,10 @@ import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentw
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  archiveAsset,
   cloneEnvironment,
+  createAsset,
+  createAssetFolder,
   createContentType,
   createEntry,
   createEnvironment,
@@ -18,8 +21,10 @@ import {
   createWorkflowDraft,
   defineWorkflow,
   exportSnapshot,
+  getAsset,
   getPublishedEntry,
   importSnapshot,
+  listAssetFolders,
   listPreviewEntries,
   listWorkflows,
   listWorkflowVersions,
@@ -488,6 +493,74 @@ describe('workflows in snapshots', () => {
     expect(report.skipped.join(' ')).toMatch(/workflow "W" version 1/);
     const [imported] = await listWorkflows(ctx, target);
     expect(imported).toMatchObject({ latestVersion: null, graph: good });
+  });
+});
+
+describe('asset folders in snapshots', () => {
+  const blob = {
+    getUploadUrl: async () => ({ url: 'https://upload', headers: {} }),
+    getDownloadUrl: async () => 'https://download',
+    delete: async () => {},
+  };
+  const upload = async (fileName: string, folderId?: string) =>
+    (
+      await createAsset(
+        ctx,
+        blob as never,
+        source,
+        { fileName, contentType: 'image/png' },
+        folderId ? { folderId } : {},
+      )
+    ).asset;
+
+  it('carries the folders with their ids and paths, so filed assets land in the same place', async () => {
+    const brand = await createAssetFolder(ctx, source, { name: 'Brand' });
+    const logos = await createAssetFolder(ctx, source, { name: 'Logos', parentId: brand.id });
+    const logo = await upload('logo.png', logos.id);
+
+    await cloneEnvironment(ctx, source, target);
+
+    expect(await listAssetFolders(ctx, target)).toEqual(await listAssetFolders(ctx, source));
+    expect((await getAsset(ctx, target, logo.id)).folderId).toBe(logos.id);
+  });
+
+  it('imports an archived asset as a draft, without its archive date', async () => {
+    const old = await upload('old.png');
+    await archiveAsset(ctx, source, old.id);
+
+    await cloneEnvironment(ctx, source, target);
+
+    const copied = await getAsset(ctx, target, old.id);
+    expect(copied.status).toBe('draft');
+    expect(copied).not.toHaveProperty('archivedAt');
+  });
+
+  it('still imports a snapshot written before folders, its assets at the root', async () => {
+    const brand = await createAssetFolder(ctx, source, { name: 'Brand' });
+    const filed = await upload('filed.png', brand.id);
+    const { assetFolders: _dropped, ...older } = await exportSnapshot(ctx, source);
+
+    await importSnapshot(ctx, target, older);
+
+    expect(await listAssetFolders(ctx, target)).toEqual([]);
+    const copied = await getAsset(ctx, target, filed.id);
+    expect(copied).not.toHaveProperty('folderId');
+  });
+
+  it('refuses, before writing, a folder whose parent the snapshot lacks', async () => {
+    const snapshot = await exportSnapshot(ctx, source);
+    const orphan = {
+      id: 'orphan',
+      name: 'Orphan',
+      parentId: 'missing',
+      path: '/missing/orphan/',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    await expect(
+      importSnapshot(ctx, target, { ...snapshot, assetFolders: [orphan] }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(await store.contentTypes.list(target)).toEqual([]);
   });
 });
 

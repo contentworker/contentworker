@@ -1,7 +1,7 @@
 import type { EnvironmentPurgeDueEvent, Scope } from '@contentworker/domain';
 import type { BlobStore } from '@contentworker/ports';
+import { allAssets } from './assets';
 import type { AppContext } from './context';
-import { allPages } from './paging';
 
 /**
  * Removing a deleted environment's rows.
@@ -110,11 +110,7 @@ async function deleteEnvironmentFiles(
   for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
     if (env.id === scope.environmentId) continue;
     const other = { spaceId: scope.spaceId, environmentId: env.id };
-    for (const asset of await allPages((skip, limit) =>
-      ctx.store.assets.list(other, { skip, limit }),
-    )) {
-      inUse.add(asset.id);
-    }
+    for (const asset of await allAssets(ctx, other)) inUse.add(asset.id);
   }
   await blob.deletePrefix?.(`${scope.spaceId}/${scope.environmentId}/`, (key) =>
     inUse.has(key.split('/')[2] ?? ''),

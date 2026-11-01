@@ -44,7 +44,8 @@ that bookmark.
 
 `GET …/export` produces portable JSON for one environment, `POST …/import` replays it, and
 `POST …/clone` does both, including across spaces (`packages/application/src/snapshots.ts`).
-Import and clone write the content model in the request and the entries and assets as bulk jobs
+Import and clone write the content model (and the asset folders) in the request and the entries
+and assets as bulk jobs
 (`snapshot-jobs.ts`); follow them at `…/bulk/jobs/:id`.
 Import replays domain operations (`createEntry`, `publishEntry`, …) rather than inserting rows,
 so validation, references, read models, the outbox and the search index end up as they would

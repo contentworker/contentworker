@@ -3,6 +3,8 @@ import {
   type AgentSchedule,
   type ApiKey,
   type Asset,
+  type AssetFolder,
+  assetKind,
   type Comment,
   type Concept,
   ConflictError,
@@ -27,6 +29,7 @@ import {
   type SpaceMember,
   type Task,
   type UniqueClaim,
+  ValidationError,
   versionGatesPublish,
   type Webhook,
   type WorkflowDefinition,
@@ -50,7 +53,10 @@ import type {
   AppExtension,
   AppExtensionRepo,
   ArchivableVersion,
+  AssetFilters,
+  AssetFolderRepo,
   AssetRepo,
+  AssetSortField,
   AuditRepo,
   AuthRepo,
   BlobStore,
@@ -95,6 +101,7 @@ import type {
   WorkflowRunRepo,
   WorkflowTaskRepo,
 } from '@contentworker/ports';
+import { DEFAULT_ASSET_SORT } from '@contentworker/ports';
 import {
   and,
   asc,
@@ -157,6 +164,22 @@ async function writeAll(x: Exec, queries: readonly Query[]): Promise<void> {
   } catch (err) {
     throw mapD1Error(err);
   }
+}
+
+/**
+ * Guard statements that abort the batch (TransactionConflictError) unless the asset folder exists
+ * in the scope when it runs: put them in front of a write that files something in it.
+ */
+function folderExists(x: Exec, scope: Scope, folderId: string): Query[] {
+  const f = schema.assetFolders;
+  return [
+    x.db
+      .insert(schema.guard)
+      .select(
+        sql`SELECT EXISTS (SELECT 1 FROM ${f} WHERE ${f.spaceId} = ${scope.spaceId} AND ${f.environmentId} = ${scope.environmentId} AND ${f.id} = ${folderId}) AS ok`,
+      ),
+    x.db.delete(schema.guard),
+  ];
 }
 
 /**
@@ -948,36 +971,132 @@ function makeEntryRepo(
   };
 }
 
+/** Largest asset page a listing returns, whatever the caller asks for. */
+const MAX_ASSET_PAGE = 1000;
+
+type AssetRow = typeof schema.assets.$inferSelect;
+
+const toAsset = (r: AssetRow): Asset => ({
+  id: r.id,
+  status: r.status,
+  file: r.file,
+  title: r.title,
+  description: r.description,
+  metadata: r.metadata,
+  version: r.version,
+  ...(r.folderId ? { folderId: r.folderId } : {}),
+  ...(r.r2Key ? { r2Key: r.r2Key } : {}),
+  ...(r.contentHash ? { contentHash: r.contentHash } : {}),
+  // 0: written by the pre-0007 code, which didn't record it.
+  ...(r.createdAt.getTime() > 0 ? { createdAt: r.createdAt.toISOString() } : {}),
+  ...(r.createdBy ? { createdBy: r.createdBy } : {}),
+  ...(r.archivedAt ? { archivedAt: r.archivedAt.toISOString() } : {}),
+  ...(r.rights ? { rights: r.rights } : {}),
+});
+
+/** A content type without parameters, lowercased: the `mime` column's form. */
+const mimeOf = (contentType: string): string =>
+  (contentType.split(';')[0] ?? '').trim().toLowerCase();
+
+/** The SQL a listing sorts by, and the same value read off a row for the next cursor. */
+function assetSortKey(field: AssetSortField): { expr: SQL; of: (r: AssetRow) => number } {
+  const t = schema.assets;
+  switch (field) {
+    case 'createdAt':
+      return { expr: sql`${t.createdAt}`, of: (r) => r.createdAt.getTime() };
+    case 'size':
+      // Unknown sizes (a video before the host reports one) sort as the smallest.
+      return { expr: sql`ifnull(${t.size}, -1)`, of: (r) => r.size ?? -1 };
+    default:
+      return { expr: sql`${t.updatedAt}`, of: (r) => r.updatedAt.getTime() };
+  }
+}
+
+/** Keyset cursor: the last row's sort value and id. Opaque to callers. */
+const encodeAssetCursor = (value: number, id: string): string =>
+  btoa(JSON.stringify([value, id])).replace(/=+$/, '');
+
+function decodeAssetCursor(cursor: string): [number, string] {
+  try {
+    const parsed: unknown = JSON.parse(atob(cursor));
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      typeof parsed[0] === 'number' &&
+      typeof parsed[1] === 'string'
+    ) {
+      return [parsed[0], parsed[1]];
+    }
+  } catch {
+    // Falls through to the refusal.
+  }
+  throw new ValidationError([{ field: 'cursor', message: 'cursor is not one this list returned' }]);
+}
+
+function assetFilterConditions(filters: AssetFilters): SQL[] {
+  const t = schema.assets;
+  const conds: SQL[] = [];
+  const status = filters.status;
+  if (status === undefined) conds.push(ne(t.status, 'archived'));
+  else if (status !== 'all') conds.push(eq(t.status, status));
+  if (filters.kind) conds.push(eq(t.kind, filters.kind));
+  if (filters.mime) {
+    const mime = filters.mime.trim().toLowerCase();
+    if (mime.endsWith('/*')) {
+      const family = mime.slice(0, -1);
+      conds.push(sql`substr(${t.mime}, 1, ${family.length}) = ${family}`);
+    } else {
+      conds.push(eq(t.mime, mime));
+    }
+  }
+  if (filters.tag) {
+    conds.push(
+      sql`EXISTS (SELECT 1 FROM json_each(${t.metadata}, '$.tags') WHERE value = ${filters.tag})`,
+    );
+  }
+  if (filters.folderId === null) conds.push(isNull(t.folderId));
+  else if (filters.folderId !== undefined) conds.push(eq(t.folderId, filters.folderId));
+  return conds;
+}
+
 function makeAssetRepo(x: Exec): AssetRepo {
   const db = x.db;
-  const upsertDraft = async (scope: Scope, asset: Asset) => {
-    const values = {
-      spaceId: scope.spaceId,
-      environmentId: scope.environmentId,
-      id: asset.id,
+  /** The asset's upsert, as one statement (a caller may put a guard in front of it). */
+  const upsertDraft = (scope: Scope, asset: Asset) => {
+    const columns = {
       status: asset.status,
       file: asset.file,
       title: asset.title,
       description: asset.description,
       metadata: asset.metadata,
       updatedAt: new Date(),
+      kind: assetKind(asset.file.contentType),
+      mime: mimeOf(asset.file.contentType),
+      size: asset.file.size ?? null,
+      width: asset.file.width ?? null,
+      height: asset.file.height ?? null,
+      contentHash: asset.contentHash ?? null,
+      folderId: asset.folderId ?? null,
+      version: asset.version ?? 1,
+      r2Key: asset.r2Key ?? null,
+      // An asset read off a row the pre-0007 code wrote has none: it gets one now.
+      createdAt: new Date(asset.createdAt ?? Date.now()),
+      createdBy: asset.createdBy ?? null,
+      archivedAt: asset.archivedAt ? new Date(asset.archivedAt) : null,
+      rights: asset.rights ?? null,
     };
-    await x.write(
-      db
-        .insert(schema.assets)
-        .values(values)
-        .onConflictDoUpdate({
-          target: [schema.assets.spaceId, schema.assets.environmentId, schema.assets.id],
-          set: {
-            status: values.status,
-            file: values.file,
-            title: values.title,
-            description: values.description,
-            metadata: values.metadata,
-            updatedAt: values.updatedAt,
-          },
-        }),
-    );
+    return db
+      .insert(schema.assets)
+      .values({
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        id: asset.id,
+        ...columns,
+      })
+      .onConflictDoUpdate({
+        target: [schema.assets.spaceId, schema.assets.environmentId, schema.assets.id],
+        set: columns,
+      });
   };
   return {
     async get(scope, id) {
@@ -985,16 +1104,7 @@ function makeAssetRepo(x: Exec): AssetRepo {
         .select()
         .from(schema.assets)
         .where(and(scopeFilter(schema.assets, scope), eq(schema.assets.id, id)));
-      return row
-        ? {
-            id: row.id,
-            status: row.status,
-            file: row.file,
-            title: row.title,
-            description: row.description,
-            metadata: row.metadata,
-          }
-        : null;
+      return row ? toAsset(row) : null;
     },
     async getMany(scope, ids) {
       const rows = await selectChunked(
@@ -1007,34 +1117,98 @@ function makeAssetRepo(x: Exec): AssetRepo {
         1,
         RESERVED,
       );
-      return rows.map((r) => ({
-        id: r.id,
-        status: r.status,
-        file: r.file,
-        title: r.title,
-        description: r.description,
-        metadata: r.metadata,
-      }));
+      return rows.map(toAsset);
     },
     async list(scope, query) {
+      const t = schema.assets;
+      const sort = query.sort ?? DEFAULT_ASSET_SORT;
+      const key = assetSortKey(sort.field);
+      const limit = Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE);
+      const conds = [scopeFilter(t, scope), ...assetFilterConditions(query.filters ?? {})];
+      if (query.cursor) {
+        const [value, id] = decodeAssetCursor(query.cursor);
+        // Row-value comparison: strictly past the last row in (sort value, id) order.
+        conds.push(
+          sort.direction === 'asc'
+            ? sql`(${key.expr}, ${t.id}) > (${value}, ${id})`
+            : sql`(${key.expr}, ${t.id}) < (${value}, ${id})`,
+        );
+      }
+      const dir = sort.direction === 'asc' ? sql`ASC` : sql`DESC`;
+      // One row past the page tells whether another page exists.
       const rows = await db
         .select()
-        .from(schema.assets)
-        .where(scopeFilter(schema.assets, scope))
-        .orderBy(desc(schema.assets.updatedAt))
-        .limit(query.limit ?? 100)
-        .offset(query.skip ?? 0);
-      return rows.map((r) => ({
-        id: r.id,
-        status: r.status,
-        file: r.file,
-        title: r.title,
-        description: r.description,
-        metadata: r.metadata,
-      }));
+        .from(t)
+        .where(and(...conds))
+        .orderBy(sql`${key.expr} ${dir}`, sql`${t.id} ${dir}`)
+        .limit(limit + 1);
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.map(toAsset),
+        ...(rows.length > limit && last
+          ? { nextCursor: encodeAssetCursor(key.of(last), last.id) }
+          : {}),
+      };
     },
-    create: upsertDraft,
-    save: upsertDraft,
+    async create(scope, asset) {
+      const write = upsertDraft(scope, asset);
+      if (!asset.folderId) {
+        await x.write(write);
+        return;
+      }
+      // Its folder must still exist when the batch runs: one deleted since the use-case read it
+      // aborts the create (TransactionConflictError) instead of filing the asset nowhere.
+      await writeAll(x, [...folderExists(x, scope, asset.folderId), write]);
+    },
+    async save(scope, asset) {
+      await x.write(upsertDraft(scope, asset));
+    },
+    async moveToFolder(scope, ids, folderId) {
+      if (ids.length === 0) return;
+      const t = schema.assets;
+      // The ids ride as ONE JSON parameter, so a move of any size is one statement under D1's
+      // 100-parameter cap.
+      const move = db
+        .update(t)
+        .set({ folderId, updatedAt: new Date() })
+        .where(
+          and(
+            scopeFilter(t, scope),
+            sql`${t.id} IN (SELECT value FROM json_each(${JSON.stringify([...new Set(ids)])}))`,
+          ),
+        );
+      if (folderId === null) {
+        await x.write(move);
+        return;
+      }
+      // The folder must still exist when the batch runs: one deleted since the use-case read it
+      // aborts the move (TransactionConflictError) instead of filing assets nowhere.
+      await writeAll(x, [...folderExists(x, scope, folderId), move]);
+    },
+    async delete(scope, id) {
+      const r = schema.references;
+      const v = schema.assetVersions;
+      // No entry may link to it when the batch runs: a link made since the use-case checked
+      // aborts the deletion (TransactionConflictError) rather than leaving it dangling.
+      await writeAll(x, [
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT NOT EXISTS (SELECT 1 FROM ${r} WHERE ${r.spaceId} = ${scope.spaceId} AND ${r.environmentId} = ${scope.environmentId} AND ${r.toId} = ${id}) AS ok`,
+          ),
+        db.delete(schema.guard),
+        db
+          .delete(schema.assetPublished)
+          .where(
+            and(scopeFilter(schema.assetPublished, scope), eq(schema.assetPublished.assetId, id)),
+          ),
+        db.delete(v).where(and(scopeFilter(v, scope), eq(v.assetId, id))),
+        db
+          .delete(schema.assets)
+          .where(and(scopeFilter(schema.assets, scope), eq(schema.assets.id, id))),
+      ]);
+    },
     async putPublished(scope, s) {
       const values = {
         spaceId: scope.spaceId,
@@ -1111,6 +1285,98 @@ function makeAssetRepo(x: Exec): AssetRepo {
         .limit(query.limit ?? 100)
         .offset(query.skip ?? 0);
       return rows.map(toPublishedAsset);
+    },
+  };
+}
+
+type AssetFolderRow = typeof schema.assetFolders.$inferSelect;
+const toAssetFolder = (r: AssetFolderRow): AssetFolder => ({
+  id: r.id,
+  name: r.name,
+  ...(r.parentId ? { parentId: r.parentId } : {}),
+  path: r.path,
+  createdAt: r.createdAt.toISOString(),
+  updatedAt: r.updatedAt.toISOString(),
+});
+
+function makeAssetFolderRepo(x: Exec): AssetFolderRepo {
+  const db = x.db;
+  const f = schema.assetFolders;
+  return {
+    async get(scope, id) {
+      const [row] = await db
+        .select()
+        .from(f)
+        .where(and(scopeFilter(f, scope), eq(f.id, id)));
+      return row ? toAssetFolder(row) : null;
+    },
+    async list(scope) {
+      const rows = await db.select().from(f).where(scopeFilter(f, scope)).orderBy(asc(f.path));
+      return rows.map(toAssetFolder);
+    },
+    async create(scope, folder) {
+      const insert = db.insert(f).values({
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        id: folder.id,
+        name: folder.name,
+        parentId: folder.parentId ?? '',
+        path: folder.path,
+        createdAt: new Date(folder.createdAt),
+        updatedAt: new Date(folder.updatedAt),
+      });
+      if (!folder.parentId) {
+        await x.write(insert);
+        return;
+      }
+      // The parent must still exist when the batch runs: one deleted since the use-case read it
+      // aborts the create (TransactionConflictError) rather than leaving an orphan.
+      await writeAll(x, [...folderExists(x, scope, folder.parentId), insert]);
+    },
+    async save(scope, folder, previousPath) {
+      const statements: Query[] = [];
+      if (folder.path !== previousPath) {
+        // The whole subtree in one statement (the folder's own row included): every path that
+        // starts with the old prefix gets the new one. Compared with substr, not LIKE, so nothing
+        // in a path is read as a wildcard.
+        statements.push(
+          db
+            .update(f)
+            .set({
+              path: sql`${folder.path} || substr(${f.path}, ${previousPath.length + 1})`,
+            })
+            .where(
+              and(
+                scopeFilter(f, scope),
+                sql`substr(${f.path}, 1, ${previousPath.length}) = ${previousPath}`,
+              ),
+            ),
+        );
+      }
+      statements.push(
+        db
+          .update(f)
+          .set({
+            name: folder.name,
+            parentId: folder.parentId ?? '',
+            updatedAt: new Date(folder.updatedAt),
+          })
+          .where(and(scopeFilter(f, scope), eq(f.id, folder.id))),
+      );
+      await writeAll(x, statements);
+    },
+    async delete(scope, id) {
+      const a = schema.assets;
+      // Empty when the batch runs: a subfolder or an asset filed since the use-case checked
+      // aborts the deletion (TransactionConflictError) rather than orphaning it.
+      await writeAll(x, [
+        db.insert(schema.guard).select(
+          sql`SELECT NOT EXISTS (SELECT 1 FROM ${f} WHERE ${f.spaceId} = ${scope.spaceId} AND ${f.environmentId} = ${scope.environmentId} AND ${f.parentId} = ${id})
+              AND NOT EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${scope.spaceId} AND ${a.environmentId} = ${scope.environmentId} AND ${a.folderId} = ${id}) AS ok`,
+        ),
+        db.delete(schema.guard),
+        db.delete(f).where(and(scopeFilter(f, scope), eq(f.id, id))),
+      ]);
     },
   };
 }
@@ -2716,6 +2982,8 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.entryPublished,
   schema.assets,
   schema.assetPublished,
+  schema.assetFolders,
+  schema.assetVersions,
   schema.references,
   schema.agentRuns,
   schema.aiActions,
@@ -4291,6 +4559,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     contentTypes: makeContentTypeRepo(x),
     entries: makeEntryRepo(x, scanLimit, versionBodies),
     assets: makeAssetRepo(x),
+    assetFolders: makeAssetFolderRepo(x),
     references: makeReferenceRepo(x),
     releases: makeReleaseRepo(x),
     promotions: makePromotionRepo(x),
@@ -4316,6 +4585,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     contentTypes: makeContentTypeRepo(x),
     entries: makeEntryRepo(x, scanLimit, options.versionBodies),
     assets: makeAssetRepo(x),
+    assetFolders: makeAssetFolderRepo(x),
     references: makeReferenceRepo(x),
     webhooks: makeWebhookRepo(x),
     auth: makeAuthRepo(x),

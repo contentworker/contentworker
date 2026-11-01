@@ -25,7 +25,9 @@ export function useQueryKeys() {
        * mutations must invalidate this alongside `entriesRoot`. */
       entryRoot: [...scope, 'entry'] as const,
       entry: (entryId: string) => [...scope, 'entry', entryId] as const,
+      /** Prefix for every asset list (the picker's and the library's filtered pages). */
       assets: [...scope, 'assets'] as const,
+      assetLibrary: (query: object) => [...scope, 'assets', 'library', query] as const,
       appExtensions: [...scope, 'app-extensions'] as const,
       agentRuns: [...scope, 'agent-runs'] as const,
     };
@@ -140,7 +142,8 @@ export function useAssetsQuery() {
   const keys = useQueryKeys();
   return useQuery({
     queryKey: keys.assets,
-    queryFn: () => client.listAssets(),
+    // A picker shows the newest page; the library pages on with a cursor.
+    queryFn: async () => (await client.listAssets({ limit: 100 })).items,
     meta: { silent: true },
     staleTime: 0,
   });

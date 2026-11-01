@@ -59,7 +59,7 @@ describe('seedDev', { timeout: 60_000 }, () => {
     expect(statuses).toContain('changed');
     expect(statuses).toContain('published');
 
-    expect((await listAssets(ctx, scope)).length).toBeGreaterThan(0);
+    expect((await listAssets(ctx, scope)).items.length).toBeGreaterThan(0);
     expect((await listReleases(ctx, scope)).map((r) => r.title)).toContain('Autumn launch');
     expect((await listWorkflows(ctx, scope)).length).toBe(2);
     expect((await listWebhooks(ctx, scope)).length).toBe(3);

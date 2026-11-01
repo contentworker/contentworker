@@ -107,7 +107,7 @@ export async function installStarter(
   const summary: StarterSummary = {
     contentTypes: (await listContentTypes(ctx, scope)).length,
     entries: (await listPreviewEntries(ctx, scope, { locale: run.locale, limit: 1000 })).length,
-    assets: deps.blob ? (await listAssets(ctx, scope, { limit: 1000 })).length : 0,
+    assets: deps.blob ? (await listAssets(ctx, scope, { limit: 1000 })).items.length : 0,
     tags: taxonomy.tagIds.length,
     concepts: taxonomy.conceptIds.length,
     releases: releaseCount,

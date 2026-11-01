@@ -2,7 +2,11 @@ import type {
   AgentReview,
   AgentReviewStatus,
   Asset,
+  AssetFolder,
+  AssetKind,
   AssetMetadata,
+  AssetStatus,
+  AssetUsage,
   Comment,
   Concept,
   ConceptScheme,
@@ -813,9 +817,67 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The response's JSON body, when it had one: `{ error: { code, message, … } }`. */
+    readonly body?: unknown,
   ) {
     super(message);
   }
+
+  /** The API's stable error code (`asset_in_use`, `conflict`, …), when the body carried one. */
+  get code(): string | undefined {
+    return (this.body as { error?: { code?: string } } | undefined)?.error?.code;
+  }
+}
+
+/** The links that hold an asset, as a refused delete reports them: the first few, and how many. */
+export interface AssetInUse {
+  /** The first links (the API sends at most 50), each with its entry's type and title. */
+  readonly usage: readonly AssetUsage[];
+  /** Every link, counted, so the screen can say how many it isn't showing. */
+  readonly total: number;
+}
+
+/**
+ * Why an asset couldn't be deleted: the entries that still link to it (409 `asset_in_use`), so the
+ * screen can show where it is used without fetching each entry. Null for any other failure.
+ */
+export function assetUsageOf(err: unknown): AssetInUse | null {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'asset_in_use') return null;
+  const body = (err.body as { error?: { usage?: unknown; total?: unknown } }).error;
+  const usage = Array.isArray(body?.usage) ? (body.usage as AssetUsage[]) : [];
+  const total = typeof body?.total === 'number' ? body.total : usage.length;
+  return { usage, total };
+}
+
+/** What the asset library can be narrowed and ordered by (the API's `GET …/assets` query). */
+export interface AssetListQuery {
+  readonly kind?: AssetKind;
+  /** Exact (`image/png`) or a family (`image/*`). */
+  readonly mime?: string;
+  readonly tag?: string;
+  /** A folder id, or `root` for assets in no folder; absent: every folder. */
+  readonly folder?: string;
+  /** Absent hides archived assets. */
+  readonly status?: AssetStatus | 'all';
+  readonly sort?: 'updatedAt' | 'createdAt' | 'size';
+  readonly order?: 'asc' | 'desc';
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** One page of assets; pass `nextCursor` back as `cursor` for the next. */
+export interface AssetPage {
+  readonly items: Asset[];
+  readonly nextCursor?: string;
+}
+
+/** The query string for an {@link AssetListQuery}, without the empty parts. */
+export function assetQueryParams(query: AssetListQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  }
+  return params;
 }
 
 /**
@@ -845,7 +907,13 @@ export function createManagementClient(
     if (!res.ok) {
       if (res.status === 401) options.onUnauthorized?.();
       const text = await res.text().catch(() => '');
-      throw new ApiError(res.status, `${method} ${url} → ${res.status} ${text}`);
+      let body: unknown;
+      try {
+        body = text ? JSON.parse(text) : undefined;
+      } catch {
+        body = undefined;
+      }
+      throw new ApiError(res.status, `${method} ${url} → ${res.status} ${text}`, body);
     }
     return (res.status === 204 ? undefined : await res.json()) as T;
   }
@@ -1057,11 +1125,17 @@ export function createManagementClient(
     },
 
     // --- assets ----------------------------------------------------------
-    async listAssets(): Promise<Asset[]> {
-      const r = await req<{ items: Asset[] }>('GET', `${mgmt}/assets`);
-      return r.items;
+    /** One page of the asset library, filtered and sorted server-side. */
+    listAssets(query: AssetListQuery = {}): Promise<AssetPage> {
+      const qs = assetQueryParams(query).toString();
+      return req('GET', `${mgmt}/assets${qs ? `?${qs}` : ''}`);
     },
-    createAsset(input: { fileName: string; contentType: string; title?: string }): Promise<{
+    createAsset(input: {
+      fileName: string;
+      contentType: string;
+      title?: string;
+      folderId?: string;
+    }): Promise<{
       asset: Asset;
       upload: { url: string; headers: Record<string, string> };
     }> {
@@ -1070,7 +1144,44 @@ export function createManagementClient(
         fileName: input.fileName,
         contentType: input.contentType,
         title,
+        ...(input.folderId ? { folderId: input.folderId } : {}),
       });
+    },
+    /** Files assets in a folder; `null` takes them back to the root. */
+    moveAssets(ids: readonly string[], folderId: string | null): Promise<{ moved: number }> {
+      return req('POST', `${mgmt}/assets/move`, { ids, folderId });
+    },
+    /** Takes an asset out of Delivery and out of the library's default view. */
+    archiveAsset(id: string): Promise<Asset> {
+      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/archive`);
+    },
+    /** Brings an archived asset back as a draft. */
+    restoreAsset(id: string): Promise<Asset> {
+      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/restore`);
+    },
+    /**
+     * Deletes an asset and its files. Refused (409 `asset_in_use`, read with
+     * {@link assetUsageOf}) while an entry links to it.
+     */
+    deleteAsset(id: string): Promise<void> {
+      return req('DELETE', `${mgmt}/assets/${encodeURIComponent(id)}`);
+    },
+    async listAssetFolders(): Promise<AssetFolder[]> {
+      const r = await req<{ items: AssetFolder[] }>('GET', `${mgmt}/asset-folders`);
+      return r.items;
+    },
+    createAssetFolder(input: { name: string; parentId?: string }): Promise<AssetFolder> {
+      return req('POST', `${mgmt}/asset-folders`, input);
+    },
+    updateAssetFolder(
+      id: string,
+      patch: { name?: string; parentId?: string | null },
+    ): Promise<AssetFolder> {
+      return req('PATCH', `${mgmt}/asset-folders/${encodeURIComponent(id)}`, patch);
+    },
+    /** Deletes an empty folder (409 while anything is in it). */
+    deleteAssetFolder(id: string): Promise<void> {
+      return req('DELETE', `${mgmt}/asset-folders/${encodeURIComponent(id)}`);
     },
     /** Creates a draft video asset with a one-time direct upload to the video host. */
     createVideoAsset(input: { fileName: string; contentType: string; title?: string }): Promise<{
@@ -1435,11 +1546,12 @@ export function createManagementClient(
      * Full upload: create the draft asset (gets a presigned PUT), upload the
      * bytes directly to storage, then publish. Returns the published asset.
      */
-    async uploadAsset(file: File): Promise<Asset> {
+    async uploadAsset(file: File, opts: { folderId?: string } = {}): Promise<Asset> {
       const { asset, upload } = await this.createAsset({
         fileName: file.name,
         contentType: file.type || 'application/octet-stream',
         title: file.name,
+        ...(opts.folderId ? { folderId: opts.folderId } : {}),
       });
       const put = await fetchImpl(upload.url, {
         method: 'PUT',

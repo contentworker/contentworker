@@ -101,7 +101,7 @@ export async function seedAssets(
 ): Promise<string[]> {
   const { ctx, scope, locale, hasDe } = run;
 
-  const existing = await listAssets(ctx, scope, { limit: files.length + 10 });
+  const existing = (await listAssets(ctx, scope, { limit: files.length + 10 })).items;
   if (existing.length > 0) {
     return existing.filter((a) => a.status === 'published').map((a) => a.id);
   }

@@ -6,6 +6,8 @@ import {
   applyEntryTags,
   approvePluginCapabilities,
   approvePromotion,
+  archiveAsset,
+  auditActor,
   auditEntry,
   autofillField,
   autoTagAsset,
@@ -22,6 +24,7 @@ import {
   createApiKey,
   createAppExtension,
   createAsset,
+  createAssetFolder,
   createConcept,
   createContentType,
   createEntry,
@@ -40,6 +43,8 @@ import {
   deleteAgentSchedule,
   deleteAIAction,
   deleteAppExtension,
+  deleteAsset,
+  deleteAssetFolder,
   deleteComment,
   deleteConcept,
   deleteEnvironment,
@@ -88,6 +93,7 @@ import {
   listAIActions,
   listApiKeys,
   listAppExtensions,
+  listAssetFolders,
   listAssets,
   listAuditLog,
   listBulkJobs,
@@ -114,6 +120,7 @@ import {
   listWorkflows,
   mergeEnvironments,
   moderateEntry,
+  moveAssets,
   parseImageTransform,
   publishAsset,
   publishContentType,
@@ -129,6 +136,7 @@ import {
   requestPromotion,
   requestReindex,
   resolveTask,
+  restoreAsset,
   restoreEntry,
   restoreVersion,
   revokeApiKey,
@@ -156,6 +164,7 @@ import {
   unpublishAsset,
   unpublishEntry,
   updateAgentSchedule,
+  updateAssetFolder,
   updateEntry,
   updateRole,
   updateWebhook,
@@ -196,13 +205,15 @@ import {
 } from '../auth';
 import { doc } from '../docs/openapi';
 import * as docs from '../docs/schemas';
-import { clampCount, MAX_PAGE_LIMIT } from '../query';
+import { clampCount, MAX_PAGE_LIMIT, parseAssetListQuery } from '../query';
 import {
   agentScheduleBody,
   agentSchedulePatchBody,
   altTextBody,
   appExtensionBody,
   applyTagsBody,
+  assetFolderBody,
+  assetFolderPatchBody,
   assetMetadataBody,
   auditBody,
   autofillBody,
@@ -233,6 +244,7 @@ import {
   installPluginBody,
   installPluginFromUrlBody,
   mergeBody,
+  moveAssetsBody,
   parseBody,
   pluginCapabilitiesBody,
   pluginEnabledBody,
@@ -1705,13 +1717,28 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
 
   // --- assets -------------------------------------------------------------
-  app.get(`${BASE}/assets`, requireScope(SCOPES.previewRead), async (c) => {
-    const limit = c.req.query('limit');
-    const items = await listAssets(ctx, scopeOf(c), {
-      limit: clampCount(limit, MAX_PAGE_LIMIT, { min: 1 }),
-    });
-    return c.json({ items });
-  });
+  app.get(
+    `${BASE}/assets`,
+    doc('Assets', 'List the asset library (filtered, sorted, cursor-paged)', {
+      ok: docs.assetPage,
+      description:
+        'Archived assets are left out unless status=archived or status=all. Page with the ' +
+        "response's nextCursor; a cursor is valid only with the same filters and sort.",
+      query: {
+        kind: 'image | video | audio | document | other',
+        mime: 'An exact content type (image/png) or a family (image/*)',
+        tag: 'A taxonomy tag id',
+        folder: 'A folder id, or root for assets in no folder',
+        status: 'draft | published | archived | all',
+        sort: 'updatedAt (default) | createdAt | size',
+        order: 'desc (default) | asc',
+        limit: `Page size, 1..${MAX_PAGE_LIMIT}`,
+        cursor: 'nextCursor from the previous page',
+      },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await listAssets(ctx, scopeOf(c), parseAssetListQuery(c.req.query()))),
+  );
   app.post(
     `${BASE}/assets`,
     doc('Assets', 'Create an asset (presigned direct upload)', {
@@ -1722,9 +1749,25 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
-      const created = await createAsset(ctx, blob, scopeOf(c), await parseBody(c, createAssetBody));
+      const { folderId, ...input } = await parseBody(c, createAssetBody);
+      const created = await createAsset(ctx, blob, scopeOf(c), input, {
+        createdBy: auditActor(c.get('principal')),
+        ...(folderId ? { folderId } : {}),
+      });
       return c.json(created, 201);
     },
+  );
+  app.post(
+    `${BASE}/assets/move`,
+    doc('Assets', 'File assets in a folder', {
+      body: moveAssetsBody,
+      ok: docs.assetMoved,
+      description:
+        'One statement whatever the count (up to 500 ids). folderId null takes them to the root. ' +
+        'Ids that are not assets here are skipped; an unknown folder is a 404.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => c.json(await moveAssets(ctx, scopeOf(c), await parseBody(c, moveAssetsBody))),
   );
   app.post(
     `${BASE}/assets/videos`,
@@ -1799,6 +1842,99 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.delete(`${BASE}/assets/:id/published`, requireScope(SCOPES.contentPublish), async (c) =>
     c.json(await unpublishAsset(ctx, scopeOf(c), c.req.param('id'))),
+  );
+  app.post(
+    `${BASE}/assets/:id/archive`,
+    doc('Assets', 'Archive an asset', {
+      ok: docs.asset,
+      description:
+        'Takes it out of Delivery at once when published, and out of the default listing. ' +
+        'Idempotent. Requires content:publish, as unpublishing does.',
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) => c.json(await archiveAsset(ctx, scopeOf(c), c.req.param('id'))),
+  );
+  app.post(
+    `${BASE}/assets/:id/restore`,
+    doc('Assets', 'Restore an archived asset', {
+      ok: docs.asset,
+      description: 'Comes back as a draft; publishing it again is a separate action. Idempotent.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => c.json(await restoreAsset(ctx, scopeOf(c), c.req.param('id'))),
+  );
+  app.delete(
+    `${BASE}/assets/:id`,
+    doc('Assets', 'Delete an asset permanently', {
+      status: 204,
+      description:
+        'Irreversible. Refuses with 409 asset_in_use while entries link to it (archive it ' +
+        "instead): error.usage lists the first 50 links, each with the entry's contentTypeApiId " +
+        'and entryTitle, and error.total counts them all. Its files are removed in the background. ' +
+        'Requires content:publish, as deleting an entry permanently does.',
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) => {
+      await deleteAsset(ctx, scopeOf(c), c.req.param('id'));
+      return c.body(null, 204);
+    },
+  );
+
+  // --- asset folders ------------------------------------------------------
+  app.get(
+    `${BASE}/asset-folders`,
+    doc('Assets', 'List asset folders', {
+      ok: docs.assetFolderList,
+      description: 'Every folder, in path order (a parent before its children).',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listAssetFolders(ctx, scopeOf(c)) }),
+  );
+  app.post(
+    `${BASE}/asset-folders`,
+    doc('Assets', 'Create an asset folder', {
+      body: assetFolderBody,
+      ok: docs.assetFolder,
+      status: 201,
+      description: 'A sibling with the same name is a 409. Folders nest up to 16 deep.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, assetFolderBody);
+      return c.json(await createAssetFolder(ctx, scopeOf(c), body), 201);
+    },
+  );
+  app.patch(
+    `${BASE}/asset-folders/:id`,
+    doc('Assets', 'Rename or move an asset folder', {
+      body: assetFolderPatchBody,
+      ok: docs.assetFolder,
+      description:
+        'A move takes the whole subtree along; never into the folder itself or below it. ' +
+        'parentId null moves it to the root.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) =>
+      c.json(
+        await updateAssetFolder(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, assetFolderPatchBody),
+        ),
+      ),
+  );
+  app.delete(
+    `${BASE}/asset-folders/:id`,
+    doc('Assets', 'Delete an empty asset folder', {
+      status: 204,
+      description: 'A folder with subfolders or assets in it is a 409: move them out first.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      await deleteAssetFolder(ctx, scopeOf(c), c.req.param('id'));
+      return c.body(null, 204);
+    },
   );
 
   // --- AI Actions (templated, governed AI operations) --------------------

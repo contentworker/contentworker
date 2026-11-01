@@ -10,8 +10,8 @@ restore points for the database are in [Backup & restore](./backup-and-restore.m
 and `POST …/clone` does both, including across spaces (`packages/application/src/snapshots.ts`
 and `snapshot-jobs.ts`).
 
-A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows, and
-asset **metadata**. It deliberately never carries **credentials** (API keys, OAuth clients and
+A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows,
+asset **metadata** and the asset folders. It deliberately never carries **credentials** (API keys, OAuth clients and
 grants, preview tokens, webhook signing secrets), because a snapshot is a file people move around.
 Asset **binaries** stay in the blob store: a restore into a space pointing at the same bucket
 works, and one pointing elsewhere has dangling files, which is visible rather than silent. The
@@ -38,12 +38,16 @@ What an import preserves:
   version's fields too: the import publishes those, then applies the draft, so the copy has the
   same live content and the same pending edits. Snapshots from before this carry no live version,
   and their changed entries land as drafts.
-- **Assets** as records, published as they were; their files stay where they are.
+- **Assets** as records, published as they were; their files stay where they are. An archived
+  asset arrives as a draft.
+- **Asset folders**, with their ids and paths, so each asset lands in the same folder. A snapshot
+  from before folders carries none, and its assets land at the library root.
 
 ### Checks before any write
 
-Every entry is validated against the snapshot's content model and the target space's locales, and
-every link in what will be published must point at an entry or asset the snapshot carries. Any
+Every entry is validated against the snapshot's content model and the target space's locales,
+every link in what will be published must point at an entry or asset the snapshot carries, and
+every asset folder needs a valid name and a parent the snapshot carries. Any
 problem refuses the import with a `422` that lists them (up to 50, each naming its entry) and
 writes nothing, so the target stays empty and a corrected retry works. `?dryRun=true` runs the same
 checks and answers `200`. A failure the checks can't foresee (a plugin hook refusing an entry, an
@@ -52,8 +56,8 @@ infrastructure error) is reported per entry in the job's report.
 ### Import and clone run as jobs
 
 Replaying every entry through the use-cases is far more than one request can hold for an
-environment of any size. After the checks, the import request writes the content model, taxonomy
-and workflows (small, and everything else depends on them) and answers `202` with
+environment of any size. After the checks, the import request writes the content model, asset
+folders, taxonomy and workflows (small, and everything else depends on them) and answers `202` with
 `{ report, job, publishJobId }`. The assets and entries are staged in the blob store in chunks of
 100 before the model is written (so a staging failure leaves the target empty and a retry works),
 and written by bulk jobs, with progress at `…/bulk/jobs/:id` and per-item failures at

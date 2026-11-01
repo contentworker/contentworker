@@ -6,6 +6,7 @@ import {
   applyEntryTags,
   approvePluginCapabilities,
   approvePromotion,
+  archiveAsset,
   assignRolePreset,
   auditEntry,
   autofillField,
@@ -20,6 +21,7 @@ import {
   createAgentSchedule,
   createAIAction,
   createAppExtension,
+  createAssetFolder,
   createConcept,
   createContentType,
   createEntry,
@@ -36,6 +38,8 @@ import {
   decideWorkflowTask,
   deleteAgentSchedule,
   deleteAppExtension,
+  deleteAsset,
+  deleteAssetFolder,
   deleteEnvironment,
   deleteEnvironmentAlias,
   deleteFunction,
@@ -70,6 +74,7 @@ import {
   listAgentSchedules,
   listAIActions,
   listAppExtensions,
+  listAssetFolders,
   listAssets,
   listAuditLog,
   listBulkJobs,
@@ -97,8 +102,10 @@ import {
   listWorkflows,
   listWorkflowTasks,
   listWorkflowVersions,
+  MAX_ASSET_MOVE,
   mergeEnvironments,
   moderateEntry,
+  moveAssets,
   publishContentType,
   publishEntry,
   publishRelease,
@@ -112,6 +119,7 @@ import {
   resolveEnvironment,
   resolveTask,
   resolveWritableEnvironment,
+  restoreAsset,
   restoreEntry,
   restoreVersion,
   revokeConnectedApp,
@@ -138,6 +146,7 @@ import {
   trashEntry,
   unpublishEntry,
   updateAgentSchedule,
+  updateAssetFolder,
   updateEntry,
   updateRole,
   updateWebhook,
@@ -147,6 +156,8 @@ import {
 } from '@contentworker/application';
 import { listDocs, readDoc, searchDocs } from '@contentworker/docs';
 import {
+  ASSET_KINDS,
+  AssetInUseError,
   assertQueryRespectsFieldRules,
   assertWritableFields,
   authorize,
@@ -3106,14 +3117,190 @@ export function buildServer(
   server.registerTool(
     'assets_list',
     {
-      description: 'List assets (media library) in a space/environment.',
+      description:
+        'List the asset library in a space/environment, one page at a time: filter by kind, ' +
+        'content type, tag, folder and status (archived assets are left out unless asked for), ' +
+        'sort, and pass nextCursor back as cursor for the next page.',
       inputSchema: toolSchema('assets_list', () =>
-        z.object({ limit: z.number().int().positive().optional(), ...scopeArgs }),
+        z.object({
+          limit: z.number().int().positive().max(100).optional(),
+          cursor: z.string().optional().describe('nextCursor from the previous page'),
+          kind: z.enum(ASSET_KINDS as unknown as [string, ...string[]]).optional(),
+          mime: z.string().max(256).optional().describe('exact (image/png) or family (image/*)'),
+          tag: z.string().max(128).optional().describe('taxonomy tag id'),
+          folderId: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('assets filed in this folder; null for those in no folder'),
+          status: z.enum(['draft', 'published', 'archived', 'all']).optional(),
+          sort: z.enum(['updatedAt', 'createdAt', 'size']).optional(),
+          order: z.enum(['asc', 'desc']).optional(),
+          ...scopeArgs,
+        }),
       ),
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
-      return ok(await listAssets(ctx, scopeOf(args), { limit: args.limit }));
+      return ok(
+        await listAssets(ctx, scopeOf(args), {
+          ...(args.limit ? { limit: args.limit } : {}),
+          ...(args.cursor ? { cursor: args.cursor } : {}),
+          filters: {
+            ...(args.kind ? { kind: args.kind as (typeof ASSET_KINDS)[number] } : {}),
+            ...(args.mime ? { mime: args.mime } : {}),
+            ...(args.tag ? { tag: args.tag } : {}),
+            ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
+            ...(args.status ? { status: args.status } : {}),
+          },
+          ...(args.sort || args.order
+            ? { sort: { field: args.sort ?? 'updatedAt', direction: args.order ?? 'desc' } }
+            : {}),
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'assets_move',
+    {
+      description: `File assets in a folder (folderId null: the library root), up to ${MAX_ASSET_MOVE} at once. Ids that are not assets here are skipped.`,
+      inputSchema: toolSchema('assets_move', () =>
+        z.object({
+          ids: z.array(z.string()).min(1).max(MAX_ASSET_MOVE),
+          folderId: z.string().nullable(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      return ok(await moveAssets(ctx, scopeOf(args), { ids: args.ids, folderId: args.folderId }));
+    },
+  );
+
+  server.registerTool(
+    'asset_archive',
+    {
+      description:
+        'Archive an asset: it leaves Delivery at once when published and is hidden from the ' +
+        'default listing until restored. Idempotent.',
+      inputSchema: toolSchema('asset_archive', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      return ok(await archiveAsset(ctx, scopeOf(args), args.id));
+    },
+  );
+
+  server.registerTool(
+    'asset_restore',
+    {
+      description: 'Restore an archived asset as a draft (publish it again separately).',
+      inputSchema: toolSchema('asset_restore', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      return ok(await restoreAsset(ctx, scopeOf(args), args.id));
+    },
+  );
+
+  server.registerTool(
+    'asset_delete',
+    {
+      description:
+        'Delete an asset permanently, with its files. Refused while entries link to it: the ' +
+        'result then lists those links (usage); archive it instead, or remove the links first.',
+      inputSchema: toolSchema('asset_delete', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      try {
+        await deleteAsset(ctx, scopeOf(args), args.id);
+      } catch (err) {
+        if (!(err instanceof AssetInUseError)) throw err;
+        return {
+          ...ok({
+            error: { code: err.code, message: err.message, usage: err.usage, total: err.total },
+          }),
+          isError: true,
+        };
+      }
+      return ok({ deleted: args.id });
+    },
+  );
+
+  server.registerTool(
+    'asset_folders_list',
+    {
+      description: 'List the asset library’s folders, a parent before its children.',
+      inputSchema: toolSchema('asset_folders_list', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await listAssetFolders(ctx, scopeOf(args)));
+    },
+  );
+
+  server.registerTool(
+    'asset_folders_create',
+    {
+      description:
+        'Create an asset folder at the root or inside parentId. Sibling names are unique.',
+      inputSchema: toolSchema('asset_folders_create', () =>
+        z.object({
+          name: z.string().min(1).max(128),
+          parentId: z.string().nullable().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      return ok(
+        await createAssetFolder(ctx, scopeOf(args), { name: args.name, parentId: args.parentId }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'asset_folders_update',
+    {
+      description:
+        'Rename an asset folder and/or move it (parentId null: to the root). A move takes its ' +
+        'subfolders along.',
+      inputSchema: toolSchema('asset_folders_update', () =>
+        z.object({
+          id: z.string(),
+          name: z.string().min(1).max(128).optional(),
+          parentId: z.string().nullable().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      return ok(
+        await updateAssetFolder(ctx, scopeOf(args), args.id, {
+          ...(args.name !== undefined ? { name: args.name } : {}),
+          ...(args.parentId !== undefined ? { parentId: args.parentId } : {}),
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'asset_folders_delete',
+    {
+      description: 'Delete an empty asset folder (one with subfolders or assets is refused).',
+      inputSchema: toolSchema('asset_folders_delete', () =>
+        z.object({ id: z.string(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      await deleteAssetFolder(ctx, scopeOf(args), args.id);
+      return ok({ deleted: args.id });
     },
   );
 

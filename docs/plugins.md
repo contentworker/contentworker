@@ -205,7 +205,7 @@ Capability methods. Each one calls the same application use-case the HTTP API ca
 | `content:read`    | `caps.content.list(query)`, `caps.content.get(id)`, `caps.content.listPublished(query)` | yes      |
 | `content:write`   | `caps.content.create(input)`, `caps.content.update(id, fields)`                         | yes      |
 | `content:publish` | `caps.content.publish(id)`                                                              | yes      |
-| `assets:read`     | `caps.assets.list(query)`, `caps.assets.get(id)`                                        | yes      |
+| `assets:read`     | `caps.assets.list(query)` → `{ items, nextCursor? }`, `caps.assets.get(id)`             | yes      |
 | `assets:write`    | `caps.assets.create(…)`                                                                 | not yet  |
 | `taxonomy:read`   | `caps.taxonomy.listTags()`                                                              | yes      |
 | `taxonomy:write`  | `caps.taxonomy.createTag({ name })`                                                     | yes      |

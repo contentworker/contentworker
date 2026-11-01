@@ -207,6 +207,12 @@ read paths), 10 GB per database.
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
 | `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost              |
 
+`0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
+`height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
+`archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)
+and two tables: `asset_folders` (materialized `path`, sibling names unique) and `asset_versions`
+(the files an asset had before its current one).
+
 `0005_webhook_environments.sql` adds `webhooks.environment_id` (the one environment a webhook
 receives events from; `NULL`, as every existing row stays, means every environment) and the
 `webhooks_by_environment` index on `(space_id, environment_id)` (see

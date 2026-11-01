@@ -83,7 +83,7 @@ export const ASSISTANT_TOOLS = {
   comments_list: read('Read comments'),
   tasks_list: read('List tasks'),
   taxonomy_list_tags: read('List tags'),
-  assets_list: read('List media'),
+  assets_list: read('List assets'),
   workflow_task_list: read('List review tasks'),
 
   entries_create: edit('Create an entry', 'Created'),

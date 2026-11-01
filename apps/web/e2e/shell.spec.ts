@@ -28,6 +28,12 @@ test('a CMS screen is the real screen, not a placeholder', async ({ page }) => {
   await expect(page.getByText('This screen is being ported')).toHaveCount(0);
 });
 
+test('the old /media address goes to Assets, query and all', async ({ page }) => {
+  await open(page, '/media?view=list');
+  await expect(page).toHaveURL(/\/assets\?view=list$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Assets' })).toBeVisible();
+});
+
 /** The sidebar's drawn width, in CSS px. */
 const sidebarWidth = (page: Page) =>
   page
@@ -47,7 +53,7 @@ test('wider screens get the sidebar, grouped, with the deployment pages for admi
     'Approvals',
     'Releases',
     'Workflows',
-    'Media',
+    'Assets',
     'Access',
     'Workspace',
     'People and sign-in',
@@ -77,7 +83,7 @@ test('the sidebar collapses to a rail, and stays as it was left', async ({ page 
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   // A rail keeps every page by name for screen readers.
   await expect(
-    page.getByRole('navigation', { name: 'Main' }).first().getByRole('link', { name: 'Media' }),
+    page.getByRole('navigation', { name: 'Main' }).first().getByRole('link', { name: 'Assets' }),
   ).toBeAttached();
   await open(page, '/content');
   expect(await sidebarWidth(page), 'collapsed before paint after a reload').toBe(52);
@@ -99,9 +105,9 @@ test('an iPad upright has the rail beside the page, opening over it', async ({ p
   await page
     .getByRole('navigation', { name: 'Main' })
     .first()
-    .getByRole('link', { name: 'Media' })
+    .getByRole('link', { name: 'Assets' })
     .tap();
-  await expect(page).toHaveURL(/\/media$/);
+  await expect(page).toHaveURL(/\/assets$/);
   await expect.poll(() => sidebarWidth(page)).toBe(52);
 });
 
@@ -128,11 +134,11 @@ test('More holds the other pages and closes on navigation', async ({ page }, inf
   await open(page, '/dashboard');
   await page.getByRole('button', { name: 'More' }).tap();
   const sheet = page.getByRole('dialog');
-  await sheet.getByRole('link', { name: 'Media' }).tap();
-  await expect(page).toHaveURL(/\/media$/);
+  await sheet.getByRole('link', { name: 'Assets' }).tap();
+  await expect(page).toHaveURL(/\/assets$/);
   await expect(sheet).toBeHidden();
   // The route announcer says where the navigation landed.
-  await expect(page.locator('p[aria-live="polite"][aria-atomic="true"]')).toHaveText(/Media/);
+  await expect(page.locator('p[aria-live="polite"][aria-atomic="true"]')).toHaveText(/Assets/);
 });
 
 test('controls take a 44px tap on touch screens', async ({ page }, info) => {

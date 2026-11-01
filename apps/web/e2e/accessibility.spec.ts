@@ -5,6 +5,8 @@ import {
   createChanged,
   openCms,
   PROPOSAL_TARGET,
+  seedAsset,
+  seedAssetFolder,
   seedCms,
   useCmsScope,
   withoutAssistant,
@@ -56,7 +58,6 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['releases', '/releases'],
   ['workflows', '/workflows'],
   ['taxonomy', '/taxonomy'],
-  ['media', '/media'],
   ['settings: space access', '/settings/team'],
   ['settings: api keys', '/settings/api-keys'],
   ['settings: connected apps', '/settings/connected-apps'],
@@ -89,6 +90,35 @@ for (const [name, path] of ROUTES) {
     await scan(page, testInfo);
   });
 }
+
+// With assets and a folder in it, so the scan sees cards, the tree's nesting, the list's rows and
+// the bulk bar, not an empty library.
+test('the asset library, its list view and its bulk bar have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const stamp = Date.now();
+  const folderId = await seedAssetFolder(request, `A11y ${stamp}`);
+  await seedAsset(request, `A11y ${stamp} filed`, { folderId });
+  await seedAsset(request, `A11y ${stamp} root`, { publish: true });
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await expect(library.getByRole('button', { name: `Open “A11y ${stamp} root”` })).toBeVisible();
+  await expect(
+    page
+      .getByRole('navigation', { name: 'Folders' })
+      .getByRole('button', { name: `A11y ${stamp}`, exact: true }),
+  ).toBeVisible();
+  await scan(page, testInfo);
+
+  await library.getByRole('radio', { name: 'List' }).click();
+  await expect(library.getByRole('table')).toBeVisible();
+  await scan(page, testInfo);
+
+  await library.getByRole('checkbox', { name: `Select “A11y ${stamp} root”` }).check();
+  await expect(page.getByRole('group', { name: 'Selected assets' })).toBeVisible();
+  await scan(page, testInfo);
+});
 
 test('the content type dialog has no accessibility violations', async ({ page }, testInfo) => {
   await openCms(page, '/content');

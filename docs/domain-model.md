@@ -327,20 +327,54 @@ interface LocaleConfig {
 interface Asset {
   id: string;
   status: 'draft' | 'published' | 'archived';
-  file: AssetFile; // { url, fileName, contentType, size?, width?, height? }
+  file: AssetFile; // { url, fileName, contentType, size?, width?, height?, video? }
   title: LocalizedValue;
   description: LocalizedValue;
   metadata: AssetMetadata; // { altText: LocalizedValue, tags: string[], focalPoint?: { x, y }, fields? }
+  folderId?: string; // absent at the library root
+  version?: number; // 1, then +1 per file replacement (absent reads as 1)
+  r2Key?: string; // where the bytes live; absent for a hosted video
+  contentHash?: string;
+  createdAt?: string;
+  createdBy?: string; // as the audit log names actors
+  archivedAt?: string; // only while archived
+  rights?: AssetRights; // { license?, credit?, expiresAt?, embargoUntil? }
 }
 ```
 
 `file.video` is present on hosted video assets (provider, status, playback URLs). `metadata` holds
 the editorial "aspects": per-locale alt text, taxonomy tag ids, a focal point (0..1 on each axis,
 so transforms crop toward it) and free-form `fields`; `applyAssetMetadata` merges a partial patch
-and validates the focal point. Assets have a single current revision (no version ledger).
-`publishAsset` throws `InvalidStateError` on an `archived` asset and `unpublishAsset` on one that is
-not `published`. File bytes are not part of the aggregate: `createAsset` returns a signed upload URL
+and validates the focal point. An asset has one current file (no version ledger).
+
+`publishAsset` / `unpublishAsset` move between `draft` and `published`; `archiveAsset(asset, at)`
+takes any non-archived asset to `archived`, and `restoreAsset` brings an archived one back as a
+`draft` (each throws `InvalidStateError` on a bad transition; an archived asset cannot be
+published). File bytes are not part of the aggregate: `createAsset` returns a signed upload URL
 and the bytes go to the blob store (see [Architecture](./architecture.md#media-r2-images-stream)).
+
+`assetKind(contentType)` derives an `AssetKind` (`image`, `video`, `audio`, `document`, `other`;
+`ASSET_KINDS`) from the content type; the store keeps it in a column for filtering, so it is never
+set by a client. Deleting an asset that entries still link to throws `AssetInUseError`
+(`asset_in_use`), whose `usage` lists the links (`AssetUsage`: the edge plus the entry's
+`contentTypeApiId` and `entryTitle`, at most `MAX_ASSET_USAGE_SHOWN`, 50) and `total` counts them.
+
+### Asset folders
+
+```ts
+interface AssetFolder {
+  id: string;
+  name: string; // 1..128 characters, no "/"; unique among siblings
+  parentId?: string; // absent at the root
+  path: string; // materialized path of ids, e.g. "/a/b/"
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+Folders nest up to `MAX_ASSET_FOLDER_DEPTH` (16). `assetFolderPath(parent, id)` builds a path and
+enforces the depth; `assertFolderMove` refuses a move into the folder itself or below it. Moving a
+folder rewrites the path prefix of its whole subtree.
 
 ## References
 
@@ -387,7 +421,7 @@ under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows
 `DomainEvent` (`packages/domain/src/events.ts`) is a discriminated union appended to the
 transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. The types are
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-`asset.unpublished`, `content_type.published`, `release.published`, `environment_alias.changed`,
+`asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`, `environment_alias.changed`,
 `environment.deleted`, `promotion.awaiting_approval`, `environment.promoted`, `bulk.job_completed`,
 the `workflow_run.*` end states,
 `workflow.task_opened` and `workflow.webhook`, plus control messages for background work
@@ -443,6 +477,7 @@ All extend `DomainError` (`{ code, message, details? }`) and carry a stable, cli
 | `TransactionConflictError` (ports)    | `conflict`          | 409  | A compare-and-set lost inside a unit of work; nothing committed  |
 | `LastAdminError`                      | `last_admin`        | 409  | Would leave the space with no active administrator               |
 | `PublishGatedError(entries)`          | `publish_gated`     | 409  | A publish of an entry a gated workflow covers, outside its runs  |
+| `AssetInUseError(assetId, usage)`     | `asset_in_use`      | 409  | Entries still link to the asset (`usage`, `total`)               |
 | `InvalidStateError(message)`          | `invalid_state`     | 400  | Illegal state-machine transition                                 |
 | `QueryTooBroadError(scanLimit)`       | `query_too_broad`   | 400  | A field query matched more candidates than the store evaluates   |
 | `UnauthorizedError(message?)`         | `unauthorized`      | 401  | Invalid/missing credentials                                      |

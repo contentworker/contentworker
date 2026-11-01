@@ -1,4 +1,5 @@
 import {
+  AssetInUseError,
   ConflictError,
   DomainError,
   HookRejectedError,
@@ -23,6 +24,15 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
     };
   }
   if (err instanceof ConflictError) return { status: 409, body: errBody(err) };
+  // Still linked from entries: the links come back, so a client can show or clear them.
+  if (err instanceof AssetInUseError) {
+    return {
+      status: 409,
+      body: {
+        error: { code: err.code, message: err.message, usage: err.usage, total: err.total },
+      },
+    };
+  }
   // Would leave the space with no administrator: a conflict with the space's state.
   if (err instanceof LastAdminError) return { status: 409, body: errBody(err) };
   // A gated workflow covers the entry: a conflict with the space's workflow configuration. The

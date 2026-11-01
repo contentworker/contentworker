@@ -74,6 +74,7 @@ const PURGING_EVENTS = new Set<string>([
   'entries.published_bulk',
   'asset.published',
   'asset.unpublished',
+  'asset.deleted',
   'content_type.published',
   'release.published',
   'environment_alias.changed',

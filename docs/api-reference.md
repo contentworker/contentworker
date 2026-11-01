@@ -190,7 +190,8 @@ check first.
 | POST   | `…/import` | `content:manage` | Replay a snapshot into this environment, as a job (`202`; `?dryRun=true` reports, `200`; `?publish=false`)       |
 | POST   | `…/clone`  | `content:manage` | Copy this environment into another, entirely as jobs (`202`) `{ targetSpaceId?, targetEnvironmentId, publish? }` |
 
-A snapshot carries the content model, entries, taxonomy, workflows and asset metadata, never
+A snapshot carries the content model, entries, taxonomy, workflows, asset metadata and asset
+folders, never
 credentials or asset bytes. Import and clone answer `202` and run as bulk jobs in the engine,
 followed at `…/bulk/jobs/:id` in the target environment; `?dryRun=true` reports with `200`. What an
 import checks, preserves and writes, how clone differs, and how
@@ -374,9 +375,17 @@ content grants gets `403`, because the report exposes entry ids across content t
 
 | Method | Path                         | Scope             | Description                                                                       |
 | ------ | ---------------------------- | ----------------- | --------------------------------------------------------------------------------- |
-| GET    | `…/assets`                   | `preview:read`    | List assets                                                                       |
-| POST   | `…/assets`                   | `content:write`   | Create draft + presigned upload URL                                               |
+| GET    | `…/assets`                   | `preview:read`    | List assets: `kind`, `mime` (`image/*`), `tag`, `folder` (id or `root`), `status` (archived hidden unless `archived`/`all`), `sort` (`updatedAt`, `createdAt`, `size`), `order`, `limit`, `cursor` → `{ items, nextCursor? }` |
+| POST   | `…/assets`                   | `content:write`   | Create draft + presigned upload URL (optional `folderId`)                         |
+| POST   | `…/assets/move`              | `content:write`   | `{ ids (≤ 500), folderId \| null }` → `{ moved }`; 404 for an unknown folder      |
 | GET    | `…/assets/:id`               | `preview:read`    | Get asset                                                                         |
+| POST   | `…/assets/:id/archive`       | `content:publish` | Archive (leaves Delivery when published); idempotent                              |
+| POST   | `…/assets/:id/restore`       | `content:write`   | Restore an archived asset as a draft; idempotent                                  |
+| DELETE | `…/assets/:id`               | `content:publish` | Delete permanently (204); `409 asset_in_use` with `error.usage` (first 50, titled) and `error.total` while linked |
+| GET    | `…/asset-folders`            | `preview:read`    | List folders, in path order                                                       |
+| POST   | `…/asset-folders`            | `content:write`   | Create `{ name, parentId? }` (201); 409 for a sibling of the same name            |
+| PATCH  | `…/asset-folders/:id`        | `content:write`   | Rename and/or move `{ name?, parentId? \| null }`, subtree along                  |
+| DELETE | `…/asset-folders/:id`        | `content:write`   | Delete an empty folder (204); 409 when it holds subfolders or assets              |
 | PATCH  | `…/assets/:id/metadata`      | `content:write`   | Update alt text / tags metadata                                                   |
 | GET    | `…/assets/:id/usage`         | `preview:read`    | Reference usage                                                                   |
 | GET    | `…/assets/:id/transform`     | `preview:read`    | Image transform URL (`w,h,fit,fm,q`; `fm=auto` → AVIF/WebP)                       |

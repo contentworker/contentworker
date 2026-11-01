@@ -5,7 +5,7 @@ import { answersBeforeSetup } from '~/lib/setup-gate';
 
 describe('answersBeforeSetup', () => {
   it('lets the setup page load, submit its form and find its routes', () => {
-    for (const p of ['/setup', '/setup.data', '/__manifest', '/assets/root-abc123.js'])
+    for (const p of ['/setup', '/setup.data', '/__manifest', '/_static/root-abc123.js'])
       expect(answersBeforeSetup(p), p).toBe(true);
   });
 
@@ -19,6 +19,9 @@ describe('answersBeforeSetup', () => {
       '/setupx',
       '/setup.datax',
       '/spaces',
+      // The asset library is a page like any other, not a built file.
+      '/assets',
+      '/assets/0198c0de-0000-7000-8000-000000000000',
     ])
       expect(answersBeforeSetup(p), p).toBe(false);
   });

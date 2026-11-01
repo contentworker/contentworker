@@ -88,6 +88,8 @@ export interface EntryVersion {
   readonly createdAt?: string;
 }
 
+export type AssetKind = 'image' | 'video' | 'audio' | 'document' | 'other';
+
 export interface Asset {
   readonly id: string;
   readonly status: AssetStatus;
@@ -95,6 +97,52 @@ export interface Asset {
   readonly title: LocalizedValue;
   readonly description: LocalizedValue;
   readonly metadata: Readonly<Record<string, unknown>>;
+  /** The folder it is filed in; absent at the library root. */
+  readonly folderId?: string;
+  readonly version?: number;
+  readonly createdAt?: string;
+  readonly createdBy?: string;
+  readonly archivedAt?: string;
+  readonly rights?: {
+    readonly license?: string;
+    readonly credit?: string;
+    readonly expiresAt?: string;
+    readonly embargoUntil?: string;
+  };
+}
+
+/** What `assets.list` keeps and how it orders them. */
+export interface AssetListQuery {
+  readonly limit?: number;
+  /** `nextCursor` from the previous page. */
+  readonly cursor?: string;
+  readonly kind?: AssetKind;
+  /** An exact content type (`image/png`) or a family (`image/*`). */
+  readonly mime?: string;
+  /** A taxonomy tag id. */
+  readonly tag?: string;
+  /** A folder id, or `root` for assets in no folder. */
+  readonly folder?: string;
+  /** Omitted hides archived assets; `all` includes them. */
+  readonly status?: AssetStatus | 'all';
+  readonly sort?: 'updatedAt' | 'createdAt' | 'size';
+  readonly order?: 'asc' | 'desc';
+}
+
+export interface AssetPage {
+  readonly items: Asset[];
+  /** Present when there may be more: pass it as `cursor`. */
+  readonly nextCursor?: string;
+}
+
+export interface AssetFolder {
+  readonly id: string;
+  readonly name: string;
+  readonly parentId?: string;
+  /** Materialized path of folder ids, e.g. `/a/b/`. */
+  readonly path: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 /** A created draft asset plus the presigned target the bytes are PUT to. */
@@ -108,6 +156,8 @@ export interface CreateAssetInput {
   readonly contentType: string;
   readonly title?: LocalizedValue;
   readonly description?: LocalizedValue;
+  /** File it in this folder. */
+  readonly folderId?: string;
 }
 
 export interface Webhook {
@@ -383,8 +433,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
     },
 
     assets: {
-      list: (o: { limit?: number } = {}) =>
-        items(get<{ items: Asset[] }>(`${envBase}/assets`, { limit: o.limit })),
+      /** One page of the library; pass `nextCursor` back as `cursor` for the next. */
+      list: (query: AssetListQuery = {}) => get<AssetPage>(`${envBase}/assets`, { ...query }),
       get: (id: string) => get<Asset>(`${envBase}/assets/${e(id)}`),
       /**
        * Creates a draft asset and returns a presigned upload target. PUT the
@@ -397,6 +447,28 @@ export function createManagementClient(opts: ManagementClientOptions) {
       usage: (id: string) => items(get<{ items: unknown[] }>(`${envBase}/assets/${e(id)}/usage`)),
       publish: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/published`),
       unpublish: (id: string) => del<Asset>(`${envBase}/assets/${e(id)}/published`),
+      /** Takes it out of Delivery and out of the default listing; `restore` brings it back. */
+      archive: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/archive`),
+      restore: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/restore`),
+      /**
+       * Deletes it for good. A 409 `ManagementError` while entries link to it: its
+       * `body.error.usage` lists the first 50 links (each with the entry's `contentTypeApiId` and
+       * `entryTitle`) and `body.error.total` counts them all.
+       */
+      delete: (id: string) => del<void>(`${envBase}/assets/${e(id)}`),
+      /** Files assets in a folder (`null`: the root), up to 500 at once. */
+      move: (ids: readonly string[], folderId: string | null) =>
+        post<{ moved: number }>(`${envBase}/assets/move`, { ids, folderId }),
+      folders: {
+        list: () => items(get<{ items: AssetFolder[] }>(`${envBase}/asset-folders`)),
+        create: (input: { name: string; parentId?: string | null }) =>
+          post<AssetFolder>(`${envBase}/asset-folders`, input),
+        /** Renames and/or moves it (`parentId: null`: to the root), subfolders along. */
+        update: (id: string, changes: { name?: string; parentId?: string | null }) =>
+          patch<AssetFolder>(`${envBase}/asset-folders/${e(id)}`, changes),
+        /** Only an empty folder; one with subfolders or assets is a 409. */
+        delete: (id: string) => del<void>(`${envBase}/asset-folders/${e(id)}`),
+      },
     },
 
     webhooks: {

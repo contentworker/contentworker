@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  assetUsageOf,
   BOOKMARK_HEADER,
   type Connection,
   createManagementClient,
@@ -109,11 +110,109 @@ describe('admin ManagementClient', () => {
   });
 
   it('lists assets from the management base', async () => {
-    const { fn, calls } = fakeFetch(() => ({ items: [{ id: 'a1' }] }));
+    const { fn, calls } = fakeFetch(() => ({ items: [{ id: 'a1' }], nextCursor: 'c2' }));
     const client = createManagementClient(conn, fn);
-    const assets = await client.listAssets();
-    expect(assets[0]?.id).toBe('a1');
+    const page = await client.listAssets();
+    expect(page.items[0]?.id).toBe('a1');
+    expect(page.nextCursor).toBe('c2');
     expect(calls[0]?.url).toBe('/spaces/s1/environments/main/assets');
+  });
+
+  it('sends the library filters, sort and cursor as the query, leaving out empty ones', async () => {
+    const { fn, calls } = fakeFetch(() => ({ items: [] }));
+    const client = createManagementClient(conn, fn);
+    await client.listAssets({
+      kind: 'image',
+      folder: 'root',
+      status: 'archived',
+      tag: '',
+      sort: 'size',
+      order: 'asc',
+      limit: 50,
+      cursor: 'abc',
+    });
+    const url = new URL(calls[0]?.url ?? '', 'http://x');
+    expect(url.pathname).toBe('/spaces/s1/environments/main/assets');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      kind: 'image',
+      folder: 'root',
+      status: 'archived',
+      sort: 'size',
+      order: 'asc',
+      limit: '50',
+      cursor: 'abc',
+    });
+  });
+
+  it('moves, archives, restores and deletes assets, and manages folders', async () => {
+    const { fn, calls } = fakeFetch((_url, init) =>
+      init?.method === 'DELETE' ? new Response(null, { status: 204 }) : { items: [], moved: 2 },
+    );
+    const client = createManagementClient(conn, fn);
+    const base = '/spaces/s1/environments/main';
+    expect(await client.moveAssets(['a1', 'a2'], 'f1')).toMatchObject({ moved: 2 });
+    await client.archiveAsset('a1');
+    await client.restoreAsset('a1');
+    await client.deleteAsset('a1');
+    await client.listAssetFolders();
+    await client.createAssetFolder({ name: 'Brand', parentId: 'f0' });
+    await client.updateAssetFolder('f1', { parentId: null });
+    await client.deleteAssetFolder('f1');
+    expect(calls.map((c) => `${c.init?.method} ${c.url}`)).toEqual([
+      `POST ${base}/assets/move`,
+      `POST ${base}/assets/a1/archive`,
+      `POST ${base}/assets/a1/restore`,
+      `DELETE ${base}/assets/a1`,
+      `GET ${base}/asset-folders`,
+      `POST ${base}/asset-folders`,
+      `PATCH ${base}/asset-folders/f1`,
+      `DELETE ${base}/asset-folders/f1`,
+    ]);
+    expect(JSON.parse(calls[0]?.init?.body as string)).toEqual({
+      ids: ['a1', 'a2'],
+      folderId: 'f1',
+    });
+    expect(JSON.parse(calls[6]?.init?.body as string)).toEqual({ parentId: null });
+  });
+
+  it('reads the entries that hold an asset from a refused delete', async () => {
+    const usage = [
+      {
+        fromEntryId: 'e1',
+        fromField: 'hero',
+        toId: 'a1',
+        toType: 'Asset',
+        contentTypeApiId: 'page',
+        entryTitle: 'Home page',
+      },
+    ];
+    const { fn } = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({ error: { code: 'asset_in_use', message: 'used', usage, total: 73 } }),
+          { status: 409 },
+        ),
+    );
+    const err = await createManagementClient(conn, fn)
+      .deleteAsset('a1')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe('asset_in_use');
+    // The titles and the full count ride in the body: nothing to fetch per link.
+    expect(assetUsageOf(err)).toEqual({ usage, total: 73 });
+    expect(assetUsageOf(new ApiError(409, 'conflict'))).toBeNull();
+  });
+
+  it('uploads into a folder', async () => {
+    const { fn, calls } = fakeFetch((url) =>
+      url.endsWith('/assets')
+        ? { asset: { id: 'a1' }, upload: { url: 'https://blob.test/put', headers: {} } }
+        : { id: 'a1', status: 'published' },
+    );
+    await createManagementClient(conn, fn).uploadAsset(new File(['x'], 'a.png'), {
+      folderId: 'f1',
+    });
+    expect(JSON.parse(calls[0]?.init?.body as string)).toMatchObject({ folderId: 'f1' });
   });
 
   it('reads agent runs + usage from management, and searches via delivery', async () => {

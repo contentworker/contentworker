@@ -224,7 +224,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   `packages/ui/src/sidebar.tsx`. Full height on its own ground, with a rule. From the top: the brand
   row on the header's line, whose mark is the `SidebarTrigger` (named "Sidebar", ⌘\ or Ctrl+\);
   the day's work (Overview, Content, Approvals when on, Releases) with no label; then groups
-  labelled as captions: **Build** (Workflows), **Library** (Media, Taxonomy) and **Settings**
+  labelled as captions: **Build** (Workflows), **Library** (Assets, Taxonomy) and **Settings**
   (Access, Automation, Extensions, Workspace: Settings' own section groups, each opening its first
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
   on its edge. The page you're on is `sidebar-accent` and 500 with `aria-current`, marked as soon
@@ -251,7 +251,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   key), Connection, Keyboard shortcuts (with a fine pointer), the theme (Light, Dark, Match system)
   and Sign out. Its accessible name is that name plus "account menu".
 - **Shortcuts** are written for the device (⌘ on Apple, Ctrl elsewhere). G then a letter goes to a
-  page (H Overview, C Content, A Approvals, R Releases, W Workflows, M Media, T Taxonomy, S
+  page (H Overview, C Content, A Approvals, R Releases, W Workflows, M Assets, T Taxonomy, S
   Settings); ? opens the list of every shortcut (a sheet, with whatever the page registers); ⌘K is
   the command palette; ⌘J Coworker when it is on; ⌘\ the sidebar. Single keys go through
   `plainKeyAllowed` (not with a modifier, while typing, or with a dialog, menu or inline confirm
@@ -359,9 +359,29 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
   as you type, in the form's locale with delivery's fallbacks, references by name, and links shown
   but never followed. A new entry's pane is its preview alone.
-- **Releases, Workflows, Taxonomy, Media:** `PageHeader` with the page's one "New …" (a `Plus` and
-  the noun), then cards or a stacked table. A media card's name is its control, stretched over the
-  card, with the card's own actions above it.
+- **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the
+  noun), then cards or a stacked table.
+- **Assets** (`cms/components/AssetLibrary.tsx`, `cms/components/assets/`): `PageHeader` with
+  Upload, which names the open folder ("Upload to “Brand”"); the library section is the drop
+  target too, ringed while files are over it. From md the **folder tree** stands beside the
+  library: All assets, Not in a folder, then each folder as a list nested in its parent's list,
+  the open one `aria-current`; New folder (or subfolder), Rename and Delete (in-place confirm, empty
+  folders only) sit under it, and the name form hands focus back to the button that opened it (a
+  created folder takes focus itself). Then the **filter bar**, as the entries' (kind, status, tag,
+  sort) with the Grid/List segmented switch at its end, kept per browser. **Grid**: board cards,
+  the name the open button over the card, the checkbox top-left, status badges and the actions
+  below. **List**: a table, `stack="rows"` laid out like the entries rows on a phone. **Selecting**
+  shows a bulk bar (`role="group"`, "2 selected · Publish selected · Archive selected · Move
+  selected"); archiving several asks in place ("Archive 2 assets?"), and what failed stays
+  selected and is named in an inline Alert, as in the entries list. The **upload queue** lists each
+  file with a badge and the batch's progress, its summary a live region ("Uploading 1 of 3", then
+  "Uploaded 2 files; 1 failed"), and a toast at the end of the batch. Archiving one asset is an
+  Undo toast that restores it; an archived one shows Restore (back as a draft). **Delete** asks in
+  place, and one an entry still links to is refused: a warning Alert takes focus, names the first
+  five entries (each a link) and counts the rest ("and 12 more"), and offers Archive instead. A
+  load that failed is a destructive Alert with Retry, never an empty library; the first page
+  loads as Skeleton cards or rows. **On a phone** the tree becomes a select of folder paths
+  ("Brand / Logos") with a Folder actions button that opens the folder actions in a bottom sheet.
 - **Settings:** one page, its section nav beside the section (a grouped select on a phone); each
   section is cards and stacked tables. The install hint sits at the top of Connection.
 - **Workflows list:** a table, flush in one section (stacking into cards below md): each

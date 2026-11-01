@@ -56,7 +56,7 @@ first; the admin then calls the route.
 ## Layout
 
 From `md` a sidebar lists the day's work (Overview, Content, Approvals, Releases), then Build
-(Workflows), Library (Media, Taxonomy) and Settings, with the account and theme at its foot; it
+(Workflows), Library (Assets, Taxonomy) and Settings, with the account and theme at its foot; it
 collapses to an icon rail. A sticky header holds the breadcrumbs, the space / environment / locale
 scope, search and New entry. Below `md` a bottom tab bar holds the day's work and More.
 `app/cms/components/layout/nav.ts` is the one source of the pages and their `g`-letter shortcuts
@@ -87,7 +87,21 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 - **Releases** (`/releases`): bundle entries and assets, publish as a unit, schedule.
 - **Workflows** (`/workflows`, `/workflows/:id`): editorial workflow definitions and the graph
   editor (React Flow), with server-side validation, versions, and AI drafting.
-- **Media** (`/media`): assets, alt text, focal point, transforms.
+- **Assets** (`/assets`; the old `/media` address redirects): the asset library. A folder tree (all
+  assets, those in no folder, nested folders to create, rename, and delete once empty) beside a
+  filter bar (kind, status including archived, tag, sort) and a grid or list (the choice is kept
+  per browser), paged with the API's cursor. Pick or drop any number of files to upload them into
+  the open folder, each with its progress and a live summary ("Uploaded 2 files; 1 failed"), then
+  one toast for the batch; select several to move them to a folder, publish them, or archive them
+  after an in-place "Archive N assets?" (ids a bulk action fails for stay selected and are named in
+  an alert); archive (with Undo) or restore one; delete one, and when entries still link to it the
+  screen lists them by title (from the 409's `usage`, five shown, then "and N more"), each a link
+  to the entry, and offers to archive it instead. A failed load shows an alert with Retry, and the
+  first load shows skeletons. On a phone the folder tree becomes a select of folder paths with its
+  actions in a sheet, and the list view stacks as rows. Each asset's sheet holds its alt text,
+  focal point, tags and usage. The web build's own files are served from `/_static/` (Vite's
+  `build.assetsDir`, cached immutable by `public/_headers`), so nothing under `/assets` is ever a
+  static file.
 - **Taxonomy** (`/taxonomy`): concept schemes, concepts, tags.
 - **Settings**: API keys, roles, OAuth connected apps, webhooks, functions, AI actions, app
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch
