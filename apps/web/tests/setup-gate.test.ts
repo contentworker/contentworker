@@ -10,7 +10,16 @@ describe('answersBeforeSetup', () => {
   });
 
   it('keeps every other page and data request behind the gate', () => {
-    for (const p of ['/', '/login', '/login.data', '/dashboard', '/setup/x', '/setupx', '/setup.datax', '/spaces'])
+    for (const p of [
+      '/',
+      '/login',
+      '/login.data',
+      '/dashboard',
+      '/setup/x',
+      '/setupx',
+      '/setup.datax',
+      '/spaces',
+    ])
       expect(answersBeforeSetup(p), p).toBe(false);
   });
 });

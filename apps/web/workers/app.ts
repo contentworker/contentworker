@@ -1,6 +1,5 @@
 import { createRequestHandler } from 'react-router';
 import { awaitingSetup, principal, sessionId, setupDue } from '../app/lib/auth.server';
-import { answersBeforeSetup } from '../app/lib/setup-gate';
 import { withSecurityHeaders } from '../app/lib/csp';
 import { api, delivery } from '../app/lib/env.server';
 import { forwardToApi, hasBearer, isApiPath } from '../app/lib/gateway.server';
@@ -9,6 +8,7 @@ import { crossOrigin } from '../app/lib/origin';
 import { setPrincipalHeader } from '../app/lib/principal.server';
 import { SCIM_PATH } from '../app/lib/scim';
 import { scimFetch } from '../app/lib/scim.server';
+import { answersBeforeSetup } from '../app/lib/setup-gate';
 
 /**
  * The deploy smoke test's check: this Worker's D1, and the api's health (over the service binding,
