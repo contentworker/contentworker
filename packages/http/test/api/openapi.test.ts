@@ -58,7 +58,7 @@ describe('OpenAPI spec + docs UI', () => {
     // the descriptions live in docs/delivery-docs.ts, which only the api mounts.
     const { readFile } = await import('node:fs/promises');
     const source = await readFile(
-      new URL('../../src/api/routes/delivery.ts', import.meta.url),
+      decodeURIComponent(new URL('../../src/api/routes/delivery.ts', import.meta.url).pathname),
       'utf8',
     );
     const imports = [...source.matchAll(/^import (?!type )[^;]*?from '([^']+)'/gms)].map(
