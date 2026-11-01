@@ -3390,7 +3390,8 @@ export function buildServer(
     {
       description:
         'List the asset library as Preview serves it: drafts and published (archived left out), ' +
-        'in the delivered shape (url, renditions, srcset) with short-lived signed URLs. Filter ' +
+        'in the delivered shape (url, renditions, srcset, placeholder) with short-lived signed ' +
+        'URLs. Filter ' +
         'by kind, tag or folder; pass nextCursor back as cursor for the next page. A key with ' +
         'content grants reads none.',
       inputSchema: toolSchema('asset_preview_list', () =>

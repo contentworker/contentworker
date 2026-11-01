@@ -14,9 +14,24 @@ export interface R2ObjectBodyLike {
   text(): Promise<string>;
 }
 
+/** An R2 object's metadata (`head`), without a body. */
+export interface R2ObjectLike {
+  readonly size: number;
+  readonly httpEtag: string;
+  readonly httpMetadata?: { readonly contentType?: string };
+}
+
+/** The byte range R2 reads natively: `length` bytes from `offset`. */
+export interface R2RangeLike {
+  readonly offset: number;
+  readonly length: number;
+}
+
 /** The subset of an R2 bucket binding this adapter uses. */
 export interface R2BucketLike {
-  get(key: string): Promise<R2ObjectBodyLike | null>;
+  get(key: string, options?: { range?: R2RangeLike }): Promise<R2ObjectBodyLike | null>;
+  /** An object's metadata without its body. Optional: a fake may leave it out. */
+  head?(key: string): Promise<R2ObjectLike | null>;
   put(
     key: string,
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string,
@@ -250,6 +265,16 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
         size: obj.size,
         ...(obj.httpMetadata?.contentType ? { contentType: obj.httpMetadata.contentType } : {}),
       };
+    },
+    async head(key) {
+      if (bucket.head) {
+        const obj = await bucket.head(key);
+        return obj ? { size: obj.size } : null;
+      }
+      const obj = await bucket.get(key);
+      if (!obj) return null;
+      await obj.body.cancel();
+      return { size: obj.size };
     },
     async deletePrefix(prefix, keep) {
       // List everything first, then delete: deleting between pages could shift what a cursor

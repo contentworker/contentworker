@@ -65,7 +65,8 @@ through the gateway. Read replication is turned on per database by `scripts/prov
   (its own SQLite per shard), not in D1.
 - **10 GB per database.** Asset bytes, import staging, plugin bundles and dead letters live in
   R2; retention prunes relayed outbox rows and webhook deliveries hourly
-  (`EVENT_RETENTION_HOURS`, default 168). Superseded entry version bodies move to R2 too, once
+  (`EVENT_RETENTION_HOURS`, default 168), and the same tick sweeps drafts whose upload never
+  landed (older than 24 h, at most 50 per sweep). Superseded entry version bodies move to R2 too, once
   `VERSION_ARCHIVE=true` (off by default; see [Deployment](./deployment.md)). Saving a version
   queues the one it supersedes in `version_archive_queue`, due a day later. Each cron tick the
   engine claims due rows, 50 at a time and up to 200 (`archiveSupersededVersions`):

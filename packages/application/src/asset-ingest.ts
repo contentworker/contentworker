@@ -4,6 +4,7 @@ import {
   type AssetAiSuggestions,
   applyAssetMetadata,
   assetKind,
+  isTransformableImage,
   NotFoundError,
   RateLimitedError,
   type Scope,
@@ -42,7 +43,9 @@ import { autoTagAsset, generateAltText } from './media-ai';
  *
  * 1. `hash`: SHA-256 of the bytes, streamed, and the duplicate marker (the oldest other asset in
  *    the scope with the same hash).
- * 2. `probe`: an image's dimensions and real format.
+ * 2. `probe`: an image's dimensions and real format; `placeholder`: a raster image's ThumbHash and
+ *    dominant colour, from a thumbnail (a failure there leaves the asset without one, never fails
+ *    ingest).
  * 3. `alt-text`, `tags`: an image's alt text and tags from the existing AI use-cases, written only
  *    where empty and marked as AI suggestions. A spent AI budget skips them, and a model that still
  *    fails once the step's retries are spent records `failed`: neither fails ingest.
@@ -75,6 +78,8 @@ export interface AssetIngestDeps {
 export const MAX_HASH_BYTES = 512 * 1024 * 1024;
 /** Largest file probed for dimensions: an image's size, not a video's or an archive's. */
 export const MAX_PROBE_BYTES = 70 * 1024 * 1024;
+/** Largest image a placeholder is made from: what the Images binding takes as input. */
+export const MAX_PLACEHOLDER_BYTES = 20 * 1024 * 1024;
 /** Largest document text extraction reads (Markdown conversion takes the whole file). */
 export const MAX_EXTRACT_DOCUMENT_BYTES = 20 * 1024 * 1024;
 /** Largest recording transcription reads (Whisper takes it base64-encoded, in one request). */
@@ -314,6 +319,8 @@ export interface IngestSummary {
   readonly duplicateOf?: string;
   readonly altText?: EnrichOutcome;
   readonly tags?: EnrichOutcome;
+  /** Whether a placeholder was recorded. */
+  readonly placeholder?: boolean;
   readonly textChars?: number;
   readonly error?: string;
 }
@@ -336,6 +343,10 @@ export async function runAssetIngest(
     const hashed = await steps.do('hash', STEP, () => hashAsset(ctx, deps, params));
     if (!hashed) return { outcome: 'stale' };
     await steps.do('probe', STEP, () => probeAsset(ctx, deps, params));
+    const placeholder = await steps
+      .do('placeholder', STEP, () => placeholderAsset(ctx, deps, params))
+      // A placeholder is a nicety: one the service kept failing to make is simply not there.
+      .catch(() => false);
     const altText = await enrichStep(steps, 'alt-text', () => enrichAltText(ctx, deps, params));
     const tags = await enrichStep(steps, 'tags', () => enrichTags(ctx, deps, params));
     const text = await steps.do('extract-text', SLOW_STEP, () => extractText(ctx, deps, params));
@@ -356,6 +367,7 @@ export async function runAssetIngest(
       ...(hashed.duplicateOf ? { duplicateOf: hashed.duplicateOf } : {}),
       altText,
       tags,
+      placeholder,
       textChars: text.chars,
     };
   } catch (err) {
@@ -567,6 +579,36 @@ export async function probeAsset(
       : {}),
   });
   return { width: info.width, height: info.height, format: info.format };
+}
+
+/**
+ * Records a raster image's placeholder (ThumbHash and dominant colour) from a thumbnail the image
+ * service makes. Only types the service can decode, no larger than {@link MAX_PLACEHOLDER_BYTES}
+ * (a larger file is skipped, its body cancelled unread). `false` when nothing was recorded.
+ */
+export async function placeholderAsset(
+  ctx: AppContext,
+  deps: AssetIngestDeps,
+  params: AssetIngestParams,
+): Promise<boolean> {
+  const asset = await currentAsset(ctx, params);
+  const make = deps.images?.placeholder?.bind(deps.images);
+  // After the probe: a file uploaded without a type has its real one by now.
+  if (!asset || !make || !deps.blob.open || !isTransformableImage(asset.file.contentType)) {
+    return false;
+  }
+  const object = await deps.blob.open(assetFileKey(params.scope, asset));
+  if (!object) return false;
+  if (object.size > MAX_PLACEHOLDER_BYTES) {
+    await discard(object.body);
+    return false;
+  }
+  const placeholder = await make(object.body);
+  if (!placeholder) return false;
+  await ctx.store.assets.recordIngest(params.scope, params.assetId, params.version, {
+    placeholder,
+  });
+  return true;
 }
 
 /**
@@ -791,7 +833,7 @@ function storableText(raw: string): string {
 /**
  * Ready, the published snapshot's measurements, and `asset.ingested`, in one unit. A snapshot
  * published before ingest measured the file (the usual case: publish right after upload) gets
- * the size and dimensions ingest found, for the same version only. The event says whether the
+ * the size, dimensions and placeholder ingest found, for the same version only. The event says whether the
  * asset is published, so only then is Delivery's cache purged. `false` when the asset moved on.
  */
 export async function finishIngest(
@@ -809,6 +851,7 @@ export async function finishIngest(
     ...(asset.file.size !== undefined ? { size: asset.file.size } : {}),
     ...(asset.file.width !== undefined ? { width: asset.file.width } : {}),
     ...(asset.file.height !== undefined ? { height: asset.file.height } : {}),
+    ...(asset.file.placeholder ? { placeholder: asset.file.placeholder } : {}),
   };
   await ctx.store.withTransaction(async (tx) => {
     await tx.assets.recordIngest(scope, assetId, version, { status: 'ready', error: null });

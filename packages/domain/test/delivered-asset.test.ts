@@ -136,4 +136,29 @@ describe('deliveredAsset', () => {
       description: null,
     });
   });
+
+  it('carries the placeholder ingest computed, and null without one or for a hosted video', () => {
+    const placeholder = {
+      thumbhash: 'YJqGPQw7sFlslqhFafSE+Q6oJ1h2iHB2Rw==',
+      dominantColor: '#a07850',
+    };
+    expect(deliveredAsset(asset, { renditions: [] }).placeholder).toBeNull();
+    const d = deliveredAsset(
+      { ...asset, file: { ...asset.file, placeholder } },
+      { renditions: [] },
+    );
+    expect(d.placeholder).toEqual(placeholder);
+    const video = deliveredAsset(
+      {
+        ...asset,
+        file: {
+          ...asset.file,
+          placeholder,
+          video: { provider: 'stream', videoId: 'v', status: 'ready' as const },
+        },
+      },
+      { renditions: [] },
+    );
+    expect(video.placeholder).toBeNull();
+  });
 });

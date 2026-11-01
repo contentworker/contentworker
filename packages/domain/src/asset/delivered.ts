@@ -5,6 +5,7 @@ import {
   type AssetFile,
   type AssetKind,
   type AssetMetadata,
+  type AssetPlaceholder,
   type AssetRights,
   assetKind,
   type FocalPoint,
@@ -229,6 +230,8 @@ export interface DeliveredAsset {
   readonly renditions: Readonly<Record<string, string>>;
   /** The width ladder, up to the image's own width, for `srcset`. */
   readonly srcset: readonly { readonly width: number; readonly url: string }[];
+  /** A raster image's ThumbHash and dominant colour, once ingest has computed them; else `null`. */
+  readonly placeholder: AssetPlaceholder | null;
   readonly video?: {
     readonly status: string;
     readonly hlsUrl?: string;
@@ -311,6 +314,7 @@ export function deliveredAsset(
     url,
     renditions,
     srcset,
+    placeholder: hosted ? null : (file.placeholder ?? null),
     ...(hosted
       ? {
           video: {

@@ -169,7 +169,7 @@ it serves from, all read-only:
 | `DB` (D1)                     | Read-replica sessions (`first-unconstrained`): the gate's fallback and rendition presets      |
 | `KV_CACHE` (KV)               | The gate the engine writes (`asset-gate:<space>:<env>:<id>`), read with a 60 s `cacheTtl`  |
 | `MEDIA_BUCKET` (R2)           | Asset bytes                                                                                 |
-| `IMAGES`                      | Width steps and renditions; absent → only originals are served                              |
+| `IMAGES`                      | Width steps and renditions; absent → only originals are served. Ranges need no binding: the `Media.range` RPC reads `MEDIA_BUCKET` |
 | `METRICS` (Analytics Engine)  | `contentworker_media_purge_dead_letters_total`                                              |
 | `QUEUE_SUFFIX`, `ROLE=media`  | Template vars; consumers `contentworker-media-purge` (+ `-dlq`, logged and acked)           |
 | `MEDIA_SIGNING_SECRET`        | Its only secret: verifies published paths' tokens and signed `/media/*` GETs (with `exp`). Required with `DB` bound; dev uses the dev key, as the api does |

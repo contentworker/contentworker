@@ -1,4 +1,4 @@
-import type { FocalPoint, Scope } from '@contentworker/domain';
+import type { AssetPlaceholder, FocalPoint, Scope } from '@contentworker/domain';
 import type {
   AssetGate,
   AssetGateEntry,
@@ -156,11 +156,28 @@ export class FakeVideoHost implements VideoHost {
  */
 export class FakeImageProbe implements ImageProbe {
   private readonly known = new Map<string, ImageInfo>();
+  private readonly placeholders = new Map<string, AssetPlaceholder>();
   calls = 0;
   failNext = false;
+  /** Calls to `placeholder`, and whether each one throws (the service failing). */
+  placeholderCalls = 0;
+  failPlaceholders = false;
 
   set(bytes: string, info: ImageInfo): void {
     this.known.set(bytes, info);
+  }
+
+  /** What `placeholder` finds in these bytes; anything else has none (`null`). */
+  setPlaceholder(bytes: string, placeholder: AssetPlaceholder): void {
+    this.placeholders.set(bytes, placeholder);
+  }
+
+  async placeholder(body: ByteStream): Promise<AssetPlaceholder | null> {
+    this.placeholderCalls += 1;
+    let text = '';
+    for await (const chunk of body) text += asciiOf(chunk);
+    if (this.failPlaceholders) throw new Error('image service unavailable');
+    return this.placeholders.get(text) ?? null;
   }
 
   async info(body: ByteStream): Promise<ImageInfo | null> {

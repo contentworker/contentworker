@@ -334,7 +334,7 @@ interface LocaleConfig {
 interface Asset {
   id: string;
   status: 'draft' | 'published' | 'archived';
-  file: AssetFile; // { url, fileName, contentType, size?, width?, height?, video? }
+  file: AssetFile; // { url, fileName, contentType, size?, width?, height?, placeholder?, video? }
   title: LocalizedValue;
   description: LocalizedValue;
   metadata: AssetMetadata; // { altText: LocalizedValue, tags: string[], focalPoint?: { x, y }, fields? }
@@ -359,6 +359,16 @@ Ingest (migration `0011_asset_ingest`; see
 leaves them as they are. `aiSuggestions` marks the alt text locales and tag ids ingest filled
 from a model; `clearAcceptedSuggestions` drops a field's mark when a metadata patch carries it,
 so saving the field makes it the editor's.
+
+`file.placeholder` (`AssetPlaceholder`: `thumbhash`, base64; `dominantColor`, `#rrggbb`) is
+measured by ingest's `placeholder` step for raster types the Images binding decodes, no larger than
+20 MiB. Like `width` and `height` it lives in the `file` JSON (no column), is written by
+`recordIngest` and copied into the published snapshot by `finish`. It is data a client renders,
+never a URL or markup.
+
+An upload whose presigned PUT never landed leaves a draft with no `ingestStatus` and no `size`;
+`sweepAbandonedUploads` (hourly, see [Architecture](./architecture.md#asset-ingest-and-search))
+removes it a day later, or marks it `error` ("The upload never completed") when an entry links it.
 
 `file.video` is present on hosted video assets (provider, status, playback URLs). `metadata` holds
 the editorial "aspects": per-locale alt text, taxonomy tag ids, a focal point (0..1 on each axis,
@@ -415,7 +425,8 @@ SVG). `variantForTransform` maps a legacy `?w=` to the next step up (the largest
 (`publicAssetUrls(origin, scope, { id, version, fileName })` for published files, width steps with
 `?fm=auto`; signed URLs for Preview), the space's rendition names and the locale settings. The
 result, `DeliveredAsset`, is `{ id, title, description, altText, focalPoint, contentType, size,
-width, height, kind, url, renditions, srcset, video?, rights?, file }`; text is flattened with
+width, height, kind, url, renditions, srcset, placeholder, video?, rights?, file }`; `placeholder`
+is `file.placeholder ?? null` (always `null` for a hosted video); text is flattened with
 `resolveLocalizedValue` when a locale is given, a hosted video's `url` is its HLS manifest and it
 has no variants, and the srcset stops at the image's own width.
 

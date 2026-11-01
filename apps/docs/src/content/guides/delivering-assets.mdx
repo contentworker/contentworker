@@ -1,6 +1,6 @@
 ---
 title: Delivering assets
-description: Published images and files at stable, cacheable URLs - renditions, the width ladder for srcset, format negotiation, revocation, Preview's signed URLs, GraphQL and the SDK helpers.
+description: Published images and files at stable, cacheable URLs - renditions, the width ladder for srcset, format negotiation, byte ranges, downloads, placeholders, revocation, Preview's signed URLs, GraphQL and the SDK helpers.
 ---
 
 A published asset is served from the workspace's `media.` address at a URL that never changes
@@ -34,6 +34,7 @@ curl -s "$CDN/delivery/$SPACE/main/assets/$ASSET_ID?locale=en-US" \
     { "width": 320, "url": "https://media.acme.contentworker.app/acme/main/0193…/v1/kJ3x…Qw/w320/trail.jpg?fm=auto" },
     { "width": 640, "url": "…/w640/trail.jpg?fm=auto" }
   ],
+  "placeholder": { "thumbhash": "3PcNNYSFeXh/...", "dominantColor": "#3b4a2f" },
   "rights": { "credit": "Ada Lovelace", "license": "CC-BY-4.0" },
   "file": { "url": "…/v1/kJ3x…Qw/o/trail.jpg", "fileName": "trail.jpg", "contentType": "image/jpeg" }
 }
@@ -46,6 +47,7 @@ curl -s "$CDN/delivery/$SPACE/main/assets/$ASSET_ID?locale=en-US" \
 | `url`                                | The original file; for a video, its HLS manifest                                               |
 | `renditions`                         | Your space's named presets, by name, for images that can be resized                            |
 | `srcset`                             | Widths 320, 640, 960, 1280, 1920 and 2560, up to the image's own width                         |
+| `placeholder`                        | `{ thumbhash, dominantColor }` for a raster image, else `null` ([below](#placeholders))        |
 | `video`                              | For a video: `status`, `hlsUrl`, `dashUrl`, `thumbnailUrl`, `durationSeconds`                  |
 | `rights`                             | `credit` and `license`, when the asset has them                                               |
 | `file`                               | The stored file description, kept for existing integrations; `file.url` is `url`               |
@@ -54,6 +56,20 @@ curl -s "$CDN/delivery/$SPACE/main/assets/$ASSET_ID?locale=en-US" \
 the response's `nextCursor` back as `cursor` for the next page, and filter with `kind`, `tag` (a
 taxonomy tag id) and `folder` (a folder id, or `root`). Embedded assets in entries have the same
 shape, flattened to the entry request's `locale`.
+
+## Placeholders
+
+Processing shrinks a JPEG, PNG, WebP, AVIF or GIF of up to 20 MiB to 32 pixels and computes two
+values from it, so a page can paint something before the image loads:
+
+- `thumbhash`: a [ThumbHash](https://evanw.github.io/thumbhash/) (base64), about 25 bytes that
+  decode on the client to a blurred preview with the image's aspect ratio and transparency;
+- `dominantColor`: `#rrggbb`, the cheapest placeholder, a solid background.
+
+`placeholder` is `null` for hosted videos, SVGs, documents and other non-raster files, for larger
+images, and for images processed before placeholders existed or whose placeholder couldn't be made
+(nothing is backfilled: [reprocess](/guides/media/#what-happens-after-an-upload) them). It is data,
+never a URL or markup, and follows the file's version.
 
 ## URLs
 
@@ -78,7 +94,16 @@ environment can't be reached through another environment's copy of it.
   `410` after.
 - **Formats.** `srcset` URLs end in `?fm=auto`: the image comes back as AVIF or WebP when the
   browser's `Accept` header allows, else in its own format, with `Vary: Accept`. Other query
-  parameters are ignored.
+  parameters are ignored (apart from `download`, below).
+- **Byte ranges.** Originals answer `Accept-Ranges: bytes`. One `Range: bytes=…` header gets a
+  `206` with `Content-Range`, so audio and video can seek and a download can resume; a range
+  starting past the end is `416` with `Content-Range: bytes */<size>`. Several ranges, another unit
+  or a malformed header get the whole file as `200`, as does an `If-Range` that isn't the file's
+  current `ETag`. Width steps and renditions are always served whole.
+- **Inline or download.** Every file comes with `Content-Disposition: inline; filename="…";
+  filename*=UTF-8''…` naming it. Add `?download` (any value) to get `attachment`, so a link saves
+  the file instead of opening it. Types the media origin never renders (SVG, HTML) are always
+  `attachment`. `download` doesn't make a second cached copy.
 - **Crops follow the focal point.** A rendition that crops (`fit: crop`) keeps the asset's focal
   point in frame.
 - **Nothing else exists.** Widths off the ladder, unknown renditions, an older version, a wrong
@@ -156,6 +181,7 @@ out the same kind of short-lived URL.
     card: url(rendition: "card")
     medium: url(width: 800)
     srcset { width url }
+    placeholder { thumbhash dominantColor }
     focalPoint { x y }
     video { status hlsUrl thumbnailUrl }
     rights { credit license }
@@ -164,7 +190,7 @@ out the same kind of short-lived URL.
 ```
 
 `url(width:)` picks the ladder width at or above the one asked for (the largest past it);
-`url(rendition:)` is `null` for a rendition the space doesn't have.
+`url(rendition:)` is `null` for a rendition the space doesn't have, and `placeholder` is `null` when the asset has none.
 
 ## SDKs
 
@@ -177,6 +203,7 @@ const page = await client.listAssets({ kind: 'image', limit: 50 });
 assetUrl(asset, { width: 800 });       // the w960 step
 assetUrl(asset, { rendition: 'card' }); // undefined if the space has no "card"
 srcset(asset);                          // "…/w320/… 320w, …/w640/… 640w, …"
+asset.placeholder?.thumbhash;           // decode with the `thumbhash` package
 ```
 
 In React Native, `imageUrl(asset, { width, dpr, rendition })` from

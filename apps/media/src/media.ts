@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { wireMedia } from '@contentworker/platform/wire';
-import { type MediaDeps, serveMedia } from './serve';
+import { type MediaDeps, serveMedia, serveMediaRange } from './serve';
 
 type CachePurge = {
   purge(o: { tags: string[] }): Promise<{ success: boolean; errors: unknown[] }>;
@@ -29,6 +29,15 @@ export class Media extends WorkerEntrypoint<EdgeEnv> {
 
   override async fetch(request: Request): Promise<Response> {
     return serveMedia(request, this.deps());
+  }
+
+  /**
+   * One byte range of a canonical URL, read from R2 by range. RPC, not `fetch`: Workers Caching
+   * never sees it, so the partial is never stored. The gateway calls it only when the cached
+   * `fetch` answered a range request with the whole file (nothing sliced it).
+   */
+  async range(url: string, range: string, ifRange: string | null): Promise<Response> {
+    return serveMediaRange(new Request(url), this.deps(), range, ifRange);
   }
 
   /** Purges cached responses by tag. Workers Caching scopes a purge to the entrypoint calling it. */

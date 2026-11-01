@@ -33,7 +33,13 @@ import type { AssetGate, ContentStore } from '@contentworker/ports';
 import { FakeBlobStore, RecordingWebhookSender } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import worker from '../src/index';
-import { serveMedia } from '../src/serve';
+import {
+  byteRange,
+  canonicalMediaUrl,
+  contentDisposition,
+  serveMedia,
+  serveMediaRange,
+} from '../src/serve';
 
 const ORIGIN = 'https://media.example.test';
 
@@ -421,5 +427,165 @@ describe('the path token', () => {
     await cloneEnvironment(u.ctx, u.scope, clone, { publish: false });
     expect(await u.ctx.store.assets.get(clone, u.asset.id)).toMatchObject({ status: 'draft' });
     expect((await SELF.fetch(url)).status).toBe(404);
+  });
+});
+
+describe('byte ranges', () => {
+  // 'JPEG-BYTES': ten bytes.
+  const get = (u: Awaited<ReturnType<typeof published>>, headers: Record<string, string>) =>
+    SELF.fetch(urlOf(u, { kind: 'original' }), { headers });
+
+  it('serves one range of an original as a 206 read from R2 by range', async () => {
+    const u = await published();
+    const full = await SELF.fetch(urlOf(u, { kind: 'original' }));
+    expect(full.headers.get('accept-ranges')).toBe('bytes');
+    const etag = full.headers.get('etag') as string;
+    await full.body?.cancel();
+
+    for (const [range, body, contentRange] of [
+      ['bytes=2-5', 'EG-B', 'bytes 2-5/10'],
+      ['bytes=7-', 'TES', 'bytes 7-9/10'],
+      ['bytes=-5', 'BYTES', 'bytes 5-9/10'],
+      ['bytes=8-100', 'ES', 'bytes 8-9/10'], // an end past the file is clipped
+      ['bytes=-100', 'JPEG-BYTES', 'bytes 0-9/10'], // a suffix longer than it is all of it
+    ] as const) {
+      const res = await get(u, { range });
+      expect(res.status, range).toBe(206);
+      expect(await textOf(res)).toBe(body);
+      expect(res.headers.get('content-range')).toBe(contentRange);
+      expect(res.headers.get('content-length')).toBe(String(body.length));
+      expect(res.headers.get('etag')).toBe(etag);
+      expect(res.headers.get('accept-ranges')).toBe('bytes');
+      expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+      expect(res.headers.get('access-control-expose-headers')).toContain('content-range');
+    }
+    // A HEAD says the same, without the bytes.
+    const head = await SELF.fetch(urlOf(u, { kind: 'original' }), {
+      method: 'HEAD',
+      headers: { range: 'bytes=0-3' },
+    });
+    expect(head.status).toBe(206);
+    expect(head.headers.get('content-range')).toBe('bytes 0-3/10');
+  });
+
+  it('answers 416 for a range past the end, and the whole file for anything it does not slice', async () => {
+    const u = await published();
+    for (const range of ['bytes=10-', 'bytes=5-2', 'bytes=-0']) {
+      const res = await get(u, { range });
+      expect(res.status, range).toBe(416);
+      expect(res.headers.get('content-range')).toBe('bytes */10');
+      expect(res.headers.get('cache-control')).toBe('no-store');
+    }
+    for (const range of ['bytes=0-1,4-5', 'items=0-3', 'bytes=abc', 'bytes=-']) {
+      const res = await get(u, { range });
+      expect(res.status, range).toBe(200);
+      expect(await textOf(res)).toBe('JPEG-BYTES');
+      expect(res.headers.get('content-range')).toBeNull();
+    }
+  });
+
+  it('honours If-Range only while it names the file', async () => {
+    const u = await published();
+    const etag = (await SELF.fetch(urlOf(u, { kind: 'original' }))).headers.get('etag') as string;
+    const same = await get(u, { range: 'bytes=0-3', 'if-range': etag });
+    expect(same.status).toBe(206);
+    expect(await textOf(same)).toBe('JPEG');
+    for (const ifRange of ['"stale"', 'Wed, 21 Oct 2015 07:28:00 GMT']) {
+      const stale = await get(u, { range: 'bytes=0-3', 'if-range': ifRange });
+      expect(stale.status, ifRange).toBe(200);
+      expect(await textOf(stale)).toBe('JPEG-BYTES');
+    }
+  });
+
+  it('serves a variant whole, and gates a range like any read', async () => {
+    const u = await published();
+    const step = await SELF.fetch(urlOf(u, { kind: 'width', width: 640 }), {
+      headers: { range: 'bytes=0-3' },
+    });
+    expect(step.status).toBe(200);
+    expect(step.headers.get('content-range')).toBeNull();
+    await step.body?.cancel();
+
+    await unpublishAsset(u.ctx, u.scope, u.asset.id);
+    await syncAssetGate(u.ctx, gate, u.scope, u.asset.id);
+    await purgeMedia([`cwa:${u.scope.spaceId}:main:${u.asset.id}`]);
+    expect((await get(u, { range: 'bytes=0-3' })).status).toBe(404);
+    // The range read checks the gate itself, whoever calls it.
+    const deps = { bucket: env.MEDIA_BUCKET, paths, gate, store: createD1Store(env.DB) };
+    const direct = await serveMediaRange(
+      new Request(urlOf(u, { kind: 'original' })),
+      deps,
+      'bytes=0-3',
+      null,
+    );
+    expect(direct.status).toBe(404);
+  });
+
+  it('never answers the cached entrypoint with a partial: the cache slices the whole file', async () => {
+    const u = await published();
+    const deps = { bucket: env.MEDIA_BUCKET, paths, gate, store: createD1Store(env.DB) };
+    const res = await serveMedia(
+      new Request(urlOf(u, { kind: 'original' }), { headers: { range: 'bytes=0-3' } }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-range')).toBeNull();
+    expect(res.headers.get('accept-ranges')).toBe('bytes');
+    expect(await textOf(res)).toBe('JPEG-BYTES');
+  });
+
+  it('reads a range as RFC 9110 does', () => {
+    expect(byteRange('bytes=0-0', 10)).toEqual({ offset: 0, length: 1 });
+    expect(byteRange(' bytes = 3 - 4 ', 10)).toBeNull(); // not the shape we pass on
+    expect(byteRange('bytes=3-4', 10)).toEqual({ offset: 3, length: 2 });
+    expect(byteRange('bytes=0-', 0)).toBe('unsatisfiable');
+    expect(byteRange('bytes=-1', 0)).toBe('unsatisfiable');
+    expect(byteRange(null, 10)).toBeNull();
+  });
+});
+
+describe('downloads', () => {
+  it('serves inline by default and as an attachment with ?download, from one cache entry', async () => {
+    const u = await published();
+    const inline = await SELF.fetch(urlOf(u, { kind: 'original' }));
+    expect(inline.headers.get('content-disposition')).toBe(
+      `inline; filename="hero shot.jpg"; filename*=UTF-8''hero%20shot.jpg`,
+    );
+    await inline.body?.cancel();
+    const download = await SELF.fetch(`${urlOf(u, { kind: 'original' })}?download`);
+    expect(download.status).toBe(200);
+    expect(download.headers.get('content-disposition')).toBe(
+      `attachment; filename="hero shot.jpg"; filename*=UTF-8''hero%20shot.jpg`,
+    );
+    expect(await textOf(download)).toBe('JPEG-BYTES');
+    // A range of a download is still a download.
+    const part = await SELF.fetch(`${urlOf(u, { kind: 'original' })}?download=1`, {
+      headers: { range: 'bytes=0-3' },
+    });
+    expect(part.status).toBe(206);
+    expect(part.headers.get('content-disposition')).toMatch(/^attachment; /);
+    // `?download` never reaches the cache key.
+    const plainUrl = new URL(urlOf(u, { kind: 'original' }));
+    const downloadUrl = new URL(`${plainUrl}?download`);
+    expect(canonicalMediaUrl(downloadUrl, null, paths)?.url).toBe(
+      canonicalMediaUrl(plainUrl, null, paths)?.url,
+    );
+  });
+
+  it('keeps a type that must never render here an attachment, ?download or not', async () => {
+    const u = await published({ contentType: 'image/svg+xml', fileName: 'logo.svg' });
+    const res = await SELF.fetch(urlOf(u, { kind: 'original' }));
+    expect(res.headers.get('content-disposition')).toMatch(/^attachment; filename="logo.svg"/);
+  });
+
+  it('encodes any file name safely, with an ASCII stand-in', () => {
+    expect(contentDisposition('attachment', 'café "menu"\r\nX-Evil: 1.pdf')).toBe(
+      `attachment; filename="caf_ _menu___X-Evil: 1.pdf"; ` +
+        `filename*=UTF-8''caf%C3%A9%20%22menu%22%0D%0AX-Evil%3A%201.pdf`,
+    );
+    expect(contentDisposition('inline', "it's (1)*.png")).toBe(
+      `inline; filename="it's (1)*.png"; filename*=UTF-8''it%27s%20%281%29%2A.png`,
+    );
+    expect(contentDisposition('inline', 'a\\b.png')).toMatch(/^inline; filename="a_b.png"/);
   });
 });
