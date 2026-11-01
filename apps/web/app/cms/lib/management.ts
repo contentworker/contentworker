@@ -1730,6 +1730,13 @@ export function createManagementClient(
     getBulkJobReport(id: string): Promise<BulkJobReport> {
       return req('GET', `${mgmt}/bulk/jobs/${encodeURIComponent(id)}/report`);
     },
+    /**
+     * Stops a running job (content:publish): batches already done stay done, the rest never run.
+     * The job as it ended; a job already over comes back as it is.
+     */
+    cancelBulkJob(id: string): Promise<BulkJobSummary> {
+      return req('POST', `${mgmt}/bulk/jobs/${encodeURIComponent(id)}/cancel`);
+    },
 
     // --- plugins (sandboxed code on the write path) ----------------------
     // Space-scoped, not environment-scoped: a plugin is installed once for a

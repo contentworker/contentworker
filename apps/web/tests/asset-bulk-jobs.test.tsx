@@ -68,6 +68,9 @@ const client = {
   getBulkJobReport: vi.fn(
     async (_id: string): Promise<BulkJobReport> => ({ job: job(), chunks: [] }),
   ),
+  cancelBulkJob: vi.fn(async (_id: string) =>
+    job({ status: 'cancelled', completedChunks: 1, succeeded: 25 }),
+  ),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -189,6 +192,66 @@ describe('acting on more assets than a page shows', () => {
     const polls = client.getBulkJob.mock.calls.length;
     await tick();
     expect(client.getBulkJob.mock.calls.length).toBe(polls);
+  });
+
+  it('stops a running job after asking in place, then says how far it got', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    assets = many(51);
+    const bar = await selectAll();
+    fireEvent.click(within(bar).getByRole('button', { name: 'Publish selected' }));
+    const region = await screen.findByRole('region', { name: 'Bulk job' });
+
+    // Asked in place, and backing out keeps it running.
+    fireEvent.click(within(region).getByRole('button', { name: 'Stop' }));
+    const confirm = within(region).getByRole('alertdialog', { name: 'Stop this bulk job?' });
+    expect(within(confirm).getByText(/Batches already done stay published/)).toBeTruthy();
+    expect(document.activeElement?.textContent).toBe('Keep running');
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Keep running' }));
+    expect(client.cancelBulkJob).not.toHaveBeenCalled();
+    expect(within(region).getByRole('status').textContent).toBe('Publishing 51 assets…');
+
+    fireEvent.click(within(region).getByRole('button', { name: 'Stop' }));
+    fireEvent.click(within(region).getByRole('button', { name: 'Stop job' }));
+    await waitFor(() => expect(client.cancelBulkJob).toHaveBeenCalledWith('job1'));
+    await waitFor(() =>
+      expect(within(region).getByRole('status').textContent).toBe('Stopped: Published 25 assets'),
+    );
+    expect(within(region).getByText('Cancelled')).toBeTruthy();
+    expect(
+      within(region).getByText(
+        'Stopped after 1 of 2 batches: 25 of 51 assets handled; the other 26 were left as they were.',
+      ),
+    ).toBeTruthy();
+    expect(within(region).queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(within(region).getByRole('button', { name: 'Dismiss' })).toBeTruthy();
+    // It no longer polls, and the bar is free again, the selection kept for what never ran.
+    const polls = client.getBulkJob.mock.calls.length;
+    await tick();
+    expect(client.getBulkJob.mock.calls.length).toBe(polls);
+    expect(within(bar).getByText('51 selected')).toBeTruthy();
+    await waitFor(() =>
+      expect(within(bar).getByRole('button', { name: 'Publish selected' })).toHaveProperty(
+        'disabled',
+        false,
+      ),
+    );
+  });
+
+  it('says so when a stop is refused, and the job keeps running', async () => {
+    assets = many(51);
+    client.cancelBulkJob.mockRejectedValueOnce(
+      new ApiError(403, 'POST → 403', {
+        error: { code: 'forbidden', message: 'Needs content:publish' },
+      }),
+    );
+    const bar = await selectAll();
+    fireEvent.click(within(bar).getByRole('button', { name: 'Publish selected' }));
+    const region = await screen.findByRole('region', { name: 'Bulk job' });
+    fireEvent.click(within(region).getByRole('button', { name: 'Stop' }));
+    fireEvent.click(within(region).getByRole('button', { name: 'Stop job' }));
+    expect(await screen.findByText(/The job wasn’t stopped/)).toBeTruthy();
+    expect(within(region).getByRole('status').textContent).toBe('Publishing 51 assets…');
+    expect(within(region).getByRole('button', { name: 'Stop' })).toHaveProperty('disabled', false);
   });
 
   it('counts the failures when the role can’t read the job report', async () => {
