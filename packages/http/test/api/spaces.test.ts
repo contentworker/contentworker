@@ -136,7 +136,7 @@ describe('POST /spaces', () => {
   });
 
   it('refuses an id the media bucket keeps for its own data, as a validation error', async () => {
-    for (const spaceId of ['versions', 'imports', 'plugins', 'dlq', 'Versions']) {
+    for (const spaceId of ['versions', 'imports', 'plugins', 'dlq', 'zips', 'Versions']) {
       const res = await create(
         { authorization: 'Bearer admin' },
         { spaceId, name: 'Reserved', defaultLocale: 'en-US', starter: 'sample' },

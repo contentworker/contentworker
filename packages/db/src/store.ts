@@ -3,9 +3,11 @@ import {
   type AgentSchedule,
   type ApiKey,
   type Asset,
+  type AssetCollection,
   type AssetFolder,
   type AssetIngestStatus,
   type AssetRendition,
+  type AssetZipJob,
   assetKind,
   type Comment,
   type Concept,
@@ -30,6 +32,7 @@ import {
   type ScheduledAction,
   type Scope,
   type SpaceMember,
+  type StoredAssetShareLink,
   type Task,
   type UniqueClaim,
   ValidationError,
@@ -56,12 +59,17 @@ import type {
   AppExtension,
   AppExtensionRepo,
   ArchivableVersion,
+  AssetCollectionRepo,
   AssetFilters,
   AssetFolderRepo,
   AssetRenditionRepo,
   AssetRepo,
+  AssetShareLinkRepo,
   AssetSortField,
+  AssetUpload,
+  AssetUploadRepo,
   AssetVersionRecord,
+  AssetZipJobRepo,
   AuditRepo,
   AuthRepo,
   BlobStore,
@@ -109,7 +117,7 @@ import type {
   WorkflowRunRepo,
   WorkflowTaskRepo,
 } from '@contentworker/ports';
-import { DEFAULT_ASSET_SORT } from '@contentworker/ports';
+import { DEFAULT_ASSET_SORT, TransactionConflictError } from '@contentworker/ports';
 import {
   and,
   asc,
@@ -1264,6 +1272,15 @@ function makeAssetRepo(x: Exec): AssetRepo {
             and(scopeFilter(schema.assetPublished, scope), eq(schema.assetPublished.assetId, id)),
           ),
         db.delete(v).where(and(scopeFilter(v, scope), eq(v.assetId, id))),
+        // Out of every collection with it, in the same batch: no membership outlives its asset.
+        db
+          .delete(schema.assetCollectionItems)
+          .where(
+            and(
+              scopeFilter(schema.assetCollectionItems, scope),
+              eq(schema.assetCollectionItems.assetId, id),
+            ),
+          ),
         db
           .delete(schema.assets)
           .where(and(scopeFilter(schema.assets, scope), eq(schema.assets.id, id))),
@@ -1718,6 +1735,532 @@ function makeAssetFolderRepo(x: Exec): AssetFolderRepo {
         db.delete(schema.guard),
         db.delete(f).where(and(scopeFilter(f, scope), eq(f.id, id))),
       ]);
+    },
+  };
+}
+
+type AssetCollectionRow = typeof schema.assetCollections.$inferSelect;
+const toAssetCollection = (r: AssetCollectionRow, itemCount: number): AssetCollection => ({
+  id: r.id,
+  name: r.name,
+  ...(r.description ? { description: r.description } : {}),
+  itemCount,
+  createdAt: r.createdAt.toISOString(),
+  ...(r.createdBy ? { createdBy: r.createdBy } : {}),
+  updatedAt: r.updatedAt.toISOString(),
+});
+
+/** Keyset cursor over (text, id): a collection listing's (name, id). Opaque to callers. */
+const encodeTextCursor = (value: string, id: string): string =>
+  btoa(encodeURIComponent(JSON.stringify([value, id]))).replace(/=+$/, '');
+
+function decodeTextCursor(cursor: string): [string, string] {
+  try {
+    const parsed: unknown = JSON.parse(decodeURIComponent(atob(cursor)));
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      typeof parsed[0] === 'string' &&
+      typeof parsed[1] === 'string'
+    ) {
+      return [parsed[0], parsed[1]];
+    }
+  } catch {
+    // Falls through to the refusal.
+  }
+  throw new ValidationError([{ field: 'cursor', message: 'cursor is not one this list returned' }]);
+}
+
+/** A JSON array of distinct ids: one bound parameter whatever the count (read with json_each). */
+const idList = (ids: readonly string[]): string => JSON.stringify([...new Set(ids)]);
+
+function makeAssetCollectionRepo(x: Exec): AssetCollectionRepo {
+  const db = x.db;
+  const c = schema.assetCollections;
+  const i = schema.assetCollectionItems;
+  const a = schema.assets;
+  // Members whose asset exists: an import writes memberships before it creates their assets.
+  const itemCount = sql<number>`(SELECT count(*) FROM ${i} WHERE ${i.spaceId} = ${c.spaceId} AND ${i.environmentId} = ${c.environmentId} AND ${i.collectionId} = ${c.id} AND EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${i.spaceId} AND ${a.environmentId} = ${i.environmentId} AND ${a.id} = ${i.assetId}))`;
+  const ofCollection = (scope: Scope, id: string) =>
+    and(scopeFilter(i, scope), eq(i.collectionId, id));
+  return {
+    async get(scope, id) {
+      const [row] = await db
+        .select({ row: c, count: itemCount })
+        .from(c)
+        .where(and(scopeFilter(c, scope), eq(c.id, id)));
+      return row ? toAssetCollection(row.row, Number(row.count)) : null;
+    },
+    async list(scope, query = {}) {
+      const limit = Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE);
+      const conds: (SQL | undefined)[] = [scopeFilter(c, scope)];
+      if (query.cursor) {
+        const [name, id] = decodeTextCursor(query.cursor);
+        conds.push(sql`(${c.name}, ${c.id}) > (${name}, ${id})`);
+      }
+      const rows = await db
+        .select({ row: c, count: itemCount })
+        .from(c)
+        .where(and(...conds))
+        .orderBy(asc(c.name), asc(c.id))
+        .limit(limit + 1);
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.map((r) => toAssetCollection(r.row, Number(r.count))),
+        ...(rows.length > limit && last
+          ? { nextCursor: encodeTextCursor(last.row.name, last.row.id) }
+          : {}),
+      };
+    },
+    async create(scope, collection) {
+      await x.write(
+        db.insert(c).values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          id: collection.id,
+          name: collection.name,
+          description: collection.description ?? null,
+          createdAt: new Date(collection.createdAt),
+          createdBy: collection.createdBy ?? null,
+          updatedAt: new Date(collection.updatedAt),
+        }),
+      );
+    },
+    async save(scope, collection) {
+      await x.write(
+        db
+          .update(c)
+          .set({
+            name: collection.name,
+            description: collection.description ?? null,
+            updatedAt: new Date(collection.updatedAt),
+          })
+          .where(and(scopeFilter(c, scope), eq(c.id, collection.id))),
+      );
+    },
+    async delete(scope, id) {
+      await writeAll(x, [
+        db.delete(i).where(ofCollection(scope, id)),
+        db.delete(c).where(and(scopeFilter(c, scope), eq(c.id, id))),
+      ]);
+    },
+    async addItems(scope, id, assetIds, at, maxItems) {
+      if (assetIds.length === 0) return;
+      // One INSERT … SELECT over the ids as one JSON parameter: each goes after the current last
+      // member, in the order given (json_each's key is its index). Only assets of this scope get
+      // in, and members already there are left where they are.
+      const insert = db.insert(i).select(
+        sql`SELECT ${scope.spaceId}, ${scope.environmentId}, ${id}, j.value,
+              (SELECT ifnull(max(${i.position}), -1) FROM ${i} WHERE ${ofCollection(scope, id)}) + 1 + j.key,
+              ${at.getTime()}
+            FROM json_each(${idList(assetIds)}) j
+            WHERE EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${scope.spaceId} AND ${a.environmentId} = ${scope.environmentId} AND ${a.id} = j.value)`,
+      );
+      await writeAll(x, [
+        // The collection must still exist when the batch runs: one deleted since the use-case
+        // read it aborts the add (TransactionConflictError) instead of leaving orphan members.
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT EXISTS (SELECT 1 FROM ${c} WHERE ${c.spaceId} = ${scope.spaceId} AND ${c.environmentId} = ${scope.environmentId} AND ${c.id} = ${id}) AS ok`,
+          ),
+        db.delete(schema.guard),
+        insert.onConflictDoNothing(),
+        // And it holds no more than the cap afterwards (a concurrent add counts too).
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT (SELECT count(*) FROM ${i} WHERE ${ofCollection(scope, id)}) <= ${maxItems} AS ok`,
+          ),
+        db.delete(schema.guard),
+        db
+          .update(c)
+          .set({ updatedAt: at })
+          .where(and(scopeFilter(c, scope), eq(c.id, id))),
+      ]);
+    },
+    async removeItems(scope, id, assetIds) {
+      if (assetIds.length === 0) return;
+      await x.write(
+        db
+          .delete(i)
+          .where(
+            and(
+              ofCollection(scope, id),
+              sql`${i.assetId} IN (SELECT value FROM json_each(${idList(assetIds)}))`,
+            ),
+          ),
+      );
+    },
+    async reorder(scope, id, assetIds) {
+      if (assetIds.length === 0) return;
+      const ids = idList(assetIds);
+      const n = JSON.parse(ids).length as number;
+      await writeAll(x, [
+        // The rest keep their order, after the named ones: shifted by n, so no position collides
+        // (positions are never negative). Each statement reads its own row only.
+        db
+          .update(i)
+          .set({ position: sql`${i.position} + ${n}` })
+          .where(
+            and(
+              ofCollection(scope, id),
+              sql`${i.assetId} NOT IN (SELECT value FROM json_each(${ids}))`,
+            ),
+          ),
+        db
+          .update(i)
+          .set({
+            position: sql`(SELECT j.key FROM json_each(${ids}) j WHERE j.value = ${i.assetId})`,
+          })
+          .where(
+            and(
+              ofCollection(scope, id),
+              sql`${i.assetId} IN (SELECT value FROM json_each(${ids}))`,
+            ),
+          ),
+      ]);
+    },
+    async listItems(scope, id, query) {
+      const limit = Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE);
+      const conds: (SQL | undefined)[] = [
+        ofCollection(scope, id),
+        ...assetFilterConditions(query.filters ?? {}),
+      ];
+      if (query.cursor) {
+        const [position, assetId] = decodeAssetCursor(query.cursor);
+        conds.push(sql`(${i.position}, ${i.assetId}) > (${position}, ${assetId})`);
+      }
+      const rows = await db
+        .select({ asset: a, position: i.position })
+        .from(i)
+        .innerJoin(
+          a,
+          and(eq(a.spaceId, i.spaceId), eq(a.environmentId, i.environmentId), eq(a.id, i.assetId)),
+        )
+        .where(and(...conds))
+        .orderBy(asc(i.position), asc(i.assetId))
+        .limit(limit + 1);
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.map((r) => toAsset(r.asset)),
+        ...(rows.length > limit && last
+          ? { nextCursor: encodeAssetCursor(last.position, last.asset.id) }
+          : {}),
+      };
+    },
+    async listItemIds(scope, id) {
+      const rows = await db
+        .select({ assetId: i.assetId })
+        .from(i)
+        .where(ofCollection(scope, id))
+        .orderBy(asc(i.position), asc(i.assetId));
+      return rows.map((r) => r.assetId);
+    },
+    async listPublishedItems(scope, id, query) {
+      const p = schema.assetPublished;
+      const limit = Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE);
+      const conds: (SQL | undefined)[] = [ofCollection(scope, id)];
+      if (query.cursor) {
+        const [position, assetId] = decodeAssetCursor(query.cursor);
+        conds.push(sql`(${i.position}, ${i.assetId}) > (${position}, ${assetId})`);
+      }
+      const rows = await db
+        .select({ published: p, position: i.position })
+        .from(i)
+        .innerJoin(
+          p,
+          and(
+            eq(p.spaceId, i.spaceId),
+            eq(p.environmentId, i.environmentId),
+            eq(p.assetId, i.assetId),
+          ),
+        )
+        .where(and(...conds))
+        .orderBy(asc(i.position), asc(i.assetId))
+        .limit(limit + 1);
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.map((r) => toPublishedAsset(r.published)),
+        ...(rows.length > limit && last
+          ? { nextCursor: encodeAssetCursor(last.position, last.published.assetId) }
+          : {}),
+      };
+    },
+    async restore(scope, collection, assetIds) {
+      const statements: Query[] = [
+        db
+          .insert(c)
+          .values({
+            spaceId: scope.spaceId,
+            environmentId: scope.environmentId,
+            id: collection.id,
+            name: collection.name,
+            description: collection.description ?? null,
+            createdAt: new Date(collection.createdAt),
+            createdBy: collection.createdBy ?? null,
+            updatedAt: new Date(collection.updatedAt),
+          })
+          .onConflictDoNothing(),
+      ];
+      if (assetIds.length > 0) {
+        // `WHERE true`: SQLite reads an upsert's ON CONFLICT after a bare SELECT … FROM as a join.
+        statements.push(
+          db
+            .insert(i)
+            .select(
+              sql`SELECT ${scope.spaceId}, ${scope.environmentId}, ${collection.id}, j.value, j.key, ${Date.parse(collection.updatedAt)} FROM json_each(${idList(assetIds)}) j WHERE true`,
+            )
+            .onConflictDoNothing(),
+        );
+      }
+      await writeAll(x, statements);
+    },
+    async hasItem(scope, id, assetId) {
+      const [row] = await db
+        .select({ ok: sql<number>`1` })
+        .from(i)
+        .where(and(ofCollection(scope, id), eq(i.assetId, assetId)))
+        .limit(1);
+      return row !== undefined;
+    },
+    async collectionsOf(scope, assetId, limit) {
+      const rows = await db
+        .select({ id: i.collectionId })
+        .from(i)
+        .where(and(scopeFilter(i, scope), eq(i.assetId, assetId)))
+        .limit(Math.max(1, limit));
+      return rows.map((r) => r.id);
+    },
+  };
+}
+
+type AssetShareLinkRow = typeof schema.assetShareLinks.$inferSelect;
+const toShareLink = (r: AssetShareLinkRow): StoredAssetShareLink => ({
+  id: r.id,
+  targetType: r.targetType,
+  targetId: r.targetId,
+  expiresAt: r.expiresAt.toISOString(),
+  allowDownload: r.allowDownload,
+  ...(r.passwordHash ? { passwordHash: r.passwordHash } : {}),
+  createdAt: r.createdAt.toISOString(),
+  ...(r.createdBy ? { createdBy: r.createdBy } : {}),
+  ...(r.revokedAt ? { revokedAt: r.revokedAt.toISOString() } : {}),
+});
+
+function makeAssetShareLinkRepo(x: Exec): AssetShareLinkRepo {
+  const db = x.db;
+  const l = schema.assetShareLinks;
+  return {
+    async get(scope, id) {
+      const [row] = await db
+        .select()
+        .from(l)
+        .where(and(scopeFilter(l, scope), eq(l.id, id)));
+      return row ? toShareLink(row) : null;
+    },
+    async list(scope, query) {
+      const conds: (SQL | undefined)[] = [scopeFilter(l, scope)];
+      if (query.targetType) conds.push(eq(l.targetType, query.targetType));
+      if (query.targetId) conds.push(eq(l.targetId, query.targetId));
+      if (!query.includeInactive) {
+        conds.push(isNull(l.revokedAt), gt(l.expiresAt, query.now));
+      }
+      const rows = await db
+        .select()
+        .from(l)
+        .where(and(...conds))
+        .orderBy(desc(l.createdAt), desc(l.id))
+        .limit(Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE));
+      return rows.map(toShareLink);
+    },
+    async create(scope, link) {
+      const target =
+        link.targetType === 'asset'
+          ? sql`SELECT EXISTS (SELECT 1 FROM ${schema.assets} WHERE ${schema.assets.spaceId} = ${scope.spaceId} AND ${schema.assets.environmentId} = ${scope.environmentId} AND ${schema.assets.id} = ${link.targetId}) AS ok`
+          : sql`SELECT EXISTS (SELECT 1 FROM ${schema.assetCollections} WHERE ${schema.assetCollections.spaceId} = ${scope.spaceId} AND ${schema.assetCollections.environmentId} = ${scope.environmentId} AND ${schema.assetCollections.id} = ${link.targetId}) AS ok`;
+      await writeAll(x, [
+        // The target must still exist when the batch runs.
+        db.insert(schema.guard).select(target),
+        db.delete(schema.guard),
+        db.insert(l).values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          id: link.id,
+          targetType: link.targetType,
+          targetId: link.targetId,
+          expiresAt: new Date(link.expiresAt),
+          allowDownload: link.allowDownload,
+          passwordHash: link.passwordHash ?? null,
+          createdAt: new Date(link.createdAt),
+          createdBy: link.createdBy ?? null,
+          revokedAt: null,
+        }),
+      ]);
+    },
+    async revoke(scope, id, at) {
+      const update = db
+        .update(l)
+        .set({ revokedAt: at })
+        .where(and(scopeFilter(l, scope), eq(l.id, id), isNull(l.revokedAt)));
+      if (x.inUnit) {
+        // Revoked meanwhile: the unit (and its event) commits nothing.
+        await x.write(update);
+        x.expectChanged(1);
+        return;
+      }
+      const changed = await update.returning({ id: l.id });
+      if (changed.length === 0) throw new TransactionConflictError();
+    },
+  };
+}
+
+type AssetZipJobRow = typeof schema.assetZipJobs.$inferSelect;
+const toZipJob = (r: AssetZipJobRow): AssetZipJob => ({
+  id: r.id,
+  status: r.status,
+  source: r.source,
+  fileName: r.fileName,
+  ...(r.fileCount !== null ? { fileCount: r.fileCount } : {}),
+  ...(r.totalBytes !== null ? { totalBytes: r.totalBytes } : {}),
+  partsDone: r.partsDone,
+  ...(r.partCount !== null ? { partCount: r.partCount } : {}),
+  ...(r.error ? { error: r.error } : {}),
+  createdAt: r.createdAt.toISOString(),
+  ...(r.createdBy ? { createdBy: r.createdBy } : {}),
+  ...(r.completedAt ? { completedAt: r.completedAt.toISOString() } : {}),
+  expiresAt: r.expiresAt.toISOString(),
+});
+
+function makeAssetZipJobRepo(x: Exec): AssetZipJobRepo {
+  const db = x.db;
+  const z = schema.assetZipJobs;
+  return {
+    async get(scope, id) {
+      const [row] = await db
+        .select()
+        .from(z)
+        .where(and(scopeFilter(z, scope), eq(z.id, id)));
+      return row ? toZipJob(row) : null;
+    },
+    async list(scope, limit) {
+      const rows = await db
+        .select()
+        .from(z)
+        .where(scopeFilter(z, scope))
+        .orderBy(desc(z.createdAt), desc(z.id))
+        .limit(Math.min(Math.max(1, limit), MAX_ASSET_PAGE));
+      return rows.map(toZipJob);
+    },
+    async create(scope, job) {
+      await x.write(
+        db.insert(z).values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          id: job.id,
+          status: job.status,
+          source: job.source,
+          fileName: job.fileName,
+          fileCount: job.fileCount ?? null,
+          totalBytes: job.totalBytes ?? null,
+          partsDone: job.partsDone,
+          partCount: job.partCount ?? null,
+          error: job.error ?? null,
+          createdAt: new Date(job.createdAt),
+          createdBy: job.createdBy ?? null,
+          completedAt: job.completedAt ? new Date(job.completedAt) : null,
+          expiresAt: new Date(job.expiresAt),
+        }),
+      );
+    },
+    async update(scope, id, patch) {
+      const set: Partial<typeof z.$inferInsert> = {};
+      if (patch.status !== undefined) set.status = patch.status;
+      if (patch.fileCount !== undefined) set.fileCount = patch.fileCount;
+      if (patch.totalBytes !== undefined) set.totalBytes = patch.totalBytes;
+      if (patch.partsDone !== undefined) set.partsDone = patch.partsDone;
+      if (patch.partCount !== undefined) set.partCount = patch.partCount;
+      if (patch.error !== undefined) set.error = patch.error;
+      if (patch.completedAt !== undefined) set.completedAt = new Date(patch.completedAt);
+      if (Object.keys(set).length === 0) return;
+      await x.write(
+        db
+          .update(z)
+          .set(set)
+          .where(and(scopeFilter(z, scope), eq(z.id, id))),
+      );
+    },
+    async listExpired(at, limit) {
+      const rows = await db
+        .select({ spaceId: z.spaceId, environmentId: z.environmentId, id: z.id })
+        .from(z)
+        .where(lte(z.expiresAt, at))
+        .orderBy(asc(z.expiresAt))
+        .limit(Math.max(1, Math.min(limit, MAX_ASSET_PAGE)));
+      return rows.map((r) => ({
+        scope: { spaceId: r.spaceId, environmentId: r.environmentId },
+        id: r.id,
+      }));
+    },
+    async delete(scope, id) {
+      await x.write(db.delete(z).where(and(scopeFilter(z, scope), eq(z.id, id))));
+    },
+  };
+}
+
+type AssetUploadRow = typeof schema.assetUploads.$inferSelect;
+const toAssetUpload = (r: AssetUploadRow): AssetUpload => ({
+  assetId: r.assetId,
+  uploadId: r.uploadId,
+  r2Key: r.r2Key,
+  size: r.size,
+  partSize: r.partSize,
+  contentType: r.contentType,
+  createdAt: r.createdAt.toISOString(),
+});
+
+function makeAssetUploadRepo(x: Exec): AssetUploadRepo {
+  const db = x.db;
+  const u = schema.assetUploads;
+  const one = (scope: Scope, assetId: string, uploadId: string) =>
+    and(scopeFilter(u, scope), eq(u.assetId, assetId), eq(u.uploadId, uploadId));
+  return {
+    async get(scope, assetId, uploadId) {
+      const [row] = await db.select().from(u).where(one(scope, assetId, uploadId));
+      return row ? toAssetUpload(row) : null;
+    },
+    async create(scope, upload) {
+      await x.write(
+        db.insert(u).values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          assetId: upload.assetId,
+          uploadId: upload.uploadId,
+          r2Key: upload.r2Key,
+          size: upload.size,
+          partSize: upload.partSize,
+          contentType: upload.contentType,
+          createdAt: new Date(upload.createdAt),
+        }),
+      );
+    },
+    async delete(scope, assetId, uploadId) {
+      await x.write(db.delete(u).where(one(scope, assetId, uploadId)));
+    },
+    async listStartedBefore(before, limit) {
+      const rows = await db
+        .select()
+        .from(u)
+        .where(lt(u.createdAt, before))
+        .orderBy(asc(u.createdAt))
+        .limit(Math.max(1, Math.min(limit, MAX_ASSET_PAGE)));
+      return rows.map((r) => ({
+        scope: { spaceId: r.spaceId, environmentId: r.environmentId },
+        upload: toAssetUpload(r),
+      }));
     },
   };
 }
@@ -3553,6 +4096,11 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.assetPublished,
   schema.assetFolders,
   schema.assetVersions,
+  schema.assetCollections,
+  schema.assetCollectionItems,
+  schema.assetShareLinks,
+  schema.assetZipJobs,
+  schema.assetUploads,
   schema.references,
   schema.agentRuns,
   schema.aiActions,
@@ -5154,6 +5702,10 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     entries: makeEntryRepo(x, scanLimit, versionBodies),
     assets: makeAssetRepo(x),
     assetFolders: makeAssetFolderRepo(x),
+    assetCollections: makeAssetCollectionRepo(x),
+    assetShareLinks: makeAssetShareLinkRepo(x),
+    assetZips: makeAssetZipJobRepo(x),
+    assetUploads: makeAssetUploadRepo(x),
     assetRenditions: makeAssetRenditionRepo(x),
     references: makeReferenceRepo(x),
     releases: makeReleaseRepo(x),
@@ -5181,6 +5733,10 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     entries: makeEntryRepo(x, scanLimit, options.versionBodies),
     assets: makeAssetRepo(x),
     assetFolders: makeAssetFolderRepo(x),
+    assetCollections: makeAssetCollectionRepo(x),
+    assetShareLinks: makeAssetShareLinkRepo(x),
+    assetZips: makeAssetZipJobRepo(x),
+    assetUploads: makeAssetUploadRepo(x),
     assetRenditions: makeAssetRenditionRepo(x),
     references: makeReferenceRepo(x),
     webhooks: makeWebhookRepo(x),

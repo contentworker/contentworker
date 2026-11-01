@@ -1,26 +1,39 @@
 import { env } from 'cloudflare:workers';
-import { assetGateKey, createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
+import {
+  assetGateKey,
+  createKvAssetGate,
+  createKvShareLinkGate,
+} from '@contentworker/adapters/asset-gate-kv';
 import {
   type AppContext,
+  addToAssetCollection,
   commitAssetFile,
   consumeEvent,
   createAsset,
+  createAssetCollection,
   createAssetRendition,
+  createAssetShareLink,
   createEnvironment,
   createSpace,
   createVideoAsset,
+  deleteAsset,
   deleteEnvironment,
   finishIngest,
   publishAsset,
   refreshVideoAsset,
   replaceAssetFile,
+  revokeAssetShareLink,
   runDueAssetExpiries,
   setAssetRights,
   unpublishAsset,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
 import type { DomainEvent, Principal } from '@contentworker/domain';
-import type { PurgeMessage } from '@contentworker/platform/messages';
+import {
+  mediaCollectionTag,
+  mediaShareLinkTag,
+  type PurgeMessage,
+} from '@contentworker/platform/messages';
 import { FakeBlobStore, FakeVideoHost, RecordingWebhookSender } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import {
@@ -349,5 +362,74 @@ describe('asset versions and rights in the engine', () => {
     // A redelivered pair converges on the same state.
     await consume(ctx, events);
     expect(await env.KV_CACHE.get(assetGateKey(scope, asset.id))).toBeNull();
+  });
+});
+
+describe('collections and share links in the engine', () => {
+  it('purge a collection’s share pages and Delivery when it or a member changes', async () => {
+    const { ctx, scope } = await space();
+    const blob = new FakeBlobStore();
+    const { asset } = await createAsset(ctx, blob, scope, {
+      fileName: 'a.png',
+      contentType: 'image/png',
+    });
+    const since = await lastRowid();
+    const c = await createAssetCollection(ctx, scope, { name: 'Kit' });
+    await addToAssetCollection(ctx, scope, c.id, [asset.id]);
+    await publishAsset(ctx, scope, asset.id);
+    const plan = await consume(ctx, await eventsSince(scope, since));
+    const { spaceId, environmentId } = scope;
+    expect(plan.delivery).toContain(`cw:${spaceId}:${environmentId}`);
+    // The member's publish reaches the collection's pages through the asset's memberships.
+    expect(plan.media).toContain(mediaCollectionTag(spaceId, environmentId, c.id));
+
+    // A deleted member: its delete announces the collection (the membership is gone by now).
+    const before = await lastRowid();
+    await unpublishAsset(ctx, scope, asset.id);
+    await deleteAsset(ctx, scope, asset.id);
+    const after = await consume(ctx, await eventsSince(scope, before));
+    expect(after.media).toContain(mediaCollectionTag(spaceId, environmentId, c.id));
+  });
+
+  it('write a link’s KV entry when created, remove it and purge its page twice when revoked', async () => {
+    const { ctx, scope } = await space();
+    const shareGate = createKvShareLinkGate(env.KV_CACHE);
+    const c = await createAssetCollection(ctx, scope, { name: 'Kit' });
+    const since = await lastRowid();
+    const link = await createAssetShareLink(ctx, scope, {
+      targetType: 'collection',
+      targetId: c.id,
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    for (const e of await eventsSince(scope, since)) {
+      await consumeEvent(
+        ctx,
+        { sender: new RecordingWebhookSender(), shareLinkGate: shareGate },
+        e,
+      );
+    }
+    expect(await shareGate.get(scope, link.id)).toMatchObject({ targetId: c.id });
+
+    const before = await lastRowid();
+    await revokeAssetShareLink(ctx, scope, link.id);
+    const events = await eventsSince(scope, before);
+    const plan = newPurgePlan();
+    for (const e of events) {
+      await consumeEvent(
+        ctx,
+        { sender: new RecordingWebhookSender(), shareLinkGate: shareGate },
+        e,
+      );
+      await planPurges(ctx, plan, e);
+    }
+    expect(await shareGate.get(scope, link.id)).toBeNull();
+    const tag = mediaShareLinkTag(scope.spaceId, scope.environmentId, link.id);
+    expect(plan.revoked).toContain(tag);
+    const { q, sent } = queues();
+    await sendPurges(q, plan, () => {});
+    expect(sent.filter((m) => m.body.tags.includes(tag)).map((m) => m.delaySeconds)).toEqual([
+      undefined,
+      REVOCATION_REPURGE_SECONDS,
+    ]);
   });
 });

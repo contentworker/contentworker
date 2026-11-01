@@ -2,6 +2,7 @@ import {
   assetSearchDeps,
   assetTransformTarget,
   getDeliveredAsset,
+  getDeliveredCollection,
   getPublishedEntry,
   hybridSearch,
   listContentTypes,
@@ -242,6 +243,28 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
         locale !== undefined ? { locale } : {},
       );
       return c.json({ ...page, total: page.items.length });
+    },
+  );
+
+  app.get(
+    `${BASE}/collections/:id`,
+    describe('getCollection'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => {
+      // As for assets: a key with content grants reads none.
+      if (c.get('principal').contentGrants) return c.body(null, 403);
+      const locale = c.req.query('locale');
+      const limit = clampCount(c.req.query('limit'), MAX_PAGE_LIMIT, { min: 1 });
+      const cursor = c.req.query('cursor');
+      return c.json(
+        await getDeliveredCollection(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          { ...(limit !== undefined ? { limit } : {}), ...(cursor ? { cursor } : {}) },
+          locale !== undefined ? { locale } : {},
+        ),
+      );
     },
   );
 

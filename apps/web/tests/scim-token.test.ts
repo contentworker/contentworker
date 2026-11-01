@@ -1,5 +1,5 @@
+import { sha256Hex } from '@contentworker/security/credentials';
 import { describe, expect, it, vi } from 'vitest';
-import { sha256Hex } from '~/lib/credentials';
 import { SCIM_TOKEN_MS } from '~/lib/scim';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));

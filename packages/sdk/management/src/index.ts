@@ -8,6 +8,22 @@
  */
 
 import { bookmarkTracker } from './bookmark.js';
+import {
+  inPool,
+  SINGLE_UPLOAD_MAX_BYTES,
+  sizeOf,
+  sliceOf,
+  type UploadBody,
+  type UploadOptions,
+  withRetry,
+} from './upload.js';
+
+export {
+  SINGLE_UPLOAD_MAX_BYTES,
+  type UploadBody,
+  type UploadOptions,
+  type UploadProgress,
+} from './upload.js';
 
 /** Locale-keyed values, e.g. `{ 'en-US': 'Hello' }`. */
 export type LocalizedValue = Readonly<Record<string, unknown>>;
@@ -209,6 +225,87 @@ export interface CreateAssetInput {
   readonly description?: LocalizedValue;
   /** File it in this folder. */
   readonly folderId?: string;
+}
+
+/** A named, ordered set of assets; an asset may be in any number of them. */
+export interface AssetCollection {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly itemCount: number;
+  readonly createdAt: string;
+  readonly createdBy?: string;
+  readonly updatedAt: string;
+}
+
+export interface AssetCollectionPage {
+  readonly items: readonly AssetCollection[];
+  readonly nextCursor?: string;
+}
+
+/** An expiring, revocable link to a published asset or a collection, for people without an account. */
+export interface ShareLink {
+  readonly id: string;
+  readonly targetType: 'asset' | 'collection';
+  readonly targetId: string;
+  readonly expiresAt: string;
+  readonly allowDownload: boolean;
+  readonly hasPassword: boolean;
+  readonly createdAt: string;
+  readonly createdBy?: string;
+  readonly revokedAt?: string;
+  /** The URL to hand out, on the media origin. */
+  readonly url?: string;
+}
+
+export interface CreateShareLinkInput {
+  readonly targetType: 'asset' | 'collection';
+  readonly targetId: string;
+  /** ISO 8601, 5 minutes to 90 days from now. */
+  readonly expiresAt: string;
+  readonly allowDownload?: boolean;
+  /** 8 to 256 characters; asked for before the page opens, never stored. */
+  readonly password?: string;
+}
+
+/** A multipart upload started for a new draft asset. */
+export interface MultipartUploadStarted {
+  readonly asset: Asset;
+  readonly upload: {
+    readonly uploadId: string;
+    /** Every part but the last has exactly this many bytes. */
+    readonly partSize: number;
+    readonly partCount: number;
+  };
+}
+
+/** A signed URL for one part: PUT exactly `length` bytes; the response's ETag names the part. */
+export interface SignedPart {
+  readonly partNumber: number;
+  readonly url: string;
+  readonly length: number;
+  readonly expiresAt: string;
+}
+
+/** A zip download being built; `downloadUrl` once `completed` (15 minutes; get it again for more). */
+export interface AssetZip {
+  readonly id: string;
+  readonly status: 'pending' | 'running' | 'completed' | 'failed';
+  readonly fileName: string;
+  readonly fileCount?: number;
+  readonly totalBytes?: number;
+  readonly partsDone: number;
+  readonly partCount?: number;
+  readonly error?: string;
+  readonly createdAt: string;
+  readonly completedAt?: string;
+  readonly expiresAt: string;
+  readonly downloadUrl?: string;
+}
+
+/** A file to upload as a new asset (`assets.upload`). */
+export interface UploadAssetInput extends CreateAssetInput {
+  readonly body: UploadBody;
 }
 
 /** A file replacement in progress: PUT the bytes to `upload.url`, then pass `commit` back. */
@@ -517,6 +614,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
   const items = async <T>(p: Promise<{ items: T[] }>): Promise<T[]> => (await p).items;
 
   const e = encodeURIComponent;
+  /** A signed URL may be root-relative (a deployment without MEDIA_BASE_URL): resolve it here. */
+  const absolute = (url: string) => (/^https?:\/\//.test(url) ? url : `${root}${url}`);
 
   return {
     /**
@@ -664,6 +763,166 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       setRights: (id: string, rights: AssetRights) =>
         put<Asset>(`${envBase}/assets/${e(id)}/rights`, rights),
+      /**
+       * Uploads a file as a new draft asset, whatever its size: one signed PUT up to 100 MiB, a
+       * multipart upload above it (parts retried on their own, `concurrency` at once, progress
+       * after each). A failed or aborted multipart upload is aborted on the server too. Returns
+       * the asset once its bytes are stored.
+       */
+      upload: async (input: UploadAssetInput, uploadOpts: UploadOptions = {}): Promise<Asset> => {
+        const { body, ...rest } = input;
+        const total = sizeOf(body);
+        const sleep =
+          uploadOpts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+        const attempts = uploadOpts.attempts ?? 4;
+        const retry = <T>(fn: () => Promise<T>) =>
+          withRetry(fn, {
+            attempts,
+            sleep,
+            ...(uploadOpts.signal ? { signal: uploadOpts.signal } : {}),
+          });
+        const putBytes = async (url: string, bytes: Blob | Uint8Array, headers = {}) => {
+          const res = await doFetch(absolute(url), {
+            method: 'PUT',
+            headers,
+            body: bytes as BodyInit,
+            ...(uploadOpts.signal ? { signal: uploadOpts.signal } : {}),
+          });
+          if (!res.ok) {
+            throw new ManagementError(res.status, `Upload failed: ${res.status} PUT ${url}`);
+          }
+          return res;
+        };
+        if (total <= SINGLE_UPLOAD_MAX_BYTES) {
+          const created = await post<CreatedAsset>(`${envBase}/assets`, rest);
+          uploadOpts.onProgress?.({ loaded: 0, total, partsDone: 0, partCount: 1 });
+          await retry(() =>
+            putBytes(created.upload.url, sliceOf(body, 0, total), created.upload.headers),
+          );
+          uploadOpts.onProgress?.({ loaded: total, total, partsDone: 1, partCount: 1 });
+          return created.asset;
+        }
+        const started = await post<MultipartUploadStarted>(`${envBase}/assets/uploads`, {
+          ...rest,
+          size: total,
+        });
+        const { uploadId, partSize, partCount } = started.upload;
+        const base = `${envBase}/assets/${e(started.asset.id)}/uploads/${e(uploadId)}`;
+        let loaded = 0;
+        let partsDone = 0;
+        uploadOpts.onProgress?.({ loaded, total, partsDone, partCount });
+        try {
+          const numbers = Array.from({ length: partCount }, (_, i) => i + 1);
+          const parts = await inPool(
+            numbers.map((n) => async () => {
+              const etag = await retry(async () => {
+                // Signed again on each attempt: a URL lives 15 minutes, a retry may outlast it.
+                const [signed] = (
+                  await post<{ parts: SignedPart[] }>(`${base}/parts`, { partNumbers: [n] })
+                ).parts;
+                if (!signed) throw new Error(`part ${n} was not signed`);
+                const res = await putBytes(
+                  signed.url,
+                  sliceOf(body, (n - 1) * partSize, signed.length),
+                );
+                const tag = res.headers.get('etag');
+                if (!tag) throw new Error(`part ${n} came back without an ETag`);
+                return tag;
+              });
+              partsDone += 1;
+              loaded += Math.min(partSize, total - (n - 1) * partSize);
+              uploadOpts.onProgress?.({ loaded, total, partsDone, partCount });
+              return { partNumber: n, etag };
+            }),
+            uploadOpts.concurrency ?? 4,
+          );
+          return await retry(() => post<Asset>(`${base}/complete`, { parts }));
+        } catch (err) {
+          await del<void>(base).catch(() => undefined);
+          throw err;
+        }
+      },
+      /** The multipart steps one at a time (`upload` runs them for you). */
+      uploads: {
+        start: (input: CreateAssetInput & { size: number }) =>
+          post<MultipartUploadStarted>(`${envBase}/assets/uploads`, input),
+        signParts: (assetId: string, uploadId: string, partNumbers: readonly number[]) =>
+          post<{ parts: SignedPart[] }>(
+            `${envBase}/assets/${e(assetId)}/uploads/${e(uploadId)}/parts`,
+            { partNumbers },
+          ),
+        complete: (
+          assetId: string,
+          uploadId: string,
+          parts: readonly { partNumber: number; etag: string }[],
+        ) =>
+          post<Asset>(`${envBase}/assets/${e(assetId)}/uploads/${e(uploadId)}/complete`, {
+            parts,
+          }),
+        abort: (assetId: string, uploadId: string) =>
+          del<void>(`${envBase}/assets/${e(assetId)}/uploads/${e(uploadId)}`),
+      },
+      collections: {
+        /** By name; pass `nextCursor` back as `cursor` for the next page. */
+        list: (o: { limit?: number; cursor?: string } = {}) =>
+          get<AssetCollectionPage>(`${envBase}/asset-collections`, { ...o }),
+        get: (id: string) => get<AssetCollection>(`${envBase}/asset-collections/${e(id)}`),
+        create: (input: { name: string; description?: string }) =>
+          post<AssetCollection>(`${envBase}/asset-collections`, input),
+        /** `description: ''` clears it. */
+        update: (id: string, changes: { name?: string; description?: string }) =>
+          patch<AssetCollection>(`${envBase}/asset-collections/${e(id)}`, changes),
+        /** Its assets stay in the library. */
+        delete: (id: string) => del<void>(`${envBase}/asset-collections/${e(id)}`),
+        /** Its assets in its order, filtered as the library is. */
+        assets: (id: string, query: Omit<AssetListQuery, 'folder' | 'sort' | 'order'> = {}) =>
+          get<AssetPage>(`${envBase}/asset-collections/${e(id)}/assets`, { ...query }),
+        /** After its last member, in the order given (up to 500 ids; 1,000 members at most). */
+        add: (id: string, assetIds: readonly string[]) =>
+          post<{ added: number; skipped: string[] }>(
+            `${envBase}/asset-collections/${e(id)}/assets`,
+            { assetIds },
+          ),
+        remove: (id: string, assetIds: readonly string[]) =>
+          post<{ removed: number }>(`${envBase}/asset-collections/${e(id)}/assets/remove`, {
+            assetIds,
+          }),
+        /** The named members first, in that order; the rest after, as they were. */
+        reorder: (id: string, assetIds: readonly string[]) =>
+          put<void>(`${envBase}/asset-collections/${e(id)}/order`, { assetIds }),
+      },
+      /** Expiring links to a published asset or a collection (content:publish). */
+      shareLinks: {
+        list: (
+          o: {
+            targetType?: 'asset' | 'collection';
+            targetId?: string;
+            includeInactive?: boolean;
+          } = {},
+        ) =>
+          items(
+            get<{ items: ShareLink[] }>(`${envBase}/share-links`, {
+              targetType: o.targetType,
+              targetId: o.targetId,
+              includeInactive: o.includeInactive ? 'true' : undefined,
+            }),
+          ),
+        get: (id: string) => get<ShareLink>(`${envBase}/share-links/${e(id)}`),
+        create: (input: CreateShareLinkInput) => post<ShareLink>(`${envBase}/share-links`, input),
+        /** It stops opening within a minute. */
+        revoke: (id: string) => del<ShareLink>(`${envBase}/share-links/${e(id)}`),
+      },
+      /** Zip downloads of a selection or a collection, built in the background. */
+      zips: {
+        create: (
+          input:
+            | { assetIds: readonly string[]; name?: string }
+            | { collectionId: string; name?: string },
+        ) => post<AssetZip>(`${envBase}/asset-zips`, input),
+        /** `downloadUrl` once completed. */
+        get: (id: string) => get<AssetZip>(`${envBase}/asset-zips/${e(id)}`),
+        list: () => items(get<{ items: AssetZip[] }>(`${envBase}/asset-zips`)),
+      },
       folders: {
         list: () => items(get<{ items: AssetFolder[] }>(`${envBase}/asset-folders`)),
         create: (input: { name: string; parentId?: string | null }) =>

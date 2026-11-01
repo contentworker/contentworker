@@ -84,6 +84,15 @@ export interface AssetSearchQuery {
   readonly locale?: string;
 }
 
+/** A collection as Delivery serves it: its published members, in its order. */
+export interface DeliveredCollection {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly items: DeliveredAsset[];
+  readonly nextCursor?: string;
+}
+
 export interface AssetQuery {
   readonly limit?: number;
   /** `nextCursor` from the previous page. */
@@ -290,6 +299,21 @@ export function createDeliveryClient(opts: ClientOptions) {
     /** Fetch a single published asset by id (from Preview: as it is now, drafts included). */
     async getAsset(id: string, o: { locale?: string } = {}): Promise<DeliveredAsset> {
       return get<DeliveredAsset>(`/assets/${encodeURIComponent(id)}`, { locale: o.locale });
+    },
+
+    /**
+     * A collection's published assets in its order (drafts and archived members left out), a
+     * page at a time. Delivery only.
+     */
+    async getCollection(
+      id: string,
+      o: { limit?: number; cursor?: string; locale?: string } = {},
+    ): Promise<DeliveredCollection> {
+      return get<DeliveredCollection>(`/collections/${encodeURIComponent(id)}`, {
+        limit: o.limit,
+        cursor: o.cursor,
+        locale: o.locale,
+      });
     },
 
     /** List published assets, a page at a time (pass `nextCursor` back as `cursor`). */

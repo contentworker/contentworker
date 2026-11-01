@@ -8,8 +8,10 @@ import type { DomainEvent } from '@contentworker/domain';
 import {
   deliveryScopeTag,
   mediaAssetTag,
+  mediaCollectionTag,
   mediaEnvironmentTag,
   mediaRenditionTag,
+  mediaShareLinkTag,
   type PurgeMessage,
 } from '@contentworker/platform/messages';
 
@@ -22,6 +24,9 @@ export const PURGING_EVENTS = new Set<string>([
   'asset.unpublished',
   'asset.deleted',
   'asset.rights_changed',
+  // Delivery lists a collection's published members (`GET …/collections/:id`), cached under the
+  // scope's tag like every other delivery read: one tag, coalesced per batch.
+  'asset_collection.changed',
   'content_type.published',
   'release.published',
   'environment_alias.changed',
@@ -49,6 +54,12 @@ export const newPurgePlan = (): PurgePlan => ({
   revoked: new Set(),
 });
 
+/**
+ * Most collections an asset event purges the share pages of. Past it, a share page of a collection
+ * holding the asset shows it (or not) until the page's own max-age (at most an hour) runs out.
+ */
+export const MAX_COLLECTIONS_PURGED = 100;
+
 /** Adds what `event` makes stale to `plan`. */
 export async function planPurges(
   ctx: Pick<AppContext, 'store'>,
@@ -64,7 +75,30 @@ export async function planPurges(
   if (event.type === 'asset.ingested' && event.published) {
     plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
   }
+  // A share page of a collection lists its members' published files: a member published or
+  // unpublished makes every such page stale. (A deleted asset has left its collections by now;
+  // its delete announced each one with `asset_collection.changed`.)
+  if (
+    event.type === 'asset.published' ||
+    event.type === 'asset.unpublished' ||
+    event.type === 'asset.rights_changed'
+  ) {
+    const collections = await ctx.store.assetCollections.collectionsOf(
+      event.scope,
+      event.assetId,
+      MAX_COLLECTIONS_PURGED,
+    );
+    for (const id of collections) plan.media.add(mediaCollectionTag(spaceId, environmentId, id));
+  }
   switch (event.type) {
+    case 'asset_collection.changed':
+      plan.media.add(mediaCollectionTag(spaceId, environmentId, event.collectionId));
+      break;
+    case 'asset_share.revoked':
+      // Its page and the files under it stop at the gateway at once (it checks the link on every
+      // request); the cached page goes too, now and once every colo's KV read has expired.
+      plan.revoked.add(mediaShareLinkTag(spaceId, environmentId, event.linkId));
+      break;
     case 'asset.published':
       // A republish with a new file takes the old version out of Delivery: its URLs must stop
       // working, so they are purged as a revocation is (now, and again once every colo sees the

@@ -5,6 +5,9 @@ import type {
   AssetKind,
   AssetMetadata,
   AssetRights,
+  AssetShareTargetType,
+  AssetZipSource,
+  AssetZipStatus,
   ContentTypeGrant,
   DomainEvent,
   EntryFields,
@@ -325,6 +328,120 @@ export const assetFolders = sqliteTable(
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
     uniqueIndex('asset_folders_sibling_name').on(t.spaceId, t.environmentId, t.parentId, t.name),
     index('asset_folders_by_path').on(t.spaceId, t.environmentId, t.path),
+  ],
+);
+
+/** Collections: named, ordered sets of assets (0016_asset_collections). */
+export const assetCollections = sqliteTable(
+  'asset_collections',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    createdBy: text('created_by'),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    index('asset_collections_by_name').on(t.spaceId, t.environmentId, t.name, t.id),
+  ],
+);
+
+/** A collection's members; `position` orders them (lower first, not necessarily dense). */
+export const assetCollectionItems = sqliteTable(
+  'asset_collection_items',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    collectionId: text('collection_id').notNull(),
+    assetId: text('asset_id').notNull(),
+    position: integer('position').notNull(),
+    addedAt: integer('added_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.collectionId, t.assetId] }),
+    index('asset_collection_items_by_position').on(
+      t.spaceId,
+      t.environmentId,
+      t.collectionId,
+      t.position,
+      t.assetId,
+    ),
+    index('asset_collection_items_by_asset').on(t.spaceId, t.environmentId, t.assetId),
+  ],
+);
+
+/** Expiring, revocable share links to an asset or a collection (0016_asset_collections). */
+export const assetShareLinks = sqliteTable(
+  'asset_share_links',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    targetType: text('target_type').$type<AssetShareTargetType>().notNull(),
+    targetId: text('target_id').notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    allowDownload: integer('allow_download', { mode: 'boolean' }).notNull().default(false),
+    // PBKDF2 (`pbkdf2:<iterations>:<salt>:<hash>`), never the password.
+    passwordHash: text('password_hash'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    createdBy: text('created_by'),
+    revokedAt: integer('revoked_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    index('asset_share_links_by_target').on(t.spaceId, t.environmentId, t.targetType, t.targetId),
+    index('asset_share_links_by_created').on(t.spaceId, t.environmentId, t.createdAt),
+  ],
+);
+
+/** Zip downloads and the engine Workflow's progress building them (0016_asset_collections). */
+export const assetZipJobs = sqliteTable(
+  'asset_zip_jobs',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    status: text('status').$type<AssetZipStatus>().notNull(),
+    source: text('source', { mode: 'json' }).$type<AssetZipSource>().notNull(),
+    fileName: text('file_name').notNull(),
+    fileCount: integer('file_count'),
+    totalBytes: integer('total_bytes'),
+    partsDone: integer('parts_done').notNull().default(0),
+    partCount: integer('part_count'),
+    error: text('error'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    createdBy: text('created_by'),
+    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    index('asset_zip_jobs_by_created').on(t.spaceId, t.environmentId, t.createdAt),
+    index('asset_zip_jobs_by_expiry').on(t.expiresAt),
+  ],
+);
+
+/** Multipart uploads in progress (0016_asset_collections). */
+export const assetUploads = sqliteTable(
+  'asset_uploads',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    assetId: text('asset_id').notNull(),
+    uploadId: text('upload_id').notNull(),
+    r2Key: text('r2_key').notNull(),
+    size: integer('size').notNull(),
+    partSize: integer('part_size').notNull(),
+    contentType: text('content_type').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.assetId, t.uploadId] }),
+    index('asset_uploads_by_created').on(t.createdAt),
   ],
 );
 

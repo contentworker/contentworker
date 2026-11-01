@@ -47,6 +47,8 @@ export default defineConfig(async () => ({
         d1Databases: { DB: 'contentworker-engine-test' },
         // The media gate the events consumer writes (test/asset-delivery.test.ts).
         kvNamespaces: ['KV_CACHE'],
+        // The zip Workflow's files and archive (a real multipart upload).
+        r2Buckets: ['MEDIA_BUCKET'],
         // The editorial workflow host, run by miniflare's real Workflows engine over the
         // fixture's in-memory context (test/fixtures/editorial.ts).
         workflows: {
@@ -59,6 +61,11 @@ export default defineConfig(async () => ({
           ASSET_INGEST_WF: {
             name: 'contentworker-asset-ingest-test',
             className: 'AssetIngestTestWorkflow',
+          },
+          // Zip downloads over the test's store and the real R2 binding (test/fixtures/asset-zip.ts).
+          ASSET_ZIP_WF: {
+            name: 'contentworker-asset-zip-test',
+            className: 'AssetZipTestWorkflow',
           },
         },
         bindings: {

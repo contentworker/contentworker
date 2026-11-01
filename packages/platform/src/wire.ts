@@ -6,7 +6,7 @@ import {
   type WorkersAiRun,
   workersAiModelsFromEnv,
 } from '@contentworker/adapters/ai-workers';
-import { createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
+import { createKvAssetGate, createKvShareLinkGate } from '@contentworker/adapters/asset-gate-kv';
 import {
   createMediaPathSigner,
   createMediaUrlSigner,
@@ -45,12 +45,14 @@ import {
   withSealedSecrets,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
+import { hashPassword, verifyPassword } from '@contentworker/security/credentials';
 import { type ApiKeyKind, type DomainEvent, scopesForKind } from '@contentworker/domain';
 import type {
   AIProvider,
   AssetGate,
   AssetIngestQueue,
   AssetIngestStarter,
+  AssetZipStarter,
   BlobStore,
   Cache,
   ContentStore,
@@ -61,8 +63,10 @@ import type {
   GenerateRequest,
   IdGenerator,
   MediaPathSigner,
+  PasswordHasher,
   Queue as QueuePort,
   SecretSealer,
+  ShareLinkGate,
   TextExtractor,
   VectorStore,
   WorkflowEngine,
@@ -77,6 +81,7 @@ import {
   StubDecisionModel,
 } from '@contentworker/test-kit';
 import { CloudflareAssetIngestStarter } from './asset-ingest';
+import { CloudflareAssetZipStarter } from './asset-zip';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
 import { doCostGuardFromEnv } from './do/cost-guard';
@@ -112,6 +117,10 @@ export interface EdgeWired {
   readonly assetIngest?: AssetIngestQueue;
   /** Starts ingest runs (the engine's ASSET_INGEST_WF); absent elsewhere. */
   readonly assetIngestStarter?: AssetIngestStarter;
+  /** Share links as the media origin reads them (KV_CACHE); written by the engine only. */
+  readonly shareLinkGate?: ShareLinkGate;
+  /** Starts zip builds (the engine's ASSET_ZIP_WF); absent elsewhere. */
+  readonly assetZipStarter?: AssetZipStarter;
   readonly ai: AIProvider;
   /** Decision model (Clef on Workers AI): typed questions in, probabilities out. */
   readonly decisions: DecisionModel;
@@ -229,6 +238,10 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
         }
       : {}),
     ...(env.STREAM ? { video: createStreamVideoHost(env.STREAM) } : {}),
+    passwords,
+    ...(posNum(env.ASSET_UPLOAD_MAX_BYTES) !== undefined
+      ? { maxUploadBytes: posNum(env.ASSET_UPLOAD_MAX_BYTES) as number }
+      : {}),
     ...(env.MEDIA_PUBLIC_URL
       ? {
           mediaPublicUrl: env.MEDIA_PUBLIC_URL.replace(/\/$/, ''),
@@ -293,6 +306,10 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     ...(env.ASSET_INGEST_WF
       ? { assetIngestStarter: new CloudflareAssetIngestStarter(env.ASSET_INGEST_WF) }
       : {}),
+    ...(env.KV_CACHE ? { shareLinkGate: createKvShareLinkGate(env.KV_CACHE) } : {}),
+    ...(env.ASSET_ZIP_WF
+      ? { assetZipStarter: new CloudflareAssetZipStarter(env.ASSET_ZIP_WF) }
+      : {}),
     ai,
     decisions,
     bus: new InMemoryEventBus(),
@@ -306,12 +323,28 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
   };
 }
 
+/** Share-link passwords: PBKDF2-SHA256, the admin's own scheme (no pepper: the api has none). */
+export const passwords: PasswordHasher = {
+  hash: (password) => hashPassword(password),
+  verify: (password, stored) => verifyPassword(password, stored),
+};
+
 /** What the media Worker reads with, all of it read-only. */
 export interface MediaWired {
-  /** Through a read-replica session: the gate's fallback and the rendition presets. */
-  readonly store?: Pick<ContentStore, 'assets' | 'assetRenditions'>;
+  /**
+   * Through a read-replica session: the gate's fallback, the rendition presets, and the share
+   * links and collections a share page reads.
+   */
+  readonly store?: Pick<
+    ContentStore,
+    'assets' | 'assetRenditions' | 'assetShareLinks' | 'assetCollections'
+  >;
   /** The engine's published-asset gate (KV_CACHE). */
   readonly assetGate?: AssetGate;
+  /** The engine's share-link entries (KV_CACHE). */
+  readonly shareLinkGate?: ShareLinkGate;
+  /** Checks a share link's password. */
+  readonly passwords: PasswordHasher;
   /** Checks the token in a published asset's path. */
   readonly mediaPaths: MediaPathSigner;
   /** Checks Preview's short-lived signed `/media/*` reads. */
@@ -329,7 +362,13 @@ export function wireMedia(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): Media
   const session = env.DB?.withSession(options.bookmark ?? 'first-unconstrained');
   return {
     ...(session ? { store: createD1Store(session) } : {}),
-    ...(env.KV_CACHE ? { assetGate: createKvAssetGate(env.KV_CACHE) } : {}),
+    ...(env.KV_CACHE
+      ? {
+          assetGate: createKvAssetGate(env.KV_CACHE),
+          shareLinkGate: createKvShareLinkGate(env.KV_CACHE),
+        }
+      : {}),
+    passwords,
     mediaPaths: createMediaPathSigner(secret),
     mediaSigner: createMediaUrlSigner(secret),
   };

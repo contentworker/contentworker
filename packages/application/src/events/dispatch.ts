@@ -2,14 +2,17 @@ import type { DomainEvent, EntriesPublishedBulkEvent, Webhook } from '@contentwo
 import type {
   AssetGate,
   AssetIngestQueue,
+  AssetZipStarter,
   BlobStore,
   Cache,
   FunctionInvoker,
   SearchIndex,
+  ShareLinkGate,
   WebhookSender,
 } from '@contentworker/ports';
 import { assetBulkChunkRunner } from '../asset-bulk';
 import { syncAssetGate } from '../asset-gate';
+import { syncShareLinkGate } from '../asset-shares';
 import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
 import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../asset-search';
 import { deleteAssetFiles } from '../assets';
@@ -75,6 +78,13 @@ export interface DispatchDeps {
   /** The ingest queue, which `asset_reindex` bulk chunks feed; absent, those chunks wait. */
   readonly assetIngest?: AssetIngestQueue;
   /**
+   * The media origin's share-link entries (KV on the edge): written when a link is created,
+   * removed when it is revoked. Without it the media Worker reads links from a D1 replica.
+   */
+  readonly shareLinkGate?: ShareLinkGate;
+  /** Starts the Workflow that builds a requested zip; absent, a request fails at once. */
+  readonly assetZip?: AssetZipStarter;
+  /**
    * Tags already invalidated during this consumer invocation. A queue batch of
    * same-type publishes (a release, a burst of scheduled publishes) would
    * otherwise write the SAME `ct:` tag once per event — and a cache backend
@@ -121,6 +131,20 @@ export async function dispatchEvent(
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),
     });
+    return;
+  }
+
+  // A zip was asked for: start the Workflow that builds it (one instance per job, so a
+  // redelivered event starts nothing more). A control event: no webhooks apply.
+  if (event.type === 'asset_zip.requested') {
+    if (deps.assetZip) {
+      await deps.assetZip.start({ scope, jobId: event.jobId });
+    } else {
+      await ctx.store.assetZips.update(scope, event.jobId, {
+        status: 'failed',
+        error: 'Zip downloads are not available on this deployment',
+      });
+    }
     return;
   }
 
@@ -221,6 +245,15 @@ export async function dispatchEvent(
       event.type === 'asset.rights_changed')
   ) {
     await syncAssetGate(ctx, deps.assetGate, scope, event.assetId);
+  }
+
+  // The media origin's entry for a share link follows the link's row (written while it is active,
+  // removed once it is revoked), read fresh so a redelivered event converges.
+  if (
+    deps.shareLinkGate &&
+    (event.type === 'asset_share.created' || event.type === 'asset_share.revoked')
+  ) {
+    await syncShareLinkGate(ctx, deps.shareLinkGate, scope, event.linkId);
   }
 
   // A replaced (or restored) file goes through ingest as an upload does: the same message the

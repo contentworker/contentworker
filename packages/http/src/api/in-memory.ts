@@ -11,6 +11,7 @@ import type {
   GenerateRequest,
   IdGenerator,
 } from '@contentworker/ports';
+import { hashPassword, verifyPassword } from '@contentworker/security/credentials';
 import {
   FakeBlobStore,
   InMemoryContentStore,
@@ -87,7 +88,14 @@ export function wire(config: ApiConfig): InMemoryWired {
       : undefined;
   const embeddings = new LocalEmbeddingsProvider(1536);
   return {
-    ctx: { store: store as ContentStore, clock, ids, costGuard },
+    ctx: {
+      store: store as ContentStore,
+      clock,
+      ids,
+      costGuard,
+      // Share-link passwords, hashed as the edge hashes them.
+      passwords: { hash: (p) => hashPassword(p), verify: (p, s) => verifyPassword(p, s) },
+    },
     rag: { embeddings, vectors: new InMemoryVectorStore() },
     blob: new FakeBlobStore(),
     ai: new StubAIProvider(devGenerate),

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assetGateKey,
   createKvAssetGate,
+  createKvShareLinkGate,
   GATE_READ_TTL_SECONDS,
   type KvGateBinding,
 } from '../../src/asset-gate-kv/index';
@@ -9,13 +10,15 @@ import {
 function fakeKv() {
   const values = new Map<string, string>();
   const reads: { key: string; cacheTtl?: number }[] = [];
+  const expirations = new Map<string, number>();
   const kv: KvGateBinding = {
     async get(key, options) {
       reads.push({ key, ...(options?.cacheTtl ? { cacheTtl: options.cacheTtl } : {}) });
       return values.get(key) ?? null;
     },
-    async put(key, value) {
+    async put(key, value, options) {
       values.set(key, value);
+      if (options?.expiration) expirations.set(key, options.expiration);
     },
     async delete(key) {
       values.delete(key);
@@ -31,7 +34,7 @@ function fakeKv() {
       return { keys, list_complete: done, ...(done ? {} : { cursor: keys.at(-1)?.name }) };
     },
   };
-  return { kv, values, reads };
+  return { kv, values, reads, expirations };
 }
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -83,5 +86,40 @@ describe('the KV asset gate', () => {
     const gate = createKvAssetGate(kv);
     expect(await gate.get(scope, 'a')).toBeNull();
     expect(await gate.get(scope, 'b')).toBeNull();
+  });
+});
+
+describe('the KV share-link gate', () => {
+  const link = {
+    targetType: 'collection' as const,
+    targetId: 'c1',
+    allowDownload: true,
+    passwordHash: 'pbkdf2:1:a:b',
+  };
+
+  it('writes an entry that expires with its link, reads it, and removes it', async () => {
+    const { kv, values, expirations } = fakeKv();
+    const gate = createKvShareLinkGate(kv);
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    await gate.put(scope, 'l1', { ...link, expiresAt });
+    expect(expirations.get('share-link:shop:main:l1')).toBe(
+      Math.floor(Date.parse(expiresAt) / 1000),
+    );
+    expect(await gate.get(scope, 'l1')).toEqual({ ...link, expiresAt });
+    expect(await gate.get({ ...scope, environmentId: 'other' }, 'l1')).toBeNull();
+    await gate.delete(scope, 'l1');
+    expect(values.size).toBe(0);
+  });
+
+  it('writes nothing for a link about to expire, and reads no malformed entry', async () => {
+    const { kv, values } = fakeKv();
+    const gate = createKvShareLinkGate(kv);
+    await gate.put(scope, 'l1', {
+      ...link,
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+    });
+    expect(values.size).toBe(0);
+    values.set('share-link:shop:main:bad', '{"targetType":"nope"}');
+    expect(await gate.get(scope, 'bad')).toBeNull();
   });
 });

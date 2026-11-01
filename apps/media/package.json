@@ -18,7 +18,8 @@
     "@contentworker/db": "workspace:*",
     "@contentworker/domain": "workspace:*",
     "@contentworker/platform": "workspace:*",
-    "@contentworker/ports": "workspace:*"
+    "@contentworker/ports": "workspace:*",
+    "@contentworker/security": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",

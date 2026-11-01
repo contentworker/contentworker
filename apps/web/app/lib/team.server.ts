@@ -14,7 +14,7 @@ import {
   isEmail,
   normalizeEmail,
   passwordProblem,
-} from './credentials';
+} from '@contentworker/security/credentials';
 import { db, passwordPepper } from './env.server';
 import { newId } from './ids';
 import { isRole, type Principal, type Role, sessionIdleMs } from './roles';

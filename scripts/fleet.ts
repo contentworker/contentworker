@@ -601,6 +601,7 @@ export const REQUIRED_BINDINGS: Record<App, readonly string[]> = {
     'AGENT_WF',
     'EDITORIAL_WF',
     'ASSET_INGEST_WF',
+    'ASSET_ZIP_WF',
   ],
   media: ['DB', 'KV_CACHE', 'MEDIA_BUCKET'],
   api: [

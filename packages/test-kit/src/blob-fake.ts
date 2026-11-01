@@ -1,4 +1,11 @@
-import type { BlobHead, BlobObject, BlobStore, DownloadUrlOptions } from '@contentworker/ports';
+import type {
+  BlobHead,
+  BlobObject,
+  BlobStore,
+  DownloadUrlOptions,
+  MultipartBlobStore,
+  UploadedPart,
+} from '@contentworker/ports';
 
 /**
  * An in-memory BlobStore for dev/tests. It hands out deterministic fake
@@ -85,6 +92,82 @@ export class FakeBlobStore implements BlobStore {
   }
 
   private readonly types = new Map<string, string>();
+
+  /** Every range `openRange` read: `key@offset+length`. */
+  readonly rangesRead: string[] = [];
+
+  async openRange(key: string, offset: number, length: number): Promise<BlobObject | null> {
+    this.rangesRead.push(`${key}@${offset}+${length}`);
+    const bytes = this.bytes(key);
+    if (!bytes) return null;
+    const slice = bytes.subarray(offset, offset + length);
+    const contentType = this.types.get(key);
+    return {
+      // In two chunks when it can be, so a reader that assumes one chunk is caught.
+      body: (async function* () {
+        const half = Math.floor(slice.byteLength / 2);
+        if (half > 0) yield slice.subarray(0, half);
+        yield slice.subarray(half);
+      })(),
+      size: bytes.byteLength,
+      ...(contentType ? { contentType } : {}),
+    };
+  }
+
+  /** Multipart uploads in progress, by upload id, with R2's rules: equal parts but the last. */
+  readonly uploadsInProgress = new Map<
+    string,
+    { key: string; contentType: string; parts: Map<number, Uint8Array> }
+  >();
+  /** Upload ids aborted, in order. */
+  readonly aborted: string[] = [];
+  private uploadSeq = 0;
+
+  readonly multipart: MultipartBlobStore = {
+    create: async (key, contentType) => {
+      const uploadId = `upload-${++this.uploadSeq}`;
+      this.uploadsInProgress.set(uploadId, { key, contentType, parts: new Map() });
+      return { uploadId };
+    },
+    partUrl: async (key, uploadId, partNumber, length) => ({
+      url: `${this.base}/${key}?uploadId=${uploadId}&part=${partNumber}&len=${length}`,
+      expiresAt: new Date(Date.now() + 900_000).toISOString(),
+    }),
+    uploadPart: async (key, uploadId, partNumber, body): Promise<UploadedPart> => {
+      const upload = this.uploadsInProgress.get(uploadId);
+      if (!upload || upload.key !== key) throw new Error(`no multipart upload ${uploadId}`);
+      upload.parts.set(partNumber, body.slice());
+      return { partNumber, etag: `part-${uploadId}-${partNumber}-${body.byteLength}` };
+    },
+    complete: async (key, uploadId, parts) => {
+      const upload = this.uploadsInProgress.get(uploadId);
+      if (!upload || upload.key !== key) throw new Error(`no multipart upload ${uploadId}`);
+      const ordered = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+      const chunks = ordered.map((p) => {
+        const bytes = upload.parts.get(p.partNumber);
+        if (!bytes) throw new Error(`part ${p.partNumber} was never uploaded`);
+        return bytes;
+      });
+      const first = chunks[0]?.byteLength ?? 0;
+      if (chunks.slice(0, -1).some((c) => c.byteLength !== first)) {
+        throw new Error('All non-trailing parts must have the same size');
+      }
+      const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+      const out = new Uint8Array(total);
+      let at = 0;
+      for (const c of chunks) {
+        out.set(c, at);
+        at += c.byteLength;
+      }
+      this.uploadsInProgress.delete(uploadId);
+      await this.put(key, out, upload.contentType);
+      return { size: total, contentType: upload.contentType, etag: `${this.etags.get(key)}-${chunks.length}` };
+    },
+    abort: async (_key, uploadId) => {
+      this.aborted.push(uploadId);
+      this.uploadsInProgress.delete(uploadId);
+    },
+  };
 
   /** The stored bytes of `key`, as written (a test reads back a binary upload with this). */
   bytes(key: string): Uint8Array | null {

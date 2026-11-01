@@ -34,7 +34,7 @@ import {
   randomToken,
   sha256Hex,
   verifyPassword,
-} from './credentials';
+} from '@contentworker/security/credentials';
 import { openSecret } from './data-key.server';
 import { secretContext } from './encryption';
 import { afterResponse, db, passwordPepper } from './env.server';

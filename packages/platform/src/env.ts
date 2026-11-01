@@ -74,6 +74,11 @@ export interface EdgeEnv {
    */
   readonly ASSET_INGEST_WF?: Workflow;
   /**
+   * Zip downloads (`AssetZipWorkflow`, one instance per job), started by the engine's events
+   * consumer from `asset_zip.requested`. Absent → a requested zip fails at once.
+   */
+  readonly ASSET_ZIP_WF?: Workflow;
+  /**
    * R2 bucket holding asset bytes (native binding — no access keys). When
    * bound it is THE BlobStore: uploads and downloads go through this Worker's
    * signed `/media/*` route (see @contentworker/adapters/blob-r2).
@@ -120,6 +125,11 @@ export interface EdgeEnv {
   readonly RATE_LIMIT_READ?: CfRateLimiter;
   readonly RATE_LIMIT_WRITE?: CfRateLimiter;
   readonly RATE_LIMIT_AI?: CfRateLimiter;
+  /**
+   * The media Worker's limit on share-link password attempts, per link and client address.
+   * Absent → attempts are limited only by PBKDF2's cost.
+   */
+  readonly RATE_LIMIT_SHARE_UNLOCK?: CfRateLimiter;
   /** AI budget governor (one object per space). */
   readonly AI_BUDGET?: DurableObjectNamespace<CostGuardDO>;
   /**
@@ -228,6 +238,11 @@ export interface EdgeEnv {
    * there. Empty → the api's signed `/media/*` URLs, without renditions or a srcset.
    */
   readonly MEDIA_PUBLIC_URL?: string;
+  /**
+   * Largest file a multipart upload takes, in bytes (default 5 GiB). One signed PUT still takes
+   * at most 100 MiB; past that the admin and the SDK upload in parts.
+   */
+  readonly ASSET_UPLOAD_MAX_BYTES?: string;
   /** HMAC key signing `/media/*` URLs. Required on persistent deployments. */
   readonly MEDIA_SIGNING_SECRET?: string;
   /**

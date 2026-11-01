@@ -4,9 +4,14 @@ import {
   BULK_JOB_MAX_ITEMS,
   MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
+  MAX_PART_URLS,
 } from '@contentworker/application';
 import {
   MAX_ASSET_RIGHTS_TEXT,
+  MAX_COLLECTION_CHANGE,
+  MAX_COLLECTION_DESCRIPTION,
+  MAX_SHARE_PASSWORD,
+  MAX_ZIP_ASSETS,
   PLUGIN_SETTING_MAX_STRING,
   SPACE_ID_PATTERN,
   ValidationError,
@@ -333,6 +338,59 @@ export const assetReindexBody = z.object({
       'Every asset with a file; by default only those never ingested or whose ingest failed',
     ),
 });
+export const assetCollectionBody = z.object({
+  name: z.string().min(1).max(128),
+  description: z.string().max(MAX_COLLECTION_DESCRIPTION).optional(),
+});
+export const assetCollectionPatchBody = z.object({
+  name: z.string().min(1).max(128).optional(),
+  description: z
+    .string()
+    .max(MAX_COLLECTION_DESCRIPTION)
+    .optional()
+    .describe('An empty string clears it'),
+});
+export const collectionAssetIdsBody = z.object({
+  assetIds: z.array(zId).min(1).max(MAX_COLLECTION_CHANGE),
+});
+export const shareLinkBody = z.object({
+  targetType: z.enum(['asset', 'collection']),
+  targetId: zId,
+  expiresAt: z.iso.datetime({ offset: true }).describe('5 minutes to 90 days from now'),
+  allowDownload: z.boolean().optional(),
+  password: z
+    .string()
+    .min(8)
+    .max(MAX_SHARE_PASSWORD)
+    .optional()
+    .describe('Asked for before the page opens; hashed, never stored or returned'),
+});
+export const multipartUploadBody = z.object({
+  fileName: z.string().min(1).max(1024),
+  contentType: z.string().min(1).max(256),
+  size: z.int().min(1).describe('The file’s exact length in bytes'),
+  title: zLocalized.optional(),
+  description: zLocalized.optional(),
+  folderId: zId.optional().describe('File it in this folder (absent: the library root)'),
+});
+export const uploadPartsBody = z.object({
+  partNumbers: z.array(z.int().min(1).max(10_000)).min(1).max(MAX_PART_URLS),
+});
+export const completeUploadBody = z.object({
+  parts: z
+    .array(z.object({ partNumber: z.int().min(1).max(10_000), etag: z.string().min(1).max(256) }))
+    .min(1)
+    .max(10_000),
+});
+export const assetZipBody = z
+  .object({
+    assetIds: z.array(zId).min(1).max(MAX_ZIP_ASSETS).optional(),
+    collectionId: zId.optional(),
+    name: z.string().max(100).optional().describe('The archive’s name (.zip is added)'),
+  })
+  .refine((b) => (b.assetIds === undefined) !== (b.collectionId === undefined), {
+    message: 'Give assetIds or collectionId, not both',
+  });
 export const assetFolderBody = z.object({
   name: z.string().min(1).max(128),
   parentId: zId.nullable().optional().describe('The folder to create it in (absent: the root)'),

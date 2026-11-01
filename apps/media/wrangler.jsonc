@@ -39,6 +39,15 @@
   "kv_namespaces": [{ "binding": "KV_CACHE" }],
   "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "contentworker-media" }],
   "images": { "binding": "IMAGES" },
+  // Password attempts on a share link, per link and client address (scripts/fleet.ts renders the
+  // namespace per deployment slot).
+  "ratelimits": [
+    {
+      "name": "RATE_LIMIT_SHARE_UNLOCK",
+      "namespace_id": "1006",
+      "simple": { "limit": 10, "period": 60 }
+    }
+  ],
   "queues": {
     "consumers": [
       {

@@ -23,7 +23,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
 import { audit } from './audit.server';
 import { type Caller, cookie, forgetUserCount, startSession } from './auth.server';
-import { normalizeEmail, randomToken } from './credentials';
+import { normalizeEmail, randomToken } from '@contentworker/security/credentials';
 import { EgressRefused, readCappedJson, readCappedText, safeFetch } from './egress';
 import { db } from './env.server';
 import { newId } from './ids';

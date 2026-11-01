@@ -10,8 +10,11 @@
  * 1. checks a public URL's token (`/<space>/<env>/<asset>/v<n>/<token>/<variant>/<file>`), maps
  *    it to its canonical form (the path, and for a variant the negotiated format) and asks the
  *    cached `Media` entrypoint, which checks the engine's gate on a miss; or
- * 2. serves a short-lived signed read (`/media/<key>?exp=…&sig=…`, Preview's drafts), uncached,
- *    when the signature and expiry hold. Never an upload, never a URL without an expiry.
+ * 2. serves a short-lived signed read (`/media/<key>?exp=…&sig=…`, Preview's drafts and zip
+ *    downloads), uncached, when the signature and expiry hold. Never an upload, never a URL without
+ *    an expiry; or
+ * 3. serves a share link (`/s/<space>/<env>/<link>/<token>…`: its page, its files, its password
+ *    form), checking the link on every request (share.ts).
  *
  * Its queue consumer drains `contentworker-media-purge`, rationed like delivery's.
  */
@@ -23,6 +26,7 @@ import { drain } from '@contentworker/platform/purge';
 import { wireMedia } from '@contentworker/platform/wire';
 import type { Media } from './media';
 import { canonicalMediaUrl, contentDisposition, singleByteRange } from './serve';
+import { handleShareRequest } from './share';
 
 export { Media } from './media';
 
@@ -57,6 +61,34 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/health')
       return Response.json({ ok: true, service: 'contentworker-media' });
+    // A share link: its page, one of its files, or (the only POST anywhere here) its password.
+    // Verified, then the link read, before anything else (share.ts).
+    if (url.pathname.startsWith('/s/')) {
+      if (!['GET', 'HEAD', 'POST'].includes(request.method)) {
+        return withPublic(new Response('method not allowed', { status: 405 }), {
+          allow: 'GET, HEAD, POST',
+        });
+      }
+      const wired = wireMedia(env);
+      const exports = (ctx as unknown as { exports: Exports }).exports;
+      const res = await handleShareRequest(
+        request,
+        {
+          paths: wired.mediaPaths,
+          passwords: wired.passwords,
+          ...(wired.shareLinkGate ? { gate: wired.shareLinkGate } : {}),
+          ...(wired.store ? { store: wired.store } : {}),
+          ...(env.RATE_LIMIT_SHARE_UNLOCK ? { limiter: env.RATE_LIMIT_SHARE_UNLOCK } : {}),
+        },
+        {
+          fetch: (req) => exports.Media.fetch(req),
+          range: (u, r, i) => exports.Media.range(u, r, i),
+        },
+      );
+      // A share page is for the people it was given to: no cross-origin reads of it.
+      if (res.headers.get('content-type')?.startsWith('text/html')) return res;
+      return withPublic(res);
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return withPublic(new Response('read only', { status: 405 }), { allow: 'GET, HEAD' });
     }

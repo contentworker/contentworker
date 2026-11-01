@@ -1,8 +1,11 @@
 import {
   type Asset,
+  type AssetCollection,
   type AssetFolder,
   AssetRightsError,
   applyDefaults,
+  assetCollectionDescription,
+  assetCollectionName,
   assetFolderName,
   assetFolderPath,
   type Concept,
@@ -13,6 +16,7 @@ import {
   extractReferences,
   type FieldIssue,
   MAX_ASSET_FOLDER_DEPTH,
+  MAX_COLLECTION_ITEMS,
   NotFoundError,
   type Scope,
   type Tag,
@@ -89,12 +93,24 @@ export interface EnvironmentSnapshot {
    * library root.
    */
   readonly assetFolders?: readonly AssetFolder[];
+  /**
+   * Collections, each with its members' asset ids in order. Absent in snapshots written before
+   * collections. An import keeps only the members whose asset the snapshot carries or the target
+   * already holds.
+   */
+  readonly assetCollections?: readonly SnapshotCollection[];
   readonly taxonomy: {
     readonly schemes: readonly ConceptScheme[];
     readonly concepts: readonly Concept[];
     readonly tags: readonly Tag[];
   };
   readonly workflows: readonly SnapshotWorkflow[];
+}
+
+/** A collection in a snapshot: its record and its members, in order. */
+export interface SnapshotCollection {
+  readonly collection: AssetCollection;
+  readonly assetIds: readonly string[];
 }
 
 /**
@@ -174,6 +190,7 @@ export async function exportSnapshot(
     })),
     assets: await allAssets(ctx, scope),
     assetFolders: await ctx.store.assetFolders.list(scope),
+    assetCollections: await exportCollections(ctx, scope),
     taxonomy: {
       schemes: await ctx.store.taxonomy.listSchemes(scope),
       concepts: await ctx.store.taxonomy.listConcepts(scope),
@@ -181,6 +198,26 @@ export async function exportSnapshot(
     },
     workflows: await exportWorkflows(ctx, scope),
   };
+}
+
+/** Every collection in the scope, with its members in order. */
+async function exportCollections(ctx: AppContext, scope: Scope): Promise<SnapshotCollection[]> {
+  const out: SnapshotCollection[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await ctx.store.assetCollections.list(scope, {
+      limit: 100,
+      ...(cursor ? { cursor } : {}),
+    });
+    for (const collection of page.items) {
+      out.push({
+        collection,
+        assetIds: await ctx.store.assetCollections.listItemIds(scope, collection.id),
+      });
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  return out;
 }
 
 async function exportWorkflows(ctx: AppContext, scope: Scope): Promise<SnapshotWorkflowV2[]> {
@@ -470,6 +507,9 @@ export async function writeSnapshotModel(
 
   // Folders before assets, so the assets' folderIds have something to point at.
   await writeSnapshotFolders(ctx, target, snapshot.assetFolders ?? []);
+  // Collections too, with the members whose asset the snapshot brings (created after this) or
+  // the target already holds.
+  await writeSnapshotCollections(ctx, target, snapshot);
 
   // Taxonomy before entries, so entry metadata has something to point at.
   const taxonomyIds = new Map<string, string>();
@@ -558,6 +598,44 @@ async function writeSnapshotFolders(
     };
     await ctx.store.assetFolders.create(target, copy);
     created.set(folder.id, copy);
+  }
+}
+
+/**
+ * Writes the snapshot's collections with their ids and member order, keeping only the members
+ * whose asset the snapshot carries or the target already has. A collection already there (a
+ * retried import) is kept as it is.
+ */
+async function writeSnapshotCollections(
+  ctx: AppContext,
+  target: Scope,
+  snapshot: EnvironmentSnapshot,
+): Promise<void> {
+  const collections = snapshot.assetCollections ?? [];
+  if (collections.length === 0) return;
+  const carried = new Set(snapshot.assets.map((a) => a.id));
+  const others = [
+    ...new Set(collections.flatMap((c) => c.assetIds).filter((id) => !carried.has(id))),
+  ];
+  const present = new Set(
+    others.length > 0 ? (await ctx.store.assets.getMany(target, others)).map((a) => a.id) : [],
+  );
+  for (const { collection, assetIds } of collections) {
+    const description = collection.description
+      ? assetCollectionDescription(collection.description)
+      : undefined;
+    const { description: _d, ...rest } = collection;
+    await ctx.store.assetCollections.restore(
+      target,
+      {
+        ...rest,
+        name: assetCollectionName(collection.name),
+        ...(description ? { description } : {}),
+      },
+      [...new Set(assetIds)]
+        .filter((id) => carried.has(id) || present.has(id))
+        .slice(0, MAX_COLLECTION_ITEMS),
+    );
   }
 }
 
@@ -689,6 +767,20 @@ function preflight(
     if (depth === null) refuse('its parents form a cycle');
     else if (depth > MAX_ASSET_FOLDER_DEPTH) {
       refuse(`it nests ${depth} deep; folders nest at most ${MAX_ASSET_FOLDER_DEPTH} deep`);
+    }
+  }
+
+  // Collections are written with the model: a bad one stops the import here too.
+  for (const { collection } of snapshot.assetCollections ?? []) {
+    try {
+      assetCollectionName(collection.name);
+      if (collection.description) assetCollectionDescription(collection.description);
+    } catch (err) {
+      if (!(err instanceof ValidationError)) throw err;
+      issues.push({
+        field: 'assetCollections',
+        message: `Collection ${collection.id}: ${err.issues[0]?.message ?? err.message}`,
+      });
     }
   }
 

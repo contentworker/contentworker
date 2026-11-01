@@ -8,6 +8,7 @@ import type {
   IdGenerator,
   ImageTransformer,
   MediaPathSigner,
+  PasswordHasher,
   VideoHost,
 } from '@contentworker/ports';
 import type { AiCallRecord } from './ai-provenance';
@@ -84,6 +85,13 @@ export interface AppContext {
    * refuse with NotConfiguredError; plain blob uploads of video files still work.
    */
   readonly video?: VideoHost;
+  /**
+   * Hashes share-link passwords (PBKDF2, the admin's scheme). Absent → a link can't be given a
+   * password.
+   */
+  readonly passwords?: PasswordHasher;
+  /** Largest file a multipart upload takes, bytes (ASSET_UPLOAD_MAX_BYTES; default 5 GiB). */
+  readonly maxUploadBytes?: number;
 }
 
 /** Default {@link AppContext.deliveryCacheTtlSeconds}. */

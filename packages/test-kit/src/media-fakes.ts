@@ -6,6 +6,8 @@ import type {
   AssetIngestQueue,
   AssetIngestRequest,
   AssetIngestStarter,
+  AssetZipParams,
+  AssetZipStarter,
   ByteStream,
   ExtractableFile,
   HostedVideo,
@@ -14,6 +16,9 @@ import type {
   ImageTransformer,
   ImageTransformSpec,
   MediaPathSigner,
+  PasswordHasher,
+  ShareLinkGate,
+  ShareLinkGateEntry,
   TextExtractor,
   VideoHost,
   VideoUpload,
@@ -66,6 +71,41 @@ export class FakeMediaPathSigner implements MediaPathSigner {
   }
   verify(scope: Scope, assetId: string, version: number, token: string): boolean {
     return token === this.token(scope, assetId, version);
+  }
+  linkToken(scope: Scope, linkId: string): string {
+    // Version -1 never names an asset file, so a link's token is never an asset path's.
+    return this.token(scope, `link:${linkId}`, -1);
+  }
+  verifyLink(scope: Scope, linkId: string, token: string): boolean {
+    return token === this.linkToken(scope, linkId);
+  }
+}
+
+/** An in-memory ShareLinkGate (the media origin's KV entries for share links). */
+export class InMemoryShareLinkGate implements ShareLinkGate {
+  readonly entries = new Map<string, ShareLinkGateEntry>();
+  private key = (scope: Scope, id: string) => `${scope.spaceId}:${scope.environmentId}:${id}`;
+  async get(scope: Scope, linkId: string) {
+    return this.entries.get(this.key(scope, linkId)) ?? null;
+  }
+  async put(scope: Scope, linkId: string, entry: ShareLinkGateEntry) {
+    this.entries.set(this.key(scope, linkId), entry);
+  }
+  async delete(scope: Scope, linkId: string) {
+    this.entries.delete(this.key(scope, linkId));
+  }
+}
+
+/**
+ * A PasswordHasher without key stretching (`fake:<password reversed>`): tests check that a
+ * password is hashed, never stored, and verified, without paying for PBKDF2.
+ */
+export class FakePasswordHasher implements PasswordHasher {
+  async hash(password: string): Promise<string> {
+    return `fake:${[...password].reverse().join('')}`;
+  }
+  async verify(password: string, stored: string): Promise<boolean> {
+    return stored === (await this.hash(password));
   }
 }
 
@@ -251,4 +291,14 @@ function asciiOf(bytes: Uint8Array): string {
   let out = '';
   for (const b of bytes) out += String.fromCharCode(b);
   return out;
+}
+
+/** An AssetZipStarter that records each start; a job id starts once, as Workflows' ids do. */
+export class FakeAssetZipStarter implements AssetZipStarter {
+  readonly started: AssetZipParams[] = [];
+  async start(params: AssetZipParams): Promise<boolean> {
+    if (this.started.some((p) => p.jobId === params.jobId)) return false;
+    this.started.push(params);
+    return true;
+  }
 }

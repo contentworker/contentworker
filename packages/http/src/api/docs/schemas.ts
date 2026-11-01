@@ -452,3 +452,100 @@ export const workflowList = z.object({
     }),
   ),
 });
+
+export const assetCollection = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  description: z.string().optional(),
+  itemCount: z.int().describe('Assets in it, of every status'),
+  createdAt: z.iso.datetime(),
+  createdBy: z.string().optional(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const assetCollectionPage = z.object({
+  items: z.array(assetCollection),
+  nextCursor: z.string().optional(),
+});
+
+export const collectionAdded = z.object({
+  added: z.int().describe('Assets added (members already in it are left where they are)'),
+  skipped: z.array(z.string()).describe('Ids that are not assets in this environment'),
+});
+
+export const collectionRemoved = z.object({ removed: z.int() });
+
+export const deliveredCollection = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  items: z.array(deliveredAsset).describe('Published members, in the collection’s order'),
+  nextCursor: z.string().optional(),
+});
+
+export const shareLink = z.object({
+  id: z.uuid(),
+  targetType: z.enum(['asset', 'collection']),
+  targetId: z.string(),
+  expiresAt: z.iso.datetime(),
+  allowDownload: z.boolean(),
+  hasPassword: z.boolean(),
+  createdAt: z.iso.datetime(),
+  createdBy: z.string().optional(),
+  revokedAt: z.iso.datetime().optional(),
+  url: z
+    .string()
+    .optional()
+    .describe('The link to hand out, on the media origin (absent without MEDIA_PUBLIC_URL)'),
+});
+
+export const shareLinkList = z.object({ items: z.array(shareLink) });
+
+export const multipartUpload = z.object({
+  asset,
+  upload: z.object({
+    uploadId: z.string(),
+    partSize: z.int().describe('Every part but the last has exactly this many bytes'),
+    partCount: z.int(),
+  }),
+});
+
+export const signedParts = z.object({
+  parts: z.array(
+    z.object({
+      partNumber: z.int(),
+      url: z
+        .string()
+        .describe('PUT exactly `length` bytes here; the response’s ETag names the part'),
+      length: z.int(),
+      expiresAt: z.iso.datetime(),
+    }),
+  ),
+});
+
+export const assetZip = z.object({
+  id: z.uuid(),
+  status: z.enum(['pending', 'running', 'completed', 'failed']),
+  source: z.union([
+    z.object({ kind: z.literal('selection'), assetIds: z.array(z.string()) }),
+    z.object({ kind: z.literal('collection'), collectionId: z.string() }),
+  ]),
+  fileName: z.string(),
+  fileCount: z.int().optional(),
+  totalBytes: z.int().optional(),
+  partsDone: z.int(),
+  partCount: z.int().optional(),
+  error: z.string().optional(),
+  createdAt: z.iso.datetime(),
+  createdBy: z.string().optional(),
+  completedAt: z.iso.datetime().optional(),
+  expiresAt: z.iso.datetime().describe('The archive is removed then'),
+  downloadUrl: z
+    .string()
+    .optional()
+    .describe(
+      'Once completed: a signed URL that works for 15 minutes (get the job again for another)',
+    ),
+});
+
+export const assetZipList = z.object({ items: z.array(assetZip) });

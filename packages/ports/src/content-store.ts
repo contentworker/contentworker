@@ -3,13 +3,16 @@ import type {
   AgentSchedule,
   ApiKey,
   Asset,
+  AssetCollection,
   AssetFolder,
   AssetIngestStatus,
   AssetKind,
   AssetPlaceholder,
   AssetRendition,
   AssetRights,
+  AssetShareTargetType,
   AssetStatus,
+  AssetZipJob,
   Comment,
   Concept,
   ConceptScheme,
@@ -40,6 +43,7 @@ import type {
   Role,
   ScheduledAction,
   Scope,
+  StoredAssetShareLink,
   SpaceMember,
   Tag,
   Task,
@@ -97,6 +101,10 @@ export interface ContentStore {
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
   readonly assetFolders: AssetFolderRepo;
+  readonly assetCollections: AssetCollectionRepo;
+  readonly assetShareLinks: AssetShareLinkRepo;
+  readonly assetZips: AssetZipJobRepo;
+  readonly assetUploads: AssetUploadRepo;
   readonly assetRenditions: AssetRenditionRepo;
   readonly references: ReferenceRepo;
   readonly webhooks: WebhookRepo;
@@ -586,7 +594,8 @@ export interface AssetRepo {
    */
   moveToFolder(scope: Scope, ids: readonly string[], folderId: string | null): Promise<void>;
   /**
-   * Deletes the asset row, its published snapshot and its version history. Refused while any
+   * Deletes the asset row, its published snapshot, its version history and its collection
+   * memberships. Refused while any
    * entry links to it: if a link exists at commit, the unit throws
    * {@link TransactionConflictError} and nothing is deleted.
    */
@@ -708,6 +717,158 @@ export interface AssetFolderRepo {
    * {@link TransactionConflictError} and nothing is deleted.
    */
   delete(scope: Scope, id: string): Promise<void>;
+}
+
+/** One page of the collections in a scope, by name. */
+export interface AssetCollectionPage {
+  readonly items: AssetCollection[];
+  readonly nextCursor?: string;
+}
+
+/** A collection and its members' ids in order, as a snapshot carries it. */
+export interface AssetCollectionWithItems {
+  readonly collection: AssetCollection;
+  readonly assetIds: readonly string[];
+}
+
+/**
+ * Collections: named, ordered sets of assets (many-to-many with assets), environment-scoped. Every
+ * id list rides as one JSON parameter (`json_each`), so a change of any size is one statement
+ * under D1's parameter cap, and only assets of the same scope ever become members.
+ */
+export interface AssetCollectionRepo {
+  get(scope: Scope, id: string): Promise<AssetCollection | null>;
+  /** By name, then id; `cursor` is a previous page's `nextCursor`. */
+  list(
+    scope: Scope,
+    query?: { readonly limit?: number; readonly cursor?: string },
+  ): Promise<AssetCollectionPage>;
+  create(scope: Scope, collection: AssetCollection): Promise<void>;
+  /** Writes the name, description and `updatedAt`. */
+  save(scope: Scope, collection: AssetCollection): Promise<void>;
+  /** Deletes the collection and its memberships (never the assets). */
+  delete(scope: Scope, id: string): Promise<void>;
+  /**
+   * Appends `assetIds` after the last member, in the order given. Ids already in it, and ids that
+   * aren't assets of the scope, are skipped. If the collection is gone, or would hold more than
+   * `maxItems`, at commit, the unit throws {@link TransactionConflictError} and nothing is added.
+   */
+  addItems(
+    scope: Scope,
+    id: string,
+    assetIds: readonly string[],
+    at: Date,
+    maxItems: number,
+  ): Promise<void>;
+  removeItems(scope: Scope, id: string, assetIds: readonly string[]): Promise<void>;
+  /**
+   * Puts `assetIds` first, in that order; the other members follow in the order they had. Ids
+   * that aren't members are ignored.
+   */
+  reorder(scope: Scope, id: string, assetIds: readonly string[]): Promise<void>;
+  /**
+   * The members as assets, in the collection's order, filtered as the library is (archived
+   * members hidden unless asked for; `query.sort` is ignored). Keyset-paged like the library.
+   */
+  listItems(scope: Scope, id: string, query: AssetListQuery): Promise<AssetPage>;
+  /** Every member id in order (at most the collection's cap): for a reorder or a zip. */
+  listItemIds(scope: Scope, id: string): Promise<string[]>;
+  /** The published members, in the collection's order, paged: what Delivery lists. */
+  listPublishedItems(
+    scope: Scope,
+    id: string,
+    query: { readonly limit?: number; readonly cursor?: string },
+  ): Promise<PublishedAssetPage>;
+  /**
+   * Writes a collection and its members in the order given, as a snapshot import has them: the
+   * members are written whether or not their assets exist yet (the import creates them after;
+   * every read joins the assets, so a member whose asset never arrives is never seen). A
+   * collection already there (a retried import) is left as it is.
+   */
+  restore(scope: Scope, collection: AssetCollection, assetIds: readonly string[]): Promise<void>;
+  /** Whether the asset is a member of the collection (a primary-key read). */
+  hasItem(scope: Scope, id: string, assetId: string): Promise<boolean>;
+  /** The collections an asset is in (at most `limit`), for purging what lists them. */
+  collectionsOf(scope: Scope, assetId: string, limit: number): Promise<string[]>;
+}
+
+/** What a share link listing keeps. */
+export interface AssetShareLinkQuery {
+  readonly targetType?: AssetShareTargetType;
+  readonly targetId?: string;
+  /** Expired and revoked links too (default: active ones only, as of `now`). */
+  readonly includeInactive?: boolean;
+  readonly now: Date;
+  readonly limit?: number;
+}
+
+/** Share links: revocable, expiring links to an asset or a collection (environment-scoped). */
+export interface AssetShareLinkRepo {
+  get(scope: Scope, id: string): Promise<StoredAssetShareLink | null>;
+  /** Newest first. */
+  list(scope: Scope, query: AssetShareLinkQuery): Promise<StoredAssetShareLink[]>;
+  /**
+   * Creates the link. If its target (the asset, or the collection) is gone at commit, the unit
+   * throws {@link TransactionConflictError} and nothing is written.
+   */
+  create(scope: Scope, link: StoredAssetShareLink): Promise<void>;
+  /**
+   * Marks the link revoked at `at`, only while it isn't already: one revoked meanwhile throws
+   * {@link TransactionConflictError} at commit (in a unit of work).
+   */
+  revoke(scope: Scope, id: string, at: Date): Promise<void>;
+}
+
+/** What a zip job's progress writes; an omitted key is left as it is. */
+export interface AssetZipJobPatch {
+  readonly status?: AssetZipJob['status'];
+  readonly fileCount?: number;
+  readonly totalBytes?: number;
+  readonly partsDone?: number;
+  readonly partCount?: number;
+  readonly error?: string;
+  readonly completedAt?: string;
+}
+
+/** Zip download jobs. Written by the api (create) and the engine's Workflow (progress). */
+export interface AssetZipJobRepo {
+  get(scope: Scope, id: string): Promise<AssetZipJob | null>;
+  /** Newest first, at most `limit`. */
+  list(scope: Scope, limit: number): Promise<AssetZipJob[]>;
+  create(scope: Scope, job: AssetZipJob): Promise<void>;
+  update(scope: Scope, id: string, patch: AssetZipJobPatch): Promise<void>;
+  /** Jobs whose archive expired by `at`, in every scope, oldest first: the sweep's work. */
+  listExpired(at: Date, limit: number): Promise<{ readonly scope: Scope; readonly id: string }[]>;
+  delete(scope: Scope, id: string): Promise<void>;
+}
+
+/**
+ * A multipart upload in progress: the asset whose file it writes, the object key, the size it was
+ * started for and the part size every part but the last has (R2 needs them equal).
+ */
+export interface AssetUpload {
+  readonly assetId: string;
+  readonly uploadId: string;
+  readonly r2Key: string;
+  readonly size: number;
+  readonly partSize: number;
+  readonly contentType: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Multipart uploads in progress, so completing one checks what it was started for and the sweep
+ * aborts the ones left behind (R2 keeps their parts, billed, until aborted).
+ */
+export interface AssetUploadRepo {
+  get(scope: Scope, assetId: string, uploadId: string): Promise<AssetUpload | null>;
+  create(scope: Scope, upload: AssetUpload): Promise<void>;
+  delete(scope: Scope, assetId: string, uploadId: string): Promise<void>;
+  /** Uploads started before `before`, in every scope, oldest first, at most `limit`. */
+  listStartedBefore(
+    before: Date,
+    limit: number,
+  ): Promise<{ readonly scope: Scope; readonly upload: AssetUpload }[]>;
 }
 
 export interface AuthRepo {
@@ -957,6 +1118,10 @@ export interface ContentStoreTx {
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
   readonly assetFolders: AssetFolderRepo;
+  readonly assetCollections: AssetCollectionRepo;
+  readonly assetShareLinks: AssetShareLinkRepo;
+  readonly assetZips: AssetZipJobRepo;
+  readonly assetUploads: AssetUploadRepo;
   readonly assetRenditions: AssetRenditionRepo;
   readonly references: ReferenceRepo;
   readonly releases: ReleaseRepo;

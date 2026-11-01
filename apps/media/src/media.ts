@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { wireMedia } from '@contentworker/platform/wire';
 import { type MediaDeps, serveMedia, serveMediaRange } from './serve';
+import { type ShareDeps, serveSharePage } from './share';
 
 type CachePurge = {
   purge(o: { tags: string[] }): Promise<{ success: boolean; errors: unknown[] }>;
@@ -27,7 +28,22 @@ export class Media extends WorkerEntrypoint<EdgeEnv> {
     };
   }
 
+  /** What a share page reads, read-only, from the composition root. */
+  protected shareDeps(): ShareDeps {
+    const wired = wireMedia(this.env, { bookmark: 'first-unconstrained' });
+    return {
+      paths: wired.mediaPaths,
+      passwords: wired.passwords,
+      ...(wired.shareLinkGate ? { gate: wired.shareLinkGate } : {}),
+      ...(wired.store ? { store: wired.store } : {}),
+    };
+  }
+
   override async fetch(request: Request): Promise<Response> {
+    // A share link's page: rendered here so Workers Caching keeps it (tagged per link).
+    if (new URL(request.url).pathname.startsWith('/s/')) {
+      return serveSharePage(request, this.shareDeps());
+    }
     return serveMedia(request, this.deps());
   }
 
