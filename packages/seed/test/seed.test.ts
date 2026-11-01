@@ -93,6 +93,21 @@ describe('seedDev', { timeout: 60_000 }, () => {
     expect(after).toEqual(before);
   });
 
+  it('stores a real file for every seeded image and document, and none for videos', async () => {
+    const ctx = makeContext();
+    const blob = new FakeBlobStore();
+    await seedDev(ctx, config, { blob });
+    const keys = blob.keys();
+    const png = keys.filter((k) => k.endsWith('.png'));
+    const pdf = keys.filter((k) => k.endsWith('.pdf'));
+    expect(png.length).toBeGreaterThan(0);
+    expect(pdf.length).toBeGreaterThan(0);
+    expect(keys.some((k) => k.endsWith('.mp4'))).toBe(false);
+    // PNG signature and PDF header: the bytes are the files their names say.
+    expect([...(blob.bytes(png[0] as string) ?? []).slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(await blob.get(pdf[0] as string)).toMatch(/^%PDF-1\.4/);
+  });
+
   it('scales the generated corpus linearly', async () => {
     const ctx = makeContext();
     await seedDev(ctx, { ...config, scale: 2 }, { blob: new FakeBlobStore() });
