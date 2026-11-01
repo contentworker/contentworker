@@ -135,6 +135,10 @@ export class InMemoryContentStore implements ContentStore {
   private readonly outboxData: { event: DomainEvent; relayed: boolean; relayedAt?: number }[] = [];
 
   private readonly environmentData = new Map<string, { id: string; name: string }[]>();
+  private readonly purgeData = new Map<
+    string,
+    { spaceId: string; environmentId: string; nudgedAt: Date }
+  >();
   private readonly aliasData = new Map<string, EnvironmentAlias>();
 
   readonly spaces: SpaceRepo = {
@@ -148,6 +152,8 @@ export class InMemoryContentStore implements ContentStore {
       if (config) this.spaceConfigs.set(spaceId, { ...config, workflowSeparateDuties: value });
     },
     createEnvironment: async (spaceId, environmentId, name) => {
+      // As the D1 store's guard: not while a deleted environment of this id is being purged.
+      if (this.purgeData.has(`${spaceId}::${environmentId}`)) throw new TransactionConflictError();
       const list = this.environmentData.get(spaceId) ?? [];
       if (!list.some((e) => e.id === environmentId)) list.push({ id: environmentId, name });
       this.environmentData.set(spaceId, list);
@@ -161,6 +167,10 @@ export class InMemoryContentStore implements ContentStore {
       this.aliasData.set(`${spaceId}::${alias}`, { alias, targetEnvironmentId, updatedAt: at });
     },
     getAlias: async (spaceId, alias) => this.aliasData.get(`${spaceId}::${alias}`) ?? null,
+    resolveName: async (spaceId, name) => ({
+      targetEnvironmentId: this.aliasData.get(`${spaceId}::${name}`)?.targetEnvironmentId ?? null,
+      purging: this.purgeData.has(`${spaceId}::${name}`),
+    }),
     listAliases: async (spaceId) => {
       const prefix = `${spaceId}::`;
       return [...this.aliasData.entries()].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
@@ -177,6 +187,23 @@ export class InMemoryContentStore implements ContentStore {
       ) {
         throw new TransactionConflictError();
       }
+      const list = this.environmentData.get(spaceId) ?? [];
+      this.environmentData.set(
+        spaceId,
+        list.filter((e) => e.id !== environmentId),
+      );
+      // The rows stay until purged, as on D1; the name can't be reused meanwhile.
+      this.purgeData.set(`${spaceId}::${environmentId}`, {
+        spaceId,
+        environmentId,
+        nudgedAt: new Date(audit.at),
+      });
+      for (const event of events) this.outboxData.push({ event, relayed: false });
+      this.auditData.push(audit);
+    },
+    purgeEnvironmentStep: async (spaceId, environmentId, rowsPerTable, at) => {
+      // As the D1 store: nothing without the purge marker (the id may be in use again).
+      if (!this.purgeData.has(`${spaceId}::${environmentId}`)) return 0;
       const scope = { spaceId, environmentId };
       const key = scopeKey(scope);
       // The environment-scoped collections, named (a sweep by key prefix would also catch
@@ -216,20 +243,32 @@ export class InMemoryContentStore implements ContentStore {
         this.bulkJobData,
         this.bulkChunkData,
       ];
+      let deleted = 0;
       for (const map of scoped) {
+        let fromThis = 0;
         for (const [k, v] of map) {
+          if (fromThis >= rowsPerTable) break;
           const own = (v as { scope?: Scope } | null)?.scope;
-          if (k === key || k.startsWith(`${key}::`) || (own && scopeKey(own) === key))
+          if (k === key || k.startsWith(`${key}::`) || (own && scopeKey(own) === key)) {
             map.delete(k);
+            fromThis += 1;
+          }
         }
+        deleted += fromThis;
       }
-      const list = this.environmentData.get(spaceId) ?? [];
-      this.environmentData.set(
-        spaceId,
-        list.filter((e) => e.id !== environmentId),
-      );
-      for (const event of events) this.outboxData.push({ event, relayed: false });
-      this.auditData.push(audit);
+      const purge = this.purgeData.get(`${spaceId}::${environmentId}`);
+      if (purge) purge.nudgedAt = at;
+      return deleted;
+    },
+    finishEnvironmentPurge: async (spaceId, environmentId) => {
+      this.purgeData.delete(`${spaceId}::${environmentId}`);
+    },
+    claimStalledPurges: async (staleBefore, at, limit) => {
+      const stalled = [...this.purgeData.values()]
+        .filter((p) => p.nudgedAt < staleBefore)
+        .slice(0, limit);
+      for (const p of stalled) p.nudgedAt = at;
+      return stalled.map((p) => ({ spaceId: p.spaceId, environmentId: p.environmentId }));
     },
   };
 
@@ -851,7 +890,12 @@ export class InMemoryContentStore implements ContentStore {
     },
     findDue: async (now, limit = 100) =>
       [...this.scheduledActionData.values()]
-        .filter((r) => r.action.status === 'pending' && r.action.scheduledFor <= now)
+        .filter(
+          (r) =>
+            r.action.status === 'pending' &&
+            r.action.scheduledFor <= now &&
+            this.registered(r.scope),
+        )
         .sort((a, b) => (a.action.scheduledFor < b.action.scheduledFor ? -1 : 1))
         .slice(0, limit),
   };
@@ -935,7 +979,9 @@ export class InMemoryContentStore implements ContentStore {
     },
     findDue: async (now, limit = 100) =>
       [...this.agentScheduleData.values()]
-        .filter((r) => r.schedule.enabled && r.schedule.nextRunAt <= now)
+        .filter(
+          (r) => r.schedule.enabled && r.schedule.nextRunAt <= now && this.registered(r.scope),
+        )
         .sort((a, b) => (a.schedule.nextRunAt < b.schedule.nextRunAt ? -1 : 1))
         .slice(0, limit),
     claimNextRun: async (scope, id, expectedNextRunAt, nextRunAt) => {
@@ -1660,6 +1706,13 @@ export class InMemoryContentStore implements ContentStore {
       this.outboxData.push(...outboxSnapshot);
       throw err;
     }
+  }
+
+  /** As the D1 store's due queries: the row's environment still exists (not deleted or purging). */
+  private registered(scope: Scope): boolean {
+    return (this.environmentData.get(scope.spaceId) ?? []).some(
+      (e) => e.id === scope.environmentId,
+    );
   }
 
   // ---- test helpers -------------------------------------------------------

@@ -21,6 +21,7 @@ export * from './content-types';
 export * from './context';
 export * from './delivery';
 export * from './entries';
+export * from './environment-purge';
 export * from './events/consume';
 export * from './events/dispatch';
 export * from './events/relay';

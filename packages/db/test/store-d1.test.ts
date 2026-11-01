@@ -412,6 +412,55 @@ describe('deleting an environment', () => {
     expect((await store.spaces.listEnvironments(spaceId)).map((x) => x.id)).toContain(env);
   });
 
+  it('deletes nothing for an environment that is not being purged', async () => {
+    const live = { spaceId, environmentId: `live-${uid().slice(0, 8)}` };
+    await createEnvironment(ctx, spaceId, live.environmentId);
+    await store.taxonomy.createTag(live, { id: `tag-${uid()}`, name: 'Stays' });
+    // A late step for a finished purge, or one for an id now in use again, must not touch it.
+    expect(
+      await store.spaces.purgeEnvironmentStep(spaceId, live.environmentId, 500, clock.now()),
+    ).toBe(0);
+    expect(await store.taxonomy.listTags(live)).toHaveLength(1);
+  });
+
+  it('keeps a purging environment out of the due queries', async () => {
+    const env = `due-${uid().slice(0, 8)}`;
+    const s = { spaceId, environmentId: env };
+    await createEnvironment(ctx, spaceId, env);
+    const action = {
+      id: `sa-${uid()}`,
+      entityType: 'Entry' as const,
+      entityId: 'e1',
+      action: 'publish' as const,
+      scheduledFor: '2020-01-01T00:00:00.000Z',
+      status: 'pending' as const,
+      createdAt: '2020-01-01T00:00:00.000Z',
+    };
+    await store.scheduledActions.create(s, action as never);
+    const due = async () =>
+      (await store.scheduledActions.findDue('2021-01-01T00:00:00.000Z', 1000)).map(
+        (d) => d.action.id,
+      );
+    expect(await due()).toContain(action.id);
+    await store.spaces.deleteEnvironment(spaceId, env, [], audit(env));
+    expect(await due()).not.toContain(action.id);
+  });
+
+  it('restarts only a purge that has stopped making progress', async () => {
+    const env = `stalled-${uid().slice(0, 8)}`;
+    await createEnvironment(ctx, spaceId, env);
+    const t0 = new Date('2030-01-01T00:00:00.000Z');
+    await store.spaces.deleteEnvironment(spaceId, env, [], { ...audit(env), at: t0.toISOString() });
+    // A step marks progress, so a sweep looking for purges idle since before it finds none.
+    await store.spaces.purgeEnvironmentStep(spaceId, env, 1, new Date(t0.getTime() + 60_000));
+    const sweep = (staleBefore: number) =>
+      store.spaces.claimStalledPurges(new Date(staleBefore), new Date(staleBefore), 100);
+    expect((await sweep(t0.getTime() + 30_000)).map((p) => p.environmentId)).not.toContain(env);
+    expect(await sweep(t0.getTime() + 120_000)).toContainEqual({ spaceId, environmentId: env });
+    // Claimed: the same sweep again doesn't take it twice.
+    expect((await sweep(t0.getTime() + 120_000)).map((p) => p.environmentId)).not.toContain(env);
+  });
+
   it('refuses an alias at an environment that no longer exists', async () => {
     await expect(
       store.spaces.setAlias(
@@ -447,6 +496,11 @@ describe('deleting an environment', () => {
       fields: { title: { 'en-US': 'Going away' } },
     });
     await publishEntry(ctx, doomed, e.entry.id);
+    // A second entry, so the entry tables need more than one bounded step.
+    await createEntry(ctx, doomed, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'Also going' } },
+    });
     await store.taxonomy.createTag(doomed, { id: `tag-${uid()}`, name: 'Doomed' });
     await store.audit.append({
       id: uid(),
@@ -464,6 +518,31 @@ describe('deleting an environment', () => {
       confirm: doomed.environmentId,
       principal: { spaceId, kind: 'user', subject: 'usr_admin', scopes: [SCOPES.spaceAdmin] },
     });
+    // Gone from the registry and marked purging, at once; the id can't be reused until purged.
+    expect(await store.spaces.resolveName(spaceId, doomed.environmentId)).toEqual({
+      targetEnvironmentId: null,
+      purging: true,
+    });
+    await expect(createEnvironment(ctx, spaceId, doomed.environmentId)).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+
+    // Bounded steps: at most `rowsPerTable` rows from each table per step, counted from D1.
+    const perStep: number[] = [];
+    for (;;) {
+      const n = await store.spaces.purgeEnvironmentStep(
+        spaceId,
+        doomed.environmentId,
+        1,
+        clock.now(),
+      );
+      if (n === 0) break;
+      perStep.push(n);
+    }
+    expect(perStep.length).toBeGreaterThan(1);
+    expect(Math.max(...perStep)).toBeLessThanOrEqual(33);
+    await store.spaces.finishEnvironmentPurge(spaceId, doomed.environmentId);
+    expect((await store.spaces.resolveName(spaceId, doomed.environmentId)).purging).toBe(false);
 
     // Every table with an environment_id column, found from the schema itself, so a table added
     // later without joining the delete list fails here.
