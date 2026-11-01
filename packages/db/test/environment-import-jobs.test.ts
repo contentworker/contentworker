@@ -79,7 +79,7 @@ describe('cloning an environment as a job on D1', () => {
     expect((await exportSnapshot(ctx, source)).entries).toHaveLength(150);
 
     const blob = new FakeBlobStore();
-    const started = await startEnvironmentClone(ctx, blob, source, target);
+    const started = await startEnvironmentClone(ctx, source, target);
     const ran = new Set<string>();
     for (let round = 0; round < 10; round++) {
       const due = (await store.outbox.readPending(1000)).filter(
@@ -92,11 +92,15 @@ describe('cloning an environment as a job on D1', () => {
       }
     }
 
-    expect(await getBulkJob(ctx, target, started.job?.id as string)).toMatchObject({
+    expect(await getBulkJob(ctx, target, started.job.id)).toMatchObject({
+      status: 'completed',
+      succeeded: 1,
+    });
+    expect(await getBulkJob(ctx, target, started.createJobId)).toMatchObject({
       status: 'completed',
       succeeded: 150,
     });
-    expect(await getBulkJob(ctx, target, started.publishJobId as string)).toMatchObject({
+    expect(await getBulkJob(ctx, target, started.publishJobId)).toMatchObject({
       status: 'completed',
       succeeded: 150,
       failed: 0,

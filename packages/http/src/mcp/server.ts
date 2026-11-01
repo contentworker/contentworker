@@ -42,6 +42,7 @@ import {
   draftEntry,
   draftWorkflowGraph,
   duplicateEntry,
+  type EnvironmentSnapshot,
   executeImport,
   exportSnapshot,
   findDuplicates,
@@ -114,6 +115,7 @@ import {
   setPluginEnabled,
   setWorkflowSeparationDefault,
   startBulkJob,
+  startEnvironmentClone,
   startSnapshotImport,
   startWorkflowRun,
   suggestEntries,
@@ -152,19 +154,20 @@ import {
   principalActorId,
   ROLE_PRESETS,
   SCOPES,
-  SPACE_ID_PATTERN,
   type Scope,
+  SPACE_ID_PATTERN,
   ValidationError,
   WORKFLOW_RUN_STATUSES,
   type WorkflowRunStatus,
 } from '@contentworker/domain';
 import { redactCredentials } from '@contentworker/redaction';
-import { createSpaceWithStarter, STARTERS } from '@contentworker/seed';
 import { generateTypes } from '@contentworker/sdk-codegen';
+import { createSpaceWithStarter, STARTERS } from '@contentworker/seed';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { toHttpError } from '../api/http';
+import { snapshotBody } from '../api/validation';
 import type { McpDeps } from './deps';
 
 /**
@@ -1353,16 +1356,46 @@ export function buildServer(
   );
 
   server.registerTool(
+    'environment_import',
+    {
+      description:
+        'Import a snapshot (as environment_export returns it) into this environment, which ' +
+        'must exist and have no content types. Every entry is checked first, and nothing is ' +
+        'written if anything would fail. Set dryRun to see the report only. Otherwise the ' +
+        'content model is written and the entries and assets are written by a job: the ' +
+        'result is `{ report, job, publishJobId }`; follow `job` with bulk_job_status in this ' +
+        'environment, then `publishJobId`, which starts once `job` completes with no failures.',
+      inputSchema: toolSchema('environment_import', () =>
+        z.object({
+          snapshot: snapshotBody,
+          publish: z.boolean().optional().describe('republish what was published (default true)'),
+          dryRun: z.boolean().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      const target = scopeOf(args);
+      guard(SCOPES.contentManage, target);
+      const snapshot = args.snapshot as unknown as EnvironmentSnapshot;
+      const options = { dryRun: args.dryRun, publish: args.publish };
+      if (args.dryRun || !deps.blob)
+        return ok(await importSnapshot(ctx, target, snapshot, options));
+      return ok(await startSnapshotImport(ctx, deps.blob, target, snapshot, options));
+    },
+  );
+
+  server.registerTool(
     'environment_clone',
     {
       description:
         'Copy this environment into another (which may be in another space). The ' +
-        'target must exist and have no content types. Set dryRun to see the plan first. ' +
-        'Otherwise everything is checked, the content model is copied, and the entries and ' +
-        'assets are copied by a job: the result is `{ report, job, publishJobId }`. Both jobs ' +
-        'belong to the TARGET: follow `job` with bulk_job_status passing `space`=targetSpace ' +
-        'and `environment`=targetEnvironment, then `publishJobId`, which starts only once `job` ' +
-        'completes with no failures.',
+        'target must exist and have no content types. Set dryRun to see the report first. ' +
+        'Otherwise it runs entirely as jobs: the result is `{ job, createJobId, publishJobId }`. ' +
+        '`job` exports the source and checks it (a refused snapshot fails it; bulk_job_report ' +
+        'names the problems), then starts `createJobId`, whose clean completion starts ' +
+        '`publishJobId` (when anything is published). All belong to the TARGET: follow them ' +
+        'with bulk_job_status passing `space`=targetSpace and `environment`=targetEnvironment.',
       inputSchema: toolSchema('environment_clone', () =>
         z.object({
           targetSpace: z.string().optional().describe('defaults to the source space'),
@@ -1383,10 +1416,11 @@ export function buildServer(
       // Authorized separately: cloning into a space the caller cannot manage
       // would be a tenancy hole.
       guard(SCOPES.contentManage, to);
-      const snapshot = await exportSnapshot(ctx, from);
       const options = { dryRun: args.dryRun, publish: args.publish };
-      if (args.dryRun || !deps.blob) return ok(await importSnapshot(ctx, to, snapshot, options));
-      return ok(await startSnapshotImport(ctx, deps.blob, to, snapshot, options));
+      if (args.dryRun || !deps.blob) {
+        return ok(await importSnapshot(ctx, to, await exportSnapshot(ctx, from), options));
+      }
+      return ok(await startEnvironmentClone(ctx, from, to, options));
     },
   );
 

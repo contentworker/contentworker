@@ -180,7 +180,7 @@ describe('the environment a tool names', () => {
 });
 
 describe('environment_clone over MCP', () => {
-  it('copies the model and starts a job for the entries when object storage is bound', async () => {
+  it('starts the clone as jobs when object storage is bound', async () => {
     const deps = { ...makeDeps(), blob: new FakeBlobStore() };
     await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
     await createEnvironment(deps.ctx, 'space-1', 'copy');
@@ -216,9 +216,86 @@ describe('environment_clone over MCP', () => {
     });
     expect(res.isError).toBeFalsy();
     const body = JSON.parse((res.content as { text: string }[])[0]?.text ?? '{}');
-    expect(body).toMatchObject({
-      report: { entries: 1 },
-      job: { action: 'import', status: 'running' },
+    expect(body).toMatchObject({ job: { action: 'import', status: 'running', totalItems: 1 } });
+    expect(body.createJobId).toBeTruthy();
+  });
+});
+
+describe('environment_import over MCP', () => {
+  async function setup() {
+    const deps = { ...makeDeps(), blob: new FakeBlobStore() };
+    for (const spaceId of ['space-1', 'space-2']) {
+      await createSpace(deps.ctx, { spaceId, name: spaceId, defaultLocale: 'en-US' });
+      await createEnvironment(deps.ctx, spaceId, 'copy');
+    }
+    const main = { spaceId: 'space-1', environmentId: 'main' };
+    await createContentType(deps.ctx, main, {
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+      ],
+    } as Parameters<typeof createContentType>[2]);
+    await publishContentType(deps.ctx, main, 'note');
+    await createEntry(deps.ctx, main, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'Hello' } },
     });
+    const admin = await connect(deps, {
+      spaceId: '*',
+      kind: 'admin',
+      scopes: [...scopesForKind('cma')],
+    });
+    const exported = await admin.callTool({
+      name: 'environment_export',
+      arguments: { space: 'space-1' },
+    });
+    const snapshot = JSON.parse((exported.content as { text: string }[])[0]?.text ?? '{}');
+    return { deps, admin, snapshot };
+  }
+  const body = (res: Awaited<ReturnType<Client['callTool']>>) =>
+    JSON.parse((res.content as { text: string }[])[0]?.text ?? '{}');
+
+  it('reports on a dry run, then imports as a job', async () => {
+    const { deps, admin, snapshot } = await setup();
+    const dry = await admin.callTool({
+      name: 'environment_import',
+      arguments: { space: 'space-1', environment: 'copy', snapshot, dryRun: true },
+    });
+    expect(body(dry)).toMatchObject({ dryRun: true, entries: 1 });
+    const copy = { spaceId: 'space-1', environmentId: 'copy' };
+    expect(await deps.ctx.store.contentTypes.list(copy)).toEqual([]);
+
+    const res = await admin.callTool({
+      name: 'environment_import',
+      arguments: { space: 'space-1', environment: 'copy', snapshot },
+    });
+    expect(res.isError).toBeFalsy();
+    expect(body(res)).toMatchObject({ report: { entries: 1 }, job: { status: 'running' } });
+    expect((await deps.ctx.store.contentTypes.list(copy)).map((t) => t.apiId)).toEqual(['note']);
+  });
+
+  it('refuses a caller who cannot manage the target space', async () => {
+    const { deps, snapshot } = await setup();
+    const other = await connect(deps, {
+      spaceId: 'space-1',
+      kind: 'cma',
+      scopes: [...scopesForKind('cma')],
+    });
+    const res = await other.callTool({
+      name: 'environment_import',
+      arguments: { space: 'space-2', environment: 'copy', snapshot },
+    });
+    expect(res.isError).toBe(true);
+    const target = { spaceId: 'space-2', environmentId: 'copy' };
+    expect(await deps.ctx.store.contentTypes.list(target)).toEqual([]);
   });
 });

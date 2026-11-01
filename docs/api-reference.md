@@ -134,7 +134,7 @@ Base paths: `/spaces` and `…` = `/spaces/:space/environments/:env`.
 | ------ | ---------- | ---------------- | -------------------------------------------------------------------------------------- |
 | GET    | `…/export` | `content:manage` | Export the environment as portable JSON                                                |
 | POST   | `…/import` | `content:manage` | Replay a snapshot into this environment, as a job (`202`; `?dryRun=true` reports, `200`; `?publish=false`) |
-| POST   | `…/clone`  | `content:manage` | Copy this environment into another, as a job (`202`) `{ targetSpaceId?, targetEnvironmentId, publish? }` |
+| POST   | `…/clone`  | `content:manage` | Copy this environment into another, entirely as jobs (`202`) `{ targetSpaceId?, targetEnvironmentId, publish? }` |
 
 A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows, and
 asset **metadata**. It deliberately never carries **credentials** — API keys, OAuth clients and
@@ -216,7 +216,17 @@ search and vector indexing) as an entry written by hand would.
 Every chunk step is safe to run again after a crash: an entry already created isn't created twice,
 and one already published (or already carrying its draft) isn't published again. A snapshot with no
 entries or assets answers `job: null`. Without a blob store (local fakes), import and clone run
-synchronously and answer `201` with the report. The clone's export still runs inside the request.
+synchronously and answer `201` with the report.
+
+**A clone runs entirely as jobs.** An import's snapshot arrives in the request body, so its checks
+run there; a clone's source is read from the database, so even the export and the checks move off
+the request. `POST …/clone` checks only that both environments exist and the target holds no
+content types, and answers `202` with `{ job, createJobId, publishJobId }`. `job` (one chunk, in the
+engine) exports the source, runs every check, stages the work, writes the model and starts
+`createJobId`, as an import's request would. A snapshot the checks refuse fails `job`, and its
+report (`…/bulk/jobs/:id/report`) names the problems; nothing is written. `publishJobId` starts when
+`createJobId` completes cleanly, and only exists if anything is published. A dry run
+(`dryRun: true` on the MCP tool) still exports and checks in the request.
 
 ### Importing from elsewhere
 
