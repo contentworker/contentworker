@@ -15,7 +15,7 @@ const params: AssetIngestParams = {
 };
 
 /** A Workflows binding whose createBatch answers what the test says. */
-function binding(answer: () => Awaited<ReturnType<AssetIngestWorkflowBinding['createBatch']>>) {
+function binding(answer: () => WorkflowBatchCreateResult) {
   const calls: unknown[] = [];
   const wf = {
     async createBatch(options: unknown) {

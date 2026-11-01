@@ -407,7 +407,8 @@ describe('asset search and ingest tools (MCP), on the same use-cases as the HTTP
     expect(out).toMatchObject({ id: a.id, ingestStatus: 'pending' });
     expect(queue.requested).toHaveLength(1);
     const job = payload(
-      await client.callTool({ name: 'assets_reindex', arguments: { space: SPACE } }),
+      // all: the re-ingested asset is pending, which the default reindex leaves alone.
+      await client.callTool({ name: 'assets_reindex', arguments: { space: SPACE, all: true } }),
     );
     expect(job).toMatchObject({ assets: 1, job: { action: 'asset_reindex' } });
     // Without the queue it says so rather than doing nothing.

@@ -158,10 +158,11 @@ describe('asset search over HTTP', () => {
       (await app.request(`${M}/assets/${a.id}/reingest`, { method: 'POST', headers: cpa })).status,
     ).toBe(403);
 
+    // The re-ingested asset is pending now, which the default reindex leaves alone; all takes it.
     const job = await app.request(`${M}/assets/reindex`, {
       method: 'POST',
       headers: cma,
-      body: JSON.stringify({}),
+      body: JSON.stringify({ all: true }),
     });
     expect(job.status).toBe(202);
     expect(await json<{ assets: number; job: { action: string } }>(job)).toMatchObject({
