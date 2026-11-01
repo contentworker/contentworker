@@ -35,6 +35,7 @@ import {
   finishIngest,
   getAsset,
   getPublishedAsset,
+  hashAsset,
   importSnapshot,
   ingestErrorMessage,
   MAX_EXTRACT_DOCUMENT_BYTES,
@@ -235,6 +236,32 @@ describe('asset ingest', () => {
     expect((await getAsset(t.ctx, scope, original.id)).duplicateOf).toBeUndefined();
     expect((await getAsset(t.ctx, scope, other.id)).duplicateOf).toBeUndefined();
     expect(ingested(t.store).find((e) => e.assetId === copy.id)?.duplicateOf).toBeUndefined();
+  });
+
+  it('marks two copies hashed at the same time, though neither saw the other when it looked', async () => {
+    const original = await t.upload('a.png', 'image/png', 'same-bytes');
+    const copy = await t.upload('b.png', 'image/png', 'same-bytes');
+    // Both hash steps list the scope before either has written its hash.
+    const list = t.store.assets.list.bind(t.store.assets);
+    let looking = 0;
+    let release: () => void = () => {};
+    const bothLooked = new Promise<void>((r) => {
+      release = r;
+    });
+    t.store.assets.list = async (sc, q) => {
+      const page = await list(sc, q);
+      if (q.filters?.contentHash && looking < 2) {
+        looking += 1;
+        if (looking === 2) release();
+        await bothLooked;
+      }
+      return page;
+    };
+    const hash = (assetId: string) => hashAsset(t.ctx, t.deps, { scope, assetId, version: 1 });
+    await Promise.all([hash(original.id), hash(copy.id)]);
+    t.store.assets.list = list;
+    expect((await getAsset(t.ctx, scope, copy.id)).duplicateOf).toBe(original.id);
+    expect((await getAsset(t.ctx, scope, original.id)).duplicateOf).toBeUndefined();
   });
 
   it('does not mark a duplicate across environments (scope isolation)', async () => {
@@ -677,6 +704,8 @@ describe('starting ingest', () => {
     const queue = new FakeAssetIngestQueue();
     const out = await reingestAsset(t.ctx, queue, scope, asset.id);
     expect(out.ingestStatus).toBe('pending');
+    // Stored, not only answered: a reload shows the retry queued.
+    expect((await getAsset(t.ctx, scope, asset.id)).ingestStatus).toBe('pending');
     expect(queue.requested).toEqual([
       { scope, assetId: asset.id, version: 1, rerun: expect.any(String) },
     ]);

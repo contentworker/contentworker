@@ -231,6 +231,12 @@ export async function reingestAsset(
   }
   if (asset.ingestStatus === 'pending' || asset.ingestStatus === 'processing') return asset;
   const version = asset.version ?? 1;
+  // Recorded now, so a reload shows the retry queued (and a second click is the no-op above).
+  await ctx.store.assets.recordIngest(scope, id, version, {
+    status: 'pending',
+    error: null,
+    onlyFrom: NOT_PROCESSING,
+  });
   await queue.request([{ scope, assetId: id, version, rerun: ctx.ids.newId() }]);
   return { ...asset, ingestStatus: 'pending' };
 }
@@ -432,8 +438,9 @@ export interface HashResult {
 /**
  * Hashes the file (SHA-256, streamed: it is never held whole) and marks duplicates: the oldest
  * asset in the scope with these bytes is the original, and every other one, this one included,
- * points at it. Marking the others too covers two copies uploaded together, where neither sees
- * the other's hash when it looks. A file over {@link MAX_HASH_BYTES} is not read: its size is
+ * points at it. Two copies hashed at the same time may each look before the other has written its
+ * hash, so after writing, the marks are checked once more against everything with this hash: the
+ * later of the two second looks sees both. A file over {@link MAX_HASH_BYTES} is not read: its size is
  * recorded and ingest goes on without a hash. `null` when the asset moved on.
  */
 export async function hashAsset(
@@ -481,7 +488,42 @@ export async function hashAsset(
       });
     }
   });
-  return { contentHash, size, ...(duplicateOf ? { duplicateOf } : {}) };
+  const settled = await settleDuplicates(ctx, scope, contentHash, assetId);
+  return { contentHash, size, ...(settled ? { duplicateOf: settled } : {}) };
+}
+
+/**
+ * Re-reads every asset with `contentHash` (this one's hash now among them) and points each at the
+ * oldest, the oldest at nothing. Returns what `assetId` points at now.
+ */
+async function settleDuplicates(
+  ctx: AppContext,
+  scope: Scope,
+  contentHash: string,
+  assetId: string,
+): Promise<string | undefined> {
+  const all = (
+    await ctx.store.assets.list(scope, {
+      limit: MAX_DUPLICATES_MARKED,
+      filters: { contentHash, status: 'all' },
+      sort: { field: 'createdAt', direction: 'asc' },
+    })
+  ).items.sort(byAge);
+  const original = all[0];
+  if (!original) return undefined;
+  const wrong = all.filter(
+    (a) => (a.duplicateOf ?? null) !== (a.id === original.id ? null : original.id),
+  );
+  if (wrong.length > 0) {
+    await ctx.store.withTransaction(async (tx) => {
+      for (const a of wrong) {
+        await tx.assets.recordIngest(scope, a.id, a.version ?? 1, {
+          duplicateOf: a.id === original.id ? null : original.id,
+        });
+      }
+    });
+  }
+  return assetId === original.id ? undefined : original.id;
 }
 
 /** Oldest first; an asset with no creation time (a pre-0007 row) counts as oldest; then by id. */
