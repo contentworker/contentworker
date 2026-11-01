@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { LocaleConfig } from '@contentworker/domain';
+import type { DomainEvent, LocaleConfig } from '@contentworker/domain';
 import {
   canAccessContentType,
   deniedFieldsFor,
@@ -484,4 +484,51 @@ export async function visibleSearchHits<T extends { readonly entryId: string }>(
     }
   }
   return visible;
+}
+
+/**
+ * The event types the Live Content API carries: facts about published content. Editorial and
+ * internal events (workflow runs and tasks, bulk-job control, reindex requests) never reach a
+ * delivery subscriber.
+ */
+export const LIVE_EVENT_TYPES: ReadonlySet<DomainEvent['type']> = new Set([
+  'entry.published',
+  'entry.unpublished',
+  'entries.published_bulk',
+  'asset.published',
+  'asset.unpublished',
+  'content_type.published',
+  'release.published',
+  'environment_alias.changed',
+]);
+
+/**
+ * What `principal` may see of `event` on the live stream, or null for nothing: the same rules as
+ * a delivery read. An unrestricted key sees every published-content fact. A key with content
+ * grants sees entries only of types it may read, with its denied fields masked; a content type's
+ * publish only for those types; alias changes; and no asset, bulk or release facts (asset reads
+ * are refused to it, and a bulk or release fact lists entry ids of every type).
+ */
+export function liveEventFor(
+  principal: Pick<Principal, 'contentGrants'>,
+  event: DomainEvent,
+): DomainEvent | null {
+  if (!LIVE_EVENT_TYPES.has(event.type)) return null;
+  if (!principal.contentGrants) return event;
+  const p = principal as Principal;
+  switch (event.type) {
+    case 'entry.published':
+      if (!canAccessContentType(p, 'read', event.contentTypeApiId)) return null;
+      return {
+        ...event,
+        fields: maskDeliveredFields(p, event.contentTypeApiId, event.fields) as typeof event.fields,
+      };
+    case 'entry.unpublished':
+    case 'content_type.published':
+      return canAccessContentType(p, 'read', event.contentTypeApiId) ? event : null;
+    case 'environment_alias.changed':
+      return event;
+    default:
+      return null;
+  }
 }

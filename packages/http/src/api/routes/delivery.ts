@@ -5,6 +5,7 @@ import {
   listContentTypes,
   listPublishedAssets,
   listPublishedEntries,
+  liveEventFor,
   maskDeliveredFields,
   parseImageTransform,
   semanticSearch,
@@ -248,12 +249,20 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean);
+      const principal = c.get('principal');
       return streamSSE(c, async (stream) => {
         const sub = bus.subscribe('*', async (event) => {
           if (event.scope.spaceId !== scope.spaceId) return;
           if (event.scope.environmentId !== scope.environmentId) return;
           if (types.length > 0 && !types.includes(event.type)) return;
-          await stream.writeSSE({ event: event.type, id: event.id, data: JSON.stringify(event) });
+          // Only published-content facts, and only what this principal may read (as LiveHubDO).
+          const visible = liveEventFor(principal, event);
+          if (!visible) return;
+          await stream.writeSSE({
+            event: visible.type,
+            id: visible.id,
+            data: JSON.stringify(visible),
+          });
         });
         stream.onAbort(() => void sub.close());
         // Heartbeat so proxies keep the connection open until the client leaves.

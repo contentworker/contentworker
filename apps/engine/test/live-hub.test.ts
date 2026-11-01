@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import type { DomainEvent } from '@contentworker/domain';
-import { createDoEventBus } from '@contentworker/platform/do/live-hub';
+import { createDoEventBus, LIVE_ACCESS_HEADER } from '@contentworker/platform/do/live-hub';
 import { describe, expect, it } from 'vitest';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
@@ -50,10 +50,19 @@ function frameReader(stream: ReadableStream<Uint8Array>) {
 
 const hubStub = (name: string) => env.LIVE_HUB.get(env.LIVE_HUB.idFromName(name));
 
+/** Subscribes as the live route does: with the authorized principal's access (unrestricted by default). */
+function subscribe(
+  stub: ReturnType<typeof hubStub>,
+  url: string,
+  access: object = {},
+): Promise<Response> {
+  return stub.fetch(url, { headers: { [LIVE_ACCESS_HEADER]: JSON.stringify(access) } });
+}
+
 describe('LiveHubDO', () => {
   it('opens with a ping and fans published events out to a subscriber', async () => {
     const stub = hubStub('space-1:main');
-    const res = await stub.fetch('https://hub/delivery/space-1/main/live');
+    const res = await subscribe(stub, 'https://hub/delivery/space-1/main/live');
     expect(res.headers.get('content-type')).toBe('text/event-stream');
     const frames = frameReader(res.body as ReadableStream<Uint8Array>);
 
@@ -70,7 +79,7 @@ describe('LiveHubDO', () => {
 
   it('honors the ?types= filter', async () => {
     const stub = hubStub('space-1:filtered');
-    const res = await stub.fetch('https://hub/live?types=entry.published');
+    const res = await subscribe(stub, 'https://hub/live?types=entry.published');
     const frames = frameReader(res.body as ReadableStream<Uint8Array>);
     expect(await frames.next()).toContain('event: ping');
 
@@ -87,10 +96,10 @@ describe('LiveHubDO', () => {
   it('delivers to every connected client of the same hub', async () => {
     const stub = hubStub('space-1:multi');
     const a = frameReader(
-      (await stub.fetch('https://hub/live')).body as ReadableStream<Uint8Array>,
+      (await subscribe(stub, 'https://hub/live')).body as ReadableStream<Uint8Array>,
     );
     const b = frameReader(
-      (await stub.fetch('https://hub/live')).body as ReadableStream<Uint8Array>,
+      (await subscribe(stub, 'https://hub/live')).body as ReadableStream<Uint8Array>,
     );
     expect(await a.next()).toContain('event: ping');
     expect(await b.next()).toContain('event: ping');
@@ -103,11 +112,87 @@ describe('LiveHubDO', () => {
   });
 });
 
+describe('LiveHubDO access', () => {
+  it('refuses a subscriber the live route did not stamp with an access policy', async () => {
+    const res = await hubStub('space-1:unstamped').fetch('https://hub/live');
+    expect(res.status).toBe(403);
+  });
+
+  it('never forwards editorial or internal events', async () => {
+    const stub = hubStub('space-1:editorial');
+    const frames = frameReader(
+      (await subscribe(stub, 'https://hub/live')).body as ReadableStream<Uint8Array>,
+    );
+    expect(await frames.next()).toContain('event: ping');
+    await stub.publish({
+      id: 'evt-task',
+      type: 'workflow.task_opened',
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      scope,
+      title: 'Approve the launch post',
+    } as unknown as DomainEvent);
+    await stub.publish(publishedEvent('evt-after'));
+    // The task never arrives: the next frame is the published entry.
+    const frame = await frames.next();
+    expect(frame).toContain('id: evt-after');
+    expect(frame).not.toContain('Approve the launch post');
+    await frames.cancel();
+  });
+
+  it('shows a restricted key only the types it may read, with denied fields masked', async () => {
+    const stub = hubStub('space-1:restricted');
+    const restricted = frameReader(
+      (
+        await subscribe(stub, 'https://hub/live', {
+          contentGrants: [
+            { contentTypeApiId: 'post', actions: ['read'], deniedFields: ['internalNotes'] },
+          ],
+        })
+      ).body as ReadableStream<Uint8Array>,
+    );
+    const open = frameReader(
+      (await subscribe(stub, 'https://hub/live')).body as ReadableStream<Uint8Array>,
+    );
+    expect(await restricted.next()).toContain('event: ping');
+    expect(await open.next()).toContain('event: ping');
+
+    const entry = (id: string, contentTypeApiId: string) =>
+      ({
+        id,
+        type: 'entry.published',
+        occurredAt: '2026-01-01T00:00:00.000Z',
+        scope,
+        entryId: `entry-${id}`,
+        contentTypeApiId,
+        version: 1,
+        fields: {
+          title: { 'en-US': `A ${contentTypeApiId}` },
+          internalNotes: { 'en-US': 'secret' },
+        },
+      }) as unknown as DomainEvent;
+    await stub.publish(entry('evt-page', 'page'));
+    await stub.publish(entry('evt-post', 'post'));
+
+    // The ungranted page never reaches the restricted key; its post arrives masked.
+    const post = await restricted.next();
+    expect(post).toContain('id: evt-post');
+    expect(post).toContain('A post');
+    expect(post).not.toContain('secret');
+    // An unrestricted subscriber on the same hub still sees both, unmasked.
+    expect(await open.next()).toContain('id: evt-page');
+    const openPost = await open.next();
+    expect(openPost).toContain('id: evt-post');
+    expect(openPost).toContain('secret');
+    await restricted.cancel();
+    await open.cancel();
+  });
+});
+
 describe('createDoEventBus', () => {
   it('routes publish to the scope hub and rejects subscribe', async () => {
     const bus = createDoEventBus(env.LIVE_HUB);
     const stub = hubStub('space-1:main');
-    const res = await stub.fetch('https://hub/live');
+    const res = await subscribe(stub, 'https://hub/live');
     const frames = frameReader(res.body as ReadableStream<Uint8Array>);
     expect(await frames.next()).toContain('event: ping');
 

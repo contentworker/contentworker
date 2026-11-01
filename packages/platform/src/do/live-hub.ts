@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { DomainEvent, Scope } from '@contentworker/domain';
+import { liveEventFor } from '@contentworker/application';
+import type { DomainEvent, Principal, Scope } from '@contentworker/domain';
 import type { EventBus } from '@contentworker/ports';
 import type { EdgeEnv } from '../env.js';
 
@@ -7,9 +8,20 @@ const HEARTBEAT_MS = 15_000;
 
 const scopeKey = (scope: Scope) => `${scope.spaceId}:${scope.environmentId}`;
 
+/** What a subscriber may see: the content grants of the principal the live route authorized. */
+type LiveAccess = Pick<Principal, 'contentGrants'>;
+
+/**
+ * The header the live route sets on the request it forwards here, carrying the authorized
+ * principal's access. Only the route can reach this object (it has no public route), and the
+ * route always replaces whatever a caller sent.
+ */
+export const LIVE_ACCESS_HEADER = 'x-cw-live-access';
+
 interface SseClient {
   readonly writer: WritableStreamDefaultWriter<Uint8Array>;
   readonly types: string[];
+  readonly access: LiveAccess;
 }
 
 const encoder = new TextEncoder();
@@ -25,6 +37,19 @@ function sseFrame(fields: { event: string; id?: string; data: string }): Uint8Ar
   return encoder.encode(lines.join('\n'));
 }
 
+const frameFor = (event: DomainEvent) =>
+  sseFrame({ event: event.type, id: event.id, data: JSON.stringify(event) });
+
+function parseAccess(header: string | null): LiveAccess | null {
+  if (!header) return null;
+  try {
+    const parsed = JSON.parse(header) as LiveAccess;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Live Content API fan-out hub — one object per space:environment. The queue
  * consumer publishes domain events via the `publish` RPC; delivery clients hold
@@ -37,13 +62,30 @@ export class LiveHubDO extends DurableObject<EdgeEnv> {
   /** Connection counter — client keys are DO-instance-local, not entity ids. */
   private seq = 0;
 
-  /** Fan a domain event out to every connected client (filtered by ?types=). */
+  /**
+   * Fan a domain event out to every connected client (filtered by ?types=), each getting only what
+   * its access allows (`liveEventFor`): editorial events never, restricted keys masked or nothing.
+   */
   async publish(event: DomainEvent): Promise<void> {
-    const frame = sseFrame({ event: event.type, id: event.id, data: JSON.stringify(event) });
-    await this.broadcast(event.type, frame);
+    // Unrestricted subscribers share one frame; a restricted one gets its own view (or none).
+    let shared: Uint8Array | null | undefined;
+    await this.broadcast(event.type, (client) => {
+      if (!client.access.contentGrants) {
+        if (shared === undefined) {
+          const visible = liveEventFor(client.access, event);
+          shared = visible ? frameFor(visible) : null;
+        }
+        return shared;
+      }
+      const visible = liveEventFor(client.access, event);
+      return visible ? frameFor(visible) : null;
+    });
   }
 
   override async fetch(req: Request): Promise<Response> {
+    // Fail closed: a request the live route didn't stamp with an access policy gets nothing.
+    const access = parseAccess(req.headers.get(LIVE_ACCESS_HEADER));
+    if (!access) return new Response('forbidden', { status: 403 });
     const url = new URL(req.url);
     const types = (url.searchParams.get('types') ?? '')
       .split(',')
@@ -53,7 +95,7 @@ export class LiveHubDO extends DurableObject<EdgeEnv> {
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     const id = String(++this.seq);
-    this.clients.set(id, { writer, types });
+    this.clients.set(id, { writer, types, access });
     this.ensureHeartbeat();
 
     // Initial ping so clients observe an open stream immediately.
@@ -68,9 +110,14 @@ export class LiveHubDO extends DurableObject<EdgeEnv> {
     });
   }
 
-  private async broadcast(eventType: string, frame: Uint8Array): Promise<void> {
+  private async broadcast(
+    eventType: string,
+    frameOf: (client: SseClient) => Uint8Array | null,
+  ): Promise<void> {
     for (const [id, client] of this.clients) {
       if (client.types.length > 0 && !client.types.includes(eventType)) continue;
+      const frame = frameOf(client);
+      if (!frame) continue;
       // Never await writes: a client that stopped reading would park the write
       // promise on backpressure and stall publish() (and the queue consumer
       // behind it). Zero desiredSize means the buffer is full — drop the
@@ -97,7 +144,8 @@ export class LiveHubDO extends DurableObject<EdgeEnv> {
     // Heartbeats keep proxies from reaping idle SSE connections and detect
     // departed clients (their write fails → dropped).
     this.heartbeat ??= setInterval(() => {
-      void this.broadcast('ping', sseFrame({ event: 'ping', data: '' }));
+      const ping = sseFrame({ event: 'ping', data: '' });
+      void this.broadcast('ping', () => ping);
     }, HEARTBEAT_MS);
   }
 }
