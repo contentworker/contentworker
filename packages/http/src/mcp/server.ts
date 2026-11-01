@@ -113,6 +113,7 @@ import {
   setPluginEnabled,
   setWorkflowSeparationDefault,
   startBulkJob,
+  startSnapshotImport,
   startWorkflowRun,
   suggestEntries,
   suggestEntryTags,
@@ -1034,7 +1035,9 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
       guardBulkJobs();
-      return ok(await cancelBulkJob(ctx, scopeOf(args), args.id));
+      return ok(
+        await cancelBulkJob(ctx, scopeOf(args), args.id, deps.blob ? { blob: deps.blob } : {}),
+      );
     },
   );
 
@@ -1351,7 +1354,12 @@ export function buildServer(
     {
       description:
         'Copy this environment into another (which may be in another space). The ' +
-        'target must have no content types. Set dryRun to see the plan first.',
+        'target must exist and have no content types. Set dryRun to see the plan first. ' +
+        'Otherwise everything is checked, the content model is copied, and the entries and ' +
+        'assets are copied by a job: the result is `{ report, job, publishJobId }`. Both jobs ' +
+        'belong to the TARGET: follow `job` with bulk_job_status passing `space`=targetSpace ' +
+        'and `environment`=targetEnvironment, then `publishJobId`, which starts only once `job` ' +
+        'completes with no failures.',
       inputSchema: toolSchema('environment_clone', () =>
         z.object({
           targetSpace: z.string().optional().describe('defaults to the source space'),
@@ -1373,12 +1381,9 @@ export function buildServer(
       // would be a tenancy hole.
       guard(SCOPES.contentManage, to);
       const snapshot = await exportSnapshot(ctx, from);
-      return ok(
-        await importSnapshot(ctx, to, snapshot, {
-          dryRun: args.dryRun,
-          publish: args.publish,
-        }),
-      );
+      const options = { dryRun: args.dryRun, publish: args.publish };
+      if (args.dryRun || !deps.blob) return ok(await importSnapshot(ctx, to, snapshot, options));
+      return ok(await startSnapshotImport(ctx, deps.blob, to, snapshot, options));
     },
   );
 

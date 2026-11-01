@@ -5,12 +5,14 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import {
+  type BlobStore,
   type BulkJob,
   type BulkJobAction,
   type BulkJobChunk,
   TransactionConflictError,
 } from '@contentworker/ports';
 import type { AppContext } from './context';
+import { discardStagedJob, importChunkKey } from './job-staging';
 import { publishEntriesTx, unpublishEntriesTx } from './publishing';
 
 /** Entry ids processed per chunk (one transaction + one coalesced event each). */
@@ -252,15 +254,74 @@ export async function runBulkChunk(
   return { outcome: 'processed', succeeded, failed };
 }
 
+/**
+ * A job that starts when another completes, named in the first job's `config.next`. Its chunks'
+ * work is staged under its own id (`importChunkKey`) before the first job is persisted, so it can
+ * be created in the same write that finalizes the first: exactly once, and only on completion (a
+ * cancelled first job never starts it).
+ */
+export interface ChainedJob {
+  readonly id: string;
+  readonly totalItems: number;
+  readonly chunkIds: readonly string[];
+  readonly config: Readonly<Record<string, unknown>>;
+}
+
+const chainedJobOf = (job: BulkJob): ChainedJob | undefined =>
+  (job.config as { next?: ChainedJob } | undefined)?.next;
+
 /** Finalizes the job and emits `bulk.job_completed` once all chunks are in. */
 async function finalizeIfDone(ctx: AppContext, scope: Scope, job: BulkJob): Promise<void> {
   if (job.status !== 'running' || job.completedChunks < job.totalChunks) return;
   await ctx.store
     .withTransaction(async (tx) => {
-      const finalized = await tx.bulkJobs.finalizeJob(scope, job.id, 'completed', ctx.clock.now());
+      const at = ctx.clock.now();
+      const finalized = await tx.bulkJobs.finalizeJob(scope, job.id, 'completed', at);
       // finalizeJob CASes on `running`, so exactly one competing finalizer
       // wins and the completed event is emitted once.
       if (!finalized) return;
+      // Only after a clean run: a chained job builds on the first one's results (a snapshot's
+      // publishing needs every entry the first job created), so after any failure it doesn't
+      // start; the first job's report names what failed. Its staged work is discarded with the
+      // first job's on `bulk.job_completed`.
+      const next = finalized.failed === 0 ? chainedJobOf(finalized) : undefined;
+      if (next) {
+        const nowIso = at.toISOString();
+        await tx.bulkJobs.createJob(scope, {
+          id: next.id,
+          action: finalized.action,
+          status: 'running',
+          totalItems: next.totalItems,
+          totalChunks: next.chunkIds.length,
+          completedChunks: 0,
+          succeeded: 0,
+          failed: 0,
+          createdAt: nowIso,
+          config: next.config,
+        });
+        await tx.bulkJobs.createChunks(
+          scope,
+          next.chunkIds.map((chunkId) => ({
+            jobId: next.id,
+            chunkId,
+            entryIds: [],
+            payloadKey: importChunkKey(scope, next.id, chunkId),
+            status: 'pending' as const,
+            attempts: 0,
+            failures: [],
+          })),
+        );
+        await tx.outbox.appendMany(
+          next.chunkIds.map((chunkId) => ({
+            id: ctx.ids.newId(),
+            type: 'bulk.chunk_due' as const,
+            scope,
+            occurredAt: nowIso,
+            jobId: next.id,
+            chunkId,
+          })),
+        );
+      }
       await tx.outbox.append({
         id: ctx.ids.newId(),
         type: 'bulk.job_completed',
@@ -368,8 +429,15 @@ export async function getBulkJobReport(
  * job-status check precedes the claim); a chunk mid-transaction finishes —
  * cancellation is a stop-taking-new-work signal, not a rollback.
  */
-export async function cancelBulkJob(ctx: AppContext, scope: Scope, id: string): Promise<BulkJob> {
+export async function cancelBulkJob(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  deps: { readonly blob?: BlobStore } = {},
+): Promise<BulkJob> {
   const job = await ctx.store.bulkJobs.finalizeJob(scope, id, 'cancelled', ctx.clock.now());
+  // Its unrun chunks' staged work, and that of the job it would have started, are never read now.
+  if (job && deps.blob) await discardStagedJob(deps.blob, scope, job, { nextStarted: false });
   if (!job) {
     const existing = await ctx.store.bulkJobs.getJob(scope, id);
     if (!existing) throw new NotFoundError('BulkJob', id);

@@ -91,6 +91,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
       hasher: createHasher(env.TOKEN_PEPPER),
       adminToken: mcpToken,
+      blob: wired.blob,
       moderateBeforePublish: wired.config.moderateBeforePublish,
       accessPolicy: WEB_SIGN_IN,
       signalReview: env.AGENT_WF

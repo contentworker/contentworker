@@ -54,6 +54,7 @@ import {
   diffVersions,
   draftEntry,
   duplicateEntry,
+  type EnvironmentSnapshot,
   executeImport,
   exportSnapshot,
   findDuplicates,
@@ -138,7 +139,9 @@ import {
   setPluginEnabled,
   spacesForSubject,
   startBulkJob,
+  startEnvironmentClone,
   startImportJob,
+  startSnapshotImport,
   suggestEntryTags,
   summarizeEntry,
   transformAssetUrl,
@@ -697,31 +700,36 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'Replays the snapshot through the normal use-cases, so validation, the reference ' +
         'graph and the delivery read model all end up consistent. Requires an environment ' +
-        'with no content types. `?dryRun=true` reports without writing.',
+        'with no content types. Everything is checked before anything is written; then the ' +
+        'content model, taxonomy and workflows are written and the assets and entries run as ' +
+        "a job (202: `{ report, job, publishJobId }`; follow it at this environment's " +
+        '`bulk/jobs/:id`, then the publishing job, which starts once it completes with no ' +
+        'failures). `?dryRun=true` reports without writing (200).',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
-      const snapshot = await parseBody(c, snapshotBody);
-      const report = await importSnapshot(
-        ctx,
-        scopeOf(c),
-        snapshot as unknown as Parameters<typeof importSnapshot>[2],
-        {
-          dryRun: c.req.query('dryRun') === 'true',
-          publish: c.req.query('publish') !== 'false',
-        },
-      );
-      return c.json(report, report.dryRun ? 200 : 201);
+      const snapshot = (await parseBody(c, snapshotBody)) as unknown as EnvironmentSnapshot;
+      const options = {
+        dryRun: c.req.query('dryRun') === 'true',
+        publish: c.req.query('publish') !== 'false',
+      };
+      if (options.dryRun || !blob) {
+        const report = await importSnapshot(ctx, scopeOf(c), snapshot, options);
+        return c.json(report, report.dryRun ? 200 : 201);
+      }
+      return c.json(await startSnapshotImport(ctx, blob, scopeOf(c), snapshot, options), 202);
     },
   );
   app.post(
     `${BASE}/clone`,
     doc('Spaces & environments', 'Clone this environment into another', {
       body: cloneBody,
-      status: 201,
+      status: 202,
       description:
         'Export plus import with no file in between. The target may be in another space, ' +
-        'which is the case environment merge does not cover.',
+        'which is the case environment merge does not cover. Runs as a job, as an import ' +
+        'does (202: `{ report, job, publishJobId }`); both jobs belong to the target ' +
+        'environment, so follow them at its `bulk/jobs/:id`.',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
@@ -733,16 +741,13 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         SCOPES.contentManage,
         body.targetSpaceId ?? c.req.param('space'),
       );
-      const report = await cloneEnvironment(
-        ctx,
-        scopeOf(c),
-        {
-          spaceId: body.targetSpaceId ?? (c.req.param('space') as string),
-          environmentId: body.targetEnvironmentId,
-        },
-        { publish: body.publish !== false },
-      );
-      return c.json(report, 201);
+      const target = {
+        spaceId: body.targetSpaceId ?? (c.req.param('space') as string),
+        environmentId: body.targetEnvironmentId,
+      };
+      const options = { publish: body.publish !== false };
+      if (!blob) return c.json(await cloneEnvironment(ctx, scopeOf(c), target, options), 201);
+      return c.json(await startEnvironmentClone(ctx, blob, scopeOf(c), target, options), 202);
     },
   );
 
@@ -1363,7 +1368,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   });
   app.post(`${BASE}/bulk/jobs/:id/cancel`, requireScope(SCOPES.contentPublish), async (c) => {
     guardBulkJobs(c);
-    return c.json(await cancelBulkJob(ctx, scopeOf(c), c.req.param('id')));
+    return c.json(await cancelBulkJob(ctx, scopeOf(c), c.req.param('id'), blob ? { blob } : {}));
   });
 
   // --- agent actions (audit → work packages) -----------------------------

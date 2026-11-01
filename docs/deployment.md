@@ -176,3 +176,7 @@ one admin account; its use and every wrong guess go to the audit log.
 CI rolls back a failed deploy itself. A later rollback is a revert merged to `main`, which CI
 ships like any change. Rolling code back never rolls the schema back; restoring data is a D1
 Time Travel restore (see [Backup & restore](./backup-and-restore.md)).
+
+An engine from before snapshot import jobs (environment import and clone) doesn't know their job
+kind: it fails their chunks and never starts their publishing job. Re-run such an import after
+rolling forward.
