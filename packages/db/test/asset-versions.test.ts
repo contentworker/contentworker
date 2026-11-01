@@ -228,6 +228,12 @@ describe('asset expiry on D1', () => {
       .run();
     const found = await store.assets.findExpiredPublished(new Date(base), 1000);
     expect(found.map((f) => f.assetId)).not.toContain(id);
+    // Due to the millisecond (julianday is a float): an expiry exactly at the sweep's instant counts.
+    expect(
+      (await store.assets.findExpiredPublished(new Date(base + 86_400_000), 1000)).map(
+        (f) => f.assetId,
+      ),
+    ).toContain(id);
   });
 
   it('unpublishes an expired asset once, and leaves one whose expiry moved', async () => {

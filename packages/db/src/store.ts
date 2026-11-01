@@ -1447,7 +1447,9 @@ function makeAssetRepo(x: Exec): AssetRepo {
             // And the rights themselves say so. The column is a copy, and code that predates it
             // (a rollback) can rewrite a snapshot without it: a stale row the sweep only skipped
             // would stay first in line forever and, a hundred of them, starve real expiries.
-            sql`(julianday(json_extract(${p.rights}, '$.expiresAt')) - 2440587.5) * 86400000 <= ${at.getTime()}`,
+            // Rounded to the millisecond as the 0014 backfill rounds it: julianday is a float,
+            // and an expiry exactly at `at` must count as due.
+            sql`round((julianday(json_extract(${p.rights}, '$.expiresAt')) - 2440587.5) * 86400000) <= ${at.getTime()}`,
             // Only in an environment that still exists: a deleted one's rows linger until purged.
             registered(p),
           ),
