@@ -52,7 +52,9 @@ delivery and leaves the drafts in place.
 | Unpublish | `DELETE …/entries/{id}/published` | `entries_unpublish` |
 
 Publishing validates the entry against its content type and checks that everything it links to
-exists. A published entry emits `entry.published`, which refreshes delivery caches, updates search
+exists. When a workflow that [gates publishing](/guides/workflows/#gate-publishing) covers the
+entry, a direct publish is refused with `409 publish_gated`, for everyone; only a run of that
+workflow publishes it. A published entry emits `entry.published`, which refreshes delivery caches, updates search
 and notifies [webhooks](/guides/webhooks/).
 
 To publish several entries together, use a [release](/guides/releases-and-scheduling/). To publish
@@ -136,6 +138,10 @@ job need `content:publish` on a role with no per-content-type restrictions. Foll
 `GET …/bulk/jobs/{id}`, read per-entry failures at `…/bulk/jobs/{id}/report` and stop it with
 `POST …/bulk/jobs/{id}/cancel`. The MCP tools are `bulk_job_start`, `bulk_job_status`,
 `bulk_job_report` and `bulk_job_cancel`.
+
+An entry a [gated workflow](/guides/workflows/#gate-publishing) covers fails as its own item, in
+the synchronous summary and in a job's report, with the `publish_gated` message naming the
+workflow; the rest of the batch still publishes.
 
 ## Import content
 

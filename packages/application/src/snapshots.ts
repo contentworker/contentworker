@@ -22,6 +22,7 @@ import { createContentType, publishContentType } from './content-types';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
 import { allPages } from './paging';
+import { grantSnapshotImport } from './publish-gate';
 import { publishEntry } from './publishing';
 import { createConcept, createScheme, createTag, setEntryMetadata } from './taxonomy';
 import {
@@ -517,7 +518,10 @@ export async function publishSnapshotEntry(
   if (!current) throw new NotFoundError('Entry', publication.id);
   const status = current.entry.status;
   if (status === 'changed') return; // published, and its draft is already on top
-  if (status !== 'published') await publishEntry(ctx, target, publication.id);
+  // Past any publish gate: the copy reproduces the source's published state (see the grant).
+  if (status !== 'published') {
+    await publishEntry(ctx, target, publication.id, { grant: grantSnapshotImport() });
+  }
   if (publication.draft) await updateEntry(ctx, target, publication.id, publication.draft);
 }
 

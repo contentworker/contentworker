@@ -1227,6 +1227,20 @@ export class InMemoryContentStore implements ContentStore {
       const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${workflowId}`)?.at(-1);
       return latest ? clone(latest) : null;
     },
+    // As the D1 store: a deleted definition no longer gates, whatever its versions say.
+    listPublishGates: async (scope) =>
+      this.workflowRows(scope).flatMap((row) => {
+        const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${row.id}`)?.at(-1);
+        if (!latest?.gatesPublish) return [];
+        return [
+          {
+            workflowId: row.id,
+            name: row.name,
+            version: latest.version,
+            contentTypes: [...latest.contentTypes],
+          },
+        ];
+      }),
   };
 
   // ---- workflow runs / tasks ------------------------------------------------
@@ -1767,6 +1781,7 @@ export class InMemoryContentStore implements ContentStore {
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,
+        workflowGraphs: this.workflowGraphs,
         outbox: this.outbox,
       });
     } catch (err) {

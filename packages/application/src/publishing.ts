@@ -14,6 +14,7 @@ import {
 import type { ContentStoreTx, EntryWithFields, PublishedEntry } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { runHook } from './hooks';
+import { loadPublishGuard, type PublishGrant, type PublishGuard } from './publish-gate';
 
 /**
  * Holds a write to the version its caller saw. A confirm card, a page's button and an API client
@@ -22,6 +23,15 @@ import { runHook } from './hooks';
  */
 export interface ExpectedVersion {
   readonly expectedVersion?: number;
+}
+
+/** What a publish of one entry takes. */
+export interface PublishOptions extends ExpectedVersion {
+  /**
+   * Lets the publish pass a workflow's publish gate. Only the workflow node executors (and the
+   * snapshot import) can mint one (`publish-gate.ts`); a value from request input is ignored.
+   */
+  readonly grant?: PublishGrant;
 }
 
 /** Refuses with `ConflictError` (409) when `entry` is no longer at the version the caller saw. */
@@ -39,17 +49,24 @@ export function assertExpectedVersion(entry: Entry, opts: ExpectedVersion = {}):
  * published snapshot (the Delivery read model), materializes reference edges,
  * and appends an `entry.published` event to the outbox. Factored out of
  * {@link publishEntry} so a release can publish many entries in one transaction.
+ *
+ * Refuses an entry a gated workflow covers ({@link PublishOptions.grant}). A caller publishing
+ * several entries passes the `guard` it already loaded, so the gates are read once.
  */
 export async function publishEntryTx(
   ctx: AppContext,
   tx: ContentStoreTx,
   scope: Scope,
   id: string,
-  opts: ExpectedVersion = {},
+  opts: PublishOptions = {},
+  guard?: PublishGuard,
 ): Promise<Entry> {
   const found = await tx.entries.get(scope, id);
   if (!found) throw new NotFoundError('Entry', id);
   assertExpectedVersion(found.entry, opts);
+  // A read, before anything in the unit writes.
+  const gate = guard ?? (await loadPublishGuard(tx.workflowGraphs, scope, opts.grant));
+  gate.assert(id, found.entry.contentTypeApiId);
 
   // Inside the transaction on purpose: a veto here rolls back everything the
   // publish would have written, including the outbox row.
@@ -183,6 +200,9 @@ export async function publishEntriesTx(
 
   const found = await tx.entries.getMany(scope, uniqueIds);
   const byId = new Map(found.map((f) => [f.entry.id, f]));
+  // The scope's publish gates, read once for the chunk. No grant: no batch path runs from a
+  // workflow, so a gated entry is a per-item failure like any other.
+  const gate = await loadPublishGuard(tx.workflowGraphs, scope);
 
   // Load each distinct content type once for the whole chunk.
   const typeIds = [...new Set(found.map((f) => f.entry.contentTypeApiId))];
@@ -201,6 +221,7 @@ export async function publishEntriesTx(
       continue;
     }
     try {
+      gate.assert(id, item.entry.contentTypeApiId);
       // Same order as publishEntryTx: the state machine runs before the
       // content-type check, so an archived entry with a missing type reports
       // the same error on either path.
@@ -372,13 +393,14 @@ export async function unpublishEntriesTx(
  * Publishes an entry at its current version. Within one transaction it writes
  * the denormalized published snapshot (the Delivery read model) and appends an
  * `entry.published` event to the outbox, guaranteeing the event is enqueued iff
- * the publish commits.
+ * the publish commits. Refused with `PublishGatedError` (409 `publish_gated`)
+ * when a gated workflow covers the entry, unless a run of it is publishing.
  */
 export async function publishEntry(
   ctx: AppContext,
   scope: Scope,
   id: string,
-  opts: ExpectedVersion = {},
+  opts: PublishOptions = {},
 ): Promise<Entry> {
   return ctx.store.withTransaction((tx) => publishEntryTx(ctx, tx, scope, id, opts));
 }

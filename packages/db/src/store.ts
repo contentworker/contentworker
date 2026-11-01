@@ -3557,6 +3557,39 @@ function makeWorkflowGraphRepo(x: Exec): WorkflowGraphRepo {
         .where(and(versionFilter(scope, workflowId), eq(v.version, version)));
       return row ? toVersion(row) : null;
     },
+    async listPublishGates(scope) {
+      // One grouped query: SQLite takes the bare columns of a `max()` aggregate from the row
+      // holding the max, so each workflow's gating and content types come from its latest
+      // version. Only those two keys are extracted; the graph never leaves the database. The
+      // join drops a deleted workflow, which no admin could otherwise ungate.
+      const rows = await db
+        .select({
+          workflowId: v.workflowId,
+          version: sql<number>`max(${v.version})`.mapWith(Number),
+          name: d.name,
+          gatesPublish: sql<number | null>`json_extract(${v.definition}, '$.gatesPublish')`,
+          contentTypes: sql<string | null>`json_extract(${v.definition}, '$.contentTypes')`,
+        })
+        .from(v)
+        .innerJoin(
+          d,
+          and(
+            eq(d.spaceId, v.spaceId),
+            eq(d.environmentId, v.environmentId),
+            eq(d.id, v.workflowId),
+          ),
+        )
+        .where(scopeFilter(v, scope))
+        .groupBy(v.workflowId);
+      return rows
+        .filter((r) => Number(r.gatesPublish) === 1)
+        .map((r) => ({
+          workflowId: r.workflowId,
+          name: r.name,
+          version: r.version,
+          contentTypes: r.contentTypes ? (JSON.parse(r.contentTypes) as string[]) : [],
+        }));
+    },
     async getLatestVersion(scope, workflowId) {
       const [row] = await db
         .select()
@@ -4108,6 +4141,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
+    workflowGraphs: { listPublishGates: makeWorkflowGraphRepo(x).listPublishGates },
     outbox: makeOutboxRepo(x),
   };
 }

@@ -762,6 +762,48 @@ describe('D1 store (contract)', () => {
       expect(await getWorkflow(ctx, scope, id)).toMatchObject({ legacy: false, latestVersion: 1 });
     });
 
+    it('lists publish gates from each workflow’s latest published version, in one scope', async () => {
+      // A scope of its own: gates here would refuse the other tests' publishes.
+      const gatedScope = { spaceId: `g-${uuidv7()}`, environmentId: 'main' };
+      const graph = editorialReviewWorkflow().graph;
+      const draft = async (name: string, gatesPublish: boolean, contentTypes: string[] = []) =>
+        (await createWorkflowDraft(ctx, gatedScope, { name, graph, gatesPublish, contentTypes }))
+          .workflow.id;
+      expect(await store.workflowGraphs.listPublishGates(gatedScope)).toEqual([]);
+
+      // Gated at v1, ungated at v2: the latest version wins.
+      const flipped = await draft('Flipped', true, ['article']);
+      await publishWorkflowVersion(ctx, gatedScope, flipped);
+      expect(await store.workflowGraphs.listPublishGates(gatedScope)).toEqual([
+        { workflowId: flipped, name: 'Flipped', version: 1, contentTypes: ['article'] },
+      ]);
+      await saveWorkflowDraft(ctx, gatedScope, flipped, { gatesPublish: false });
+      await publishWorkflowVersion(ctx, gatedScope, flipped);
+
+      // Ungated at v1, gated (every type) at v2.
+      const later = await draft('Later', false);
+      await publishWorkflowVersion(ctx, gatedScope, later);
+      await saveWorkflowDraft(ctx, gatedScope, later, { gatesPublish: true, name: 'Later gate' });
+      await publishWorkflowVersion(ctx, gatedScope, later);
+
+      // Gated only in a draft; gated and then deleted.
+      await draft('Draft only', true);
+      const deleted = await draft('Deleted', true);
+      await publishWorkflowVersion(ctx, gatedScope, deleted);
+      await deleteWorkflow(ctx, gatedScope, deleted);
+
+      const expected = [{ workflowId: later, name: 'Later gate', version: 2, contentTypes: [] }];
+      expect(await store.workflowGraphs.listPublishGates(gatedScope)).toEqual(expected);
+      // The same read inside a unit of work, as the publish paths make it.
+      expect(
+        await store.withTransaction((tx) => tx.workflowGraphs.listPublishGates(gatedScope)),
+      ).toEqual(expected);
+      // Another environment of the same space sees none of them.
+      expect(
+        await store.workflowGraphs.listPublishGates({ ...gatedScope, environmentId: 'other' }),
+      ).toEqual([]);
+    });
+
     it('create-with-steps keeps the legacy steps column in step', async () => {
       const wf = await defineWorkflow(ctx, scope, { name: 'Editorial', steps: STEPS });
       expect(wf.latestVersion).toBe(1);

@@ -5,6 +5,7 @@ import {
   LastAdminError,
   NotConfiguredError,
   NotFoundError,
+  PublishGatedError,
   RateLimitedError,
   SecretUnreadableError,
   ValidationError,
@@ -24,6 +25,14 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
   if (err instanceof ConflictError) return { status: 409, body: errBody(err) };
   // Would leave the space with no administrator: a conflict with the space's state.
   if (err instanceof LastAdminError) return { status: 409, body: errBody(err) };
+  // A gated workflow covers the entry: a conflict with the space's workflow configuration. The
+  // body names each refused entry and the workflows whose runs may publish it.
+  if (err instanceof PublishGatedError) {
+    return {
+      status: 409,
+      body: { error: { code: err.code, message: err.message, entries: err.entries } },
+    };
+  }
   if (err instanceof DomainError && err.code === 'unauthorized')
     return { status: 401, body: errBody(err) };
   if (err instanceof DomainError && err.code === 'forbidden')

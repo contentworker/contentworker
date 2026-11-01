@@ -33,6 +33,11 @@ Publishing the release applies every item in one step, so readers never see half
 The MCP tools are `releases_create`, `releases_add_entry`, `releases_get`, `releases_list` and
 `releases_publish`.
 
+A release that would publish an entry a [gated workflow](/guides/workflows/#gate-publishing)
+covers is refused whole with `409 publish_gated`, naming every such entry, and nothing in it
+ships. Adding the entry is allowed; the check runs when the release publishes. Remove the entry,
+or ship the release from a run of the workflow (its `content.publish_release` node).
+
 Publishing a release emits one `entry.published` event per entry, plus a `release.published`
 event that names them all, which is the one to subscribe to if a deploy hook should run once per
 launch.
@@ -57,6 +62,10 @@ curl -s "$API/spaces/$SPACE/environments/main/scheduled-actions" \
 `entityType` is `entry` or `release`; a release can be scheduled to publish but not to unpublish.
 The MCP tool is `schedule_action`. Scheduled actions are listed under `GET …/scheduled-actions` and
 cancelled with `DELETE …/scheduled-actions/{id}` until they run.
+
+A scheduled publish of an entry or release a [gated workflow](/guides/workflows/#gate-publishing)
+covers is refused when you create it (`409 publish_gated`). If gating is switched on afterwards,
+the action fails when it comes due, and its `error` says which workflow gates it.
 
 A scheduled publish validates the entry when it runs, not when it was scheduled, so a draft that
 has since gone invalid fails rather than going live.

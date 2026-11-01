@@ -13,6 +13,7 @@ export * from './logic';
 export * from './nodes';
 export * from './planner';
 export * from './policy';
+export * from './publish-gate';
 export * from './runs';
 export * from './templates';
 export * from './validate';
