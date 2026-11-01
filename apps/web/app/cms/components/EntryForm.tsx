@@ -189,6 +189,11 @@ export function EntryForm(props: {
    * focus back from wherever the editor has since moved.
    */
   focusField?: { apiId: string; locale?: string };
+  /**
+   * The form's live values (as a save would send them) and the locale tab it is on, after every
+   * change: the side pane's preview draws the draft from these.
+   */
+  onValuesChange?: (fields: EntryFields, locale: string) => void;
   onSave: (fields: EntryFields) => void;
   onCancel: () => void;
 }) {
@@ -248,6 +253,12 @@ export function EntryForm(props: {
     setFieldErrors({});
     props.onDirtyChange?.(true);
   }, [props.mergePatch, props.onDirtyChange]);
+
+  // The preview follows the form: values and the locale tab, as a save would send them.
+  const onValuesChange = props.onValuesChange;
+  useEffect(() => {
+    onValuesChange?.(fieldsFromValues(contentType, values, locales, defaultLocale), activeLocale);
+  }, [onValuesChange, contentType, values, locales, defaultLocale, activeLocale]);
 
   // Bumped per rejected submit; scrolls the error summary into view once the
   // errors have rendered (not on every fieldErrors change — typing edits those).

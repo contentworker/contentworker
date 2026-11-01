@@ -37,43 +37,48 @@ export function ContentLayout() {
   };
 
   return (
-    <div className="grid grid-cols-1 gap-6 md:grid-cols-[13rem_1fr]">
-      {/* The space's content types beside the page, from md (a phone reaches them from the
-          Content overview's cards). Drawn as the Settings section nav is. */}
-      <nav aria-labelledby="content-types-nav" className="hidden pt-6 md:block">
-        <div className="sticky top-[calc(var(--shell-h)+1.5rem)]">
-          <h2 id="content-types-nav" className="caption px-2.5 pb-1">
-            Content types
-          </h2>
-          <ul className="flex flex-col gap-0.5">
-            {types.map((t) => (
-              <li key={t.apiId}>
-                <NavLink
-                  to={`/content/${t.apiId}`}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
-                      isActive
-                        ? 'bg-accent font-medium text-accent-foreground'
-                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                    )
-                  }
-                >
-                  <span className="truncate">{t.name}</span>
-                  {t.status !== 'published' ? <StatusDot status={t.status} /> : null}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-          {types.length === 0 && !typesQuery.isPending && (
-            <p className="px-2.5 py-1 text-muted-foreground text-sm">No content types yet.</p>
-          )}
-        </div>
-      </nav>
+    // Sized by the room the page has, not the screen: beside the assistant's column the page is
+    // narrower than the screen says, and the entries table needs the width more than this nav.
+    <div className="@container">
+      <div className="grid grid-cols-1 gap-6 @[40rem]:grid-cols-[13rem_1fr]">
+        {/* The space's content types beside the page, given 40rem for both (a phone, or a page beside
+          the assistant, reaches them from the Content overview's cards). Drawn as the Settings
+          section nav is. */}
+        <nav aria-labelledby="content-types-nav" className="hidden pt-6 @[40rem]:block">
+          <div className="sticky top-[calc(var(--shell-h)+1.5rem)]">
+            <h2 id="content-types-nav" className="caption px-2.5 pb-1">
+              Content types
+            </h2>
+            <ul className="flex flex-col gap-0.5">
+              {types.map((t) => (
+                <li key={t.apiId}>
+                  <NavLink
+                    to={`/content/${t.apiId}`}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
+                        isActive
+                          ? 'bg-accent font-medium text-accent-foreground'
+                          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                      )
+                    }
+                  >
+                    <span className="truncate">{t.name}</span>
+                    {t.status !== 'published' ? <StatusDot status={t.status} /> : null}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+            {types.length === 0 && !typesQuery.isPending && (
+              <p className="px-2.5 py-1 text-muted-foreground text-sm">No content types yet.</p>
+            )}
+          </div>
+        </nav>
 
-      <section className="min-w-0">
-        <Outlet context={outlet} />
-      </section>
+        <section className="min-w-0">
+          <Outlet context={outlet} />
+        </section>
+      </div>
     </div>
   );
 }

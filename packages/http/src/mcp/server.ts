@@ -155,11 +155,29 @@ import {
   WORKFLOW_RUN_STATUSES,
   type WorkflowRunStatus,
 } from '@contentworker/domain';
+import { redactCredentials } from '@contentworker/redaction';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
+import { toHttpError } from '../api/http.js';
 import type { McpDeps } from './deps.js';
+
+/**
+ * What a tool call that failed inside the server says, in place of the failure, as REST does: a
+ * domain error (not found, forbidden, invalid, a conflict, not configured) keeps its own words,
+ * which REST shows too; anything else (a database's, a binding's error) is REST's
+ * "Internal server error", and its words never reach the caller.
+ */
+export const INTERNAL_TOOL_ERROR = 'Internal server error';
+
+/** A tool handler's failure as the caller may see it; internal ones are logged here instead. */
+function toolFailure(tool: string, err: unknown): unknown {
+  if ((toHttpError(err).body as { error?: { code?: string } }).error?.code !== 'internal')
+    return err;
+  console.error(JSON.stringify({ msg: 'mcp: tool failed', tool, error: redactCredentials(err) }));
+  return new Error(INTERNAL_TOOL_ERROR);
+}
 
 const DEFAULT_SPACE = process.env.SEED_SPACE_ID ?? 'space-1';
 const DEFAULT_ENV = process.env.SEED_ENV_ID ?? 'main';
@@ -301,28 +319,34 @@ export function buildServer(
     { name: 'contentworker', version: '0.1.0' },
     { cacheHints: CACHE_HINTS },
   );
-  // Every tool's `environment` argument resolves the way an HTTP `:env` does: an alias names its
-  // target, and a name that is neither an alias nor an environment is refused (`NotFoundError`),
-  // so a typo'd or deleted environment never collects rows. Two tools take the name as given:
-  // deleting refuses an alias name itself, and a deleted environment's audit history stays readable.
+  // Every tool's failures pass through `toolFailure`, so no handler can leak an internal error.
+  // And every tool's `environment` argument resolves the way an HTTP `:env` does: an alias names
+  // its target, and a name that is neither an alias nor an environment is refused
+  // (`NotFoundError`), so a typo'd or deleted environment never collects rows. Two tools take the
+  // name as given: deleting refuses an alias name itself, and a deleted environment's audit
+  // history stays readable.
   const LITERAL_ENVIRONMENT = new Set(['environment_delete', 'audit_log_list']);
-  const registerTool = server.registerTool.bind(server) as typeof server.registerTool;
+  const register = server.registerTool.bind(server);
   server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) =>
-    registerTool(
+    register(
       name,
       config as never,
       (async (args: unknown, ...rest: unknown[]) => {
-        const a = args as { space?: unknown; environment?: unknown } | undefined;
-        if (!LITERAL_ENVIRONMENT.has(name) && a && typeof a.environment === 'string') {
-          const spaceId = typeof a.space === 'string' ? a.space : DEFAULT_SPACE;
-          // Checked only for a caller who may act in the space, so nobody else learns which
-          // environments exist there: the tool's own guard refuses them first.
-          const resolve = inScope(principal, spaceId)
-            ? resolveWritableEnvironment
-            : resolveEnvironment;
-          args = { ...a, environment: await resolve(ctx, spaceId, a.environment) };
+        try {
+          const a = args as { space?: unknown; environment?: unknown } | undefined;
+          if (!LITERAL_ENVIRONMENT.has(name) && a && typeof a.environment === 'string') {
+            const spaceId = typeof a.space === 'string' ? a.space : DEFAULT_SPACE;
+            // Checked only for a caller who may act in the space, so nobody else learns which
+            // environments exist there: the tool's own guard refuses them first.
+            const resolve = inScope(principal, spaceId)
+              ? resolveWritableEnvironment
+              : resolveEnvironment;
+            args = { ...a, environment: await resolve(ctx, spaceId, a.environment) };
+          }
+          return await handler(args, ...rest);
+        } catch (err) {
+          throw toolFailure(name, err);
         }
-        return handler(args, ...rest);
       }) as never,
     )) as typeof server.registerTool;
   const guard = (scope: PermissionScope, s: Scope) => authorize(principal, scope, s.spaceId);

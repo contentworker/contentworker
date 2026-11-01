@@ -81,13 +81,22 @@ export const SECRETS: Record<App, readonly string[]> = {
     'MCP_TOKEN',
     'ADMIN_TOKEN',
   ],
-  engine: ['DATA_KEY', 'DATA_KEY_PREVIOUS', 'TOKEN_PEPPER', 'MEDIA_SIGNING_SECRET'],
+  // The engine's AssistantAgent verifies its socket's signed principal itself.
+  engine: [
+    'PRINCIPAL_KEY',
+    'PRINCIPAL_KEY_PREVIOUS',
+    'DATA_KEY',
+    'DATA_KEY_PREVIOUS',
+    'TOKEN_PEPPER',
+    'MEDIA_SIGNING_SECRET',
+  ],
   delivery: ['DATA_KEY', 'DATA_KEY_PREVIOUS', 'TOKEN_PEPPER', 'MEDIA_SIGNING_SECRET'],
 };
 
 /**
  * Secrets a deploy can't go without; missing, the deploy stops before migrating anything.
- * PRINCIPAL_KEY signs what the web Worker forwards to the api; DATA_KEY seals secrets at rest;
+ * PRINCIPAL_KEY signs what the web Worker forwards to the api (and the assistant's socket, which the
+ * engine checks too); DATA_KEY seals secrets at rest;
  * TOKEN_PEPPER is in every API key hash; MEDIA_SIGNING_SECRET signs media URLs.
  */
 export const REQUIRED_SECRETS = [

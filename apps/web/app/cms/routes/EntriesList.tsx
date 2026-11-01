@@ -26,13 +26,24 @@ import { EntryFilterBar } from '~/cms/components/EntryFilterBar';
 import { Empty, EmptyState, PageHeader } from '~/cms/components/page';
 import { EntryDiff } from '../components/EntryDiff';
 import { EntriesTable, type EntryRowActions } from '../components/entries/EntriesTable';
+import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
-import type { EntryListQuery, PreviewEntry } from '../lib/management';
+import type { EntryAggregate, EntryListQuery, PreviewEntry } from '../lib/management';
 import { useDebouncedValue, useEntriesQuery, useQueryKeys } from '../lib/queries';
 import { type ToastOptions, useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
-/** Entries table for one content type, with bulk publishing and a draft/published diff. */
+type BulkSummary = Awaited<ReturnType<ReturnType<typeof useClient>['client']['bulkEntryAction']>>;
+
+/**
+ * Entries table for one content type, with bulk publishing and a draft/published diff.
+ *
+ * Its edits go through the assistant (`useAssistantEdit`): publishing, unpublishing, the trash,
+ * deleting for good and bulk changes stop at a confirm card in its panel, and run once confirmed;
+ * duplicating and restoring from the trash run at once and leave a line. When the assistant can't
+ * be reached, each goes straight to the API as before (bulk changes and deleting for good confirm
+ * in the page's own dialogs). Undo in a toast always goes straight to the API.
+ */
 export function EntriesList() {
   const { typeId } = useParams();
   const navigate = useNavigate();
@@ -41,6 +52,7 @@ export function EntriesList() {
   const { types } = useContentOutlet();
   const queryClient = useQueryClient();
   const keys = useQueryKeys();
+  const edit = useAssistantEdit();
 
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [diffEntry, setDiffEntry] = useState<PreviewEntry | null>(null);
@@ -75,6 +87,10 @@ export function EntriesList() {
   const setQuery = (q: EntryListQuery) => setFilterState({ typeId, query: q });
 
   const selectedType = types.find((t) => t.apiId === typeId);
+  usePageContext(
+    () => ({ kind: 'content-type', contentType: typeId ?? '', label: selectedType?.name ?? '' }),
+    [typeId, selectedType?.name],
+  );
 
   // The list is keyed by type + debounced filters; edits to the filter bar
   // re-key the query after 250ms while the previous page stays visible.
@@ -136,7 +152,10 @@ export function EntriesList() {
   const trash = (e: PreviewEntry) =>
     mutateEntries(async () => {
       const title = titleOf(e.id);
-      await client.trashEntry(e.id);
+      const r = await orDirect(await edit('entries_trash', { id: e.id }, title), () =>
+        client.trashEntry(e.id),
+      );
+      if (!('output' in r)) return;
       toast.success(
         e.status === 'draft'
           ? `“${title}” moved to the trash`
@@ -173,8 +192,18 @@ export function EntriesList() {
     });
   const restore = (e: PreviewEntry) =>
     mutateEntries(async () => {
-      await client.restoreEntry(e.id);
+      const r = await orDirect(await edit('entries_restore', { id: e.id }, titleOf(e.id)), () =>
+        client.restoreEntry(e.id),
+      );
+      if (!('output' in r)) return;
       toast.success(`“${titleOf(e.id)}” restored as a draft`);
+    });
+  // Deleting for good: the assistant's card, or (without it) the page's dialog naming the entry.
+  const requestPurge = (e: PreviewEntry) =>
+    mutateEntries(async () => {
+      const r = await edit('entries_purge', { id: e.id }, titleOf(e.id));
+      if (r === null) setConfirmPurge(e);
+      else if ('output' in r) toast.success('Entry permanently deleted');
     });
   const purge = (e: PreviewEntry) =>
     mutateEntries(async () => {
@@ -183,9 +212,13 @@ export function EntriesList() {
     });
   const duplicate = (e: PreviewEntry) =>
     mutateEntries(async () => {
-      const { entry } = await client.duplicateEntry(e.id);
+      const r = await orDirect(
+        await edit<{ entry: EntryAggregate }>('entries_duplicate', { id: e.id }, titleOf(e.id)),
+        () => client.duplicateEntry(e.id),
+      );
+      if (!('output' in r)) return;
       toast.success('Entry duplicated');
-      navigate(`/content/${selectedType?.apiId}/${entry.id}`);
+      navigate(`/content/${selectedType?.apiId}/${r.output.entry.id}`);
     });
 
   const titleOf = (id: string) => {
@@ -208,61 +241,100 @@ export function EntriesList() {
       const optimistic = !entriesQuery.isPlaceholderData;
       const snapshot = entries;
       if (optimistic) optimisticStatus(new Set(ids), status);
-      let summary: Awaited<ReturnType<typeof client.bulkEntryAction>>;
+      let summary: BulkSummary;
       try {
         summary = await client.bulkEntryAction(action, ids);
       } catch (e) {
         if (optimistic) queryClient.setQueryData(entriesKey, snapshot);
         throw e;
       }
-      if (summary.failed > 0) {
-        setBulkFailures(
-          summary.results
-            .filter((r) => !r.ok)
-            .map((r) => ({ id: r.id, title: titleOf(r.id), error: r.error })),
-        );
-        toast.error(`${verb} ${summary.succeeded}; ${summary.failed} failed (details in the list)`);
-      } else {
-        const done = summary.results.filter((r) => r.ok).map((r) => r.id);
-        const wasLive = new Set(snapshot.filter((e) => e.status === 'published').map((e) => e.id));
-        const undoable =
-          action === 'unpublish' && done.length > 0 && done.every((id) => wasLive.has(id));
-        toast.success(
-          `${verb} ${summary.succeeded} ${summary.succeeded === 1 ? 'entry' : 'entries'}`,
-          undoable
-            ? {
-                action: {
-                  label: 'Undo',
-                  onAction: () =>
-                    void undoUnpublish(
-                      done,
-                      `Republished ${done.length} ${done.length === 1 ? 'entry' : 'entries'}`,
-                    ),
-                },
-              }
-            : undefined,
-        );
-      }
+      reportBulk(action, verb, summary, snapshot);
     });
   };
 
+  // A bulk change through the assistant's card. Without it, the page's own dialog confirms the
+  // batch (`confirmBulk`), and `bulk` runs it straight through the API.
+  const requestBulk = (action: 'publish' | 'unpublish') => {
+    const ids = [...picked];
+    const verb = action === 'publish' ? 'Published' : 'Unpublished';
+    return mutateEntries(async () => {
+      const snapshot = entries;
+      const r = await edit<BulkSummary>(
+        'entries_bulk_action',
+        { action, ids },
+        `${action === 'publish' ? 'Publish' : 'Unpublish'} ${ids.length} ${ids.length === 1 ? 'entry' : 'entries'}`,
+      );
+      if (r === null) {
+        setConfirmBulk(action);
+        return;
+      }
+      if (!('output' in r)) return;
+      setPicked(new Set());
+      setBulkFailures(null);
+      reportBulk(action, verb, r.output, snapshot);
+    });
+  };
+
+  // Partial failures are surfaced by entry, not as a count; an all-live unpublish offers Undo.
+  const reportBulk = (
+    action: 'publish' | 'unpublish',
+    verb: string,
+    summary: BulkSummary,
+    snapshot: readonly PreviewEntry[],
+  ) => {
+    if (summary.failed > 0) {
+      setBulkFailures(
+        summary.results
+          .filter((r) => !r.ok)
+          .map((r) => ({ id: r.id, title: titleOf(r.id), error: r.error })),
+      );
+      toast.error(`${verb} ${summary.succeeded}; ${summary.failed} failed (details in the list)`);
+    } else {
+      const done = summary.results.filter((r) => r.ok).map((r) => r.id);
+      const wasLive = new Set(snapshot.filter((e) => e.status === 'published').map((e) => e.id));
+      const undoable =
+        action === 'unpublish' && done.length > 0 && done.every((id) => wasLive.has(id));
+      toast.success(
+        `${verb} ${summary.succeeded} ${summary.succeeded === 1 ? 'entry' : 'entries'}`,
+        undoable
+          ? {
+              action: {
+                label: 'Undo',
+                onAction: () =>
+                  void undoUnpublish(
+                    done,
+                    `Republished ${done.length} ${done.length === 1 ? 'entry' : 'entries'}`,
+                  ),
+              },
+            }
+          : undefined,
+      );
+    }
+  };
+
+  // Through the assistant's card, the status changes once confirmed (no optimism before an answer).
+  // Straight through the API, it changes at once and rolls back on failure.
   const setStatus = (
     id: string,
+    tool: 'entries_publish' | 'entries_unpublish',
     status: string,
     act: (id: string) => Promise<unknown>,
     msg: string,
     toastOptions?: ToastOptions,
   ) =>
     mutateEntries(async () => {
-      const optimistic = !entriesQuery.isPlaceholderData;
-      const snapshot = entries;
-      if (optimistic) optimisticStatus(new Set([id]), status);
-      try {
-        await act(id);
-      } catch (e) {
-        if (optimistic) queryClient.setQueryData(entriesKey, snapshot);
-        throw e;
-      }
+      const r = await orDirect(await edit(tool, { id }, titleOf(id)), async () => {
+        const optimistic = !entriesQuery.isPlaceholderData;
+        const snapshot = entries;
+        if (optimistic) optimisticStatus(new Set([id]), status);
+        try {
+          return await act(id);
+        } catch (e) {
+          if (optimistic) queryClient.setQueryData(entriesKey, snapshot);
+          throw e;
+        }
+      });
+      if (!('output' in r)) return;
       toast.success(msg, toastOptions);
     });
 
@@ -270,12 +342,19 @@ export function EntriesList() {
   // used, so optimistic status, Undo toasts and confirmations are unchanged.
   const rowActions: EntryRowActions = {
     publish: (e) =>
-      void setStatus(e.id, 'published', (id) => client.publishEntry(id), 'Entry published'),
+      void setStatus(
+        e.id,
+        'entries_publish',
+        'published',
+        (id) => client.publishEntry(id),
+        'Entry published',
+      ),
     diff: (e) => setDiffEntry(e),
     duplicate: (e) => void duplicate(e),
     unpublish: (e) =>
       void setStatus(
         e.id,
+        'entries_unpublish',
         'draft',
         (id) => client.unpublishEntry(id),
         `“${titleOf(e.id)}” unpublished`,
@@ -296,7 +375,7 @@ export function EntriesList() {
     // unlike the permanent delete offered from the trash.
     trash: (e) => void trash(e),
     restore: (e) => void restore(e),
-    purge: (e) => setConfirmPurge(e),
+    purge: (e) => void requestPurge(e),
   };
 
   if (!selectedType) {
@@ -324,13 +403,13 @@ export function EntriesList() {
         {picked.size > 0 && !viewingTrash && (
           <>
             <span className="text-sm text-muted-foreground">{picked.size} selected</span>
-            <Button type="button" onClick={() => setConfirmBulk('publish')} disabled={busy}>
+            <Button type="button" onClick={() => void requestBulk('publish')} disabled={busy}>
               Publish selected
             </Button>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setConfirmBulk('unpublish')}
+              onClick={() => void requestBulk('unpublish')}
               disabled={busy}
             >
               Unpublish selected

@@ -2,6 +2,7 @@ import type { CostGuardDO } from '@contentworker/platform/do/cost-guard';
 import type { LiveHubDO } from '@contentworker/platform/do/live-hub';
 import type { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 import type { SearchShardDO } from '@contentworker/platform/do/search-shard';
+import type { AssistantAgent } from '../src/assistant.js';
 
 // Bindings provided by vitest.config.ts (miniflare section), typed as
 // required — unlike EdgeEnv, where every binding is optional.
@@ -17,6 +18,9 @@ declare global {
       readonly AI_BUDGET: DurableObjectNamespace<CostGuardDO>;
       readonly SEARCH: DurableObjectNamespace<SearchShardDO>;
       readonly EDITORIAL_WF: Workflow;
+      readonly ASSISTANT_AGENT: DurableObjectNamespace<AssistantAgent>;
+      readonly DB: D1Database;
+      readonly PRINCIPAL_KEY: string;
     }
   }
 }
