@@ -2,7 +2,10 @@
 
 > **Interactive docs:** every deployment serves its own OpenAPI 3.1 spec at
 > `GET /openapi.json` (a complete inventory of the mounted routes — the spec
-> reflects the deployment's `ROLE`) and a browsable Scalar UI at `GET /docs`.
+> reflects the deployment's `ROLE`) and a browsable Scalar UI at `GET /docs`. The page loads
+> Scalar from the deployment's own admin origin (`/vendor/scalar/standalone.js`, copied out of
+> node_modules by `apps/web/scripts/vendor-scalar.mjs` on every web `dev` and `build`), with
+> Scalar's default fonts and "Ask AI" off, so it makes no third-party requests.
 
 The API is a [Hono](https://hono.dev) app (`createApp` in `packages/http/src/api/app.ts`) mounted by
 two Workers. It exposes three role-based surfaces:

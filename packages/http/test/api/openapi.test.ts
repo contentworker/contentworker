@@ -1,6 +1,7 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { scalarBundleUrl } from '../../src/api/docs/openapi.js';
 import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
@@ -143,6 +144,18 @@ describe('OpenAPI spec + docs UI', () => {
     const res = await app.request('/docs');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
-    expect(await res.text()).toContain('openapi.json');
+    const html = await res.text();
+    expect(html).toContain('openapi.json');
+    // The explorer comes from this deployment's own vendored copy, never a third-party CDN.
+    expect(html).toContain('<script src="/vendor/scalar/standalone.js"');
+    expect(html).not.toContain('cdn.jsdelivr.net');
+    expect(html).toMatch(/"withDefaultFonts": ?false/);
+  });
+
+  it('loads the explorer from the admin origin when the api runs on its own host', () => {
+    expect(scalarBundleUrl({ oauthIssuer: 'https://acme.contentworker.app' })).toBe(
+      'https://acme.contentworker.app/vendor/scalar/standalone.js',
+    );
+    expect(scalarBundleUrl({})).toBe('/vendor/scalar/standalone.js');
   });
 });
