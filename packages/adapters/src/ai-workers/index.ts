@@ -11,13 +11,18 @@ import { extractJson } from './json';
 import {
   asWorkersAIError,
   DEFAULT_TIMEOUT_MS,
-  NO_LOG_PAYLOAD,
+  gatewayRunOptions,
   WorkersAIError,
   type WorkersAiRun,
-  type WorkersAiRunOptions,
   withTimeout,
 } from './transport';
 
+export {
+  createWorkersAIDecisionModel,
+  MAX_DECISION_QUESTIONS,
+  WORKERS_AI_DECISION_MODEL_BY_TIER,
+  type WorkersAIDecisionOptions,
+} from './decisions';
 export { extractJson } from './json';
 export {
   DEFAULT_TIMEOUT_MS,
@@ -315,21 +320,6 @@ export function createWorkersAIEmbeddings(opts: WorkersAIEmbeddingsOptions): Emb
         }
       }
       return out;
-    },
-  };
-}
-
-/** Run options routing a call through AI Gateway, or none to call Workers AI directly. */
-function gatewayRunOptions(
-  gatewayId: string | undefined,
-  collectLogs: boolean | undefined,
-): WorkersAiRunOptions | undefined {
-  if (!gatewayId) return undefined;
-  return {
-    gateway: { id: gatewayId },
-    extraHeaders: {
-      ...NO_LOG_PAYLOAD,
-      ...(collectLogs === undefined ? {} : { 'cf-aig-collect-log': String(collectLogs) }),
     },
   };
 }

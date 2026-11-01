@@ -65,7 +65,29 @@ through the gateway. Read replication is turned on per database by `scripts/prov
   (its own SQLite per shard), not in D1.
 - **10 GB per database.** Asset bytes, import staging, plugin bundles and dead letters live in
   R2; retention prunes relayed outbox rows and webhook deliveries hourly
-  (`EVENT_RETENTION_HOURS`, default 168).
+  (`EVENT_RETENTION_HOURS`, default 168). Superseded entry version bodies move to R2 too, once
+  `VERSION_ARCHIVE=true` (off by default; see [Deployment](./deployment.md)). Saving a version
+  queues the one it supersedes in `version_archive_queue`, due a day later. Each cron tick the
+  engine claims due rows, 50 at a time and up to 200 (`archiveSupersededVersions`):
+  - versions that are neither their entry's current nor its published version have their body
+    written to `versions/<space>/<env>/<entry>/<v>.json`, then their `fields` emptied in D1 and
+    `body_key` recorded;
+  - versions that aren't archivable yet are put back a day.
+
+  The cost of a tick is bounded by its batch, not by the size of the table. Only the history
+  views read archived bodies, and the store fetches them back transparently, a few at a time. A
+  missing object marks just that version `bodyUnavailable` in a history list. Three guards keep a
+  live version's body in D1:
+  - the day's delay;
+  - the mark re-checks, in the same write, that the version is still superseded, unpublished and
+    the same row;
+  - should a lost update ever move an entry back onto an archived version, entry reads fetch its
+    body from R2 instead of showing `{}`.
+
+  The object is written before the row changes, so a crash between the two leaves the body in D1
+  and a later tick retries. Deleting an entry for good
+  (from the trash) removes its archived bodies too, and purging a deleted environment removes all
+  of its own.
 
 ## Delivery cache
 

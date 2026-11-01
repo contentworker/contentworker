@@ -188,6 +188,13 @@ treat `environment.purge_due` as an ordinary event (so a webhook subscribed to `
 it). Check `SELECT * FROM environment_purges` is empty before rolling back past that change;
 purges normally finish within minutes.
 
+Code from before `0004_version_bodies.sql` reads an archived version's emptied `fields` (`{}`)
+as its body, so the archive sweep ships off (`VERSION_ARCHIVE=false`). Turn it on in a later change,
+once the release that reads archived bodies runs on every Worker of every ring. Once it's on, don't
+roll back past that release: history views and restores of superseded versions would show empty
+content. Current and published versions are never archived, so entries themselves read
+correctly.
+
 An engine from before snapshot import jobs (environment import and clone) doesn't know their job
 kind: it fails their chunks and never starts their publishing job. Re-run such an import after
 rolling forward.

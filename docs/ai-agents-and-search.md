@@ -51,6 +51,48 @@ persistent deployment. `AI_MODE=mock` (local dev, demos, tests) answers every `g
 its heuristic without calling a model. See [Configuration](./configuration.md) for
 `AI_TIMEOUT_MS`.
 
+### Decision models
+
+Some AI work is a decision, not a text: which label, which route, is this unsafe, does this need a
+person. That goes to a second port, `DecisionModel`. It takes a state (text or JSON) and up to 64
+typed questions, and answers each with a probability for every allowed answer:
+- `noul`: yes/no, answered with the probability of yes;
+- `choice`: one of a set of options, answered with each option's probability and a confidence;
+- `score`: a level on an ordered rubric, answered with a probability-weighted score.
+
+There's no text to parse, so no schema to check and no off-menu answer. The probabilities are the
+model's, not a number it writes, so they can carry thresholds. Hostile content in the state can
+still sway an answer, but it can't make the model answer outside the options.
+
+`createWorkersAIDecisionModel` runs Cloudflare's Clef models over the same `AI` binding and AI
+Gateway settings as generation: `@cf/cloudflare/clef` for `flagship` and `balanced`, and
+`@cf/cloudflare/clef-flash` (much faster and cheaper) for `fast`. Clef bills input tokens only.
+Calls go through `decide()` (`ai-decide.ts`), with the same guarantees as `generateJson`:
+- `decideWithBudget` meters input tokens against the space's AI budget;
+- `AI_MODE=mock` and budget refusals answer with the caller's heuristic;
+- a failure retries while the durable step can, then falls back;
+- every call is an `ai_call` record with its provenance.
+
+Without the `AI` binding the stub answers the first option, no, or the lowest level, and the
+adapter guard refuses it on a persistent deployment.
+
+Workflow nodes that choose ask the decision model when one is bound (the platform always binds one),
+and fall back to a generative model's JSON otherwise:
+
+| Node          | Questions                                                                                                                                                                                                             |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ai.classify` | one `choice` over the node's labels; `output.probabilities` carries each label's                                                                                                                                      |
+| `ai.router`   | one `choice` over the routes whose guards hold; the author's instructions are the question                                                                                                                            |
+| `ai.moderate` | a `noul` per category (hate, violence, sexual, harassment, self-harm, anything else unsafe or illegal, plus house rules when set); a category at or above the node's `threshold` (between 0 and 1, default 0.5) flags |
+| `ai.assess`   | the node's own questions, which already use this shape                                                                                                                                                                |
+
+The entry is always the state and never the question, capped at 20,000 characters as the
+generative prompts are, so the author's instructions and the house rules stay out of reach of the
+content being judged. A router with one allowed route, or a classifier with one label, answers
+without asking. Gating nodes fail closed exactly as before: an
+answer the model couldn't give flags (moderation), takes the careful route (router) or goes to
+`unsure` (assess).
+
 Embeddings are a **separate port** (`EmbeddingsProvider`): Workers AI
 (`createWorkersAIEmbeddings`, `@cf/baai/bge-base-en-v1.5`, 768 dims by default), or the test-kit's
 deterministic `LocalEmbeddingsProvider` (`EMBEDDINGS_PROVIDER=local`) for development.

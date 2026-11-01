@@ -11,6 +11,7 @@ import {
   cloneJson,
   type DomainEvent,
   type Entry,
+  type EntryFields,
   type EntryMetadata,
   type EntryVersion,
   type EntryWorkflowState,
@@ -46,10 +47,12 @@ import type {
   AIActionRepo,
   AppExtension,
   AppExtensionRepo,
+  ArchivableVersion,
   AssetRepo,
   AuditEntry,
   AuditRepo,
   AuthRepo,
+  BlobStore,
   BulkJob,
   BulkJobChunk,
   BulkJobRepo,
@@ -131,6 +134,18 @@ export class InMemoryContentStore implements ContentStore {
   private readonly contentTypeData = new Map<string, ContentType>();
   private readonly entryData = new Map<string, Entry>();
   private readonly versionData = new Map<string, EntryVersion[]>();
+  /** Archived versions' object keys, by `${scopeKey}::${entryId}::${version}`. */
+  private readonly archivedBodies = new Map<string, string>();
+  /** Where archived version bodies are read from (as the D1 store's `versionBodies`). */
+  versionBodies?: BlobStore;
+
+  private async resolveVersion(scope: Scope, v: EntryVersion): Promise<EntryVersion> {
+    const bodyKey = this.archivedBodies.get(`${scopeKey(scope)}::${v.entryId}::${v.version}`);
+    if (!bodyKey) return v;
+    const raw = this.versionBodies ? await this.versionBodies.get(bodyKey) : null;
+    if (raw === null) return { ...v, fields: {}, bodyUnavailable: true };
+    return { ...v, fields: JSON.parse(raw) as EntryFields };
+  }
   private readonly publishedData = new Map<string, PublishedEntry>();
   private readonly outboxData: { event: DomainEvent; relayed: boolean; relayedAt?: number }[] = [];
 
@@ -384,12 +399,69 @@ export class InMemoryContentStore implements ContentStore {
       this.releaseClaims(scope, entryId);
     },
     listVersions: async (scope, entryId) =>
-      [...(this.versionData.get(`${scopeKey(scope)}::${entryId}`) ?? [])].sort(
-        (a, b) => b.version - a.version,
+      Promise.all(
+        [...(this.versionData.get(`${scopeKey(scope)}::${entryId}`) ?? [])]
+          .sort((a, b) => b.version - a.version)
+          .map((v) => this.resolveVersion(scope, v)),
       ),
-    getVersion: async (scope, entryId, version) =>
-      this.versionData.get(`${scopeKey(scope)}::${entryId}`)?.find((v) => v.version === version) ??
-      null,
+    getVersion: async (scope, entryId, version) => {
+      const found = this.versionData
+        .get(`${scopeKey(scope)}::${entryId}`)
+        ?.find((v) => v.version === version);
+      return found ? this.resolveVersion(scope, found) : null;
+    },
+    // The D1 store queues versions as they are superseded and makes them due a day later; here
+    // every superseded, unpublished version is due at once (tests drive the sweep directly).
+    claimArchivableVersions: async (limit, _now) => {
+      const out: ArchivableVersion[] = [];
+      for (const [key, versions] of this.versionData) {
+        const entry = this.entryData.get(key);
+        if (!entry) continue;
+        const [spaceId = '', environmentId = ''] = key.split('::');
+        for (const v of versions) {
+          if (out.length >= limit) return out;
+          if (
+            !this.archivedBodies.has(`${key}::${v.version}`) &&
+            v.version < entry.currentVersion &&
+            v.version !== entry.publishedVersion
+          ) {
+            out.push({
+              scope: { spaceId, environmentId },
+              entryId: v.entryId,
+              version: v.version,
+              createdAt: v.createdAt ?? '',
+              fields: v.fields,
+            });
+          }
+        }
+      }
+      return out;
+    },
+    markVersionsArchived: async (versions) => {
+      let marked = 0;
+      for (const a of versions) {
+        const key = `${scopeKey(a.scope)}::${a.entryId}`;
+        const entry = this.entryData.get(key);
+        const list = this.versionData.get(key) ?? [];
+        const i = list.findIndex((v) => v.version === a.version);
+        const existing = list[i];
+        // As on D1: re-checked as it marks.
+        if (
+          !entry ||
+          !existing ||
+          this.archivedBodies.has(`${key}::${a.version}`) ||
+          (existing.createdAt ?? '') !== a.createdAt ||
+          a.version >= entry.currentVersion ||
+          a.version === entry.publishedVersion
+        ) {
+          continue;
+        }
+        list[i] = { ...existing, fields: {} };
+        this.archivedBodies.set(`${key}::${a.version}`, a.bodyKey);
+        marked += 1;
+      }
+      return marked;
+    },
     putPublished: async (scope, snapshot) => {
       this.publishedData.set(`${scopeKey(scope)}::${snapshot.entryId}`, snapshot);
     },

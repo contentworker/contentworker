@@ -180,19 +180,20 @@ Worker when needed.
 
 ## Agents, workflows, email and plugins
 
-| Var                             | A   | E   | Default                             | Purpose                                                                                         |
-| ------------------------------- | --- | --- | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `AGENT_RUNTIME`                 | ✓   | ✓   | `cloudflare-workflows` in templates | With `AGENT_WF`, on-publish agents run durably on `AgentWorkflow`; otherwise in-process         |
-| `AGENTS_ENRICH`                 | ✓   | ✓   | `false`                             | Run the enrich agent on publish                                                                 |
-| `AGENTS_MODERATE`               | ✓   | ✓   | `false`                             | Run the moderation agent on publish (post-publish; retracts flagged content)                    |
-| `AGENTS_AUTO_APPLY`             | ✓   | ✓   | `false`                             | Apply enrich proposals without review                                                           |
-| `AGENTS_MODERATE_BLOCKING`      |     |     | `false`                             | `true` runs moderation before single-entry publish and blocks flagged content                   |
-| `AGENTS_SCHEDULES`              | ✓   | ✓   | `false`                             | Run recurring agent schedules on the engine's cron                                              |
-| `AGENT_SCHEDULE_MAX_ENTRIES`    |     |     | `25`                                | Entries per scheduled run                                                                       |
-| `AGENT_SCHEDULE_MAX_RUN_TOKENS` |     |     | `100000`                            | Token cap per scheduled run                                                                     |
-| `EMAIL_FROM`, `EMAIL_FROM_NAME` | ✓   | ✓   | empty                               | Email Sending sender for workflow `content.notify` nodes; rendered from the registry's `email`  |
-| `PLUGIN_MIN_RELEASE_AGE_HOURS`  | ✓   | ✓   | empty                               | Minimum age of a plugin release installed from a URL; callers may ask for longer, never shorter |
-| `PLUGIN_SOURCE_HOSTS`           | ✓   | ✓   | empty                               | Comma-separated hosts plugins may be installed from; callers may narrow, never widen            |
+| Var                             | A   | E   | Default                             | Purpose                                                                                                              |
+| ------------------------------- | --- | --- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_RUNTIME`                 | ✓   | ✓   | `cloudflare-workflows` in templates | With `AGENT_WF`, on-publish agents run durably on `AgentWorkflow`; otherwise in-process                              |
+| `AGENTS_ENRICH`                 | ✓   | ✓   | `false`                             | Run the enrich agent on publish                                                                                      |
+| `AGENTS_MODERATE`               | ✓   | ✓   | `false`                             | Run the moderation agent on publish (post-publish; retracts flagged content)                                         |
+| `AGENTS_AUTO_APPLY`             | ✓   | ✓   | `false`                             | Apply enrich proposals without review                                                                                |
+| `AGENTS_MODERATE_BLOCKING`      |     |     | `false`                             | `true` runs moderation before single-entry publish and blocks flagged content                                        |
+| `AGENTS_SCHEDULES`              | ✓   | ✓   | `false`                             | Run recurring agent schedules on the engine's cron                                                                   |
+| `VERSION_ARCHIVE`               | ✓   | ✓   | `false`                             | Move superseded entry version bodies to the media bucket on the engine's cron (turn on once every Worker reads them) |
+| `AGENT_SCHEDULE_MAX_ENTRIES`    |     |     | `25`                                | Entries per scheduled run                                                                                            |
+| `AGENT_SCHEDULE_MAX_RUN_TOKENS` |     |     | `100000`                            | Token cap per scheduled run                                                                                          |
+| `EMAIL_FROM`, `EMAIL_FROM_NAME` | ✓   | ✓   | empty                               | Email Sending sender for workflow `content.notify` nodes; rendered from the registry's `email`                       |
+| `PLUGIN_MIN_RELEASE_AGE_HOURS`  | ✓   | ✓   | empty                               | Minimum age of a plugin release installed from a URL; callers may ask for longer, never shorter                      |
+| `PLUGIN_SOURCE_HOSTS`           | ✓   | ✓   | empty                               | Comma-separated hosts plugins may be installed from; callers may narrow, never widen                                 |
 
 ## Caches and retention
 

@@ -10,6 +10,7 @@ import {
   createWebhookSender,
 } from '@contentworker/adapters/http-effects';
 import {
+  archiveSupersededVersions,
   type ConsumeDeps,
   consumeEvent,
   drainOutbox,
@@ -489,6 +490,16 @@ export default {
           }
         } catch (err) {
           console.error('environment purge sweep failed', err);
+        }
+        // Superseded version bodies out of D1 into the media bucket (bounded per tick), once the
+        // deployment has turned it on: every Worker must read archived bodies first.
+        if (env.VERSION_ARCHIVE === 'true') {
+          try {
+            const moved = await archiveSupersededVersions(wired.ctx, wired.blob);
+            if (moved > 0) metrics.count('contentworker_versions_archived_total', moved);
+          } catch (err) {
+            console.error('version archive sweep failed', err);
+          }
         }
       }
       // Recurring agent jobs: due schedules run here on the cron tick, metered

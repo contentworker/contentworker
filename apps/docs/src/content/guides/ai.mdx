@@ -90,6 +90,15 @@ Features ask for a **tier**, not a specific model: `fast` for classification and
 Cloudflare Workers AI, and your workspace maps each tier to a model, so a model can change without
 changing a workflow or an integration.
 
+## Decisions
+
+Workflow steps that choose rather than write use a **decision model** (Cloudflare's Clef):
+classifying an entry, picking a route, moderating, and assessing. Instead of writing an answer, it
+gives a probability for every allowed answer. So a classification reports how sure it is of each
+label, and a moderation step flags only above the probability you set (**Flag at**, 0.5 by
+default). The answer is always one of the options the step defines. A step that can't get an answer
+still fails safe: moderation flags the entry, and a router takes its most careful route.
+
 ## The AI budget
 
 Usage is metered per space against a rolling window with a ceiling on requests and on tokens. When
