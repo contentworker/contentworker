@@ -2,9 +2,11 @@ import { env, listDurableObjectIds, runInDurableObject } from 'cloudflare:test';
 import { createDoRateLimiter } from '@contentworker/platform/do/rate-limiter';
 import { afterEach, describe, expect, it } from 'vitest';
 
-// vitest.config.ts binds AUTH_RATE_LIMIT_MAX=3, AUTH_RATE_LIMIT_WINDOW_MS=300.
+// vitest.config.ts binds AUTH_RATE_LIMIT_MAX=3, AUTH_RATE_LIMIT_WINDOW_MS=3000. Seconds, not
+// milliseconds: a test records its failures and checks the block inside one window, and a loaded CI
+// runner took ~950 ms for three failures against a 300 ms window (the first had aged out).
 const MAX = 3;
-const WINDOW_MS = 300;
+const WINDOW_MS = 3000;
 
 // The DO arms a GC alarm on every recorded failure. A pending alarm must not
 // outlive its test: vitest-pool-workers pops each test's isolated storage at
@@ -51,9 +53,9 @@ describe('RateLimiterDO via createDoRateLimiter', () => {
     // failures' times with its own clock, so a fixed margin after a fixed sleep was flaky in CI.
     await sleep(WINDOW_MS);
     await expect
-      .poll(() => limiter.isBlocked(key), { timeout: WINDOW_MS * 10, interval: 50 })
+      .poll(() => limiter.isBlocked(key), { timeout: WINDOW_MS * 3, interval: 100 })
       .toBe(false);
-  });
+  }, 20_000);
 
   it('clear resets the budget immediately (successful auth path)', async () => {
     const limiter = createDoRateLimiter(env.AUTH_LIMITER);
