@@ -286,6 +286,48 @@ test('the asset library with ingest badges has no accessibility violations', asy
   await scan(page, testInfo);
 });
 
+// An image's Details tab: the focal point control with its marker set, and the AI suggestion
+// buttons, in both themes (the marker's ink ring and paper halo come from the theme's tokens).
+test('an image’s Details tab, its focal point and its AI buttons have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const name = `a11y-focal-${Date.now()}.png`;
+  // A 1×1 PNG: an image the sheet offers the focal point and the AI suggestions for.
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const id = await uploadAssetBytes(request, name, png, 'image/png');
+  const focal = await api(request, 'PATCH', `${MGMT}/assets/${id}/metadata`, {
+    focalPoint: { x: 0.3, y: 0.6 },
+  });
+  expect(focal.ok(), await focal.text()).toBe(true);
+
+  await openCms(page, '/assets');
+  await page
+    .getByRole('region', { name: 'Asset library' })
+    .getByRole('button', { name: `Open “${name}”` })
+    .click();
+  const sheet = page.getByRole('dialog', { name });
+  const control = sheet.getByRole('button', { name: 'Focal point: 30% across, 60% down' });
+  await expect(control).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'Generate alt text' })).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'Suggest tags' })).toBeVisible();
+  await scan(page, testInfo);
+
+  // The keyboard moves it, and its name follows.
+  await control.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(
+    sheet.getByRole('button', { name: 'Focal point: 31% across, 60% down' }),
+  ).toBeFocused();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await scan(page, testInfo);
+  await page.emulateMedia({ colorScheme: 'light' });
+});
+
 // The asset sheet, tab by tab: a version list with an older version to restore (and its in-place
 // confirm), usage, renditions, and the rights form with its status and a field the API refused.
 test('the asset sheet’s tabs have no accessibility violations', async ({

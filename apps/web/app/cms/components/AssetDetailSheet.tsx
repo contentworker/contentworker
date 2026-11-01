@@ -1,6 +1,7 @@
 import type { Asset, ReferenceEdge, Tag } from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
+import { ComposeLoader, composeIcons } from '@contentworker/ui/compose-loader';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import {
@@ -64,6 +65,8 @@ export function AssetDetailSheet(props: {
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [usage, setUsage] = useState<ReferenceEdge[] | null>(null);
   const [busy, setBusy] = useState(false);
+  // The model call under way, if any: its button shows the mark composing.
+  const [suggesting, setSuggesting] = useState<'alt' | 'tags' | null>(null);
   const [width, setWidth] = useState('400');
   const [fit, setFit] = useState<NonNullable<ImageTransform['fit']>>('crop');
   const [format, setFormat] = useState<ImageTransform['format'] | 'original'>('original');
@@ -159,11 +162,35 @@ export function AssetDetailSheet(props: {
   );
 
   const pickFocal = (e: React.MouseEvent<HTMLButtonElement>) => {
+    // Enter or Space clicks with no pointer (detail 0): place the point in the middle to start,
+    // rather than at the corner a pointerless click's coordinates would name.
+    if (e.detail === 0) {
+      setFocal((f) => f ?? { x: 0.5, y: 0.5 });
+      return;
+    }
     const rect = imgRef.current?.getBoundingClientRect();
     if (!rect) return;
     const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
     setFocal({ x: Number(x.toFixed(3)), y: Number(y.toFixed(3)) });
+  };
+
+  // The arrow keys move the point 1% (10% with Shift), from the middle when none is set yet.
+  const nudgeFocal = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    const step = e.shiftKey ? 0.1 : 0.01;
+    const move = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    }[e.key];
+    if (!move) return;
+    e.preventDefault();
+    const clamp = (n: number) => Number(Math.min(1, Math.max(0, n)).toFixed(3));
+    setFocal((f) => {
+      const from = f ?? { x: 0.5, y: 0.5 };
+      return { x: clamp(from.x + (move[0] ?? 0)), y: clamp(from.y + (move[1] ?? 0)) };
+    });
   };
 
   const toggleTag = (id: string) => {
@@ -185,16 +212,20 @@ export function AssetDetailSheet(props: {
   };
 
   const suggestAlt = async () => {
+    setSuggesting('alt');
     try {
       const { altText: suggestion } = await client.generateAltText(asset.id, { locale });
       setAltText(suggestion);
       toast.success('Alt text suggested — review and save');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSuggesting(null);
     }
   };
 
   const suggestTags = async () => {
+    setSuggesting('tags');
     try {
       const { tagIds: matched, newTags } = await client.autoTagAsset(asset.id);
       setTagIds((ids) => Array.from(new Set([...ids, ...matched])));
@@ -205,6 +236,8 @@ export function AssetDetailSheet(props: {
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSuggesting(null);
     }
   };
 
@@ -351,33 +384,48 @@ export function AssetDetailSheet(props: {
               {isImage && (
                 <div className="space-y-1.5">
                   <Label>Focal point</Label>
+                  {/* One control for pointer and keyboard: click where the point goes, or
+                      focus it and use the arrow keys. Its name says where the point is. */}
                   <button
                     type="button"
                     ref={imgRef}
                     onClick={pickFocal}
-                    className="relative block w-full cursor-crosshair overflow-hidden rounded-md border"
+                    onKeyDown={nudgeFocal}
+                    aria-label={
+                      focal
+                        ? `Focal point: ${Math.round(focal.x * 100)}% across, ${Math.round(focal.y * 100)}% down`
+                        : 'Focal point: not set'
+                    }
+                    aria-describedby="asset-focal-hint"
+                    className="relative block w-full cursor-crosshair overflow-hidden rounded-md border outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
                   >
                     {imageFailed ? (
                       <FallbackTile asset={asset} className="h-40 w-full" />
                     ) : (
+                      // Named by the control around it; the alt text is edited below.
                       <img
                         src={asset.file.url}
-                        alt={altText || asset.file.fileName}
+                        alt=""
                         onError={() => setImageFailed(true)}
                         className="w-full"
                       />
                     )}
                     {focal && (
+                      // A ring in the ink with a halo in the paper, and a dot at the point: one of
+                      // the two always stands off the picture, light or dark, in either theme.
                       <span
-                        className="-translate-x-1/2 -translate-y-1/2 pointer-events-none absolute size-5 rounded-full border-2 border-white bg-primary/60 shadow"
+                        data-testid="focal-marker"
+                        className="-translate-x-1/2 -translate-y-1/2 pointer-events-none absolute grid size-6 place-items-center rounded-full border-2 border-foreground shadow-sm ring-2 ring-background"
                         style={{ left: `${focal.x * 100}%`, top: `${focal.y * 100}%` }}
-                      />
+                      >
+                        <span className="size-1.5 rounded-full bg-foreground ring-1 ring-background" />
+                      </span>
                     )}
                   </button>
-                  <p className="text-muted-foreground text-xs">
+                  <p id="asset-focal-hint" className="text-muted-foreground text-xs">
                     {focal
-                      ? `x ${focal.x}, y ${focal.y} — click to move`
-                      : 'Click the image to set a focal point for smart cropping.'}
+                      ? `x ${focal.x}, y ${focal.y}. Click to move it, or use the arrow keys (Shift for bigger steps).`
+                      : 'Click the image, or focus it and press Enter, to set a focal point for smart cropping.'}
                   </p>
                 </div>
               )}
@@ -389,8 +437,19 @@ export function AssetDetailSheet(props: {
                     {altSuggested && <ToneBadge tone="ai" label="AI suggestion" />}
                   </div>
                   {isImage && (
-                    <Button type="button" variant="ghost" size="xs" onClick={suggestAlt}>
-                      ✨ Generate
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      disabled={suggesting !== null}
+                      onClick={suggestAlt}
+                    >
+                      <ComposeLoader
+                        icon={composeIcons.write}
+                        playing={suggesting === 'alt'}
+                        className="text-ai"
+                      />
+                      {suggesting === 'alt' ? 'Generating…' : 'Generate alt text'}
                     </Button>
                   )}
                 </div>
@@ -412,8 +471,19 @@ export function AssetDetailSheet(props: {
                     )}
                   </div>
                   {isImage && (
-                    <Button type="button" variant="ghost" size="xs" onClick={suggestTags}>
-                      ✨ Auto-tag
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      disabled={suggesting !== null}
+                      onClick={suggestTags}
+                    >
+                      <ComposeLoader
+                        icon={composeIcons.asset}
+                        playing={suggesting === 'tags'}
+                        className="text-ai"
+                      />
+                      {suggesting === 'tags' ? 'Suggesting…' : 'Suggest tags'}
                     </Button>
                   )}
                 </div>
