@@ -30,16 +30,22 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # One turbo run, so the four checks share the runner's cores instead of taking turns.
+      # One turbo run, so the three checks share the runner's cores instead of taking turns.
       # `--continue` keeps going past a failure, so a red build reports all of its problems in one
-      # go; turbo groups each task's log and lists the failed ones at the end. Tests need no build
-      # first: every package exports its source. `build` bundles every Worker (api, delivery and
-      # engine build with `wrangler deploy --dry-run`; nothing is uploaded). The tests include the
+      # go; turbo groups each task's log and lists the failed ones at the end. `build` bundles every
+      # Worker (api, delivery and engine build with `wrangler deploy --dry-run`; nothing is
+      # uploaded).
+      - name: Lint, type-check and build
+        if: ${{ !cancelled() }}
+        run: pnpm turbo run lint check-types build --continue
+
+      # On their own, after the build: the workerd suites have timing budgets (vitest's 5 s per
+      # test) that sharing the 4-core runner with the build and type-check overruns. Includes the
       # engine's end-to-end Workflow runs in workerd (Durable Objects, Workflows, D1, R2) with
       # AI_MODE=mock — no network or Cloudflare account needed.
-      - name: Lint, type-check, build and test
+      - name: Test
         if: ${{ !cancelled() }}
-        run: pnpm turbo run lint check-types build test --continue
+        run: pnpm test
 
       # The registry in deployments/ and the configs rendered from it.
       - name: Test fleet
