@@ -43,6 +43,8 @@ const client = createDeliveryClient({
   cacheTtlMs: 0, // optional in-memory cache (0 = off)
   preview: false, // optional: read drafts from the Preview API (see Inline editing)
   locale: 'en-US', // optional: locale stamped onto inline-edit refs
+  readYourWrites: true, // optional, preview only: echo x-cw-bookmark (default true)
+  bookmark: undefined, // optional, preview only: a bookmark to start from
 });
 ```
 
@@ -58,6 +60,7 @@ client.searchAssets(q, { limit?, kind?, tag?, folder?, locale? }): Promise<Asset
 client.query(): EntryQueryBuilder<F>     // fluent builder
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
+client.bookmark: string | undefined     // read-your-writes position (preview); assignable
 ```
 
 - `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, since?, filters?, order?, select?, search? }`.
@@ -76,6 +79,9 @@ client.clearCache(): void
   `width` (the largest past it, the original without a ladder), or the original; `srcset(asset)`
   returns `"url 320w, url 640w, …"` (empty without a ladder). Neither adds a query parameter, so
   signed and immutable URLs stay intact.
+- With `preview: true` the client keeps [read-your-writes](#read-your-writes) by default. A
+  Delivery client never sends a bookmark: the delivery host is cached, reads replicas by design
+  and doesn't accept the header.
 
 Shapes:
 
@@ -233,6 +239,8 @@ const cma = createManagementClient({
   environment: 'main',
   token: '<cma-token>',
   fetch, // optional: inject a fetch (SSR/edge/test)
+  readYourWrites: true, // optional: echo x-cw-bookmark (default true)
+  bookmark: undefined, // optional: a bookmark to start from
 });
 ```
 
@@ -240,6 +248,7 @@ The surface is namespaced; every method maps 1:1 onto a Management route:
 
 ```ts
 cma.me()                                              // principal probe (/auth/me)
+cma.bookmark                                          // read-your-writes position; assignable
 
 cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
 
@@ -280,6 +289,39 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
 - `spaces.create` takes the deployment's admin token (a space's own keys are refused);
   `starter: 'sample'` installs the sample content before it returns.
 - Failed requests throw `ManagementError` with `status` and the parsed error `body`.
+- A read after the client's own write sees it: see [Read-your-writes](#read-your-writes).
+
+## Read-your-writes
+
+The api answers every request with `x-cw-bookmark`, the D1 Sessions bookmark after its queries,
+and a request that sends one back reads a database at least that fresh, even from a read replica
+([Consistency](./consistency.md#d1-sessions-and-replicas)). The Management client and a Delivery
+client in `preview: true` mode do this for you:
+
+- Each client instance keeps the newest bookmark it has been answered with (bookmarks sort oldest
+  to newest as strings, so a late response to an earlier request never moves it back, and a
+  failed request's bookmark counts too) and sends it with its next request.
+- It goes only to, and is taken only from, the origin of `baseUrl` (a relative `baseUrl` is the
+  page's own origin); a response redirected elsewhere is ignored.
+- `client.bookmark` reads it, and assigning replaces it (`undefined` clears it). `bookmark` in the
+  options seeds it. A value that isn't shaped like a D1 bookmark is dropped, as the api would.
+- `readYourWrites: false` turns it off: nothing is kept or sent, and `bookmark` stays `undefined`.
+
+To carry it from a write on the server to a reader in the browser, hand the bookmark across:
+
+```ts
+// Server action
+await cma.entries.update(id, fields);
+return { bookmark: cma.bookmark };
+
+// Browser
+const preview = createDeliveryClient({ ...previewOptions, preview: true, bookmark });
+```
+
+A Delivery client (not preview) never sends one: Delivery is served from the cache and replicas
+and is eventually consistent after a publish (see [Consistency](./consistency.md)). The
+in-memory cache (`cacheTtlMs`) answers without asking the api, so a cached read does not see a
+later write; `clearCache()` after writing.
 
 ## `@contentworker/sdk-codegen` — typed field shapes from your content model
 

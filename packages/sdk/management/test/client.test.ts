@@ -482,3 +482,104 @@ describe('@contentworker/sdk-management client', () => {
     );
   });
 });
+
+describe('@contentworker/sdk-management read-your-writes', () => {
+  // Real D1 bookmarks: hex groups joined by dashes, newer sorts later.
+  const OLD = '00000001-00000010-00004f9b-0c3e87bb37b3db5cc52eedb93cd3b96b';
+  const NEW = '00000001-00000033-00004f9b-0c3e87bb37b3db5cc52eedb93cd3b96b';
+
+  function bookmarking(answers: (string | undefined)[], from?: string) {
+    const sent: (string | undefined)[] = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push((init?.headers as Record<string, string> | undefined)?.['x-cw-bookmark']);
+      const answer = answers.shift();
+      const res = new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: answer ? { 'x-cw-bookmark': answer } : {},
+      });
+      if (from) Object.defineProperty(res, 'url', { value: from });
+      return res;
+    }) as unknown as typeof fetch;
+    return { sent, fetchImpl };
+  }
+
+  it("reads after its own write at the write's bookmark", async () => {
+    const { sent, fetchImpl } = bookmarking([NEW, NEW]);
+    const cma = createManagementClient({ ...base, fetch: fetchImpl });
+
+    await cma.entries.update('e1', { title: { 'en-US': 'Hi' } });
+    await cma.entries.get('e1');
+    expect(sent).toEqual([undefined, NEW]);
+    expect(cma.bookmark).toBe(NEW);
+  });
+
+  it('never moves back to an older bookmark from a late response', async () => {
+    const { sent, fetchImpl } = bookmarking([NEW, OLD]);
+    const cma = createManagementClient({ ...base, fetch: fetchImpl });
+
+    await cma.entries.get('e1');
+    await cma.entries.get('e1');
+    await cma.entries.get('e1');
+    expect(sent).toEqual([undefined, NEW, NEW]);
+  });
+
+  it('hands its bookmark to another client, which reads from there', async () => {
+    const writer = bookmarking([NEW]);
+    const cma = createManagementClient({ ...base, fetch: writer.fetchImpl });
+    await cma.entries.publish('e1');
+
+    const reader = bookmarking([]);
+    const next = createManagementClient({
+      ...base,
+      bookmark: cma.bookmark,
+      fetch: reader.fetchImpl,
+    });
+    await next.entries.get('e1');
+    expect(reader.sent).toEqual([NEW]);
+  });
+
+  it('keeps the bookmark of a failed write', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 'conflict' }), {
+          status: 409,
+          headers: { 'x-cw-bookmark': NEW },
+        }),
+    ) as unknown as typeof fetch;
+    const cma = createManagementClient({ ...base, fetch: fetchImpl });
+
+    await expect(cma.entries.publish('e1', { expectedVersion: 1 })).rejects.toBeInstanceOf(
+      ManagementError,
+    );
+    expect(cma.bookmark).toBe(NEW);
+  });
+
+  it('never sends or keeps one with readYourWrites: false', async () => {
+    const { sent, fetchImpl } = bookmarking([NEW, NEW]);
+    const cma = createManagementClient({
+      ...base,
+      readYourWrites: false,
+      bookmark: OLD,
+      fetch: fetchImpl,
+    });
+
+    await cma.entries.get('e1');
+    await cma.entries.get('e1');
+    expect(sent).toEqual([undefined, undefined]);
+    expect(cma.bookmark).toBeUndefined();
+  });
+
+  it('ignores a bookmark from a response redirected to another origin, and malformed ones', async () => {
+    const redirected = bookmarking([NEW], 'https://elsewhere.test/x');
+    const cma = createManagementClient({ ...base, bookmark: OLD, fetch: redirected.fetchImpl });
+    await cma.entries.get('e1');
+    expect(cma.bookmark).toBe(OLD);
+
+    const junk = bookmarking(['"><script>', 'first-primary']);
+    const other = createManagementClient({ ...base, fetch: junk.fetchImpl });
+    await other.entries.get('e1');
+    await other.entries.get('e1');
+    await other.entries.get('e1');
+    expect(junk.sent).toEqual([undefined, undefined, undefined]);
+  });
+});

@@ -200,3 +200,136 @@ describe('assets', () => {
     expect(srcset({ srcset: [] })).toBe('');
   });
 });
+
+describe('@contentworker/sdk-core read-your-writes (preview)', () => {
+  // Real D1 bookmarks: hex groups joined by dashes, newer sorts later.
+  const OLD = '00000001-00000010-00004f9b-0c3e87bb37b3db5cc52eedb93cd3b96b';
+  const NEW = '00000001-00000033-00004f9b-0c3e87bb37b3db5cc52eedb93cd3b96b';
+  const NEWER = '00000001-00000040-00004f9b-0c3e87bb37b3db5cc52eedb93cd3b96b';
+
+  /** Answers each request with the next bookmark in `answers` (none once they run out). */
+  function bookmarking(answers: (string | undefined)[], from?: string) {
+    const sent: (string | undefined)[] = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push((init?.headers as Record<string, string> | undefined)?.['x-cw-bookmark']);
+      const answer = answers.shift();
+      const res = new Response(JSON.stringify({ items: [], total: 0 }), {
+        status: 200,
+        headers: answer ? { 'x-cw-bookmark': answer } : {},
+      });
+      // What a redirect to another host leaves on the Response it resolves to.
+      if (from) Object.defineProperty(res, 'url', { value: from });
+      return res;
+    }) as unknown as typeof fetch;
+    return { sent, fetchImpl };
+  }
+
+  it('sends nothing first, then the bookmark of the last response', async () => {
+    const { sent, fetchImpl } = bookmarking([OLD, NEW]);
+    const client = createDeliveryClient({ ...base, preview: true, fetch: fetchImpl });
+
+    await client.listEntries();
+    await client.listEntries();
+    await client.listEntries();
+    expect(sent).toEqual([undefined, OLD, NEW]);
+    expect(client.bookmark).toBe(NEW);
+  });
+
+  it('keeps the newest bookmark when concurrent responses arrive out of order', async () => {
+    const { fetchImpl } = bookmarking([NEW, OLD]);
+    const client = createDeliveryClient({ ...base, preview: true, fetch: fetchImpl });
+
+    await client.listEntries();
+    await client.listEntries();
+    expect(client.bookmark).toBe(NEW);
+  });
+
+  it('starts from a seeded bookmark and can be handed one explicitly', async () => {
+    const { sent, fetchImpl } = bookmarking([]);
+    const client = createDeliveryClient({
+      ...base,
+      preview: true,
+      bookmark: NEW,
+      fetch: fetchImpl,
+    });
+
+    await client.listEntries();
+    // Explicit replaces, even with an older one; garbage is dropped; undefined clears.
+    client.bookmark = OLD;
+    await client.listEntries();
+    client.bookmark = 'not-a-bookmark';
+    await client.listEntries();
+    client.bookmark = NEWER;
+    client.bookmark = undefined;
+    await client.listEntries();
+    expect(sent).toEqual([NEW, OLD, undefined, undefined]);
+  });
+
+  it('never sends or keeps one with readYourWrites: false', async () => {
+    const { sent, fetchImpl } = bookmarking([NEW, NEW]);
+    const client = createDeliveryClient({
+      ...base,
+      preview: true,
+      readYourWrites: false,
+      bookmark: OLD,
+      fetch: fetchImpl,
+    });
+
+    await client.listEntries();
+    client.bookmark = NEWER;
+    await client.listEntries();
+    expect(sent).toEqual([undefined, undefined]);
+    expect(client.bookmark).toBeUndefined();
+  });
+
+  it('a Delivery client never sends one: the cached CDN ignores it and refuses the header', async () => {
+    const { sent, fetchImpl } = bookmarking([NEW, NEW]);
+    const client = createDeliveryClient({ ...base, bookmark: OLD, fetch: fetchImpl });
+
+    await client.listEntries();
+    await client.listEntries();
+    expect(sent).toEqual([undefined, undefined]);
+    expect(client.bookmark).toBeUndefined();
+  });
+
+  it('ignores a bookmark from a response that was redirected to another origin', async () => {
+    const { sent, fetchImpl } = bookmarking([NEW, NEWER], 'https://elsewhere.test/x');
+    const client = createDeliveryClient({
+      ...base,
+      preview: true,
+      bookmark: OLD,
+      fetch: fetchImpl,
+    });
+
+    await client.listEntries();
+    await client.listEntries();
+    expect(sent).toEqual([OLD, OLD]);
+    expect(client.bookmark).toBe(OLD);
+  });
+
+  it('keeps the bookmark of a failed request', async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response('{}', { status: 404, headers: { 'x-cw-bookmark': NEW } }),
+    ) as unknown as typeof fetch;
+    const client = createDeliveryClient({ ...base, preview: true, fetch: fetchImpl });
+
+    await expect(client.getEntry('missing')).rejects.toBeInstanceOf(DeliveryError);
+    expect(client.bookmark).toBe(NEW);
+  });
+});
+
+describe('@contentworker/sdk-core read-your-writes on a relative baseUrl', () => {
+  it('treats a relative baseUrl as same-origin', async () => {
+    const BM = '00000001-00000033-00004f9b-0c3e87bb37b3db5cc52eedb93cd3b96b';
+    const sent: (string | undefined)[] = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push((init?.headers as Record<string, string> | undefined)?.['x-cw-bookmark']);
+      return new Response('{"items":[],"total":0}', { headers: { 'x-cw-bookmark': BM } });
+    }) as unknown as typeof fetch;
+    const client = createDeliveryClient({ ...base, baseUrl: '', preview: true, fetch: fetchImpl });
+
+    await client.listEntries();
+    await client.listEntries();
+    expect(sent).toEqual([undefined, BM]);
+  });
+});
