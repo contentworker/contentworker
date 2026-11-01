@@ -296,6 +296,12 @@ export const assets = sqliteTable(
     index('assets_by_folder').on(t.spaceId, t.environmentId, t.folderId, t.updatedAt),
     index('assets_by_status').on(t.spaceId, t.environmentId, t.status, t.updatedAt),
     index('assets_by_hash').on(t.spaceId, t.environmentId, t.contentHash),
+    // Drafts whose upload never landed, oldest first, across scopes (0012_asset_upload_sweep).
+    index('assets_awaiting_upload')
+      .on(t.createdAt)
+      .where(
+        sql`${t.status} = 'draft' AND ${t.ingestStatus} IS NULL AND ${t.size} IS NULL AND ${t.r2Key} IS NOT NULL`,
+      ),
   ],
 );
 

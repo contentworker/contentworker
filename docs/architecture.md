@@ -149,7 +149,8 @@ bind them by `script_name`) and handles:
   see [Assets](#assets-r2-images-stream-and-the-media-worker).
 - **Cron** (`* * * * *`): due scheduled actions, the outbox relay sweep, bulk-job stall recovery,
   the restart of deleted-environment purges that stopped progressing, agent schedules
-  (`AGENTS_SCHEDULES=true`), retention at the top of each hour, and the daily
+  (`AGENTS_SCHEDULES=true`), retention and the abandoned-upload sweep (see
+  [Asset ingest](#asset-ingest-and-search)) at the top of each hour, and the daily
   secret reseal at 03:30 UTC. Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
   failure is logged and recorded, and never skips the rest of the tick. At the end of the tick one
   D1 batch writes the heartbeat (`scheduler_jobs`: each sweep's last run, success and redacted
@@ -241,9 +242,22 @@ embeds, Preview and GraphQL's `Asset` type.
   first, so a guessed or edited URL is a `404` (`no-store`) that costs a MAC and no cache, KV or
   D1 read. It then maps the URL to a canonical
   one on `https://media.internal` (the path, plus `?f=avif|webp|src` for a variant, negotiated
-  from `Accept`; every other parameter dropped), adds `Vary: Accept` when it negotiated, answers
-  `304` on `If-None-Match`, and serves signed `/media/*` GETs (never a PUT, never one without
-  `exp`) uncached.
+  from `Accept`; every other parameter dropped, so `?download` never reaches the cache key), adds
+  `Vary: Accept` when it negotiated, answers `304` on `If-None-Match`, and serves signed
+  `/media/*` GETs (never a PUT, never one without `exp`) uncached. It forwards one `Range: bytes=`
+  header (`singleByteRange`) and `If-Range` to the cached entrypoint; Workers Caching strips the
+  range on a miss, stores the full `200` and slices `206`/`416` itself. When that fetch comes back
+  `200` for a range on an original (no cache in front, as in local dev and tests, or a file the
+  cache didn't keep), the gateway calls the RPC method `Media.range(url, range, ifRange)`, which
+  reads the range from R2 (`bucket.get(key, { range })`) and answers `206` with `Content-Range`,
+  `Content-Length` and `ETag`, or `416` with `Content-Range: bytes */<size>` and `no-store`. RPC is
+  never cached, so a partial never stands in for the whole file. Several ranges, another unit, a
+  malformed header, a variant (served whole when uncached) and an `If-Range` that isn't the current
+  strong ETag get the whole file as `200`; unsatisfiable is a start at or past the size, an
+  inverted range, or `bytes=-0`. Every `200`/`206` carries `Content-Disposition: inline;
+  filename="<ascii>"; filename*=UTF-8''<RFC 8187>`, or `attachment` with `?download` (any value)
+  and for types `safeHeaders` already forces to `attachment` (SVG, HTML); CORS exposes `etag`,
+  `cf-cache-status`, `accept-ranges`, `content-range`, `content-length` and `content-disposition`.
 - The cached **`Media`** entrypoint, on a miss, checks the token again and then reads the **gate**
   (`asset-gate:<space>:<env>:<id>` in `KV_CACHE`: `{v, r2Key, contentType, fileName, focal,
   expiresAt}`, `@contentworker/adapters/asset-gate-kv`), falling back to a D1 replica
@@ -253,7 +267,8 @@ embeds, Preview and GraphQL's `Asset` type.
   `410`; both `no-store`. A `200` is `public, max-age=31536000, immutable`, except for an asset
   whose rights expire: then `public, max-age=<seconds left>`, without `immutable`, so no cache
   holds it past the expiry. A `200` is tagged `cwa:<space>:<env>:<id>`, `cwe:<space>:<env>` and,
-  for a rendition, `cwr:<space>:<name>`. Its ports (the gate, a replica store, the path signer)
+  for a rendition, `cwr:<space>:<name>`. The miss path always returns the whole file, never a
+  `206` (Workers Caching would not store it), with `Accept-Ranges: bytes` on originals. Its ports (the gate, a replica store, the path signer)
   come from `wireMedia`, the media Worker's composition root. It writes nothing.
 - The **engine** owns the gate: `syncAssetGate` runs for `asset.published`, `asset.unpublished`
   and `asset.deleted` and writes or removes the entry from the current published snapshot (so a
@@ -317,7 +332,13 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   R2, skipped above 512 MiB; `duplicate_of` set to the oldest other asset in the scope with that
   hash, on this asset and on later copies, and re-pointed at the oldest copy left when the
   original is deleted), `probe` (the Images binding's `info`, skipped above 70 MiB: width,
-  height, and the format when the upload declared `application/octet-stream`), `alt-text` and
+  height, and the format when the upload declared `application/octet-stream`), `placeholder`
+  (raster types `isTransformableImage` accepts, at most 20 MiB, `MAX_PLACEHOLDER_BYTES`: the Images
+  binding shrinks the file to a 32 px `scale-down` PNG, one billed transformation, and
+  `packages/adapters/src/images-cf/placeholder.ts` decodes it with `fast-png` and computes a
+  `thumbhash` ThumbHash (base64) and a dominant colour, `#rrggbb` from 4-bit-per-channel binning
+  that skips transparent pixels; stored as `file.placeholder` in the `file` JSON, no column; a
+  failure leaves none and never fails the run), `alt-text` and
   `tags` (images: `generateAltText` and `autoTagAsset` under the AI budget, the uploader's text
   wrapped as untrusted, only where empty, existing tags only, recorded in `ai_suggestions`; a
   spent budget skips them, and a model that still fails after the step's retries records
@@ -326,7 +347,7 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   `AI_MODE=mock`; at most 20 MiB and 10 MiB read, handed over as the stream's chunks, 500,000
   characters kept, at `space/env/asset/v<n>/text.md`, which no media URL can name, and removed if
   the asset was deleted meanwhile), `embed`, `index` and `finish` (`ingest_status` ready, the
-  measured size and dimensions written into a published snapshot of the same version, and
+  measured size, dimensions and placeholder written into a published snapshot of the same version, and
   `asset.ingested` with `published`, in one unit). A step that still fails after its retries
   records `ingest_status` error and the message, credentials redacted.
 - **Writes.** `AssetRepo.recordIngest` writes only `ingest_status`, `ingest_error`,
@@ -335,6 +356,18 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   undoes a step. Alt text and tags go through `applyAssetMetadata` and `save` after a re-read, so
   a value an editor saved meanwhile wins; a save through the metadata path clears the
   `ai_suggestions` marks of the alt text locales it changed and the suggested tags it removed.
+- **Abandoned uploads.** A presigned PUT URL lives 15 minutes; a draft whose bytes never landed
+  has `ingest_status` and `size` NULL. On the top-of-hour cron tick (after the event-history
+  prune) the engine runs `sweepAbandonedUploads` (`packages/application/src/assets.ts`) over
+  drafts created more than `ABANDONED_UPLOAD_TTL_MS` (24 h) ago, across every space and
+  environment, oldest first, at most 50 per sweep (`AssetRepo.listAwaitingUpload`, served by the
+  partial index `assets_awaiting_upload`, migration `0012`). Per draft, `BlobStore.head` on its
+  key (a store without `head` sweeps nothing): bytes exist → the size is recorded and the
+  reindex job ingests it (`landed`); no bytes and an entry links it → `ingest_status` `error`,
+  "The upload never completed", the asset kept (`linked`); no bytes and unlinked → `deleteAsset`
+  (row, `asset.deleted`, and the engine removes anything under the asset's R2 prefix)
+  (`removed`). A store or blob error leaves the draft for the next sweep (`failed`). The engine
+  logs `abandoned uploads swept` and counts `contentworker_abandoned_uploads_total{outcome}`.
 - **Search.** Assets are indexed apart from entries, in two corpora (`AssetSearchCorpus`): the
   library (every asset as it is now) and the published assets (their published snapshots, written
   on publish and ingest, removed on unpublish). Each has its own SearchShard objects

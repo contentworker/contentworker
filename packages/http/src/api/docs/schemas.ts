@@ -89,6 +89,15 @@ export const searchHits = z.object({
   ),
 });
 
+export const assetPlaceholder = z
+  .object({
+    thumbhash: z
+      .string()
+      .describe('ThumbHash of the image (base64): decode it on the client to a blurred preview'),
+    dominantColor: z.string().describe('The image’s dominant colour, #rrggbb'),
+  })
+  .describe('What to show while a raster image loads, computed by ingest');
+
 export const asset = z.object({
   id: z.uuid(),
   status: z.enum(['draft', 'published', 'archived']),
@@ -99,6 +108,7 @@ export const asset = z.object({
     size: z.int().optional(),
     width: z.int().optional(),
     height: z.int().optional(),
+    placeholder: assetPlaceholder.optional().describe('Absent until ingest has computed one'),
   }),
   title: z.record(z.string(), z.unknown()),
   description: z.record(z.string(), z.unknown()),
@@ -191,6 +201,9 @@ export const deliveredAsset = z.object({
   srcset: z
     .array(z.object({ width: z.int(), url: z.string() }))
     .describe('The width ladder (320–2560), up to the image’s own width'),
+  placeholder: assetPlaceholder
+    .nullable()
+    .describe('A raster image’s ThumbHash and dominant colour; null until ingest computed them'),
   video: z
     .object({
       status: z.string(),

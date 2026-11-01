@@ -82,6 +82,10 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
 - With `preview: true` the client keeps [read-your-writes](#read-your-writes) by default. A
   Delivery client never sends a bookmark: the delivery host is cached, reads replicas by design
   and doesn't accept the header.
+- `DeliveredAsset.placeholder` is `{ thumbhash, dominantColor } | null`: the ThumbHash (base64;
+  decode it with the `thumbhash` package) and `#rrggbb` ingest computed for a raster image, `null`
+  for videos, other kinds and assets processed before it existed. Codegen's `DeliveredAsset`
+  prelude declares it.
 
 Shapes:
 
@@ -426,5 +430,5 @@ navigating.
 If you prefer GraphQL over the REST client, the Delivery API also exposes a per-space GraphQL
 schema generated from your content types at `POST /delivery/:space/:env/graphql` (scope
 `delivery:read`). It needs no SDK — use any GraphQL client with a CDA token. `asset(id)` is a
-typed `Asset` with `url(rendition, width)`, `srcset`, per-field `locale` arguments and `video`. See
+typed `Asset` with `url(rendition, width)`, `srcset`, `placeholder`, per-field `locale` arguments and `video`. See
 [API reference → GraphQL Delivery](./api-reference.md#graphql-delivery).

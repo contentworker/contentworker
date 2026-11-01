@@ -6,6 +6,7 @@ import type {
   AssetFolder,
   AssetIngestStatus,
   AssetKind,
+  AssetPlaceholder,
   AssetRendition,
   AssetRights,
   AssetStatus,
@@ -578,6 +579,16 @@ export interface AssetRepo {
    */
   recordIngest(scope: Scope, id: string, version: number, patch: AssetIngestPatch): Promise<void>;
   /**
+   * Drafts created for a presigned upload whose bytes never showed up (nothing measured, never
+   * ingested), created before `createdBefore`, across every space and environment, oldest first:
+   * the abandoned-upload sweep's candidates. At most `limit`. A row whose creation time is
+   * unknown (written before it was recorded) is never one.
+   */
+  listAwaitingUpload(
+    createdBefore: Date,
+    limit: number,
+  ): Promise<{ readonly scope: Scope; readonly asset: Asset }[]>;
+  /**
    * Writes the file's measurements into the published snapshot, only while it delivers `version`
    * (an asset published before ingest measured it), so Delivery reports what ingest found.
    */
@@ -585,7 +596,12 @@ export interface AssetRepo {
     scope: Scope,
     id: string,
     version: number,
-    file: { readonly size?: number; readonly width?: number; readonly height?: number },
+    file: {
+      readonly size?: number;
+      readonly width?: number;
+      readonly height?: number;
+      readonly placeholder?: AssetPlaceholder;
+    },
   ): Promise<void>;
   putPublished(scope: Scope, snapshot: PublishedAsset): Promise<void>;
   removePublished(scope: Scope, id: string): Promise<void>;
@@ -606,6 +622,8 @@ export interface AssetIngestPatch {
   readonly size?: number;
   readonly width?: number;
   readonly height?: number;
+  /** A raster image's ThumbHash and dominant colour, into the file record. */
+  readonly placeholder?: AssetPlaceholder;
   /** The real content type, when the upload declared none worth keeping. */
   readonly contentType?: string;
   /**

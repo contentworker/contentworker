@@ -69,6 +69,8 @@ export interface DeliveredAsset {
   url: string;
   renditions: Record<string, string>;
   srcset: { width: number; url: string }[];
+  /** ThumbHash (base64) and dominant colour (#rrggbb) to show while it loads; null until ingested. */
+  placeholder: { thumbhash: string; dominantColor: string } | null;
   video?: {
     status: string;
     hlsUrl?: string;

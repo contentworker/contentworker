@@ -11,6 +11,7 @@ export const CRON_JOBS = {
   purgeResume: 'environment-purge-resume',
   versionArchive: 'version-archive',
   agentSchedules: 'agent-schedules',
+  abandonedUploads: 'abandoned-uploads',
 } as const;
 
 /** A tick's heartbeat, started when the tick starts. */

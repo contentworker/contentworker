@@ -1,4 +1,4 @@
-import type { FocalPoint } from '@contentworker/domain';
+import type { AssetPlaceholder, FocalPoint } from '@contentworker/domain';
 import type {
   ByteStream,
   ImageFit,
@@ -8,6 +8,15 @@ import type {
   ImageTransformer,
   ImageTransformSpec,
 } from '@contentworker/ports';
+import { PLACEHOLDER_SIDE, placeholderFromRgba, rgbaFromPng } from './placeholder';
+
+export {
+  dominantColor,
+  PLACEHOLDER_SIDE,
+  placeholderFromRgba,
+  type RgbaImage,
+  rgbaFromPng,
+} from './placeholder';
 
 /**
  * Cloudflare Images adapter.
@@ -253,21 +262,27 @@ export async function transformImage(
   return new Response(res.body, { status: res.status, headers });
 }
 
+/** How the binding refuses input it can't decode: an answer ("not an image"), not an outage. */
+const NOT_AN_IMAGE = /unsupported|invalid|decode|not.*image/i;
+
 /**
- * The ImageProbe port over the Images binding's `info` (not billed): the format and dimensions of
- * an image, read from its bytes. Bytes that aren't an image it reads, and SVG (no intrinsic
- * size), are `null`; a failure of the service itself throws, so a durable caller retries.
+ * The ImageProbe port over the Images binding. `info` (not billed) reads the format and dimensions
+ * of an image from its bytes; `placeholder` has the binding shrink it to a
+ * {@link PLACEHOLDER_SIDE}-pixel PNG (one transformation, billed as such) and computes the
+ * ThumbHash and dominant colour from that here. Bytes that aren't an image it reads, and SVG (no
+ * intrinsic size), are `null`; a failure of the service itself throws, so a durable caller
+ * retries.
  */
-export function createCfImageProbe(images: Pick<ImagesBindingLike, 'info'>): ImageProbe {
-  return {
+export function createCfImageProbe(
+  images: Pick<ImagesBindingLike, 'info'> & Partial<Pick<ImagesBindingLike, 'input'>>,
+): ImageProbe {
+  const probe: ImageProbe = {
     async info(body: ByteStream): Promise<ImageInfo | null> {
       let info: CfImageInfo;
       try {
         info = await images.info(toReadable(body));
       } catch (err) {
-        // The binding refuses what it can't decode with an error naming the input; that's an
-        // answer ("not an image"), not an outage.
-        if (/unsupported|invalid|decode|not.*image/i.test(String(err))) return null;
+        if (NOT_AN_IMAGE.test(String(err))) return null;
         throw err;
       }
       if (!('width' in info)) return null;
@@ -277,6 +292,28 @@ export function createCfImageProbe(images: Pick<ImagesBindingLike, 'info'>): Ima
         format: info.format,
         ...(info.fileSize ? { size: info.fileSize } : {}),
       };
+    },
+  };
+  const { input } = images;
+  if (!input) return probe;
+  return {
+    ...probe,
+    async placeholder(body: ByteStream): Promise<AssetPlaceholder | null> {
+      let png: Uint8Array;
+      try {
+        const out = await input
+          .call(images, toReadable(body))
+          .transform({ width: PLACEHOLDER_SIDE, height: PLACEHOLDER_SIDE, fit: 'scale-down' })
+          .output({ format: 'image/png' });
+        png = new Uint8Array(await out.response().arrayBuffer());
+      } catch (err) {
+        if (NOT_AN_IMAGE.test(String(err))) return null;
+        throw err;
+      }
+      const pixels = rgbaFromPng(png);
+      // ThumbHash takes at most 100 a side; a binding that ignored the resize gets no placeholder.
+      if (!pixels || pixels.width > 100 || pixels.height > 100) return null;
+      return placeholderFromRgba(pixels);
     },
   };
 }

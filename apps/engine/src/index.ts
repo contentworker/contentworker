@@ -24,6 +24,7 @@ import {
   runPublishAgents,
   startAssetIngestForObject,
   startRequestedAssetIngest,
+  sweepAbandonedUploads,
 } from '@contentworker/application';
 import type { Scope } from '@contentworker/domain';
 import { isResealTick } from '@contentworker/platform/data-key';
@@ -453,8 +454,9 @@ export default {
     const metrics = makeMetrics(env.METRICS);
     const tick = startTick(wired.ctx);
     try {
-      // Retention sweep on the top-of-hour tick only (the cron fires every
-      // minute): trims relayed outbox rows + old webhook delivery records.
+      // Retention sweeps on the top-of-hour tick only (the cron fires every
+      // minute): trims relayed outbox rows + old webhook delivery records, then
+      // abandoned uploads.
       if (wired.persistent && new Date(ctrl.scheduledTime).getUTCMinutes() === 0) {
         await sweep(
           tick,
@@ -476,6 +478,25 @@ export default {
             }
           },
           (err) => console.error('event history prune failed', err),
+        );
+        // Drafts whose presigned upload never landed, a day on (bounded per tick).
+        await sweep(
+          tick,
+          CRON_JOBS.abandonedUploads,
+          async () => {
+            const swept = await sweepAbandonedUploads(wired.ctx, wired.blob);
+            if (swept.removed + swept.landed + swept.linked + swept.failed > 0) {
+              console.log(JSON.stringify({ msg: 'abandoned uploads swept', ...swept }));
+              for (const outcome of ['removed', 'landed', 'linked', 'failed'] as const) {
+                if (swept[outcome] > 0) {
+                  metrics.count('contentworker_abandoned_uploads_total', swept[outcome], {
+                    outcome,
+                  });
+                }
+              }
+            }
+          },
+          (err) => console.error('abandoned upload sweep failed', redactCredentials(err)),
         );
       }
       // Secrets-at-rest sweep, once a day (03:30 UTC): reseals values under

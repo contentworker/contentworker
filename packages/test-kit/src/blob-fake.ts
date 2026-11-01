@@ -67,6 +67,11 @@ export class FakeBlobStore implements BlobStore {
     };
   }
 
+  async head(key: string): Promise<{ size: number } | null> {
+    const bytes = this.bytes(key);
+    return bytes ? { size: bytes.byteLength } : null;
+  }
+
   private readonly types = new Map<string, string>();
 
   /** The stored bytes of `key`, as written (a test reads back a binary upload with this). */

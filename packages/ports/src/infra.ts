@@ -1,4 +1,5 @@
 import type {
+  AssetPlaceholder,
   AssetVideoStatus,
   DomainEvent,
   FieldIssue,
@@ -87,6 +88,12 @@ export interface BlobStore {
    * when the object does not exist. Optional: a store without it can't feed asset ingest.
    */
   open?(key: string): Promise<BlobObject | null>;
+  /**
+   * What the store records about `key` without reading it, or `null` when the object does not
+   * exist. Optional: a store without it can't tell an upload that landed from one that never did,
+   * so the abandoned-upload sweep doesn't run on it.
+   */
+  head?(key: string): Promise<{ readonly size: number } | null>;
 }
 
 /**
@@ -117,6 +124,12 @@ export interface ImageInfo {
  */
 export interface ImageProbe {
   info(body: ByteStream): Promise<ImageInfo | null>;
+  /**
+   * The image's placeholder (ThumbHash and dominant colour), from a thumbnail of its pixels.
+   * `null` when the bytes are not a raster image it can decode. Optional: a probe without it
+   * leaves assets without placeholders.
+   */
+  placeholder?(body: ByteStream): Promise<AssetPlaceholder | null>;
 }
 
 /**

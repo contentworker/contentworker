@@ -489,6 +489,93 @@ async function assetInUse(
 }
 
 /**
+ * How long a draft waits for its upload before the sweep removes it: a day, far past the upload
+ * URL's life (15 minutes), so no PUT through it can still land.
+ */
+export const ABANDONED_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+/** Most candidates one sweep looks at (each costs a blob `head` and, if gone, one unit). */
+export const ABANDONED_UPLOAD_SWEEP_LIMIT = 50;
+/** What an asset linked from an entry, whose upload never landed, says instead of going. */
+export const UPLOAD_NEVER_COMPLETED = 'The upload never completed';
+
+export interface AbandonedUploadSweep {
+  /** Drafts with no bytes, deleted (their `asset.deleted` removes whatever is under the key). */
+  readonly removed: number;
+  /** Bytes that did land, whose notice was lost: their size is recorded, for ingest to pick up. */
+  readonly landed: number;
+  /** Drafts with no bytes that an entry links to: marked as failed uploads, not deleted. */
+  readonly linked: number;
+  /** Candidates a store or blob error left for the next sweep. */
+  readonly failed: number;
+}
+
+/**
+ * Cleans up after presigned uploads that never completed: drafts created more than
+ * {@link ABANDONED_UPLOAD_TTL_MS} ago that ingest never saw, across every space and environment,
+ * oldest first, at most `limit`. Each one leaves the candidate set whatever happens to it, so a
+ * sweep never chews on the same rows twice:
+ *
+ * - bytes under its key (the upload landed, but R2's notification and the api's notice were both
+ *   lost, or the file predates ingest): its size is recorded, and the reindex job ingests it;
+ * - no bytes, linked from an entry: it stays, its ingest marked `error` so the library shows why
+ *   (deleting it would break the link);
+ * - no bytes, unlinked: {@link deleteAsset}, whose `asset.deleted` event removes anything under the
+ *   asset's prefix in the engine (retried there, not here).
+ *
+ * A store without `head` can't tell the first case from the others, so nothing is swept.
+ * Rerunning is harmless: a removed draft is gone, the others no longer match.
+ */
+export async function sweepAbandonedUploads(
+  ctx: AppContext,
+  blob: BlobStore,
+  opts: { readonly ttlMs?: number; readonly limit?: number } = {},
+): Promise<AbandonedUploadSweep> {
+  const counts = { removed: 0, landed: 0, linked: 0, failed: 0 };
+  if (!blob.head) return counts;
+  const before = new Date(ctx.clock.now().getTime() - (opts.ttlMs ?? ABANDONED_UPLOAD_TTL_MS));
+  const candidates = await ctx.store.assets.listAwaitingUpload(
+    before,
+    opts.limit ?? ABANDONED_UPLOAD_SWEEP_LIMIT,
+  );
+  for (const { scope, asset } of candidates) {
+    if (asset.file.video) continue;
+    const version = asset.version ?? 1;
+    const neverCompleted = () =>
+      ctx.store.assets.recordIngest(scope, asset.id, version, {
+        status: 'error',
+        error: UPLOAD_NEVER_COMPLETED,
+        onlyFrom: [null],
+      });
+    try {
+      const object = await blob.head(assetFileKey(scope, asset));
+      if (object) {
+        await ctx.store.assets.recordIngest(scope, asset.id, version, { size: object.size });
+        counts.landed += 1;
+        continue;
+      }
+      if ((await getAssetUsage(ctx, scope, asset.id)).length > 0) {
+        await neverCompleted();
+        counts.linked += 1;
+        continue;
+      }
+      await deleteAsset(ctx, scope, asset.id);
+      counts.removed += 1;
+    } catch (err) {
+      if (err instanceof NotFoundError) continue; // deleted meanwhile
+      if (err instanceof AssetInUseError) {
+        // Linked after the check: the store refused the delete at commit.
+        await neverCompleted();
+        counts.linked += 1;
+        continue;
+      }
+      // Left for the next sweep; the engine logs the count.
+      counts.failed += 1;
+    }
+  }
+  return counts;
+}
+
+/**
  * Removes a deleted asset's bytes (the engine runs it for `asset.deleted`). Everything under the
  * asset's key prefix goes, so older versions' files go with the current one; but nothing goes
  * while another environment of the space still has an asset with this id, because an environment

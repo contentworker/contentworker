@@ -68,22 +68,84 @@ export function canonicalMediaUrl(
   url: URL,
   accept: string | null,
   paths: MediaPathSigner,
-): { readonly url: string; readonly negotiated: boolean } | null {
+): {
+  readonly url: string;
+  readonly negotiated: boolean;
+  readonly address: AssetMediaAddress;
+} | null {
   const address = verifiedAddress(url.pathname, paths);
   if (!address) return null;
   const path = `${INTERNAL_ORIGIN}${url.pathname}`;
   switch (address.variant.kind) {
     case 'original':
-      return { url: path, negotiated: false };
+      return { url: path, negotiated: false, address };
     case 'width': {
       // A width step negotiates only when asked to (`fm=auto`, which delivered URLs carry).
-      if (url.searchParams.get('fm') !== 'auto') return { url: `${path}?f=src`, negotiated: false };
-      return { url: `${path}?f=${formatClass(accept)}`, negotiated: true };
+      if (url.searchParams.get('fm') !== 'auto') {
+        return { url: `${path}?f=src`, negotiated: false, address };
+      }
+      return { url: `${path}?f=${formatClass(accept)}`, negotiated: true, address };
     }
     default:
       // A rendition's own format may be `auto`; which it is is only known on a miss.
-      return { url: `${path}?f=${formatClass(accept)}`, negotiated: true };
+      return { url: `${path}?f=${formatClass(accept)}`, negotiated: true, address };
   }
+}
+
+/** `bytes=<first>-<last>`, either side optional (both absent is no range at all). */
+const BYTE_RANGE = /^bytes=\s*(\d*)\s*-\s*(\d*)\s*$/i;
+
+/**
+ * The `Range` header to pass on: one `bytes=` range, as the client wrote it, or `null` for no
+ * header, another unit, or several ranges (served whole, as a 200: allowed, and simpler than a
+ * multipart body nobody here needs).
+ */
+export function singleByteRange(header: string | null): string | null {
+  const h = header?.trim() ?? '';
+  const m = BYTE_RANGE.exec(h);
+  return m && (m[1] || m[2]) ? h : null;
+}
+
+/**
+ * What a single byte range asks of an object of `size` bytes: `length` bytes from `offset`,
+ * `unsatisfiable` (416: it starts at or past the end, is inverted, or is an empty suffix), or
+ * `null` when the header isn't one {@link singleByteRange} passes (serve the whole object). An end
+ * past the object is clipped to it, and a suffix longer than it is the whole object, as RFC 9110
+ * and Workers Caching both do.
+ */
+export function byteRange(
+  header: string | null,
+  size: number,
+): { readonly offset: number; readonly length: number } | 'unsatisfiable' | null {
+  const spec = singleByteRange(header);
+  const m = spec ? BYTE_RANGE.exec(spec) : null;
+  if (!m) return null;
+  const [, first = '', last = ''] = m;
+  if (first === '') {
+    const suffix = Number(last);
+    if (suffix === 0 || size === 0) return 'unsatisfiable';
+    const length = Math.min(suffix, size);
+    return { offset: size - length, length };
+  }
+  const offset = Number(first);
+  const end = last === '' ? size - 1 : Math.min(Number(last), size - 1);
+  if (offset >= size || end < offset) return 'unsatisfiable';
+  return { offset, length: end - offset + 1 };
+}
+
+/**
+ * A `Content-Disposition` naming the file, safe for any name: `filename*` carries it exactly
+ * (RFC 8187, UTF-8, percent-encoded), and `filename` an ASCII stand-in for clients that predate
+ * it, with quotes, backslashes and anything outside printable ASCII (a CR or LF that would split
+ * the header among them) replaced.
+ */
+export function contentDisposition(kind: 'inline' | 'attachment', fileName: string): string {
+  const ascii = fileName.replace(/[^\x20-\x7e]|["\\]/g, '_');
+  const encoded = encodeURIComponent(fileName).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 export interface MediaDeps {
@@ -133,15 +195,17 @@ function variantSpec(
 }
 
 /**
- * Serves one canonical media request (the cached entrypoint's miss path). 200s are tagged so the
- * engine's purges reach them (by asset, by environment, and by rendition) and cached as
- * {@link mediaServability} says: a year and immutable, or only until the rights expire. Anything
- * else is `no-store`, so a 404 never outlives a publish and a 410 never outlives a restored right.
+ * The published file a canonical URL names, when it may be served now: its address, gate entry
+ * and how long it may be cached. Otherwise the answer (`no-store`): 404, or 410 past its rights.
+ * The gateway checked the token already; it is checked again here, still before any lookup, so
+ * neither entrypoint answers anything for a path nobody was given.
  */
-export async function serveMedia(request: Request, deps: MediaDeps): Promise<Response> {
-  const url = new URL(request.url);
-  // The gateway checked the token already; checked again here, still before any lookup, so this
-  // entrypoint answers nothing for a path nobody was given.
+async function admit(
+  url: URL,
+  deps: MediaDeps,
+): Promise<
+  Response | { a: AssetMediaAddress; gate: AssetGateEntry; verdict: { cacheControl: string } }
+> {
   const a = verifiedAddress(url.pathname, deps.paths);
   if (!a) return plain(404, 'not found');
   const gate = await gateFor(deps, a);
@@ -149,6 +213,23 @@ export async function serveMedia(request: Request, deps: MediaDeps): Promise<Res
   if (verdict.status !== 200 || !gate) {
     return verdict.status === 410 ? plain(410, 'gone') : plain(404, 'not found');
   }
+  return { a, gate, verdict };
+}
+
+/**
+ * Serves one canonical media request (the cached entrypoint's miss path). 200s are tagged so the
+ * engine's purges reach them (by asset, by environment, and by rendition) and cached as
+ * {@link mediaServability} says: a year and immutable, or only until the rights expire. Anything
+ * else is `no-store`, so a 404 never outlives a publish and a 410 never outlives a restored right.
+ *
+ * Always the whole file, whatever `Range` says: Workers Caching strips a client's range on a miss,
+ * stores this 200 and slices ranges out of it; a 206 from here would not be stored at all.
+ */
+export async function serveMedia(request: Request, deps: MediaDeps): Promise<Response> {
+  const url = new URL(request.url);
+  const admitted = await admit(url, deps);
+  if (admitted instanceof Response) return admitted;
+  const { a, gate, verdict } = admitted;
 
   const f = (url.searchParams.get('f') ?? 'src') as FormatClass;
   const tags = [
@@ -193,9 +274,54 @@ export async function serveMedia(request: Request, deps: MediaDeps): Promise<Res
     const headers = safeHeaders(gate.contentType);
     headers.set('content-length', String(object.size));
     headers.set('etag', object.httpEtag);
+    headers.set('accept-ranges', 'bytes');
     response = new Response(object.body, { status: 200, headers });
   }
   response.headers.set('cache-control', verdict.cacheControl);
   response.headers.set('cache-tag', tags.join(','));
   return response;
+}
+
+/**
+ * One byte range of a published original, read from R2 by range, for when no cache sliced it (no
+ * Workers Caching in front: local dev and tests; or a response the cache didn't keep). Reached by
+ * RPC, which Workers Caching never caches, so a partial never stands in for the whole file. Gated
+ * as {@link serveMedia} is. A variant, an `If-Range` that no longer names the file, or a header
+ * that isn't one range gets the whole file; a range past the end, 416.
+ */
+export async function serveMediaRange(
+  request: Request,
+  deps: MediaDeps,
+  range: string,
+  ifRange: string | null,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const admitted = await admit(url, deps);
+  if (admitted instanceof Response) return admitted;
+  const { a, gate, verdict } = admitted;
+  if (a.variant.kind !== 'original' || !deps.bucket.head) return serveMedia(request, deps);
+  const head = await deps.bucket.head(gate.r2Key);
+  if (!head) return plain(404, 'not found');
+  // A date, or a weak or stale tag, can't promise the same bytes: the whole file instead.
+  if (ifRange !== null && ifRange.trim() !== head.httpEtag) return serveMedia(request, deps);
+  const want = byteRange(range, head.size);
+  if (!want) return serveMedia(request, deps);
+  if (want === 'unsatisfiable') {
+    return new Response(null, {
+      status: 416,
+      headers: { 'content-range': `bytes */${head.size}`, 'cache-control': NO_STORE },
+    });
+  }
+  const object = await deps.bucket.get(gate.r2Key, { range: want });
+  if (!object) return plain(404, 'not found');
+  const headers = safeHeaders(gate.contentType);
+  headers.set('content-length', String(want.length));
+  headers.set(
+    'content-range',
+    `bytes ${want.offset}-${want.offset + want.length - 1}/${head.size}`,
+  );
+  headers.set('etag', object.httpEtag);
+  headers.set('accept-ranges', 'bytes');
+  headers.set('cache-control', verdict.cacheControl);
+  return new Response(object.body, { status: 206, headers });
 }

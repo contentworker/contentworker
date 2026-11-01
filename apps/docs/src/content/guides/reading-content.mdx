@@ -67,7 +67,7 @@ Entries a role-bound key can't read are left out of lists, and denied fields are
 
 `GET /delivery/{space}/{env}/assets` and `…/assets/{id}` return published assets as
 `{ id, title, description, altText, focalPoint, contentType, size, width, height, kind, url,
-renditions, srcset, video?, rights?, file }`. With `?locale=`, the title, description and alt text
+renditions, srcset, placeholder, video?, rights?, file }`. With `?locale=`, the title, description and alt text
 are one locale's text. The list pages with `limit` and `cursor` (the response's `nextCursor`) and
 filters by `kind`, `tag` and `folder`.
 
