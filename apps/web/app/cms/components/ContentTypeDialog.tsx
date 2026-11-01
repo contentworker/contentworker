@@ -1,4 +1,5 @@
 import {
+  blockVariants,
   type ContentType,
   type ContentTypeDraft,
   FIELD_TYPES,
@@ -28,6 +29,15 @@ import {
 } from '@contentworker/ui/select';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { toApiId } from '../lib/api-id';
+import {
+  BlockVariantsEditor,
+  newVariant,
+  type VariantRow,
+  variantRowsFrom,
+  variantRowsProblem,
+  variantsFromRows,
+} from './BlockVariantsEditor';
 
 interface FieldRow {
   name: string;
@@ -37,6 +47,11 @@ interface FieldRow {
   required: boolean;
   localized: boolean;
   unique?: boolean;
+  /**
+   * Set when the field is a blocks field: an `Array` of `Component` whose
+   * elements take one of these shapes. Offered in the type menu as "Blocks".
+   */
+  blocks?: VariantRow[];
   /**
    * The definition this row was loaded from, if any.
    *
@@ -61,19 +76,11 @@ interface FieldRow {
  */
 const UNBUILDABLE_TYPES: readonly FieldType[] = ['Component'];
 
-/** Derive a legal apiId (`^[a-zA-Z][a-zA-Z0-9_]*$`) from a human name, camelCased. */
-function toApiId(name: string): string {
-  const words = name
-    .trim()
-    .split(/[^a-zA-Z0-9]+/)
-    .filter(Boolean);
-  if (words.length === 0) return '';
-  const camel = words
-    .map((w, i) => (i === 0 ? w.toLowerCase() : w[0]!.toUpperCase() + w.slice(1).toLowerCase()))
-    .join('');
-  const cleaned = camel.replace(/[^a-zA-Z0-9_]/g, '');
-  return (/^[a-zA-Z]/.test(cleaned) ? cleaned : `f${cleaned}`).slice(0, 64);
-}
+/**
+ * The type menu's entry for a blocks field. Not a field type of its own: it is
+ * an `Array` of `Component` with variants, which is what gets saved.
+ */
+const BLOCKS = 'Blocks';
 
 const newField = (): FieldRow => ({
   name: '',
@@ -94,11 +101,23 @@ const newField = (): FieldRow => ({
  * anything but a component) is refused by the domain anyway.
  */
 function toDefinition(row: FieldRow, position: number): FieldDefinition {
-  const retyped = row.source && row.source.type !== row.type;
+  // Turning a list into blocks (or back) is a change of type too: the old
+  // `items` described elements of the other kind.
+  const wasBlocks = row.source ? blockVariants(row.source) !== undefined : false;
+  const retyped =
+    row.source && (row.source.type !== row.type || wasBlocks !== (row.blocks !== undefined));
   const { linkType, items, fields, validations, defaultValue, ...rest } = row.source ?? {};
+  const blocksItems = row.blocks
+    ? {
+        ...(retyped ? {} : { validations: items?.validations }),
+        type: 'Component' as const,
+        variants: variantsFromRows(row.blocks),
+      }
+    : undefined;
   return {
     ...rest,
     ...(retyped ? {} : { linkType, items, fields, validations, defaultValue }),
+    ...(blocksItems ? { items: blocksItems } : {}),
     apiId: row.apiId,
     name: row.name.trim(),
     type: row.type,
@@ -123,6 +142,7 @@ function fromContentType(ct: ContentType): { name: string; apiId: string; fields
       required: f.required,
       localized: f.localized,
       unique: f.unique,
+      ...(blockVariants(f) ? { blocks: variantRowsFrom(blockVariants(f) ?? []) } : {}),
       source: f,
     })),
   };
@@ -190,6 +210,13 @@ export function ContentTypeDialog(props: {
     if (!apiIds.includes(displayField)) {
       setError('The display field must be one of the fields.');
       return;
+    }
+    for (const f of namedFields) {
+      const problem = f.blocks ? variantRowsProblem(f.name, f.blocks) : null;
+      if (problem) {
+        setError(problem);
+        return;
+      }
     }
     setBusy(true);
     try {
@@ -292,8 +319,15 @@ export function ContentTypeDialog(props: {
                   <div className="w-28 space-y-1">
                     <span className="text-xs text-muted-foreground">Type</span>
                     <Select
-                      value={f.type}
-                      onValueChange={(v) => setField(i, { type: v as FieldType })}
+                      value={f.blocks ? BLOCKS : f.type}
+                      onValueChange={(v) =>
+                        setField(
+                          i,
+                          v === BLOCKS
+                            ? { type: 'Array', blocks: f.blocks ?? [newVariant()] }
+                            : { type: v as FieldType, blocks: undefined },
+                        )
+                      }
                     >
                       <SelectTrigger
                         aria-label={`Type for ${f.name || f.apiId || 'field'}`}
@@ -310,6 +344,7 @@ export function ContentTypeDialog(props: {
                             {t}
                           </SelectItem>
                         ))}
+                        <SelectItem value={BLOCKS}>{BLOCKS}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -354,6 +389,13 @@ export function ContentTypeDialog(props: {
                   >
                     <Trash2 className="size-4" />
                   </Button>
+                  {f.blocks && (
+                    <BlockVariantsEditor
+                      fieldLabel={f.name || f.apiId || `field ${i + 1}`}
+                      value={f.blocks}
+                      onChange={(blocks) => setField(i, { blocks })}
+                    />
+                  )}
                 </div>
               ))}
             </div>

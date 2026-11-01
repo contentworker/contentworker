@@ -107,6 +107,28 @@ const EDGE: ContentTypeInput[] = [
         },
       },
       { apiId: 'shapeless', type: 'Component' },
+      {
+        apiId: 'blocks',
+        type: 'Array',
+        items: {
+          type: 'Component',
+          variants: [
+            {
+              apiId: 'hero',
+              name: 'Hero',
+              fields: [
+                { apiId: 'heading', type: 'Symbol', required: true },
+                { apiId: 'image', type: 'Link', linkType: 'Asset' },
+              ],
+            },
+            {
+              apiId: 'cta',
+              name: 'Call to action',
+              fields: [{ apiId: 'target', type: 'Link', linkType: 'Entry', required: true }],
+            },
+          ],
+        },
+      },
       { apiId: "author's-note", type: 'Symbol' },
       { apiId: 'tricky', name: 'Bad */ comment', type: 'Symbol', localized: true },
       { apiId: 'mood', type: 'Symbol', validations: { in: ["it's"] } },
@@ -152,6 +174,16 @@ describe('@contentworker/sdk-codegen generator', () => {
     // A component is localized as a whole, so the locale is resolved one level
     // up; `Localized<>` on a leaf would describe a shape that never arrives.
     expect(edge).toContain('callout?: Localized<{ heading: string; icon?: AssetLink }>;');
+  });
+
+  it('types a blocks field as an array of a union discriminated on _type', () => {
+    // Golden: the exact text consumers compile against, delivered and draft.
+    expect(edge).toContain(
+      "blocks?: ({ _type: 'hero'; _key: string; heading: string; image?: AssetLink | DeliveredAsset } | { _type: 'cta'; _key: string; target: EntryLink })[];",
+    );
+    expect(edge).toContain(
+      "blocks?: Localized<({ _type: 'hero'; _key: string; heading: string; image?: AssetLink } | { _type: 'cta'; _key: string; target: EntryLink })[]>;",
+    );
   });
 
   it('falls back to a record for a component with no declared shape', () => {
@@ -238,6 +270,12 @@ declare const article: ArticleFields;
 declare const draft: ArticleDraftFields;
 acceptsFields(article);
 acceptsFields(draft);
+// A blocks element narrows on _type to its variant's fields.
+declare const post: BlogPostFields;
+for (const block of post.blocks ?? []) {
+  if (block._type === 'hero') block.heading.toUpperCase();
+  else block.target.id.toUpperCase();
+}
 `;
     // types: [] keeps ambient @types packages (e.g. node) out of the check —
     // the generated module must stand alone.

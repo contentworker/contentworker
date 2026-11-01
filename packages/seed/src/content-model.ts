@@ -1,11 +1,13 @@
+import type { FieldDefinition } from '@contentworker/domain';
 import { ensureContentType } from './helpers';
 import type { SeedRun } from './types';
 
 /**
  * The demo content model. Eight types that together cover every field type
  * (Symbol, Text, RichText, Integer, Number, Boolean, Date, Location, JSON,
- * Link, Array) and every validation rule (in, regexp, range, size,
- * linkContentTypes), plus localized/non-localized and required/optional mixes.
+ * Link, Array, and Components as a repeater and as blocks) and every
+ * validation rule (in, regexp, range, size, linkContentTypes), plus
+ * localized/non-localized and required/optional mixes.
  */
 export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
@@ -477,6 +479,70 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
         required: false,
         position: 4,
       },
+      {
+        // Blocks: the page body as an ordered list of mixed sections.
+        apiId: 'blocks',
+        name: 'Blocks',
+        type: 'Array',
+        localized: true,
+        required: false,
+        position: 5,
+        items: {
+          type: 'Component',
+          variants: [
+            {
+              apiId: 'hero',
+              name: 'Hero',
+              fields: [
+                nested({ apiId: 'heading', name: 'Heading', type: 'Symbol', required: true }),
+                nested({ apiId: 'subheading', name: 'Subheading', type: 'Text', position: 1 }),
+                nested({
+                  apiId: 'image',
+                  name: 'Image',
+                  type: 'Link',
+                  linkType: 'Asset',
+                  position: 2,
+                }),
+              ],
+            },
+            {
+              apiId: 'richText',
+              name: 'Rich text',
+              fields: [nested({ apiId: 'body', name: 'Body', type: 'RichText', required: true })],
+            },
+            {
+              apiId: 'callToAction',
+              name: 'Call to action',
+              fields: [
+                nested({ apiId: 'label', name: 'Label', type: 'Symbol', required: true }),
+                nested({
+                  apiId: 'target',
+                  name: 'Target',
+                  type: 'Link',
+                  linkType: 'Entry',
+                  position: 1,
+                  validations: { linkContentTypes: ['article', 'page'] },
+                }),
+                nested({
+                  apiId: 'style',
+                  name: 'Style',
+                  type: 'Symbol',
+                  position: 2,
+                  defaultValue: 'primary',
+                  validations: { in: ['primary', 'secondary'] },
+                }),
+              ],
+            },
+          ],
+        },
+      },
     ],
   });
+}
+
+/** A field inside a component or block: never localized on its own. */
+function nested(
+  f: Pick<FieldDefinition, 'apiId' | 'name' | 'type'> & Partial<FieldDefinition>,
+): FieldDefinition {
+  return { localized: false, required: false, position: 0, ...f };
 }

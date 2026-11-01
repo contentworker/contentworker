@@ -43,7 +43,7 @@ A content type is an ordered list of typed, validated fields. The 13 field types
 | `JSON`      | Arbitrary JSON                                      | object                         |
 | `Link`      | Reference to an Entry or Asset                      | `{ id, linkType }`             |
 | `Component` | A group of nested typed fields                      | object keyed by nested apiId   |
-| `Array`     | Homogeneous list of `Symbol`, `Link` or `Component` | array                          |
+| `Array`     | List of `Symbol`, `Link` or `Component` (or blocks) | array                          |
 
 ### Components and repeaters
 
@@ -83,6 +83,55 @@ Everything else behaves as it does at the top level, and is tested that way:
 are reserved first, since those are what clients query by. A component with no declared shape stays
 `JSON`, because an object type with no fields is not a legal schema.
 
+### Blocks
+
+A **blocks field** is an `Array` of `Component` whose `items` declares `variants` instead of
+`fields` (never both): a page body assembled from a hero, then a rich-text section, then a call to
+action, in whatever order the editor chooses. Each variant is `{ apiId, name, fields }`
+(`ComponentVariant`, `packages/domain/src/content-type/field.ts`), and each stored element names its
+variant and carries a stable key:
+
+```json
+{
+  "_type": "hero",
+  "_key": "0192f4a1-…",
+  "heading": "Spring launch",
+  "image": { "id": "…", "linkType": "Asset" }
+}
+```
+
+`_`-prefixed keys cannot collide with a field apiId, which must start with a letter. A variant-less
+repeater is unchanged: its elements carry neither key.
+
+- **Definition rules** (`defineContentType` / `reviseContentType`): at least one variant, variant
+  apiIds legal and unique within the field, each variant at least one field. A variant's fields
+  obey the component rules above (no `localized`, `unique` or `Slug`) and count toward
+  `MAX_COMPONENT_DEPTH`. Variants are refused on a single `Component`: one optional block slot is
+  the same `Array` field with `validations.size.max: 1`. Content type fields are stored as JSON
+  (`content_types.fields`), so blocks needed no migration.
+- **`_key` is assigned on write.** `createEntry` and `updateEntry` fill a missing `_key` from
+  `ctx.ids.newId()` (`assignBlockKeys`, however deep the blocks field sits) and keep the ones sent,
+  so a block keeps its identity across edits and reorders. Validation does not require `_key`
+  (an AI draft or an import dry-run is judged on content), but a present key must be a non-empty
+  string used once in the field value: a duplicate is refused at `body[i]`.
+- **Validation** looks up each element's variant by `_type`; a missing or unknown `_type` is one
+  issue at `body[i]`, and the element is then checked as that variant's component (`body[i].heading`).
+- **References, defaults and search** read each element with its own variant's fields, so links in
+  a block produce edges (and `?include=` resolves them), nested defaults apply per variant, and
+  text is indexed. `_type` and `_key` are left out of the embedded text.
+- **Removing a variant** is refused with `409 conflict` while any entry still has a block of it
+  (`updateContentType`, `removedVariants` / `removedVariantUses` in
+  `packages/domain/src/content-type/blocks.ts`). It scans the type's current versions, the trash
+  and the published snapshots in keyset pages of 100 by entry id, only when a variant is removed,
+  and names each `location: variant` with the entries using it (`details.variantsInUse`). Adding a
+  variant, or an optional field to one, is always allowed.
+
+**GraphQL** gives a blocks field a union named like a component in that place (`LandingPageBody`)
+with one object type per variant (`LandingPageBodyHero`), each exposing `_type`, `_key` and the
+variant's fields; `resolveType` reads `_type`. An element whose `_type` names no variant is left
+out of the list rather than failing the query. **SDK codegen** emits a discriminated union on
+`_type`: `({ _type: 'hero'; _key: string; heading: string } | …)[]`.
+
 One surface still treats a component as opaque, deliberately:
 
 - **Query pushdown** cannot filter on a nested value. Filter on a top-level field, or model the
@@ -93,7 +142,11 @@ with add / remove / reorder. Validation issues land on the nested input that cau
 error summary reads paths as directions ("Cards 3 › Title", not `cards[2].title`). The content-type
 dialog does not offer to _create_ a component — it has no nested-field authoring, and a component
 with no fields is refused by the domain — so component shapes are authored through the API or MCP.
-Existing ones load, edit and round-trip there unchanged.
+Existing ones load, edit and round-trip there unchanged. Blocks are the exception: the dialog's
+**Blocks** type authors the variants (a name, an API ID and a flat list of fields each), and the
+entry editor adds a block from an "Add block" menu of variants (a plain "Add …" button when there
+is one), reorders and removes blocks, and names them by type in the error summary
+("Body 2 (Hero) › Heading").
 
 ### Rich text
 
@@ -198,6 +251,7 @@ interface FieldDefinition {
     linkType?: 'Entry' | 'Asset';
     validations?: FieldValidations;
     fields?: readonly FieldDefinition[]; // for Array-of-Component
+    variants?: readonly { apiId: string; name: string; fields: readonly FieldDefinition[] }[]; // blocks, instead of fields
   };
   fields?: readonly FieldDefinition[]; // for Component fields
 }

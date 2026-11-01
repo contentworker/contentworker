@@ -1,5 +1,8 @@
 import type { ContentType } from '../content-type/content-type';
 import {
+  BLOCK_KEY,
+  BLOCK_TYPE_KEY,
+  type ComponentVariant,
   type FieldDefinition,
   type FieldValidations,
   unsafeRegexReason,
@@ -198,6 +201,11 @@ function validateValue(
       }
       checkSize(value.length, v?.size, push, 'item count');
       const itemType = field.items?.type;
+      const variants = itemType === 'Component' ? field.items?.variants : undefined;
+      if (variants) {
+        validateBlocks(variants, value, locale, issues, path);
+        break;
+      }
       value.forEach((item, index) => {
         if (itemType === 'Link' && !isLink(item))
           push('Array item must be a link { id, linkType }');
@@ -254,6 +262,51 @@ function validateComponent(
     }
     validateValue(f, nestedValue, locale, issues, at);
   }
+}
+
+/**
+ * Validates the elements of a blocks field: each names a declared variant in
+ * `_type` and is then checked as that variant's component.
+ *
+ * `_key` is not required here. It is assigned on write (`assignBlockKeys`), so
+ * a value that has not been written yet (an AI draft, an import dry-run, the
+ * editor's own pre-save check) is judged on its content alone. A key that is
+ * present must be a non-empty string used once in the field value: two blocks
+ * sharing a key would make every client that addresses a block by it (a
+ * comment anchor, a live-preview patch) pick one of them at random.
+ */
+function validateBlocks(
+  variants: readonly ComponentVariant[],
+  items: readonly unknown[],
+  locale: LocaleCode,
+  issues: FieldIssue[],
+  path: string,
+): void {
+  const keys = new Set<string>();
+  items.forEach((item, index) => {
+    const at = `${path}[${index}]`;
+    const push = (message: string) => issues.push({ field: at, locale, message });
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      push('Expected a block object with a _type');
+      return;
+    }
+    const { [BLOCK_TYPE_KEY]: type, [BLOCK_KEY]: key, ...values } = item as Record<string, unknown>;
+    if (key !== undefined) {
+      if (typeof key !== 'string' || key === '') push('_key must be a non-empty string');
+      else if (keys.has(key)) push(`Duplicate _key "${key}"`);
+      else keys.add(key);
+    }
+    if (typeof type !== 'string' || type === '') {
+      push(`Block is missing _type (one of: ${variants.map((v) => v.apiId).join(', ')})`);
+      return;
+    }
+    const variant = variants.find((v) => v.apiId === type);
+    if (!variant) {
+      push(`Unknown block type "${type}" (one of: ${variants.map((v) => v.apiId).join(', ')})`);
+      return;
+    }
+    validateComponent(variant.fields, values, locale, issues, at, push);
+  });
 }
 
 function isLink(value: unknown): value is { id: string; linkType: string } {

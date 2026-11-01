@@ -1,8 +1,13 @@
-import type {
-  ContentType,
-  DeliveredAsset,
-  FieldDefinition,
-  LocalizedValue,
+import {
+  BLOCK_KEY,
+  BLOCK_TYPE_KEY,
+  blockVariants,
+  type ComponentVariant,
+  type ContentType,
+  type DeliveredAsset,
+  type FieldDefinition,
+  type LocalizedValue,
+  variantOf,
 } from '@contentworker/domain';
 import {
   GraphQLBoolean,
@@ -17,6 +22,7 @@ import {
   GraphQLScalarType,
   GraphQLSchema,
   GraphQLString,
+  GraphQLUnionType,
 } from 'graphql';
 
 /** An entry rendered (locale-flattened, links resolved) by the resolvers. */
@@ -125,24 +131,77 @@ function componentType(
   names: TypeNames,
   preferredName: string,
   nested: readonly FieldDefinition[] | undefined,
+  extra: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {},
 ): GraphQLOutputType {
   if (!nested || nested.length === 0) return JSONScalar;
   const name = names.claim(preferredName);
   return new GraphQLObjectType({
     name,
     fields: () => {
-      const fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {};
+      const fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = { ...extra };
       for (const f of nested) {
         fields[f.apiId] = {
           type: typeFor(names, `${name}${cap(f.apiId)}`, f),
           // Values arrive as a plain object keyed by nested apiId, so the
           // default resolver would do — spelled out to survive a rename.
-          resolve: (value) => value?.[f.apiId],
+          resolve: (value) => servedValue(f, value?.[f.apiId]),
         };
       }
       return fields;
     },
   });
+}
+
+/** What every block carries besides its variant's fields. */
+const BLOCK_FIELDS: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {
+  [BLOCK_TYPE_KEY]: {
+    type: new GraphQLNonNull(GraphQLString),
+    description: "The block's variant apiId",
+    resolve: (value) => value?.[BLOCK_TYPE_KEY],
+  },
+  [BLOCK_KEY]: {
+    type: GraphQLString,
+    description: 'Stable identity of the block within its field value',
+    resolve: (value) => value?.[BLOCK_KEY],
+  },
+};
+
+/**
+ * A blocks field becomes a union with one object type per variant, picked by
+ * each element's `_type`. The union takes the name a component in the same
+ * place would (`LandingPageBody`), and each member appends its variant
+ * (`LandingPageBodyHero`), claimed in declaration order so names are stable
+ * from one schema build to the next.
+ */
+function blocksType(
+  names: TypeNames,
+  preferredName: string,
+  variants: readonly ComponentVariant[],
+): GraphQLUnionType {
+  const name = names.claim(preferredName);
+  const members = new Map<string, GraphQLObjectType>();
+  for (const v of variants) {
+    const member = componentType(names, `${name}${cap(v.apiId)}`, v.fields, BLOCK_FIELDS);
+    // Variants are refused without fields, so this is always an object type.
+    if (member instanceof GraphQLObjectType) members.set(v.apiId, member);
+  }
+  return new GraphQLUnionType({
+    name,
+    types: [...members.values()],
+    resolveType: (value: Record<string, unknown>) =>
+      members.get(String(value?.[BLOCK_TYPE_KEY]))?.name,
+  });
+}
+
+/**
+ * A field's value as the schema serves it. A blocks element whose `_type`
+ * names no variant (one removed while a stale snapshot still held it) is left
+ * out rather than failing the whole query: the union has no member to type it.
+ */
+function servedValue(field: FieldDefinition, value: unknown): unknown {
+  const variants = blockVariants(field);
+  if (!variants || !Array.isArray(value)) return value;
+  return value.filter((item) => variantOf(variants, item) !== undefined);
 }
 
 /** The GraphQL type for one field, recursing into components. */
@@ -153,6 +212,10 @@ function typeFor(
 ): GraphQLOutputType {
   if (field.type === 'Component') return componentType(names, preferredName, field.fields);
   if (field.type === 'Array' && field.items?.type === 'Component') {
+    const variants = field.items.variants;
+    if (variants && variants.length > 0) {
+      return new GraphQLList(blocksType(names, preferredName, variants));
+    }
     return new GraphQLList(componentType(names, preferredName, field.items.fields));
   }
   return scalarFor(field);
@@ -231,7 +294,7 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
     for (const f of ct.fields) {
       fields[f.apiId] = {
         type: typeFor(names, `${cap(ct.apiId)}${cap(f.apiId)}`, f),
-        resolve: (s) => s.fields[f.apiId],
+        resolve: (s) => servedValue(f, s.fields[f.apiId]),
       };
     }
     const objectType = new GraphQLObjectType<ResolvedEntry>({ name: cap(ct.apiId), fields });

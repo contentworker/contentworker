@@ -12,11 +12,14 @@
   "delivery: POST /graphql entry": { "statements": 8, "roundTrips": 8 },
   "delivery: POST /graphql collection": { "statements": 8, "roundTrips": 8 },
   "delivery: POST /graphql asset": { "statements": 4, "roundTrips": 4 },
+  "delivery: GET /entries/:id?include=1 (blocks)": { "statements": 5, "roundTrips": 5 },
+  "delivery: POST /graphql blocks": { "statements": 8, "roundTrips": 8 },
   "delivery: GET /assets/:id": { "statements": 2, "roundTrips": 2 },
   "delivery: GET /assets/:id?locale=de": { "statements": 3, "roundTrips": 3 },
   "delivery: GET /assets": { "statements": 2, "roundTrips": 2 },
   "management: GET /entries/:id": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries?content_type=article": { "statements": 2, "roundTrips": 2 },
   "management: POST /entries": { "statements": 4, "roundTrips": 3 },
+  "management: POST /entries (blocks)": { "statements": 4, "roundTrips": 3 },
   "management: POST /entries/:id/published": { "statements": 10, "roundTrips": 6 }
 }

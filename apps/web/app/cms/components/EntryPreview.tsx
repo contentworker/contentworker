@@ -9,6 +9,7 @@ import {
   isRichTextDocument,
   isWellFormedTable,
   resolveLocalizedValue,
+  variantOf,
 } from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { cn } from '@contentworker/ui/lib/utils';
@@ -140,6 +141,23 @@ function FieldValue({
     case 'Array': {
       const items = Array.isArray(value) ? value : [];
       const of = field.items;
+      if (of?.type === 'Component' && of.variants)
+        return (
+          <ol className="space-y-3">
+            {items.map((item, i) => {
+              const variant = variantOf(of.variants ?? [], item);
+              const type = (item as Record<string, unknown> | null)?._type;
+              return (
+                <li key={i} className="space-y-1 border-l-2 pl-3">
+                  <p className="caption">
+                    {variant?.name ?? `Unknown block “${typeof type === 'string' ? type : ''}”`}
+                  </p>
+                  {variant && <Nested fields={variant.fields} value={item} pickers={pickers} />}
+                </li>
+              );
+            })}
+          </ol>
+        );
       if (of?.type === 'Component')
         return (
           <ol className="space-y-3">

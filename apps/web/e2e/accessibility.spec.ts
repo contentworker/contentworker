@@ -361,3 +361,56 @@ test('the publish confirmation has no accessibility violations', async ({
   await expect(dialog.getByText('1 field changed')).toBeVisible();
   await scan(page, testInfo);
 });
+
+test('a blocks field’s editor has no accessibility violations', async ({ page, request }, info) => {
+  test.skip(info.project.name.startsWith('iphone'), 'the editor is review-only on a phone');
+  const leaf = (apiId: string, name: string) => ({
+    apiId,
+    name,
+    type: 'Symbol',
+    localized: false,
+    required: true,
+    position: 0,
+  });
+  const type = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'promo',
+    name: 'Promo',
+    displayField: 'title',
+    fields: [
+      leaf('title', 'Title'),
+      {
+        apiId: 'blocks',
+        name: 'Blocks',
+        type: 'Array',
+        localized: false,
+        required: false,
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [
+            { apiId: 'hero', name: 'Hero', fields: [leaf('heading', 'Heading')] },
+            { apiId: 'cta', name: 'Call to action', fields: [leaf('label', 'Label')] },
+          ],
+        },
+      },
+    ],
+  });
+  expect([200, 201], await type.text()).toContain(type.status());
+  await api(request, 'POST', `${MGMT}/content-types/promo/published`);
+
+  await openCms(page, '/content/promo/new');
+  const add = page.getByRole('button', { name: 'Add block to Blocks' });
+  await expect(add).toBeVisible({ timeout: 15_000 });
+  await add.click();
+  // Not scanned while open: a Radix menu is modal, so it marks the page behind it aria-hidden, and
+  // axe reports the hidden page's focusable controls (every menu in the admin does the same).
+  await expect(page.getByRole('menuitem', { name: 'Call to action' })).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Hero' }).click();
+  await add.click();
+  await page.getByRole('menuitem', { name: 'Call to action' }).click();
+  await expect(page.getByRole('button', { name: 'Remove Hero block 1' })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Move Call to action block 2 down' }),
+  ).toBeDisabled();
+  await scan(page, info);
+});
