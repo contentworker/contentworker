@@ -39,7 +39,8 @@ Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
 | `entry.published`        | `entryId`, `contentTypeApiId`, `version`, `fields`    | An entry is published                   |
 | `entry.unpublished`      | `entryId`, `contentTypeApiId`                         | An entry is unpublished, or trashed while live |
 | `asset.published`        | `assetId`                                             | An asset is published                   |
-| `asset.unpublished`      | `assetId`                                             | An asset is unpublished                 |
+| `asset.unpublished`      | `assetId`                                             | An asset is unpublished, or archived or deleted while live |
+| `asset.deleted`          | `assetId`, `r2Key` or `videoId`                       | An asset is deleted permanently         |
 | `content_type.published` | `contentTypeApiId`, `version`                         | A content type's definition is published |
 | `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
 

@@ -54,7 +54,7 @@ first; the admin then calls the route.
 ## Layout
 
 From `md` a sidebar lists the day's work (Overview, Content, Approvals, Releases), then Build
-(Workflows), Library (Media, Taxonomy) and Settings, with the account and theme at its foot; it
+(Workflows), Library (Assets, Taxonomy) and Settings, with the account and theme at its foot; it
 collapses to an icon rail. A sticky header holds the breadcrumbs, the space / environment / locale
 scope, search and New entry. Below `md` a bottom tab bar holds the day's work and More.
 `app/cms/components/layout/nav.ts` is the one source of the pages and their `g`-letter shortcuts
@@ -76,7 +76,14 @@ Settings sections: **Access** (Space access, API keys, Roles, Connected apps), *
 - **Releases** (`/releases`): bundle entries and assets, publish as a unit, schedule.
 - **Workflows** (`/workflows`, `/workflows/:id`): editorial workflow definitions and the graph
   editor (React Flow), with server-side validation, versions, and AI drafting.
-- **Media** (`/media`): assets, alt text, focal point, transforms.
+- **Assets** (`/assets`; the old `/media` address redirects): the asset library. A folder tree (all
+  assets, those in no folder, nested folders to create, rename, and delete once empty) beside a
+  filter bar (kind, status including archived, tag, sort) and a grid or list (the choice is kept
+  per browser), paged with the API's cursor. Pick or drop any number of files to upload them into
+  the open folder, each with its progress; select several to move them to a folder, publish or
+  archive them; archive (with Undo) or restore one; delete one, and when entries still link to it
+  the screen lists them, each a link to the entry, and offers to archive it instead. Each asset's
+  sheet holds its alt text, focal point, tags and usage.
 - **Taxonomy** (`/taxonomy`): concept schemes, concepts, tags.
 - **Settings**: API keys, roles, OAuth connected apps, webhooks, functions, AI actions, app
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch

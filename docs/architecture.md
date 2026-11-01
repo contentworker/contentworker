@@ -129,8 +129,8 @@ bind them by `script_name`) and handles:
   `entry.published` to the agents queue when it is bound, and sends one coalesced purge message
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-  `asset.unpublished`, `content_type.published`, `release.published`,
-  `environment_alias.changed`).
+  `asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
+  `environment_alias.changed`, `environment.deleted`).
 - **Cron** (`* * * * *`): due scheduled actions, the outbox relay sweep, bulk-job stall recovery,
   agent schedules (`AGENTS_SCHEDULES=true`), retention at the top of each hour, and the daily
   secret reseal at 03:30 UTC.
@@ -211,6 +211,13 @@ Served by the api (`packages/http/src/routes/media.ts`, `@contentworker/adapters
   upload; `POST /webhooks/stream` verifies `Webhook-Signature` (`STREAM_WEBHOOK_SECRET`) and then
   re-reads the video from the Stream API; `POST …/assets/:id/video/refresh` does the same on
   demand.
+- **Deleting** an asset (`DELETE …/assets/:id`, refused with `409 asset_in_use` while entries link
+  to it) removes the row in one unit with an `asset.deleted` event; the engine then deletes the
+  bytes under the asset's key prefix and its Stream video, unless another environment of the space
+  still holds an asset with that id (an environment import shares files).
+
+The admin's **Assets** screen (`/assets`; `/media` redirects there) is the library over these
+routes: folders, filters, archive and delete. The api's `/media/*` byte route keeps its name.
 
 ## Data placement
 

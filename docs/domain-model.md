@@ -316,15 +316,48 @@ interface LocaleConfig {
 interface Asset {
   id: string;
   status: 'draft' | 'published' | 'archived';
-  file: AssetFile; // { url, fileName, contentType, size?, width?, height? }
+  file: AssetFile; // { url, fileName, contentType, size?, width?, height?, video? }
   title: LocalizedValue;
   description: LocalizedValue;
+  metadata: AssetMetadata; // { altText, tags, focalPoint?, fields? }
+  folderId?: string; // absent at the library root
+  version?: number; // 1, then +1 per file replacement (absent reads as 1)
+  r2Key?: string; // where the bytes live; absent for a hosted video
+  contentHash?: string;
+  createdAt?: string;
+  createdBy?: string; // as the audit log names actors
+  archivedAt?: string; // only while archived
+  rights?: AssetRights; // { license?, credit?, expiresAt?, embargoUntil? }
 }
 ```
 
-Assets have a single current revision (no version ledger). `publishAsset` / `unpublishAsset`
-move between `draft` and `published` (throwing `InvalidStateError` on bad transitions). Bytes are
-uploaded directly to object storage via a presigned URL — they never transit the API.
+An asset has one current file. `publishAsset` / `unpublishAsset` move between `draft` and
+`published`; `archiveAsset(asset, at)` takes any non-archived asset to `archived`, and
+`restoreAsset` brings an archived one back as a `draft` (each throws `InvalidStateError` on a bad
+transition; an archived asset cannot be published). Bytes are uploaded directly to object storage
+via a presigned URL — they never transit the API.
+
+`assetKind(contentType)` derives an `AssetKind` (`image`, `video`, `audio`, `document`, `other`;
+`ASSET_KINDS`) from the content type; the store keeps it in a column for filtering, so it is never
+set by a client. Deleting an asset that entries still link to throws `AssetInUseError`
+(`asset_in_use`), whose `usage` lists the links.
+
+### Asset folders
+
+```ts
+interface AssetFolder {
+  id: string;
+  name: string; // 1..128 characters, no "/"; unique among siblings
+  parentId?: string; // absent at the root
+  path: string; // materialized path of ids, e.g. "/a/b/"
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+Folders nest up to `MAX_ASSET_FOLDER_DEPTH` (16). `assetFolderPath(parent, id)` builds a path and
+enforces the depth; `assertFolderMove` refuses a move into the folder itself or below it. Moving a
+folder rewrites the path prefix of its whole subtree.
 
 ## References
 
@@ -375,6 +408,7 @@ exact event type. Delivery attempts are recorded as `WebhookDelivery` rows for o
 | `entries.published_bulk`    | `jobId`, `chunkId`, `action`, `entryIds`                                   |
 | `asset.published`           | `assetId`                                                                  |
 | `asset.unpublished`         | `assetId`                                                                  |
+| `asset.deleted`             | `assetId`, `r2Key?`, `videoId?`                                            |
 | `content_type.published`    | `contentTypeApiId`, `version`                                              |
 | `release.published`         | `releaseId`, `entryIds`                                                    |
 | `environment_alias.changed` | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias name |
@@ -425,6 +459,7 @@ All extend `DomainError` (`{ code, message, details? }`) and carry a stable, cli
 | `ValidationError(issues)`          | `validation_failed` | Carries `issues: FieldIssue[]`              |
 | `ConflictError(message, details?)` | `conflict`          | Uniqueness violation (e.g. duplicate apiId) |
 | `InvalidStateError(message)`       | `invalid_state`     | Illegal state-machine transition            |
+| `AssetInUseError(assetId, usage)`  | `asset_in_use`      | Entries still link to the asset (`usage`)   |
 | `UnauthorizedError(message?)`      | `unauthorized`      | Invalid/missing credentials                 |
 | `ForbiddenError(scope)`            | `forbidden`         | Missing the required scope                  |
 

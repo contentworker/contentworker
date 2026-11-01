@@ -214,6 +214,12 @@ is still removing in bounded steps (their ids can't be reused until it finishes)
 The lexical search index is not in D1: it lives in `SearchShardDO` (FTS5). Vectors live in
 Vectorize. See [AI, agents & search](./ai-agents-and-search.md).
 
+`0004_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
+`height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
+`archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)
+and two tables: `asset_folders` (materialized `path`, sibling names unique) and `asset_versions`
+(the files an asset had before its current one).
+
 ## Testing approach
 
 The application layer is tested against `@contentworker/test-kit` fakes: an in-memory

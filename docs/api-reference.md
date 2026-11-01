@@ -458,9 +458,17 @@ time, so a link from an unpublished draft does not block the delete.
 
 | Method | Path                         | Scope             | Description                                                                       |
 | ------ | ---------------------------- | ----------------- | --------------------------------------------------------------------------------- |
-| GET    | `…/assets`                   | `preview:read`    | List assets                                                                       |
-| POST   | `…/assets`                   | `content:write`   | Create draft + presigned upload URL                                               |
+| GET    | `…/assets`                   | `preview:read`    | List assets: `kind`, `mime` (`image/*`), `tag`, `folder` (id or `root`), `status` (archived hidden unless `archived`/`all`), `sort` (`updatedAt`, `createdAt`, `size`), `order`, `limit`, `cursor` → `{ items, nextCursor? }` |
+| POST   | `…/assets`                   | `content:write`   | Create draft + presigned upload URL (optional `folderId`)                         |
+| POST   | `…/assets/move`              | `content:write`   | `{ ids (≤ 500), folderId \| null }` → `{ moved }`; 404 for an unknown folder      |
 | GET    | `…/assets/:id`               | `preview:read`    | Get asset                                                                         |
+| POST   | `…/assets/:id/archive`       | `content:publish` | Archive (leaves Delivery when published); idempotent                              |
+| POST   | `…/assets/:id/restore`       | `content:write`   | Restore an archived asset as a draft; idempotent                                  |
+| DELETE | `…/assets/:id`               | `content:publish` | Delete permanently (204); `409 asset_in_use` with `error.usage` while linked      |
+| GET    | `…/asset-folders`            | `preview:read`    | List folders, in path order                                                       |
+| POST   | `…/asset-folders`            | `content:write`   | Create `{ name, parentId? }` (201); 409 for a sibling of the same name            |
+| PATCH  | `…/asset-folders/:id`        | `content:write`   | Rename and/or move `{ name?, parentId? \| null }`, subtree along                  |
+| DELETE | `…/asset-folders/:id`        | `content:write`   | Delete an empty folder (204); 409 when it holds subfolders or assets              |
 | PATCH  | `…/assets/:id/metadata`      | `content:write`   | Update alt text / tags metadata                                                   |
 | GET    | `…/assets/:id/usage`         | `preview:read`    | Reference usage                                                                   |
 | GET    | `…/assets/:id/transform`     | `preview:read`    | Image transform URL (`w,h,fit,fm,q`; `fm=auto` → AVIF/WebP)                       |

@@ -213,7 +213,8 @@ cma.entries.reverseReferences(id)                     // "what links here"
 cma.entries.versions.list(id) / .get(id, v) / .diff(id, from, to) / .restore(id, v)
 
 cma.assets.create({ fileName, contentType })          // → { asset, upload } (presigned PUT)
-cma.assets.list() / .get(id) / .setMetadata(id, patch) / .usage(id)
+cma.assets.list(query) / .get(id) / .setMetadata(id, patch) / .usage(id) / .archive(id) / .restore(id) / .delete(id) / .move(ids, folderId)
+cma.assets.folders.list() / .create({ name, parentId }) / .update(id, changes) / .delete(id)
 cma.assets.publish(id) / .unpublish(id)
 
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
