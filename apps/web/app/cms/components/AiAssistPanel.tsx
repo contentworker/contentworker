@@ -1,6 +1,7 @@
 import type { ContentType, EntryFields } from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
+import { type ComposeIcon, ComposeLoader, composeIcons } from '@contentworker/ui/compose-loader';
 import { Label } from '@contentworker/ui/label';
 import {
   Select,
@@ -9,7 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import { Bot } from 'lucide-react';
 import { useState } from 'react';
 import { Confirmation, ProposedValue } from '~/cms/components/ai/Confirmation';
 import { Task, TaskItem } from '~/cms/components/ai/Task';
@@ -89,6 +89,10 @@ export function AiAssistPanel(props: {
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const working = busy !== null && busy !== 'apply';
+  /** The loader for a task's button while that task runs. */
+  const runs = (label: string, icon: ComposeIcon) =>
+    busy === label ? <ComposeLoader icon={icon} /> : null;
 
   const ok = (label: string, fn: () => Promise<void>) => async () => {
     setBusy(label);
@@ -226,7 +230,8 @@ export function AiAssistPanel(props: {
     <CollapsibleCard
       title={
         <>
-          <Bot className="size-4 text-muted-foreground" /> AI assist
+          {/* The mark at rest; it composes itself while a task runs. */}
+          <ComposeLoader playing={working} className="text-ai" /> AI assist
         </>
       }
       description="Translate, summarize, autofill, and classify. Every result is proposed for your review before anything is written."
@@ -250,6 +255,7 @@ export function AiAssistPanel(props: {
             </Select>
           </div>
           <Button type="button" size="sm" disabled={!target || busy !== null} onClick={translate}>
+            {runs('translate', composeIcons.write)}
             {busy === 'translate' ? 'Translating…' : 'Translate'}
           </Button>
         </div>
@@ -278,6 +284,7 @@ export function AiAssistPanel(props: {
             disabled={!summaryField || busy !== null}
             onClick={summarize}
           >
+            {runs('summarize', composeIcons.write)}
             {busy === 'summarize' ? 'Summarizing…' : 'Summarize'}
           </Button>
         </div>
@@ -301,6 +308,7 @@ export function AiAssistPanel(props: {
             </Select>
           </div>
           <Button type="button" size="sm" disabled={!autofill || busy !== null} onClick={fill}>
+            {runs('autofill', composeIcons.schema)}
             {busy === 'autofill' ? 'Autofilling…' : 'Autofill'}
           </Button>
         </div>
@@ -314,6 +322,7 @@ export function AiAssistPanel(props: {
         disabled={busy !== null}
         onClick={tag}
       >
+        {runs('tags', composeIcons.search)}
         {busy === 'tags' ? 'Classifying…' : 'Suggest taxonomy tags'}
       </Button>
 

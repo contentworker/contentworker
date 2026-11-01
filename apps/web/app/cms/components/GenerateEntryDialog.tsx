@@ -1,5 +1,6 @@
 import type { ContentType, EntryFields } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import { ComposeLoader, composeSequences } from '@contentworker/ui/compose-loader';
 import {
   Dialog,
   DialogContent,
@@ -222,7 +223,14 @@ export function GenerateEntryDialog(props: {
                 Cancel
               </Button>
               <Button type="submit" disabled={busy || !prompt.trim()}>
-                {busy ? 'Generating…' : 'Generate draft'}
+                {busy ? (
+                  <>
+                    <ComposeLoader icon={composeSequences.drafting} />
+                    Generating…
+                  </>
+                ) : (
+                  'Generate draft'
+                )}
               </Button>
             </DialogFooter>
           </form>

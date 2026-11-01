@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@contentworker/ui/card';
 import { type ChartConfig, ChartContainer } from '@contentworker/ui/chart';
-import { Bot } from 'lucide-react';
 import { Bar, BarChart } from 'recharts';
+import { Mark } from '~/components/mark';
 import type { AgentRun } from '../../lib/management';
 import { formatTokens, usageByWorkflow, type WorkflowUsage } from '../../lib/usage';
 
@@ -39,7 +39,7 @@ export function UsageByWorkflowCard(props: { runs: readonly AgentRun[]; days?: n
       <CardContent>
         {rows.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-6 text-center text-sm text-muted-foreground">
-            <Bot className="size-6" />
+            <Mark className="size-6" />
             No agent runs in the last {days} days.
           </div>
         ) : (

@@ -58,9 +58,9 @@ export function ContentLayout() {
                     to={`/content/${t.apiId}`}
                     className={({ isActive }) =>
                       cn(
-                        'flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
+                        'relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
                         isActive
-                          ? 'bg-accent font-medium text-accent-foreground'
+                          ? 'bg-accent font-medium text-accent-foreground before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-brand'
                           : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                       )
                     }

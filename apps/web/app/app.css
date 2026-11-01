@@ -615,27 +615,6 @@
   overscroll-behavior: contain;
 }
 
-/* Work in progress: an ellipsis that fills in, still where motion is reduced. */
-.cw-dots::after {
-  content: "\2026";
-  display: inline-block;
-  width: 0;
-  overflow: hidden;
-  vertical-align: bottom;
-  animation: cw-dots 1.2s steps(4, end) infinite;
-}
-@keyframes cw-dots {
-  to {
-    width: 1.05em;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .cw-dots::after {
-    animation: none;
-    width: auto;
-  }
-}
-
 /* Work in progress as a light sweeping across muted text (AI Elements' Shimmer). Still, in plain
    muted text, where motion is reduced. */
 .cw-shimmer {

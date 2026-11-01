@@ -8,6 +8,7 @@
 import { ASSISTANT_TOOLS, isAssistantTool } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@contentworker/ui/card';
+import { ComposeLoader } from '@contentworker/ui/compose-loader';
 import { cn } from '@contentworker/ui/lib/utils';
 import { type DynamicToolUIPart, getToolName, type ToolUIPart } from 'ai';
 import {
@@ -121,11 +122,13 @@ function Line({
         tone === 'bad' && 'text-bad',
       )}
     >
-      <Icon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-      <span className="min-w-0">
-        {children}
-        {tone === 'running' ? <span aria-hidden="true" className="cw-dots" /> : null}
-      </span>
+      {/* A tool still running shows the model at work in place of its icon. */}
+      {tone === 'running' ? (
+        <ComposeLoader className="mt-0.5 size-3.5 text-ai" />
+      ) : (
+        <Icon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+      )}
+      <span className="min-w-0">{children}</span>
     </span>
   );
   return href ? (

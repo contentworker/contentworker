@@ -137,7 +137,8 @@ status.
 
 - **Brand** (`brand`, purple): contentworker's accent, the colour of its mark. It marks where you
   are and what you chose: the mark (sidebar, top bar, sign-in), the current page's tick and icon
-  (sidebar and tab bar), focus (`ring` and the page-wide outline), checked checkboxes and switches
+  (sidebar and tab bar), the current item's tick in a page's own list (Settings sections, content
+  types), the current folder's icon, the active tab's underline, focus (`ring` and the page-wide outline), checked checkboxes and switches
   and the chosen option card, the text selection and the caret. A model's work wears it too: `ai`
   is the brand, so the AI loader (`ComposeLoader`), the AI stamp and agent proposals read as
   contentworker at work. Never a button fill, never a background wash. Its edge holds 3:1 and its
@@ -581,7 +582,10 @@ for code and data blocks only.
   the icon fades, in one 2.8s cycle, in `text-ai`. Icons: `aiMark` (the default), `write`,
   `schema`, `asset`, `search`, `workflow`; sequences (`drafting`, `enriching`, `working`) play one
   per cycle and open on the mark. Decoration beside a status line, unless `label` makes it the
-  status. Where motion is reduced it is drawn whole and holds still.
+  status. Where motion is reduced it is drawn whole and holds still. It is the AI's working state
+  everywhere: Coworker's thinking line and its running tool lines, the busy Generate draft button
+  (`drafting`), and AI assist, whose header mark composes while a task runs and whose busy button
+  shows that task's icon. An agent at rest is the mark in `text-ai`, never a robot icon.
 - **Skeleton** (`ui/skeleton.tsx`): `Skeleton` (a block, tile radius), `SkeletonText` (lines one
   line-height tall in the surrounding type), `SkeletonPill` (a badge, or a button with `h-8`). The
   CMS's regions compose them with `LoadingStatus`, `Refreshing`, `PageSkeleton` and the
