@@ -35,9 +35,9 @@ afterEach(() => {
 const type = (apiId: string, name: string, status: 'draft' | 'published'): ContentType =>
   ({ apiId, name, displayField: 'title', version: 1, status, fields: [] }) as ContentType;
 
-function setup(types: ContentType[]) {
+function setup(types: ContentType[], typesPending = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const outlet = { types, locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
+  const outlet = { types, typesPending, locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
   render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
@@ -88,5 +88,13 @@ describe('content types overview', () => {
     const article = rowOf('Article');
     expect((await article.findAllByText('—')).length).toBe(3);
     expect(article.getByRole('button', { name: 'Edit “Article”' })).toBeTruthy();
+  });
+});
+
+describe('ContentTypesOverview while the types load', () => {
+  it('draws a loading list, never "No content types yet", before the types arrive', () => {
+    setup([], true);
+    expect(screen.queryByText('No content types yet')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('Loading content types…');
   });
 });
