@@ -10,6 +10,7 @@ import { runBulkChunk } from '../bulk-jobs.js';
 import type { AppContext } from '../context.js';
 import { invokeFunctionsForEvent } from '../functions.js';
 import { importChunkRunner } from '../import-jobs.js';
+import { allPages } from '../paging.js';
 import {
   extractTextByLocale,
   indexEntryEmbeddings,
@@ -160,6 +161,35 @@ export async function dispatchEvent(
         await deps.cache.invalidateTags(fresh);
         for (const t of fresh) deps.invalidatedTags?.add(t);
       }
+    }
+  }
+
+  // A deleted environment: its rows are gone, so remove what was derived from them elsewhere.
+  // Each removal is idempotent, so a redelivered event is harmless.
+  if (event.type === 'environment.deleted') {
+    const searchIndex = deps.searchIndex ?? deps.rag?.searchIndex;
+    for (const entryId of event.entryIds) {
+      if (deps.rag) await removeEntryEmbeddings(deps.rag, scope, entryId);
+      await searchIndex?.remove(scope, entryId);
+    }
+    if (deps.cache) await deps.cache.invalidateTag(epochTag(scope));
+    // Its asset files, except any another environment's asset records still point at: an
+    // environment import keeps asset ids and their files, so a clone shares its source's files.
+    if (deps.blob?.deletePrefix) {
+      const inUse = new Set<string>();
+      for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
+        if (env.id === scope.environmentId) continue;
+        const other = { spaceId: scope.spaceId, environmentId: env.id };
+        for (const asset of await allPages((skip, limit) =>
+          ctx.store.assets.list(other, { skip, limit }),
+        )) {
+          inUse.add(asset.id);
+        }
+      }
+      // Keys are `${space}/${environment}/${assetId}/${fileName}` (assetObjectKey).
+      await deps.blob.deletePrefix(`${scope.spaceId}/${scope.environmentId}/`, (key) =>
+        inUse.has(key.split('/')[2] ?? ''),
+      );
     }
   }
 

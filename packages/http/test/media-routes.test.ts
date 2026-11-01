@@ -36,8 +36,14 @@ function fakeBucket(): R2BucketLike {
         type: options?.httpMetadata?.contentType,
       });
     },
-    async delete(key) {
-      objects.delete(key);
+    async delete(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key);
+    },
+    async list({ prefix }) {
+      return {
+        objects: [...objects.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })),
+        truncated: false,
+      };
     },
   };
 }

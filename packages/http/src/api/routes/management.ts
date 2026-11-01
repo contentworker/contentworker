@@ -41,6 +41,7 @@ import {
   deleteAppExtension,
   deleteComment,
   deleteConcept,
+  deleteEnvironment,
   deleteEnvironmentAlias,
   deleteFunction,
   deleteRelease,
@@ -468,6 +469,25 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     await createEnvironment(ctx, c.req.param('space'), body.id, body.name);
     return c.json({ id: body.id }, 201);
   });
+  app.delete(
+    '/spaces/:space/environments/:env',
+    doc('Spaces & environments', 'Delete an environment and everything in it', {
+      query: { confirm: 'The environment id again (required: deleting is irreversible)' },
+      description:
+        'Removes the environment, its content model, entries, versions, assets, releases, ' +
+        'workflows and the rest (its audit history stays); search documents, vectors and the ' +
+        'delivery cache are cleaned up asynchronously. Refuses `main` and any environment an ' +
+        'alias points at (409).',
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) =>
+      c.json(
+        await deleteEnvironment(ctx, c.req.param('space'), c.req.param('env'), {
+          confirm: c.req.query('confirm'),
+          principal: c.get('principal'),
+        }),
+      ),
+  );
 
   // --- environment aliases (blue/green) ----------------------------------
   app.get('/spaces/:space/environment-aliases', requireScope(SCOPES.previewRead), async (c) =>

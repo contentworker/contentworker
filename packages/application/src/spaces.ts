@@ -1,11 +1,20 @@
 import {
+  ConflictError,
+  type DomainEvent,
+  ForbiddenError,
   InvalidStateError,
   type LocaleCode,
   NotFoundError,
+  type Principal,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
-import type { EnvironmentAlias, SpaceConfig } from '@contentworker/ports';
+import {
+  type EnvironmentAlias,
+  type SpaceConfig,
+  TransactionConflictError,
+} from '@contentworker/ports';
+import { auditActor } from './audit.js';
 import type { AppContext } from './context.js';
 import { ensureRolePresets } from './team.js';
 
@@ -74,6 +83,115 @@ export async function listEnvironments(ctx: AppContext, spaceId: string) {
   return ctx.store.spaces.listEnvironments(spaceId);
 }
 
+/** Entry ids per `environment.deleted` event (keeps each outbox row and queue message small). */
+export const ENVIRONMENT_DELETED_CHUNK = 500;
+
+export interface DeletedEnvironment {
+  readonly environmentId: string;
+  /** Published entries whose search documents and vectors the engine removes. */
+  readonly publishedEntries: number;
+}
+
+/**
+ * Deletes an environment and everything in it (its audit history stays). Refuses `main`, an
+ * unknown environment, and one an alias points at (repoint or remove the alias first, so delivery
+ * under the alias never breaks). The rows go in one atomic write with `environment.deleted`
+ * events, from which the engine removes the published entries' search documents and vectors and
+ * purges the environment's delivery cache. `confirm` must repeat the environment's id: deleting
+ * one is irreversible, and an agent (or a script) shouldn't do it by a slip of an argument.
+ */
+export async function deleteEnvironment(
+  ctx: AppContext,
+  spaceId: string,
+  environmentId: string,
+  opts: { readonly confirm?: string; readonly principal: Principal },
+): Promise<DeletedEnvironment> {
+  // A person (signed in, or through their own token) or the deployment admin token: never a plain
+  // API key, even one holding space:admin, since integration and CI keys routinely do, and an agent
+  // steered into calling this can supply `confirm` as easily as anything else.
+  if (opts.principal.kind !== 'user' && opts.principal.kind !== 'admin') {
+    throw new ForbiddenError(
+      'Deleting an environment takes a person or the deployment admin token, not an API key',
+    );
+  }
+  if (opts.confirm !== environmentId) {
+    throw new ValidationError([
+      {
+        field: 'confirm',
+        message: `Deleting an environment is irreversible: pass confirm="${environmentId}" to proceed`,
+      },
+    ]);
+  }
+  if (environmentId === 'main') {
+    throw new ValidationError([
+      { field: 'environmentId', message: 'The main environment cannot be deleted' },
+    ]);
+  }
+  const environments = await ctx.store.spaces.listEnvironments(spaceId);
+  if (!environments.some((e) => e.id === environmentId)) {
+    throw new NotFoundError('Environment', environmentId);
+  }
+  const aliases = (await ctx.store.spaces.listAliases(spaceId)).filter(
+    (a) => a.targetEnvironmentId === environmentId,
+  );
+  if (aliases.length > 0) {
+    throw new ConflictError(
+      `Environment "${environmentId}" is the target of ${aliases.map((a) => `"${a.alias}"`).join(', ')}; repoint or remove the alias first`,
+    );
+  }
+
+  const scope: Scope = { spaceId, environmentId };
+  // Keyset pages (entry ids are time-ordered UUIDv7s), so an entry published meanwhile can't
+  // shift another out of a page the way offsets would.
+  const ids: string[] = [];
+  for (let after = ''; ; ) {
+    const page = await ctx.store.entries.listPublished(scope, {
+      limit: 500,
+      afterEntryId: after,
+    });
+    ids.push(...page.map((p) => p.entryId));
+    if (page.length < 500) break;
+    after = page[page.length - 1]?.entryId ?? after;
+  }
+  const occurredAt = ctx.clock.now().toISOString();
+  const chunks: string[][] = [];
+  for (let at = 0; at < ids.length; at += ENVIRONMENT_DELETED_CHUNK) {
+    chunks.push(ids.slice(at, at + ENVIRONMENT_DELETED_CHUNK));
+  }
+  // At least one event, even for an empty environment: its delivery cache is purged either way.
+  const events: DomainEvent[] = (chunks.length > 0 ? chunks : [[]]).map((entryIds) => ({
+    id: ctx.ids.newId(),
+    type: 'environment.deleted',
+    scope,
+    occurredAt,
+    entryIds,
+  }));
+  // Recorded in the same write as the deletion, whichever surface asked: it can't commit unrecorded.
+  const audit = {
+    id: ctx.ids.newId(),
+    spaceId,
+    environmentId,
+    actor: auditActor(opts.principal),
+    action: 'environment.deleted',
+    targetType: 'environment',
+    targetId: environmentId,
+    status: 200,
+    at: occurredAt,
+  };
+  try {
+    await ctx.store.spaces.deleteEnvironment(spaceId, environmentId, events, audit);
+  } catch (err) {
+    // An alias was pointed at it after the check above: the deletion did not happen.
+    if (err instanceof TransactionConflictError) {
+      throw new ConflictError(
+        `An alias now points at "${environmentId}"; repoint or remove it, then delete again`,
+      );
+    }
+    throw err;
+  }
+  return { environmentId, publishedEntries: ids.length };
+}
+
 // --- environment aliases (blue/green) --------------------------------------
 
 async function requireEnvironment(ctx: AppContext, spaceId: string, environmentId: string) {
@@ -103,7 +221,15 @@ export async function setEnvironmentAlias(
     );
   }
   const at = ctx.clock.now().toISOString();
-  await ctx.store.spaces.setAlias(spaceId, alias, targetEnvironmentId, at);
+  try {
+    await ctx.store.spaces.setAlias(spaceId, alias, targetEnvironmentId, at);
+  } catch (err) {
+    // The target was deleted after the check above: nothing was aliased.
+    if (err instanceof TransactionConflictError) {
+      throw new NotFoundError('Environment', `${spaceId}/${targetEnvironmentId}`);
+    }
+    throw err;
+  }
   await announceAliasChange(ctx, spaceId, alias, targetEnvironmentId);
   return { alias, targetEnvironmentId, updatedAt: at };
 }
@@ -161,4 +287,20 @@ export async function resolveEnvironment(
 ): Promise<string> {
   const alias = await ctx.store.spaces.getAlias(spaceId, envOrAlias);
   return alias?.targetEnvironmentId ?? envOrAlias;
+}
+
+/**
+ * Like {@link resolveEnvironment}, but refuses a name that is neither an alias nor a registered
+ * environment (`NotFoundError`). Every write resolves through this, so a typo'd or deleted
+ * environment gets a 404 instead of rows no environment owns.
+ */
+export async function resolveWritableEnvironment(
+  ctx: AppContext,
+  spaceId: string,
+  envOrAlias: string,
+): Promise<string> {
+  const alias = await ctx.store.spaces.getAlias(spaceId, envOrAlias);
+  if (alias) return alias.targetEnvironmentId;
+  await requireEnvironment(ctx, spaceId, envOrAlias);
+  return envOrAlias;
 }

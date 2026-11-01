@@ -33,6 +33,7 @@ import {
   decideWorkflowTask,
   deleteAgentSchedule,
   deleteAppExtension,
+  deleteEnvironment,
   deleteEnvironmentAlias,
   deleteFunction,
   deleteRole,
@@ -95,7 +96,9 @@ import {
   refreshVideoAsset,
   relatedEntries,
   requestReindex,
+  resolveEnvironment,
   resolveTask,
+  resolveWritableEnvironment,
   restoreEntry,
   restoreVersion,
   revokeConnectedApp,
@@ -138,6 +141,7 @@ import {
   type EntryFields,
   FIELD_TYPES,
   ForbiddenError,
+  inScope,
   maskDeniedFields,
   NotConfiguredError,
   NotFoundError,
@@ -316,14 +320,30 @@ export function buildServer(
     { cacheHints: CACHE_HINTS },
   );
   // Every tool's failures pass through `toolFailure`, so no handler can leak an internal error.
+  // And every tool's `environment` argument resolves the way an HTTP `:env` does: an alias names
+  // its target, and a name that is neither an alias nor an environment is refused
+  // (`NotFoundError`), so a typo'd or deleted environment never collects rows. Two tools take the
+  // name as given: deleting refuses an alias name itself, and a deleted environment's audit
+  // history stays readable.
+  const LITERAL_ENVIRONMENT = new Set(['environment_delete', 'audit_log_list']);
   const register = server.registerTool.bind(server);
   server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) =>
     register(
       name,
       config as never,
-      (async (...args: unknown[]) => {
+      (async (args: unknown, ...rest: unknown[]) => {
         try {
-          return await handler(...args);
+          const a = args as { space?: unknown; environment?: unknown } | undefined;
+          if (!LITERAL_ENVIRONMENT.has(name) && a && typeof a.environment === 'string') {
+            const spaceId = typeof a.space === 'string' ? a.space : DEFAULT_SPACE;
+            // Checked only for a caller who may act in the space, so nobody else learns which
+            // environments exist there: the tool's own guard refuses them first.
+            const resolve = inScope(principal, spaceId)
+              ? resolveWritableEnvironment
+              : resolveEnvironment;
+            args = { ...a, environment: await resolve(ctx, spaceId, a.environment) };
+          }
+          return await handler(args, ...rest);
         } catch (err) {
           throw toolFailure(name, err);
         }
@@ -3102,6 +3122,33 @@ export function buildServer(
       guard(SCOPES.spaceAdmin, { spaceId, environmentId: DEFAULT_ENV });
       await deleteEnvironmentAlias(ctx, spaceId, args.alias);
       return ok({ deleted: args.alias });
+    },
+  );
+
+  server.registerTool(
+    'environment_delete',
+    {
+      description:
+        'Delete an environment and everything in it (content model, entries, versions, assets, ' +
+        'releases, workflows; its audit history stays). IRREVERSIBLE. Refuses `main` and any ' +
+        'environment an alias points at. `confirm` must repeat the environment id.',
+      inputSchema: toolSchema('environment_delete', () =>
+        z.object({
+          environment: z.string(),
+          confirm: z.string().describe('the environment id again, to confirm'),
+          space: z.string().optional(),
+        }),
+      ),
+    },
+    async (args) => {
+      const spaceId = args.space ?? DEFAULT_SPACE;
+      guard(SCOPES.spaceAdmin, { spaceId, environmentId: args.environment });
+      return ok(
+        await deleteEnvironment(ctx, spaceId, args.environment, {
+          confirm: args.confirm,
+          principal,
+        }),
+      );
     },
   );
 

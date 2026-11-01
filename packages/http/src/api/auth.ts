@@ -7,17 +7,20 @@ import type {
   WorkflowNodeDeps,
 } from '@contentworker/application';
 import {
+  auditActor,
   authenticate,
   createHasher,
   principalForWebUser,
   recordAudit,
   resolveEnvironment,
+  resolveWritableEnvironment,
   secureTokenEqual,
 } from '@contentworker/application';
 import {
   type AgentReview,
   authorize,
   ForbiddenError,
+  inScope,
   type PermissionScope,
   type Principal,
   scopesForKind,
@@ -133,12 +136,6 @@ const authRateLimiter = new AuthRateLimiter(
   Number(process.env.AUTH_RATE_LIMIT_MAX ?? 10),
   Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS ?? 60_000),
 );
-
-function auditActor(principal: Principal): string {
-  if (principal.kind === 'admin') return 'admin-token';
-  if (principal.kind === 'user' && principal.subject) return principal.subject;
-  return principal.kind;
-}
 
 async function resolvePrincipal(deps: AuthDeps, token: string): Promise<Principal> {
   if (deps.adminToken && secureTokenEqual(token, deps.adminToken)) {
@@ -283,7 +280,13 @@ export function environmentMiddleware(deps: AuthDeps): MiddlewareHandler<AuthVar
     const space = c.req.param('space');
     const env = c.req.param('env');
     if (space && env) {
-      c.set('environmentId', await resolveEnvironment(deps.ctx, space, env));
+      // A write must land in an environment that exists; a read of an unknown one is just empty.
+      // Only checked for a caller who may act in the space, so nobody else learns which
+      // environments exist there (the route's scope check refuses them with 403 instead).
+      const principal = c.get('principal');
+      const check = MUTATING.has(c.req.method) && principal && inScope(principal, space);
+      const resolve = check ? resolveWritableEnvironment : resolveEnvironment;
+      c.set('environmentId', await resolve(deps.ctx, space, env));
     }
     await next();
   };

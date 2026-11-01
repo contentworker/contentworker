@@ -7,7 +7,7 @@ import { cn } from './lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
 
 /*
- * shadcn's Sidebar (radix-maia), as OrderLoop adapted it (DESIGN.md, "The shell"):
+ * shadcn's Sidebar (radix-maia), adapted to Ledger (DESIGN.md, "The shell"):
  * - Phones have the shell's tab bar, so there is no mobile Sheet: the sidebar is md and up only.
  * - `overlay` replaces `isMobile`: the sidebar stays an icon rail beside the page and its toggle
  *   opens it over the page (`peek`) instead of pushing it, leaving `open` (the reader's choice)

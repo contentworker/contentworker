@@ -31,8 +31,20 @@ function fakeBucket() {
           : new Uint8Array(await new Response(value).arrayBuffer());
       objects.set(key, { bytes, contentType: options?.httpMetadata?.contentType });
     },
-    async delete(key) {
-      objects.delete(key);
+    async delete(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key);
+    },
+    // Pages of two, so a listing that only reads the first page shows in a test.
+    async list({ prefix, cursor }) {
+      const keys = [...objects.keys()].filter((k) => k.startsWith(prefix)).sort();
+      const start = cursor ? Number(cursor) : 0;
+      const page = keys.slice(start, start + 2);
+      const truncated = start + 2 < keys.length;
+      return {
+        objects: page.map((key) => ({ key })),
+        truncated,
+        ...(truncated ? { cursor: String(start + 2) } : {}),
+      };
     },
   };
   return { bucket, objects };
@@ -184,5 +196,29 @@ describe('handleMediaRequest', () => {
     expect(
       (await handleMediaRequest(new Request(tampered), { bucket, signer, transform })).status,
     ).toBe(403);
+  });
+});
+
+describe('deletePrefix', () => {
+  it('deletes every page under the prefix except what keep names, and nothing outside it', async () => {
+    const { bucket, objects } = fakeBucket();
+    const store = createR2BlobStore(bucket, { signer });
+    for (const key of [
+      's1/staging/a1/x.png',
+      's1/staging/a2/y.png',
+      's1/staging/shared/z.png',
+      's1/staging/a3/w.png',
+      's1/stagingx/a4/v.png',
+      's1/main/a5/u.png',
+    ]) {
+      await store.put(key, 'bytes', 'image/png');
+    }
+    const deleted = await store.deletePrefix?.('s1/staging/', (key) => key.includes('/shared/'));
+    expect(deleted).toBe(3);
+    expect([...objects.keys()].sort()).toEqual([
+      's1/main/a5/u.png',
+      's1/staging/shared/z.png',
+      's1/stagingx/a4/v.png',
+    ]);
   });
 });

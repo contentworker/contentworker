@@ -68,7 +68,7 @@ beforeEach(async () => {
   store = new InMemoryContentStore();
   store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('e') };
-  await createEnvironment(ctx, 's1', { environmentId: 'copy' });
+  await createEnvironment(ctx, 's1', 'copy');
   await seedModel();
 });
 
@@ -357,6 +357,14 @@ describe('importing a snapshot', () => {
     await expect(
       importSnapshot(ctx, target, await exportSnapshot(ctx, source)),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('refuses a target environment that does not exist, writing nothing', async () => {
+    const typo = { spaceId: 's1', environmentId: 'cpoy' };
+    await expect(
+      importSnapshot(ctx, typo, await exportSnapshot(ctx, source)),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(await store.contentTypes.list(typo)).toEqual([]);
   });
 
   it('refuses a snapshot it cannot read', async () => {

@@ -68,6 +68,19 @@ Path segment `:env` in Management, Delivery, and Preview routes is resolved thro
 **environment aliases** (`environment_aliases` table) before use. This supports blue/green-style
 routing without changing client URLs.
 
+MCP tools resolve their `environment` argument the same way (except `environment_delete`, which
+takes the name as given, and `audit_log_list`, so a deleted environment's history stays readable).
+
+A write must name an alias or an environment that exists. Anything else is `404`, so a typo'd or
+deleted environment never collects rows that no environment owns. A read of an unknown environment
+is just empty. A caller who can't act in the space gets `403` before that check, so they can't tell
+which environments exist there. Snapshot import and clone also need their target environment to
+exist (create it first).
+
+Setting an alias and deleting its target can't race: each write re-checks inside its own batch.
+An alias set after a deletion's check aborts the deletion (`409`), and an alias whose target was
+deleted after its check is refused (`404`).
+
 ## System endpoints
 
 | Method | Path                    | Auth | Response                                             |
@@ -107,6 +120,7 @@ Base paths: `/spaces` and `…` = `/spaces/:space/environments/:env`.
 | POST   | `/spaces`                                   | `space:admin`    | Create a space                                  |
 | GET    | `/spaces/:space/environments`               | `preview:read`   | List environments                               |
 | POST   | `/spaces/:space/environments`               | `space:admin`    | Create environment `{ id, name }`               |
+| DELETE | `/spaces/:space/environments/:env?confirm=` | `space:admin`    | Delete an environment and everything in it      |
 | GET    | `/spaces/:space/environment-aliases`        | `preview:read`   | List aliases                                    |
 | PUT    | `/spaces/:space/environment-aliases/:alias` | `space:admin`    | Set alias → environment id                      |
 | DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`    | Remove alias                                    |
@@ -146,6 +160,20 @@ What an import preserves:
   same live content and the same pending edits. Snapshots from before this carry no live version,
   and their changed entries land as drafts.
 - **Assets** as records, published as they were; their files stay where they are.
+
+**Deleting an environment** (`DELETE …/environments/:env?confirm=:env`, MCP `environment_delete`)
+removes its rows (content model, entries and versions, assets, references, releases, schedules,
+workflows and runs, taxonomy, comments, tasks, jobs) in one atomic write; its audit history stays.
+`confirm` must repeat the environment id. It takes a person holding `space:admin` in that space
+(signed in, or through their OAuth or personal access token) or the deployment admin token; a
+plain API key gets `403`, even one with `space:admin`. It refuses `main` (`422`) and any environment an alias
+points at (`409`: repoint or remove the alias first). The same write records an
+`environment.deleted` audit row naming the caller (on both surfaces, so a deletion never commits
+unrecorded) and appends `environment.deleted` events (published entry ids in chunks of 500). From
+those the engine removes the entries' search documents and vectors, deletes the environment's asset
+files from the blob store (keeping any another environment's asset records still point at, as a
+clone's do), and purges its delivery cache. Search results only ever include entries published now,
+so an index document that outlives its entry is never served.
 
 **An import checks before it writes.** Every entry is validated against the snapshot's content
 model and the target space's locales, and every link in what will be published must point at an

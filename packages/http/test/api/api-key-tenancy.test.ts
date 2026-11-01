@@ -80,3 +80,75 @@ describe('api-key minting cannot be rebound to another space', () => {
     expect(res.status).toBe(422);
   });
 });
+
+describe('deleting an environment stays within the caller’s space and role', () => {
+  let app: ReturnType<typeof createApp>;
+  const del = (space: string, env: string, auth: string) =>
+    app.request(`/spaces/${space}/environments/${env}?confirm=${env}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${auth}` },
+    });
+  const mint = async (space: string, body: Record<string, unknown>) =>
+    (
+      (await (
+        await app.request(`/spaces/${space}/api-keys`, {
+          method: 'POST',
+          headers: admin,
+          body: JSON.stringify(body),
+        })
+      ).json()) as { token: string }
+    ).token;
+
+  beforeEach(async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    app = createApp(ctx, config, rag, blob, ai);
+    await app.request('/spaces', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ spaceId: 's2', name: 'Second', defaultLocale: 'en-US' }),
+    });
+    for (const space of ['s1', 's2']) {
+      await app.request(`/spaces/${space}/environments`, {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({ id: 'staging' }),
+      });
+    }
+  });
+
+  it('refuses a key for another space', async () => {
+    const s1Writer = await mint('s1', { kind: 'cma' });
+    expect((await del('s2', 'staging', s1Writer)).status).toBe(403);
+  });
+
+  it('refuses read-only keys and roles without space:admin', async () => {
+    expect((await del('s1', 'staging', 'cda')).status).toBe(403);
+    expect((await del('s1', 'staging', 'cpa')).status).toBe(403);
+    // A writer's role: content scopes, no space:admin.
+    const role = (await (
+      await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          name: 'Writer',
+          scopes: ['content:write', 'content:publish', 'preview:read'],
+        }),
+      })
+    ).json()) as { id: string };
+    expect(role.id).toBeTruthy();
+    const editorKey = await mint('s1', { kind: 'cma', roleId: role.id });
+    expect((await del('s1', 'staging', editorKey)).status).toBe(403);
+  });
+
+  it('refuses even a key holding space:admin: it takes a person or the admin token', async () => {
+    const s1Writer = await mint('s1', { kind: 'cma' });
+    expect((await del('s1', 'staging', s1Writer)).status).toBe(403);
+    expect((await del('s1', 'staging', 'admin')).status).toBe(200);
+    const s2 = (await (
+      await app.request('/spaces/s2/environments', { headers: admin })
+    ).json()) as {
+      items: { id: string }[];
+    };
+    expect(s2.items.map((e) => e.id)).toContain('staging');
+  });
+});
