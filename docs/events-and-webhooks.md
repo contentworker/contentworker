@@ -134,7 +134,7 @@ After each `contentworker-events` batch, the engine collects one `deliveryScopeT
 space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/index.ts`):
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
 `asset.unpublished`, `content_type.published`, `release.published`,
-`environment_alias.changed`. It sends them as **one** message on `contentworker-purge`, so a burst
+`environment_alias.changed`, `environment.deleted`. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
 path's environment and the one it resolves to. A failed enqueue is logged and not retried:
@@ -204,6 +204,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `content_type.published`     | `contentTypeApiId`, `version`                                              |
 | `release.published`          | `releaseId`, `entryIds`                                                    |
 | `environment_alias.changed`  | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias |
+| `environment.deleted`        | `entryIds` (published entries whose search documents and vectors go; chunks of 500) |
 | `bulk.job_completed`         | `jobId`, `action`, `total`, `succeeded`, `failed`                          |
 | `workflow_run.completed` / `.declined` / `.cancelled` / `.failed` / `.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason` |
 | `workflow.task_opened`       | `taskId`, `runId`, `nodeId`, …                                             |

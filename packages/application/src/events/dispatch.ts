@@ -163,6 +163,17 @@ export async function dispatchEvent(
     }
   }
 
+  // A deleted environment: its rows are gone, so remove what was derived from them elsewhere.
+  // Each removal is idempotent, so a redelivered event is harmless.
+  if (event.type === 'environment.deleted') {
+    const searchIndex = deps.searchIndex ?? deps.rag?.searchIndex;
+    for (const entryId of event.entryIds) {
+      if (deps.rag) await removeEntryEmbeddings(deps.rag, scope, entryId);
+      await searchIndex?.remove(scope, entryId);
+    }
+    if (deps.cache) await deps.cache.invalidateTag(epochTag(scope));
+  }
+
   // Terminal bulk-job fact: the unconditional scope-epoch bump — the
   // correctness backstop for any bump missed while the job ran. (Webhook
   // fan-out above already delivered the job summary to subscribers.)

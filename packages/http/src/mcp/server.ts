@@ -33,6 +33,7 @@ import {
   decideWorkflowTask,
   deleteAgentSchedule,
   deleteAppExtension,
+  deleteEnvironment,
   deleteEnvironmentAlias,
   deleteFunction,
   deleteRole,
@@ -3070,6 +3071,28 @@ export function buildServer(
       guard(SCOPES.spaceAdmin, { spaceId, environmentId: DEFAULT_ENV });
       await deleteEnvironmentAlias(ctx, spaceId, args.alias);
       return ok({ deleted: args.alias });
+    },
+  );
+
+  server.registerTool(
+    'environment_delete',
+    {
+      description:
+        'Delete an environment and everything in it (content model, entries, versions, assets, ' +
+        'releases, workflows; its audit history stays). IRREVERSIBLE. Refuses `main` and any ' +
+        'environment an alias points at. `confirm` must repeat the environment id.',
+      inputSchema: toolSchema('environment_delete', () =>
+        z.object({
+          environment: z.string(),
+          confirm: z.string().describe('the environment id again, to confirm'),
+          space: z.string().optional(),
+        }),
+      ),
+    },
+    async (args) => {
+      const spaceId = args.space ?? DEFAULT_SPACE;
+      guard(SCOPES.spaceAdmin, { spaceId, environmentId: args.environment });
+      return ok(await deleteEnvironment(ctx, spaceId, args.environment, { confirm: args.confirm }));
     },
   );
 

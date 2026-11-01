@@ -107,6 +107,7 @@ Base paths: `/spaces` and `…` = `/spaces/:space/environments/:env`.
 | POST   | `/spaces`                                   | `space:admin`    | Create a space                                  |
 | GET    | `/spaces/:space/environments`               | `preview:read`   | List environments                               |
 | POST   | `/spaces/:space/environments`               | `space:admin`    | Create environment `{ id, name }`               |
+| DELETE | `/spaces/:space/environments/:env?confirm=` | `space:admin`    | Delete an environment and everything in it      |
 | GET    | `/spaces/:space/environment-aliases`        | `preview:read`   | List aliases                                    |
 | PUT    | `/spaces/:space/environment-aliases/:alias` | `space:admin`    | Set alias → environment id                      |
 | DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`    | Remove alias                                    |
@@ -146,6 +147,14 @@ What an import preserves:
   same live content and the same pending edits. Snapshots from before this carry no live version,
   and their changed entries land as drafts.
 - **Assets** as records, published as they were; their files stay where they are.
+
+**Deleting an environment** (`DELETE …/environments/:env?confirm=:env`, MCP `environment_delete`)
+removes its rows (content model, entries and versions, assets, references, releases, schedules,
+workflows and runs, taxonomy, comments, tasks, jobs) in one atomic write; its audit history stays.
+`confirm` must repeat the environment id. It refuses `main` (`422`) and any environment an alias
+points at (`409`: repoint or remove the alias first). The same write appends `environment.deleted`
+events (published entry ids in chunks of 500), from which the engine removes those entries' search
+documents and vectors and purges the environment's delivery cache.
 
 **An import checks before it writes.** Every entry is validated against the snapshot's content
 model and the target space's locales, and every link in what will be published must point at an

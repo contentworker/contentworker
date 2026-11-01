@@ -2351,8 +2351,76 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           ),
       );
     },
+    async deleteEnvironment(spaceId, environmentId, events) {
+      const scope = { spaceId, environmentId };
+      // One atomic batch: every environment-scoped table, the registry row, and the events that
+      // tell the engine to clean up what was derived from those rows.
+      await writeAll(x, [
+        ...ENVIRONMENT_SCOPED_TABLES.map((table) =>
+          db.delete(table).where(scopeFilter(table, scope)),
+        ),
+        db
+          .delete(schema.environments)
+          .where(
+            and(
+              eq(schema.environments.spaceId, spaceId),
+              eq(schema.environments.id, environmentId),
+            ),
+          ),
+        ...insertChunks(schema.outbox, events, (chunk) =>
+          db.insert(schema.outbox).values(
+            chunk.map((event) => ({
+              id: event.id,
+              type: event.type,
+              payload: event,
+              occurredAt: new Date(event.occurredAt),
+            })),
+          ),
+        ),
+      ]);
+    },
   };
 }
+
+/**
+ * Every table whose rows belong to one environment, cleared when it is deleted. Not the audit log:
+ * it is a hash chain (and a record of what happened in the environment), so it stays.
+ */
+const ENVIRONMENT_SCOPED_TABLES = [
+  schema.contentTypes,
+  schema.entries,
+  schema.entryUniqueValues,
+  schema.entryVersions,
+  schema.entryPublished,
+  schema.assets,
+  schema.assetPublished,
+  schema.references,
+  schema.agentRuns,
+  schema.aiActions,
+  schema.functions,
+  schema.appExtensions,
+  schema.releases,
+  schema.releaseItems,
+  schema.scheduledActions,
+  schema.agentReviews,
+  schema.agentSchedules,
+  schema.comments,
+  schema.tasks,
+  schema.workflowDefinitions,
+  schema.workflowVersions,
+  schema.workflowRuns,
+  schema.workflowNodeRuns,
+  schema.workflowTimeline,
+  schema.workflowTasks,
+  schema.entryWorkflowState,
+  schema.conceptSchemes,
+  schema.concepts,
+  schema.tags,
+  schema.entryMetadata,
+  schema.previewTokens,
+  schema.bulkJobs,
+  schema.bulkJobChunks,
+] as const;
 
 type ReleaseRow = typeof schema.releases.$inferSelect;
 const toRelease = (r: ReleaseRow): Release => ({

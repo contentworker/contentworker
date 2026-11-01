@@ -2,8 +2,11 @@ import type { AppContext } from '@contentworker/application';
 import {
   createContentType,
   createEntry,
+  createEnvironment,
   createSpace,
+  deleteEnvironment,
   publishContentType,
+  publishEntry,
   startWorkflowRun,
 } from '@contentworker/application';
 import {
@@ -381,5 +384,81 @@ describe('stored secrets', () => {
     expect(await store.storedSecrets.replace(ref, 'stale', 'v2')).toBe(false);
     expect(await store.storedSecrets.replace(ref, 'v1', 'v2')).toBe(true);
     expect((await store.webhooks.get(scope, id))?.headers).toEqual({ 'X-"Odd"': 'v2', Keep: 'k' });
+  });
+});
+
+describe('deleting an environment', () => {
+  it('clears every environment-scoped table but the audit log, atomically with its events', async () => {
+    const doomed = { spaceId, environmentId: `doomed-${uid().slice(0, 8)}` };
+    await createEnvironment(ctx, spaceId, doomed.environmentId);
+    await createContentType(ctx, doomed, {
+      apiId: 'article',
+      name: 'Article',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+      ],
+    });
+    await publishContentType(ctx, doomed, 'article');
+    const e = await createEntry(ctx, doomed, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'Going away' } },
+    });
+    await publishEntry(ctx, doomed, e.entry.id);
+    await store.taxonomy.createTag(doomed, { id: `tag-${uid()}`, name: 'Doomed' });
+    await store.audit.append({
+      id: uid(),
+      spaceId,
+      environmentId: doomed.environmentId,
+      at: clock.now().toISOString(),
+      actor: 'test',
+      action: 'entry.published',
+      targetType: 'entry',
+      targetId: e.entry.id,
+      status: 200,
+    });
+
+    await deleteEnvironment(ctx, spaceId, doomed.environmentId, { confirm: doomed.environmentId });
+
+    // Every table with an environment_id column, found from the schema itself, so a table added
+    // later without joining the delete list fails here.
+    const tables = (
+      await testDb
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%`environment_id`%'",
+        )
+        .all<{ name: string }>()
+    ).results.map((r) => r.name);
+    expect(tables.length).toBeGreaterThan(30);
+    const left: Record<string, number> = {};
+    for (const table of tables) {
+      const row = await testDb
+        .prepare(`SELECT count(*) AS n FROM "${table}" WHERE space_id = ? AND environment_id = ?`)
+        .bind(spaceId, doomed.environmentId)
+        .first<{ n: number }>();
+      if ((row?.n ?? 0) > 0) left[table] = row?.n ?? 0;
+    }
+    expect(left).toEqual({ audit_log: 1 });
+    expect((await store.spaces.listEnvironments(spaceId)).map((x) => x.id)).not.toContain(
+      doomed.environmentId,
+    );
+    // The cleanup events went into the outbox in the same write.
+    const announced = await testDb
+      .prepare("SELECT payload FROM outbox WHERE type = 'environment.deleted'")
+      .all<{ payload: string }>();
+    expect(
+      announced.results.some(
+        (r) => JSON.parse(r.payload).scope.environmentId === doomed.environmentId,
+      ),
+    ).toBe(true);
+    // The rest of the space is untouched.
+    expect(await store.contentTypes.list(scope)).not.toEqual([]);
   });
 });

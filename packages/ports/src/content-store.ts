@@ -761,6 +761,17 @@ export interface SpaceRepo {
   listAliases(spaceId: string): Promise<EnvironmentAlias[]>;
   /** Removes an alias (the target environment is untouched). */
   deleteAlias(spaceId: string, alias: string): Promise<void>;
+  /**
+   * Removes an environment: its registry row and every row scoped to it (the content model,
+   * entries and their versions, assets, references, releases, schedules, workflows and runs,
+   * taxonomy, comments, tasks, jobs), keeping its audit history, and appends `events` to the
+   * outbox in the same atomic write.
+   */
+  deleteEnvironment(
+    spaceId: string,
+    environmentId: string,
+    events: readonly DomainEvent[],
+  ): Promise<void>;
 }
 
 export interface ContentTypeRepo {

@@ -1,4 +1,6 @@
 import {
+  ConflictError,
+  type DomainEvent,
   InvalidStateError,
   type LocaleCode,
   NotFoundError,
@@ -7,6 +9,7 @@ import {
 } from '@contentworker/domain';
 import type { EnvironmentAlias, SpaceConfig } from '@contentworker/ports';
 import type { AppContext } from './context.js';
+import { allPages } from './paging.js';
 import { ensureRolePresets } from './team.js';
 
 export interface CreateSpaceInput {
@@ -72,6 +75,77 @@ export async function createEnvironment(
 /** Lists a space's environments (branches). */
 export async function listEnvironments(ctx: AppContext, spaceId: string) {
   return ctx.store.spaces.listEnvironments(spaceId);
+}
+
+/** Entry ids per `environment.deleted` event (keeps each outbox row and queue message small). */
+export const ENVIRONMENT_DELETED_CHUNK = 500;
+
+export interface DeletedEnvironment {
+  readonly environmentId: string;
+  /** Published entries whose search documents and vectors the engine removes. */
+  readonly publishedEntries: number;
+}
+
+/**
+ * Deletes an environment and everything in it (its audit history stays). Refuses `main`, an
+ * unknown environment, and one an alias points at (repoint or remove the alias first, so delivery
+ * under the alias never breaks). The rows go in one atomic write with `environment.deleted`
+ * events, from which the engine removes the published entries' search documents and vectors and
+ * purges the environment's delivery cache. `confirm` must repeat the environment's id: deleting
+ * one is irreversible, and an agent (or a script) shouldn't do it by a slip of an argument.
+ */
+export async function deleteEnvironment(
+  ctx: AppContext,
+  spaceId: string,
+  environmentId: string,
+  opts: { readonly confirm?: string } = {},
+): Promise<DeletedEnvironment> {
+  if (opts.confirm !== environmentId) {
+    throw new ValidationError([
+      {
+        field: 'confirm',
+        message: `Deleting an environment is irreversible: pass confirm="${environmentId}" to proceed`,
+      },
+    ]);
+  }
+  if (environmentId === 'main') {
+    throw new ValidationError([
+      { field: 'environmentId', message: 'The main environment cannot be deleted' },
+    ]);
+  }
+  const environments = await ctx.store.spaces.listEnvironments(spaceId);
+  if (!environments.some((e) => e.id === environmentId)) {
+    throw new NotFoundError('Environment', environmentId);
+  }
+  const aliases = (await ctx.store.spaces.listAliases(spaceId)).filter(
+    (a) => a.targetEnvironmentId === environmentId,
+  );
+  if (aliases.length > 0) {
+    throw new ConflictError(
+      `Environment "${environmentId}" is the target of ${aliases.map((a) => `"${a.alias}"`).join(', ')}; repoint or remove the alias first`,
+    );
+  }
+
+  const scope: Scope = { spaceId, environmentId };
+  const published = await allPages((skip, limit) =>
+    ctx.store.entries.listPublished(scope, { skip, limit }),
+  );
+  const ids = published.map((p) => p.entryId);
+  const occurredAt = ctx.clock.now().toISOString();
+  const chunks: string[][] = [];
+  for (let at = 0; at < ids.length; at += ENVIRONMENT_DELETED_CHUNK) {
+    chunks.push(ids.slice(at, at + ENVIRONMENT_DELETED_CHUNK));
+  }
+  // At least one event, even for an empty environment: its delivery cache is purged either way.
+  const events: DomainEvent[] = (chunks.length > 0 ? chunks : [[]]).map((entryIds) => ({
+    id: ctx.ids.newId(),
+    type: 'environment.deleted',
+    scope,
+    occurredAt,
+    entryIds,
+  }));
+  await ctx.store.spaces.deleteEnvironment(spaceId, environmentId, events);
+  return { environmentId, publishedEntries: ids.length };
 }
 
 // --- environment aliases (blue/green) --------------------------------------
