@@ -35,6 +35,18 @@ export class FakeBlobStore implements BlobStore {
     return typeof body === 'string' ? body : String.fromCharCode(...body);
   }
 
+  async deletePrefix(prefix: string, keep: (key: string) => boolean): Promise<number> {
+    let deleted = 0;
+    for (const key of [...this.objects.keys()]) {
+      if (key.startsWith(prefix) && !keep(key)) {
+        this.objects.delete(key);
+        this.deletes.push(key);
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
   /** The stored bytes of `key`, as written (a test reads back a binary upload with this). */
   bytes(key: string): Uint8Array | null {
     const body = this.objects.get(key);

@@ -3092,7 +3092,12 @@ export function buildServer(
     async (args) => {
       const spaceId = args.space ?? DEFAULT_SPACE;
       guard(SCOPES.spaceAdmin, { spaceId, environmentId: args.environment });
-      return ok(await deleteEnvironment(ctx, spaceId, args.environment, { confirm: args.confirm }));
+      return ok(
+        await deleteEnvironment(ctx, spaceId, args.environment, {
+          confirm: args.confirm,
+          principal,
+        }),
+      );
     },
   );
 

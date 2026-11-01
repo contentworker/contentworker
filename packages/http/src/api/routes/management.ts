@@ -484,6 +484,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       c.json(
         await deleteEnvironment(ctx, c.req.param('space'), c.req.param('env'), {
           confirm: c.req.query('confirm'),
+          principal: c.get('principal'),
         }),
       ),
   );

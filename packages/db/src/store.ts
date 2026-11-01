@@ -2351,7 +2351,7 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           ),
       );
     },
-    async deleteEnvironment(spaceId, environmentId, events) {
+    async deleteEnvironment(spaceId, environmentId, events, audit) {
       const scope = { spaceId, environmentId };
       // One atomic batch: every environment-scoped table, the registry row, and the events that
       // tell the engine to clean up what was derived from those rows.
@@ -2377,6 +2377,17 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
             })),
           ),
         ),
+        db.insert(schema.auditLog).values({
+          id: audit.id,
+          spaceId: audit.spaceId,
+          environmentId: audit.environmentId ?? null,
+          actor: audit.actor,
+          action: audit.action,
+          targetType: audit.targetType ?? null,
+          targetId: audit.targetId ?? null,
+          status: audit.status,
+          at: new Date(audit.at),
+        }),
       ]);
     },
   };

@@ -67,6 +67,11 @@ export interface BlobStore {
   put(key: string, body: string | Uint8Array, contentType: string): Promise<void>;
   /** Server-side read. `null` when the object does not exist. */
   get(key: string): Promise<string | null>;
+  /**
+   * Deletes every object under `prefix` except those `keep` names, and returns how many went.
+   * Optional: a store without it leaves the objects (a deleted environment's files stay).
+   */
+  deletePrefix?(prefix: string, keep: (key: string) => boolean): Promise<number>;
 }
 
 /** How an image is fit into the requested box (provider-neutral names). */

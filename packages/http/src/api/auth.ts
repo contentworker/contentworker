@@ -7,6 +7,7 @@ import type {
   WorkflowNodeDeps,
 } from '@contentworker/application';
 import {
+  auditActor,
   authenticate,
   createHasher,
   principalForWebUser,
@@ -133,12 +134,6 @@ const authRateLimiter = new AuthRateLimiter(
   Number(process.env.AUTH_RATE_LIMIT_MAX ?? 10),
   Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS ?? 60_000),
 );
-
-function auditActor(principal: Principal): string {
-  if (principal.kind === 'admin') return 'admin-token';
-  if (principal.kind === 'user' && principal.subject) return principal.subject;
-  return principal.kind;
-}
 
 async function resolvePrincipal(deps: AuthDeps, token: string): Promise<Principal> {
   if (deps.adminToken && secureTokenEqual(token, deps.adminToken)) {

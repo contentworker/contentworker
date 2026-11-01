@@ -425,7 +425,10 @@ describe('deleting an environment', () => {
       status: 200,
     });
 
-    await deleteEnvironment(ctx, spaceId, doomed.environmentId, { confirm: doomed.environmentId });
+    await deleteEnvironment(ctx, spaceId, doomed.environmentId, {
+      confirm: doomed.environmentId,
+      principal: { spaceId, kind: 'user', subject: 'usr_admin', scopes: [SCOPES.spaceAdmin] },
+    });
 
     // Every table with an environment_id column, found from the schema itself, so a table added
     // later without joining the delete list fails here.
@@ -445,7 +448,15 @@ describe('deleting an environment', () => {
         .first<{ n: number }>();
       if ((row?.n ?? 0) > 0) left[table] = row?.n ?? 0;
     }
-    expect(left).toEqual({ audit_log: 1 });
+    // Its earlier history stays, and the deletion itself is recorded, by whom.
+    expect(left).toEqual({ audit_log: 2 });
+    const recorded = await testDb
+      .prepare(
+        "SELECT actor, target_id FROM audit_log WHERE environment_id = ? AND action = 'environment.deleted'",
+      )
+      .bind(doomed.environmentId)
+      .first<{ actor: string; target_id: string }>();
+    expect(recorded).toEqual({ actor: 'usr_admin', target_id: doomed.environmentId });
     expect((await store.spaces.listEnvironments(spaceId)).map((x) => x.id)).not.toContain(
       doomed.environmentId,
     );

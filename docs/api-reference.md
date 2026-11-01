@@ -152,9 +152,13 @@ What an import preserves:
 removes its rows (content model, entries and versions, assets, references, releases, schedules,
 workflows and runs, taxonomy, comments, tasks, jobs) in one atomic write; its audit history stays.
 `confirm` must repeat the environment id. It refuses `main` (`422`) and any environment an alias
-points at (`409`: repoint or remove the alias first). The same write appends `environment.deleted`
-events (published entry ids in chunks of 500), from which the engine removes those entries' search
-documents and vectors and purges the environment's delivery cache.
+points at (`409`: repoint or remove the alias first). The same write records an
+`environment.deleted` audit row naming the caller (on both surfaces, so a deletion never commits
+unrecorded) and appends `environment.deleted` events (published entry ids in chunks of 500). From
+those the engine removes the entries' search documents and vectors, deletes the environment's asset
+files from the blob store (keeping any another environment's asset records still point at, as a
+clone's do), and purges its delivery cache. Search results only ever include entries published now,
+so an index document that outlives its entry is never served.
 
 **An import checks before it writes.** Every entry is validated against the snapshot's content
 model and the target space's locales, and every link in what will be published must point at an

@@ -765,12 +765,14 @@ export interface SpaceRepo {
    * Removes an environment: its registry row and every row scoped to it (the content model,
    * entries and their versions, assets, references, releases, schedules, workflows and runs,
    * taxonomy, comments, tasks, jobs), keeping its audit history, and appends `events` to the
-   * outbox in the same atomic write.
+   * outbox and `audit` to the audit log in the same atomic write: a deletion never commits
+   * unrecorded.
    */
   deleteEnvironment(
     spaceId: string,
     environmentId: string,
     events: readonly DomainEvent[],
+    audit: AuditEntry,
   ): Promise<void>;
 }
 

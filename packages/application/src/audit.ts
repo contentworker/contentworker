@@ -1,5 +1,13 @@
+import type { Principal } from '@contentworker/domain';
 import type { AuditEntry } from '@contentworker/ports';
 import type { AppContext } from './context.js';
+
+/** Who an audit row names for a principal: the person, else the key kind (the admin token by name). */
+export function auditActor(principal: Principal): string {
+  if (principal.kind === 'admin') return 'admin-token';
+  if (principal.kind === 'user' && principal.subject) return principal.subject;
+  return principal.kind;
+}
 
 /** The fields a caller supplies; id + timestamp are filled from the context. */
 export interface RecordAuditInput {

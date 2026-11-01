@@ -163,7 +163,7 @@ export class InMemoryContentStore implements ContentStore {
     deleteAlias: async (spaceId, alias) => {
       this.aliasData.delete(`${spaceId}::${alias}`);
     },
-    deleteEnvironment: async (spaceId, environmentId, events) => {
+    deleteEnvironment: async (spaceId, environmentId, events, audit) => {
       const scope = { spaceId, environmentId };
       const key = scopeKey(scope);
       // The environment-scoped collections, named (a sweep by key prefix would also catch
@@ -216,6 +216,7 @@ export class InMemoryContentStore implements ContentStore {
         list.filter((e) => e.id !== environmentId),
       );
       for (const event of events) this.outboxData.push({ event, relayed: false });
+      this.auditData.push(audit);
     },
   };
 

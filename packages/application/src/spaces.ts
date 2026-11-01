@@ -4,12 +4,13 @@ import {
   InvalidStateError,
   type LocaleCode,
   NotFoundError,
+  type Principal,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
 import type { EnvironmentAlias, SpaceConfig } from '@contentworker/ports';
+import { auditActor } from './audit.js';
 import type { AppContext } from './context.js';
-import { allPages } from './paging.js';
 import { ensureRolePresets } from './team.js';
 
 export interface CreateSpaceInput {
@@ -98,7 +99,7 @@ export async function deleteEnvironment(
   ctx: AppContext,
   spaceId: string,
   environmentId: string,
-  opts: { readonly confirm?: string } = {},
+  opts: { readonly confirm?: string; readonly principal: Principal },
 ): Promise<DeletedEnvironment> {
   if (opts.confirm !== environmentId) {
     throw new ValidationError([
@@ -127,10 +128,18 @@ export async function deleteEnvironment(
   }
 
   const scope: Scope = { spaceId, environmentId };
-  const published = await allPages((skip, limit) =>
-    ctx.store.entries.listPublished(scope, { skip, limit }),
-  );
-  const ids = published.map((p) => p.entryId);
+  // Keyset pages (entry ids are time-ordered UUIDv7s), so an entry published meanwhile can't
+  // shift another out of a page the way offsets would.
+  const ids: string[] = [];
+  for (let after = ''; ; ) {
+    const page = await ctx.store.entries.listPublished(scope, {
+      limit: 500,
+      afterEntryId: after,
+    });
+    ids.push(...page.map((p) => p.entryId));
+    if (page.length < 500) break;
+    after = page[page.length - 1]?.entryId ?? after;
+  }
   const occurredAt = ctx.clock.now().toISOString();
   const chunks: string[][] = [];
   for (let at = 0; at < ids.length; at += ENVIRONMENT_DELETED_CHUNK) {
@@ -144,7 +153,19 @@ export async function deleteEnvironment(
     occurredAt,
     entryIds,
   }));
-  await ctx.store.spaces.deleteEnvironment(spaceId, environmentId, events);
+  // Recorded in the same write as the deletion, whichever surface asked: it can't commit unrecorded.
+  const audit = {
+    id: ctx.ids.newId(),
+    spaceId,
+    environmentId,
+    actor: auditActor(opts.principal),
+    action: 'environment.deleted',
+    targetType: 'environment',
+    targetId: environmentId,
+    status: 200,
+    at: occurredAt,
+  };
+  await ctx.store.spaces.deleteEnvironment(spaceId, environmentId, events, audit);
   return { environmentId, publishedEntries: ids.length };
 }
 
