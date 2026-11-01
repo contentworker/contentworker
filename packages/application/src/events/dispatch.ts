@@ -1,6 +1,7 @@
 import type { DomainEvent, EntriesPublishedBulkEvent, Webhook } from '@contentworker/domain';
 import type {
   AssetGate,
+  AssetIngestQueue,
   BlobStore,
   Cache,
   FunctionInvoker,
@@ -8,6 +9,8 @@ import type {
   WebhookSender,
 } from '@contentworker/ports';
 import { syncAssetGate } from '../asset-gate';
+import { assetReindexChunkRunner } from '../asset-ingest';
+import { type AssetSearchDeps, indexAssetForSearch } from '../asset-search';
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
@@ -63,6 +66,13 @@ export interface DispatchDeps {
    */
   readonly assetGate?: AssetGate;
   /**
+   * The asset search indexes. When present, an asset publish or unpublish re-indexes it from what
+   * is published now, and deletes (of an asset, of an environment) remove what was indexed.
+   */
+  readonly assetSearch?: AssetSearchDeps;
+  /** The ingest queue, which `asset_reindex` bulk chunks feed; absent, those chunks wait. */
+  readonly assetIngest?: AssetIngestQueue;
+  /**
    * Tags already invalidated during this consumer invocation. A queue batch of
    * same-type publishes (a release, a burst of scheduled publishes) would
    * otherwise write the SAME `ct:` tag once per event — and a cache backend
@@ -104,6 +114,9 @@ export async function dispatchEvent(
   if (event.type === 'bulk.chunk_due') {
     await runBulkChunk(ctx, event, {
       ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob) } : {}),
+      ...(deps.assetIngest
+        ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
+        : {}),
     });
     return;
   }
@@ -116,6 +129,7 @@ export async function dispatchEvent(
       {
         ...(deps.blob ? { blob: deps.blob } : {}),
         ...(deps.assetGate ? { assetGate: deps.assetGate } : {}),
+        ...(deps.assetSearch ? { assetSearch: deps.assetSearch } : {}),
       },
       event,
     );
@@ -214,7 +228,23 @@ export async function dispatchEvent(
   // A deleted asset's bytes: the row went with the request, the files go here, so a failed
   // removal comes back with the event. Idempotent, like every removal below.
   if (event.type === 'asset.deleted') {
-    await deleteAssetFiles(ctx, { ...(deps.blob ? { blob: deps.blob } : {}) }, event);
+    await deleteAssetFiles(
+      ctx,
+      {
+        ...(deps.blob ? { blob: deps.blob } : {}),
+        ...(deps.assetSearch ? { search: deps.assetSearch } : {}),
+      },
+      event,
+    );
+  }
+
+  // 2e. Asset search reads the published snapshot of a published asset, so a publish or unpublish
+  // re-indexes it (the asset may never have been ingested, too: an upload from before ingest).
+  if (
+    deps.assetSearch &&
+    (event.type === 'asset.published' || event.type === 'asset.unpublished')
+  ) {
+    await indexAssetForSearch(ctx, deps.assetSearch, deps.blob, scope, event.assetId);
   }
 
   // A deleted environment: its rows are gone, so remove what was derived from them elsewhere.
@@ -225,6 +255,9 @@ export async function dispatchEvent(
       if (deps.rag) await removeEntryEmbeddings(deps.rag, scope, entryId);
       await searchIndex?.remove(scope, entryId);
     }
+    // Asset search documents go in one call per shard; asset vectors, which go only by id, go
+    // with the purge (it pages the assets before their rows are removed).
+    await deps.assetSearch?.index?.clear?.(scope);
     if (deps.cache) await deps.cache.invalidateTag(epochTag(scope));
     // Its media stops at once: every gate entry goes (the engine then purges the environment's
     // cached media, now and once more later). The purge clears the gate again when it finishes.

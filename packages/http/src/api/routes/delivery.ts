@@ -1,4 +1,5 @@
 import {
+  assetSearchDeps,
   assetTransformTarget,
   getDeliveredAsset,
   getPublishedEntry,
@@ -9,6 +10,7 @@ import {
   liveEventFor,
   maskDeliveredFields,
   parseImageTransform,
+  searchDeliveredAssets,
   semanticSearch,
   transformPublishedAssetUrl,
   visibleSearchHits,
@@ -56,6 +58,7 @@ import {
   clampCount,
   entryQueryFrom,
   MAX_PAGE_LIMIT,
+  parseAssetSearchQuery,
   parseDeliveredAssetQuery,
   parseEntryQuery,
 } from '../query';
@@ -206,6 +209,21 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
         return c.json({ items: [], total: 0 });
       }
       const locale = c.req.query('locale');
+      // ?q= searches published assets (hybrid, with facets) instead of listing them. A read like
+      // the listing: nothing is written, so the cached entrypoint caches it by URL.
+      if (c.req.query('q') !== undefined) {
+        const { filters, ...query } = parseAssetSearchQuery(c.req.query());
+        const { status: _status, ...published } = filters ?? {};
+        return c.json(
+          await searchDeliveredAssets(
+            ctx,
+            assetSearchDeps(rag),
+            scopeOf(c),
+            { ...query, filters: published },
+            locale !== undefined ? { locale } : {},
+          ),
+        );
+      }
       const page = await listDeliveredAssets(
         ctx,
         scopeOf(c),

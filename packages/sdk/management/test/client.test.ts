@@ -378,6 +378,9 @@ describe('@contentworker/sdk-management client', () => {
     await c.assets.restore('a1');
     await c.assets.delete('a1');
     await c.assets.move(['a1', 'a2'], 'f1');
+    await c.assets.search({ q: 'mug', kind: 'image', folder: 'root' });
+    await c.assets.reingest('a1');
+    await c.assets.reindex({ all: true });
     await c.assets.folders.list();
     await c.assets.folders.create({ name: 'Brand' });
     await c.assets.folders.update('f1', { parentId: null });
@@ -412,6 +415,9 @@ describe('@contentworker/sdk-management client', () => {
       `POST ${env}/assets/a1/restore`,
       `DELETE ${env}/assets/a1`,
       `POST ${env}/assets/move`,
+      `GET ${env}/assets/search?q=mug&kind=image&folder=root`,
+      `POST ${env}/assets/a1/reingest`,
+      `POST ${env}/assets/reindex`,
       `GET ${env}/asset-folders`,
       `POST ${env}/asset-folders`,
       `PATCH ${env}/asset-folders/f1`,

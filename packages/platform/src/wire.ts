@@ -2,6 +2,7 @@ import {
   createWorkersAIDecisionModel,
   createWorkersAIEmbeddings,
   createWorkersAIProvider,
+  createWorkersAITextExtractor,
   type WorkersAiRun,
   workersAiModelsFromEnv,
 } from '@contentworker/adapters/ai-workers';
@@ -15,7 +16,7 @@ import {
 import { createKvCache } from '@contentworker/adapters/cache-kv';
 import { createCfEmailSender } from '@contentworker/adapters/email-cf';
 import { createRemoteFetcher, createWebhookSender } from '@contentworker/adapters/http-effects';
-import { createCfImageTransformer } from '@contentworker/adapters/images-cf';
+import { createCfImageProbe, createCfImageTransformer } from '@contentworker/adapters/images-cf';
 import { createWorkerLoaderRuntime } from '@contentworker/adapters/plugins-cf-loader';
 import { createCfQueueProducer } from '@contentworker/adapters/queue-cf';
 import { createKvDevVectorStore } from '@contentworker/adapters/vector-kv-dev';
@@ -25,10 +26,12 @@ import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runt
 import {
   type AgentRunner,
   type AppContext,
+  type AssetIngestDeps,
   aiCallLevel,
   aiModeFakes,
   aiRuntimeConfig,
   assertNoFakeAdapters,
+  assetSearchDeps,
   BULK_TOPIC,
   createHasher,
   createPluginHookDispatcher,
@@ -45,6 +48,8 @@ import { type ApiKeyKind, type DomainEvent, scopesForKind } from '@contentworker
 import type {
   AIProvider,
   AssetGate,
+  AssetIngestQueue,
+  AssetIngestStarter,
   BlobStore,
   Cache,
   ContentStore,
@@ -57,6 +62,7 @@ import type {
   MediaPathSigner,
   Queue as QueuePort,
   SecretSealer,
+  TextExtractor,
   VectorStore,
   WorkflowEngine,
 } from '@contentworker/ports';
@@ -69,6 +75,7 @@ import {
   StubAIProvider,
   StubDecisionModel,
 } from '@contentworker/test-kit';
+import { CloudflareAssetIngestStarter, createAssetIngestQueue } from './asset-ingest';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
 import { doCostGuardFromEnv } from './do/cost-guard';
@@ -93,6 +100,10 @@ export interface EdgeWired {
    * events; the media Worker reads it.
    */
   readonly assetGate?: AssetGate;
+  /** Hands files to ingest (the asset-events queue); absent when ASSET_EVENTS_QUEUE is unbound. */
+  readonly assetIngest?: AssetIngestQueue;
+  /** Starts ingest runs (the engine's ASSET_INGEST_WF); absent elsewhere. */
+  readonly assetIngestStarter?: AssetIngestStarter;
   readonly ai: AIProvider;
   /** Decision model (Clef on Workers AI): typed questions in, probabilities out. */
   readonly decisions: DecisionModel;
@@ -267,6 +278,12 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     blob,
     ...(mediaSigner ? { mediaSigner } : {}),
     ...(env.KV_CACHE ? { assetGate: createKvAssetGate(env.KV_CACHE) } : {}),
+    ...(env.ASSET_EVENTS_QUEUE
+      ? { assetIngest: createAssetIngestQueue(env.ASSET_EVENTS_QUEUE) }
+      : {}),
+    ...(env.ASSET_INGEST_WF
+      ? { assetIngestStarter: new CloudflareAssetIngestStarter(env.ASSET_INGEST_WF) }
+      : {}),
     ai,
     decisions,
     bus: new InMemoryEventBus(),
@@ -307,6 +324,34 @@ export function wireMedia(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): Media
     mediaPaths: createMediaPathSigner(secret),
     mediaSigner: createMediaUrlSigner(secret),
   };
+}
+
+/**
+ * What an ingest run uses, from a wired invocation: the bytes (R2), the Images binding's `info`
+ * for dimensions, Workers AI's Markdown conversion and Whisper for text, the generation model for
+ * alt text and tags, and the asset search indexes. Embedding follows the events consumer's rule:
+ * only with EMBEDDINGS_PROVIDER set, never the dev fallback.
+ */
+export function makeAssetIngestDeps(env: EdgeEnv, wired: EdgeWired): AssetIngestDeps {
+  const extractor = makeTextExtractor(env);
+  return {
+    blob: wired.blob,
+    ai: wired.ai,
+    ...(env.IMAGES ? { images: createCfImageProbe(env.IMAGES) } : {}),
+    ...(extractor ? { extractor } : {}),
+    search: assetSearchDeps(wired.rag, { embed: Boolean(env.EMBEDDINGS_PROVIDER) }),
+  };
+}
+
+/** Text extraction on Workers AI, when the AI binding (with Markdown conversion) is there. */
+function makeTextExtractor(env: EdgeEnv): TextExtractor | undefined {
+  if (!env.AI?.toMarkdown) return undefined;
+  return createWorkersAITextExtractor({
+    toMarkdown: env.AI.toMarkdown.bind(env.AI),
+    run: env.AI.run.bind(env.AI),
+    gatewayId: env.AI_GATEWAY_ID || undefined,
+    ...gatewayLogs(env),
+  });
 }
 
 /** The editorial workflow engine over the EDITORIAL_WF binding, when bound. */
@@ -534,7 +579,16 @@ function makeRag(env: EdgeEnv, fakes: FakeAdapterBinding[]): RagDeps {
       : memoInMemoryVectors();
   const shards = Number(env.SEARCH_SHARDS) || DEFAULT_SEARCH_SHARDS;
   const searchIndex = env.SEARCH ? createShardedSearchIndex(env.SEARCH, shards) : undefined;
-  return { embeddings, vectors, ...(searchIndex ? { searchIndex } : {}) };
+  // Assets in shards of their own (same class, no new Durable Object or tag).
+  const assetSearchIndex = env.SEARCH
+    ? createShardedSearchIndex(env.SEARCH, shards, 'assets')
+    : undefined;
+  return {
+    embeddings,
+    vectors,
+    ...(searchIndex ? { searchIndex } : {}),
+    ...(assetSearchIndex ? { assetSearchIndex } : {}),
+  };
 }
 
 // ---- module-scope memoization for demo mode --------------------------------

@@ -521,9 +521,13 @@ export function shellVars(d: Deployment): Record<string, string> {
       'contentworker-purge-dlq',
       'contentworker-media-purge',
       'contentworker-media-purge-dlq',
+      'contentworker-asset-events',
+      'contentworker-asset-events-dlq',
     ]
       .map(n.queue)
       .join(' '),
+    // The queue the media bucket's object-create notifications go to (asset ingest).
+    ASSET_EVENTS: n.queue('contentworker-asset-events'),
     DOMAIN: h.web,
     API_DOMAIN: h.api,
     CDN_DOMAIN: h.delivery,

@@ -62,7 +62,9 @@
     "producers": [
       { "binding": "EVENTS_QUEUE", "queue": "contentworker-events" },
       { "binding": "BULK_QUEUE", "queue": "contentworker-bulk" },
-      { "binding": "AGENTS_QUEUE", "queue": "contentworker-agents" }
+      { "binding": "AGENTS_QUEUE", "queue": "contentworker-agents" },
+      // A completed signed upload, and a re-ingest request, for the engine's asset ingest.
+      { "binding": "ASSET_EVENTS_QUEUE", "queue": "contentworker-asset-events" }
     ]
   },
   "durable_objects": {

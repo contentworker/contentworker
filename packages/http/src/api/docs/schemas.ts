@@ -116,6 +116,45 @@ export const asset = z.object({
       embargoUntil: z.iso.datetime().optional(),
     })
     .optional(),
+  contentHash: z.string().optional().describe('SHA-256 of the bytes (hex), once ingested'),
+  ingestStatus: z
+    .enum(['pending', 'processing', 'ready', 'error'])
+    .optional()
+    .describe('Where ingest stands on the current file; absent when it never ran'),
+  ingestError: z.string().optional().describe('Why the last ingest failed'),
+  duplicateOf: z
+    .string()
+    .optional()
+    .describe('The oldest other asset here with the same bytes (a warning, not a block)'),
+  aiSuggestions: z
+    .object({
+      altText: z.array(z.string()).optional().describe('Locales whose alt text a model wrote'),
+      tags: z.array(z.string()).optional().describe('Tag ids a model chose'),
+    })
+    .optional()
+    .describe('What ingest filled from a model that no person has saved yet'),
+});
+
+const assetFacets = z
+  .object({
+    kind: z.record(z.string(), z.int()),
+    tag: z.record(z.string(), z.int()).describe('By tag id'),
+    folder: z.record(z.string(), z.int()).describe('By folder id; root for assets in no folder'),
+  })
+  .describe('Matches per value, each counted with the other filters but not its own');
+
+export const assetSearchPage = z.object({
+  items: z.array(asset).describe('Best match first'),
+  total: z.int().describe('Matches after the filters'),
+  facets: assetFacets,
+});
+
+export const assetReindex = z.object({
+  assets: z.int().describe('Assets sent through ingest'),
+  job: z
+    .looseObject({ id: z.string(), status: z.string(), totalItems: z.int() })
+    .optional()
+    .describe('The bulk job (GET /bulk-jobs/{id}); absent when there was nothing to do'),
 });
 
 export const assetPage = z.object({
@@ -170,6 +209,12 @@ export const deliveredAssetPage = z.object({
     .string()
     .optional()
     .describe('Pass as ?cursor= for the next page; absent on the last page'),
+});
+
+export const deliveredAssetSearchPage = z.object({
+  items: z.array(deliveredAsset).describe('Best match first'),
+  total: z.int().describe('Matches after the filters'),
+  facets: assetFacets,
 });
 
 export const assetRendition = z.object({

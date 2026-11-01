@@ -53,7 +53,7 @@ test('every account-wide name in every app carries the deployment', () => {
   assert.equal(engine.name, 'contentworker-engine-acme');
   assert.deepEqual(
     engine.workflows.map((w: { name: string }) => w.name),
-    ['contentworker-agent-acme', 'contentworker-editorial-acme'],
+    ['contentworker-agent-acme', 'contentworker-editorial-acme', 'contentworker-asset-ingest-acme'],
   );
   assert.equal(engine.d1_databases[0].database_name, n.d1);
   assert.equal(engine.d1_databases[0].database_id, acme.d1Id);
@@ -142,6 +142,32 @@ test('the media Worker gets its own route, purge queue and the deployment’s me
     /contentworker-media-purge-acme contentworker-media-purge-dlq-acme/,
   );
   assert.equal(shellVars(acme).MEDIA_DOMAIN, 'media.acme.contentworker.app');
+});
+
+test('asset ingest: the engine consumes the asset-events queue, and provisioning creates it', () => {
+  const engine = renderEngine(base('engine'), acme);
+  const consumer = engine.queues.consumers.find(
+    (q: { queue: string }) => q.queue === 'contentworker-asset-events-acme',
+  );
+  assert.equal(consumer.dead_letter_queue, 'contentworker-asset-events-dlq-acme');
+  assert.ok(
+    engine.queues.consumers.some(
+      (q: { queue: string }) => q.queue === 'contentworker-asset-events-dlq-acme',
+    ),
+  );
+  assert.equal(
+    engine.workflows.find((w: { binding: string }) => w.binding === 'ASSET_INGEST_WF').name,
+    'contentworker-asset-ingest-acme',
+  );
+  const api = renderApi(base('api'), acme);
+  assert.equal(
+    api.queues.producers.find((p: { binding: string }) => p.binding === 'ASSET_EVENTS_QUEUE').queue,
+    'contentworker-asset-events-acme',
+  );
+  const vars = shellVars(acme);
+  assert.match(vars.QUEUES, /contentworker-asset-events-acme contentworker-asset-events-dlq-acme/);
+  // The R2 notification rule targets the deployment's own queue.
+  assert.equal(vars.ASSET_EVENTS, 'contentworker-asset-events-acme');
 });
 
 test('Workers deploy engine first, then media, api, delivery and web', () => {

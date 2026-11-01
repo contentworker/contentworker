@@ -131,3 +131,44 @@ describe('createVectorizeStore', () => {
     expect(strict.map((m) => m.entryId)).toEqual(['e1']);
   });
 });
+
+describe('asset vectors', () => {
+  it('keeps assets in a namespace of their own: entry queries never see them, nor the reverse', async () => {
+    const { index, vectors } = fakeIndex();
+    const store = createVectorizeStore(index, { dimensions: 3, modelId: 'm' });
+    await store.upsert([row(scopeA, 'e1', 0, [1, 0, 0])]);
+    await store.upsertAsset(scopeA, {
+      assetId: 'a1',
+      embedding: [1, 0, 0],
+      assetKind: 'image',
+      version: 2,
+    });
+    expect((await store.query(scopeA, [1, 0, 0], { topK: 10 })).map((m) => m.entryId)).toEqual([
+      'e1',
+    ]);
+    expect(await store.queryAssets(scopeA, [1, 0, 0], { topK: 10 })).toEqual([
+      { assetId: 'a1', score: expect.closeTo(1, 5) },
+    ]);
+    const stored = [...vectors.values()].find((v) => v.metadata?.assetId === 'a1');
+    expect(stored?.metadata).toMatchObject({
+      kind: 'asset',
+      spaceId: 'space-a',
+      environmentId: 'main',
+      assetId: 'a1',
+      assetKind: 'image',
+      version: 2,
+    });
+  });
+
+  it('isolates scopes and replaces an asset in place; delete removes it', async () => {
+    const { index, vectors } = fakeIndex();
+    const store = createVectorizeStore(index, { dimensions: 3, modelId: 'm' });
+    const asset = { assetId: 'a1', assetKind: 'document', version: 1 };
+    await store.upsertAsset(scopeA, { ...asset, embedding: [1, 0, 0] });
+    await store.upsertAsset(scopeA, { ...asset, embedding: [0, 1, 0] });
+    expect(vectors.size).toBe(1);
+    expect(await store.queryAssets(scopeB, [0, 1, 0], { topK: 10 })).toEqual([]);
+    await store.deleteAsset(scopeA, 'a1');
+    expect(await store.queryAssets(scopeA, [0, 1, 0], { topK: 10 })).toEqual([]);
+  });
+});

@@ -18,6 +18,7 @@ declare global {
       readonly AI_BUDGET: DurableObjectNamespace<CostGuardDO>;
       readonly SEARCH: DurableObjectNamespace<SearchShardDO>;
       readonly EDITORIAL_WF: Workflow;
+      readonly ASSET_INGEST_WF: Workflow;
       readonly ASSISTANT_AGENT: DurableObjectNamespace<AssistantAgent>;
       readonly DB: D1Database;
       readonly KV_CACHE: KVNamespace;

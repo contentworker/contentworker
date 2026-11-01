@@ -145,6 +145,55 @@ export interface Asset {
   /** When it was archived; present only while `status` is `archived`. */
   readonly archivedAt?: string;
   readonly rights?: AssetRights;
+  /**
+   * Where ingest stands on the current file (hashing, probing, enrichment, indexing). Absent: it
+   * has never run for this asset (a hosted video, or an asset uploaded before ingest shipped).
+   */
+  readonly ingestStatus?: AssetIngestStatus;
+  /** Why the last ingest failed, while `ingestStatus` is `error`. */
+  readonly ingestError?: string;
+  /**
+   * The asset this one's bytes duplicate: the oldest other asset in the scope with the same
+   * {@link contentHash}. A warning for the editor, never a block.
+   */
+  readonly duplicateOf?: string;
+  /** Values ingest filled in that no person has saved yet, shown as AI suggestions. */
+  readonly aiSuggestions?: AssetAiSuggestions;
+}
+
+/** Ingest's progress on an asset's current file: queued, running, done, or given up on. */
+export type AssetIngestStatus = 'pending' | 'processing' | 'ready' | 'error';
+
+export const ASSET_INGEST_STATUSES: readonly AssetIngestStatus[] = [
+  'pending',
+  'processing',
+  'ready',
+  'error',
+];
+
+/**
+ * Metadata ingest wrote from a model, until an editor saves that field: the alt text locales and
+ * the tag ids it filled. Saving a field through the metadata path clears its marker (the editor
+ * has made the value theirs).
+ */
+export interface AssetAiSuggestions {
+  readonly altText?: readonly string[];
+  readonly tags?: readonly string[];
+}
+
+/** The suggestion markers left after an editor saves `patch`: the fields it carries are theirs. */
+export function clearAcceptedSuggestions(
+  suggestions: AssetAiSuggestions | undefined,
+  patch: { readonly altText?: unknown; readonly tags?: unknown },
+): AssetAiSuggestions | undefined {
+  if (!suggestions) return undefined;
+  const next: AssetAiSuggestions = {
+    ...(suggestions.altText?.length && patch.altText === undefined
+      ? { altText: suggestions.altText }
+      : {}),
+    ...(suggestions.tags?.length && patch.tags === undefined ? { tags: suggestions.tags } : {}),
+  };
+  return next.altText || next.tags ? next : undefined;
 }
 
 /**

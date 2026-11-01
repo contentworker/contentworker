@@ -21,6 +21,8 @@ export const PURGING_EVENTS = new Set<string>([
   'asset.published',
   'asset.unpublished',
   'asset.deleted',
+  // Delivery's asset search ranks on what ingest indexed.
+  'asset.ingested',
   'content_type.published',
   'release.published',
   'environment_alias.changed',

@@ -1,4 +1,5 @@
 import type { DomainEvent, Scope } from '@contentworker/domain';
+import type { AssetIngestRequest } from '@contentworker/ports';
 
 /** Minimal runtime shape check for a queued DomainEvent (defensive, not exhaustive). */
 export function isDomainEvent(body: unknown): body is DomainEvent {
@@ -80,5 +81,50 @@ export function isWebhookRetryMessage(value: unknown): value is WebhookRetryMess
     typeof m.attempt === 'number' &&
     typeof m.event === 'object' &&
     m.event !== null
+  );
+}
+
+/**
+ * An R2 event notification for an object written to the media bucket, as the
+ * `contentworker-asset-events` queue carries it (R2 sends it; the api sends the same shape when an
+ * upload through its signed PUT completes, since local development has no notifications).
+ */
+export interface ObjectCreatedMessage {
+  readonly action: string;
+  readonly object: { readonly key: string; readonly size?: number; readonly eTag?: string };
+  readonly bucket?: string;
+  readonly eventTime?: string;
+}
+
+/** A request to run ingest on an asset's file again (a retry, the reindex job). */
+export interface AssetIngestMessage extends AssetIngestRequest {
+  readonly kind: 'asset.ingest';
+}
+
+/** The R2 actions that leave a new object behind. */
+const CREATING_ACTIONS = new Set(['PutObject', 'CopyObject', 'CompleteMultipartUpload']);
+
+export function isObjectCreated(body: unknown): body is ObjectCreatedMessage {
+  const m = body as Partial<ObjectCreatedMessage> | null;
+  return (
+    !!m &&
+    typeof m.action === 'string' &&
+    CREATING_ACTIONS.has(m.action) &&
+    typeof m.object === 'object' &&
+    m.object !== null &&
+    typeof m.object.key === 'string'
+  );
+}
+
+export function isAssetIngestMessage(body: unknown): body is AssetIngestMessage {
+  const m = body as Partial<AssetIngestMessage> | null;
+  return (
+    !!m &&
+    m.kind === 'asset.ingest' &&
+    typeof m.assetId === 'string' &&
+    typeof m.version === 'number' &&
+    typeof m.scope?.spaceId === 'string' &&
+    typeof m.scope?.environmentId === 'string' &&
+    (m.rerun === undefined || typeof m.rerun === 'string')
   );
 }

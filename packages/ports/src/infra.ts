@@ -82,6 +82,60 @@ export interface BlobStore {
    * Optional: a store without it leaves the objects (a deleted environment's files stay).
    */
   deletePrefix?(prefix: string, keep: (key: string) => boolean): Promise<number>;
+  /**
+   * Streams `key`'s bytes, for work that reads a file once without holding it (hashing). `null`
+   * when the object does not exist. Optional: a store without it can't feed asset ingest.
+   */
+  open?(key: string): Promise<BlobObject | null>;
+}
+
+/**
+ * A stream of bytes, typed structurally so no platform type crosses the port: a web
+ * `ReadableStream` is one (it is async-iterable on workerd and Node).
+ */
+export type ByteStream = AsyncIterable<Uint8Array>;
+
+/** An object's bytes as a stream, with what the store recorded about it. */
+export interface BlobObject {
+  readonly body: ByteStream;
+  readonly size: number;
+  readonly contentType?: string;
+}
+
+/** What an image's bytes say about it, read without decoding it fully. */
+export interface ImageInfo {
+  readonly width: number;
+  readonly height: number;
+  /** A content type (`image/png`). */
+  readonly format: string;
+  readonly size?: number;
+}
+
+/**
+ * Reads an image's dimensions and format from its bytes (the Cloudflare Images binding's `info`
+ * on edge). `null` when the bytes are not an image it can read, or carry no dimensions (SVG).
+ */
+export interface ImageProbe {
+  info(body: ByteStream): Promise<ImageInfo | null>;
+}
+
+/** A file to read text out of: its bytes, already capped by the caller. */
+export interface ExtractableFile {
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly bytes: Uint8Array;
+}
+
+/**
+ * Turns a document (PDF, office formats) into Markdown, or speech in an audio file into text
+ * (Workers AI `toMarkdown` and Whisper on edge). What comes back is the file's own text: untrusted,
+ * stored and indexed as data, never followed as instructions.
+ */
+export interface TextExtractor {
+  /** Whether it can read this content type at all. */
+  supports(contentType: string): boolean;
+  /** The text, or '' when the file holds none. */
+  extract(file: ExtractableFile): Promise<string>;
 }
 
 /** How an image is fit into the requested box (provider-neutral names). */
@@ -454,6 +508,11 @@ export interface SearchIndex {
   remove(scope: Scope, entryId: string): Promise<void>;
   search(scope: Scope, query: string, opts: { topK: number }): Promise<LexicalSearchHit[]>;
   /**
+   * Removes every document of the scope (a deleted environment). Optional: an engine without it
+   * leaves them, unreachable once the environment is gone.
+   */
+  clear?(scope: Scope): Promise<void>;
+  /**
    * How many documents the engine holds for this scope.
    *
    * Optional: an engine that cannot count cheaply should omit it rather than
@@ -478,6 +537,31 @@ export interface VectorStore {
     embedding: number[],
     opts: { topK: number; minScore?: number },
   ): Promise<VectorMatch[]>;
+  /**
+   * Asset vectors, one per asset, kept apart from entries' (on Vectorize, a namespace of their
+   * own), so entry search, related entries and RAG answers never see an asset's text.
+   */
+  upsertAsset(scope: Scope, row: AssetVectorRow): Promise<void>;
+  deleteAsset(scope: Scope, assetId: string): Promise<void>;
+  queryAssets(
+    scope: Scope,
+    embedding: number[],
+    opts: { topK: number; minScore?: number },
+  ): Promise<AssetVectorMatch[]>;
+}
+
+/** One asset's embedding: its caption, title, alt text, tags and an excerpt of its text. */
+export interface AssetVectorRow {
+  readonly assetId: string;
+  readonly embedding: number[];
+  /** The asset's kind (`image`, `document`, …), kept as metadata. */
+  readonly assetKind: string;
+  readonly version: number;
+}
+
+export interface AssetVectorMatch {
+  readonly assetId: string;
+  readonly score: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -628,4 +712,42 @@ export interface MediaPathSigner {
   token(scope: Scope, assetId: string, version: number): string;
   /** Whether `token` is the one {@link token} gives; constant-time. */
   verify(scope: Scope, assetId: string, version: number, token: string): boolean;
+}
+
+/** Ingest of one asset's file, as the queue carries it (see {@link AssetIngestQueue}). */
+export interface AssetIngestRequest {
+  readonly scope: Scope;
+  readonly assetId: string;
+  readonly version: number;
+  /**
+   * Set to run ingest again on a file already ingested (a person's retry, the reindex job): a
+   * fresh run, where without it a repeat request for the same file is the same run.
+   */
+  readonly rerun?: string;
+}
+
+/**
+ * Hands asset files to ingest, through the engine's asset-events queue (which R2's object-create
+ * notifications also feed). At least once: ingest dedupes by file, so a repeat costs nothing.
+ */
+export interface AssetIngestQueue {
+  /** An object was written under `key` (a completed upload). */
+  objectCreated(key: string): Promise<void>;
+  request(requests: readonly AssetIngestRequest[]): Promise<void>;
+}
+
+/** What one ingest run is about. Plain JSON: it is a Workflow instance's payload. */
+export interface AssetIngestParams {
+  readonly scope: Scope;
+  readonly assetId: string;
+  readonly version: number;
+}
+
+/**
+ * Starts an ingest run (an `AssetIngestWorkflow` instance on edge). Idempotent on `instanceId`: a
+ * run already started under that id is not started again, which is what makes a redelivered
+ * notification free.
+ */
+export interface AssetIngestStarter {
+  start(instanceId: string, params: AssetIngestParams): Promise<void>;
 }

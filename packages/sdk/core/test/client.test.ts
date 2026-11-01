@@ -149,6 +149,22 @@ describe('assets', () => {
     expect(calls[2]).toBe('https://cms.test/delivery/s1/main/assets?skip=20');
   });
 
+  it('searches published assets with ?q= and the filters', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        return { items: [image], total: 1, facets: { kind: { image: 1 }, tag: {}, folder: {} } };
+      }),
+    });
+    const page = await client.searchAssets('red mug', { kind: 'image', folder: 'root', limit: 5 });
+    expect(page.facets.kind).toEqual({ image: 1 });
+    expect(calls[0]).toBe(
+      'https://cms.test/delivery/s1/main/assets?q=red+mug&limit=5&kind=image&folder=root',
+    );
+  });
+
   it('reads drafts from the preview surface', async () => {
     const calls: string[] = [];
     const client = createDeliveryClient({

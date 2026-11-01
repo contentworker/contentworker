@@ -8,6 +8,7 @@ import type {
 import type { AgentReview } from '@contentworker/domain';
 import type {
   AIProvider,
+  AssetIngestQueue,
   BlobStore,
   Hasher,
   ImportSource,
@@ -44,6 +45,8 @@ export interface McpDeps {
   /** Object storage, where environment import and clone jobs stage their work. Absent: those
    *  tools run synchronously (local fakes, tests). */
   readonly blob?: BlobStore;
+  /** Hands asset files to ingest; absent, asset_reingest refuses (not configured). */
+  readonly assetIngest?: AssetIngestQueue;
   /** Whether people sign in through SSO (for the last-administrator rule). Absent: no SSO. */
   readonly accessPolicy?: AccessPolicy;
 }

@@ -994,6 +994,10 @@ const toAsset = (r: AssetRow): Asset => ({
   ...(r.createdBy ? { createdBy: r.createdBy } : {}),
   ...(r.archivedAt ? { archivedAt: r.archivedAt.toISOString() } : {}),
   ...(r.rights ? { rights: r.rights } : {}),
+  ...(r.ingestStatus ? { ingestStatus: r.ingestStatus } : {}),
+  ...(r.ingestError ? { ingestError: r.ingestError } : {}),
+  ...(r.duplicateOf ? { duplicateOf: r.duplicateOf } : {}),
+  ...(r.aiSuggestions ? { aiSuggestions: r.aiSuggestions } : {}),
 });
 
 /** A content type without parameters, lowercased: the `mime` column's form. */
@@ -1058,6 +1062,7 @@ function assetFilterConditions(filters: AssetFilters): SQL[] {
   }
   if (filters.folderId === null) conds.push(isNull(t.folderId));
   else if (filters.folderId !== undefined) conds.push(eq(t.folderId, filters.folderId));
+  if (filters.contentHash) conds.push(eq(t.contentHash, filters.contentHash));
   return conds;
 }
 
@@ -1086,7 +1091,18 @@ function makeAssetRepo(x: Exec): AssetRepo {
       createdBy: asset.createdBy ?? null,
       archivedAt: asset.archivedAt ? new Date(asset.archivedAt) : null,
       rights: asset.rights ?? null,
+      aiSuggestions: asset.aiSuggestions ?? null,
     };
+    // What ingest owns: written on insert (an imported asset keeps its source's), and on an update
+    // only by recordIngest, so an editor's save made from a read taken before an ingest step
+    // can't undo what the step found.
+    const ingested = {
+      contentHash: asset.contentHash ?? null,
+      ingestStatus: asset.ingestStatus ?? null,
+      ingestError: asset.ingestError ?? null,
+      duplicateOf: asset.duplicateOf ?? null,
+    };
+    const { contentHash: _hash, ...updated } = columns;
     return db
       .insert(schema.assets)
       .values({
@@ -1094,10 +1110,11 @@ function makeAssetRepo(x: Exec): AssetRepo {
         environmentId: scope.environmentId,
         id: asset.id,
         ...columns,
+        ...ingested,
       })
       .onConflictDoUpdate({
         target: [schema.assets.spaceId, schema.assets.environmentId, schema.assets.id],
-        set: columns,
+        set: updated,
       });
   };
   return {
@@ -1210,6 +1227,42 @@ function makeAssetRepo(x: Exec): AssetRepo {
           .delete(schema.assets)
           .where(and(scopeFilter(schema.assets, scope), eq(schema.assets.id, id))),
       ]);
+    },
+    async recordIngest(scope, id, version, patch) {
+      const t = schema.assets;
+      const set: Record<string, unknown> = {};
+      if (patch.status !== undefined) set.ingestStatus = patch.status;
+      if (patch.error !== undefined) set.ingestError = patch.error;
+      if (patch.contentHash !== undefined) set.contentHash = patch.contentHash;
+      if (patch.duplicateOf !== undefined) set.duplicateOf = patch.duplicateOf;
+      // The file record is JSON: measurements go into it with json_set, so the rest of it (its
+      // URL, name, a video) stays as the last save left it.
+      const fileSets: SQL[] = [];
+      if (patch.size !== undefined) {
+        set.size = patch.size;
+        fileSets.push(sql`'$.size', ${patch.size}`);
+      }
+      if (patch.width !== undefined) {
+        set.width = patch.width;
+        fileSets.push(sql`'$.width', ${patch.width}`);
+      }
+      if (patch.height !== undefined) {
+        set.height = patch.height;
+        fileSets.push(sql`'$.height', ${patch.height}`);
+      }
+      if (patch.contentType !== undefined) {
+        set.mime = mimeOf(patch.contentType);
+        set.kind = assetKind(patch.contentType);
+        fileSets.push(sql`'$.contentType', ${patch.contentType}`);
+      }
+      if (fileSets.length > 0) set.file = sql`json_set(${t.file}, ${sql.join(fileSets, sql`, `)})`;
+      if (Object.keys(set).length === 0) return;
+      await x.write(
+        db
+          .update(t)
+          .set(set)
+          .where(and(scopeFilter(t, scope), eq(t.id, id), eq(t.version, version))),
+      );
     },
     async putPublished(scope, s) {
       const values = {

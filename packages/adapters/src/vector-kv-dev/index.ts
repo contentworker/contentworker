@@ -1,5 +1,11 @@
 import type { Scope } from '@contentworker/domain';
-import type { VectorMatch, VectorRow, VectorStore } from '@contentworker/ports';
+import type {
+  AssetVectorMatch,
+  AssetVectorRow,
+  VectorMatch,
+  VectorRow,
+  VectorStore,
+} from '@contentworker/ports';
 
 /** The subset of a KV namespace binding this store uses. */
 export interface KvVectorBinding {
@@ -34,7 +40,34 @@ export function createKvDevVectorStore(kv: KvVectorBinding): VectorStore {
     return raw ? (JSON.parse(raw) as VectorRow[]) : [];
   };
 
+  // Assets under a prefix of their own, so an entry query's scan never reads one.
+  const assetPrefix = (scope: Scope) => `vecasset:${scope.spaceId}:${scope.environmentId}:`;
   return {
+    async upsertAsset(scope, row) {
+      await kv.put(`${assetPrefix(scope)}${row.assetId}`, JSON.stringify(row));
+    },
+
+    async deleteAsset(scope, assetId) {
+      await kv.delete(`${assetPrefix(scope)}${assetId}`);
+    },
+
+    async queryAssets(scope, embedding, opts) {
+      const matches: AssetVectorMatch[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await kv.list({ prefix: assetPrefix(scope), cursor, limit: 1000 });
+        for (const { name } of page.keys) {
+          const raw = await kv.get(name);
+          if (!raw) continue;
+          const row = JSON.parse(raw) as AssetVectorRow;
+          const score = cosine(embedding, row.embedding);
+          if (score >= (opts.minScore ?? 0)) matches.push({ assetId: row.assetId, score });
+        }
+        cursor = page.list_complete ? undefined : page.cursor;
+      } while (cursor);
+      return matches.sort((a, b) => b.score - a.score).slice(0, opts.topK);
+    },
+
     async upsert(rows) {
       const byEntry = new Map<string, VectorRow[]>();
       for (const row of rows) {

@@ -1,5 +1,6 @@
 import {
   handleMediaRequest,
+  keyFromMediaPath,
   type MediaUrlSigner,
   type R2BucketLike,
 } from '@contentworker/adapters/blob-r2';
@@ -15,6 +16,13 @@ export interface MediaRouteDeps {
   readonly signer?: MediaUrlSigner;
   readonly images?: ImagesBindingLike;
   readonly streamWebhookSecret?: string;
+  /**
+   * Called with the key of each upload the signed PUT stored, to start its ingest. R2's own
+   * notification starts it too where notifications exist (not in local development); the run id
+   * is the file's, so whichever arrives first starts the one run. A failure here is logged, never
+   * the upload's.
+   */
+  readonly onUploaded?: (key: string) => Promise<void>;
   /** Injected for tests; seconds since the epoch. */
   readonly now?: () => number;
 }
@@ -36,8 +44,8 @@ export function mediaRoutes(deps: MediaRouteDeps): Hono {
   const { bucket, signer } = deps;
 
   if (bucket && signer) {
-    app.on(['GET', 'HEAD', 'PUT'], '/media/*', (c) =>
-      handleMediaRequest(c.req.raw, {
+    app.on(['GET', 'HEAD', 'PUT'], '/media/*', async (c) => {
+      const res = await handleMediaRequest(c.req.raw, {
         bucket,
         signer,
         ...(deps.now ? { now: deps.now } : {}),
@@ -53,8 +61,17 @@ export function mediaRoutes(deps: MediaRouteDeps): Hono {
                 ),
             }
           : {}),
-      }),
-    );
+      });
+      if (c.req.method === 'PUT' && res.ok && deps.onUploaded) {
+        const key = keyFromMediaPath(new URL(c.req.url).pathname);
+        if (key) {
+          await deps.onUploaded(key).catch((err: unknown) => {
+            console.error('upload ingest notice failed', { key, error: String(err) });
+          });
+        }
+      }
+      return res;
+    });
   }
 
   if (deps.streamWebhookSecret) {

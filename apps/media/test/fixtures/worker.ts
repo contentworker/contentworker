@@ -7,6 +7,10 @@ import type { MediaDeps } from '../../src/serve';
 
 /** What the fake records about the last transform, so a test can see what was asked for. */
 export const fakeImages: ImagesBindingLike = {
+  // The media Worker never probes; the binding shape has it for ingest.
+  async info() {
+    return { format: 'image/png', fileSize: 0, width: 1, height: 1 };
+  },
   input(stream) {
     const steps: unknown[] = [];
     const handle = {

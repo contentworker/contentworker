@@ -2,10 +2,19 @@ import type { FocalPoint, Scope } from '@contentworker/domain';
 import type {
   AssetGate,
   AssetGateEntry,
+  AssetIngestParams,
+  AssetIngestQueue,
+  AssetIngestRequest,
+  AssetIngestStarter,
+  ByteStream,
+  ExtractableFile,
   HostedVideo,
+  ImageInfo,
+  ImageProbe,
   ImageTransformer,
   ImageTransformSpec,
   MediaPathSigner,
+  TextExtractor,
   VideoHost,
   VideoUpload,
 } from '@contentworker/ports';
@@ -138,4 +147,90 @@ export class FakeVideoHost implements VideoHost {
   forget(videoId: string): void {
     this.videos.delete(videoId);
   }
+}
+
+/**
+ * An ImageProbe that reads the dimensions a test planted: `set(bytes, info)` keyed by the bytes'
+ * text, so a test uploads a "file" and says what an image service would find in it. Anything else
+ * is not an image (`null`). `failNext` makes the next call throw, for the retry path.
+ */
+export class FakeImageProbe implements ImageProbe {
+  private readonly known = new Map<string, ImageInfo>();
+  calls = 0;
+  failNext = false;
+
+  set(bytes: string, info: ImageInfo): void {
+    this.known.set(bytes, info);
+  }
+
+  async info(body: ByteStream): Promise<ImageInfo | null> {
+    this.calls += 1;
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error('image service unavailable');
+    }
+    let text = '';
+    for await (const chunk of body) text += asciiOf(chunk);
+    return this.known.get(text) ?? null;
+  }
+}
+
+/**
+ * A TextExtractor for documents (`application/pdf`, office types) and audio: returns what a test
+ * planted for the file name, or the file's bytes as text. Records every file it read.
+ */
+export class FakeTextExtractor implements TextExtractor {
+  readonly read: ExtractableFile[] = [];
+  private readonly texts = new Map<string, string>();
+
+  setText(fileName: string, text: string): void {
+    this.texts.set(fileName, text);
+  }
+
+  supports(contentType: string): boolean {
+    return (
+      contentType === 'application/pdf' ||
+      contentType.startsWith('application/vnd.openxmlformats-officedocument.') ||
+      contentType.startsWith('audio/')
+    );
+  }
+
+  async extract(file: ExtractableFile): Promise<string> {
+    this.read.push(file);
+    return this.texts.get(file.fileName) ?? asciiOf(file.bytes);
+  }
+}
+
+/** An AssetIngestQueue that records what was handed to ingest. */
+export class FakeAssetIngestQueue implements AssetIngestQueue {
+  readonly created: string[] = [];
+  readonly requested: AssetIngestRequest[] = [];
+
+  async objectCreated(key: string): Promise<void> {
+    this.created.push(key);
+  }
+
+  async request(requests: readonly AssetIngestRequest[]): Promise<void> {
+    this.requested.push(...requests);
+  }
+}
+
+/**
+ * An AssetIngestStarter with the Workflows binding's id semantics: a second start under an id
+ * already used is not a second run. `started` lists the runs that did start.
+ */
+export class RecordingAssetIngestStarter implements AssetIngestStarter {
+  readonly started: { instanceId: string; params: AssetIngestParams }[] = [];
+
+  async start(instanceId: string, params: AssetIngestParams): Promise<void> {
+    if (this.started.some((s) => s.instanceId === instanceId)) return;
+    this.started.push({ instanceId, params });
+  }
+}
+
+/** Bytes as text, one char per byte (exact for the ASCII the tests write). */
+function asciiOf(bytes: Uint8Array): string {
+  let out = '';
+  for (const b of bytes) out += String.fromCharCode(b);
+  return out;
 }

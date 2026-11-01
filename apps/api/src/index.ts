@@ -40,6 +40,7 @@ let devSeeded = false;
 
 function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
   const app = new Hono();
+  const { assetIngest } = wired;
 
   // Signed R2 transfers (+ Images transforms) and Stream webhooks. Mounted on
   // every role: delivery serves downloads, management takes uploads.
@@ -51,6 +52,8 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       signer: wired.mediaSigner,
       images: env.IMAGES,
       streamWebhookSecret: env.STREAM ? env.STREAM_WEBHOOK_SECRET : undefined,
+      // A completed upload starts its ingest (local dev has no R2 notifications to do it).
+      ...(assetIngest ? { onUploaded: (key: string) => assetIngest.objectCreated(key) } : {}),
     }),
   );
   const mountManagement = mountsRole(wired.config, 'management');
@@ -99,6 +102,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
         : undefined,
       ...(wired.workflowEngine ? { workflowEngine: wired.workflowEngine } : {}),
       workflowNodes: wired.workflowNodes,
+      ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
     };
     const issuer = wired.config.oauthIssuer?.replace(/\/$/, '');
     app.route(
@@ -130,6 +134,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       {
         ...(wired.workflowEngine ? { workflowEngine: wired.workflowEngine } : {}),
         workflowNodes: wired.workflowNodes,
+        ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
       },
     ),
   );

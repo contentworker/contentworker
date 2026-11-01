@@ -32,6 +32,7 @@ import {
 } from '@contentworker/platform/auth-rate-limit';
 import type {
   AIProvider,
+  AssetIngestQueue,
   BlobStore,
   EventBus,
   Hasher,
@@ -74,6 +75,8 @@ export interface AuthDeps {
   readonly rag: RagDeps;
   /** Object storage for asset uploads/downloads. */
   readonly blob: BlobStore;
+  /** Hands asset files to ingest (re-ingest, which answers 501 without it). */
+  readonly assetIngest?: AssetIngestQueue;
   /** AI provider for entry generation. */
   readonly ai: AIProvider;
   /** Agent-workflow runtime for on-demand agent actions (moderation). */

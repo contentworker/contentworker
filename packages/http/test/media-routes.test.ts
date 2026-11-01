@@ -98,6 +98,34 @@ describe('/media routes', () => {
     expect(formats).toEqual(['image/avif']);
   });
 
+  it('starts ingest for a completed upload only, and a failed notice never fails it', async () => {
+    const bucket = fakeBucket();
+    const uploaded: string[] = [];
+    const app = mediaRoutes({
+      ctx: ctx(),
+      bucket,
+      signer,
+      onUploaded: async (key) => {
+        uploaded.push(key);
+        throw new Error('queue down');
+      },
+    });
+    const blob = createR2BlobStore(bucket, { signer, baseUrl: 'https://w.example' });
+    const { url } = await blob.getUploadUrl('s1/main/a/my file.png', 'image/png');
+    const put = await app.request(url, {
+      method: 'PUT',
+      headers: { 'content-length': '3' },
+      body: 'png',
+    });
+    expect(put.status).toBe(200);
+    expect(uploaded).toEqual(['s1/main/a/my file.png']);
+
+    // A refused upload (forged signature) and a download start nothing.
+    await app.request(url.replace(/sig=[^&]+/, 'sig=forged'), { method: 'PUT', body: 'x' });
+    await app.request(await blob.getDownloadUrl('s1/main/a/my file.png'));
+    expect(uploaded).toHaveLength(1);
+  });
+
   it('is not mounted without a bucket', async () => {
     const app = mediaRoutes({ ctx: ctx() });
     expect((await app.request('https://w.example/media/a/b?sig=x')).status).toBe(404);

@@ -5,6 +5,7 @@ import {
   type AssetUsage,
   applyAssetMetadata,
   archiveAsset as archiveAssetState,
+  clearAcceptedSuggestions,
   emptyAssetMetadata,
   type LocalizedValue,
   MAX_ASSET_USAGE_SHOWN,
@@ -25,6 +26,7 @@ import {
   type PublishedAssetQuery,
   TransactionConflictError,
 } from '@contentworker/ports';
+import { type AssetSearchDeps, removeAssetFromSearch } from './asset-search';
 import type { AppContext } from './context';
 import { runHook } from './hooks';
 
@@ -257,6 +259,38 @@ function isAssetObjectKey(key: string, assetId: string): boolean {
   );
 }
 
+/**
+ * The asset an object key belongs to, read from its shape: `space/environment/assetId/fileName`
+ * outside the bucket's shared namespaces, or `null` for anything else (a derived file such as
+ * extracted text, a version body, a staged job). For an R2 notification, which names only a key.
+ */
+export function parseAssetObjectKey(key: string): { scope: Scope; assetId: string } | null {
+  const [spaceId, environmentId, assetId] = key.split('/');
+  if (!spaceId || !environmentId || !assetId) return null;
+  if (!isAssetObjectKey(key, assetId)) return null;
+  return { scope: { spaceId, environmentId }, assetId };
+}
+
+/**
+ * Where files derived from an asset's version live (its extracted text): `space/environment/
+ * assetId/v<n>/`, under the asset's own prefix in its own environment, so they go with the asset
+ * and the environment. Five segments deep, so never an asset file key (four), which is all the
+ * media origin and the signed reads serve. `null` when the scope names a namespace the bucket
+ * shares with other data, where nothing of the asset's may be written.
+ */
+export function assetDerivedPrefix(scope: Scope, assetId: string, version: number): string | null {
+  const parts = [scope.spaceId, scope.environmentId, assetId];
+  if (parts.some((p) => p === '' || p === '.' || p === '..' || p.includes('/'))) return null;
+  if (SHARED_BLOB_NAMESPACES.has(scope.spaceId)) return null;
+  return `${parts.join('/')}/v${version}/`;
+}
+
+/** The extracted text of an asset's version (Markdown), or `null` where none may be kept. */
+export function assetTextKey(scope: Scope, assetId: string, version: number): string | null {
+  const prefix = assetDerivedPrefix(scope, assetId, version);
+  return prefix ? `${prefix}text.md` : null;
+}
+
 /** How long a URL handed out by a Management or Preview read works (15 minutes, at least). */
 export const READ_URL_TTL_SECONDS = 900;
 
@@ -295,7 +329,10 @@ export async function setAssetMetadata(
 ): Promise<Asset> {
   const asset = await ctx.store.assets.get(scope, id);
   if (!asset) throw new NotFoundError('Asset', id);
-  const updated = applyAssetMetadata(asset, patch);
+  const { aiSuggestions: _previous, ...applied } = applyAssetMetadata(asset, patch);
+  // A person saving alt text or tags makes them theirs: those fields stop being AI suggestions.
+  const aiSuggestions = clearAcceptedSuggestions(asset.aiSuggestions, patch);
+  const updated: Asset = { ...applied, ...(aiSuggestions ? { aiSuggestions } : {}) };
   await ctx.store.assets.save(scope, updated);
   return updated;
 }
@@ -441,7 +478,7 @@ async function assetInUse(
  */
 export async function deleteAssetFiles(
   ctx: AppContext,
-  deps: { readonly blob?: BlobStore },
+  deps: { readonly blob?: BlobStore; readonly search?: AssetSearchDeps },
   event: {
     readonly scope: Scope;
     readonly assetId: string;
@@ -450,6 +487,15 @@ export async function deleteAssetFiles(
   },
 ): Promise<void> {
   const { scope, assetId } = event;
+  // What ingest derived belongs to this environment's asset alone (another environment's copy
+  // has its own), so it goes whatever the other environments hold: its search document, its
+  // vector, and its extracted text (`space/environment/assetId/v<n>/…`, five segments deep).
+  await removeAssetFromSearch(deps.search, scope, assetId);
+  const derived = assetDerivedPrefix(scope, assetId, 0);
+  if (derived && deps.blob?.deletePrefix) {
+    const assetPrefix = derived.slice(0, -'v0/'.length);
+    await deps.blob.deletePrefix(assetPrefix, (key) => key.split('/').length <= 4);
+  }
   for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
     if (env.id === scope.environmentId) continue;
     const other = { spaceId: scope.spaceId, environmentId: env.id };

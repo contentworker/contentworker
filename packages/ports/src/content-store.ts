@@ -4,6 +4,7 @@ import type {
   ApiKey,
   Asset,
   AssetFolder,
+  AssetIngestStatus,
   AssetKind,
   AssetRendition,
   AssetRights,
@@ -457,6 +458,8 @@ export interface AssetFilters {
   /** Assets filed directly in this folder; `null` for those at the root (in no folder). */
   readonly folderId?: string | null;
   readonly status?: AssetStatus | 'all';
+  /** Assets whose bytes hash to this (hex SHA-256): duplicate detection. */
+  readonly contentHash?: string;
 }
 
 export type AssetSortField = 'updatedAt' | 'createdAt' | 'size';
@@ -551,6 +554,13 @@ export interface AssetRepo {
    * {@link TransactionConflictError} and nothing is deleted.
    */
   delete(scope: Scope, id: string): Promise<void>;
+  /**
+   * Records what ingest learned about the asset's file, only while the asset is still on
+   * `version` (a replaced file's findings are dropped). Touches only the columns ingest owns and
+   * the file's measurements, never what an editor edits, and doesn't move `updatedAt`; `save`
+   * in turn leaves the ingest columns alone, so neither clobbers the other.
+   */
+  recordIngest(scope: Scope, id: string, version: number, patch: AssetIngestPatch): Promise<void>;
   putPublished(scope: Scope, snapshot: PublishedAsset): Promise<void>;
   removePublished(scope: Scope, id: string): Promise<void>;
   getPublished(scope: Scope, id: string): Promise<PublishedAsset | null>;
@@ -558,6 +568,20 @@ export interface AssetRepo {
   getPublishedMany(scope: Scope, ids: readonly string[]): Promise<PublishedAsset[]>;
   /** Published assets in publish order (oldest first), filtered and paged. */
   listPublished(scope: Scope, query: PublishedAssetQuery): Promise<PublishedAssetPage>;
+}
+
+/** What one ingest step writes. `null` clears a value; an omitted key is left as it is. */
+export interface AssetIngestPatch {
+  readonly status?: AssetIngestStatus;
+  readonly error?: string | null;
+  readonly contentHash?: string;
+  readonly duplicateOf?: string | null;
+  /** Measured from the bytes: written into the file record and its columns. */
+  readonly size?: number;
+  readonly width?: number;
+  readonly height?: number;
+  /** The real content type, when the upload declared none worth keeping. */
+  readonly contentType?: string;
 }
 
 /**
@@ -1326,7 +1350,8 @@ export interface StoredSecretRepo {
 
 // ---- Bulk jobs ------------------------------------------------------------
 
-export type BulkJobAction = 'publish' | 'unpublish' | 'import';
+/** `asset_reindex`: the chunk's ids are assets, each sent through ingest again. */
+export type BulkJobAction = 'publish' | 'unpublish' | 'import' | 'asset_reindex';
 export type BulkJobStatus = 'running' | 'completed' | 'cancelled';
 export type BulkChunkStatus = 'pending' | 'running' | 'completed' | 'failed';
 

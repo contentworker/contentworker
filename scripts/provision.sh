@@ -62,13 +62,23 @@ if [ -n "$VECTORS" ]; then
   done
 fi
 
-# Queues: domain events (+ dead letters), bulk chunks, agent jobs, delivery purges and media purges
-# (each + dead letters).
+# Queues: domain events (+ dead letters), bulk chunks, agent jobs, delivery purges, media purges
+# and asset events (each + dead letters).
 for q in $QUEUES; do
   if wrangler queues info "$q" >/dev/null 2>&1; then echo "Queue $q already exists"
   else wrangler queues create "$q"; fi
   wrangler queues update "$q" --message-retention-period-secs 1209600 >/dev/null
 done
+
+# Asset ingest: every object written to the media bucket is announced on the asset-events queue.
+# Asset keys (`space/environment/asset/file`) share no prefix, so the rule has none; the engine
+# ignores keys that aren't an asset's current file (extracted text, version bodies, staged jobs).
+if wrangler r2 bucket notification list "$MEDIA" ${j[@]+"${j[@]}"} 2>/dev/null | grep -q "$ASSET_EVENTS"; then
+  echo "R2 notification $MEDIA -> $ASSET_EVENTS already exists"
+else
+  wrangler r2 bucket notification create "$MEDIA" --event-type object-create \
+    --queue "$ASSET_EVENTS" --description "contentworker asset ingest" ${j[@]+"${j[@]}"}
+fi
 
 # The AI Gateway every model call goes through.
 if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then

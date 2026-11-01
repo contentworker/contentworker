@@ -11,6 +11,7 @@ import {
 } from '@contentworker/adapters/http-effects';
 import {
   archiveSupersededVersions,
+  assetSearchDeps,
   type ConsumeDeps,
   consumeEvent,
   drainOutbox,
@@ -22,6 +23,8 @@ import {
   runDueAgentSchedules,
   runDueScheduledActions,
   runPublishAgents,
+  startAssetIngestForObject,
+  startRequestedAssetIngest,
 } from '@contentworker/application';
 import type { Scope } from '@contentworker/domain';
 import { isResealTick } from '@contentworker/platform/data-key';
@@ -33,7 +36,9 @@ import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platfo
 import {
   type AgentJobMessage,
   isAgentJob,
+  isAssetIngestMessage,
   isDomainEvent,
+  isObjectCreated,
   isWebhookRetryMessage,
   type WebhookRetryMessage,
 } from '@contentworker/platform/messages';
@@ -49,6 +54,7 @@ import { AssistantAgent } from './assistant';
 import { runInLanes } from './lanes';
 import { newPurgePlan, planPurges, sendPurges } from './purges';
 import { AgentWorkflow } from './workflows/agent-workflow';
+import { AssetIngestWorkflow } from './workflows/asset-ingest-workflow';
 import { EditorialWorkflow } from './workflows/editorial-workflow';
 
 /** A queue message's payload (kept as one accessor so every consumer reads it the same way). */
@@ -58,6 +64,7 @@ const payloadOf = (m: { body: unknown }): unknown => m.body;
 // Durable Object and Workflow; the api and delivery Workers bind them by script name.
 export {
   AgentWorkflow,
+  AssetIngestWorkflow,
   AssistantAgent,
   CostGuardDO,
   EditorialWorkflow,
@@ -127,6 +134,10 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     blob: wired.blob,
     // The media origin's gate: written and removed here, from asset events, and nowhere else.
     ...(wired.assetGate ? { assetGate: wired.assetGate } : {}),
+    // Asset search: re-indexed on publish, removed on delete. Embeds under the same rule as rag.
+    assetSearch: assetSearchDeps(wired.rag, { embed: Boolean(env.EMBEDDINGS_PROVIDER) }),
+    // `asset_reindex` bulk chunks hand their assets to ingest through this queue.
+    ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
     bus: env.LIVE_HUB ? createDoEventBus(env.LIVE_HUB) : undefined,
     onLiveError: (err) => console.error('live publish error', err),
     // Inline agents only when no contentworker-agents queue is bound (dev/demo parity).
@@ -204,6 +215,49 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     console.error(`${what} enqueue failed`, redactCredentials(err));
     metrics.count('contentworker_purge_enqueue_errors_total', 1, { queue: what });
   });
+}
+
+/**
+ * contentworker-asset-events consumer body: R2's object-create notifications for the media bucket
+ * (and the api's own message when an upload through its signed PUT completes), plus requests to
+ * run ingest again. Each starts at most one AssetIngestWorkflow instance, under an id derived
+ * from the file version, so the two triggers of one upload and any redelivery start one run.
+ * Objects that aren't an asset's current file (extracted text, version bodies, staged jobs) are
+ * acknowledged and ignored.
+ */
+async function consumeAssetEvents(
+  batch: MessageBatch,
+  env: EdgeEnv,
+  wired: EdgeWired,
+): Promise<void> {
+  const metrics = makeMetrics(env.METRICS);
+  const starter = wired.assetIngestStarter;
+  for (const msg of batch.messages) {
+    const body = payloadOf(msg);
+    if (!starter) {
+      // Ingest isn't bound here: nothing will ever take these, so don't hold them.
+      metrics.count('contentworker_asset_events_total', 1, { outcome: 'unbound' });
+      msg.ack();
+      continue;
+    }
+    try {
+      let outcome: string;
+      if (isObjectCreated(body)) {
+        outcome = await startAssetIngestForObject(wired.ctx, starter, body.object.key);
+      } else if (isAssetIngestMessage(body)) {
+        outcome = await startRequestedAssetIngest(wired.ctx, starter, body);
+      } else {
+        // An object deletion, a lifecycle event, or something malformed: nothing to ingest.
+        outcome = 'ignored';
+      }
+      metrics.count('contentworker_asset_events_total', 1, { outcome });
+      msg.ack();
+    } catch (err) {
+      console.error('asset ingest start failed; retrying', redactCredentials(err));
+      metrics.count('contentworker_asset_events_total', 1, { outcome: 'error' });
+      msg.retry();
+    }
+  }
 }
 
 /**
@@ -323,12 +377,18 @@ export default {
    *   when that queue is bound, else run inline (dev parity).
    * - contentworker-agents: one agent job per invocation (batch size 1) — each job can
    *   await durable Workflow runs for minutes without starving event delivery.
-   * - contentworker-events-dlq: dead letters are logged loudly and acked, never silent.
+   * - contentworker-asset-events: R2 object-create notifications (and the api's upload and
+   *   re-ingest messages), each starting one AssetIngestWorkflow run.
+   * - contentworker-events-dlq, contentworker-asset-events-dlq: dead letters are logged loudly
+   *   and acked, never silent.
    * Per-message ack/retry so one poison message doesn't recycle a batch.
    */
   async queue(batch: MessageBatch, rawEnv: EdgeEnv, _exec: ExecutionContext): Promise<void> {
     const env = withJurisdiction(rawEnv);
-    if (batch.queue === queueName(env, 'contentworker-events-dlq')) {
+    if (
+      batch.queue === queueName(env, 'contentworker-events-dlq') ||
+      batch.queue === queueName(env, 'contentworker-asset-events-dlq')
+    ) {
       const metrics = makeMetrics(env.METRICS);
       for (const msg of batch.messages) {
         console.error(
@@ -348,6 +408,8 @@ export default {
     try {
       if (batch.queue === queueName(env, 'contentworker-agents')) {
         await consumeAgentJobs(batch, env, wired);
+      } else if (batch.queue === queueName(env, 'contentworker-asset-events')) {
+        await consumeAssetEvents(batch, env, wired);
       } else {
         await consumeEvents(batch, env, wired);
       }

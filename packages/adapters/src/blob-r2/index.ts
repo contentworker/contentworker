@@ -242,6 +242,15 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
       const obj = await bucket.get(key);
       return obj ? obj.text() : null;
     },
+    async open(key) {
+      const obj = await bucket.get(key);
+      if (!obj) return null;
+      return {
+        body: obj.body as ReadableStream<Uint8Array>,
+        size: obj.size,
+        ...(obj.httpMetadata?.contentType ? { contentType: obj.httpMetadata.contentType } : {}),
+      };
+    },
     async deletePrefix(prefix, keep) {
       // List everything first, then delete: deleting between pages could shift what a cursor
       // points at and skip objects.
