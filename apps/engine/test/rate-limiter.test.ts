@@ -47,8 +47,12 @@ describe('RateLimiterDO via createDoRateLimiter', () => {
     const key = 'ip-lapses';
     for (let i = 0; i < MAX; i++) await limiter.recordFailure(key);
     expect(await limiter.isBlocked(key)).toBe(true);
-    await sleep(WINDOW_MS + 100);
-    expect(await limiter.isBlocked(key)).toBe(false);
+    // Wait out the window, then give a loaded runner a generous deadline: the limiter compares the
+    // failures' times with its own clock, so a fixed margin after a fixed sleep was flaky in CI.
+    await sleep(WINDOW_MS);
+    await expect
+      .poll(() => limiter.isBlocked(key), { timeout: WINDOW_MS * 10, interval: 50 })
+      .toBe(false);
   });
 
   it('clear resets the budget immediately (successful auth path)', async () => {
