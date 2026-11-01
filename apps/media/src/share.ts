@@ -4,9 +4,8 @@
  * serves one of those files. Nothing here writes anything.
  *
  * Every request is refused for the price of one MAC until its token checks out, so a guessed or
- * edited link id costs no lookup. Then the link is read (the engine's KV entry, or a D1 replica
- * when KV has none), on every request, so an expired link answers 410 at once and a revoked one
- * within KV's read cache (a minute). A link with a password asks for it first (a POST to
+ * edited link id costs no lookup. Then the link's row is read from a D1 replica, on every request,
+ * so an expired link answers 410 at once and a revoked one as soon as the replica has the revoke. A link with a password asks for it first (a POST to
  * `…/unlock`, limited per link and address) and remembers it in a cookie scoped to the link's
  * path, MAC'd under the media secret.
  *
@@ -14,12 +13,11 @@
  * environment: revoking the link, or a change to what it lists, purges it. Files go through the
  * published file's own cached URL, so a shared file costs no second copy in the cache.
  */
-import { sharedAssetFile, sharedAssets, shareLinkGateEntry } from '@contentworker/application';
+import { openShareLink, sharedAssetFile, sharedAssets } from '@contentworker/application';
 import {
   type LocalizedValue,
   parseShareLinkPath,
   type ShareLinkAddress,
-  shareLinkState,
 } from '@contentworker/domain';
 import {
   mediaAssetTag,
@@ -32,14 +30,12 @@ import type {
   MediaPathSigner,
   PasswordHasher,
   PublishedAsset,
-  ShareLinkGate,
   ShareLinkGateEntry,
 } from '@contentworker/ports';
 import { canonicalMediaUrl, contentDisposition, INTERNAL_ORIGIN, singleByteRange } from './serve';
 
 export interface ShareDeps {
   readonly paths: MediaPathSigner;
-  readonly gate?: ShareLinkGate;
   /** Read-only, through a replica. */
   readonly store?: Pick<ContentStore, 'assets' | 'assetShareLinks' | 'assetCollections'>;
   readonly passwords: PasswordHasher;
@@ -87,20 +83,13 @@ export function verifiedShare(pathname: string, paths: MediaPathSigner): ShareLi
   return a;
 }
 
-/**
- * The link as the media origin may use it now: its entry, `gone` (expired or revoked: 410), or
- * `null` (no such link: 404). KV first, then a replica; a KV entry past its expiry is gone.
- */
+/** The link as it stands now (a replica read): its entry, `gone` (410), or `null` (404). */
 export async function shareLinkEntry(
   deps: ShareDeps,
   a: ShareLinkAddress,
 ): Promise<ShareLinkGateEntry | 'gone' | null> {
-  const now = nowOf(deps);
-  const cached = await deps.gate?.get(a.scope, a.linkId);
-  if (cached) return Date.parse(cached.expiresAt) > now ? cached : 'gone';
-  const link = await deps.store?.assetShareLinks.get(a.scope, a.linkId);
-  if (!link) return null;
-  return shareLinkState(link, now) === 'active' ? shareLinkGateEntry(link, now) : 'gone';
+  if (!deps.store) return null;
+  return openShareLink(deps.store, a.scope, a.linkId, nowOf(deps));
 }
 
 /** The share page's path (no trailing slash), as the browser has it. */
@@ -349,6 +338,7 @@ export async function handleShareRequest(
     await upstream.body?.cancel();
     upstream = await media.range(canonical.url, range, null);
   }
+  if (request.method === 'HEAD') await upstream.body?.cancel();
   const out = new Response(request.method === 'HEAD' ? null : upstream.body, upstream);
   if (upstream.status === 200 || upstream.status === 206) {
     const download = entry.allowDownload && url.searchParams.has('download');
@@ -378,7 +368,10 @@ async function unlock(
     new Response(null, { status: 303, headers: { location: path, 'cache-control': 'no-store' } });
   if (!entry.passwordHash) return back();
   const address = request.headers.get('cf-connecting-ip') ?? 'unknown';
-  if (deps.limiter && !(await deps.limiter.limit({ key: `${a.linkId}:${address}` })).success) {
+  // Per address, and per link from everywhere at once (no spreading guesses over many addresses).
+  const limited = async (key: string) =>
+    deps.limiter ? !(await deps.limiter.limit({ key })).success : false;
+  if ((await limited(`${a.linkId}:${address}`)) || (await limited(`${a.linkId}:*`))) {
     return page(
       429,
       'Too many attempts',

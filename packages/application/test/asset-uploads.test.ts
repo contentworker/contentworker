@@ -96,16 +96,25 @@ describe('multipart uploads', () => {
     expect(done.id).toBe(asset.id);
     expect((await blob.head(asset.r2Key ?? ''))?.size).toBe(size);
     expect(ingest.created).toEqual([{ key: asset.r2Key, etag: expect.stringMatching(/-3$/) }]);
-    // The upload is forgotten: completing again is a 404, not a second ingest.
+    // Completing again (a retry whose answer was lost) answers with the same asset, and starts no
+    // second ingest; one for an asset without bytes is a 404.
+    const again = await completeMultipartAssetUpload(
+      ctx,
+      { blob, ingest },
+      scope,
+      asset.id,
+      upload.uploadId,
+      uploaded,
+    );
+    expect(again.id).toBe(asset.id);
+    expect(ingest.created).toHaveLength(1);
+    const empty = await startMultipartAssetUpload(ctx, blob, scope, {
+      fileName: 'b.bin',
+      contentType: 'application/octet-stream',
+      size: 3,
+    });
     await expect(
-      completeMultipartAssetUpload(
-        ctx,
-        { blob, ingest },
-        scope,
-        asset.id,
-        upload.uploadId,
-        uploaded,
-      ),
+      completeMultipartAssetUpload(ctx, { blob, ingest }, scope, empty.asset.id, 'never', uploaded),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 

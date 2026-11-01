@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
+import { parseShareLinkPath } from '@contentworker/domain';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { wireMedia } from '@contentworker/platform/wire';
 import { type MediaDeps, serveMedia, serveMediaRange } from './serve';
@@ -34,14 +35,13 @@ export class Media extends WorkerEntrypoint<EdgeEnv> {
     return {
       paths: wired.mediaPaths,
       passwords: wired.passwords,
-      ...(wired.shareLinkGate ? { gate: wired.shareLinkGate } : {}),
       ...(wired.store ? { store: wired.store } : {}),
     };
   }
 
   override async fetch(request: Request): Promise<Response> {
     // A share link's page: rendered here so Workers Caching keeps it (tagged per link).
-    if (new URL(request.url).pathname.startsWith('/s/')) {
+    if (parseShareLinkPath(new URL(request.url).pathname)) {
       return serveSharePage(request, this.shareDeps());
     }
     return serveMedia(request, this.deps());

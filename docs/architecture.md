@@ -367,10 +367,9 @@ Migration `0016_asset_collections` adds five environment-scoped tables (mirrored
   `/s/<space>/<env>/<linkId>/<token>`. Only published assets are shared: an unpublished asset is
   `409`, and a collection's page lists only its published members, so a draft is never exposed. The
   `token` is a 128-bit HMAC (`MediaPathSigner`) checked before any lookup. The link is then read on
-  every request: the engine's KV entry (`share-link:<space>:<env>:<linkId>` in `KV_CACHE`,
-  `createKvShareLinkGate`, written on `asset_share.created`, removed on `asset_share.revoked`, expired
-  by KV) with a D1 replica fallback. Expired is `410` at once; revoked is `410` within KV's read
-  cache (about a minute). The page is HTML, or JSON with `?format=json` or `Accept:
+  every request, from a D1 replica (`openShareLink`): no cache or engine step stands between a
+  revoke and the link closing. Expired is `410` at once; revoked is `410` as soon as the replica has
+  the row (replication lag, usually well under a second). The page is HTML, or JSON with `?format=json` or `Accept:
   application/json`; files are at `…/f/<assetId>/<fileName>` through the published file's own cached
   URL, and `?download` is honoured only when the link has `allowDownload`. The page renders in the
   cached `Media` entrypoint, tagged `cws:<space>:<env>:<link>`, `cwa:<space>:<env>:<asset>` for an asset link or
@@ -401,7 +400,7 @@ Migration `0016_asset_collections` adds five environment-scoped tables (mirrored
   writes the job (`pending`) and `asset_zip.requested` in one unit; the engine starts
   `AssetZipWorkflow` (`ASSET_ZIP_WF`, instance per job) from that event, or fails the job when the
   binding is absent. The workflow plans the archive from each asset's current file (a hosted video
-  and a file whose bytes never landed are skipped), then runs one step per 16 MiB R2 multipart
+  and a file whose bytes never landed are skipped), then runs one step per 8 MiB R2 multipart
   part from ranged reads, so one part is in memory and never the archive. Entries are stored
   (no compression) with data descriptors, and Zip64 where a size or offset passes 4 GiB. The
   archive lives at `zips/<space>/<env>/<job>/<name>.zip` (`zips` is a `RESERVED_SPACE_IDS`

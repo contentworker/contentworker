@@ -13,6 +13,7 @@ import type {
   UploadedPart,
 } from '@contentworker/ports';
 import {
+  assetFileKey,
   type CreateAssetInput,
   createUploadDraft,
   deleteAsset,
@@ -198,7 +199,16 @@ export async function completeMultipartAssetUpload(
   uploadId: string,
   parts: readonly UploadedPart[],
 ): Promise<Asset> {
-  const upload = await uploadOrThrow(ctx, scope, assetId, uploadId);
+  const upload = await ctx.store.assetUploads.get(scope, assetId, uploadId);
+  if (!upload) {
+    // Completed already (a retry whose first answer was lost): the file is there, so the answer is
+    // the same asset, not a 404 that would make a client upload it all again.
+    const asset = await ctx.store.assets.get(scope, assetId);
+    if (asset && deps.blob.head && (await deps.blob.head(assetFileKey(scope, asset)))) {
+      return withReadUrl(deps.blob, scope, asset);
+    }
+    throw new NotFoundError('AssetUpload', uploadId);
+  }
   const count = partCountOf(upload);
   const numbers = parts.map((p) => p.partNumber).sort((a, b) => a - b);
   if (
@@ -212,29 +222,40 @@ export async function completeMultipartAssetUpload(
   }
   const asset = await ctx.store.assets.get(scope, assetId);
   if (!asset) throw new NotFoundError('Asset', assetId);
-  let stored: Awaited<ReturnType<MultipartBlobStore['complete']>>;
+  let etag: string | undefined;
   try {
-    stored = await multipartOf(deps.blob).complete(upload.r2Key, uploadId, parts);
+    etag = (await multipartOf(deps.blob).complete(upload.r2Key, uploadId, parts)).etag;
   } catch (err) {
-    // A part never uploaded, an etag that isn't its part's, or uneven parts: R2 keeps the upload,
-    // so the client can upload the part again and retry.
-    throw new ValidationError([
-      {
-        field: 'parts',
-        message: `The upload could not be completed: ${String(err).slice(0, 200)}`,
-      },
-    ]);
+    // Completed by an earlier attempt whose row delete failed: the object is there at its size.
+    const there = await deps.blob.head?.(upload.r2Key);
+    if (there?.size === upload.size) {
+      etag = there.etag;
+    } else if (PART_ERROR.test(String(err))) {
+      // A part never uploaded, an etag that isn't its part's, or uneven parts: R2 keeps the
+      // upload, so the client can upload the part again and retry.
+      throw new ValidationError([
+        {
+          field: 'parts',
+          message: `The upload could not be completed: ${String(err).slice(0, 200)}`,
+        },
+      ]);
+    } else {
+      throw err;
+    }
   }
   await ctx.store.assetUploads.delete(scope, assetId, uploadId);
   // The same notice a finished signed PUT sends: ingest names the bytes by their etag, so R2's
   // own notification of the completion starts no second run.
   if (deps.ingest) {
-    await deps.ingest.objectCreated(upload.r2Key, stored.etag).catch((err: unknown) => {
+    await deps.ingest.objectCreated(upload.r2Key, etag).catch((err: unknown) => {
       console.error('upload ingest notice failed', { key: upload.r2Key, error: String(err) });
     });
   }
   return withReadUrl(deps.blob, scope, asset);
 }
+
+/** R2's refusals that name a part (InvalidPart, EntityTooSmall, NoSuchUpload): the client's to fix. */
+const PART_ERROR = /InvalidPart|EntityTooSmall|NoSuchUpload|1002[45]|10011|10048|same size|part/i;
 
 /**
  * Abandons an upload: its parts are discarded and, while it still has no bytes and nothing links

@@ -56,14 +56,12 @@ export function assetCollectionDescription(description: string): string | undefi
 
 /**
  * The asset ids an add, remove or reorder names: deduplicated, in the order given, between 1 and
- * {@link MAX_COLLECTION_CHANGE}.
+ * `max` ({@link MAX_COLLECTION_CHANGE}; a reorder takes a whole collection's order).
  */
-export function collectionChangeIds(ids: readonly string[]): string[] {
+export function collectionChangeIds(ids: readonly string[], max = MAX_COLLECTION_CHANGE): string[] {
   const unique = [...new Set(ids)];
-  if (unique.length === 0 || unique.length > MAX_COLLECTION_CHANGE) {
-    throw new ValidationError([
-      { field: 'assetIds', message: `Name between 1 and ${MAX_COLLECTION_CHANGE} assets` },
-    ]);
+  if (unique.length === 0 || unique.length > max) {
+    throw new ValidationError([{ field: 'assetIds', message: `Name between 1 and ${max} assets` }]);
   }
   return unique;
 }

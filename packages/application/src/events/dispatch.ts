@@ -7,14 +7,12 @@ import type {
   Cache,
   FunctionInvoker,
   SearchIndex,
-  ShareLinkGate,
   WebhookSender,
 } from '@contentworker/ports';
 import { assetBulkChunkRunner } from '../asset-bulk';
 import { syncAssetGate } from '../asset-gate';
 import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
 import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../asset-search';
-import { syncShareLinkGate } from '../asset-shares';
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
@@ -77,11 +75,6 @@ export interface DispatchDeps {
   readonly assetSearch?: AssetSearchDeps;
   /** The ingest queue, which `asset_reindex` bulk chunks feed; absent, those chunks wait. */
   readonly assetIngest?: AssetIngestQueue;
-  /**
-   * The media origin's share-link entries (KV on the edge): written when a link is created,
-   * removed when it is revoked. Without it the media Worker reads links from a D1 replica.
-   */
-  readonly shareLinkGate?: ShareLinkGate;
   /** Starts the Workflow that builds a requested zip; absent, a request fails at once. */
   readonly assetZip?: AssetZipStarter;
   /**
@@ -245,15 +238,6 @@ export async function dispatchEvent(
       event.type === 'asset.rights_changed')
   ) {
     await syncAssetGate(ctx, deps.assetGate, scope, event.assetId);
-  }
-
-  // The media origin's entry for a share link follows the link's row (written while it is active,
-  // removed once it is revoked), read fresh so a redelivered event converges.
-  if (
-    deps.shareLinkGate &&
-    (event.type === 'asset_share.created' || event.type === 'asset_share.revoked')
-  ) {
-    await syncShareLinkGate(ctx, deps.shareLinkGate, scope, event.linkId);
   }
 
   // A replaced (or restored) file goes through ingest as an upload does: the same message the

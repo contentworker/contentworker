@@ -1,6 +1,7 @@
 import {
   type AssetZipJob,
   type AssetZipSource,
+  ConflictError,
   MAX_ZIP_ASSETS,
   NotFoundError,
   type Scope,
@@ -38,15 +39,26 @@ import {
  * and passes on only a running CRC-32. A retried step writes the same part again.
  */
 
-/** Every part but the last is this long (R2 needs them equal; 5 MiB at least). */
-export const ZIP_PART_BYTES = 16 * 1024 * 1024;
-/** Largest archive one job builds (a part per step: 1,280 steps at this size). */
+/**
+ * Every part but the last is this long (R2 needs them equal; 5 MiB at least). The one buffer a
+ * step holds, so several builds can share an isolate's 128 MB.
+ */
+export const ZIP_PART_BYTES = 8 * 1024 * 1024;
+/** Largest archive one job builds (a part per step: 2,560 steps at this size, of 10,000). */
 export const MAX_ZIP_BYTES = 20 * 1024 * 1024 * 1024;
 
 /** Where a job's archive is: under the reserved `zips/` prefix, named for download. */
 export function zipObjectKey(scope: Scope, job: Pick<AssetZipJob, 'id' | 'fileName'>): string {
   return `zips/${scope.spaceId}/${scope.environmentId}/${job.id}/${job.fileName}`;
 }
+
+/** Where a job's plan is kept while it builds (beside the archive; removed once it is built). */
+export function zipPlanKey(scope: Scope, job: Pick<AssetZipJob, 'id'>): string {
+  return `zips/${scope.spaceId}/${scope.environmentId}/${job.id}/plan.json`;
+}
+
+/** Most zips one environment builds at once (pending or running); another is a 409. */
+export const MAX_ACTIVE_ZIPS = 3;
 
 /** Asks for a zip of a selection of assets, or of a collection's members. */
 export interface RequestAssetZipInput {
@@ -89,6 +101,15 @@ export async function requestAssetZip(
       ]);
     }
     source = { kind: 'selection', assetIds: ids };
+  }
+  // Each job reads every file and writes an archive kept a day: a scope runs a few at a time.
+  const active = (await ctx.store.assetZips.list(scope, MAX_ZIP_JOBS_LISTED)).filter(
+    (j) => j.status === 'pending' || j.status === 'running',
+  );
+  if (active.length >= MAX_ACTIVE_ZIPS) {
+    throw new ConflictError(
+      `${MAX_ACTIVE_ZIPS} zips are already being built here; wait for one to finish`,
+    );
   }
   const now = ctx.clock.now();
   const job: AssetZipJob = {
@@ -179,6 +200,13 @@ async function planAssetZip(
       continue;
     }
     const key = assetFileKey(scope, asset);
+    // The size ingest measured, from the row: no read per file (a collection of a thousand icons
+    // would be a thousand). A file without one (never measured) is looked at. A size that is wrong
+    // fails the build when its bytes are read (`changed or went away`), never a corrupt archive.
+    if (asset.file.size !== undefined && asset.ingestStatus === 'ready') {
+      files.push({ name: asset.file.fileName, key, size: asset.file.size });
+      continue;
+    }
     const head = await blob.head(key);
     if (!head) {
       skipped += 1;
@@ -343,10 +371,14 @@ export async function runAssetZip(
     if (!multipart) throw new ZipFailure('Zip downloads are not available on this deployment');
     // A ZipFailure (nothing to zip, a file that changed) can't succeed on a retry: the step
     // returns it as its result, and it is thrown again out here.
+    // The plan can be larger than a step's result may be (1 MiB: a thousand long file names), so
+    // it is kept beside the archive and each step reads it back; the step returns its size only.
+    const planKey = zipPlanKey(scope, job);
     const planned = unwrap(
       await steps.do('plan', STEP_RETRIES, () =>
         settle(async () => {
           const p = await planAssetZip(ctx, blob, scope, job);
+          await blob.put(planKey, JSON.stringify(p.plan), 'application/json');
           await ctx.store.assetZips.update(scope, jobId, {
             status: 'running',
             fileCount: p.plan.entries.length,
@@ -354,17 +386,24 @@ export async function runAssetZip(
             partCount: Math.ceil(p.plan.length / partBytes),
             partsDone: 0,
           });
-          return p;
+          return { length: p.plan.length, files: p.plan.entries.length, skipped: p.skipped };
         }),
       ),
     );
-    const { plan } = planned;
+    let cached: ZipPlan | undefined;
+    const readPlan = async (): Promise<ZipPlan> => {
+      if (cached) return cached;
+      const raw = await blob.get(planKey);
+      if (raw === null) throw new Error('the zip plan is missing');
+      cached = JSON.parse(raw) as ZipPlan;
+      return cached;
+    };
     key = zipObjectKey(scope, job);
     const started = await steps.do('start upload', STEP_RETRIES, async () =>
       multipart.create(key, 'application/zip'),
     );
     uploadId = started.uploadId;
-    const partCount = Math.ceil(plan.length / partBytes);
+    const partCount = Math.ceil(planned.length / partBytes);
     const crcs = new Map<number, number>();
     const parts: UploadedPart[] = [];
     let carry: readonly [number, number] | undefined;
@@ -375,6 +414,7 @@ export async function runAssetZip(
       const result = unwrap(
         await steps.do(`part ${i + 1}`, STEP_RETRIES, () =>
           settle(async () => {
+            const plan = await readPlan();
             const r = await writePart(blob, multipart, key, id, plan, i, partBytes, before, prior);
             await ctx.store.assetZips.update(scope, jobId, { partsDone: i + 1 });
             return r;
@@ -387,7 +427,15 @@ export async function runAssetZip(
     }
     const id = uploadId;
     await steps.do('complete', STEP_RETRIES, async () => {
-      await multipart.complete(key, id, parts);
+      try {
+        await multipart.complete(key, id, parts);
+      } catch (err) {
+        // A retry of a step whose complete did land (R2 has no such upload any more): the archive
+        // is there, at its planned length, so carry on to recording it.
+        const there = await blob.head?.(key);
+        if (there?.size !== planned.length) throw err;
+      }
+      await blob.delete(planKey);
       await ctx.store.assetZips.update(scope, jobId, {
         status: 'completed',
         completedAt: ctx.clock.now().toISOString(),

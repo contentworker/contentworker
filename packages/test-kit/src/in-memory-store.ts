@@ -1120,7 +1120,8 @@ export class InMemoryContentStore implements ContentStore {
     save: async (scope, collection) => {
       const key = `${scopeKey(scope)}::${collection.id}`;
       const current = this.collectionData.get(key);
-      if (!current) return;
+      // As the D1 store's compare-and-set: the collection must still exist.
+      if (!current) throw new TransactionConflictError();
       const { description: _d, ...kept } = current;
       this.collectionData.set(key, {
         ...kept,
@@ -1147,7 +1148,8 @@ export class InMemoryContentStore implements ContentStore {
         (a) => !present.has(a) && this.assetData.has(`${scopeKey(scope)}::${a}`),
       );
       // As the D1 store's guard: no more than the cap afterwards.
-      if (members.length + adding.length > maxItems) throw new TransactionConflictError();
+      const counted = members.filter((m) => this.assetData.has(`${scopeKey(scope)}::${m.assetId}`));
+      if (counted.length + adding.length > maxItems) throw new TransactionConflictError();
       const base = Math.max(-1, ...members.map((m) => m.position)) + 1;
       const order = [...new Set(assetIds)];
       for (const assetId of adding) {
@@ -1166,6 +1168,10 @@ export class InMemoryContentStore implements ContentStore {
       }
     },
     reorder: async (scope, id, assetIds) => {
+      // As the D1 store's guard: the collection must still exist.
+      if (!this.collectionData.has(`${scopeKey(scope)}::${id}`)) {
+        throw new TransactionConflictError();
+      }
       const order = [...new Set(assetIds)];
       const named = new Set(order);
       for (const m of this.membersOf(scope, id)) {

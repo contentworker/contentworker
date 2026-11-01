@@ -11,7 +11,7 @@ import type {
   GenerateRequest,
   IdGenerator,
 } from '@contentworker/ports';
-import { hashPassword, verifyPassword } from '@contentworker/security/credentials';
+import { pbkdf2PasswordHasher } from '@contentworker/security/credentials';
 import {
   FakeBlobStore,
   InMemoryContentStore,
@@ -94,7 +94,7 @@ export function wire(config: ApiConfig): InMemoryWired {
       ids,
       costGuard,
       // Share-link passwords, hashed as the edge hashes them.
-      passwords: { hash: (p) => hashPassword(p), verify: (p, s) => verifyPassword(p, s) },
+      passwords: pbkdf2PasswordHasher,
     },
     rag: { embeddings, vectors: new InMemoryVectorStore() },
     blob: new FakeBlobStore(),

@@ -183,3 +183,12 @@ export function passwordProblem(password: string, email: string): string | null 
     return 'Don’t include your email address.';
   return null;
 }
+
+/**
+ * PBKDF2 hashing as an object (unpeppered: the api and media Workers hold no pepper), for share-link
+ * passwords. Structurally the application's `PasswordHasher` port.
+ */
+export const pbkdf2PasswordHasher = {
+  hash: (password: string): Promise<string> => hashPassword(password),
+  verify: (password: string, stored: string): Promise<boolean> => verifyPassword(password, stored),
+};

@@ -17,8 +17,6 @@ import type {
   ImageTransformSpec,
   MediaPathSigner,
   PasswordHasher,
-  ShareLinkGate,
-  ShareLinkGateEntry,
   TextExtractor,
   VideoHost,
   VideoUpload,
@@ -78,21 +76,6 @@ export class FakeMediaPathSigner implements MediaPathSigner {
   }
   verifyLink(scope: Scope, linkId: string, token: string): boolean {
     return token === this.linkToken(scope, linkId);
-  }
-}
-
-/** An in-memory ShareLinkGate (the media origin's KV entries for share links). */
-export class InMemoryShareLinkGate implements ShareLinkGate {
-  readonly entries = new Map<string, ShareLinkGateEntry>();
-  private key = (scope: Scope, id: string) => `${scope.spaceId}:${scope.environmentId}:${id}`;
-  async get(scope: Scope, linkId: string) {
-    return this.entries.get(this.key(scope, linkId)) ?? null;
-  }
-  async put(scope: Scope, linkId: string, entry: ShareLinkGateEntry) {
-    this.entries.set(this.key(scope, linkId), entry);
-  }
-  async delete(scope: Scope, linkId: string) {
-    this.entries.delete(this.key(scope, linkId));
   }
 }
 

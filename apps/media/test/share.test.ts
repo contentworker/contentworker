@@ -1,6 +1,6 @@
 import { SELF } from 'cloudflare:test';
 import { env, exports } from 'cloudflare:workers';
-import { createKvAssetGate, createKvShareLinkGate } from '@contentworker/adapters/asset-gate-kv';
+import { createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
 import { createMediaPathSigner } from '@contentworker/adapters/blob-r2';
 import {
   type AppContext,
@@ -13,17 +13,15 @@ import {
   revokeAssetShareLink,
   shareLinkUrl,
   syncAssetGate,
-  syncShareLinkGate,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
-import { hashPassword, verifyPassword } from '@contentworker/security/credentials';
+import { pbkdf2PasswordHasher } from '@contentworker/security/credentials';
 import { FakeBlobStore } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { handleShareRequest } from '../src/share';
 
 const ORIGIN = 'https://media.example.test';
 const paths = createMediaPathSigner(env.MEDIA_SIGNING_SECRET);
-const shareGate = createKvShareLinkGate(env.KV_CACHE);
 const assetGate = createKvAssetGate(env.KV_CACHE);
 const textOf = async (res: Response) => new TextDecoder().decode(await res.arrayBuffer());
 
@@ -35,7 +33,7 @@ function context(): AppContext {
     ids: { newId: () => crypto.randomUUID() },
     mediaPublicUrl: ORIGIN,
     mediaPaths: paths,
-    passwords: { hash: (p) => hashPassword(p), verify: (p, s) => verifyPassword(p, s) },
+    passwords: pbkdf2PasswordHasher,
   };
 }
 
@@ -67,7 +65,6 @@ async function sharedCollection(opts: { allowDownload?: boolean; password?: stri
     expiresAt: inDays(7),
     ...opts,
   });
-  await syncShareLinkGate(ctx, shareGate, scope, link.id);
   const url = shareLinkUrl(ctx, scope, link.id) as string;
   return { ctx, scope, link, url, image, draft, pdf, collection };
 }
@@ -140,31 +137,23 @@ describe('share links on the media origin', () => {
   it('answers 410 once revoked or expired, then purges (the engine sends the link’s tag)', async () => {
     const s = await sharedCollection();
     await revokeAssetShareLink(s.ctx, s.scope, s.link.id);
-    await syncShareLinkGate(s.ctx, shareGate, s.scope, s.link.id);
     expect((await SELF.fetch(s.url)).status).toBe(410);
     expect((await SELF.fetch(fileUrl(s.url, s.pdf))).status).toBe(410);
 
-    // Expired: KV has dropped it, and the replica's row says so.
+    // Expired: the replica's row says so.
     const e = await sharedCollection();
     await env.DB.prepare('UPDATE asset_share_links SET expires_at = ? WHERE id = ?')
       .bind(Date.now() - 1000, e.link.id)
       .run();
-    await shareGate.delete(e.scope, e.link.id);
     const gone = await SELF.fetch(e.url);
     expect(gone.status).toBe(410);
     expect(await textOf(gone)).toContain('no longer available');
-    // A KV entry past its expiry is gone too, without the replica.
-    const k = await sharedCollection();
-    await env.KV_CACHE.put(
-      `share-link:${k.scope.spaceId}:${k.scope.environmentId}:${k.link.id}`,
-      JSON.stringify({
-        targetType: 'collection',
-        targetId: k.collection.id,
-        allowDownload: false,
-        expiresAt: new Date(Date.now() - 1).toISOString(),
-      }),
-    );
-    expect((await SELF.fetch(k.url)).status).toBe(410);
+    // Revoked straight in the row (no engine step at all): the next request answers 410.
+    const r = await sharedCollection();
+    await env.DB.prepare('UPDATE asset_share_links SET revoked_at = ? WHERE id = ?')
+      .bind(Date.now(), r.link.id)
+      .run();
+    expect((await SELF.fetch(r.url)).status).toBe(410);
   });
 
   it('refuses a bad token or a forged link before any lookup', async () => {
@@ -184,7 +173,6 @@ describe('share links on the media origin', () => {
     const deps = {
       paths,
       passwords: { hash: explode, verify: explode },
-      gate: { get: explode, put: explode, delete: explode },
       store: new Proxy({}, { get: explode }) as never,
     };
     const media = { fetch: explode, range: explode };
@@ -237,5 +225,62 @@ describe('share links on the media origin', () => {
     // A GET to unlock, and a POST to the page, are refused.
     expect((await SELF.fetch(`${s.url}/unlock`)).status).toBe(405);
     expect((await SELF.fetch(s.url, { method: 'POST' })).status).toBe(405);
+  });
+
+  it('limits password attempts per link from every address together', async () => {
+    const s = await sharedCollection({ password: 'open sesame!' });
+    const counts = new Map<string, number>();
+    const limiter = {
+      async limit({ key }: { key: string }) {
+        const n = (counts.get(key) ?? 0) + 1;
+        counts.set(key, n);
+        return { success: n <= 2 };
+      },
+    };
+    const deps = { paths, passwords: pbkdf2PasswordHasher, store: createD1Store(env.DB), limiter };
+    const media = {
+      fetch: () => Promise.reject(new Error('unused')),
+      range: () => Promise.reject(new Error('unused')),
+    };
+    const attempt = (ip: string) => {
+      const body = 'password=wrong-guess';
+      return handleShareRequest(
+        new Request(`${s.url}/unlock`, {
+          method: 'POST',
+          body,
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            'content-length': String(body.length),
+            'cf-connecting-ip': ip,
+          },
+        }),
+        deps,
+        media as never,
+      );
+    };
+    // Three addresses, one guess each: the link's own budget (2 here) runs out on the third.
+    expect((await attempt('10.0.0.1')).status).toBe(401);
+    expect((await attempt('10.0.0.2')).status).toBe(401);
+    expect((await attempt('10.0.0.3')).status).toBe(429);
+  });
+
+  it('leaves a space named `s` its published media URLs', async () => {
+    const ctx = context();
+    const scope = { spaceId: 's', environmentId: 'main' };
+    await createSpace(ctx, { spaceId: 's', name: 'S', defaultLocale: 'en-US' });
+    const { asset } = await createAsset(ctx, new FakeBlobStore(), scope, {
+      fileName: 'pic.png',
+      contentType: 'image/png',
+    });
+    await env.MEDIA_BUCKET.put(asset.r2Key as string, 'S-BYTES', {
+      httpMetadata: { contentType: 'image/png' },
+    });
+    await publishAsset(ctx, scope, asset.id);
+    await syncAssetGate(ctx, assetGate, scope, asset.id);
+    const res = await SELF.fetch(
+      `${ORIGIN}/s/main/${asset.id}/v1/${paths.token(scope, asset.id, 1)}/o/pic.png`,
+    );
+    expect(res.status).toBe(200);
+    expect(await textOf(res)).toBe('S-BYTES');
   });
 });

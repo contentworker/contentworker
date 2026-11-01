@@ -1828,16 +1828,22 @@ function makeAssetCollectionRepo(x: Exec): AssetCollectionRepo {
       );
     },
     async save(scope, collection) {
-      await x.write(
-        db
-          .update(c)
-          .set({
-            name: collection.name,
-            description: collection.description ?? null,
-            updatedAt: new Date(collection.updatedAt),
-          })
-          .where(and(scopeFilter(c, scope), eq(c.id, collection.id))),
-      );
+      const update = db
+        .update(c)
+        .set({
+          name: collection.name,
+          description: collection.description ?? null,
+          updatedAt: new Date(collection.updatedAt),
+        })
+        .where(and(scopeFilter(c, scope), eq(c.id, collection.id)));
+      if (x.inUnit) {
+        // Deleted since the use-case read it: the unit (and its event) commits nothing.
+        await x.write(update);
+        x.expectChanged(1);
+        return;
+      }
+      const changed = await update.returning({ id: c.id });
+      if (changed.length === 0) throw new TransactionConflictError();
     },
     async delete(scope, id) {
       await writeAll(x, [
@@ -1871,7 +1877,7 @@ function makeAssetCollectionRepo(x: Exec): AssetCollectionRepo {
         db
           .insert(schema.guard)
           .select(
-            sql`SELECT (SELECT count(*) FROM ${i} WHERE ${ofCollection(scope, id)}) <= ${maxItems} AS ok`,
+            sql`SELECT (SELECT count(*) FROM ${i} WHERE ${ofCollection(scope, id)} AND EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${i.spaceId} AND ${a.environmentId} = ${i.environmentId} AND ${a.id} = ${i.assetId})) <= ${maxItems} AS ok`,
           ),
         db.delete(schema.guard),
         db
@@ -1898,6 +1904,13 @@ function makeAssetCollectionRepo(x: Exec): AssetCollectionRepo {
       const ids = idList(assetIds);
       const n = JSON.parse(ids).length as number;
       await writeAll(x, [
+        // The collection must still exist when the batch runs.
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT EXISTS (SELECT 1 FROM ${c} WHERE ${c.spaceId} = ${scope.spaceId} AND ${c.environmentId} = ${scope.environmentId} AND ${c.id} = ${id}) AS ok`,
+          ),
+        db.delete(schema.guard),
         // The rest keep their order, after the named ones: shifted by n, so no position collides
         // (positions are never negative). Each statement reads its own row only.
         db

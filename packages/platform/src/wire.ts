@@ -6,7 +6,7 @@ import {
   type WorkersAiRun,
   workersAiModelsFromEnv,
 } from '@contentworker/adapters/ai-workers';
-import { createKvAssetGate, createKvShareLinkGate } from '@contentworker/adapters/asset-gate-kv';
+import { createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
 import {
   createMediaPathSigner,
   createMediaUrlSigner,
@@ -65,12 +65,11 @@ import type {
   PasswordHasher,
   Queue as QueuePort,
   SecretSealer,
-  ShareLinkGate,
   TextExtractor,
   VectorStore,
   WorkflowEngine,
 } from '@contentworker/ports';
-import { hashPassword, verifyPassword } from '@contentworker/security/credentials';
+import { pbkdf2PasswordHasher } from '@contentworker/security/credentials';
 import {
   FakeBlobStore,
   InMemoryContentStore,
@@ -117,8 +116,6 @@ export interface EdgeWired {
   readonly assetIngest?: AssetIngestQueue;
   /** Starts ingest runs (the engine's ASSET_INGEST_WF); absent elsewhere. */
   readonly assetIngestStarter?: AssetIngestStarter;
-  /** Share links as the media origin reads them (KV_CACHE); written by the engine only. */
-  readonly shareLinkGate?: ShareLinkGate;
   /** Starts zip builds (the engine's ASSET_ZIP_WF); absent elsewhere. */
   readonly assetZipStarter?: AssetZipStarter;
   readonly ai: AIProvider;
@@ -306,7 +303,6 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     ...(env.ASSET_INGEST_WF
       ? { assetIngestStarter: new CloudflareAssetIngestStarter(env.ASSET_INGEST_WF) }
       : {}),
-    ...(env.KV_CACHE ? { shareLinkGate: createKvShareLinkGate(env.KV_CACHE) } : {}),
     ...(env.ASSET_ZIP_WF
       ? { assetZipStarter: new CloudflareAssetZipStarter(env.ASSET_ZIP_WF) }
       : {}),
@@ -324,10 +320,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
 }
 
 /** Share-link passwords: PBKDF2-SHA256, the admin's own scheme (no pepper: the api has none). */
-export const passwords: PasswordHasher = {
-  hash: (password) => hashPassword(password),
-  verify: (password, stored) => verifyPassword(password, stored),
-};
+export const passwords: PasswordHasher = pbkdf2PasswordHasher;
 
 /** What the media Worker reads with, all of it read-only. */
 export interface MediaWired {
@@ -341,8 +334,6 @@ export interface MediaWired {
   >;
   /** The engine's published-asset gate (KV_CACHE). */
   readonly assetGate?: AssetGate;
-  /** The engine's share-link entries (KV_CACHE). */
-  readonly shareLinkGate?: ShareLinkGate;
   /** Checks a share link's password. */
   readonly passwords: PasswordHasher;
   /** Checks the token in a published asset's path. */
@@ -362,12 +353,7 @@ export function wireMedia(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): Media
   const session = env.DB?.withSession(options.bookmark ?? 'first-unconstrained');
   return {
     ...(session ? { store: createD1Store(session) } : {}),
-    ...(env.KV_CACHE
-      ? {
-          assetGate: createKvAssetGate(env.KV_CACHE),
-          shareLinkGate: createKvShareLinkGate(env.KV_CACHE),
-        }
-      : {}),
+    ...(env.KV_CACHE ? { assetGate: createKvAssetGate(env.KV_CACHE) } : {}),
     passwords,
     mediaPaths: createMediaPathSigner(secret),
     mediaSigner: createMediaUrlSigner(secret),

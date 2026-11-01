@@ -1,9 +1,5 @@
 import { env } from 'cloudflare:workers';
-import {
-  assetGateKey,
-  createKvAssetGate,
-  createKvShareLinkGate,
-} from '@contentworker/adapters/asset-gate-kv';
+import { assetGateKey, createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
 import {
   type AppContext,
   addToAssetCollection,
@@ -37,6 +33,7 @@ import {
 import { FakeBlobStore, FakeVideoHost, RecordingWebhookSender } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import {
+  MEDIA_TAGS_PER_MESSAGE,
   newPurgePlan,
   type PurgeQueues,
   planPurges,
@@ -388,41 +385,22 @@ describe('collections and share links in the engine', () => {
     await unpublishAsset(ctx, scope, asset.id);
     await deleteAsset(ctx, scope, asset.id);
     const after = await consume(ctx, await eventsSince(scope, before));
-    expect(after.media).toContain(mediaCollectionTag(spaceId, environmentId, c.id));
+    // Leaving Delivery (or the collection) is purged as a revocation: now and once more later.
+    expect(after.revoked).toContain(mediaCollectionTag(spaceId, environmentId, c.id));
   });
 
-  it('write a link’s KV entry when created, remove it and purge its page twice when revoked', async () => {
+  it('purge a revoked link’s page twice, and split a large purge into bounded messages', async () => {
     const { ctx, scope } = await space();
-    const shareGate = createKvShareLinkGate(env.KV_CACHE);
     const c = await createAssetCollection(ctx, scope, { name: 'Kit' });
-    const since = await lastRowid();
     const link = await createAssetShareLink(ctx, scope, {
       targetType: 'collection',
       targetId: c.id,
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     });
-    for (const e of await eventsSince(scope, since)) {
-      await consumeEvent(
-        ctx,
-        { sender: new RecordingWebhookSender(), shareLinkGate: shareGate },
-        e,
-      );
-    }
-    expect(await shareGate.get(scope, link.id)).toMatchObject({ targetId: c.id });
-
     const before = await lastRowid();
     await revokeAssetShareLink(ctx, scope, link.id);
-    const events = await eventsSince(scope, before);
     const plan = newPurgePlan();
-    for (const e of events) {
-      await consumeEvent(
-        ctx,
-        { sender: new RecordingWebhookSender(), shareLinkGate: shareGate },
-        e,
-      );
-      await planPurges(ctx, plan, e);
-    }
-    expect(await shareGate.get(scope, link.id)).toBeNull();
+    for (const e of await eventsSince(scope, before)) await planPurges(ctx, plan, e);
     const tag = mediaShareLinkTag(scope.spaceId, scope.environmentId, link.id);
     expect(plan.revoked).toContain(tag);
     const { q, sent } = queues();
@@ -431,5 +409,17 @@ describe('collections and share links in the engine', () => {
       undefined,
       REVOCATION_REPURGE_SECONDS,
     ]);
+  });
+
+  it('send a batch touching many collections in bounded messages, revocations first', async () => {
+    const plan = newPurgePlan();
+    for (let i = 0; i < 250; i++) plan.media.add(`cwc:s:e:${i}`);
+    plan.revoked.add('cwa:s:e:gone');
+    const { q, sent } = queues();
+    await sendPurges(q, plan, () => {});
+    const now = sent.filter((m) => m.queue === 'media-purge' && !m.delaySeconds);
+    expect(now.map((m) => m.body.tags.length)).toEqual([MEDIA_TAGS_PER_MESSAGE, 100, 51]);
+    expect(now[0]?.body.tags[0]).toBe('cwa:s:e:gone');
+    expect(sent.filter((m) => m.delaySeconds).map((m) => m.body.tags)).toEqual([['cwa:s:e:gone']]);
   });
 });

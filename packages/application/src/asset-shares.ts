@@ -13,7 +13,6 @@ import {
 import {
   type ContentStore,
   type PublishedAsset,
-  type ShareLinkGate,
   type ShareLinkGateEntry,
   TransactionConflictError,
 } from '@contentworker/ports';
@@ -26,8 +25,8 @@ import type { AppContext } from './context';
  * unpublished asset can't be shared, and a collection's drafts are left off its page), so a link
  * never exposes more than Delivery already does, only for longer than a signed URL would.
  *
- * Creating and revoking commit with an event, from which the engine writes (or removes) the media
- * origin's KV entry for the link and, on revocation, purges its cached page.
+ * Creating and revoking commit with an event (for webhooks; a revocation also purges the link's
+ * cached page). The media origin reads the link's row on every request ({@link openShareLink}).
  */
 
 /** Most links one listing returns. */
@@ -159,8 +158,8 @@ export async function getAssetShareLink(
 }
 
 /**
- * Revokes a link: it stops opening at once (the media origin checks the link on every request) and
- * its cached page is purged. Revoking one already revoked changes nothing and sends no event.
+ * Revokes a link: it stops opening as soon as the media origin's replica has the row (it reads the
+ * link on every request), and its cached page is purged. Revoking one already revoked changes nothing and sends no event.
  */
 export async function revokeAssetShareLink(
   ctx: AppContext,
@@ -190,7 +189,7 @@ export async function revokeAssetShareLink(
   return present(ctx, scope, { ...link, revokedAt: now.toISOString() });
 }
 
-/** What the media origin keeps of an active link, or `null` for one that opens nothing now. */
+/** What the media origin uses of an active link, or `null` for one that opens nothing now. */
 export function shareLinkGateEntry(
   link: StoredAssetShareLink,
   nowMs: number,
@@ -206,24 +205,20 @@ export function shareLinkGateEntry(
 }
 
 /**
- * Brings the media origin's entry for a link in line with the store: written while the link is
- * active, removed otherwise. Reads the current row rather than trusting the event, so a
- * redelivered or out-of-order event converges. The engine runs it; no request path writes it.
+ * The link a share URL names, as the media origin may use it now: its entry while active, `gone`
+ * once expired or revoked (410), or `null` when there is no such link (404). Read from the store
+ * (a D1 replica on the media Worker) on every request, so a revocation needs nothing but the row:
+ * no cache or engine step stands between a revoke and the link closing.
  */
-export async function syncShareLinkGate(
-  ctx: AppContext,
-  gate: ShareLinkGate,
+export async function openShareLink(
+  store: Pick<ContentStore, 'assetShareLinks'>,
   scope: Scope,
   linkId: string,
-): Promise<'written' | 'removed'> {
-  const link = await ctx.store.assetShareLinks.get(scope, linkId);
-  const entry = link ? shareLinkGateEntry(link, ctx.clock.now().getTime()) : null;
-  if (entry) {
-    await gate.put(scope, linkId, entry);
-    return 'written';
-  }
-  await gate.delete(scope, linkId);
-  return 'removed';
+  nowMs: number,
+): Promise<ShareLinkGateEntry | 'gone' | null> {
+  const link = await store.assetShareLinks.get(scope, linkId);
+  if (!link) return null;
+  return shareLinkGateEntry(link, nowMs) ?? 'gone';
 }
 
 /** Most files a share page lists (a collection's cap). */

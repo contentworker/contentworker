@@ -18,12 +18,12 @@
     "@contentworker/db": "workspace:*",
     "@contentworker/domain": "workspace:*",
     "@contentworker/platform": "workspace:*",
-    "@contentworker/ports": "workspace:*",
-    "@contentworker/security": "workspace:*"
+    "@contentworker/ports": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",
     "@cloudflare/workers-types": "catalog:",
+    "@contentworker/security": "workspace:*",
     "@contentworker/test-kit": "workspace:*",
     "@contentworker/typescript-config": "workspace:*",
     "@types/node": "catalog:",

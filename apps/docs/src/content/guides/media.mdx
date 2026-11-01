@@ -223,7 +223,8 @@ named for their file names (made unique), and a hosted video, which has no file 
 out. Follow the job at `GET …/asset-zips/{id}`: `status` is `pending`, `running`, `completed` or
 `failed` (with `error`), and `partsDone` of `partCount` shows progress. Once `completed` it has a
 `downloadUrl` that works for 15 minutes (ask again for a fresh one). The archive is kept for a day,
-then removed. `GET …/asset-zips` lists the latest jobs. These need `preview:read`; the MCP tools
+then removed. An environment builds three zips at once; a fourth request answers **409** until
+one finishes. `GET …/asset-zips` lists the latest jobs. These need `preview:read`; the MCP tools
 are `asset_zip_create`, `asset_zip_get` and `asset_zips_list`, and the SDK's `assets.zips`.
 
 To give someone outside your team a file or a collection without an account, see

@@ -5,25 +5,23 @@ import {
   FakePasswordHasher,
   FixedClock,
   InMemoryContentStore,
-  InMemoryShareLinkGate,
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
   addToAssetCollection,
-  consumeEvent,
   createAsset,
   createAssetCollection,
   createAssetShareLink,
   createEnvironment,
   createSpace,
   listAssetShareLinks,
+  openShareLink,
   publishAsset,
   revokeAssetShareLink,
   sharedAssetFile,
   sharedAssets,
-  syncShareLinkGate,
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -158,8 +156,7 @@ describe('share links', () => {
     ).toEqual([short.id, live.id]);
   });
 
-  it('keeps the media origin’s entry in line with the row, and the events drive it', async () => {
-    const gate = new InMemoryShareLinkGate();
+  it('opens a link from its row: active, then gone once revoked or expired', async () => {
     const c = await createAssetCollection(ctx, scope, { name: 'C' });
     const link = await createAssetShareLink(ctx, scope, {
       targetType: 'collection',
@@ -167,21 +164,18 @@ describe('share links', () => {
       expiresAt: inDays(1),
       password: 'long enough',
     });
-    const deps = { sender: { send: async () => ({ ok: true, status: 200 }) }, shareLinkGate: gate };
-    const created = store.allEvents().at(-1);
-    await consumeEvent(ctx, deps as never, created as never);
-    expect(await gate.get(scope, link.id)).toMatchObject({
+    const now = () => clock.now().getTime();
+    expect(await openShareLink(store, scope, link.id, now())).toMatchObject({
       targetType: 'collection',
       targetId: c.id,
       passwordHash: expect.stringMatching(/^fake:/),
     });
+    expect(await openShareLink(store, scope, link.id, now() + 2 * DAY)).toBe('gone');
     await revokeAssetShareLink(ctx, scope, link.id);
-    await consumeEvent(ctx, deps as never, store.allEvents().at(-1) as never);
-    expect(await gate.get(scope, link.id)).toBeNull();
-    // A redelivered `created` after the revoke converges on the row: still removed.
-    await consumeEvent(ctx, deps as never, created as never);
-    expect(await gate.get(scope, link.id)).toBeNull();
-    expect(await syncShareLinkGate(ctx, gate, scope, 'ghost')).toBe('removed');
+    expect(await openShareLink(store, scope, link.id, now())).toBe('gone');
+    expect(await openShareLink(store, scope, 'ghost', now())).toBeNull();
+    // Another environment never opens it.
+    expect(await openShareLink(store, { ...scope, environmentId: 'x' }, link.id, now())).toBeNull();
   });
 
   it('shows published members only, in order, and serves a file only of its target', async () => {

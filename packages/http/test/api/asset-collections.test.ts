@@ -254,10 +254,14 @@ describe('multipart uploads and zips over HTTP', () => {
     expect((await send(h, 'GET', `/assets/${again.asset.id}`)).status).toBe(404);
   });
 
-  it('asks for a zip with preview:read, and refuses a request naming both sources', async () => {
+  it('asks for a zip with preview:read, refusing a key with content grants (as asset reads do)', async () => {
     const h = makeApp();
     const a = await upload(h, 'a.png');
-    const reader = await keyWithScopes(h, 'Reader', ['preview:read']);
+    const cpa = { Authorization: 'Bearer cpa', 'Content-Type': 'application/json' };
+    // A role key carries content grants: it reads no assets, so no zip of them either.
+    const granted = await keyWithScopes(h, 'Reader', ['preview:read']);
+    expect((await send(h, 'POST', '/asset-zips', { assetIds: [a.id] }, granted)).status).toBe(403);
+    const reader = cpa;
     const res = await send(h, 'POST', '/asset-zips', { assetIds: [a.id], name: 'Pick' }, reader);
     expect(res.status).toBe(202);
     const job = await json<{ id: string; status: string; fileName: string }>(res);

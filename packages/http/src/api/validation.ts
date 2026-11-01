@@ -10,6 +10,7 @@ import {
   MAX_ASSET_RIGHTS_TEXT,
   MAX_COLLECTION_CHANGE,
   MAX_COLLECTION_DESCRIPTION,
+  MAX_COLLECTION_ITEMS,
   MAX_SHARE_PASSWORD,
   MAX_ZIP_ASSETS,
   PLUGIN_SETTING_MAX_STRING,
@@ -352,6 +353,13 @@ export const assetCollectionPatchBody = z.object({
 });
 export const collectionAssetIdsBody = z.object({
   assetIds: z.array(zId).min(1).max(MAX_COLLECTION_CHANGE),
+});
+export const collectionOrderBody = z.object({
+  assetIds: z
+    .array(zId)
+    .min(1)
+    .max(MAX_COLLECTION_ITEMS)
+    .describe('Members to put first, in this order (the whole order: up to 1,000)'),
 });
 export const shareLinkBody = z.object({
   targetType: z.enum(['asset', 'collection']),

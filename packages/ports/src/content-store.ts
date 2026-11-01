@@ -744,7 +744,10 @@ export interface AssetCollectionRepo {
     query?: { readonly limit?: number; readonly cursor?: string },
   ): Promise<AssetCollectionPage>;
   create(scope: Scope, collection: AssetCollection): Promise<void>;
-  /** Writes the name, description and `updatedAt`. */
+  /**
+   * Writes the name, description and `updatedAt`. A collection gone by commit throws
+   * {@link TransactionConflictError}.
+   */
   save(scope: Scope, collection: AssetCollection): Promise<void>;
   /** Deletes the collection and its memberships (never the assets). */
   delete(scope: Scope, id: string): Promise<void>;
@@ -763,7 +766,8 @@ export interface AssetCollectionRepo {
   removeItems(scope: Scope, id: string, assetIds: readonly string[]): Promise<void>;
   /**
    * Puts `assetIds` first, in that order; the other members follow in the order they had. Ids
-   * that aren't members are ignored.
+   * that aren't members are ignored. A collection gone by commit throws
+   * {@link TransactionConflictError}.
    */
   reorder(scope: Scope, id: string, assetIds: readonly string[]): Promise<void>;
   /**

@@ -144,8 +144,6 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     assetSearch: wired.assetSearch,
     // `asset_reindex` bulk chunks hand their assets to ingest through this queue.
     ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
-    // Share links' entries for the media origin: written and removed here, from link events.
-    ...(wired.shareLinkGate ? { shareLinkGate: wired.shareLinkGate } : {}),
     // Zip downloads: `asset_zip.requested` starts the job's Workflow.
     ...(wired.assetZipStarter ? { assetZip: wired.assetZipStarter } : {}),
     bus: env.LIVE_HUB ? createDoEventBus(env.LIVE_HUB) : undefined,

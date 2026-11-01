@@ -27,8 +27,7 @@ which cache tags to purge.
              │    ├─ webhooks  — fan out to subscribers (HMAC-signed)
              │    ├─ functions — invoke user-defined HTTP hooks (FunctionInvoker)
              │    ├─ cache     — invalidate the entry's tag + reverse-reference tags (KV)
-             │    ├─ gate      — asset.*: write or remove asset-gate:<space>:<env>:<id> (KV);
-             │    │              asset_share.*: share-link:<space>:<env>:<link> (KV)
+             │    ├─ gate      — asset.*: write or remove asset-gate:<space>:<env>:<id> (KV)
              │    ├─ zip       — asset_zip.requested: start AssetZipWorkflow
              │    ├─ rag       — re-index (published) or delete (unpublished) embeddings
              │    └─ search    — SearchShardDO index / remove
@@ -184,9 +183,7 @@ that re-cached a file from a stale gate read loses it too. The media Worker drai
 (`contentworker_media_purge_dead_letters_total`).
 
 Before that, `dispatchEvent` runs `syncAssetGate` for `asset.published`, `asset.unpublished`,
-`asset.deleted` and `asset.rights_changed` when `assetGate` is bound (and `syncShareLinkGate` for
-`asset_share.created` and `asset_share.revoked` when `shareLinkGate` is bound, writing or removing
-`share-link:<space>:<env>:<link>` from the link's row): it reads the current published snapshot and writes
+`asset.deleted` and `asset.rights_changed` when `assetGate` is bound: it reads the current published snapshot and writes
 `asset-gate:<space>:<env>:<id>` (`{v, r2Key, contentType, fileName, focal, expiresAt}`) or removes
 it, so a redelivered or out-of-order event converges. Nothing on a request path writes the gate.
 For `asset.file_replaced` it hands the new file to ingest (`AssetIngestQueue.objectCreated`, with
@@ -318,7 +315,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset.ingested`                                                                   | `assetId`, `version`, `published`, `contentHash` (absent over 512 MiB), `duplicateOf` (ingest finished a file version: hashed, measured, enriched where empty, indexed)                                              |
 | `asset_renditions.changed`                                                         | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged; `scope` is the environment it was changed through, so other environments' scoped hooks don't hear it) |
 | `asset_collection.changed`                                                         | `collectionId` (a collection was created, renamed or deleted, or its members were added, removed or reordered; also sent for each collection a deleted asset leaves; Delivery's collection read and every share page that shows it are purged) |
-| `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the engine writes or removes the media origin's KV entry for the link; a revoke also purges its cached page, now and after 90 s) |
+| `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the media origin reads the link's row itself; a revoke purges its cached page, now and after 90 s) |
 | `asset_zip.requested`                                                              | `jobId` (a control event: the engine starts `AssetZipWorkflow`, or fails the job when `ASSET_ZIP_WF` is unbound; no webhooks apply) |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                                                                        |
 | `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                                                              |

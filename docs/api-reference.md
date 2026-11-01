@@ -454,7 +454,7 @@ Every route is under `/spaces/:space/environments/:env`.
 | POST   | `…/assets/:id/uploads/:uploadId/parts`    | `content:write`   | `{ partNumbers }` (≤ 100) → a signed `PUT` URL per part; sign again to retry |
 | POST   | `…/assets/:id/uploads/:uploadId/complete` | `content:write`   | `{ parts: [{ partNumber, etag }] }`, parts `1..n` once each; ingest starts |
 | DELETE | `…/assets/:id/uploads/:uploadId`          | `content:write`   | Abort (204); the empty draft is deleted |
-| POST   | `…/asset-zips`                            | `preview:read`    | `{ assetIds (1–1,000) \| collectionId, name? }` (202, the job) |
+| POST   | `…/asset-zips`                            | `preview:read`    | `{ assetIds (1–1,000) \| collectionId, name? }` (202, the job; 409 while three are pending or running in the environment; refused for a key with content grants) |
 | GET    | `…/asset-zips`                            | `preview:read`    | The latest 50 jobs |
 | GET    | `…/asset-zips/:id`                        | `preview:read`    | Status, `partsDone` / `partCount`, `error?`, and once `completed` a `downloadUrl` valid for 15 minutes |
 
@@ -465,9 +465,10 @@ collection's page lists only its published members. The media origin serves a li
 `https://media.<domain>/s/<space>/<env>/<linkId>/<token>`: the token is a 128-bit HMAC checked before
 any lookup; the page is HTML, or JSON with `?format=json` or `Accept: application/json`; a file is
 at `…/f/<assetId>/<fileName>`, and `?download` is honoured only when the link has `allowDownload`.
-The link is checked on every request: an expired one answers `410` at once, a revoked one within
-KV's read cache (about a minute). A password is asked for through a form (`POST …/unlock`, limited
-to 10 a minute per link and address by `RATE_LIMIT_SHARE_UNLOCK`) and remembered in a cookie scoped
+The link is checked on every request: an expired one answers `410` at once, a revoked one as
+soon as the media Worker's D1 replica has the revoke. A password is asked for through a form (`POST …/unlock`, limited
+to 10 a minute per link and address, and 10 a minute per link from all addresses together, by
+`RATE_LIMIT_SHARE_UNLOCK`) and remembered in a cookie scoped
 to the link's path for at most 12 hours and never past the expiry. The MCP tools are
 `asset_collections_list`, `asset_collections_get`, `asset_collections_create`,
 `asset_collections_update`, `asset_collections_delete`, `asset_collection_assets_list`,

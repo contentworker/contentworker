@@ -71,6 +71,7 @@ import {
   generateAltText,
   getAgentReview,
   getAssetCollection,
+  getAssetShareLink,
   getAssetUsage,
   getAssetZip,
   getBulkJob,
@@ -3655,6 +3656,12 @@ export function buildServer(
   // that carries the URLs, opens published files to anyone); uploads content:write; a zip
   // preview:read.
   const collectionAuthor = auditActor(principal);
+  // A key with content grants reads no assets (as the preview asset tools refuse it).
+  const refuseGrantedAssetReads = () => {
+    if (principal.contentGrants) {
+      throw new ForbiddenError('assets (a key with content grants reads no assets)');
+    }
+  };
   const uploadBlob = () => {
     if (!deps.blob) throw new NotConfiguredError('blob', 'Uploads and zips need a blob store');
     return deps.blob;
@@ -3776,6 +3783,10 @@ export function buildServer(
         z.object({
           id: z.string(),
           kind: z.enum(['image', 'video', 'audio', 'document', 'other']).optional(),
+          mime: z
+            .string()
+            .optional()
+            .describe('An exact content type (image/png) or a family (image/*)'),
           tag: z.string().optional(),
           status: z.enum(['draft', 'published', 'archived', 'all']).optional(),
           limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
@@ -3786,11 +3797,13 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      refuseGrantedAssetReads();
       const page = await listAssetCollectionItems(ctx, scopeOf(args), args.id, {
         ...(args.limit !== undefined ? { limit: args.limit } : {}),
         ...(args.cursor ? { cursor: args.cursor } : {}),
         filters: {
           ...(args.kind ? { kind: args.kind } : {}),
+          ...(args.mime ? { mime: args.mime } : {}),
           ...(args.tag ? { tag: args.tag } : {}),
           ...(args.status ? { status: args.status } : {}),
         },
@@ -3844,7 +3857,7 @@ export function buildServer(
       inputSchema: toolSchema('asset_collection_reorder', () =>
         z.object({
           id: z.string(),
-          assetIds: z.array(z.string()).min(1).max(MAX_COLLECTION_CHANGE),
+          assetIds: z.array(z.string()).min(1).max(MAX_COLLECTION_ITEMS),
           ...scopeArgs,
         }),
       ),
@@ -3918,6 +3931,18 @@ export function buildServer(
           { createdBy: collectionAuthor },
         ),
       );
+    },
+  );
+
+  server.registerTool(
+    'share_link_get',
+    {
+      description: 'Get one share link by id (active, expired or revoked), with its URL.',
+      inputSchema: toolSchema('share_link_get', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      return ok(await getAssetShareLink(ctx, scopeOf(args), args.id));
     },
   );
 
@@ -4058,6 +4083,7 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      refuseGrantedAssetReads();
       return ok(
         await requestAssetZip(
           ctx,
@@ -4081,6 +4107,7 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      refuseGrantedAssetReads();
       return ok(await getAssetZip(ctx, uploadBlob(), scopeOf(args), args.id));
     },
   );
@@ -4093,6 +4120,7 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      refuseGrantedAssetReads();
       return ok({ items: await listAssetZips(ctx, scopeOf(args)) });
     },
   );

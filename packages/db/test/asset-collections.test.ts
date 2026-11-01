@@ -131,6 +131,25 @@ describe('collections on D1', () => {
     ).rejects.toBeInstanceOf(TransactionConflictError);
   });
 
+  it('counts only members whose asset exists toward the cap, and refuses a save or reorder of a deleted one', async () => {
+    const { ctx, scope, upload } = await harness();
+    const [a, b] = [await upload('a.png'), await upload('b.png')];
+    const c = await createAssetCollection(ctx, scope, { name: 'Orphans' });
+    // An import's members whose assets never arrived: invisible, and not counted.
+    await store.assetCollections.restore(scope, c, [a.id, uid(), uid()]);
+    await store.withTransaction((tx) =>
+      tx.assetCollections.addItems(scope, c.id, [b.id], new Date(), 2),
+    );
+    expect(await store.assetCollections.get(scope, c.id)).toMatchObject({ itemCount: 2 });
+    await store.assetCollections.delete(scope, c.id);
+    await expect(
+      store.withTransaction((tx) => tx.assetCollections.save(scope, { ...c, name: 'X' })),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    await expect(
+      store.withTransaction((tx) => tx.assetCollections.reorder(scope, c.id, [a.id])),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+  });
+
   it('drops a deleted asset from every collection in the delete’s own batch', async () => {
     const { ctx, scope, upload } = await harness();
     const a = await upload('a.png');

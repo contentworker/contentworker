@@ -74,8 +74,6 @@ Workflows it hosts, and the cached `Delivery` and `Media` entrypoints.
 10. **Only the engine writes the media gate.** On `asset.published`, `asset.unpublished` and
     `asset.deleted`, `syncAssetGate` writes or removes `asset-gate:<space>:<env>:<id>` in
     `KV_CACHE` from the current published snapshot.
-    It likewise writes a share link's entry (`share-link:<space>:<env>:<link>`) on `asset_share.created`
-    and removes it on `asset_share.revoked`.
 11. **Readers fetch published files** at `media.<domain>`. The media gateway checks the URL's
     token and forwards a canonical URL to the cached `Media` entrypoint. On a miss, `Media` reads
     the gate, then the bytes from R2, and gets resized variants from Images. Share links (`/s/<space>/<env>/<link>/<token>`) take the same
@@ -83,7 +81,7 @@ Workflows it hosts, and the cached `Delivery` and `Media` entrypoints.
 12. **Uploads land in R2 and start ingest.** The api's signed `PUT` stores the bytes. R2's
     object-create notification feeds `contentworker-asset-events`, and the engine starts one
     `AssetIngestWorkflow` per file version. The workflow calls Workers AI through AI Gateway and
-    writes embeddings to Vectorize. Files past 100 MiB upload in parts through R2 multipart and start ingest the same way on completion. The api also creates Stream direct uploads for video. A zip download is a fourth Workflow, `AssetZipWorkflow` (`ASSET_ZIP_WF`), started from `asset_zip.requested` and writing the archive to R2 one 16 MiB part per step.
+    writes embeddings to Vectorize. Files past 100 MiB upload in parts through R2 multipart and start ingest the same way on completion. The api also creates Stream direct uploads for video. A zip download is a fourth Workflow, `AssetZipWorkflow` (`ASSET_ZIP_WF`), started from `asset_zip.requested` and writing the archive to R2 one 8 MiB part per step.
 13. **api and delivery reach the engine's classes through `script_name` bindings.** The api binds
     `LiveHubDO`, `RateLimiterDO`, `CostGuardDO`, `SearchShardDO` and `AssistantAgent`, plus the
     `AgentWorkflow` and `EditorialWorkflow` workflows. The delivery Worker binds `LiveHubDO` and

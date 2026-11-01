@@ -40,6 +40,16 @@ async function collectionOrThrow(
   return collection;
 }
 
+/** Runs a change, reporting a collection deleted before it committed as the check would have. */
+async function gone(id: string, change: () => Promise<void>): Promise<void> {
+  try {
+    await change();
+  } catch (err) {
+    if (err instanceof TransactionConflictError) throw new NotFoundError('AssetCollection', id);
+    throw err;
+  }
+}
+
 /** The event every change rides with. */
 async function announce(ctx: AppContext, tx: ContentStoreTx, scope: Scope, id: string) {
   await tx.outbox.append({
@@ -111,10 +121,12 @@ export async function updateAssetCollection(
     ...(description ? { description } : {}),
     updatedAt: ctx.clock.now().toISOString(),
   };
-  await ctx.store.withTransaction(async (tx) => {
-    await tx.assetCollections.save(scope, updated);
-    await announce(ctx, tx, scope, id);
-  });
+  await gone(id, () =>
+    ctx.store.withTransaction(async (tx) => {
+      await tx.assetCollections.save(scope, updated);
+      await announce(ctx, tx, scope, id);
+    }),
+  );
   return updated;
 }
 
@@ -210,12 +222,15 @@ export async function reorderAssetCollection(
   id: string,
   assetIds: readonly string[],
 ): Promise<void> {
-  const ids = collectionChangeIds(assetIds);
+  // A whole collection's order at most: still one JSON parameter.
+  const ids = collectionChangeIds(assetIds, MAX_COLLECTION_ITEMS);
   await collectionOrThrow(ctx, scope, id);
-  await ctx.store.withTransaction(async (tx) => {
-    await tx.assetCollections.reorder(scope, id, ids);
-    await announce(ctx, tx, scope, id);
-  });
+  await gone(id, () =>
+    ctx.store.withTransaction(async (tx) => {
+      await tx.assetCollections.reorder(scope, id, ids);
+      await announce(ctx, tx, scope, id);
+    }),
+  );
 }
 
 /** A page of a collection's assets, in its order, filtered as the library is. */

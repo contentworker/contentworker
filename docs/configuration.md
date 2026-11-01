@@ -60,7 +60,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `EMAIL` (`send_email`)                            |     |     |     | ✓   | Added by fleet render only when the deployment sets `email`                                                                                                                                                                                                                               |
 | `METRICS` (Analytics Engine)                      |     | ✓   | ✓   | ✓   | Absent → counters fall back to log lines                                                                                                                                                                                                                                                  |
 | `RATE_LIMIT_READ` / `_WRITE` / `_AI` (ratelimits) |     | ✓   | ✓   |     | api: 600 / 120 / 20 per 60 s, inert until a `RATE_LIMIT_*_PER_WINDOW` var is set (see [Rate limits](#rate-limits)); delivery: `RATE_LIMIT_READ` 1200 per 60 s, always applied                                                                                                             |
-| `RATE_LIMIT_SHARE_UNLOCK` (ratelimits)            |     |     |     |     | The media Worker's: 10 password attempts per 60 s per share link and client address (namespace `1006`, rendered per slot). Absent → attempts are limited only by PBKDF2's cost |
+| `RATE_LIMIT_SHARE_UNLOCK` (ratelimits)            |     |     |     |     | The media Worker's: 10 password attempts per 60 s per share link and client address, and per link overall (namespace `1006`, rendered per slot). Absent → attempts are limited only by PBKDF2's cost |
 | `API_LIMIT` (ratelimits)                          | ✓   |     |     |     | 600 per 60 s on sign-in paths that need no session, and on SCIM                                                                                                                                                                                                                           |
 
 ## Deployment shape
@@ -170,11 +170,11 @@ it serves from, all read-only:
 | Binding / var / secret        | Notes                                                                                       |
 | ----------------------------- | ------------------------------------------------------------------------------------------- |
 | `DB` (D1)                     | Read-replica sessions (`first-unconstrained`): the gate's fallback and rendition presets      |
-| `KV_CACHE` (KV)               | The gate the engine writes (`asset-gate:<space>:<env>:<id>`) and the share-link entries (`share-link:<space>:<env>:<link>`), read with a 60 s `cacheTtl`  |
+| `KV_CACHE` (KV)               | The gate the engine writes (`asset-gate:<space>:<env>:<id>`), read with a 60 s `cacheTtl`. Share links are read from D1, not KV  |
 | `MEDIA_BUCKET` (R2)           | Asset bytes                                                                                 |
 | `IMAGES`                      | Width steps and renditions; absent → only originals are served. Ranges need no binding: the `Media.range` RPC reads `MEDIA_BUCKET` |
 | `METRICS` (Analytics Engine)  | `contentworker_media_purge_dead_letters_total`                                              |
-| `RATE_LIMIT_SHARE_UNLOCK`     | Password attempts on a share link: 10 per 60 s per link and client address (namespace `1006`) |
+| `RATE_LIMIT_SHARE_UNLOCK`     | Password attempts on a share link: 10 per 60 s per link and client address, and per link overall (namespace `1006`) |
 | `QUEUE_SUFFIX`, `ROLE=media`  | Template vars; consumers `contentworker-media-purge` (+ `-dlq`, logged and acked)           |
 | `MEDIA_SIGNING_SECRET`        | Its only secret: verifies published paths' tokens and signed `/media/*` GETs (with `exp`), the share-link tokens, and signs a share link's unlock cookie. Required with `DB` bound; dev uses the dev key, as the api does |
 

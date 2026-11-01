@@ -798,7 +798,7 @@ export interface MediaPathSigner {
   verifyLink(scope: Scope, linkId: string, token: string): boolean;
 }
 
-/** What the media origin needs of a share link, without a database read (KV on the edge). */
+/** What the media origin uses of an active share link (read from a D1 replica per request). */
 export interface ShareLinkGateEntry {
   readonly targetType: AssetShareTargetType;
   readonly targetId: string;
@@ -806,16 +806,6 @@ export interface ShareLinkGateEntry {
   readonly allowDownload: boolean;
   /** PBKDF2 hash of the link's password, when it has one. */
   readonly passwordHash?: string;
-}
-
-/**
- * Share links as the media origin reads them. The engine writes an entry when a link is created
- * and removes it when the link is revoked; an entry also expires with its link.
- */
-export interface ShareLinkGate {
-  get(scope: Scope, linkId: string): Promise<ShareLinkGateEntry | null>;
-  put(scope: Scope, linkId: string, entry: ShareLinkGateEntry): Promise<void>;
-  delete(scope: Scope, linkId: string): Promise<void>;
 }
 
 /** Hashes and checks passwords (PBKDF2-SHA256, the admin's scheme), for share links. */

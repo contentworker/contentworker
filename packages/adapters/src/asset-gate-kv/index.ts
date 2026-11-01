@@ -1,15 +1,10 @@
 import type { Scope } from '@contentworker/domain';
-import type {
-  AssetGate,
-  AssetGateEntry,
-  ShareLinkGate,
-  ShareLinkGateEntry,
-} from '@contentworker/ports';
+import type { AssetGate, AssetGateEntry } from '@contentworker/ports';
 
 /** The subset of a Workers KV namespace binding the gate uses. */
 export interface KvGateBinding {
   get(key: string, options?: { cacheTtl?: number }): Promise<string | null>;
-  put(key: string, value: string, options?: { expiration?: number }): Promise<void>;
+  put(key: string, value: string): Promise<void>;
   delete(key: string): Promise<void>;
   list(options: { prefix: string; cursor?: string; limit?: number }): Promise<{
     keys: readonly { name: string }[];
@@ -79,53 +74,6 @@ export function createKvAssetGate(kv: KvGateBinding): AssetGate {
         await Promise.all(own.map((k) => kv.delete(k.name)));
         cursor = page.list_complete ? undefined : page.cursor;
       } while (cursor);
-    },
-  };
-}
-
-/** The KV key of one share link's entry. */
-export const shareLinkKey = (scope: Scope, linkId: string) =>
-  `share-link:${scope.spaceId}:${scope.environmentId}:${linkId}`;
-
-function parseLink(raw: string): ShareLinkGateEntry | null {
-  try {
-    const e = JSON.parse(raw) as Partial<ShareLinkGateEntry>;
-    if (
-      (e.targetType === 'asset' || e.targetType === 'collection') &&
-      typeof e.targetId === 'string' &&
-      typeof e.expiresAt === 'string' &&
-      typeof e.allowDownload === 'boolean'
-    ) {
-      return e as ShareLinkGateEntry;
-    }
-  } catch {
-    // Falls through: an unreadable entry opens nothing.
-  }
-  return null;
-}
-
-/**
- * Share links in Workers KV, beside the asset gate. The engine writes an entry when a link is
- * created and removes it when the link is revoked; KV drops it on its own when the link expires
- * (KV's expiry is at least a minute out, and the media Worker checks `expiresAt` itself anyway).
- */
-export function createKvShareLinkGate(kv: KvGateBinding): ShareLinkGate {
-  return {
-    async get(scope, linkId) {
-      const raw = await kv.get(shareLinkKey(scope, linkId), { cacheTtl: GATE_READ_TTL_SECONDS });
-      return raw === null ? null : parseLink(raw);
-    },
-    async put(scope, linkId, entry) {
-      const expiration = Math.floor(Date.parse(entry.expiresAt) / 1000);
-      // KV refuses an expiry less than 60 seconds out: such a link is as good as expired.
-      if (!(expiration - Date.now() / 1000 > 60)) {
-        await kv.delete(shareLinkKey(scope, linkId));
-        return;
-      }
-      await kv.put(shareLinkKey(scope, linkId), JSON.stringify(entry), { expiration });
-    },
-    async delete(scope, linkId) {
-      await kv.delete(shareLinkKey(scope, linkId));
     },
   };
 }

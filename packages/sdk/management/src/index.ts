@@ -887,7 +887,7 @@ export function createManagementClient(opts: ManagementClientOptions) {
           post<{ removed: number }>(`${envBase}/asset-collections/${e(id)}/assets/remove`, {
             assetIds,
           }),
-        /** The named members first, in that order; the rest after, as they were. */
+        /** The named members first, in that order (up to 1,000); the rest after, as they were. */
         reorder: (id: string, assetIds: readonly string[]) =>
           put<void>(`${envBase}/asset-collections/${e(id)}/order`, { assetIds }),
       },

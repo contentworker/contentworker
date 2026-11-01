@@ -1,5 +1,5 @@
 import { crc32 } from 'node:zlib';
-import { NotFoundError, ValidationError } from '@contentworker/domain';
+import { ConflictError, NotFoundError, ValidationError } from '@contentworker/domain';
 import {
   FakeAssetZipStarter,
   FakeBlobStore,
@@ -18,6 +18,7 @@ import {
   createAssetCollection,
   createSpace,
   getAssetZip,
+  MAX_ACTIVE_ZIPS,
   planZip,
   requestAssetZip,
   runAssetZip,
@@ -135,6 +136,21 @@ describe('zip downloads', () => {
     expect(readZip(blob.bytes(zipObjectKey(scope, job)) as Uint8Array)[0]?.size).toBe(200);
   });
 
+  it('keeps the plan out of step state, however long the names, and removes it once built', async () => {
+    const long = `${'é'.repeat(190)}.png`;
+    const assets = [];
+    for (let i = 0; i < 40; i++) assets.push(await upload(long, bytesOf(`f${i}`)));
+    const job = await requestAssetZip(ctx, scope, { assetIds: assets.map((x) => x.id) });
+    const steps = new FakeWorkflowSteps(clock);
+    await build(job.id, 64, steps);
+    const plan = steps.journal.get('plan');
+    // The step's result is the plan's size only: a thousand such names would pass 1 MiB.
+    expect(plan).toMatchObject({ ok: true, value: { ok: { files: 40 } } });
+    expect(JSON.stringify(plan).length).toBeLessThan(200);
+    expect(blob.keys().some((k) => k.endsWith('/plan.json'))).toBe(false);
+    expect(readZip(blob.bytes(zipObjectKey(scope, job)) as Uint8Array)).toHaveLength(40);
+  });
+
   it('zips a collection in its order, and names repeated file names apart', async () => {
     const one = await upload('logo.png', bytesOf('one'));
     const two = await upload('logo.png', bytesOf('two'));
@@ -206,6 +222,39 @@ describe('zip downloads', () => {
     if (second?.type !== 'asset_zip.requested') throw new Error('no event');
     await consumeEvent(ctx, { sender: deps.sender } as never, second);
     expect((await getAssetZip(ctx, blob, scope, other.id)).status).toBe('failed');
+  });
+
+  it('completes on a retried complete step whose upload had already been assembled', async () => {
+    const a = await upload('a.png', bytesOf('z'.repeat(50)));
+    const job = await requestAssetZip(ctx, scope, { assetIds: [a.id] });
+    // The first write of `completed` fails after R2 assembled the archive: the step retries, R2 no
+    // longer has the upload, and the archive found at its planned length counts as done.
+    const update = store.assetZips.update.bind(store.assetZips);
+    let failed = false;
+    store.assetZips.update = async (sc, id, patch) => {
+      if (patch.status === 'completed' && !failed) {
+        failed = true;
+        throw new Error('D1 blip');
+      }
+      return update(sc, id, patch);
+    };
+    expect(await build(job.id)).toMatchObject({ value: { status: 'completed' } });
+    expect((await getAssetZip(ctx, blob, scope, job.id)).status).toBe('completed');
+  });
+
+  it('builds at most three zips at once per environment', async () => {
+    const a = await upload('a.png', bytesOf('a'));
+    for (let i = 0; i < MAX_ACTIVE_ZIPS; i++)
+      await requestAssetZip(ctx, scope, { assetIds: [a.id] });
+    await expect(requestAssetZip(ctx, scope, { assetIds: [a.id] })).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+    // One finishing frees a slot.
+    const [first] = await store.assetZips.list(scope, 10);
+    await store.assetZips.update(scope, first?.id ?? '', { status: 'completed' });
+    await expect(requestAssetZip(ctx, scope, { assetIds: [a.id] })).resolves.toMatchObject({
+      status: 'pending',
+    });
   });
 
   it('sweeps archives a day old: the object and the job', async () => {

@@ -132,6 +132,9 @@ describe('collection, share, upload and zip tools (MCP), on the HTTP routes’ u
     expect(link.body.hasPassword).toBe(true);
     expect(link.text).not.toContain('long enough');
     expect(((await call('share_links_list')).body as { items: unknown[] }).items).toHaveLength(1);
+    expect(((await call('share_link_get', { id: link.body.id })).body as { id: string }).id).toBe(
+      link.body.id,
+    );
     const revoked = (await call('share_link_revoke', { id: link.body.id })).body as {
       revokedAt?: string;
     };
@@ -189,5 +192,21 @@ describe('collection, share, upload and zip tools (MCP), on the HTTP routes’ u
         })
       ).body,
     ).toEqual({ aborted: aborted.upload.uploadId });
+  });
+
+  it('refuses a key with content grants on zips and collection members, as on asset reads', async () => {
+    const { deps, add } = await setup();
+    const a = await add('a.png');
+    const asAdmin = await connect(deps, admin);
+    const c = (await asAdmin('asset_collections_create', { name: 'K' })).body as { id: string };
+    await asAdmin('asset_collection_assets_add', { id: c.id, assetIds: [a.id] });
+    const pdf = (
+      await asAdmin('asset_collection_assets_list', { id: c.id, mime: 'application/pdf' })
+    ).body as { items: unknown[] };
+    expect(pdf.items).toEqual([]);
+    const granted = await connect(deps, { ...reader, contentGrants: [] });
+    expect((await granted('asset_zip_create', { assetIds: [a.id] })).isError).toBe(true);
+    expect((await granted('asset_collection_assets_list', { id: c.id })).isError).toBe(true);
+    expect((await granted('asset_collections_list')).isError).toBe(false);
   });
 });

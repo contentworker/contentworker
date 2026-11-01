@@ -277,6 +277,7 @@ import {
   canvasBody,
   cloneBody,
   collectionAssetIdsBody,
+  collectionOrderBody,
   commentBody,
   commitAssetFileBody,
   completeUploadBody,
@@ -1991,6 +1992,13 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ),
   );
   // --- asset collections ---------------------------------------------------
+  // A key with content grants reads no assets (as the preview asset reads refuse it): not a
+  // collection's members, and not a zip of anyone's files.
+  const refuseGrantedAssetReads = (c: Context<AuthVars>) => {
+    if (c.get('principal').contentGrants) {
+      throw new ForbiddenError('assets (a key with content grants reads no assets)');
+    }
+  };
   app.get(
     `${BASE}/asset-collections`,
     doc('Assets', 'List asset collections', {
@@ -2085,6 +2093,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.previewRead),
     async (c) => {
+      refuseGrantedAssetReads(c);
       const page = await listAssetCollectionItems(
         ctx,
         scopeOf(c),
@@ -2125,7 +2134,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.put(
     `${BASE}/asset-collections/:id/order`,
     doc('Assets', 'Reorder a collection', {
-      body: collectionAssetIdsBody,
+      body: collectionOrderBody,
       status: 204,
       description:
         'The named members go first, in that order; the rest follow in the order they had. ' +
@@ -2133,7 +2142,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
-      const { assetIds } = await parseBody(c, collectionAssetIdsBody);
+      const { assetIds } = await parseBody(c, collectionOrderBody);
       await reorderAssetCollection(ctx, scopeOf(c), c.req.param('id'), assetIds);
       return c.body(null, 204);
     },
@@ -2309,6 +2318,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.previewRead),
     async (c) => {
+      refuseGrantedAssetReads(c);
       const body = await parseBody(c, assetZipBody);
       return c.json(
         await requestAssetZip(ctx, scopeOf(c), body, {
@@ -2322,13 +2332,19 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     `${BASE}/asset-zips`,
     doc('Assets', 'List recent zip downloads', { ok: docs.assetZipList }),
     requireScope(SCOPES.previewRead),
-    async (c) => c.json({ items: await listAssetZips(ctx, scopeOf(c)) }),
+    async (c) => {
+      refuseGrantedAssetReads(c);
+      return c.json({ items: await listAssetZips(ctx, scopeOf(c)) });
+    },
   );
   app.get(
     `${BASE}/asset-zips/:id`,
     doc('Assets', 'Get a zip download (with its download URL once built)', { ok: docs.assetZip }),
     requireScope(SCOPES.previewRead),
-    async (c) => c.json(await getAssetZip(ctx, blob, scopeOf(c), c.req.param('id'))),
+    async (c) => {
+      refuseGrantedAssetReads(c);
+      return c.json(await getAssetZip(ctx, blob, scopeOf(c), c.req.param('id')));
+    },
   );
 
   app.get(`${BASE}/assets/:id`, requireScope(SCOPES.previewRead), async (c) =>

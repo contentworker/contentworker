@@ -173,6 +173,29 @@ describe('asset collections', () => {
     );
   });
 
+  it('reports a collection deleted before an update or reorder commits as not found', async () => {
+    const c = await createAssetCollection(ctx, scope, { name: 'Gone soon' });
+    const original = store.withTransaction.bind(store);
+    store.withTransaction = async (fn) => {
+      await store.assetCollections.delete(scope, c.id);
+      return original(fn);
+    };
+    await expect(updateAssetCollection(ctx, scope, c.id, { name: 'X' })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    store.withTransaction = original;
+    const d = await createAssetCollection(ctx, scope, { name: 'Order' });
+    store.withTransaction = async (fn) => {
+      await store.assetCollections.delete(scope, d.id);
+      return original(fn);
+    };
+    await expect(reorderAssetCollection(ctx, scope, d.id, ['a'])).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    store.withTransaction = original;
+    expect(store.allEvents().filter((e) => e.type === 'asset_collection.changed')).toHaveLength(2);
+  });
+
   it('keeps every collection in its own environment: another scope sees nothing of it', async () => {
     await createEnvironment(ctx, 'shop', 'staging');
     const staging = { spaceId: 'shop', environmentId: 'staging' };
