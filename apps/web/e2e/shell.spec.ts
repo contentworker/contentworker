@@ -179,6 +179,18 @@ test('controls take a 44px tap on touch screens', async ({ page }, info) => {
   expect(targets.filter((t) => t.height < 44)).toEqual([]);
 });
 
+test('tabs take a 44px tap on touch screens and keep their density on desktop', async ({
+  page,
+}, info) => {
+  await open(page, '/taxonomy');
+  // The screen loads its space on the client: wait for the tabs, then measure them.
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  const tabs = await tapTargets(page, '[data-slot="tabs-trigger"]');
+  expect(tabs.map((t) => t.name)).toEqual(['Concepts', 'Tags']);
+  if (isTouch(info)) expect(tabs.filter((t) => t.height < 44)).toEqual([]);
+  else expect(tabs.filter((t) => t.height >= 44)).toEqual([]);
+});
+
 test('Account offers the Home Screen on an iPhone or iPad, until dismissed', async ({
   page,
 }, info) => {

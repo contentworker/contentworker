@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
+import { Tabs, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
@@ -32,6 +33,33 @@ describe('UI primitives', () => {
       .map(([file]) => file);
     expect(offenders).toEqual([]);
     expect(Object.keys(primitives).length).toBeGreaterThan(10);
+  });
+});
+
+describe('Tabs', () => {
+  // A trigger is drawn 25px tall in a 32px list: under DESIGN.md's 44px for a finger. On a coarse
+  // pointer each trigger is at least 44px square and the list grows to hold it; a mouse keeps the
+  // drawn size. (The measured size on each device is apps/web/e2e/shell.spec.ts's.)
+  it('gives every trigger a 44px target on touch and lets the list grow to hold it', () => {
+    render(
+      <Tabs defaultValue="a">
+        <TabsList>
+          <TabsTrigger value="a">Concepts</TabsTrigger>
+          <TabsTrigger value="b">Tags</TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    );
+    for (const tab of screen.getAllByRole('tab')) {
+      expect(tab.className.split(' ')).toEqual(
+        expect.arrayContaining(['touch:min-h-11', 'touch:min-w-11', 'h-[calc(100%-1px)]']),
+      );
+    }
+    expect(screen.getByRole('tablist').className.split(' ')).toEqual(
+      expect.arrayContaining([
+        'group-data-horizontal/tabs:h-8',
+        'touch:group-data-horizontal/tabs:h-auto',
+      ]),
+    );
   });
 });
 
