@@ -301,6 +301,30 @@ describe('OAuth authorization endpoint', () => {
     expect(((await res.json()) as Record<string, string>).error).toBe('invalid_request');
   });
 
+  it('refuses a consent form signed for one person when another posts it', async () => {
+    // The signature binds the person it was rendered for: another member who obtains the form
+    // can't approve with it, even for a space they are on themselves.
+    const cookie = await sessionCookie(ctx);
+    const role = await createRole(ctx, 's1', { name: 'other', scopes: [SCOPES.deliveryRead] });
+    await addMember(ctx, 's1', { email: 'other@example.com', name: 'Other', role: role.id });
+    const other = `principal:${JSON.stringify({ sub: 'usr_other', email: 'other@example.com', name: 'Other', role: 'member' })}`;
+    const { body: client } = await register(app);
+    const consent = await app.request(authorizeUrl(client.client_id as string), {
+      headers: { Cookie: cookie },
+    });
+    const fields = hiddenFields(await consent.text());
+
+    const res = await app.request('/oauth/authorize', {
+      method: 'POST',
+      headers: { Cookie: other, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ ...fields, decision: 'approve' }).toString(),
+    });
+    expect(res.status).toBe(400);
+    const refused = (await res.json()) as Record<string, string>;
+    expect(refused.error).toBe('invalid_request');
+    expect(refused.error_description).toContain('no longer valid');
+  });
+
   it('rejects a consent form submitted after it expired', async () => {
     const cookie = await sessionCookie(ctx);
     const { body: client } = await register(app);
