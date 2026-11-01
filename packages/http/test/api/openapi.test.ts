@@ -52,6 +52,29 @@ describe('OpenAPI spec + docs UI', () => {
     expect(paths).not.toContain('/docs');
   });
 
+  it('keeps the Delivery routes free of the docs stack, so the delivery Worker stays small', async () => {
+    // The delivery Worker serves these routes but no API docs. Importing the docs (zod,
+    // hono-openapi, the response schemas) from the routes module would put ~40% back on its script;
+    // the descriptions live in docs/delivery-docs.ts, which only the api mounts.
+    const { readFile } = await import('node:fs/promises');
+    const source = await readFile(
+      new URL('../../src/api/routes/delivery.ts', import.meta.url),
+      'utf8',
+    );
+    const imports = [...source.matchAll(/^import (?!type )[^;]*?from '([^']+)'/gms)].map(
+      (m) => m[1],
+    );
+    for (const banned of [
+      'zod',
+      'hono-openapi',
+      '../docs/openapi.js',
+      '../docs/schemas.js',
+      '../docs/delivery-docs.js',
+    ]) {
+      expect(imports, banned).not.toContain(banned);
+    }
+  });
+
   it('describes response schemas, not just paths', async () => {
     const app = makeApp();
     const spec = (await (await app.request('/openapi.json')).json()) as {

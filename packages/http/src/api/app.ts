@@ -10,6 +10,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { WEB_SIGN_IN } from './access-policy.js';
 import type { AuthDeps, AuthRateLimit } from './auth.js';
 import { createApiHasher } from './auth.js';
+import { describeDelivery } from './docs/delivery-docs.js';
 import { doc, mountDocs } from './docs/openapi.js';
 import { health, ready } from './docs/schemas.js';
 import { onError } from './http.js';
@@ -153,7 +154,7 @@ export function createApp(
     // After managementRoutes: its `/spaces/*` principal + audit middleware cover these routes.
     app.route('/', teamRoutes(deps));
   }
-  if (mountDelivery) app.route('/', deliveryRoutes(deps));
+  if (mountDelivery) app.route('/', deliveryRoutes(deps, describeDelivery));
   if (mountPreview) app.route('/', previewRoutes(deps));
 
   // Last: the OpenAPI spec walks the routes mounted above, so /openapi.json

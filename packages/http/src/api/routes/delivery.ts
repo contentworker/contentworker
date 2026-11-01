@@ -39,7 +39,7 @@ import {
   type ValidationRule,
   validate,
 } from 'graphql';
-import { type Context, Hono } from 'hono';
+import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import {
   type AuthDeps,
@@ -48,8 +48,7 @@ import {
   principalMiddleware,
   requireScope,
 } from '../auth.js';
-import { doc } from '../docs/openapi.js';
-import { asset, publishedEntry, publishedEntryList, searchHits } from '../docs/schemas.js';
+import type { DeliveryDocKey } from '../docs/delivery-docs.js';
 import { onError } from '../http.js';
 import { clampCount, entryQueryFrom, MAX_PAGE_LIMIT, parseEntryQuery } from '../query.js';
 
@@ -121,7 +120,13 @@ export function deliveryApp(routes: Hono<AuthVars>): Hono {
   return app;
 }
 
-export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
+/** Documents a route (the api's OpenAPI); the delivery Worker passes nothing and bundles none. */
+type Describe = (key: DeliveryDocKey) => MiddlewareHandler;
+const undocumented: Describe = () => async (_c, next) => {
+  await next();
+};
+
+export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented): Hono<AuthVars> {
   const { ctx, rag, bus } = deps;
   const app = new Hono<AuthVars>();
   app.use(`${BASE}/*`, principalMiddleware(deps));
@@ -129,46 +134,25 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   // Hybrid (semantic + full-text, RRF-fused) by default; ?mode=semantic or
   // ?mode=lexical selects a single leg.
-  app.get(
-    `${BASE}/search`,
-    doc('Delivery', 'Search published content', {
-      ok: searchHits,
-      description:
-        'Hybrid search by default: Vectorize ANN + the FTS5 SearchShard full-text index, fused with Reciprocal Rank Fusion.',
-      query: {
-        q: 'Search query',
-        mode: 'hybrid (default) | semantic | lexical',
-        top_k: 'Max hits (default 10)',
-      },
-    }),
-    requireScope(SCOPES.searchRead),
-    async (c) => {
-      const q = c.req.query('q') ?? '';
-      const mode = c.req.query('mode') ?? 'hybrid';
-      const opts = { topK: clampCount(c.req.query('top_k'), MAX_PAGE_LIMIT, { min: 1 }) };
-      const scope = scopeOf(c);
-      let hits =
-        mode === 'semantic'
-          ? await semanticSearch(rag, scope, q, opts)
-          : await hybridSearch(rag, ctx, scope, q, {
-              ...opts,
-              lexicalOnly: mode === 'lexical',
-            });
-      hits = await visibleSearchHits(ctx, scope, c.get('principal'), hits);
-      return c.json({ hits });
-    },
-  );
+  app.get(`${BASE}/search`, describe('search'), requireScope(SCOPES.searchRead), async (c) => {
+    const q = c.req.query('q') ?? '';
+    const mode = c.req.query('mode') ?? 'hybrid';
+    const opts = { topK: clampCount(c.req.query('top_k'), MAX_PAGE_LIMIT, { min: 1 }) };
+    const scope = scopeOf(c);
+    let hits =
+      mode === 'semantic'
+        ? await semanticSearch(rag, scope, q, opts)
+        : await hybridSearch(rag, ctx, scope, q, {
+            ...opts,
+            lexicalOnly: mode === 'lexical',
+          });
+    hits = await visibleSearchHits(ctx, scope, c.get('principal'), hits);
+    return c.json({ hits });
+  });
 
   app.get(
     `${BASE}/entries`,
-    doc('Delivery', 'List published entries', {
-      ok: publishedEntryList,
-      query: {
-        content_type: 'Filter by content type apiId',
-        locale: 'Resolve fields for one locale',
-        include: 'Reference resolution depth',
-      },
-    }),
+    describe('listEntries'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       const query = parseEntryQuery(new URL(c.req.url).searchParams);
@@ -189,10 +173,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   app.get(
     `${BASE}/entries/:id`,
-    doc('Delivery', 'Get a published entry', {
-      ok: publishedEntry,
-      query: { locale: 'Resolve fields for one locale', include: 'Reference resolution depth' },
-    }),
+    describe('getEntry'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       const entry = await getPublishedEntry(ctx, scopeOf(c), c.req.param('id'), {
@@ -210,7 +191,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   app.get(
     `${BASE}/assets`,
-    doc('Delivery', 'List published assets', { query: { limit: 'Max items' } }),
+    describe('listAssets'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       if (c.get('principal').contentGrants) {
@@ -225,7 +206,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   app.get(
     `${BASE}/assets/:id`,
-    doc('Delivery', 'Get a published asset', { ok: asset }),
+    describe('getAsset'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       if (c.get('principal').contentGrants) {
@@ -237,62 +218,44 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   // Live Content API: an SSE stream of published-content changes for this scope.
   // Optional ?types=entry.published,entry.unpublished filters the event types.
-  app.get(
-    `${BASE}/live`,
-    doc('Delivery', 'Live Content API (SSE)', {
-      okDescription: 'text/event-stream of published-content domain events for this scope',
-      query: { types: 'Comma-separated event-type filter, e.g. entry.published' },
-    }),
-    requireScope(SCOPES.deliveryRead),
-    (c) => {
-      const scope = scopeOf(c);
-      const types = (c.req.query('types') ?? '')
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
-      const principal = c.get('principal');
-      return streamSSE(c, async (stream) => {
-        const sub = bus.subscribe('*', async (event) => {
-          if (event.scope.spaceId !== scope.spaceId) return;
-          if (event.scope.environmentId !== scope.environmentId) return;
-          if (types.length > 0 && !types.includes(event.type)) return;
-          // Only published-content facts, and only what this principal may read (as LiveHubDO).
-          const visible = liveEventFor(principal, event);
-          if (!visible) return;
-          await stream.writeSSE({
-            event: visible.type,
-            id: visible.id,
-            data: JSON.stringify(visible),
-          });
+  app.get(`${BASE}/live`, describe('live'), requireScope(SCOPES.deliveryRead), (c) => {
+    const scope = scopeOf(c);
+    const types = (c.req.query('types') ?? '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const principal = c.get('principal');
+    return streamSSE(c, async (stream) => {
+      const sub = bus.subscribe('*', async (event) => {
+        if (event.scope.spaceId !== scope.spaceId) return;
+        if (event.scope.environmentId !== scope.environmentId) return;
+        if (types.length > 0 && !types.includes(event.type)) return;
+        // Only published-content facts, and only what this principal may read (as LiveHubDO).
+        const visible = liveEventFor(principal, event);
+        if (!visible) return;
+        await stream.writeSSE({
+          event: visible.type,
+          id: visible.id,
+          data: JSON.stringify(visible),
         });
-        stream.onAbort(() => void sub.close());
-        // Heartbeat so proxies keep the connection open, until the client leaves or the stream's
-        // lifetime ends (the client reconnects and is authorized again, as with LiveHubDO).
-        const until = Date.now() + LIVE_STREAM_MAX_MS;
-        while (!stream.aborted && Date.now() < until) {
-          await stream.writeSSE({ event: 'ping', data: '' });
-          await stream.sleep(15000);
-        }
-        await sub.close();
       });
-    },
-  );
+      stream.onAbort(() => void sub.close());
+      // Heartbeat so proxies keep the connection open, until the client leaves or the stream's
+      // lifetime ends (the client reconnects and is authorized again, as with LiveHubDO).
+      const until = Date.now() + LIVE_STREAM_MAX_MS;
+      while (!stream.aborted && Date.now() < until) {
+        await stream.writeSSE({ event: 'ping', data: '' });
+        await stream.sleep(15000);
+      }
+      await sub.close();
+    });
+  });
 
   // Resolves a transformed-image URL for a published asset (resize/crop/format/
   // quality, focal-point-aware) and redirects to it, so it can back an <img src>.
   app.get(
     `${BASE}/assets/:id/transform`,
-    doc('Delivery', 'Resolve a transformed image URL', {
-      status: 302,
-      okDescription: 'Redirects to the CDN-transformable image URL',
-      query: {
-        w: 'Width',
-        h: 'Height',
-        fit: 'Fit mode',
-        fm: 'Output format: auto (AVIF/WebP negotiated from Accept) | jpg | png | webp | avif',
-        q: 'Quality',
-      },
-    }),
+    describe('transform'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       const { url } = await transformPublishedAssetUrl(
