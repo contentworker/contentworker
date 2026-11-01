@@ -94,7 +94,7 @@ export default function LoginSsoLink() {
   return (
     <main className="grid min-h-dvh justify-items-center bg-background px-4 pt-[16vh]">
       <Form method="post" className="h-fit w-full max-w-sm card p-6">
-        <Mark className="size-7" />
+        <Mark className="size-7 text-brand" />
         <h1 className="mt-4 font-semibold tracking-title text-2xl">Link single sign-on</h1>
         <p className="mt-1 text-muted-foreground text-sm">
           Your identity provider signed you in as {email}, which already has a password here. Enter

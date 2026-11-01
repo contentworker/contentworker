@@ -36,7 +36,7 @@ export default function Logout() {
   return (
     <main className="grid min-h-dvh justify-items-center bg-background px-4 pt-[16vh]">
       <Form method="post" reloadDocument className="h-fit w-full max-w-sm card p-6">
-        <Mark className="size-7" />
+        <Mark className="size-7 text-brand" />
         <h1 className="mt-4 font-semibold tracking-title text-2xl">Sign out?</h1>
         <p className="mt-1 text-muted-foreground text-sm">You’re signed in as {who}.</p>
         <Button type="submit" className="mt-4 w-full">

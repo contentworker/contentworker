@@ -125,3 +125,21 @@ describe('Ledger contrast (PRODUCT.md: text 4.5:1 in both themes)', () => {
     }
   }
 });
+
+describe('Ledger contrast: the brand accent (DESIGN.md Accent)', () => {
+  for (const scheme of ['light', 'dark'] as const) {
+    const p = palette(scheme);
+    const brand = srgb(p.brand);
+    for (const ground of ['paper', 'card', 'muted', 'sidebar', 'sidebar-accent'] as const) {
+      it(`${scheme}: brand words (the AI tone) hold 4.5:1 on ${ground}`, () => {
+        expect(contrast(brand, srgb(p[ground]))).toBeGreaterThanOrEqual(4.5);
+      });
+      it(`${scheme}: the focus edge (ring) holds 3:1 on ${ground}`, () => {
+        expect(contrast(srgb(p.ring), srgb(p[ground]))).toBeGreaterThanOrEqual(3);
+      });
+    }
+    it(`${scheme}: words and checks on a brand fill hold 4.5:1`, () => {
+      expect(contrast(srgb(p['brand-foreground']), brand)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});
