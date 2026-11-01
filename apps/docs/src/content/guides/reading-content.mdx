@@ -1,0 +1,105 @@
+---
+title: Reading content
+description: The Delivery and Preview APIs - filtering, sorting, locales, embedded references, delta sync, search, GraphQL and live updates.
+---
+
+Sites and apps read content through two read-only APIs with the same shape:
+
+- **Delivery**, `/delivery/{space}/{env}`, serves **published** content. Use a Delivery (CDA) key.
+- **Preview**, `/preview/{space}/{env}`, serves the **latest saved** version, drafts included. Use
+  a Preview (CPA) key, and only from a staging site or server.
+
+Delivery is served from the workspace's `cdn.` address (`$CDN` below), a cached read path of its
+own; Preview is served from its `api.` address (`$API`), uncached. `{env}` may be an environment
+or an alias, so production can read `/delivery/acme/production`
+while you change which environment `production` points to.
+
+## Entries
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/entries/$ENTRY_ID?locale=en-US&include=1" \
+  -H "Authorization: Bearer $CDA"
+```
+
+A delivered entry is `{ id, contentType, fields, publishedAt }`. Lists return
+`{ items, total }`.
+
+| Parameter      | Example                         | Meaning                                                    |
+| -------------- | ------------------------------- | ---------------------------------------------------------- |
+| `content_type` | `content_type=article`          | Only entries of this type                                  |
+| `locale`       | `locale=de-DE`                  | Resolve every field to this locale, following fallbacks     |
+| `include`      | `include=2`                     | Embed linked entries and assets, up to this depth (0 to 5)  |
+| `limit`, `skip`| `limit=20&skip=40`              | Paging; `limit` is at most 100                             |
+| `order`        | `order=-sys.publishedAt,fields.title` | Sort; `-` for descending                             |
+| `select`       | `select=fields.title,fields.slug` | Return only these fields                                 |
+| `query`        | `query=launch`                  | Full-text match over text fields                           |
+| `since`        | `since=2026-10-01T00:00:00Z`    | Only entries changed since then, for delta sync            |
+
+Without `locale`, each field is keyed by locale (`{ "title": { "en-US": "…" } }`); with it, each
+field is a plain value, with the [fallback chain](/start/concepts/#locales) applied.
+
+### Filters
+
+Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>`:
+
+| Filter                                | Matches                                 |
+| ------------------------------------- | --------------------------------------- |
+| `fields.category=news`                | equal                                   |
+| `fields.category[ne]=news`            | not equal                               |
+| `fields.category[in]=news,events`     | any of                                  |
+| `fields.category[nin]=news,events`    | none of                                 |
+| `fields.price[gte]=10&fields.price[lt]=50` | ranges: `gt`, `gte`, `lt`, `lte`   |
+| `fields.hero[exists]=true`            | has a value                             |
+| `fields.title[match]=launch`          | text contains                           |
+| `sys.publishedAt[gt]=2026-10-01`      | system fields work the same way         |
+
+Entries a role-bound key can't read are left out of lists, and denied fields are removed; see
+[Roles](/guides/api-keys/#roles).
+
+## Assets
+
+`GET /delivery/{space}/{env}/assets` and `…/assets/{id}` return published assets with their file
+URL, size and dimensions. `…/assets/{id}/transform?w=800&fm=webp` (also `h`, `fit` and `q`) redirects to a resized or
+re-encoded image.
+
+## Search
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/search?q=waterproof+running+shoes&top_k=10" \
+  -H "Authorization: Bearer $CDA"
+```
+
+Search is **hybrid** by default, combining keyword and semantic matching; pass `mode=semantic` or
+`mode=lexical` to use one. Hits are `{ entryId, score, snippet }`. It needs `search:read`, which
+Delivery keys have.
+
+## GraphQL
+
+Each environment has a GraphQL endpoint whose schema is generated from your published content
+types: one type per content type, with typed fields and linked entries as nested objects.
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/graphql" \
+  -H "Authorization: Bearer $CDA" -H 'content-type: application/json' \
+  -d '{ "query": "{ articleCollection(limit: 5, locale: \"en-US\") { id title } }" }'
+```
+
+The schema changes when a content type is published. A GraphiQL page at
+`/graphiql/{space}/{env}` lets you explore it (queries still need a key).
+
+## Live updates
+
+`GET /delivery/{space}/{env}/live` is a Server-Sent Events stream of publish and unpublish events
+for the environment. Use it to refresh a page or invalidate a cache the moment content changes,
+instead of polling. For server-to-server notifications, use [webhooks](/guides/webhooks/).
+
+## Caching
+
+Delivery answers from a cache in front of the database. Your key is checked on every request,
+before the cache, so revoking a key or narrowing its role takes effect at once; keys that may see
+the same content share cached responses. A cached response is fresh for a minute and is purged
+when anything in its environment is published, unpublished or re-pointed by an alias change;
+responses carry an `ETag`, so `If-None-Match` gets a `304` when nothing changed.
+
+You don't need a long cache of your own in front of it. For static sites, rebuild on the
+`entry.published` [webhook](/guides/webhooks/) or use `since=` to fetch only what changed.

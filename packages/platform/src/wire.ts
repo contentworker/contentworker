@@ -1,0 +1,499 @@
+import {
+  createWorkersAIEmbeddings,
+  createWorkersAIProvider,
+  type WorkersAiRun,
+  workersAiModelsFromEnv,
+} from '@contentworker/adapters/ai-workers';
+import {
+  createMediaUrlSigner,
+  createR2BlobStore,
+  type MediaUrlSigner,
+} from '@contentworker/adapters/blob-r2';
+import { createKvCache } from '@contentworker/adapters/cache-kv';
+import { createCfEmailSender } from '@contentworker/adapters/email-cf';
+import { createRemoteFetcher, createWebhookSender } from '@contentworker/adapters/http-effects';
+import { createCfImageTransformer } from '@contentworker/adapters/images-cf';
+import { createWorkerLoaderRuntime } from '@contentworker/adapters/plugins-cf-loader';
+import { createCfQueueProducer } from '@contentworker/adapters/queue-cf';
+import { createVectorizeStore } from '@contentworker/adapters/vector-vectorize';
+import { createStreamVideoHost } from '@contentworker/adapters/video-stream';
+import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
+import {
+  type AgentRunner,
+  type AppContext,
+  aiCallLevel,
+  aiModeFakes,
+  aiRuntimeConfig,
+  assertNoFakeAdapters,
+  BULK_TOPIC,
+  createHasher,
+  createPluginHookDispatcher,
+  EVENTS_TOPIC,
+  type FakeAdapterBinding,
+  type PublishAgentsConfig,
+  type RagDeps,
+  recordPluginCapabilityDenial,
+  type WorkflowNodeDeps,
+  withSealedSecrets,
+} from '@contentworker/application';
+import { createD1Store } from '@contentworker/db';
+import { type ApiKeyKind, type DomainEvent, scopesForKind } from '@contentworker/domain';
+import type {
+  AIProvider,
+  BlobStore,
+  Cache,
+  ContentStore,
+  EmailSender,
+  EmbeddingsProvider,
+  EventBus,
+  GenerateRequest,
+  IdGenerator,
+  Queue as QueuePort,
+  SecretSealer,
+  VectorStore,
+  WorkflowEngine,
+} from '@contentworker/ports';
+import {
+  FakeBlobStore,
+  InMemoryContentStore,
+  InMemoryEventBus,
+  InMemoryVectorStore,
+  LocalEmbeddingsProvider,
+  StubAIProvider,
+} from '@contentworker/test-kit';
+import { type ApiConfig, loadConfig } from './config.js';
+import { sealerFromEnv } from './data-key.js';
+import { doCostGuardFromEnv } from './do/cost-guard.js';
+import { createShardedSearchIndex, DEFAULT_SEARCH_SHARDS } from './do/search-shard.js';
+import { type EdgeEnv, withJurisdiction } from './env.js';
+import { newId } from './ids.js';
+import { CloudflareWorkflowEngine, CloudflareWorkflowsAgentRuntime } from './workflows.js';
+
+const clock = { now: () => new Date() };
+// UUIDv7 (time-ordered) — consistent with the rest of the platform's PKs.
+const ids: IdGenerator = { newId };
+
+export interface EdgeWired {
+  readonly ctx: AppContext;
+  readonly config: ApiConfig;
+  readonly rag: RagDeps;
+  readonly blob: BlobStore;
+  /** Signs/verifies `/media/*` URLs; present when MEDIA_BUCKET is bound. */
+  readonly mediaSigner?: MediaUrlSigner;
+  readonly ai: AIProvider;
+  readonly bus: EventBus;
+  readonly cache?: Cache;
+  /** Producer onto the contentworker-events queue; absent when the binding is not set. */
+  readonly queue?: QueuePort;
+  /** Relay topic router; set only when the deployment lacks a contentworker-bulk queue
+   *  (falls everything back to the events topic). */
+  readonly routeTopic?: (event: DomainEvent) => string;
+  /**
+   * Starts/signals/cancels editorial workflow runs on the EDITORIAL_WF binding; absent when the
+   * binding is not set (run actions then answer 501).
+   */
+  readonly workflowEngine?: WorkflowEngine;
+  /** The AI, email and webhook ports workflow nodes use (and cancel's compensations). */
+  readonly workflowNodes: WorkflowNodeDeps;
+  /** True when backed by D1 vs the in-memory demo store. */
+  readonly persistent: boolean;
+  /**
+   * The D1 Sessions API bookmark after this invocation's queries: hand it back to the caller
+   * (`x-cw-bookmark`) so its next request reads at least this fresh, even from a replica.
+   * Undefined on the in-memory store.
+   */
+  bookmark(): string | undefined;
+  /** Seals secrets at rest under DATA_KEY; the reseal sweep needs it directly. */
+  readonly sealer: SecretSealer;
+  /** Releases per-invocation resources. D1 holds none; kept so callers stay uniform. */
+  close(): Promise<void>;
+}
+
+/**
+ * Composition root for the Cloudflare deployment: D1 (read-replica sessions), KV cache, Queues,
+ * Vectorize, R2, Images, Stream, Workers AI, Worker Loader. Called once per request / queue batch
+ * / cron tick; it opens nothing expensive (D1 is a binding, not a connection), so per-invocation
+ * wiring is cheap. The in-memory fallback is memoized at module scope so demo-mode data survives
+ * across requests within an isolate.
+ */
+export interface EdgeWireOptions {
+  /**
+   * D1 Sessions API constraint for this invocation's reads: a bookmark the caller got back from
+   * an earlier write (read-your-writes from any replica), `first-unconstrained` (any replica,
+   * cheapest), or `first-primary` (default: the primary, for request paths that write).
+   */
+  readonly bookmark?: string;
+}
+
+export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWired {
+  const env = withJurisdiction(rawEnv);
+  const config = loadConfig(env as unknown as NodeJS.ProcessEnv);
+  const cache = env.KV_CACHE ? createKvCache(env.KV_CACHE) : undefined;
+  const queue = env.EVENTS_QUEUE
+    ? createCfQueueProducer({
+        [EVENTS_TOPIC]: env.EVENTS_QUEUE,
+        ...(env.BULK_QUEUE ? { [BULK_TOPIC]: env.BULK_QUEUE } : {}),
+      })
+    : undefined;
+  // Without a contentworker-bulk binding, chunk_due events fall back to the events topic
+  // (single-queue deployments still work; the consumer handles both).
+  const routeTopic = env.BULK_QUEUE ? undefined : () => EVENTS_TOPIC;
+
+  const persistent = Boolean(env.DB);
+  // Secrets at rest: fails closed (throws) on a persistent deployment without DATA_KEY.
+  const sealer = sealerFromEnv(env, persistent);
+  const session = env.DB?.withSession(options.bookmark ?? 'first-primary');
+  const store: ContentStore = withSealedSecrets(
+    session ? createD1Store(session) : inMemoryStore(config),
+    sealer,
+  );
+
+  // Fail fast when a persistent (D1-backed) deployment would run
+  // behind dev fakes.
+  const fakes: FakeAdapterBinding[] = [];
+  const rag = makeRag(env, fakes);
+  const mediaSigner = env.MEDIA_BUCKET
+    ? createMediaUrlSigner(mediaSigningSecret(env, persistent))
+    : undefined;
+  const blob = makeBlob(env, fakes, mediaSigner);
+  const ai = makeAI(env, fakes);
+  const aiContext = aiContextFromEnv(env, fakes);
+  assertNoFakeAdapters({
+    persistent,
+    allowFakeAdapters: env.ALLOW_FAKE_ADAPTERS,
+    fakes,
+  });
+  // Meter AI spend per space via the CostGuard Durable Object (shared across
+  // isolates/colos). Absent binding or 0-ceilings → unmetered (demo/dev).
+  const costGuard = doCostGuardFromEnv(env);
+  const posNum = (v: string | undefined): number | undefined => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  const ttlRaw = Number(env.DELIVERY_CACHE_TTL_SECONDS);
+  const baseCtx: AppContext = {
+    store,
+    clock,
+    ids,
+    cache,
+    ...(Number.isFinite(ttlRaw) && ttlRaw > 0 ? { deliveryCacheTtlSeconds: ttlRaw } : {}),
+    ...(posNum(env.DELIVERY_LIST_TTL_SECONDS) !== undefined
+      ? { deliveryListTtlSeconds: posNum(env.DELIVERY_LIST_TTL_SECONDS) as number }
+      : {}),
+    costGuard,
+    ai: aiContext,
+    // Cloudflare Images: signed /media transform URLs over R2 bytes (executed
+    // by the IMAGES binding in the /media route), /cdn-cgi/image for others.
+    ...(mediaSigner
+      ? {
+          images: createCfImageTransformer({
+            signer: mediaSigner,
+            zoneOrigin: env.IMAGES_ZONE_ORIGIN || undefined,
+          }),
+        }
+      : {}),
+    ...(env.STREAM ? { video: createStreamVideoHost(env.STREAM) } : {}),
+  };
+
+  const ctx: AppContext = env.PLUGIN_LOADER
+    ? {
+        ...baseCtx,
+        // Built over `baseCtx`, which has no hooks: a plugin's own capability
+        // calls therefore cannot re-enter the plugin chain.
+        hooks: createPluginHookDispatcher(
+          baseCtx,
+          blob,
+          createWorkerLoaderRuntime(env.PLUGIN_LOADER, {
+            onError: (message, detail) => console.error(message, { detail: String(detail) }),
+            // A plugin reaching outside its grant: logged, and put on the
+            // space's audit trail so an operator sees it, not just the plugin.
+            onDenied: async (denial) => {
+              console.warn('plugin capability denied', denial);
+              await recordPluginCapabilityDenial(baseCtx, denial);
+            },
+          }),
+          {
+            // No principal override: each plugin acts as exactly the scopes its
+            // approved capabilities imply.
+            onError: (message, detail) => console.error(message, { detail: String(detail) }),
+            // Backs `network:request`. The isolate itself has no network, so
+            // this is the only way out and it checks the allowlist first.
+            fetcher: createRemoteFetcher(),
+          },
+        ),
+      }
+    : // No Worker Loader means no isolate to run plugins in, so the hook seam
+      // stays unwired: installed plugins simply do not execute. Running
+      // untrusted code in the host isolate is not an available fallback.
+      baseCtx;
+
+  const email = makeEmail(env);
+  const workflowEngine = makeWorkflowEngine(env);
+  return {
+    ctx,
+    config,
+    rag,
+    ...(workflowEngine ? { workflowEngine } : {}),
+    workflowNodes: { ai, webhooks: createWebhookSender(), ...(email ? { email } : {}) },
+    blob,
+    ...(mediaSigner ? { mediaSigner } : {}),
+    ai,
+    bus: new InMemoryEventBus(),
+    cache,
+    queue,
+    ...(routeTopic ? { routeTopic } : {}),
+    persistent,
+    sealer,
+    bookmark: () => session?.getBookmark() ?? undefined,
+    close: async () => {},
+  };
+}
+
+/** The editorial workflow engine over the EDITORIAL_WF binding, when bound. */
+export function makeWorkflowEngine(env: EdgeEnv): WorkflowEngine | undefined {
+  return env.EDITORIAL_WF ? new CloudflareWorkflowEngine(env.EDITORIAL_WF) : undefined;
+}
+
+/**
+ * Cloudflare Email Sending over the `send_email` binding (EMAIL) from EMAIL_FROM. Unbound means no
+ * sender, and `content.notify` nodes fail with "email sending is not configured". A bound EMAIL
+ * without EMAIL_FROM is a configuration error, refused here rather than at the first send.
+ */
+export function makeEmail(env: EdgeEnv): EmailSender | undefined {
+  if (!env.EMAIL) return undefined;
+  if (!env.EMAIL_FROM) {
+    throw new Error(
+      'The EMAIL send_email binding is set but EMAIL_FROM is not; set it to an address on a domain onboarded to Email Sending',
+    );
+  }
+  return createCfEmailSender(env.EMAIL, {
+    from: env.EMAIL_FROM,
+    ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
+  });
+}
+
+/** On-publish agent configuration (used by the queue consumer). */
+export function agentConfigFromEnv(env: EdgeEnv): PublishAgentsConfig {
+  return {
+    enrich: env.AGENTS_ENRICH === 'true',
+    moderate: env.AGENTS_MODERATE === 'true',
+    autoApply: env.AGENTS_AUTO_APPLY === 'true',
+  };
+}
+
+/**
+ * Agent runtime for on-publish runs: Cloudflare Workflows when selected
+ * (durable), else in-process (non-durable; dev/demo and tests).
+ */
+export function makeAgents(env: EdgeEnv, ctx: AppContext, ai: AIProvider): AgentRunner | undefined {
+  const cfg = agentConfigFromEnv(env);
+  // Schedules need a runner even when no on-publish agent is enabled.
+  if (!cfg.enrich && !cfg.moderate && env.AGENTS_SCHEDULES !== 'true') return undefined;
+  if (env.AGENT_RUNTIME === 'cloudflare-workflows' && env.AGENT_WF) {
+    return new CloudflareWorkflowsAgentRuntime(env.AGENT_WF, ids);
+  }
+  return new InProcessAgentRuntime(makeActivities({ ctx, ai }));
+}
+
+/**
+ * How `generateJson` calls the model (AI_MODE / AI_TIMEOUT_MS), with one
+ * structured log line per call (the telemetry shim's console JSON on Workers).
+ * AI_MODE=mock is recorded as an `ai` fake, so a persistent deployment refuses
+ * it unless ALLOW_FAKE_ADAPTERS says otherwise.
+ */
+export function aiContextFromEnv(
+  env: EdgeEnv,
+  fakes?: FakeAdapterBinding[],
+): NonNullable<AppContext['ai']> {
+  const config = aiRuntimeConfig(env as unknown as Record<string, string | undefined>);
+  fakes?.push(...aiModeFakes(config));
+  return {
+    ...config,
+    log: (record) => {
+      const line = JSON.stringify(record);
+      if (aiCallLevel(record) === 'warn') console.warn(line);
+      else console.log(line);
+    },
+  };
+}
+
+/** The Workers `AI` binding's `run`, required when AI_PROVIDER / EMBEDDINGS_PROVIDER is workers-ai. */
+function workersAiRun(env: EdgeEnv): WorkersAiRun {
+  if (!env.AI) {
+    throw new Error(
+      'workers-ai selected but the AI binding is missing — add "ai": { "binding": "AI" } to this wrangler env',
+    );
+  }
+  return env.AI.run.bind(env.AI);
+}
+
+/**
+ * The AI provider: Workers AI (through AI Gateway when AI_GATEWAY_ID is set), or the stub
+ * placeholder provider when AI_PROVIDER is unset, which the fake-adapter guard refuses on a
+ * persistent deployment.
+ */
+export function makeAI(env: EdgeEnv, fakes?: FakeAdapterBinding[]): AIProvider {
+  if (env.AI_PROVIDER === 'workers-ai' || (env.AI_PROVIDER === undefined && env.AI)) {
+    return createWorkersAIProvider({
+      run: workersAiRun(env),
+      models: workersAiModelsFromEnv(env as unknown as Record<string, string | undefined>),
+      gatewayId: env.AI_GATEWAY_ID || undefined,
+      ...gatewayLogs(env),
+    });
+  }
+  fakes?.push({
+    key: 'ai',
+    detail: 'StubAIProvider (placeholder generations) — bind AI and set AI_PROVIDER=workers-ai',
+  });
+  return new StubAIProvider(devGenerate);
+}
+
+/** Placeholder generation from the requested JSON schema (dev/no-key fallback). */
+function devGenerate(req: GenerateRequest): unknown {
+  const props =
+    (req.outputSchema as { properties?: Record<string, { type?: string; description?: string }> })
+      ?.properties ?? {};
+  const out: Record<string, unknown> = {};
+  for (const [key, def] of Object.entries(props)) {
+    if (def.type === 'integer' || def.type === 'number') out[key] = 0;
+    else if (def.type === 'boolean') out[key] = false;
+    else if (/ISO-8601|date/i.test(def.description ?? '')) out[key] = '2024-01-01';
+    else out[key] = `Sample ${def.description ?? key}`;
+  }
+  return out;
+}
+
+/** Dev-only signing key; refused on persistent deployments (see below). */
+const DEV_MEDIA_SIGNING_SECRET = 'dev-media-signing-secret';
+
+/**
+ * The `/media/*` HMAC key. A persistent deployment must set its own: with the
+ * dev key anyone could mint upload URLs into the bucket.
+ */
+function mediaSigningSecret(env: EdgeEnv, persistent: boolean): string {
+  if (env.MEDIA_SIGNING_SECRET) return env.MEDIA_SIGNING_SECRET;
+  if (persistent && env.REQUIRE_SECURE_SECRETS !== 'false') {
+    throw new Error(
+      'MEDIA_BUCKET is bound but MEDIA_SIGNING_SECRET is unset (wrangler secret put MEDIA_SIGNING_SECRET)',
+    );
+  }
+  return DEV_MEDIA_SIGNING_SECRET;
+}
+
+/**
+ * Blob storage: the native R2 binding (MEDIA_BUCKET). Uploads and downloads go through the signed
+ * /media route; unbound means the fake blob store, refused on a persistent deployment.
+ */
+function makeBlob(
+  env: EdgeEnv,
+  fakes: FakeAdapterBinding[],
+  mediaSigner: MediaUrlSigner | undefined,
+): BlobStore {
+  if (env.MEDIA_BUCKET && mediaSigner) {
+    return createR2BlobStore(env.MEDIA_BUCKET, {
+      signer: mediaSigner,
+      baseUrl: env.MEDIA_BASE_URL || undefined,
+    });
+  }
+  fakes.push({
+    key: 'blob',
+    detail:
+      'FakeBlobStore (uploads are lost) — bind MEDIA_BUCKET (R2) and set MEDIA_SIGNING_SECRET',
+  });
+  return new FakeBlobStore();
+}
+
+/**
+ * Embeddings on Workers AI (bge-base-en-v1.5 by default) and vectors on Vectorize. Unbound means
+ * hash embeddings and an in-memory vector store (dev only; refused on a persistent deployment
+ * unless EMBEDDINGS_PROVIDER=local states the choice). The lexical search leg is not wired here:
+ * it is the SearchShard index the engine maintains.
+ */
+function makeRag(env: EdgeEnv, fakes: FakeAdapterBinding[]): RagDeps {
+  const provider = env.EMBEDDINGS_PROVIDER ?? (env.AI ? 'workers-ai' : undefined);
+  const dim = Number(env.EMBEDDINGS_DIM ?? 768);
+  if (provider !== 'workers-ai' && provider !== 'local') {
+    fakes.push({
+      key: 'embeddings',
+      detail:
+        'hash-based embeddings (semantic search returns noise) — bind AI (EMBEDDINGS_PROVIDER=workers-ai), or set EMBEDDINGS_PROVIDER=local to accept explicitly',
+    });
+  }
+  const embeddings: EmbeddingsProvider =
+    provider === 'workers-ai'
+      ? createWorkersAIEmbeddings({
+          run: workersAiRun(env),
+          gatewayId: env.AI_GATEWAY_ID || undefined,
+          ...gatewayLogs(env),
+          model: env.EMBEDDINGS_MODEL,
+          dimensions: dim,
+        })
+      : new LocalEmbeddingsProvider(dim);
+  // Local dev: Vectorize has no local emulator, so `VECTOR_STORE=memory` (.dev.vars) keeps the
+  // binding declared but unused. A persistent deployment still refuses the fake (guard below).
+  const vectorize = env.VECTOR_STORE === 'memory' ? undefined : env.VECTORIZE;
+  if (!vectorize) {
+    fakes.push({
+      key: 'vectors',
+      detail: 'in-memory vector store (per-isolate, non-durable) — bind VECTORIZE',
+    });
+  }
+  const vectors: VectorStore = vectorize
+    ? createVectorizeStore(vectorize, {
+        dimensions: embeddings.dimensions,
+        modelId: embeddings.modelId,
+      })
+    : memoInMemoryVectors();
+  const shards = Number(env.SEARCH_SHARDS) || DEFAULT_SEARCH_SHARDS;
+  const searchIndex = env.SEARCH ? createShardedSearchIndex(env.SEARCH, shards) : undefined;
+  return { embeddings, vectors, ...(searchIndex ? { searchIndex } : {}) };
+}
+
+// ---- module-scope memoization for demo mode --------------------------------
+// Workers isolates persist across requests; keeping the in-memory store at
+// module scope makes no-database demo deployments behave like a dev
+// server (create → read works across requests within an isolate).
+
+let memoStore: InMemoryContentStore | undefined;
+let memoVectors: InMemoryVectorStore | undefined;
+
+function memoInMemoryVectors(): InMemoryVectorStore {
+  memoVectors ??= new InMemoryVectorStore();
+  return memoVectors;
+}
+
+function inMemoryStore(config: ApiConfig): ContentStore {
+  if (memoStore) return memoStore as unknown as ContentStore;
+  const store = new InMemoryContentStore();
+  store.seedSpace({
+    spaceId: config.seed.spaceId,
+    defaultLocale: config.seed.defaultLocale,
+    locales: config.seed.locales,
+  });
+  const hasher = createHasher(config.tokenPepper);
+  const tokens: Record<ApiKeyKind, string> = {
+    cma: config.cmaKey,
+    cda: config.cdaKey,
+    cpa: config.cpaKey,
+  };
+  for (const [kind, token] of Object.entries(tokens) as [ApiKeyKind, string][]) {
+    store.seedApiKey({
+      id: ids.newId(),
+      spaceId: config.seed.spaceId,
+      kind,
+      name: `dev-${kind}`,
+      hashedToken: hasher.hash(token),
+      scopes: scopesForKind(kind),
+      revoked: false,
+    });
+  }
+  memoStore = store;
+  return store as unknown as ContentStore;
+}
+
+/** AI_GATEWAY_LOGS as the adapter's collectLogs: unset leaves the gateway's own setting. */
+function gatewayLogs(env: EdgeEnv): { collectLogs?: boolean } {
+  return env.AI_GATEWAY_LOGS === undefined || env.AI_GATEWAY_LOGS === ''
+    ? {}
+    : { collectLogs: env.AI_GATEWAY_LOGS === 'true' };
+}

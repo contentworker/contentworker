@@ -1,0 +1,309 @@
+import type { ApiConfig } from '@contentworker/platform/config';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createApp } from '../../src/api/app.js';
+import { wire } from './wire.js';
+
+const config: ApiConfig = {
+  role: 'all',
+  port: 0,
+  cmaKey: 'cma',
+  cdaKey: 'cda',
+  cpaKey: 'cpa',
+  adminToken: 'admin',
+  seed: {
+    spaceId: 's1',
+    environmentId: 'main',
+    defaultLocale: 'en-US',
+    locales: ['en-US'],
+    scale: 1,
+  },
+};
+
+const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+const M = '/spaces/s1/environments/main';
+
+const symbolField = (apiId: string, position: number) => ({
+  apiId,
+  name: apiId,
+  type: 'Symbol',
+  localized: false,
+  required: false,
+  position,
+});
+
+describe('granular RBAC over HTTP', () => {
+  let app: ReturnType<typeof createApp>;
+  let editor: Record<string, string>;
+  let postId: string;
+  let pageId: string;
+
+  beforeEach(async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    app = createApp(ctx, config, rag, blob, ai);
+
+    // Model two types; publish both.
+    for (const apiId of ['post', 'page']) {
+      await app.request(`${M}/content-types`, {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          apiId,
+          name: apiId,
+          displayField: 'title',
+          fields: [symbolField('title', 0), symbolField('internalNotes', 1)],
+        }),
+      });
+      await app.request(`${M}/content-types/${apiId}/published`, {
+        method: 'POST',
+        headers: admin,
+      });
+    }
+
+    // Author + publish one entry per type (with a sensitive field set).
+    const mkEntry = async (contentTypeApiId: string) => {
+      const res = await app.request(`${M}/entries`, {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          contentTypeApiId,
+          fields: {
+            title: { 'en-US': `A ${contentTypeApiId}` },
+            internalNotes: { 'en-US': 'secret' },
+          },
+        }),
+      });
+      const { entry } = (await res.json()) as { entry: { id: string } };
+      await app.request(`${M}/entries/${entry.id}/published`, { method: 'POST', headers: admin });
+      return entry.id;
+    };
+    postId = await mkEntry('post');
+    pageId = await mkEntry('page');
+
+    // A custom role: full coarse scopes, but content-wise only `post`,
+    // no publish action, internalNotes hidden.
+    const roleRes = await app.request('/spaces/s1/roles', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        name: 'Post editor',
+        scopes: ['content:write', 'content:publish', 'preview:read', 'delivery:read'],
+        contentGrants: [
+          {
+            contentTypeApiId: 'post',
+            actions: ['read', 'write'],
+            deniedFields: ['internalNotes'],
+          },
+        ],
+      }),
+    });
+    expect(roleRes.status).toBe(201);
+    const role = (await roleRes.json()) as { id: string };
+
+    const keyRes = await app.request('/spaces/s1/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cma', roleId: role.id }),
+    });
+    const { token } = (await keyRes.json()) as { token: string };
+    editor = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  });
+
+  it('allows granted writes and rejects ungranted types and fields', async () => {
+    const ok = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: editor,
+      body: JSON.stringify({ contentTypeApiId: 'post', fields: { title: { 'en-US': 'Mine' } } }),
+    });
+    expect(ok.status).toBe(201);
+
+    const wrongType = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: editor,
+      body: JSON.stringify({ contentTypeApiId: 'page', fields: { title: { 'en-US': 'No' } } }),
+    });
+    expect(wrongType.status).toBe(403);
+
+    const deniedField = await app.request(`${M}/entries/${postId}`, {
+      method: 'PUT',
+      headers: editor,
+      body: JSON.stringify({ fields: { internalNotes: { 'en-US': 'sneaky' } } }),
+    });
+    expect(deniedField.status).toBe(403);
+  });
+
+  it('denies publish despite the coarse content:publish scope', async () => {
+    const res = await app.request(`${M}/entries/${postId}/published`, {
+      method: 'POST',
+      headers: editor,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('masks denied fields on management, preview, and delivery reads', async () => {
+    const mgmt = (await (
+      await app.request(`${M}/entries/${postId}`, { headers: editor })
+    ).json()) as { fields: Record<string, unknown> };
+    expect(mgmt.fields.title).toBeDefined();
+    expect(mgmt.fields.internalNotes).toBeUndefined();
+
+    const preview = (await (
+      await app.request('/preview/s1/main/entries', { headers: editor })
+    ).json()) as { items: { contentType: string; fields: Record<string, unknown> }[] };
+    // Only `post` entries are visible, and the denied field is masked.
+    expect(preview.items.every((e) => e.contentType === 'post')).toBe(true);
+    expect(preview.items.every((e) => e.fields.internalNotes === undefined)).toBe(true);
+
+    const delivery = (await (
+      await app.request('/delivery/s1/main/entries', { headers: editor })
+    ).json()) as { items: { contentType: string }[] };
+    expect(delivery.items.map((e) => e.contentType)).toEqual(['post']);
+
+    const deniedGet = await app.request(`/delivery/s1/main/entries/${pageId}`, {
+      headers: editor,
+    });
+    expect(deniedGet.status).toBe(403);
+  });
+
+  it('kind-based keys and the admin token are unaffected', async () => {
+    const full = (await (
+      await app.request(`${M}/entries/${postId}`, { headers: admin })
+    ).json()) as { fields: Record<string, unknown> };
+    expect(full.fields.internalNotes).toBeDefined();
+  });
+
+  it('enforces granular RBAC on version-history reads', async () => {
+    // Granted type: version snapshot is readable but the denied field is masked.
+    const versions = (await (
+      await app.request(`${M}/entries/${postId}/versions`, { headers: editor })
+    ).json()) as { items: { fields: Record<string, unknown> }[] };
+    expect(versions.items.length).toBeGreaterThan(0);
+    expect(versions.items.every((v) => v.fields.title !== undefined)).toBe(true);
+    expect(versions.items.every((v) => v.fields.internalNotes === undefined)).toBe(true);
+
+    // Ungranted type: version history is forbidden, not leaked.
+    const pageVersions = await app.request(`${M}/entries/${pageId}/versions`, { headers: editor });
+    expect(pageVersions.status).toBe(403);
+
+    // A single version snapshot of an ungranted type is likewise forbidden.
+    const pageVersion = await app.request(`${M}/entries/${pageId}/versions/1`, { headers: editor });
+    expect(pageVersion.status).toBe(403);
+  });
+
+  it('applies write authorization when restoring a version', async () => {
+    // Restoring an ungranted type is rejected.
+    const restorePage = await app.request(`${M}/entries/${pageId}/versions/1/restore`, {
+      method: 'POST',
+      headers: editor,
+    });
+    expect(restorePage.status).toBe(403);
+
+    // Restoring a granted entry whose snapshot includes a denied field is rejected
+    // (it would otherwise resurrect internalNotes past the field rule).
+    const restorePost = await app.request(`${M}/entries/${postId}/versions/1/restore`, {
+      method: 'POST',
+      headers: editor,
+    });
+    expect(restorePost.status).toBe(403);
+  });
+
+  it('masks embedded entries at include depth (fields, grants, and stubs)', async () => {
+    // A story links to a post (granted, with a denied field) and a page
+    // (ungranted): the embed must be masked / reverted to a stub respectively.
+    await app.request(`${M}/content-types`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        apiId: 'story',
+        name: 'story',
+        displayField: 'title',
+        fields: [
+          symbolField('title', 0),
+          {
+            apiId: 'refPost',
+            name: 'refPost',
+            type: 'Link',
+            linkType: 'Entry',
+            localized: false,
+            required: false,
+            position: 1,
+          },
+          {
+            apiId: 'refPage',
+            name: 'refPage',
+            type: 'Link',
+            linkType: 'Entry',
+            localized: false,
+            required: false,
+            position: 2,
+          },
+        ],
+      }),
+    });
+    await app.request(`${M}/content-types/story/published`, { method: 'POST', headers: admin });
+    const created = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        contentTypeApiId: 'story',
+        fields: {
+          title: { 'en-US': 'A story' },
+          refPost: { 'en-US': { id: postId, linkType: 'Entry' } },
+          refPage: { 'en-US': { id: pageId, linkType: 'Entry' } },
+        },
+      }),
+    });
+    const { entry } = (await created.json()) as { entry: { id: string } };
+    await app.request(`${M}/entries/${entry.id}/published`, { method: 'POST', headers: admin });
+
+    const roleRes = await app.request('/spaces/s1/roles', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        name: 'Story reader',
+        scopes: ['delivery:read'],
+        contentGrants: [
+          { contentTypeApiId: 'story', actions: ['read'] },
+          { contentTypeApiId: 'post', actions: ['read'], deniedFields: ['internalNotes'] },
+          // no grant on 'page'
+        ],
+      }),
+    });
+    const role = (await roleRes.json()) as { id: string };
+    const keyRes = await app.request('/spaces/s1/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cda', roleId: role.id }),
+    });
+    const { token } = (await keyRes.json()) as { token: string };
+
+    type Embedded = { id: string; contentType?: string; fields?: Record<string, unknown> };
+    const fetchStory = async (bearer: string, query: string) => {
+      const res = await app.request(`/delivery/s1/main/entries/${entry.id}?${query}`, {
+        headers: { Authorization: `Bearer ${bearer}` },
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as { fields: Record<string, unknown> };
+    };
+
+    // Locale-flattened read: post embed masked, page embed reverted to stub.
+    const flat = await fetchStory(token, 'include=1&locale=en-US');
+    const refPost = flat.fields.refPost as Embedded;
+    expect(refPost.fields?.title).toBe('A post');
+    expect(refPost.fields?.internalNotes).toBeUndefined();
+    expect(flat.fields.refPage).toEqual({ id: pageId, linkType: 'Entry' });
+
+    // Unflattened read: embeds sit inside per-locale maps — still reached.
+    const mapped = await fetchStory(token, 'include=1');
+    const mappedPost = (mapped.fields.refPost as Record<string, Embedded>)['en-US'];
+    expect(mappedPost?.fields?.internalNotes).toBeUndefined();
+    expect((mapped.fields.refPage as Record<string, unknown>)['en-US']).toEqual({
+      id: pageId,
+      linkType: 'Entry',
+    });
+
+    // The full-access key still gets complete embeds (no over-masking).
+    const full = await fetchStory('cda', 'include=1&locale=en-US');
+    expect((full.fields.refPost as Embedded).fields?.internalNotes).toBe('secret');
+    expect((full.fields.refPage as Embedded).fields?.title).toBe('A page');
+  });
+});

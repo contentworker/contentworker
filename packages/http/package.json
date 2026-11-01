@@ -1,0 +1,50 @@
+{
+  "name": "@contentworker/http",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The HTTP surface as a library: Hono routes for Management, Preview and Delivery, auth and rate limiting, OpenAPI, OAuth/OIDC/setup, the MCP server and skills, media and live routes. The api and delivery Workers compose it; neither owns it.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "generate:skills": "node scripts/generate-skills.ts"
+  },
+  "dependencies": {
+    "@contentworker/adapters": "workspace:*",
+    "@contentworker/agent-runtime": "workspace:*",
+    "@contentworker/application": "workspace:*",
+    "@contentworker/docs": "workspace:*",
+    "@contentworker/domain": "workspace:*",
+    "@contentworker/graphql-gen": "workspace:*",
+    "@contentworker/platform": "workspace:*",
+    "@contentworker/ports": "workspace:*",
+    "@contentworker/redaction": "workspace:*",
+    "@contentworker/sdk-codegen": "workspace:*",
+    "@contentworker/security": "workspace:*",
+    "@contentworker/telemetry": "workspace:*",
+    "@contentworker/test-kit": "workspace:*",
+    "@hono/standard-validator": "catalog:",
+    "@modelcontextprotocol/server": "catalog:",
+    "@scalar/hono-api-reference": "catalog:",
+    "graphql": "catalog:",
+    "hono": "catalog:",
+    "hono-openapi": "catalog:",
+    "openid-client": "catalog:",
+    "zod": "catalog:",
+    "zod-openapi": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@contentworker/sdk-core": "workspace:*",
+    "@contentworker/typescript-config": "workspace:*",
+    "@modelcontextprotocol/client": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

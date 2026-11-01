@@ -1,0 +1,72 @@
+---
+title: MCP server
+description: Connect Claude, ChatGPT, an IDE or your own agent to a workspace over the Model Context Protocol, with the same permissions as a person.
+---
+
+Every workspace serves an MCP server at `/mcp` on its `api.` address (streamable HTTP). Its tools are the same
+operations the REST API and the admin use, behind the same permission checks, so an agent can do
+exactly what its token allows and nothing a person with that token couldn't.
+
+## Connect with OAuth
+
+MCP clients that support remote connectors (Claude, ChatGPT, MCP-capable IDEs) connect with just
+the URL:
+
+```
+https://api.your-workspace.contentworker.app/mcp
+```
+
+The client discovers where to sign in, registers itself, and opens an approval screen. You sign
+in, see which scopes the client asks for, and approve. The token it receives is capped twice: at
+what it asked for, and at what you hold. A client can never ask for `space:admin` or
+`content:manage` this way. Tokens are short-lived and refresh on use; revoke a connection at any
+time under **Settings → Access → Connected apps**.
+
+Command-line clients that can't open a browser use the device flow: they print a code to enter on
+an approval page.
+
+## Connect with a token
+
+For CI, scripts and agents you run yourself, use a
+[personal access token](/guides/api-keys/#personal-access-tokens) or a Management key with only the
+scopes the agent needs:
+
+```sh
+claude mcp add --transport http contentworker https://api.your-workspace.contentworker.app/mcp \
+  --header "Authorization: Bearer $CONTENTWORKER_TOKEN"
+```
+
+Most tools take `space` and `environment` arguments, so one connection can work across
+environments its token can reach.
+
+## Tools
+
+| Area          | Examples                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| Model         | `model_list_content_types`, `model_create_content_type`, `model_publish_content_type`, `model_typescript` |
+| Entries       | `entries_query`, `entries_get`, `entries_create`, `entries_update`, `entries_publish`, `entries_suggest`, `entries_diff_versions`, `entries_restore_version` |
+| AI            | `generate_draft`, `entry_from_canvas`, `entry_translate`, `entry_summarize`, `entry_autofill_field`, `entry_suggest_tags`, `entry_moderate` |
+| Search        | `content_search`, `content_semantic_search`, `content_related`, `content_duplicates`        |
+| Releases      | `releases_create`, `releases_add_entry`, `releases_publish`, `schedule_action`              |
+| Collaboration | `comments_add`, `tasks_create`, `tasks_resolve`, `workflow_transition`                      |
+| Workflows     | `workflow_save_draft`, `workflow_publish`, `workflow_copilot`, `workflow_run_start`, `workflow_run_get`, `workflow_task_list`, `workflow_task_decide`, `workflow_event_deliver`, `workflow_run_cancel` |
+| Assets        | `assets_list`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`           |
+| Reviews       | `agent_review_list`, `agent_review_approve`, `agent_review_reject`                          |
+| Taxonomy      | `taxonomy_list_tags`, `taxonomy_create_tag`, `taxonomy_create_concept`                      |
+| Docs          | `docs_list`, `docs_read`, `docs_search`                                                      |
+
+There are 121 in all; your client lists every tool with its description and input
+schema when it connects. Each tool checks the token's scopes and role grants before it runs, and
+writes go through the same validation, versioning and events as a person's.
+
+## Working well with agents
+
+- **Give each agent its own token**, with the narrowest scopes and a [role](/guides/api-keys/#roles)
+  limited to the content types it works on. The audit log then says which agent did what.
+- **Keep publishing with people.** An agent with `content:write` but not `content:publish` drafts,
+  and a person publishes. AI changes that wait for review show up in
+  [agent reviews](/guides/approvals/#agent-reviews).
+- **Let it read the model first.** `model_typescript` returns the content model as TypeScript,
+  which is the most compact way for an agent to learn your fields before it writes.
+- **Point it at the docs.** `docs_search` and `docs_read` let an agent look up conventions with
+  the token it already holds.

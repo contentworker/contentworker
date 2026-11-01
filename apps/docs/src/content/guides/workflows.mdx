@@ -1,0 +1,104 @@
+---
+title: Workflows
+description: Route entries through validation, policy checks, approvals and AI steps, drawn as a graph of catalog nodes and published as immutable versions.
+---
+
+A workflow is the path an entry takes between "someone wrote this" and "it's live", or anything
+else that should happen when content changes: a translation, a freshness review, a moderation
+check. It is drawn as a graph: **nodes** from the [node catalog](/reference/nodes/), joined by
+**edges** that leave a node from one of its output branches.
+
+:::caution[Rolling out]
+Workflow graphs are arriving in stages. Today a workspace can define workflows, store them as
+versioned graphs, and move entries between a workflow's [stages](#stages); the graph editor and
+running workflows on events follow. This page describes the model those build on.
+:::
+
+## Nodes
+
+Every node has a type from the catalog, a label, and config fields the editor's inspector shows and
+validates. Nodes fall into four groups:
+
+- **Triggers** start a run: a person submitting an entry for review, an entry being created, saved,
+  published or unpublished, a publish request, a release going live, or a schedule. A workflow has
+  exactly one trigger, and can be narrowed to some content types.
+- **Content** nodes act on the entry: validate it, check editorial policy, publish, unpublish,
+  schedule, add it to a release, set fields or tags, record a stage, assign someone, comment,
+  notify, or call a webhook.
+- **Control** nodes shape the run: branch on a condition, wait for an approval, an event or a
+  duration, set a value, loop, or end with an outcome.
+- **AI** nodes classify, route, summarize, assess, translate, autofill, suggest tags, enrich and
+  moderate, each through the same AI features editors use.
+
+The [node catalog](/reference/nodes/) lists every type with its fields, defaults and outputs.
+
+## Branches and edges
+
+A node's outputs are the branches it can take: `content.validate` has `valid` and `invalid`,
+`control.approval` has `approved`, `rejected` and `escalated`, most nodes have just `out`. An edge
+leaves from one output and enters another node.
+
+When a node finishes, the edges on the branch it took become active and the others are skipped.
+A node runs once all of its inputs are settled and at least one is active, so two branches can
+rejoin a shared node; a node that only skipped branches lead to is skipped too.
+
+A `control.loop` node accepts a `next` back-edge, for "revise and resubmit" cycles; each pass
+through the loop body is a fresh iteration.
+
+## Expressions and templates
+
+- **Conditions** (`logic` fields, such as `control.condition`'s `expression` or a trigger's
+  `when`) are [JSON Logic](https://jsonlogic.com/): for example
+  `{ "in": ["legal", { "var": "entry.tags" }] }` is true when the entry is tagged `legal`.
+- **Text fields** accept `{{path}}` templates over the run: `Review “{{ref}}”` names the entry,
+  and `{{nodes.validate.issues}}` inserts an earlier node's output.
+- **Durations** are written as `"30 seconds"`, `"2 days"`, `"1 week"`.
+
+Every node also takes `retries` (0 to 10) and a `timeout`, outside its config.
+
+## Versions
+
+Editing a workflow changes its draft. **Publishing** checks the graph (exactly one trigger, no
+edges to missing nodes, every node connected, every config field valid) and appends an immutable,
+numbered version. A run pins the version it started on, so editing a workflow never changes runs
+already under way. Warnings, such as a duplicate edge, don't block publishing; errors do.
+
+A workflow can also **gate publishing**: while it is active, publishing an entry it covers has to
+go through one of its runs, so nobody can skip the review by pressing Publish.
+
+## Stages
+
+A **stage** records where an entry is in a workflow ("In review", "Approved"), shown in the
+entry editor. The `content.stage` node sets it; each stage names the scope needed to move an entry
+into it, so "Approved" can require `content:publish` while "In review" needs only
+`content:write`.
+
+Stages work through the API today:
+
+```sh
+# Define a workflow from ordered stages (needs content:manage).
+curl -s "$API/spaces/$SPACE/environments/main/workflows" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{
+    "name": "Review",
+    "steps": [
+      { "id": "draft",     "name": "Draft",     "requiredScope": "content:write" },
+      { "id": "in_review", "name": "In review", "requiredScope": "content:write" },
+      { "id": "approved",  "name": "Approved",  "requiredScope": "content:publish" }
+    ]
+  }'
+
+# Move an entry into a stage (the target stage's scope is checked).
+curl -s "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/workflow/transition" \
+  -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{ "workflowId": "'"$WORKFLOW_ID"'", "toStepId": "in_review" }'
+```
+
+A stage-defined workflow is stored as a graph like any other: a manual trigger, then each stage
+with an approval in front of it that only someone holding the stage's scope can decide.
+
+## Templates
+
+New workflows can start from a [template](/reference/workflow-templates/): editorial review with an
+optional legal sign-off, moderate-then-publish, enrich with review, translate on publish, and a
+quarterly freshness review. Each is an ordinary workflow you can change before publishing.

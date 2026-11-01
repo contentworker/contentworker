@@ -1,0 +1,75 @@
+/**
+ * The API gateway: the web Worker fronts the api Worker over the `API` service binding, so the
+ * admin, the REST and GraphQL APIs, MCP, OAuth and the docs share one origin.
+ *
+ * Credentials never cross the binding as the browser sent them:
+ * 1. A request with `Authorization: Bearer …` (an API key, a personal access token, an OAuth
+ *    token) goes through as it is; the api authenticates it. Only a caller-supplied
+ *    `x-cw-principal` is removed, so a bearer request can never carry a principal.
+ * 2. Otherwise, a request from this origin with a live web session has its cookies removed and a
+ *    signed `x-cw-principal` added (`@contentworker/security`), good for 60 seconds and for that
+ *    path only. A cross-site request never gets one, so a page elsewhere can't borrow the session.
+ * 3. Otherwise it goes through with no credentials at all, and the api answers 401 where it needs
+ *    one.
+ *
+ * `x-cw-bookmark` (read-your-writes) passes through both ways untouched.
+ */
+
+import { PRINCIPAL_HEADER } from '@contentworker/security/principal';
+import { crossOrigin } from './origin';
+import type { Principal } from './roles';
+
+/** Exact paths the api serves. */
+const EXACT = new Set(['/spaces', '/mcp', '/openapi.json', '/docs', '/health/api']);
+
+/** Path prefixes the api serves (each already ends in `/` or names a family, like `/guides`). */
+const PREFIXES = [
+  '/spaces/',
+  '/preview/',
+  '/delivery/',
+  '/oauth/',
+  '/.well-known/oauth-',
+  '/media/',
+  '/docs/',
+  '/guides',
+];
+
+/** Whether the gateway forwards `pathname` to the api rather than rendering a page. */
+export function isApiPath(pathname: string): boolean {
+  return EXACT.has(pathname) || PREFIXES.some((p) => pathname.startsWith(p));
+}
+
+/** The bearer credential a request carries, if any (the api checks it, never this Worker). */
+export const hasBearer = (request: Request) =>
+  /^Bearer\s+\S/i.test(request.headers.get('authorization') ?? '');
+
+export type GatewayDeps = {
+  /** The api Worker's binding. */
+  api: Pick<Fetcher, 'fetch'>;
+  /** The signed-in person for a browser request, or null. */
+  principal: (request: Request) => Promise<(Principal & { due?: string | null }) | null>;
+  /** Sets the signed principal header for `path`. */
+  sign: (headers: Headers, p: Principal, path: string) => Promise<void>;
+};
+
+/**
+ * Forwards `request` to the api with the credentials the rules above allow. A person whose
+ * two-factor sign-in or own password is due may use only their Account page: they get a 403.
+ */
+export async function forwardToApi(request: Request, deps: GatewayDeps): Promise<Response> {
+  const url = new URL(request.url);
+  const headers = new Headers(request.headers);
+  headers.delete(PRINCIPAL_HEADER);
+
+  if (hasBearer(request)) return deps.api.fetch(new Request(request, { headers }));
+
+  headers.delete('cookie');
+  // A cross-site request is forwarded without the session: there is nothing ambient to forge.
+  const who = crossOrigin(request, url.origin) ? null : await deps.principal(request);
+  if (who?.due) return Response.json({ error: who.due }, { status: 403 });
+  if (who) {
+    const { due: _due, ...p } = who;
+    await deps.sign(headers, p, url.pathname);
+  }
+  return deps.api.fetch(new Request(request, { headers }));
+}

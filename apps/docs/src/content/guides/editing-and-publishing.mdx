@@ -1,0 +1,77 @@
+---
+title: Editing and publishing
+description: Drafts and versions, publishing and unpublishing, the trash, collaboration on an entry, previews, bulk changes and imports.
+---
+
+## Drafts and versions
+
+Every save appends a new immutable version of the entry; nothing is overwritten. The entry's state
+follows from which version is live:
+
+- <span class="cw-badge" data-state="draft">Draft</span>: never published, or unpublished since.
+- <span class="cw-badge" data-state="published">Published</span>: delivery serves the latest version.
+- <span class="cw-badge" data-state="changed">Changed</span>: published, with newer edits saved but
+  not live. Readers keep seeing the published version until you publish again.
+
+The entry's **History** lists every version. Compare any two to see what changed field by field,
+and **restore** an old version: it is copied forward as a new draft, so history is never rewritten.
+
+| Do this             | API                                                     | Scope             |
+| ------------------- | ------------------------------------------------------- | ----------------- |
+| Save a draft        | `PUT …/entries/{id}` with `{ "fields": … }`             | `content:write`   |
+| List versions       | `GET …/entries/{id}/versions`                           | `preview:read`    |
+| Compare two         | `GET …/entries/{id}/versions/diff?from=3&to=5`          | `preview:read`    |
+| Restore one         | `POST …/entries/{id}/versions/{version}/restore`        | `content:write`   |
+
+`…` stands for `/spaces/{space}/environments/{env}`.
+
+## Publishing
+
+**Publish** makes the entry's latest version the one delivery serves; **Unpublish** takes it off
+delivery and leaves the drafts in place. Both need `content:publish`, which you can withhold from
+writers so that everything they write goes through someone who may publish.
+
+Publishing validates the entry against its content type and checks that everything it links to
+exists. A published entry emits `entry.published`, which refreshes delivery caches, updates search
+and notifies [webhooks](/guides/webhooks/).
+
+To publish several entries together, use a [release](/guides/releases-and-scheduling/). To publish
+later, schedule it. To require a review first, use a [workflow](/guides/workflows/).
+
+## The trash
+
+Deleting an entry moves it to the trash: it is unpublished first if it was live, and hidden from
+every list. The trash (`GET …/entries?trashed=true`) shows what's there; **Restore** brings an
+entry back as a draft, never straight to published.
+
+**Delete permanently** is the one action with no way back, so it needs `content:publish`, works
+only on an entry already in the trash, and is refused while published entries still link to it.
+The refusal names those entries.
+
+## Comments and tasks
+
+Each entry has a comment thread and a task list. Comment to discuss a change; create a task to ask
+someone for one, with an assignee and a status. Workflows can add comments and assign people too
+(see the [`content.comment`](/reference/nodes/#content.comment) and
+[`content.assign`](/reference/nodes/#content.assign) nodes).
+
+## Previews
+
+Drafts are readable through the Preview API with a Preview (CPA) key, so a staging site can show
+unpublished changes exactly as the live site will. From the editor, a **preview link** opens your
+site's preview route for the entry with a short-lived token, for reviewers who don't have a key.
+
+On a previewed page, the SDKs can mark each rendered value with the field it came from, so
+clicking it opens that field in the editor. See [SDKs](/guides/sdks/#inline-editing).
+
+## Bulk changes
+
+Select entries in the list to publish or unpublish them together. The API
+accepts up to 1,000 entries per bulk request (`POST …/bulk/entries`, `…/bulk/entries/publish`,
+`…/bulk/entries/unpublish`); larger batches run as a background job you can follow.
+
+## Imports
+
+From the entries list, import a CSV, JSON or XML blog export into a content type. You map columns
+to fields, and a dry run reports what would be created, updated and skipped before anything is
+written. Large imports run as a resumable job with progress per batch.

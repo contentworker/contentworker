@@ -1,0 +1,63 @@
+---
+
+name: author-and-publish
+description: Find, create, edit and publish contentworker entries — including versions, releases for atomic multi-entry launches, scheduled publishing and editorial workflow runs and approvals. Use for any content change that should reach the Delivery API.
+---
+
+# Author and publish
+
+Every entry has a **draft** (what the management tools read and write) and, once published, a
+**published** version (what the Delivery API serves). Saving never changes what readers see;
+publishing does.
+
+## Find the entry
+
+- Resolve a name to an id with `entries_suggest` (matches the display field). Do not page through
+  `entries_query` looking for a title: you will miss everything past the first page.
+- Use `entries_query` for structured questions (field filters, ordering, `select` projection) and
+  `entries_get` for a full entry.
+
+## Write
+
+- Field values are always **locale-keyed**: `{ "title": { "en-US": "Hello" } }`. That applies to
+  non-localized fields too, under the space's default locale.
+- `entries_create` makes a draft. `entries_update` saves a **new draft version** whose fields are
+  exactly what you pass — an omitted field is dropped. To change one field, `entries_get` the entry
+  and send all of its fields back with that one changed.
+- Validation errors come back with the field that failed. Fix the value; do not retry unchanged.
+
+## Publish
+
+| Situation                                     | Tool                                                                                                                 |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| One entry, now                                | `entries_publish` (also checks its references)                                                                       |
+| Several entries that must appear together     | `releases_create` → `releases_add_entry` (per entry, `publish` or `unpublish`) → `releases_publish`, which is atomic |
+| At a future time                              | `schedule_action` with an ISO-8601 `scheduledFor`, on an entry or a release                                          |
+| The space routes the entry through a workflow | `workflow_run_start` (see below)                                                                                     |
+| The space uses legacy workflow steps          | `workflow_transition` to the next step; a step can require a scope you lack                                          |
+| Take it down                                  | `entries_unpublish`                                                                                                  |
+
+Prefer a release over publishing several entries one by one: a failure halfway through a sequence
+leaves the site half-updated, and a release cannot.
+
+## Editorial workflows
+
+A workflow is a published graph (approvals, waits for events, AI checks, publish). Runs act as
+whoever started them, so a run can do only what that caller could.
+
+- Submit: `workflow_run_start` with the entry and workflow. One active run per workflow and entry.
+- Follow it: `workflow_run_get` (`include: ["timeline"]` for what happened) or `workflow_run_list`.
+- Approvals waiting: `workflow_task_list` with `status: "pending"`, then `workflow_task_decide`.
+  With separation of duties the run's starter can't decide, and an API token can't decide at all;
+  hand those to a person rather than retrying.
+- A run waiting for a business event: `workflow_event_deliver` with the event name.
+- Stop a run: `workflow_run_cancel` undoes its finished steps. Confirm with the user first.
+- Build or change a workflow: `workflow_copilot` proposes a graph (it never saves),
+  `workflow_validate` checks one, `workflow_save_draft` saves it and `workflow_publish` makes it
+  the version new runs use.
+
+## Undo
+
+`entries_list_versions` → `entries_diff_versions` to see what changed →
+`entries_restore_version`, which copies the old fields into a new draft. Publish that draft to make
+the restore visible.
