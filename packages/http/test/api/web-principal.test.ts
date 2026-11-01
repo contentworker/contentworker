@@ -1,5 +1,6 @@
 import { addMember, findMemberForSignIn } from '@contentworker/application';
 import { loadConfig } from '@contentworker/platform/config';
+import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import { principalTarget, signPrincipal } from '@contentworker/security/principal';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
@@ -108,5 +109,11 @@ describe('the web principal (x-cw-principal)', () => {
   it('forbids a member who is not on the space team', async () => {
     const header = await signPrincipal(KEY, person('member'), principalTarget('GET', path));
     expect((await app.request(path, { headers: { 'x-cw-principal': header } })).status).toBe(403);
+  });
+
+  it('refuses a header signed with the assistant’s derived key (what the engine holds)', async () => {
+    const assistantKey = await deriveAssistantPrincipalKey(KEY);
+    const header = await signPrincipal(assistantKey, person('admin'), principalTarget('GET', path));
+    expect((await app.request(path, { headers: { 'x-cw-principal': header } })).status).toBe(401);
   });
 });

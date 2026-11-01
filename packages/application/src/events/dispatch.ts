@@ -237,6 +237,101 @@ export async function dispatchEvent(
 /** Concurrent webhook POSTs per bulk event (bounds subrequest burst). */
 const BULK_WEBHOOK_CONCURRENCY = 5;
 
+/** The per-entry topic a bulk chunk's entries are sent under. */
+const perEntryTypeOf = (event: EntriesPublishedBulkEvent) =>
+  event.action === 'publish' ? ('entry.published' as const) : ('entry.unpublished' as const);
+
+/** A publish chunk's entries as they are published now (an unpublish chunk needs ids only). */
+async function bulkSnapshots(ctx: AppContext, event: EntriesPublishedBulkEvent) {
+  const snapshots =
+    event.action === 'publish'
+      ? await ctx.store.entries.getPublishedMany(event.scope, event.entryIds)
+      : [];
+  return new Map(snapshots.map((s) => [s.entryId, s]));
+}
+
+/**
+ * Sends a bulk chunk's entries to one per-entry subscriber as synthesized `entry.published` /
+ * `entry.unpublished` events, records one delivery line for the chunk with this attempt, and on
+ * failure schedules a retry of the entries that failed only (the chunk event cut down to them).
+ * Returns how many failed.
+ */
+async function deliverBulkPerEntry(
+  ctx: AppContext,
+  deps: Pick<DispatchDeps, 'sender' | 'onWebhookDelivery' | 'scheduleWebhookRetry'>,
+  webhook: Webhook,
+  event: EntriesPublishedBulkEvent,
+  snapshotById: ReadonlyMap<string, { contentTypeApiId: string; version: number; fields: unknown }>,
+  attempt: number,
+): Promise<number> {
+  const { scope } = event;
+  const isPublish = event.action === 'publish';
+  // Publish sends only entries whose snapshot still exists — one re-unpublished
+  // between chunk commit and dispatch (or before a retry) gets no degraded empty-fields payload
+  // (its own unpublish event tells the receiver what happened instead).
+  const entryIds = isPublish
+    ? event.entryIds.filter((id) => snapshotById.has(id))
+    : [...event.entryIds];
+  if (entryIds.length === 0) return 0;
+  const failedIds: string[] = [];
+  let lastError: string | undefined;
+  const sendOne = async (entryId: string) => {
+    const snapshot = snapshotById.get(entryId);
+    // Derived id from STABLE coordinates (jobId, chunkId, entryId) — a
+    // chunk re-run or a retry mints no new id, so the receiver's dedupe key holds.
+    const derivedId = `${event.jobId}:${event.chunkId}:${entryId}`;
+    const perEntryEvent = (
+      isPublish && snapshot
+        ? {
+            id: derivedId,
+            type: 'entry.published',
+            scope,
+            occurredAt: event.occurredAt,
+            entryId,
+            contentTypeApiId: snapshot.contentTypeApiId,
+            version: snapshot.version,
+            fields: snapshot.fields,
+          }
+        : {
+            id: derivedId,
+            type: 'entry.unpublished',
+            scope,
+            occurredAt: event.occurredAt,
+            entryId,
+            contentTypeApiId: '',
+          }
+    ) as DomainEvent;
+    const result = await deps.sender.send(webhook, perEntryEvent);
+    deps.onWebhookDelivery?.({ delivered: result.delivered });
+    if (!result.delivered) {
+      failedIds.push(entryId);
+      lastError = result.error ?? `HTTP ${result.statusCode}`;
+    }
+  };
+  for (let at = 0; at < entryIds.length; at += BULK_WEBHOOK_CONCURRENCY) {
+    await Promise.all(entryIds.slice(at, at + BULK_WEBHOOK_CONCURRENCY).map((id) => sendOne(id)));
+  }
+  await ctx.store.webhooks.recordDelivery(scope, {
+    webhookId: webhook.id,
+    eventId: event.id,
+    status: failedIds.length === 0 ? 'success' : 'failed',
+    attempts: attempt,
+    error:
+      failedIds.length === 0
+        ? undefined
+        : `${failedIds.length}/${entryIds.length} deliveries failed: ${lastError}`,
+  });
+  if (failedIds.length > 0 && attempt < WEBHOOK_MAX_ATTEMPTS && deps.scheduleWebhookRetry) {
+    await deps.scheduleWebhookRetry({
+      webhookId: webhook.id,
+      event: { ...event, entryIds: failedIds },
+      attempt: attempt + 1,
+      delaySeconds: webhookRetryDelay(attempt),
+    });
+  }
+  return failedIds.length;
+}
+
 /** Attempts at one webhook delivery before it is given up (logged as failed with this count). */
 export const WEBHOOK_MAX_ATTEMPTS = 8;
 
@@ -293,6 +388,25 @@ export async function redeliverWebhook(
   deps: Pick<DispatchDeps, 'sender' | 'onWebhookDelivery' | 'scheduleWebhookRetry'>,
   retry: Pick<WebhookRetry, 'webhookId' | 'event' | 'attempt'>,
 ): Promise<{ delivered: boolean } | null> {
+  // A bulk chunk's retry: a subscriber to the per-entry topic gets the entries that failed, one by
+  // one, as dispatch sent them; a subscriber to the bulk topic gets the bulk event again.
+  if (retry.event.type === 'entries.published_bulk') {
+    const event = retry.event;
+    const perEntry = await ctx.store.webhooks.listByTopic(event.scope, perEntryTypeOf(event));
+    const webhook = perEntry.find((w) => w.id === retry.webhookId);
+    if (webhook) {
+      const snapshotById = await bulkSnapshots(ctx, event);
+      const failed = await deliverBulkPerEntry(
+        ctx,
+        deps,
+        webhook,
+        event,
+        snapshotById,
+        retry.attempt,
+      );
+      return { delivered: failed === 0 };
+    }
+  }
   const current = await ctx.store.webhooks.listByTopic(retry.event.scope, retry.event.type);
   const webhook = current.find((w) => w.id === retry.webhookId);
   if (!webhook) return null;
@@ -322,88 +436,19 @@ async function dispatchBulkPublished(
 ): Promise<void> {
   const scope = event.scope;
   const isPublish = event.action === 'publish';
-  const perEntryType = isPublish ? ('entry.published' as const) : ('entry.unpublished' as const);
+  const perEntryType = perEntryTypeOf(event);
 
   // Snapshots for webhook payloads + indexing (publish only; unpublished
   // entries have left the read model and need ids only).
-  const snapshots = isPublish
-    ? await ctx.store.entries.getPublishedMany(scope, event.entryIds)
-    : [];
-  const snapshotById = new Map(snapshots.map((s) => [s.entryId, s]));
-
-  // Publish sends only entries whose snapshot still exists — one re-unpublished
-  // between chunk commit and dispatch gets no degraded empty-fields payload
-  // (its own unpublish event tells the receiver what happened instead).
-  const webhookIds = isPublish
-    ? event.entryIds.filter((id) => snapshotById.has(id))
-    : [...event.entryIds];
+  const snapshotById = await bulkSnapshots(ctx, event);
+  const snapshots = [...snapshotById.values()];
 
   // 1. Webhooks: subscribers to the per-entry topics get synthesized
-  // per-entry events; subscribers to the bulk topic get the bulk event.
+  // per-entry events; subscribers to the bulk topic get the bulk event. Either way a failure is
+  // retried for that webhook alone, later: the entries that failed, or the bulk event.
   const perEntryWebhooks = await ctx.store.webhooks.listByTopic(scope, perEntryType);
   for (const webhook of perEntryWebhooks) {
-    let failed = 0;
-    let lastError: string | undefined;
-    const retries: DomainEvent[] = [];
-    const sendOne = async (entryId: string) => {
-      const snapshot = snapshotById.get(entryId);
-      // Derived id from STABLE coordinates (jobId, chunkId, entryId) — a
-      // chunk re-run mints a fresh event id, but the receiver's dedupe key
-      // must not change with it.
-      const derivedId = `${event.jobId}:${event.chunkId}:${entryId}`;
-      const perEntryEvent: DomainEvent =
-        isPublish && snapshot
-          ? {
-              id: derivedId,
-              type: 'entry.published',
-              scope,
-              occurredAt: event.occurredAt,
-              entryId,
-              contentTypeApiId: snapshot.contentTypeApiId,
-              version: snapshot.version,
-              fields: snapshot.fields,
-            }
-          : {
-              id: derivedId,
-              type: 'entry.unpublished',
-              scope,
-              occurredAt: event.occurredAt,
-              entryId,
-              contentTypeApiId: '',
-            };
-      const result = await deps.sender.send(webhook, perEntryEvent);
-      deps.onWebhookDelivery?.({ delivered: result.delivered });
-      if (!result.delivered) {
-        failed += 1;
-        lastError = result.error ?? `HTTP ${result.statusCode}`;
-        retries.push(perEntryEvent);
-      }
-    };
-    // Per-endpoint failures are recorded, never thrown: the retry unit stays
-    // the receiver's dedupe on derived ids, not this whole chunk event.
-    for (let at = 0; at < webhookIds.length; at += BULK_WEBHOOK_CONCURRENCY) {
-      await Promise.all(
-        webhookIds.slice(at, at + BULK_WEBHOOK_CONCURRENCY).map((id) => sendOne(id)),
-      );
-    }
-    await ctx.store.webhooks.recordDelivery(scope, {
-      webhookId: webhook.id,
-      eventId: event.id,
-      status: failed === 0 ? 'success' : 'failed',
-      attempts: 1,
-      error:
-        failed === 0 ? undefined : `${failed}/${webhookIds.length} deliveries failed: ${lastError}`,
-    });
-    // Each failed per-entry delivery is retried on its own, under its stable derived id, like
-    // any other webhook delivery (redeliverWebhook records each later attempt).
-    for (const failedEvent of retries) {
-      await deps.scheduleWebhookRetry?.({
-        webhookId: webhook.id,
-        event: failedEvent,
-        attempt: 2,
-        delaySeconds: webhookRetryDelay(1),
-      });
-    }
+    await deliverBulkPerEntry(ctx, deps, webhook, event, snapshotById, 1);
   }
   const bulkWebhooks = (await ctx.store.webhooks.listByTopic(scope, event.type)).filter(
     (w: Webhook) => !perEntryWebhooks.some((p) => p.id === w.id),

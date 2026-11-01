@@ -21,6 +21,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyEdits, modify, type ParseError, parse, printParseErrorCode } from 'jsonc-parser';
+import { deriveAssistantKey } from './derive-assistant-key.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const RINGS = ['staging', 'internal', 'canary', 'general'] as const;
@@ -81,10 +82,11 @@ export const SECRETS: Record<App, readonly string[]> = {
     'MCP_TOKEN',
     'ADMIN_TOKEN',
   ],
-  // The engine's AssistantAgent verifies its socket's signed principal itself.
+  // The engine's AssistantAgent verifies its socket's signed principal itself, with the key
+  // derived for it (DERIVED below); it never holds PRINCIPAL_KEY.
   engine: [
-    'PRINCIPAL_KEY',
-    'PRINCIPAL_KEY_PREVIOUS',
+    'ASSISTANT_PRINCIPAL_KEY',
+    'ASSISTANT_PRINCIPAL_KEY_PREVIOUS',
     'DATA_KEY',
     'DATA_KEY_PREVIOUS',
     'TOKEN_PEPPER',
@@ -92,6 +94,26 @@ export const SECRETS: Record<App, readonly string[]> = {
   ],
   delivery: ['DATA_KEY', 'DATA_KEY_PREVIOUS', 'TOKEN_PEPPER', 'MEDIA_SIGNING_SECRET'],
 };
+
+/**
+ * Secrets no environment holds: `secrets` derives each from the one named, so rotating that one
+ * rotates it (the previous from the previous). The assistant's principal key is HKDF of
+ * PRINCIPAL_KEY (`deriveAssistantPrincipalKey` in @contentworker/security).
+ */
+export const DERIVED: Record<string, { from: string; derive: (secret: string) => string }> = {
+  ASSISTANT_PRINCIPAL_KEY: { from: 'PRINCIPAL_KEY', derive: deriveAssistantKey },
+  ASSISTANT_PRINCIPAL_KEY_PREVIOUS: { from: 'PRINCIPAL_KEY_PREVIOUS', derive: deriveAssistantKey },
+};
+
+/** The deploy job's environment with the derived secrets added (never echoed). */
+export function withDerived(env: Record<string, string | undefined>) {
+  const out = { ...env };
+  for (const [name, { from, derive }] of Object.entries(DERIVED)) {
+    const source = env[from];
+    out[name] = source ? derive(source) : undefined;
+  }
+  return out;
+}
 
 /**
  * Secrets a deploy can't go without; missing, the deploy stops before migrating anything.
@@ -457,9 +479,10 @@ function secrets(app: string | undefined, out: string | undefined) {
     );
   const short = keysProblem(process.env);
   if (short) throw new Error(short);
+  const env = withDerived(process.env);
   // Only the ones set: `--secrets-file` adds to a Worker's secrets and never removes one.
   const values = Object.fromEntries(
-    SECRETS[app as App].flatMap((k) => (process.env[k] ? [[k, process.env[k]]] : [])),
+    SECRETS[app as App].flatMap((k) => (env[k] ? [[k, env[k]]] : [])),
   );
   writeFileSync(out, JSON.stringify(values), { mode: 0o600 });
   console.log(`${app}: ${Object.keys(values).join(', ') || 'no secrets set'}`);

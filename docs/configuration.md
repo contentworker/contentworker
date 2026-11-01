@@ -72,8 +72,10 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 
 | Secret                   | W | A | D | E | Purpose                                                                                                                                                         |
 | ------------------------ | - | - | - | - | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PRINCIPAL_KEY`          | ✓ | ✓ |   | ✓ | Signs (web) and verifies (api, and the engine's assistant for its socket) `x-cw-principal`. Required. Same value on all three                                   |
-| `PRINCIPAL_KEY_PREVIOUS` | ✓ | ✓ |   | ✓ | Rotation only: accepted by the api and the engine until the web Worker has moved                                                                               |
+| `PRINCIPAL_KEY`          | ✓ | ✓ |   |   | Signs (web) and verifies (api) `x-cw-principal`. Required. Same value on web and api; the engine never holds it (it gets the derived key below)                  |
+| `PRINCIPAL_KEY_PREVIOUS` | ✓ | ✓ |   |   | Rotation only: accepted by the api until the web Worker has moved                                                                                              |
+| `ASSISTANT_PRINCIPAL_KEY` |   |   |   | ✓ | The assistant's principal key: HKDF-SHA256 of `PRINCIPAL_KEY` (`@contentworker/security/assistant-key`), derived by CI, never set by hand. Verifies the principal signed for `/agents/*` |
+| `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` |   |   |   | ✓ | Derived from `PRINCIPAL_KEY_PREVIOUS`, while a rotation finishes                                                                  |
 | `DATA_KEY`               | ✓ | ✓ | ✓ | ✓ | AES-256-GCM key sealing secrets in D1 (webhook secrets, header values; web: authenticator secrets). Required on persistent deployments. Never changes            |
 | `DATA_KEY_PREVIOUS`      | ✓ | ✓ | ✓ | ✓ | Rotation only: opens values sealed under the old key until the daily 03:30 UTC reseal has moved them                                                            |
 | `TOKEN_PEPPER`           |   | ✓ | ✓ | ✓ | Mixed into every API key hash. Required. Never changes                                                                                                          |

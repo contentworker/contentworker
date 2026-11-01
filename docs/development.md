@@ -30,6 +30,7 @@ Objects and Workflows emulated. Their vars are overridden with `LOCAL_STACK_VARS
 | `TOKEN_PEPPER`           | `dev-pepper`                            |                                                              |
 | `MEDIA_SIGNING_SECRET`   | `dev-media-signing-secret`              |                                                              |
 | `PRINCIPAL_KEY`          | `contentworker-local-dev-principal-key` | The same `DEV_PRINCIPAL_KEY` the web Worker uses locally     |
+| `ASSISTANT_PRINCIPAL_KEY` | `DEV_ASSISTANT_PRINCIPAL_KEY`          | Derived from the dev `PRINCIPAL_KEY`, for the engine         |
 | `AI_MODE`                | `mock`                                  | No model calls                                               |
 | `AI_GATEWAY_ID`          | empty                                   | No AI Gateway                                                |
 | `EMBEDDINGS_PROVIDER`    | `local`                                 | Hash embeddings                                              |

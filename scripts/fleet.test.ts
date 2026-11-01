@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { parse } from 'jsonc-parser';
+import { deriveAssistantKey } from './derive-assistant-key.ts';
 import {
   APPS,
   hosts,
@@ -150,4 +153,45 @@ test('every app has a secrets list and the shared keys must be long', () => {
   for (const app of APPS) assert.ok(SECRETS[app].length > 0);
   assert.match(keysProblem({ DATA_KEY: 'short' }) ?? '', /DATA_KEY/);
   assert.equal(keysProblem({ DATA_KEY: 'x'.repeat(32) }), null);
+});
+
+test('the engine gets the assistant’s derived principal key pair, never the main one', () => {
+  assert.deepEqual(SECRETS.engine, [
+    'ASSISTANT_PRINCIPAL_KEY',
+    'ASSISTANT_PRINCIPAL_KEY_PREVIOUS',
+    'DATA_KEY',
+    'DATA_KEY_PREVIOUS',
+    'TOKEN_PEPPER',
+    'MEDIA_SIGNING_SECRET',
+  ]);
+  // Nobody else holds the assistant's key.
+  for (const app of ['web', 'api', 'delivery'] as const)
+    assert.ok(!SECRETS[app].some((k) => k.startsWith('ASSISTANT_')), app);
+});
+
+test('`secrets` derives the assistant’s pair from PRINCIPAL_KEY and its previous, without printing it', () => {
+  const env = {
+    PATH: process.env.PATH ?? '',
+    PRINCIPAL_KEY: 'p'.repeat(40),
+    PRINCIPAL_KEY_PREVIOUS: 'q'.repeat(40),
+    DATA_KEY: 'd'.repeat(40),
+    TOKEN_PEPPER: 't'.repeat(40),
+    MEDIA_SIGNING_SECRET: 'm'.repeat(40),
+  };
+  const out = join(mkdtempSync(join(tmpdir(), 'fleet-secrets-')), 'engine.json');
+  const said = execFileSync(process.execPath, ['scripts/fleet.ts', 'secrets', 'engine', out], {
+    env,
+    encoding: 'utf8',
+  });
+  const written = JSON.parse(readFileSync(out, 'utf8')) as Record<string, string>;
+  assert.equal(written.ASSISTANT_PRINCIPAL_KEY, deriveAssistantKey(env.PRINCIPAL_KEY));
+  assert.equal(
+    written.ASSISTANT_PRINCIPAL_KEY_PREVIOUS,
+    deriveAssistantKey(env.PRINCIPAL_KEY_PREVIOUS),
+  );
+  for (const value of Object.values(written)) assert.ok(!said.includes(value));
+  // The web Worker signs with the main key and is never given the derived one.
+  const webOut = join(mkdtempSync(join(tmpdir(), 'fleet-secrets-')), 'web.json');
+  execFileSync(process.execPath, ['scripts/fleet.ts', 'secrets', 'web', webOut], { env });
+  assert.ok(!('ASSISTANT_PRINCIPAL_KEY' in JSON.parse(readFileSync(webOut, 'utf8'))));
 });

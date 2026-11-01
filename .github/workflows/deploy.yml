@@ -75,7 +75,10 @@ jobs:
           eval "$(node scripts/fleet.ts names "$ID")"
           { echo "API_DOMAIN=$API_DOMAIN"; echo "CDN_DOMAIN=$CDN_DOMAIN"; } >> "$GITHUB_ENV"
       # Only the secrets set in the environment; `--secrets-file` adds to a Worker's secrets and
-      # never removes one, so a secret set by hand survives.
+      # never removes one, so a secret set by hand survives. The engine's ASSISTANT_PRINCIPAL_KEY
+      # and ASSISTANT_PRINCIPAL_KEY_PREVIOUS aren't in the environment: `fleet.ts secrets` derives
+      # them from PRINCIPAL_KEY and PRINCIPAL_KEY_PREVIOUS (HKDF, scripts/derive-assistant-key.ts)
+      # straight into the engine's secrets file, never printing them.
       - name: Collect secrets
         env:
           PRINCIPAL_KEY: ${{ secrets.PRINCIPAL_KEY }}

@@ -85,7 +85,7 @@ survives). Which Worker gets which is `SECRETS` in `scripts/fleet.ts`:
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | web      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `SETUP_TOKEN`, `PASSWORD_PEPPER`, `OIDC_CLIENT_SECRET`        |
 | api      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN` |
-| engine   | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`                         |
+| engine   | `ASSISTANT_PRINCIPAL_KEY`, `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` (derived from the `PRINCIPAL_KEY` pair; never the pair itself), `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET` |
 | delivery | `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`                                                                   |
 
 `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER` and `MEDIA_SIGNING_SECRET` are required
@@ -93,6 +93,32 @@ survives). Which Worker gets which is `SECRETS` in `scripts/fleet.ts`:
 Worker of a deployment holds the same value of each. `DATA_KEY`, `TOKEN_PEPPER` and
 `PASSWORD_PEPPER` never change once a deployment runs (escrow them); `DATA_KEY` and
 `PRINCIPAL_KEY` rotate through their `*_PREVIOUS` companions.
+
+**Rotating `PRINCIPAL_KEY`:** set `PRINCIPAL_KEY_PREVIOUS` to the current key and `PRINCIPAL_KEY`
+to a new one in the GitHub environment and deploy; once every Worker runs the new key, remove
+`PRINCIPAL_KEY_PREVIOUS` and deploy again. The engine's assistant pair follows on its own: `fleet.ts
+secrets` derives `ASSISTANT_PRINCIPAL_KEY` from `PRINCIPAL_KEY` and `ASSISTANT_PRINCIPAL_KEY_PREVIOUS`
+from `PRINCIPAL_KEY_PREVIOUS` on every deploy. Because `--secrets-file` never removes a secret,
+delete `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` from the engine (`wrangler secret delete`, by hand, with
+the user's approval) when you remove `PRINCIPAL_KEY_PREVIOUS`, as for any `*_PREVIOUS`.
+
+### The assistant's principal key
+
+The web gateway signs the assistant's paths (`/agents/*`) with a key derived from `PRINCIPAL_KEY`
+(HKDF-SHA256, salt `contentworker/principal-subkeys`, info `contentworker/assistant-principal/v1`,
+32 bytes as base64url: `deriveAssistantPrincipalKey` in `@contentworker/security/assistant-key`)
+and every other path with `PRINCIPAL_KEY` itself. The api's gate for `/agents/*` derives the key
+from `PRINCIPAL_KEY` (and `_PREVIOUS`); its REST surface accepts only the main key. The engine holds
+only the derived pair, so a principal it could sign is good for the assistant's socket and nothing
+else. Nothing to set by hand: CI derives the pair at each deploy (`fleet.ts secrets`, with
+`scripts/derive-assistant-key.ts`; it reads the key from stdin or `PRINCIPAL_KEY`, never an
+argument), and `provision.sh` generates nothing new for it.
+
+The api gate and the engine accept only the derived key on `/agents/*`; a principal signed with
+`PRINCIPAL_KEY` is refused there, and one signed with the derived key is refused on every other
+path. This shipped in one step because no deployment had run the assistant before it: there was no
+web Worker still signing `/agents/*` with the main key to stay compatible with. A future change to
+how these paths are signed has to roll out in two steps (verifiers accept both, then only the new).
 
 ## The pipeline
 

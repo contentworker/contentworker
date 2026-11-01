@@ -159,6 +159,14 @@ export interface EdgeEnv {
   readonly PRINCIPAL_KEY?: string;
   /** Rotation only: the key PRINCIPAL_KEY replaced, accepted until the web Worker has moved. */
   readonly PRINCIPAL_KEY_PREVIOUS?: string;
+  /**
+   * The engine's secret: the assistant's principal key, derived from PRINCIPAL_KEY with HKDF
+   * (`deriveAssistantPrincipalKey`; CI derives it, `scripts/derive-assistant-key.ts`). It verifies
+   * the principal the web Worker signs for the assistant's socket, and nothing else.
+   */
+  readonly ASSISTANT_PRINCIPAL_KEY?: string;
+  /** Rotation only: derived from PRINCIPAL_KEY_PREVIOUS, accepted until the web Worker has moved. */
+  readonly ASSISTANT_PRINCIPAL_KEY_PREVIOUS?: string;
   readonly SEED_DEV?: string;
   readonly SEED_SPACE_ID?: string;
   readonly SEED_ENV_ID?: string;

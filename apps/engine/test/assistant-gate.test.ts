@@ -1,5 +1,6 @@
 import { assistantName, routeAssistant } from '@contentworker/http/assistant/gate';
 import type { EdgeEnv } from '@contentworker/platform/env';
+import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import {
   PRINCIPAL_HEADER,
   principalTarget,
@@ -41,7 +42,11 @@ describe('the assistant’s gate', () => {
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
         headers: {
-          [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, principalTarget('GET', path)),
+          [PRINCIPAL_HEADER]: await signPrincipal(
+            await deriveAssistantPrincipalKey(KEY),
+            ada,
+            principalTarget('GET', path),
+          ),
           'x-agents-lifecycle-props': 'eyJmb3JnZWQiOnRydWV9',
           'x-partykit-room': 'usr_bob',
         },
@@ -54,13 +59,60 @@ describe('the assistant’s gate', () => {
     expect(seen[0]!.headers.get('x-partykit-room')).toBeNull();
   });
 
+  it('accepts the key derived for the assistant, and refuses the main key', async () => {
+    const path = '/agents/assistant-agent/usr_ada/get-messages';
+    for (const key of [await deriveAssistantPrincipalKey(KEY)]) {
+      const { env, seen } = envSeeing();
+      const res = await routeAssistant(
+        new Request(`https://api${path}`, {
+          headers: {
+            [PRINCIPAL_HEADER]: await signPrincipal(key, ada, principalTarget('GET', path)),
+          },
+        }),
+        env,
+      );
+      expect(res.status).toBe(200);
+      expect(seen).toHaveLength(1);
+    }
+    // The main key itself is refused on the assistant's paths.
+    {
+      const { env, seen } = envSeeing();
+      const res = await routeAssistant(
+        new Request(`https://api${path}`, {
+          headers: {
+            [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, principalTarget('GET', path)),
+          },
+        }),
+        env,
+      );
+      expect(res.status).toBe(401);
+      expect(seen).toHaveLength(0);
+    }
+    // A key derived from anything else is refused.
+    const { env } = envSeeing();
+    const other = await deriveAssistantPrincipalKey('another-principal-key-0123456789abcdef');
+    const res = await routeAssistant(
+      new Request(`https://api${path}`, {
+        headers: {
+          [PRINCIPAL_HEADER]: await signPrincipal(other, ada, principalTarget('GET', path)),
+        },
+      }),
+      env,
+    );
+    expect(res.status).toBe(401);
+  });
+
   it('refuses another person’s assistant before anything reaches it', async () => {
     const { env, seen } = envSeeing();
     const path = '/agents/assistant-agent/usr_bob/get-messages';
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
         headers: {
-          [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, principalTarget('GET', path)),
+          [PRINCIPAL_HEADER]: await signPrincipal(
+            await deriveAssistantPrincipalKey(KEY),
+            ada,
+            principalTarget('GET', path),
+          ),
         },
       }),
       env,

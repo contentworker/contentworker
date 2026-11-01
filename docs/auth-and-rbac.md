@@ -59,8 +59,12 @@ The resulting principal has `kind: 'user'` and `subject` = the person's id, so a
 actions to the person.
 
 **The assistant's socket** (`/agents/assistant-agent/<person>`) carries the same header, signed
-for that path. The api forwards it to the engine's `AssistantAgent` only when `sub` is the person
-the path names, and the object verifies the signature again itself with `PRINCIPAL_KEY`. Because a
+for that path with the assistant's own key: HKDF-SHA256 of `PRINCIPAL_KEY`
+(`@contentworker/security/assistant-key`), never `PRINCIPAL_KEY` itself. The api forwards it to the
+engine's `AssistantAgent` only when `sub` is the person the path names, and the object verifies the
+signature again itself with `ASSISTANT_PRINCIPAL_KEY` (the engine holds no other). A principal
+signed with the derived key never verifies on the api's REST surface, and one signed with the
+main key never opens the socket ([Deployment](./deployment.md#the-assistants-principal-key)). Because a
 socket outlives its 60 seconds, the object keeps who the claims name per connection and, before
 every frame the socket sends and every turn and page edit, re-reads the person: refused, and the
 socket closed, once they are disabled or their session (`sid`, required for anyone but `local`) is
