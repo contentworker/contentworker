@@ -379,6 +379,57 @@ test('typing right after creating an entry lands in the created entry, never a f
   await expect(page.getByRole('heading', { level: 1, name: `${title} v2` })).toBeVisible();
 });
 
+test('the asset library searches: a match by name, facet chips, and back to the library on clear', async ({
+  page,
+  request,
+}) => {
+  // Waits on ingest, which a cold engine takes a while to start.
+  test.setTimeout(120_000);
+  const stamp = Date.now();
+  // Shares no word with the search below (its stamp in base 36), so neither leg can match it.
+  const other = `Ordinary ${stamp.toString(36)}`;
+  await seedAsset(request, other);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await expect(library.getByRole('button', { name: `Open “${other}”` })).toBeVisible();
+
+  // Uploaded through the signed PUT, which hands the file to ingest; ingest indexes it.
+  const wanted = `heliotrope-${stamp}.txt`;
+  await page
+    .getByLabel('Upload asset files')
+    .setInputFiles([
+      { name: wanted, mimeType: 'text/plain', buffer: Buffer.from('a heliotrope field guide') },
+    ]);
+  const uploads = page.getByRole('region', { name: 'Uploads' });
+  await expect(uploads.getByRole('status')).toHaveText('Uploaded 1 file', { timeout: 30_000 });
+
+  const box = library.getByRole('searchbox', { name: 'Search assets' });
+  const query = `heliotrope ${stamp}`;
+  // Ingest runs on the engine after the upload: search again until the index has caught up. The
+  // summary names the query, so the library shown before the debounced search can't pass.
+  await expect(async () => {
+    await box.fill('');
+    await box.fill(query);
+    await expect(library.getByText(new RegExp(`match(es)? for “${query}”`))).toBeVisible({
+      timeout: 3_000,
+    });
+    await expect(library.getByRole('button', { name: `Open “${wanted}”` })).toBeVisible({
+      timeout: 1_000,
+    });
+  }).toPass({ timeout: 90_000 });
+  await expect(library.getByRole('button', { name: `Open “${other}”` })).toHaveCount(0);
+  const kinds = library.getByRole('group', { name: 'Kind' });
+  await expect(kinds.getByRole('button', { name: /^Documents \d+ match/ })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
+
+  await library.getByRole('button', { name: 'Clear search' }).click();
+  await expect(library.getByRole('button', { name: `Open “${other}”` })).toBeVisible();
+  await expect(library.getByRole('group', { name: 'Kind' })).toHaveCount(0);
+});
+
 test('the asset library: a folder, uploads into it, a move, a bulk archive, a restore and a guarded delete', async ({
   page,
   request,

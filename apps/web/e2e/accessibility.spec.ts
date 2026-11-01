@@ -118,6 +118,11 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
   await library.getByRole('checkbox', { name: `Select “A11y ${stamp} root”` }).check();
   await expect(page.getByRole('group', { name: 'Selected assets' })).toBeVisible();
   await scan(page, testInfo);
+
+  // A search: the box, its summary and (when anything is indexed) the facet chips.
+  await library.getByRole('searchbox', { name: 'Search assets' }).fill(`a11y ${stamp}`);
+  await expect(library.getByText(new RegExp(`for “a11y ${stamp}”`))).toBeVisible();
+  await scan(page, testInfo);
 });
 
 test('the content type dialog has no accessibility violations', async ({ page }, testInfo) => {

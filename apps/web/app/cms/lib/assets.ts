@@ -1,5 +1,5 @@
 import type { Asset, AssetFolder, AssetKind } from '@contentworker/domain';
-import type { AssetListQuery } from './management';
+import type { AssetFacets, AssetListQuery, AssetSearchQuery } from './management';
 
 /** Where the library is looking: everything, the assets in no folder, or one folder. */
 export type FolderSelection =
@@ -173,4 +173,74 @@ export function bulkSummary(verb: string, outcome: BulkOutcome): string {
   const noun = total === 1 ? 'asset' : 'assets';
   if (outcome.failed === 0) return `${verb} ${total} ${noun}`;
   return `${verb} ${outcome.done} of ${total} ${noun}; ${outcome.failed} failed`;
+}
+
+/** The search query for what the screen shows: the text, the folder, then the filter bar. */
+export function assetSearchQuery(
+  q: string,
+  folder: FolderSelection,
+  filters: AssetFilterState,
+): AssetSearchQuery {
+  return {
+    q,
+    limit: 100,
+    ...(folder.kind === 'root' ? { folder: 'root' } : {}),
+    ...(folder.kind === 'folder' ? { folder: folder.id } : {}),
+    ...(filters.kind ? { kind: filters.kind } : {}),
+    ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.tag ? { tag: filters.tag } : {}),
+  };
+}
+
+/** One facet chip: what it narrows to, how it is named, how many matches it has. */
+export interface FacetChip {
+  readonly facet: 'kind' | 'tag' | 'folder';
+  /** The kind, tag id or folder id (`root` for no folder). */
+  readonly value: string;
+  readonly label: string;
+  readonly count: number;
+}
+
+/**
+ * The chips a search's facets make, most matches first within each facet: kinds by their label,
+ * tags and folders by name (one no longer known is left out rather than shown as an id).
+ */
+export function facetChips(
+  facets: AssetFacets,
+  tags: readonly { id: string; name: string }[],
+  folders: readonly AssetFolder[],
+): { kind: FacetChip[]; tag: FacetChip[]; folder: FacetChip[] } {
+  const tagName = new Map(tags.map((t) => [t.id, t.name]));
+  const folderName = new Map(folders.map((f) => [f.id, f.name]));
+  const chips = (
+    facet: FacetChip['facet'],
+    counts: Readonly<Record<string, number>>,
+    label: (value: string) => string | undefined,
+  ) =>
+    Object.entries(counts)
+      .flatMap(([value, count]) => {
+        const name = label(value);
+        return name && count > 0 ? [{ facet, value, label: name, count }] : [];
+      })
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  return {
+    kind: chips('kind', facets.kind, (k) => KIND_LABELS[k as AssetKind]),
+    tag: chips('tag', facets.tag, (id) => tagName.get(id)),
+    folder: chips('folder', facets.folder, (id) =>
+      id === 'root' ? 'Not in a folder' : folderName.get(id),
+    ),
+  };
+}
+
+/** What a card says about ingest: running, failed (with why), or nothing once it is done. */
+export function ingestState(
+  asset: Pick<Asset, 'ingestStatus' | 'ingestError'>,
+): { readonly state: 'processing' | 'failed'; readonly error?: string } | null {
+  if (asset.ingestStatus === 'pending' || asset.ingestStatus === 'processing') {
+    return { state: 'processing' };
+  }
+  if (asset.ingestStatus === 'error') {
+    return { state: 'failed', ...(asset.ingestError ? { error: asset.ingestError } : {}) };
+  }
+  return null;
 }

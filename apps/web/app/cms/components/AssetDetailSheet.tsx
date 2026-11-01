@@ -21,7 +21,8 @@ import {
 import { Textarea } from '@contentworker/ui/textarea';
 import { useEffect, useRef, useState } from 'react';
 import { AssetPreview, FallbackTile } from '~/cms/components/AssetPreview';
-import { StatusBadge } from '~/cms/components/status';
+import { AssetIngestBadges } from '~/cms/components/assets/AssetIngestBadges';
+import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { ImageTransform } from '../lib/management';
 import { useToast } from '../lib/toast';
@@ -39,6 +40,8 @@ export function AssetDetailSheet(props: {
   onSaved: () => void;
   /** Called with a refreshed asset (e.g. a video's new processing status). */
   onAssetChange?: (asset: Asset) => void;
+  /** Opens another asset by id (the original a possible duplicate points at). */
+  onOpenAsset?: (id: string) => void;
 }) {
   const { asset, locale } = props;
   const { client } = useClient();
@@ -92,6 +95,28 @@ export function AssetDetailSheet(props: {
       setRefreshing(false);
     }
   };
+
+  const retryIngest = async () => {
+    try {
+      props.onAssetChange?.(await client.reingestAsset(asset.id));
+      toast.success('Processing again');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // What ingest filled from a model and no one has saved yet. Editing the field and saving makes
+  // it the editor's (the API clears the mark), so the badge goes once the value is changed here.
+  const altSuggested =
+    asset.aiSuggestions?.altText?.includes(locale) === true &&
+    altText === String(asset.metadata.altText?.[locale] ?? '');
+  const suggestedTags = new Set(asset.aiSuggestions?.tags ?? []);
+  const showIngest = Boolean(
+    asset.duplicateOf ||
+      asset.ingestStatus === 'error' ||
+      asset.ingestStatus === 'pending' ||
+      asset.ingestStatus === 'processing',
+  );
 
   const pickFocal = (e: React.MouseEvent<HTMLButtonElement>) => {
     const rect = imgRef.current?.getBoundingClientRect();
@@ -172,6 +197,27 @@ export function AssetDetailSheet(props: {
         </SheetHeader>
 
         <div className="space-y-5 px-4 pb-4">
+          {showIngest && (
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-1">
+                <AssetIngestBadges
+                  asset={asset}
+                  name={asset.file.fileName}
+                  {...(props.onOpenAsset ? { onOpenOriginal: props.onOpenAsset } : {})}
+                  onRetry={() => void retryIngest()}
+                />
+              </div>
+              {asset.ingestStatus === 'error' && asset.ingestError && (
+                <p className="text-destructive text-xs">{asset.ingestError}</p>
+              )}
+              {asset.duplicateOf && (
+                <p className="text-muted-foreground text-xs">
+                  The same file is already in the library.
+                </p>
+              )}
+            </div>
+          )}
+
           {video && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -320,7 +366,10 @@ export function AssetDetailSheet(props: {
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label htmlFor="asset-alt">Alt text ({locale})</Label>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="asset-alt">Alt text ({locale})</Label>
+                {altSuggested && <ToneBadge tone="ai" label="AI suggestion" />}
+              </div>
               {isImage && (
                 <Button type="button" variant="ghost" size="xs" onClick={suggestAlt}>
                   ✨ Generate
@@ -338,7 +387,12 @@ export function AssetDetailSheet(props: {
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label>Tags</Label>
+              <div className="flex items-center gap-2">
+                <Label>Tags</Label>
+                {[...suggestedTags].some((id) => tagIds.includes(id)) && (
+                  <ToneBadge tone="ai" label="AI suggestion" />
+                )}
+              </div>
               {isImage && (
                 <Button type="button" variant="ghost" size="xs" onClick={suggestTags}>
                   ✨ Auto-tag
@@ -357,7 +411,12 @@ export function AssetDetailSheet(props: {
                     onClick={() => toggleTag(t.id)}
                     className="rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
                   >
-                    <Badge variant={tagIds.includes(t.id) ? 'default' : 'outline'}>{t.name}</Badge>
+                    <Badge variant={tagIds.includes(t.id) ? 'default' : 'outline'}>
+                      {t.name}
+                      {suggestedTags.has(t.id) && tagIds.includes(t.id) && (
+                        <span className="sr-only"> (AI suggestion)</span>
+                      )}
+                    </Badge>
                   </button>
                 ))}
               </div>

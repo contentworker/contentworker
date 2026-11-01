@@ -6,15 +6,17 @@ import { Checkbox } from '@contentworker/ui/checkbox';
 import { cn } from '@contentworker/ui/lib/utils';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, ImageIcon, Trash2, Upload } from 'lucide-react';
-import { type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
+import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AssetDetailSheet } from '~/cms/components/AssetDetailSheet';
 import { AssetPreview } from '~/cms/components/AssetPreview';
 import { AssetBulkBar } from '~/cms/components/assets/AssetBulkBar';
 import { AssetFilterBar, type AssetView } from '~/cms/components/assets/AssetFilterBar';
 import { AssetFolderTree } from '~/cms/components/assets/AssetFolderTree';
+import { AssetIngestBadges } from '~/cms/components/assets/AssetIngestBadges';
 import { AssetInUseNotice } from '~/cms/components/assets/AssetInUseNotice';
+import { AssetFacetChips, AssetSearchBox } from '~/cms/components/assets/AssetSearch';
 import {
   AssetUploadList,
   type UploadItem,
@@ -29,8 +31,11 @@ import {
   activeFilterCount,
   assetLibraryQuery,
   assetName,
+  assetSearchQuery,
   bulkSummary,
+  type FacetChip,
   type FolderSelection,
+  facetChips,
   fileSize,
   runBulk,
 } from '~/cms/lib/assets';
@@ -73,6 +78,19 @@ function useView(): [AssetView, (v: AssetView) => void] {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** How long typing pauses before the library searches. */
+const SEARCH_DEBOUNCE_MS = 250;
+
+/** `value`, once it has stopped changing for `ms`. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
+}
+
 /**
  * The asset library: folders beside a filtered, paged grid or list. Upload by picking or dropping
  * any number of files (into the open folder), select several to move, publish or archive them, and
@@ -101,6 +119,12 @@ export function AssetLibrary(props: { locale: string }) {
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [searchText, setSearchText] = useState('');
+  // Typing searches once it pauses; clearing the box puts the library back at once.
+  const debounced = useDebounced(searchText.trim(), SEARCH_DEBOUNCE_MS);
+  const q = searchText.trim() === '' ? '' : debounced;
+  const searching = q !== '';
+
   const query = useMemo(() => assetLibraryQuery(folder, filters), [folder, filters]);
   const pages = useInfiniteQuery({
     queryKey: keys.assetLibrary(query),
@@ -108,10 +132,30 @@ export function AssetLibrary(props: { locale: string }) {
       client.listAssets(pageParam ? { ...query, cursor: pageParam } : query),
     initialPageParam: '',
     getNextPageParam: (last) => last.nextCursor,
+    enabled: !searching,
   });
-  const assets = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
+  // A search ranks by relevance and comes back whole (up to 100), with its facet counts.
+  const searchQuery = useMemo(() => assetSearchQuery(q, folder, filters), [q, folder, filters]);
+  const search = useQuery({
+    queryKey: keys.assetLibrary({ search: searchQuery }),
+    queryFn: () => client.searchAssets(searchQuery),
+    enabled: searching,
+    // A chip narrowing the search keeps the results (and the chips) up while the next ones load.
+    placeholderData: keepPreviousData,
+  });
+  const assets = useMemo(
+    () =>
+      searching ? (search.data?.items ?? []) : (pages.data?.pages.flatMap((p) => p.items) ?? []),
+    [searching, search.data, pages.data],
+  );
+  const loading = searching ? search.isPending : pages.isPending;
+  const loadError = searching ? search.error : pages.error;
   const folders = useScopedQuery(['asset-folders'], () => client.listAssetFolders()).data ?? [];
   const tags = useScopedQuery(['tags'], () => client.listTags(), { silent: true }).data ?? [];
+  const chips = useMemo(
+    () => (search.data ? facetChips(search.data.facets, tags, folders) : null),
+    [search.data, tags, folders],
+  );
 
   const reload = () => invalidate(['assets']);
   const reloadFolders = () => invalidate(['asset-folders']);
@@ -128,6 +172,49 @@ export function AssetLibrary(props: { locale: string }) {
     setSelected(new Set());
     setBulkFailures(null);
   };
+
+  // --- search ---------------------------------------------------------------
+  const chipActive = (chip: FacetChip) =>
+    chip.facet === 'kind'
+      ? filters.kind === chip.value
+      : chip.facet === 'tag'
+        ? filters.tag === chip.value
+        : chip.value === 'root'
+          ? folder.kind === 'root'
+          : folder.kind === 'folder' && folder.id === chip.value;
+  // A chip narrows the search the way the filter bar and the folder tree do, so the two agree.
+  const toggleChip = (chip: FacetChip) => {
+    const on = chipActive(chip);
+    if (chip.facet === 'folder') {
+      changeFolder(
+        on
+          ? ALL_FOLDERS
+          : chip.value === 'root'
+            ? { kind: 'root' }
+            : { kind: 'folder', id: chip.value },
+      );
+    } else if (chip.facet === 'kind') {
+      changeFilters({
+        ...filters,
+        kind: on ? undefined : (chip.value as AssetFilterState['kind']),
+      });
+    } else {
+      changeFilters({ ...filters, tag: on ? undefined : chip.value });
+    }
+  };
+
+  // --- what ingest found ----------------------------------------------------
+  const openOriginal = (id: string) =>
+    void client
+      .getAsset(id)
+      .then(setOpen)
+      .catch(() => toast.error('The original asset is no longer in the library'));
+  const retryIngest = (a: Asset) =>
+    void client
+      .reingestAsset(a.id)
+      .then(reload)
+      .then(() => toast.success(`Processing “${assetName(a, locale)}” again`))
+      .catch(fail);
 
   // --- uploads ------------------------------------------------------------
   const patchUpload = (id: string, patch: Partial<UploadItem>) =>
@@ -438,6 +525,12 @@ export function AssetLibrary(props: { locale: string }) {
             label={VIDEO_STATUS_LABEL[video.status] ?? humanize(video.status)}
           />
         )}
+        <AssetIngestBadges
+          asset={a}
+          name={assetName(a, locale)}
+          onOpenOriginal={openOriginal}
+          onRetry={retryIngest}
+        />
       </div>
     );
   };
@@ -621,6 +714,7 @@ export function AssetLibrary(props: { locale: string }) {
             dragging && 'ring-2 ring-ring/50 ring-offset-4 ring-offset-background',
           )}
         >
+          <AssetSearchBox value={searchText} onChange={setSearchText} />
           <AssetFilterBar
             value={filters}
             onChange={changeFilters}
@@ -628,6 +722,16 @@ export function AssetLibrary(props: { locale: string }) {
             view={view}
             onViewChange={setView}
           />
+          {searching && chips && (
+            <AssetFacetChips groups={chips} isActive={chipActive} onToggle={toggleChip} />
+          )}
+          {searching && search.data && (
+            <p className="caption text-muted-foreground" aria-live="polite">
+              {search.data.total === 0
+                ? `No matches for “${q}”`
+                : `${search.data.total} ${search.data.total === 1 ? 'match' : 'matches'} for “${q}”`}
+            </p>
+          )}
           {dragging && (
             <p className="caption" aria-live="polite">
               Drop files to upload {openFolder ? `to “${openFolder.name}”` : 'here'}
@@ -690,12 +794,12 @@ export function AssetLibrary(props: { locale: string }) {
               setBulkFailures(null);
             }}
           />
-          {pages.isPending && (
+          {loading && (
             <p role="status" className="sr-only">
-              Loading assets…
+              {searching ? 'Searching assets…' : 'Loading assets…'}
             </p>
           )}
-          {pages.isPending ? (
+          {loading ? (
             view === 'grid' ? (
               <ul className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3">
                 {[0, 1, 2, 3].map((i) => (
@@ -711,25 +815,33 @@ export function AssetLibrary(props: { locale: string }) {
                 ))}
               </div>
             )
-          ) : pages.isError && assets.length === 0 ? (
+          ) : loadError && assets.length === 0 ? (
             // A failed load is said as one, never as an empty library.
             <Alert variant="destructive">
-              <AlertTitle>The assets didn’t load</AlertTitle>
+              <AlertTitle>
+                {searching ? 'The search didn’t finish' : 'The assets didn’t load'}
+              </AlertTitle>
               <AlertDescription>
-                <p>{message(pages.error)}</p>
+                <p>{message(loadError)}</p>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   className="mt-2"
-                  onClick={() => void pages.refetch()}
+                  onClick={() => void (searching ? search.refetch() : pages.refetch())}
                 >
                   Retry
                 </Button>
               </AlertDescription>
             </Alert>
           ) : assets.length === 0 ? (
-            filtered ? (
+            searching ? (
+              <EmptyState
+                icon={ImageIcon}
+                title="No matches"
+                description="Nothing in the library matches this search here. Try other words, or clear the filters."
+              />
+            ) : filtered ? (
               <EmptyState
                 icon={ImageIcon}
                 title="Nothing here"
@@ -751,7 +863,7 @@ export function AssetLibrary(props: { locale: string }) {
           ) : (
             list
           )}
-          {pages.hasNextPage && (
+          {!searching && pages.hasNextPage && (
             <div className="flex justify-center">
               <Button
                 type="button"
@@ -777,6 +889,7 @@ export function AssetLibrary(props: { locale: string }) {
           setOpen(next);
           void reload();
         }}
+        onOpenAsset={openOriginal}
       />
     </div>
   );
