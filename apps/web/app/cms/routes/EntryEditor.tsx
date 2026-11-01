@@ -119,6 +119,11 @@ export function EntryEditor() {
   const [canvasOpen, setCanvasOpen] = useState(false);
   // Bumped after a restore to re-seed the form (EntryForm reads `initial` once).
   const [formKey, setFormKey] = useState(0);
+  // A new entry being created: from its save until the created entry's editor takes over, this
+  // form is about to be replaced by one seeded from the server, so nothing typed into it would
+  // survive. It is removed meanwhile, the loading placeholder in its place (`navigate` is a
+  // transition: this form could stay on screen after it resolves, so "it has landed" is not enough).
+  const [swapping, setSwapping] = useState(false);
 
   // Unsaved-edit tracking: guards in-app navigation and tab close. The
   // generation counter lets `save` detect edits typed WHILE the request was in
@@ -289,43 +294,49 @@ export function EntryEditor() {
     publishAfterSaveRef.current = false;
     return run(async () => {
       if (!selectedType) return;
-      const genAtSubmit = dirtyGen.current;
-      const r =
-        isEdit && entryId
-          ? await orDirect(
-              await edit<EntryView>('entries_update', { id: entryId, fields }, about),
-              () => client.updateEntry(entryId, fields),
-            )
-          : await orDirect(
-              await edit<EntryView>(
-                'entries_create',
-                { contentType: selectedType.apiId, fields },
-                titleOf(fields) ?? `New ${selectedType.name.toLowerCase()}`,
-              ),
-              () => client.createEntry(selectedType.apiId, fields),
-            );
-      // A save runs at once; it is never a card to decline.
-      if (!('output' in r)) return;
-      const view = r.output;
-      setLastAggregate(view.entry);
-      // Edit mode: only clear dirty if nothing was typed while the request was
-      // in flight — those keystrokes are NOT in the saved payload. Create mode
-      // clears unconditionally: the URL swap below remounts the form from the
-      // server state, and blocking our own navigation would trap the user.
-      if (!isEdit || dirtyGen.current === genAtSubmit) markDirty(false);
-      if (entryId) void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
-      void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
-      if (!isEdit) {
-        // Stay in the editor: swap /new for the created entry's edit URL. The
-        // swap remounts the form from the server state, and route loaders make
-        // it asynchronous — so announce success only once it has landed, or
-        // keystrokes made after the toast would be wiped by the remount.
-        await navigate(`/content/${typeId}/${view.entry.id}`, { replace: true });
-        toast.success('Entry created');
-        return;
+      if (!isEdit) setSwapping(true);
+      let swapped = false;
+      try {
+        const genAtSubmit = dirtyGen.current;
+        const r =
+          isEdit && entryId
+            ? await orDirect(
+                await edit<EntryView>('entries_update', { id: entryId, fields }, about),
+                () => client.updateEntry(entryId, fields),
+              )
+            : await orDirect(
+                await edit<EntryView>(
+                  'entries_create',
+                  { contentType: selectedType.apiId, fields },
+                  titleOf(fields) ?? `New ${selectedType.name.toLowerCase()}`,
+                ),
+                () => client.createEntry(selectedType.apiId, fields),
+              );
+        // A save runs at once; it is never a card to decline.
+        if (!('output' in r)) return;
+        const view = r.output;
+        setLastAggregate(view.entry);
+        // Edit mode: only clear dirty if nothing was typed while the request was
+        // in flight — those keystrokes are NOT in the saved payload. Create mode
+        // clears unconditionally: the form was removed while it saved, and the URL
+        // swap below remounts it from the server state.
+        if (!isEdit || dirtyGen.current === genAtSubmit) markDirty(false);
+        if (entryId) void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+        void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
+        if (!isEdit) {
+          // Stay in the editor: swap /new for the created entry's edit URL. The swap remounts the
+          // form from the server state; this one stays removed (`swapping`) until then.
+          swapped = true;
+          await navigate(`/content/${typeId}/${view.entry.id}`, { replace: true });
+          toast.success('Entry created');
+          return;
+        }
+        toast.success('Draft updated');
+        if (chainPublish) await publish(view.entry);
+      } finally {
+        // A create that failed or wasn't saved hands the form back.
+        if (!isEdit && !swapped) setSwapping(false);
       }
-      toast.success('Draft updated');
-      if (chainPublish) await publish(view.entry);
     });
   };
 
@@ -499,8 +510,11 @@ export function EntryEditor() {
       )}
 
       <div ref={pane.ref} className={cn('flex', pane.split ? 'items-start' : 'flex-col gap-4')}>
-        <div className={cn('min-w-0 flex-1', pane.split && 'pr-5')}>
-          {initial === null ? (
+        <div
+          className={cn('min-w-0 flex-1', pane.split && 'pr-5')}
+          aria-busy={swapping || undefined}
+        >
+          {initial === null || swapping ? (
             <div className="max-w-2xl space-y-3">
               <Skeleton className="h-8 w-1/3" />
               <Skeleton className="h-24" />
