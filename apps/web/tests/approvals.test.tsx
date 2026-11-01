@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
+import { usePendingApprovalsCount } from '~/cms/lib/approvals';
 import { ClientProvider } from '~/cms/lib/client-context';
 import { ToastProvider } from '~/cms/lib/toast';
 import { Approvals } from '~/cms/routes/Approvals';
@@ -108,7 +109,7 @@ const entries = [
   },
 ];
 
-function setup(opts: { hangLookupAfterApprove?: boolean } = {}) {
+function setup(opts: { hangLookupAfterApprove?: boolean; beside?: React.ReactNode } = {}) {
   let approved = false;
   const calls: { method: string; url: string; body?: unknown }[] = [];
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -117,6 +118,8 @@ function setup(opts: { hangLookupAfterApprove?: boolean } = {}) {
     calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
     if (url === '/spaces') return json({ items: [{ id: 'space-1', name: 'Space 1' }] });
+    if (url === `${BASE}/approvals/count`)
+      return json({ workflowTasks: 1, agentReviews: 2, total: 3 });
     if (url.startsWith(`${BASE}/workflow-tasks?`)) return json({ items: [task] });
     if (url.startsWith(`${BASE}/agent-reviews?`))
       return json({ items: approved ? [orphan] : [review, orphan] });
@@ -147,6 +150,7 @@ function setup(opts: { hangLookupAfterApprove?: boolean } = {}) {
             fetchImpl={fetchImpl}
           >
             <Approvals />
+            {opts.beside}
           </ClientProvider>
         </QueryClientProvider>
       </ToastProvider>
@@ -157,7 +161,22 @@ function setup(opts: { hangLookupAfterApprove?: boolean } = {}) {
 
 const proposalFor = (name: string) => screen.findByRole('listitem', { name });
 
+/** The shell's badge, mounted beside the inbox as the shell mounts it. */
+function Badge() {
+  const n = usePendingApprovalsCount();
+  return <p data-testid="badge">{n ?? ''}</p>;
+}
+
 describe('Approvals', () => {
+  it('asks the shell’s count again whenever its lists load, so the badge agrees with it', async () => {
+    const calls = setup({ beside: <Badge /> });
+    await screen.findByRole('listitem', { name: 'Legal sign-off' });
+    const counts = () => calls.filter((c) => c.url === `${BASE}/approvals/count`).length;
+    // Once for the badge itself, once more after the lists arrived.
+    await waitFor(() => expect(counts()).toBeGreaterThanOrEqual(2));
+    expect(screen.getByTestId('badge').textContent).toBe('3');
+  });
+
   it('names every entry by its title, from one batched lookup', async () => {
     const calls = setup();
     const step = await screen.findByRole('listitem', { name: 'Legal sign-off' });

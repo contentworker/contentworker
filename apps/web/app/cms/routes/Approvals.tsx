@@ -3,7 +3,7 @@ import { Button } from '@contentworker/ui/button';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { Textarea } from '@contentworker/ui/textarea';
 import { Bot, Check, Stamp, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { type EntryRef, entryPath } from '~/cms/components/dashboard/entry-titles';
@@ -11,7 +11,11 @@ import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
 import { type FieldChange, FieldChanges } from '~/cms/components/EntryDiff';
 import { EmptyState, PageHeader, Section } from '~/cms/components/page';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
-import { usePendingAgentReviews, usePendingWorkflowTasks } from '../lib/approvals';
+import {
+  APPROVALS_COUNT_KEY,
+  usePendingAgentReviews,
+  usePendingWorkflowTasks,
+} from '../lib/approvals';
 import { useClient, useLocalRun } from '../lib/client-context';
 import { humanize, plural, toMs, until } from '../lib/format';
 import type { PreviewEntry } from '../lib/management';
@@ -29,6 +33,12 @@ import { useToast } from '../lib/toast';
 export function Approvals() {
   const tasks = usePendingWorkflowTasks();
   const reviews = usePendingAgentReviews();
+  // The shell's count is its own query: whenever these lists refresh, it does too, so the
+  // badge never disagrees with the inbox it opens.
+  const invalidateCount = useInvalidate();
+  useEffect(() => {
+    if (tasks.dataUpdatedAt || reviews.dataUpdatedAt) void invalidateCount(APPROVALS_COUNT_KEY);
+  }, [tasks.dataUpdatedAt, reviews.dataUpdatedAt, invalidateCount]);
   const types = useContentTypesQuery().data;
   const taskItems = useMemo(
     () =>
@@ -180,7 +190,7 @@ function TaskRow({
         ...(note.trim() ? { note: note.trim() } : {}),
       });
       toast.success(`${decision === 'approved' ? 'Approved' : 'Rejected'} “${task.title}”`);
-      await invalidate(['workflow-tasks'], ['workflow-runs']);
+      await invalidate(['workflow-tasks'], ['workflow-runs'], APPROVALS_COUNT_KEY);
     });
 
   return (
@@ -324,7 +334,7 @@ function ReviewRow({
           ? `Applied the proposal to ${name ? `“${name}”` : 'the entry'} as a new draft`
           : 'Rejected the proposal',
       );
-      await invalidate(['agent-reviews'], ['entry'], ['entries']);
+      await invalidate(['agent-reviews'], ['entry'], ['entries'], APPROVALS_COUNT_KEY);
     });
 
   return (

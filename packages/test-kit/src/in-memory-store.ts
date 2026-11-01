@@ -82,6 +82,7 @@ import type {
   OAuthGrantRecord,
   OAuthGrantRepo,
   OutboxRepo,
+  PendingCount,
   PluginRepo,
   PreviewTokenRecord,
   PreviewTokenRepo,
@@ -111,6 +112,13 @@ import type {
 import { DEFAULT_ASSET_SORT, TransactionConflictError } from '@contentworker/ports';
 
 const scopeKey = (s: Scope) => `${s.spaceId}::${s.environmentId}`;
+
+/** Tallies content types into the `countPending` shape (one row per type). */
+function countByType(types: readonly (string | null)[]): PendingCount[] {
+  const counts = new Map<string | null, number>();
+  for (const type of types) counts.set(type, (counts.get(type) ?? 0) + 1);
+  return [...counts].map(([contentTypeApiId, count]) => ({ contentTypeApiId, count }));
+}
 
 /**
  * A deep copy for workflow rows/versions, so a caller mutating what it read (or wrote) can never
@@ -342,6 +350,13 @@ export class InMemoryContentStore implements ContentStore {
         const current = versions.find((v) => v.version === entry.currentVersion);
         return [{ entry, fields: current?.fields ?? {} }];
       }),
+    contentTypesOf: async (scope, ids) =>
+      new Map(
+        ids.flatMap((id) => {
+          const entry = this.entryData.get(`${scopeKey(scope)}::${id}`);
+          return entry ? [[id, entry.contentTypeApiId] as const] : [];
+        }),
+      ),
     list: async (scope, query: EntryQuery) => {
       const prefix = `${scopeKey(scope)}::`;
       let entries = [...this.entryData.entries()]
@@ -1283,6 +1298,13 @@ export class InMemoryContentStore implements ContentStore {
         .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
         .slice(0, Math.min(query?.limit ?? 100, 1000));
     },
+    countPending: async (scope) => {
+      const prefix = `${scopeKey(scope)}::`;
+      const types = [...this.agentReviewData.entries()]
+        .filter(([k, r]) => k.startsWith(prefix) && r.status === 'pending')
+        .map(([, r]) => this.entryData.get(`${prefix}${r.entryId}`)?.contentTypeApiId ?? null);
+      return countByType(types);
+    },
     decide: async (scope, id, decision) => {
       const key = `${scopeKey(scope)}::${id}`;
       const review = this.agentReviewData.get(key);
@@ -1634,6 +1656,14 @@ export class InMemoryContentStore implements ContentStore {
     get: async (scope, id) => {
       const t = this.workflowTaskData.get(`${scopeKey(scope)}::${id}`);
       return t ? clone(t) : null;
+    },
+    countPending: async (scope) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return countByType(
+        [...this.workflowTaskData.entries()]
+          .filter(([k, t]) => k.startsWith(prefix) && t.status === 'pending')
+          .map(([, t]) => t.contentTypeApiId),
+      );
     },
     getByEvent: async (scope, runId, eventType) => {
       const prefix = `${scopeKey(scope)}::`;

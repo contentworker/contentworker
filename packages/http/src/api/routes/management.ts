@@ -2243,22 +2243,14 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     assertWritableFields(principal, entry.entry.contentTypeApiId, review.proposed);
   };
   app.get(`${BASE}/agent-reviews`, requireScope(SCOPES.previewRead), async (c) => {
-    const items = await listAgentReviews(ctx, scopeOf(c), {
-      status: reviewStatus(c.req.query('status')),
-      entryId: c.req.query('entryId'),
-    });
-    const principal = c.get('principal');
-    if (!principal.contentGrants) return c.json({ items });
-    // Role-bound principals: drop reviews of unreadable types, mask denied fields.
-    const visible = [];
-    for (const review of items) {
-      const entry = await getEntry(ctx, scopeOf(c), review.entryId).catch(() => null);
-      if (!entry) continue;
-      const type = entry.entry.contentTypeApiId;
-      if (!canAccessContentType(principal, 'read', type)) continue;
-      visible.push({ ...review, proposed: maskDeniedFields(principal, type, review.proposed) });
-    }
-    return c.json({ items: visible });
+    // Role-bound principals see only reviews of types they read, with denied fields masked.
+    const items = await listAgentReviews(
+      ctx,
+      scopeOf(c),
+      { status: reviewStatus(c.req.query('status')), entryId: c.req.query('entryId') },
+      c.get('principal'),
+    );
+    return c.json({ items });
   });
   app.post(`${BASE}/agent-reviews/:id/approve`, requireScope(SCOPES.contentWrite), async (c) => {
     await authorizeReviewDecision(c, c.req.param('id'));
