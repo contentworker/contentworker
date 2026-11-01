@@ -12,7 +12,8 @@
   "scripts": {
     "lint": "biome check .",
     "check-types": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:query-counts:update": "vitest run test/query-counts.test.ts --update"
   },
   "dependencies": {
     "@contentworker/domain": "workspace:*",
@@ -23,9 +24,11 @@
     "@cloudflare/vitest-plugin": "catalog:",
     "@cloudflare/workers-types": "catalog:",
     "@contentworker/application": "workspace:*",
+    "@contentworker/graphql-gen": "workspace:*",
     "@contentworker/seed": "workspace:*",
     "@contentworker/test-kit": "workspace:*",
     "@contentworker/typescript-config": "workspace:*",
+    "graphql": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "wrangler": "catalog:"

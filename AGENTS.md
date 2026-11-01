@@ -51,7 +51,9 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
 - **D1 limits are design inputs:** at most 100 bound parameters per statement (use `chunked` /
   `selectChunked` / a JSON parameter with `json_each`), one writer per database (no per-request
   writes on read paths: e.g. `lastUsedAt` is throttled), 10 GB per database (append-heavy data
-  goes to R2, derived indexes to Durable Objects).
+  goes to R2, derived indexes to Durable Objects). Statements per request are snapshotted in
+  `packages/db/test/query-counts.json`: Delivery read counts may only go down, and a PR that
+  raises one states why (`pnpm --filter @contentworker/db test:query-counts:update` rewrites it).
 - **Structured content, not serialized HTML.** Content is stored, validated, versioned and
   delivered as typed fields and `RichTextDocument` trees (`packages/domain/src/rich-text`), never
   as an HTML (or Markdown) string. HTML is converted at the edge on the way in
