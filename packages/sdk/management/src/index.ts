@@ -115,6 +115,8 @@ export interface Webhook {
   readonly url: string;
   readonly topics: readonly string[];
   readonly active: boolean;
+  /** The one environment whose events it receives; `null` for every environment in the space. */
+  readonly environmentId: string | null;
 }
 
 export interface CreateWebhookInput {
@@ -123,8 +125,14 @@ export interface CreateWebhookInput {
   readonly secret: string;
   readonly active?: boolean;
   readonly headers?: Readonly<Record<string, string>>;
+  /** `true`: every environment's events. Otherwise only the client's environment's. */
+  readonly allEnvironments?: boolean;
 }
 
+/**
+ * Omitted fields are kept. `allEnvironments: true` makes the hook space-wide, `false` scopes it to
+ * the client's environment; omitted, its scope is unchanged.
+ */
 export type UpdateWebhookInput = Partial<CreateWebhookInput>;
 
 export interface Release {

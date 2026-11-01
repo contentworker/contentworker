@@ -537,6 +537,8 @@ export interface WebhookSummary {
   readonly url: string;
   readonly topics: readonly WebhookTopic[];
   readonly active: boolean;
+  /** The one environment whose events it receives; `null` for every environment in the space. */
+  readonly environmentId: string | null;
 }
 
 /** A recorded webhook delivery attempt. */
@@ -1596,6 +1598,8 @@ export function createManagementClient(
       topics: readonly WebhookTopic[];
       secret: string;
       active?: boolean;
+      /** `true`: every environment's events. Omitted: the current environment's only. */
+      allEnvironments?: boolean;
     }): Promise<WebhookSummary> {
       return req('POST', `${mgmt}/webhooks`, input);
     },
@@ -1607,6 +1611,8 @@ export function createManagementClient(
         topics?: readonly WebhookTopic[];
         secret?: string;
         active?: boolean;
+        /** `true`: space-wide; `false`: scoped to the current environment; omitted: unchanged. */
+        allEnvironments?: boolean;
       },
     ): Promise<WebhookSummary> {
       return req('PUT', `${mgmt}/webhooks/${encodeURIComponent(id)}`, changes);

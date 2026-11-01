@@ -1633,6 +1633,16 @@ function makeStoredSecretRepo(x: Exec): StoredSecretRepo {
   };
 }
 
+/** The space's webhooks that `scope`'s environment covers: its own and the space-wide (NULL) ones. */
+const webhookVisibleIn = (scope: Scope) =>
+  and(
+    eq(schema.webhooks.spaceId, scope.spaceId),
+    or(
+      isNull(schema.webhooks.environmentId),
+      eq(schema.webhooks.environmentId, scope.environmentId),
+    ),
+  );
+
 function makeWebhookRepo(x: Exec): WebhookRepo {
   const db = x.db;
   return {
@@ -1646,6 +1656,7 @@ function makeWebhookRepo(x: Exec): WebhookRepo {
           secret: webhook.secret,
           active: webhook.active,
           headers: webhook.headers ?? null,
+          environmentId: webhook.environmentId,
         }),
       );
     },
@@ -1653,21 +1664,15 @@ function makeWebhookRepo(x: Exec): WebhookRepo {
       const [row] = await db
         .select()
         .from(schema.webhooks)
-        .where(and(eq(schema.webhooks.spaceId, scope.spaceId), eq(schema.webhooks.id, id)));
+        .where(and(webhookVisibleIn(scope), eq(schema.webhooks.id, id)));
       return row ? toWebhook(row) : null;
     },
     async list(scope) {
-      const rows = await db
-        .select()
-        .from(schema.webhooks)
-        .where(eq(schema.webhooks.spaceId, scope.spaceId));
+      const rows = await db.select().from(schema.webhooks).where(webhookVisibleIn(scope));
       return rows.map(toWebhook);
     },
     async listByTopic(scope, type) {
-      const rows = await db
-        .select()
-        .from(schema.webhooks)
-        .where(eq(schema.webhooks.spaceId, scope.spaceId));
+      const rows = await db.select().from(schema.webhooks).where(webhookVisibleIn(scope));
       return rows.map(toWebhook).filter((w) => matchesTopic(w, type));
     },
     async update(scope, webhook) {
@@ -1680,17 +1685,14 @@ function makeWebhookRepo(x: Exec): WebhookRepo {
             secret: webhook.secret,
             active: webhook.active,
             headers: webhook.headers ?? null,
+            environmentId: webhook.environmentId,
           })
-          .where(
-            and(eq(schema.webhooks.spaceId, scope.spaceId), eq(schema.webhooks.id, webhook.id)),
-          ),
+          .where(and(webhookVisibleIn(scope), eq(schema.webhooks.id, webhook.id))),
       );
     },
     async delete(scope, id) {
       await x.write(
-        db
-          .delete(schema.webhooks)
-          .where(and(eq(schema.webhooks.spaceId, scope.spaceId), eq(schema.webhooks.id, id))),
+        db.delete(schema.webhooks).where(and(webhookVisibleIn(scope), eq(schema.webhooks.id, id))),
       );
     },
     async recordDelivery(scope, delivery) {
@@ -2739,6 +2741,9 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.bulkJobs,
   schema.bulkJobChunks,
   schema.versionArchiveQueue,
+  // Only the hooks scoped to it: a space-wide hook (NULL) never matches the environment filter.
+  // Their delivery records are left to the retention sweep, as when a hook is deleted.
+  schema.webhooks,
 ] as const;
 
 type ReleaseRow = typeof schema.releases.$inferSelect;
@@ -4395,6 +4400,7 @@ const toWebhook = (r: WebhookRow): Webhook => ({
   secret: r.secret,
   active: r.active,
   headers: r.headers ?? undefined,
+  environmentId: r.environmentId,
 });
 
 type PubAssetRow = typeof schema.assetPublished.$inferSelect;

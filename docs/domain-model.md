@@ -95,7 +95,7 @@ A `RichText` value is a document tree (`packages/domain/src/rich-text/rich-text.
 `marks`; reference nodes carry a `data.target` link so the reference graph can be extracted from
 rich text exactly as from `Link` fields (`extractRichTextTargets`). `richTextToPlainText`
 flattens a document for search/embedding; a table reads as one block, a line per row with its
-cells separated by ` | `.
+cells separated by `|`.
 
 The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`):
 
@@ -373,11 +373,14 @@ interface Webhook {
   secret: string; // HMAC signing secret
   active: boolean;
   headers?: Record<string, string>; // extra headers per delivery
+  environmentId: string | null; // the one environment it hears; null = every environment
 }
 ```
 
 `matchesTopic(webhook, type)` is true when the webhook is active and its topics include `*` or the
-exact event type. Delivery attempts are recorded as `WebhookDelivery` rows for observability.
+exact event type. `coversEnvironment(webhook, environmentId)` is true when the webhook is
+space-wide (`environmentId: null`) or scoped to that environment; dispatch and every webhook read
+under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows for observability.
 
 ## Domain events
 

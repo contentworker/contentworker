@@ -34,6 +34,7 @@ export * from './image';
 export * from './import';
 export * from './import-jobs';
 export * from './media-ai';
+export * from './moderation';
 export * from './oauth';
 export * from './plugin-hooks';
 export * from './plugin-packages';
