@@ -432,16 +432,22 @@ export const appExtensions = sqliteTable(
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
 );
 
-export const webhooks = sqliteTable('webhooks', {
-  id: text('id').primaryKey(),
-  spaceId: text('space_id').notNull(),
-  url: text('url').notNull(),
-  topics: text('topics', { mode: 'json' }).$type<string[]>().notNull(),
-  secret: text('secret').notNull(),
-  active: integer('active', { mode: 'boolean' }).notNull().default(true),
-  headers: text('headers', { mode: 'json' }).$type<Record<string, string>>(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
-});
+export const webhooks = sqliteTable(
+  'webhooks',
+  {
+    id: text('id').primaryKey(),
+    spaceId: text('space_id').notNull(),
+    url: text('url').notNull(),
+    topics: text('topics', { mode: 'json' }).$type<string[]>().notNull(),
+    secret: text('secret').notNull(),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    headers: text('headers', { mode: 'json' }).$type<Record<string, string>>(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** The one environment whose events it receives; NULL for every environment (0005). */
+    environmentId: text('environment_id'),
+  },
+  (t) => [index('webhooks_by_environment').on(t.spaceId, t.environmentId)],
+);
 
 export const webhookDeliveries = sqliteTable(
   'webhook_deliveries',

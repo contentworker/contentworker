@@ -137,8 +137,13 @@ export const webhook = z.object({
   url: z.url(),
   topics: z.array(z.string()).describe('Event types, e.g. entry.published'),
   active: z.boolean(),
-  headers: z.record(z.string(), z.string()).optional(),
+  environmentId: z
+    .string()
+    .nullable()
+    .describe('The one environment whose events it receives; null for every environment'),
 });
+
+export const webhookList = z.object({ items: z.array(webhook) });
 
 export const spaceRef = z.object({ id: z.string(), name: z.string() });
 

@@ -364,6 +364,7 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
       // Node-configured targets carry no shared secret; the signature header is not a credential.
       secret: '',
       active: true,
+      environmentId: i.scope.environmentId,
     };
     const res = await i.deps.webhooks.send(hook, event);
     if (!res.delivered) {
