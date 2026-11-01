@@ -1,5 +1,6 @@
 import { createRequestHandler } from 'react-router';
 import { awaitingSetup, principal, sessionId, setupDue } from '../app/lib/auth.server';
+import { answersBeforeSetup } from '../app/lib/setup-gate';
 import { withSecurityHeaders } from '../app/lib/csp';
 import { api, delivery } from '../app/lib/env.server';
 import { forwardToApi, hasBearer, isApiPath } from '../app/lib/gateway.server';
@@ -68,11 +69,7 @@ async function route(request: Request, env: Env, _ctx: ExecutionContext): Promis
 
   // With no people yet, a deployed workspace is waiting for its first admin: only the setup page
   // (and its assets) answer. On localhost the same state is open, for local development.
-  if (
-    url.pathname !== '/setup' &&
-    !url.pathname.startsWith('/assets/') &&
-    (await awaitingSetup(url))
-  )
+  if (!answersBeforeSetup(url.pathname) && (await awaitingSetup(url)))
     return request.method === 'GET' && request.headers.get('accept')?.includes('text/html')
       ? Response.redirect(new URL('/setup', url).href, 302)
       : Response.json({ error: 'This deployment is not set up yet.' }, { status: 503 });
