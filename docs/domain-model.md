@@ -496,6 +496,7 @@ See [API reference](./api-reference.md) for HTTP shapes.
 | **AuditLogEntry**                             | Space-level change audit                                                                                                             |
 | **EnvironmentAlias**                          | Map a path alias to a concrete environment id                                                                                        |
 | **Plugin** (`InstalledPlugin`)                | A sandboxed write-path plugin: manifest, checksum, approved capabilities (see [Plugins](./plugins.md))                               |
+| **PluginSettings**                            | An operator's values for the settings a plugin's manifest declares; secret ones sealed at rest, never returned by a read API         |
 | **BulkJob**                                   | A durable bulk publish, unpublish or import: N items in claimable chunks, with a report                                              |
 | **AgentSchedule**                             | A recurring agent job: workflow, UTC cron, content-type filter, `autoApply`                                                          |
 | **AgentReview**                               | A pending agent proposal a human approves or rejects                                                                                 |

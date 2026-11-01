@@ -503,6 +503,10 @@ describe('deleting an environment', () => {
       fields: { title: { 'en-US': 'Also going' } },
     });
     await store.taxonomy.createTag(doomed, { id: `tag-${uid()}`, name: 'Doomed' });
+    // A plugin's kv:storage keys belong to the environment; the same plugin's keys elsewhere stay.
+    const kvOpts = { maxKeys: 10, at: clock.now() };
+    await store.pluginStorage.put(doomed, 'com.example.kv', 'cursor', '1', kvOpts);
+    await store.pluginStorage.put(scope, 'com.example.kv', 'cursor', '2', kvOpts);
     // Its own webhook goes with it; a space-wide one (NULL environment) stays.
     const hook = (id: string, environmentId: string | null) => ({
       id,
@@ -601,6 +605,7 @@ describe('deleting an environment', () => {
     expect(await store.contentTypes.list(scope)).not.toEqual([]);
     expect((await store.webhooks.list(scope)).map((w) => w.id)).toContain(wideHook);
     expect((await store.webhooks.list(scope)).map((w) => w.id)).not.toContain(doomedHook);
+    expect(await store.pluginStorage.get(scope, 'com.example.kv', 'cursor')).toBe('2');
   });
 });
 

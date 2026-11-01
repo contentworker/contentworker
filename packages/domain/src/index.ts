@@ -17,6 +17,7 @@ export * from './errors';
 export * from './events';
 export * from './locale';
 export * from './plugin/plugin';
+export * from './plugin/settings';
 export * from './promotion';
 export * from './query/query';
 export * from './reference/references';

@@ -27,6 +27,7 @@ import type {
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
+  PluginSettings,
   Promotion,
   PromotionStatus,
   PublishGate,
@@ -123,6 +124,8 @@ export interface ContentStore {
   readonly appExtensions: AppExtensionRepo;
   readonly previewTokens: PreviewTokenRepo;
   readonly plugins: PluginRepo;
+  readonly pluginSettings: PluginSettingsRepo;
+  readonly pluginStorage: PluginStorageRepo;
   readonly oauthClients: OAuthClientRepo;
   readonly oauthGrants: OAuthGrantRepo;
   readonly bulkJobs: BulkJobRepo;
@@ -689,6 +692,57 @@ export interface PluginRepo {
   list(spaceId: string): Promise<InstalledPlugin[]>;
   save(plugin: InstalledPlugin): Promise<void>;
   delete(spaceId: string, id: string): Promise<void>;
+}
+
+/**
+ * An installed plugin's settings, one record per plugin per space. Secret
+ * values arrive and leave in plaintext here; the store seam (`withSealedSecrets`)
+ * seals each one at rest, so an adapter only ever persists opaque strings.
+ */
+export interface PluginSettingsRepo {
+  get(spaceId: string, pluginId: string): Promise<PluginSettings | null>;
+  /**
+   * Compare-and-set on `version`: writes only when the stored record is still at
+   * `expectedVersion` (0: none exists yet). Returns whether it wrote; a lost race
+   * leaves the stored record untouched.
+   */
+  save(settings: PluginSettings, expectedVersion: number): Promise<boolean>;
+  delete(spaceId: string, pluginId: string): Promise<void>;
+}
+
+/**
+ * The `kv:storage` capability's backing store: a key/value space per plugin per
+ * environment. Values are opaque strings (the application stores JSON).
+ *
+ * Every method takes the plugin id from the host, never from the plugin, and
+ * every implementation MUST filter on (scope, pluginId) in each statement: that
+ * is the whole of the isolation between plugins.
+ */
+export interface PluginStorageRepo {
+  get(scope: Scope, pluginId: string, key: string): Promise<string | null>;
+  /**
+   * Writes `value` under `key`. A new key is refused (returns false, writes
+   * nothing) when the plugin already holds `maxKeys` keys in the scope;
+   * overwriting an existing key always succeeds. The check and the write are
+   * one statement, so concurrent puts cannot overshoot the cap.
+   */
+  put(
+    scope: Scope,
+    pluginId: string,
+    key: string,
+    value: string,
+    opts: { readonly maxKeys: number; readonly at: Date },
+  ): Promise<boolean>;
+  /** Returns whether a key was removed. */
+  delete(scope: Scope, pluginId: string, key: string): Promise<boolean>;
+  /** Keys in byte order, starting with `prefix`, strictly after `after`. */
+  list(
+    scope: Scope,
+    pluginId: string,
+    opts: { readonly prefix?: string; readonly after?: string; readonly limit: number },
+  ): Promise<string[]>;
+  /** Removes the plugin's keys in every environment of the space (an uninstall). */
+  deleteAll(spaceId: string, pluginId: string): Promise<void>;
 }
 
 /** Registered OAuth clients (RFC 7591 dynamic registration). Not space-scoped. */
@@ -1388,11 +1442,14 @@ export interface WebhookRepo {
  * each header VALUE is sealed on its own (the names stay readable), so its
  * refs carry the header name as `key`.
  */
-export type StoredSecretColumn = 'webhooks.secret' | 'webhooks.headers';
+export type StoredSecretColumn = 'webhooks.secret' | 'webhooks.headers' | 'plugin_settings.secrets';
 
 export interface StoredSecretRef {
   readonly column: StoredSecretColumn;
-  /** The owning row's id. */
+  /**
+   * The owning row's id. For `plugin_settings.secrets`, whose rows are keyed by
+   * space and plugin, `<spaceId>/<pluginId>` (neither id can hold a `/`).
+   */
   readonly id: string;
   /** The entry within a map-valued column (a header name); absent otherwise. */
   readonly key?: string;

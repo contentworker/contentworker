@@ -45,7 +45,7 @@ an ordinary API key — so an agent can still never exceed the scopes the approv
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 ## Tools
 
-The server exposes **155 tools**, one per major Management/Delivery capability (the canonical list
+The server exposes **158 tools**, one per major Management/Delivery capability (the canonical list
 is the `registerTool` calls in `packages/http/src/mcp/server.ts`). Each calls `authorize` before
 delegating to the same use-case as the HTTP route.
 
@@ -69,7 +69,7 @@ delegating to the same use-case as the HTTP route.
 | Environments  | `environments_compare`, `environments_merge`, `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environment_export`, `environment_import`, `environment_clone`, `environment_delete`                                                                                                                                                                             |
 | Promotions    | `promotion_request`, `promotion_list`, `promotion_get`, `promotion_approve`, `promotion_reject` |
 | Import        | `import_sources`, `import_analyze` (writes nothing), `import_execute`                                                                                                                                                                                                                                                                                                                            |
-| Plugins       | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities` (can confirm or narrow a grant, never widen it)                                                                                                                                                                                                                                                                              |
+| Plugins       | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities` (can confirm or narrow a grant, never widen it), `plugin_get_settings`, `plugin_set_settings` (secret settings reported as set, never returned)                                                                                                                                                                              |
 | Connections   | `oauth_connections_list`, `oauth_connection_revoke`                                                                                                                                                                                                                                                                                                                                              |
 | Webhooks      | `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`, `webhook_deliveries` (`space:admin`; never return the signing secret)                                                                                                                                                                                                                                                     |
 | Platform      | `functions_list`, `function_create`, `function_delete`, `app_extensions_list`, `app_extension_create`, `app_extension_delete`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `schedule_action`, `agent_schedule_create`, `agent_schedule_list`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject`, `audit_log_list` |

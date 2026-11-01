@@ -80,6 +80,7 @@ import {
   getEntryMetadata,
   getEntryWorkflowState,
   getPlugin,
+  getPluginSettings,
   getPromotion,
   getRelease,
   getReverseReferences,
@@ -158,6 +159,7 @@ import {
   setEntryMetadata,
   setEnvironmentAlias,
   setPluginEnabled,
+  setPluginSettings,
   startAssetReindex,
   startBulkJob,
   startEnvironmentClone,
@@ -264,6 +266,7 @@ import {
   parseBody,
   pluginCapabilitiesBody,
   pluginEnabledBody,
+  pluginSettingsBody,
   previewLinkBody,
   promotionBody,
   reindexBody,
@@ -1130,6 +1133,37 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ),
     );
   });
+  app.get(
+    '/spaces/:space/plugins/:id/settings',
+    doc('Apps', 'Read a plugin’s settings', {
+      description:
+        'The fields the manifest declares, the non-secret values (defaults applied) and ' +
+        '`secretsSet`, the secret fields that hold a value. A secret’s value is never returned.',
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) => c.json(await getPluginSettings(ctx, c.req.param('space'), c.req.param('id'))),
+  );
+  app.patch(
+    '/spaces/:space/plugins/:id/settings',
+    doc('Apps', 'Change a plugin’s settings', {
+      body: pluginSettingsBody,
+      description:
+        'Sets each key in `values` (null clears it); keys left out keep their value, so a ' +
+        'secret need not be retyped. Checked against the manifest’s fields; secret values are ' +
+        'sealed at rest and never echoed. Pass the `version` you read as `expectedVersion` and ' +
+        'a concurrent change is refused (409) instead of overwritten.',
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) => {
+      const body = await parseBody(c, pluginSettingsBody);
+      return c.json(
+        await setPluginSettings(ctx, c.get('principal'), c.req.param('space'), c.req.param('id'), {
+          values: body.values,
+          ...(body.expectedVersion !== undefined ? { expectedVersion: body.expectedVersion } : {}),
+        }),
+      );
+    },
+  );
   app.delete('/spaces/:space/plugins/:id', requireScope(SCOPES.spaceAdmin), async (c) => {
     await uninstallPlugin(ctx, blob, c.req.param('space'), c.req.param('id'));
     return c.body(null, 204);

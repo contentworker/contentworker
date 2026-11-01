@@ -11,6 +11,7 @@ import type {
   FieldDefinition,
   LocalizedValue,
   PluginManifest,
+  PluginSettingValue,
   PromotedContentType,
   PromotedEntry,
   PromotionResult,
@@ -1042,6 +1043,45 @@ export const plugins = sqliteTable(
     installedAt: integer('installed_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.id] })],
+);
+
+// A plugin's `kv:storage`: one row per key, per plugin, per environment. Every statement filters
+// on the scope and the plugin id, which is the whole of the isolation between plugins; the
+// application caps value size and key count.
+export const pluginKv = sqliteTable(
+  'plugin_kv',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    pluginId: text('plugin_id').notNull(),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.pluginId, t.key] })],
+);
+
+// An installed plugin's settings, per space. `secrets` maps each secret field to its value sealed
+// under DATA_KEY (the `plugin_settings.secrets` column of the reseal sweep); `version` is the
+// compare-and-set token for concurrent edits.
+export const pluginSettings = sqliteTable(
+  'plugin_settings',
+  {
+    spaceId: text('space_id').notNull(),
+    pluginId: text('plugin_id').notNull(),
+    config: text('config', { mode: 'json' })
+      .$type<Record<string, PluginSettingValue>>()
+      .notNull()
+      .default(sql`'{}'`),
+    secrets: text('secrets', { mode: 'json' })
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'`),
+    version: integer('version').notNull().default(1),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedBy: text('updated_by'),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.pluginId] })],
 );
 
 export const oauthClients = sqliteTable(
