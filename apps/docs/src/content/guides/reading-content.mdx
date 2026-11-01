@@ -24,6 +24,10 @@ curl -s "$CDN/delivery/$SPACE/main/entries/$ENTRY_ID?locale=en-US&include=1" \
 A delivered entry is `{ id, contentType, fields, publishedAt }`. Lists return
 `{ items, total }`.
 
+`include` embeds links wherever an entry holds them: in `Link` and list fields, inside components,
+and inside rich text, where an embed or entry link's `data.target` becomes the linked entry or
+asset. A link to something unpublished, or beyond the depth, stays `{ "id": …, "linkType": … }`.
+
 | Parameter      | Example                         | Meaning                                                    |
 | -------------- | ------------------------------- | ---------------------------------------------------------- |
 | `content_type` | `content_type=article`          | Only entries of this type                                  |

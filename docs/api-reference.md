@@ -633,7 +633,10 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 `lexical`.
 
 A delivered entry is `{ id, contentType, fields, publishedAt }`; with `?locale=` fields flatten to
-that locale; with `?include=N` linked entries embed up to depth N (cycle-guarded).
+that locale; with `?include=N` linked entries embed up to depth N (cycle-guarded). Links are
+resolved wherever they sit: `Link` and array fields, `Component` values, and rich-text reference
+nodes, whose `data.target` is replaced by the embedded entry or asset. An unpublished, missing or
+cyclic target stays a `{ id, linkType }` stub.
 
 ### GraphQL Delivery
 

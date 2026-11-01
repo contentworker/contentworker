@@ -4,6 +4,7 @@ import {
   canAccessContentType,
   deniedFieldsFor,
   fallbackChain,
+  MAX_RICH_TEXT_DEPTH,
   maskDeniedFields,
   NotFoundError,
   type Principal,
@@ -59,24 +60,43 @@ function isAssetLink(value: unknown): value is { id: string; linkType: 'Asset' }
   return typeof l?.id === 'string' && l.linkType === 'Asset';
 }
 
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * How far the link walk descends into one field value. Links sit in arrays, in
+ * Component values (at most three deep) and in rich text, where a reference
+ * node's link is `data.target` and every node level costs two steps (the node,
+ * its `content` array). Validation caps rich-text nesting, so this only stops
+ * a pathological stored JSON value from overflowing the stack.
+ */
+const MAX_VALUE_DEPTH = 2 * MAX_RICH_TEXT_DEPTH + 16;
+
 /** Everything the (pure) render pass may need, fetched up front in batches. */
 interface Prefetched {
   readonly entries: Map<string, PublishedEntry>;
   readonly assets: Map<string, PublishedAsset>;
 }
 
-/** Collects every entry/asset link id in a snapshot's fields (all locales). */
+/**
+ * Collects every entry/asset link id in a snapshot's fields (all locales):
+ * direct links, links in arrays, in Component values and in rich-text
+ * reference nodes (`data.target`). Detection is structural, like `render`'s,
+ * so the prefetch covers exactly what the render can embed.
+ */
 function collectLinkIds(snapshot: PublishedEntry, entryIds: Set<string>, assetIds: Set<string>) {
-  const scan = (value: unknown): void => {
+  const scan = (value: unknown, level: number): void => {
+    if (level > MAX_VALUE_DEPTH) return;
     if (Array.isArray(value)) {
-      for (const v of value) scan(v);
+      for (const v of value) scan(v, level + 1);
       return;
     }
     if (isEntryLink(value)) entryIds.add(value.id);
     else if (isAssetLink(value)) assetIds.add(value.id);
+    else if (isPlainObject(value)) for (const v of Object.values(value)) scan(v, level + 1);
   };
   for (const localized of Object.values(snapshot.fields)) {
-    for (const v of Object.values(localized)) scan(v);
+    for (const v of Object.values(localized)) scan(v, 0);
   }
 }
 
@@ -123,6 +143,11 @@ async function prefetchLinked(
  * the {@link Prefetched} maps (pure — no I/O). A `seen` set guards against
  * reference cycles — a revisited link is left as a `{ id, linkType }` stub
  * rather than recursing forever.
+ *
+ * A link is resolved wherever it sits: a field, an array element, a Component
+ * value, or a rich-text reference node, whose `data.target` becomes the
+ * embedded entry or asset in the same shape a Link field gets. The node keeps
+ * its `nodeType`, so a renderer still knows a block embed from an inline link.
  */
 function render(
   scope: Scope,
@@ -136,9 +161,11 @@ function render(
 ): DeliveredEntry {
   collected.add(snapshot.entryId);
   const localeCfg = toLocaleConfig(config);
-  const resolveValue = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(resolveValue);
-    if (depth > 0 && isEntryLink(value) && !seen.has(value.id)) {
+  const resolveValue = (value: unknown, level: number): unknown => {
+    if (level > MAX_VALUE_DEPTH) return value;
+    if (Array.isArray(value)) return value.map((v) => resolveValue(v, level + 1));
+    if (isEntryLink(value)) {
+      if (seen.has(value.id)) return value; // a cycle — leave the stub
       const target = fetched.entries.get(value.id);
       if (!target) return value; // dangling/unpublished link — leave the stub
       return render(
@@ -152,7 +179,7 @@ function render(
         fetched,
       );
     }
-    if (depth > 0 && isAssetLink(value)) {
+    if (isAssetLink(value)) {
       const asset = fetched.assets.get(value.id);
       if (!asset) return value; // unpublished asset — leave the stub
       return {
@@ -162,17 +189,24 @@ function render(
         description: asset.description,
       };
     }
+    if (isPlainObject(value)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [k, resolveValue(v, level + 1)]),
+      );
+    }
     return value;
   };
+  // At include 0 nothing embeds, so values pass through without being copied.
+  const resolve = (value: unknown): unknown => (depth > 0 ? resolveValue(value, 0) : value);
 
   const fields: Record<string, unknown> = {};
   for (const [apiId, localized] of Object.entries(snapshot.fields)) {
     if (opts.locale) {
       const resolved = resolveLocalizedValue(localized, localeCfg, opts.locale);
-      if (resolved !== undefined) fields[apiId] = resolveValue(resolved);
+      if (resolved !== undefined) fields[apiId] = resolve(resolved);
     } else {
       const perLocale: Record<string, unknown> = {};
-      for (const [loc, v] of Object.entries(localized)) perLocale[loc] = resolveValue(v);
+      for (const [loc, v] of Object.entries(localized)) perLocale[loc] = resolve(v);
       fields[apiId] = perLocale;
     }
   }
@@ -391,9 +425,6 @@ function isEmbeddedEntry(value: unknown): value is DeliveredEntry {
   );
 }
 
-const isPlainObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
-
 /**
  * Shape test for an asset `render` embedded in place of an asset link
  * (`{ id, file, title?, description? }` — no contentType/publishedAt).
@@ -411,11 +442,11 @@ function isEmbeddedAsset(value: unknown): value is { id: string } {
 /**
  * Field-level RBAC over a RENDERED entry, embedded links included: masks the
  * root's denied fields, then walks every place `render` can put an embedded
- * entry (field values, array elements, per-locale maps) and masks each embed
- * by ITS content type — or reverts it to the unresolved `{ id, linkType }`
- * stub when the principal holds no read grant on that type. Must run
- * post-cache: the delivery cache is shared across principals, so a masked
- * render may never be written back.
+ * entry (field values, array elements, per-locale maps, Component values and
+ * rich-text `data.target`s) and masks each embed by ITS content type — or
+ * reverts it to the unresolved `{ id, linkType }` stub when the principal
+ * holds no read grant on that type. Must run post-cache: the delivery cache is
+ * shared across principals, so a masked render may never be written back.
  *
  * Detection is structural, so a user-authored JSON value shaped exactly like
  * an embedded entry is treated as one — masked or stubbed, never leaked
@@ -428,11 +459,12 @@ export function maskDeliveredFields(
   fields: Record<string, unknown>,
 ): Record<string, unknown> {
   if (!principal.contentGrants) return fields;
-  // atLocaleMapLevel: embeds sit one plain-object level down when fields are
-  // NOT locale-flattened ({ 'en-US': <embed> }); user JSON deeper than that
-  // can never contain a render-produced embed, so the walk stops there.
-  const walk = (value: unknown, atLocaleMapLevel: boolean): unknown => {
-    if (Array.isArray(value)) return value.map((v) => walk(v, atLocaleMapLevel));
+  // Render embeds inside arrays and any plain object, so the walk descends as
+  // far — one level past render's cap, because this walk also counts the
+  // per-locale map that render's walk starts beneath.
+  const walk = (value: unknown, level: number): unknown => {
+    if (level > MAX_VALUE_DEPTH + 1) return value;
+    if (Array.isArray(value)) return value.map((v) => walk(v, level + 1));
     if (isEmbeddedEntry(value)) {
       if (!canAccessContentType(principal, 'read', value.contentType)) {
         return { id: value.id, linkType: 'Entry' };
@@ -448,13 +480,13 @@ export function maskDeliveredFields(
     if (isEmbeddedAsset(value)) {
       return { id: value.id, linkType: 'Asset' };
     }
-    if (atLocaleMapLevel && isPlainObject(value)) {
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, false)]));
+    if (isPlainObject(value)) {
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, level + 1)]));
     }
     return value;
   };
   const masked = maskDeniedFields(principal, contentType, fields);
-  return Object.fromEntries(Object.entries(masked).map(([k, v]) => [k, walk(v, true)]));
+  return Object.fromEntries(Object.entries(masked).map(([k, v]) => [k, walk(v, 0)]));
 }
 
 /**
