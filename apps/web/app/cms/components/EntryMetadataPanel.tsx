@@ -1,10 +1,12 @@
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
+import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { Link as LinkIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
+import { LoadingStatus } from '~/cms/components/loading';
 import { useClient, useLocalRun } from '../lib/client-context';
 import { useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -76,7 +78,17 @@ export function EntryMetadataPanel(props: { entryId: string }) {
   return (
     <CollapsibleCard title="Tags & concepts" contentClassName="space-y-4">
       {loading ? (
-        <p className="text-muted-foreground text-sm">Loading vocabulary…</p>
+        <div className="space-y-2">
+          <LoadingStatus>Loading tags and concepts…</LoadingStatus>
+          <p className="font-medium text-sm">
+            <SkeletonText width="2.5rem" />
+          </p>
+          <div className="flex flex-wrap gap-2" aria-hidden="true">
+            {['w-14', 'w-20', 'w-16', 'w-24', 'w-12'].map((w) => (
+              <SkeletonPill key={w} className={w} />
+            ))}
+          </div>
+        </div>
       ) : empty ? (
         <p className="text-muted-foreground text-sm">
           No vocabulary defined yet. Add tags and concepts under{' '}

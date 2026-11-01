@@ -1,4 +1,5 @@
 import { cn } from '@contentworker/ui/lib/utils';
+import { SkeletonText } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { NavLink, Outlet } from 'react-router';
@@ -30,6 +31,7 @@ export function ContentLayout() {
 
   const outlet: ContentOutlet = {
     types,
+    typesPending: typesQuery.isPending,
     locales: cfg?.locales ?? [conn.locale],
     defaultLocale: cfg?.defaultLocale ?? conn.locale,
     fallbacks: cfg?.fallbacks,
@@ -68,6 +70,13 @@ export function ContentLayout() {
                   </NavLink>
                 </li>
               ))}
+              {typesQuery.isPending
+                ? ['72%', '55%', '64%', '48%'].map((w) => (
+                    <li key={w} aria-hidden="true" className="px-2.5 py-1.5 text-sm touch:min-h-11">
+                      <SkeletonText width={w} />
+                    </li>
+                  ))
+                : null}
             </ul>
             {types.length === 0 && !typesQuery.isPending && (
               <p className="px-2.5 py-1 text-muted-foreground text-sm">No content types yet.</p>
