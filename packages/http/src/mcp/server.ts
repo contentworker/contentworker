@@ -96,7 +96,9 @@ import {
   refreshVideoAsset,
   relatedEntries,
   requestReindex,
+  resolveEnvironment,
   resolveTask,
+  resolveWritableEnvironment,
   restoreEntry,
   restoreVersion,
   revokeConnectedApp,
@@ -139,6 +141,7 @@ import {
   type EntryFields,
   FIELD_TYPES,
   ForbiddenError,
+  inScope,
   maskDeniedFields,
   NotConfiguredError,
   NotFoundError,
@@ -298,6 +301,30 @@ export function buildServer(
     { name: 'contentworker', version: '0.1.0' },
     { cacheHints: CACHE_HINTS },
   );
+  // Every tool's `environment` argument resolves the way an HTTP `:env` does: an alias names its
+  // target, and a name that is neither an alias nor an environment is refused (`NotFoundError`),
+  // so a typo'd or deleted environment never collects rows. Two tools take the name as given:
+  // deleting refuses an alias name itself, and a deleted environment's audit history stays readable.
+  const LITERAL_ENVIRONMENT = new Set(['environment_delete', 'audit_log_list']);
+  const registerTool = server.registerTool.bind(server) as typeof server.registerTool;
+  server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) =>
+    registerTool(
+      name,
+      config as never,
+      (async (args: unknown, ...rest: unknown[]) => {
+        const a = args as { space?: unknown; environment?: unknown } | undefined;
+        if (!LITERAL_ENVIRONMENT.has(name) && a && typeof a.environment === 'string') {
+          const spaceId = typeof a.space === 'string' ? a.space : DEFAULT_SPACE;
+          // Checked only for a caller who may act in the space, so nobody else learns which
+          // environments exist there: the tool's own guard refuses them first.
+          const resolve = inScope(principal, spaceId)
+            ? resolveWritableEnvironment
+            : resolveEnvironment;
+          args = { ...a, environment: await resolve(ctx, spaceId, a.environment) };
+        }
+        return handler(args, ...rest);
+      }) as never,
+    )) as typeof server.registerTool;
   const guard = (scope: PermissionScope, s: Scope) => authorize(principal, scope, s.spaceId);
   // Granular RBAC: content-level check for role-bound principals (unrestricted
   // principals short-circuit inside the domain helpers). Same enforcement as

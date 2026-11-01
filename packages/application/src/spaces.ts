@@ -9,7 +9,11 @@ import {
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
-import type { EnvironmentAlias, SpaceConfig } from '@contentworker/ports';
+import {
+  type EnvironmentAlias,
+  type SpaceConfig,
+  TransactionConflictError,
+} from '@contentworker/ports';
 import { auditActor } from './audit.js';
 import type { AppContext } from './context.js';
 import { ensureRolePresets } from './team.js';
@@ -174,7 +178,17 @@ export async function deleteEnvironment(
     status: 200,
     at: occurredAt,
   };
-  await ctx.store.spaces.deleteEnvironment(spaceId, environmentId, events, audit);
+  try {
+    await ctx.store.spaces.deleteEnvironment(spaceId, environmentId, events, audit);
+  } catch (err) {
+    // An alias was pointed at it after the check above: the deletion did not happen.
+    if (err instanceof TransactionConflictError) {
+      throw new ConflictError(
+        `An alias now points at "${environmentId}"; repoint or remove it, then delete again`,
+      );
+    }
+    throw err;
+  }
   return { environmentId, publishedEntries: ids.length };
 }
 
@@ -207,7 +221,15 @@ export async function setEnvironmentAlias(
     );
   }
   const at = ctx.clock.now().toISOString();
-  await ctx.store.spaces.setAlias(spaceId, alias, targetEnvironmentId, at);
+  try {
+    await ctx.store.spaces.setAlias(spaceId, alias, targetEnvironmentId, at);
+  } catch (err) {
+    // The target was deleted after the check above: nothing was aliased.
+    if (err instanceof TransactionConflictError) {
+      throw new NotFoundError('Environment', `${spaceId}/${targetEnvironmentId}`);
+    }
+    throw err;
+  }
   await announceAliasChange(ctx, spaceId, alias, targetEnvironmentId);
   return { alias, targetEnvironmentId, updatedAt: at };
 }
@@ -265,4 +287,20 @@ export async function resolveEnvironment(
 ): Promise<string> {
   const alias = await ctx.store.spaces.getAlias(spaceId, envOrAlias);
   return alias?.targetEnvironmentId ?? envOrAlias;
+}
+
+/**
+ * Like {@link resolveEnvironment}, but refuses a name that is neither an alias nor a registered
+ * environment (`NotFoundError`). Every write resolves through this, so a typo'd or deleted
+ * environment gets a 404 instead of rows no environment owns.
+ */
+export async function resolveWritableEnvironment(
+  ctx: AppContext,
+  spaceId: string,
+  envOrAlias: string,
+): Promise<string> {
+  const alias = await ctx.store.spaces.getAlias(spaceId, envOrAlias);
+  if (alias) return alias.targetEnvironmentId;
+  await requireEnvironment(ctx, spaceId, envOrAlias);
+  return envOrAlias;
 }

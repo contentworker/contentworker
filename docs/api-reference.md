@@ -68,6 +68,19 @@ Path segment `:env` in Management, Delivery, and Preview routes is resolved thro
 **environment aliases** (`environment_aliases` table) before use. This supports blue/green-style
 routing without changing client URLs.
 
+MCP tools resolve their `environment` argument the same way (except `environment_delete`, which
+takes the name as given, and `audit_log_list`, so a deleted environment's history stays readable).
+
+A write must name an alias or an environment that exists. Anything else is `404`, so a typo'd or
+deleted environment never collects rows that no environment owns. A read of an unknown environment
+is just empty. A caller who can't act in the space gets `403` before that check, so they can't tell
+which environments exist there. Snapshot import and clone also need their target environment to
+exist (create it first).
+
+Setting an alias and deleting its target can't race: each write re-checks inside its own batch.
+An alias set after a deletion's check aborts the deletion (`409`), and an alias whose target was
+deleted after its check is refused (`404`).
+
 ## System endpoints
 
 | Method | Path                    | Auth | Response                                             |

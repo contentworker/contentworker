@@ -287,6 +287,14 @@ export async function importSnapshot(
   }
   const config = await ctx.store.spaces.getConfig(target);
   if (!config) throw new NotFoundError('Space', target.spaceId);
+  // Only into an environment that exists: otherwise the rows would belong to no environment.
+  if (
+    !(await ctx.store.spaces.listEnvironments(target.spaceId)).some(
+      (e) => e.id === target.environmentId,
+    )
+  ) {
+    throw new NotFoundError('Environment', `${target.spaceId}/${target.environmentId}`);
+  }
 
   const existing = await ctx.store.contentTypes.list(target);
   if (existing.length > 0) {

@@ -2299,7 +2299,15 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
       return rows.map((r) => ({ id: r.id, name: r.name }));
     },
     async setAlias(spaceId, alias, targetEnvironmentId, at) {
-      await x.write(
+      const e = schema.environments;
+      await writeAll(x, [
+        // The target still exists when the alias lands: an environment deleted since the
+        // use-case checked aborts the batch (TransactionConflictError) instead of being aliased.
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT EXISTS (SELECT 1 FROM ${e} WHERE ${e.spaceId} = ${spaceId} AND ${e.id} = ${targetEnvironmentId}) AS ok`,
+          ),
         db
           .insert(schema.environmentAliases)
           .values({ spaceId, alias, targetEnvironmentId, updatedAt: new Date(at) })
@@ -2307,7 +2315,8 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
             target: [schema.environmentAliases.spaceId, schema.environmentAliases.alias],
             set: { targetEnvironmentId, updatedAt: new Date(at) },
           }),
-      );
+        db.delete(schema.guard),
+      ]);
     },
     async getAlias(spaceId, alias) {
       const [row] = await db
@@ -2355,7 +2364,16 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
       const scope = { spaceId, environmentId };
       // One atomic batch: every environment-scoped table, the registry row, and the events that
       // tell the engine to clean up what was derived from those rows.
+      const a = schema.environmentAliases;
       await writeAll(x, [
+        // No alias points at it when the batch runs: one set since the use-case checked aborts
+        // the whole deletion (TransactionConflictError) rather than leaving the alias dangling.
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT NOT EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${spaceId} AND ${a.targetEnvironmentId} = ${environmentId}) AS ok`,
+          ),
+        db.delete(schema.guard),
         ...ENVIRONMENT_SCOPED_TABLES.map((table) =>
           db.delete(table).where(scopeFilter(table, scope)),
         ),

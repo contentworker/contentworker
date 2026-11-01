@@ -26,6 +26,7 @@ import {
   dispatchEvent,
   publishContentType,
   publishEntry,
+  resolveWritableEnvironment,
   setEnvironmentAlias,
   visibleSearchHits,
 } from '../src/index.js';
@@ -226,5 +227,41 @@ describe("a deleted environment's files", () => {
       },
     );
     expect(blob.keys().sort()).toEqual(['s1/main/m1/z.png', 's1/staging/cloned/y.png']);
+  });
+});
+
+describe('the environment a write names', () => {
+  it('is an existing one, or an alias of one; anything else is not found', async () => {
+    await setEnvironmentAlias(ctx, 's1', 'live', 'staging');
+    expect(await resolveWritableEnvironment(ctx, 's1', 'staging')).toBe('staging');
+    expect(await resolveWritableEnvironment(ctx, 's1', 'live')).toBe('staging');
+    await expect(resolveWritableEnvironment(ctx, 's1', 'stagign')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+  });
+});
+
+describe('an alias racing a deletion', () => {
+  it('reports a conflict, and deletes nothing, when an alias lands after the check', async () => {
+    await setEnvironmentAlias(ctx, 's1', 'live', 'staging');
+    // The check reads no aliases, as if the alias were set just after it.
+    store.spaces.listAliases = async () => [];
+    await expect(
+      deleteEnvironment(ctx, 's1', 'staging', { confirm: 'staging', principal: admin }),
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect((await store.spaces.listEnvironments('s1')).map((e) => e.id)).toContain('staging');
+  });
+
+  it('reports the target not found when it is deleted after the check', async () => {
+    // The check sees an environment the write will not find.
+    const real = store.spaces.listEnvironments;
+    store.spaces.listEnvironments = async (spaceId) => [
+      ...(await real(spaceId)),
+      { id: 'gone', name: 'gone' },
+    ];
+    await expect(setEnvironmentAlias(ctx, 's1', 'live', 'gone')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    expect(await store.spaces.getAlias('s1', 'live')).toBeNull();
   });
 });

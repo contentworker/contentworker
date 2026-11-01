@@ -94,6 +94,7 @@ import type {
   WorkflowRunRepo,
   WorkflowTaskRepo,
 } from '@contentworker/ports';
+import { TransactionConflictError } from '@contentworker/ports';
 
 const scopeKey = (s: Scope) => `${s.spaceId}::${s.environmentId}`;
 
@@ -153,6 +154,10 @@ export class InMemoryContentStore implements ContentStore {
     },
     listEnvironments: async (spaceId) => this.environmentData.get(spaceId) ?? [],
     setAlias: async (spaceId, alias, targetEnvironmentId, at) => {
+      // As the D1 store's guard: the target must still exist when the alias lands.
+      if (!(this.environmentData.get(spaceId) ?? []).some((e) => e.id === targetEnvironmentId)) {
+        throw new TransactionConflictError();
+      }
       this.aliasData.set(`${spaceId}::${alias}`, { alias, targetEnvironmentId, updatedAt: at });
     },
     getAlias: async (spaceId, alias) => this.aliasData.get(`${spaceId}::${alias}`) ?? null,
@@ -164,6 +169,14 @@ export class InMemoryContentStore implements ContentStore {
       this.aliasData.delete(`${spaceId}::${alias}`);
     },
     deleteEnvironment: async (spaceId, environmentId, events, audit) => {
+      // As the D1 store's guard: no alias may point at it when the deletion runs.
+      if (
+        [...this.aliasData.entries()].some(
+          ([k, v]) => k.startsWith(`${spaceId}::`) && v.targetEnvironmentId === environmentId,
+        )
+      ) {
+        throw new TransactionConflictError();
+      }
       const scope = { spaceId, environmentId };
       const key = scopeKey(scope);
       // The environment-scoped collections, named (a sweep by key prefix would also catch
@@ -1651,9 +1664,20 @@ export class InMemoryContentStore implements ContentStore {
 
   // ---- test helpers -------------------------------------------------------
 
-  /** Seeds a space's locale configuration (name defaults to the space id). */
-  seedSpace(config: Omit<SpaceConfig, 'name'> & { name?: string }): void {
-    this.spaceConfigs.set(config.spaceId, { name: config.spaceId, ...config });
+  /**
+   * Seeds a space's locale configuration (name defaults to the space id) and registers its
+   * environments (`main` unless named), as `createSpace` does.
+   */
+  seedSpace(
+    config: Omit<SpaceConfig, 'name'> & { name?: string; environments?: readonly string[] },
+  ): void {
+    const { environments = ['main'], ...rest } = config;
+    this.spaceConfigs.set(config.spaceId, { name: config.spaceId, ...rest });
+    const list = this.environmentData.get(config.spaceId) ?? [];
+    for (const id of environments) {
+      if (!list.some((e) => e.id === id)) list.push({ id, name: id });
+    }
+    this.environmentData.set(config.spaceId, list);
   }
 
   /** Synchronously seeds an API key (avoids startup races in dev/tests). */

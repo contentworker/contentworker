@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
-import { type AppContext, createEnvironment, createSpace } from '@contentworker/application';
+import {
+  type AppContext,
+  createEnvironment,
+  createSpace,
+  setEnvironmentAlias,
+} from '@contentworker/application';
 import { type Principal, SCOPES, scopesForKind } from '@contentworker/domain';
 import {
   FixedClock,
@@ -101,5 +106,71 @@ describe('environment_delete over MCP', () => {
     expect(await remaining('space-1')).not.toContain('staging');
     const audit = await deps.ctx.store.audit.list('space-1', { environmentId: 'staging' });
     expect(audit.find((a) => a.action === 'environment.deleted')?.actor).toBe('usr_ada');
+  });
+});
+
+describe('the environment a tool names', () => {
+  let deps: McpDeps;
+  const article = {
+    apiId: 'article',
+    name: 'Article',
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: true,
+        position: 0,
+      },
+    ],
+  };
+  const writer: Principal = { spaceId: 'space-1', kind: 'cma', scopes: [...scopesForKind('cma')] };
+  beforeEach(async () => {
+    deps = makeDeps();
+    for (const spaceId of ['space-1', 'space-2']) {
+      await createSpace(deps.ctx, { spaceId, name: spaceId, defaultLocale: 'en-US' });
+      await createEnvironment(deps.ctx, spaceId, 'staging');
+    }
+  });
+
+  it('must exist, so a typo collects nothing', async () => {
+    const client = await connect(deps, writer);
+    const typo = await client.callTool({
+      name: 'model_create_content_type',
+      arguments: { ...article, environment: 'stagign' },
+    });
+    expect(typo.isError).toBe(true);
+    expect(JSON.stringify(typo.content)).toContain('not found');
+    const scope = { spaceId: 'space-1', environmentId: 'stagign' };
+    expect(await deps.ctx.store.contentTypes.list(scope)).toEqual([]);
+  });
+
+  it('resolves through an alias to its target', async () => {
+    await setEnvironmentAlias(deps.ctx, 'space-1', 'live', 'staging');
+    const client = await connect(deps, writer);
+    const done = await client.callTool({
+      name: 'model_create_content_type',
+      arguments: { ...article, environment: 'live' },
+    });
+    expect(done.isError).toBeFalsy();
+    const staging = { spaceId: 'space-1', environmentId: 'staging' };
+    expect((await deps.ctx.store.contentTypes.list(staging)).map((t) => t.apiId)).toEqual([
+      'article',
+    ]);
+  });
+
+  it('is not revealed to a caller from another space', async () => {
+    const client = await connect(deps, writer);
+    const [real, missing] = await Promise.all(
+      ['staging', 'nope'].map((environment) =>
+        client.callTool({
+          name: 'model_list_content_types',
+          arguments: { space: 'space-2', environment },
+        }),
+      ),
+    );
+    expect(real?.content).toEqual(missing?.content);
   });
 });

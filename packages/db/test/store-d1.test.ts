@@ -388,6 +388,41 @@ describe('stored secrets', () => {
 });
 
 describe('deleting an environment', () => {
+  // The use-cases check aliases before writing; these prove the batch itself re-checks, so an
+  // alias set (or an environment deleted) between that check and the write cannot slip through.
+  const audit = (environmentId: string) => ({
+    id: uid(),
+    spaceId,
+    environmentId,
+    at: clock.now().toISOString(),
+    actor: 'test',
+    action: 'environment.deleted',
+    targetType: 'environment',
+    targetId: environmentId,
+    status: 200,
+  });
+
+  it('aborts, deleting nothing, if an alias points at it when the batch runs', async () => {
+    const env = `aliased-${uid().slice(0, 8)}`;
+    await createEnvironment(ctx, spaceId, env);
+    await store.spaces.setAlias(spaceId, `to-${env}`, env, clock.now().toISOString());
+    await expect(
+      store.spaces.deleteEnvironment(spaceId, env, [], audit(env)),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    expect((await store.spaces.listEnvironments(spaceId)).map((x) => x.id)).toContain(env);
+  });
+
+  it('refuses an alias at an environment that no longer exists', async () => {
+    await expect(
+      store.spaces.setAlias(
+        spaceId,
+        `ghost-${uid().slice(0, 8)}`,
+        'gone',
+        clock.now().toISOString(),
+      ),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+  });
+
   it('clears every environment-scoped table but the audit log, atomically with its events', async () => {
     const doomed = { spaceId, environmentId: `doomed-${uid().slice(0, 8)}` };
     await createEnvironment(ctx, spaceId, doomed.environmentId);
