@@ -28,6 +28,7 @@ import { compareEnvironments } from './branching';
 import { publishContentType } from './content-types';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
+import { loadPublishGuard } from './publish-gate';
 import { publishEntry } from './publishing';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
 
@@ -134,7 +135,20 @@ export async function requestPromotion(
     });
   }
 
-  const risk = await assessPromotion(ctx, source, target, types, entries);
+  // A workflow that gates publishing an entry in the target publishes it there, not a promotion:
+  // such an entry goes as a draft, and the record says why.
+  const gate = await loadPublishGuard(ctx.store.workflowGraphs, target);
+  const gatedNotes: string[] = [];
+  for (const [i, e] of entries.entries()) {
+    const refused = e.publish ? gate.refusal(e.entryId, e.contentTypeApiId) : null;
+    if (!refused) continue;
+    entries[i] = { ...e, publish: false };
+    gatedNotes.push(
+      `Entry ${e.entryId} goes as a draft: ${refused.workflows.map((w) => `"${w.name}"`).join(', ')} gates publishing it in ${targetId}`,
+    );
+  }
+  const assessed = await assessPromotion(ctx, source, target, types, entries);
+  const risk: PromotionRisk = { ...assessed, reasons: [...assessed.reasons, ...gatedNotes] };
   const now = ctx.clock.now().toISOString();
   const promotion: Promotion = {
     id: ctx.ids.newId(),
@@ -311,6 +325,7 @@ async function applyPromotion(ctx: AppContext, promotion: Promotion): Promise<Pr
     contentTypes: [] as string[],
     entries: [] as string[],
     published: [] as string[],
+    gated: [] as string[],
   };
   const finish = async (patch: {
     status: 'completed' | 'failed';
@@ -368,8 +383,14 @@ async function applyPromotion(ctx: AppContext, promotion: Promotion): Promise<Pr
       result.entries.push(e.entryId);
     }
     // Published after every entry exists: a link between promoted entries resolves either way.
+    // A gate added since the request: that entry stays a draft, listed, rather than failing the rest.
+    const gate = await loadPublishGuard(ctx.store.workflowGraphs, target);
     for (const e of promotion.entries) {
       if (!e.publish) continue;
+      if (gate.refusal(e.entryId, e.contentTypeApiId)) {
+        result.gated.push(e.entryId);
+        continue;
+      }
       await publishEntry(ctx, target, e.entryId);
       result.published.push(e.entryId);
     }

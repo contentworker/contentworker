@@ -58,7 +58,7 @@ Errors use the HTTP status and a body with a stable `code`:
 | 401 | `unauthorized`, `http_error` | No token, one that isn't valid, or an expired preview token |
 | 403 | `forbidden` | The token lacks the scope, the content-type grant, or the space |
 | 404 | `not_found` | No such entry, type, release… |
-| 409 | `conflict`, `last_admin` | A unique value already taken, a delete blocked by links, an `expectedVersion` that no longer matches, or a change that would leave the space with no administrator (`last_admin`) |
+| 409 | `conflict`, `last_admin`, `publish_gated` | A unique value already taken, a delete blocked by links, an `expectedVersion` that no longer matches, a change that would leave the space with no administrator (`last_admin`), or a publish of an entry a [gated workflow](/guides/workflows/#gate-publishing) covers, made outside a run of it (`publish_gated`; the body adds `entries`, each with its `entryId` and the `workflows` whose runs may publish it) |
 | 413 | `payload_too_large` | The request body is over the limit (5 MiB by default; the workspace's administrator can change it) |
 | 422 | `validation_failed`, `hook_rejected` | Validation failed (`issues` lists each field), or a hook or plugin refused the change on policy grounds (`hook_rejected`, with the reason as `message`) |
 | 429 | `rate_limited` | Too many requests for the key or address (the response carries `Retry-After`, in seconds), or an AI budget or a reindex cooldown for the space was hit; retry later |

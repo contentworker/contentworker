@@ -67,6 +67,10 @@ and written by bulk jobs, with progress at `…/bulk/jobs/:id` and per-item fail
    chunks run concurrently. It starts only if `job` completes with no failures (otherwise `job`'s
    report names what failed, and nothing is published); it never starts if `job` is cancelled, and
    it is `null` when nothing is published (`?publish=false`, or a snapshot of drafts).
+   It publishes past every workflow that gates publishing (`gatesPublish`) in the target: those
+   written with the model, and any the target already held (the import requires a target without
+   content types, not one without workflows). `publishSnapshotEntry` is the only exempt path;
+   publishes after the import are gated as usual.
 
 Staged work is removed as each chunk finishes, and whatever is left (a chunk that failed for good, a
 publishing job that never started, a cancelled job) when the job completes or is cancelled. Each

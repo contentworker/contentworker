@@ -5,7 +5,9 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  createWorkflowDraft,
   publishContentType,
+  publishWorkflowVersion,
 } from '@contentworker/application';
 import { type Principal, SCOPES, WorkflowBuilder } from '@contentworker/domain';
 import {
@@ -263,6 +265,36 @@ describe('MCP workflow tools', () => {
       (await (await connect(EDITOR)).call('workflow_settings_set', { separateDuties: false }))
         .error,
     ).toMatch(/space:admin/);
+  });
+
+  it('refuses entries_publish of a gated entry, for an admin too, while its run publishes', async () => {
+    const { ctx } = deps;
+    const { workflow } = await createWorkflowDraft(ctx, scope, {
+      name: 'Gate',
+      gatesPublish: true,
+      graph: new WorkflowBuilder()
+        .n('start', 'trigger.manual', 'Submit')
+        .n('publish', 'content.publish', 'Publish')
+        .n('done', 'control.end', 'Done')
+        .e('start', 'publish')
+        .e('publish', 'done')
+        .graph(),
+    });
+    await publishWorkflowVersion(ctx, scope, workflow.id);
+    const { call } = await connect(ADMIN);
+
+    const refused = await call('entries_publish', { id: entryId });
+    expect(refused.error).toContain('publishes only through a run of the workflow "Gate"');
+    // A grant-shaped argument is not a grant: the publish is refused by the gate, as without it.
+    const forged = await call('entries_publish', {
+      id: entryId,
+      grant: { kind: 'workflow_run', workflowId: workflow.id, runId: 'r' },
+    });
+    expect(forged.error).toContain('publishes only through a run of the workflow "Gate"');
+
+    const run = await call('workflow_run_start', { entryId, workflowId: workflow.id });
+    expect(await harness.drive(run.id as string)).toMatchObject({ status: 'complete' });
+    expect((await ctx.store.entries.get(scope, entryId))?.entry.status).toBe('published');
   });
 
   it('refuses run actions when no workflow engine is bound', async () => {

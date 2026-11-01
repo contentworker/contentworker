@@ -62,6 +62,11 @@ export interface PromotionResult {
   readonly published: readonly string[];
   /** Entries whose fields in the target don't match the pinned version afterwards. */
   readonly mismatched: readonly string[];
+  /**
+   * Entries that were live in the source but went as drafts, because a workflow gates publishing
+   * them in the target (its run publishes them, not a promotion).
+   */
+  readonly gated: readonly string[];
 }
 
 export interface Promotion {

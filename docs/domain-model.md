@@ -406,7 +406,7 @@ See [API reference](./api-reference.md) for HTTP shapes.
 | **Release**                                   | Bundle entries/assets for coordinated publish (`release.published` event)                                                            |
 | **ScheduledAction**                           | Deferred publish/unpublish at a future time                                                                                          |
 | **Comment / Task**                            | Editorial collaboration on entries                                                                                                   |
-| **WorkflowGraphDefinition / WorkflowVersion** | An editable workflow graph (the draft) and its immutable published versions; `gatesPublish` makes single-entry publish require a run |
+| **WorkflowGraphDefinition / WorkflowVersion** | An editable workflow graph (the draft) and its immutable versions; the latest's `gatesPublish` lets only its runs publish its types. |
 | **WorkflowRun / WorkflowTask**                | A durable run pinned to one version, and the approvals, event waits and agent reviews it opens                                       |
 | **WorkflowDefinition** (legacy)               | Ordered `steps`, each gated by a scope; per-entry `EntryWorkflowState`. Kept for existing rows; `legacyStepsToGraph` converts it     |
 | **ConceptScheme / Concept / Tag**             | Controlled vocabulary and free-form tags                                                                                             |
@@ -442,6 +442,7 @@ All extend `DomainError` (`{ code, message, details? }`) and carry a stable, cli
 | `ConflictError(message, details?)`    | `conflict`          | 409  | Uniqueness or identity violation (e.g. duplicate apiId)          |
 | `TransactionConflictError` (ports)    | `conflict`          | 409  | A compare-and-set lost inside a unit of work; nothing committed  |
 | `LastAdminError`                      | `last_admin`        | 409  | Would leave the space with no active administrator               |
+| `PublishGatedError(entries)`          | `publish_gated`     | 409  | A publish of an entry a gated workflow covers, outside its runs  |
 | `InvalidStateError(message)`          | `invalid_state`     | 400  | Illegal state-machine transition                                 |
 | `QueryTooBroadError(scanLimit)`       | `query_too_broad`   | 400  | A field query matched more candidates than the store evaluates   |
 | `UnauthorizedError(message?)`         | `unauthorized`      | 401  | Invalid/missing credentials                                      |

@@ -28,6 +28,7 @@ import {
   initPlan,
   isPersonPrincipal,
   isTrigger,
+  MANUAL_TRIGGER,
   MAX_EVENT_PAYLOAD_BYTES,
   type NodeRun,
   NotFoundError,
@@ -309,7 +310,7 @@ export async function startWorkflowRun(
     throw new InvalidStateError(`This workflow doesn’t cover ${contentTypeApiId} entries`);
   }
   const trigger = version.graph.nodes.find(isTrigger);
-  if (!input.startAt && trigger?.type !== 'trigger.manual') {
+  if (!input.startAt && trigger?.type !== MANUAL_TRIGGER) {
     throw new InvalidStateError('This workflow starts from its trigger, not by hand');
   }
   if (input.startAt && !version.graph.nodes.some((n) => n.id === input.startAt)) {

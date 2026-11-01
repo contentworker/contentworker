@@ -5,6 +5,7 @@ import {
   type Principal,
   SCOPES,
   ValidationError,
+  WorkflowBuilder,
 } from '@contentworker/domain';
 import {
   FixedClock,
@@ -20,10 +21,12 @@ import {
   createEntry,
   createEnvironment,
   createSpace,
+  createWorkflowDraft,
   deleteEnvironment,
   deleteEnvironmentAlias,
   publishContentType,
   publishEntry,
+  publishWorkflowVersion,
   rejectPromotion,
   requestPromotion,
   setEnvironmentAlias,
@@ -349,5 +352,43 @@ describe('promoting content between environments', () => {
     expect(rows.sort()).toEqual(
       ['promotion.approved:grace', 'promotion.completed:grace', 'promotion.requested:ada'].sort(),
     );
+  });
+
+  it('sends an entry a workflow gates in the target as a draft, saying why, and fails nothing', async () => {
+    const { workflow } = await createWorkflowDraft(ctx, qa, {
+      name: 'Legal review',
+      contentTypes: [],
+      gatesPublish: true,
+      graph: new WorkflowBuilder()
+        .n('start', 'trigger.manual', 'Submit for review')
+        .n('review', 'control.approval', 'Review')
+        .n('publish', 'content.publish', 'Publish')
+        .n('done', 'control.end', 'Done')
+        .n('no', 'control.end', 'Declined', { outcome: 'declined' })
+        .e('start', 'review')
+        .e('review.approved', 'publish')
+        .e('review.rejected', 'no')
+        .e('publish', 'done')
+        .graph(),
+    });
+    await publishWorkflowVersion(ctx, qa, workflow.id);
+    const e = await createEntry(ctx, staging, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'Needs legal' } },
+    });
+    await publishEntry(ctx, staging, e.entry.id);
+
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [e.entry.id],
+    });
+    expect(p.status).toBe('completed');
+    expect(p.entries[0]?.publish).toBe(false);
+    expect(p.risk.reasons.join(' ')).toMatch(/goes as a draft: "Legal review" gates publishing it/);
+    expect(await store.entries.getPublished(qa, e.entry.id)).toBeNull();
+    expect((await store.entries.get(qa, e.entry.id))?.fields.title).toEqual({
+      'en-US': 'Needs legal',
+    });
   });
 });

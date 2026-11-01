@@ -34,6 +34,7 @@ const workflow = (
   description: '',
   contentTypes: [],
   gatesPublish: false,
+  publishGated: false,
   graph: graph(trigger),
   steps: [],
   latestVersion: 1,
@@ -93,6 +94,7 @@ describe('workflows list', () => {
       workflow('wf-1', 'Editorial review', 'trigger.manual', {
         contentTypes: ['article'],
         gatesPublish: true,
+        publishGated: true,
       }),
     ]);
     const row = await rowOf('Editorial review');

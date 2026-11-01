@@ -65,6 +65,7 @@ const summary = (graph: WorkflowGraph) => ({
   description: '',
   contentTypes: [],
   gatesPublish: false,
+  publishGated: false,
   graph,
   steps: [],
   latestVersion: null,

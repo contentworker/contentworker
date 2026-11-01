@@ -10,6 +10,7 @@ import {
   type Scope,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
+import { assertReleaseUngated, loadPublishGuard } from './publish-gate';
 import { publishEntry, unpublishEntry } from './publishing';
 import { publishRelease } from './releases';
 
@@ -21,7 +22,14 @@ export interface ScheduleActionInput {
   readonly scheduledFor: string;
 }
 
-/** Schedules a publish/unpublish of an entry or release for a future instant. */
+/**
+ * Schedules a publish/unpublish of an entry or release for a future instant.
+ *
+ * A publish of something a gated workflow covers is refused now (`PublishGatedError`), and again
+ * when it fires, since gating can be turned on in between: a scheduled publish never runs from a
+ * workflow run, so it can never pass a gate (not even one a workflow's `content.schedule` node
+ * created).
+ */
 export async function scheduleAction(
   ctx: AppContext,
   scope: Scope,
@@ -30,11 +38,21 @@ export async function scheduleAction(
   // Validate the target exists now (it may still be deleted before firing — the
   // worker handles that by failing the action rather than crashing).
   if (input.entityType === 'Entry') {
-    if (!(await ctx.store.entries.get(scope, input.entityId))) {
-      throw new NotFoundError('Entry', input.entityId);
+    const found = await ctx.store.entries.get(scope, input.entityId);
+    if (!found) throw new NotFoundError('Entry', input.entityId);
+    if (input.action === 'publish') {
+      const guard = await loadPublishGuard(ctx.store.workflowGraphs, scope);
+      guard.assert(input.entityId, found.entry.contentTypeApiId);
     }
-  } else if (!(await ctx.store.releases.get(scope, input.entityId))) {
-    throw new NotFoundError('Release', input.entityId);
+  } else {
+    if (!(await ctx.store.releases.get(scope, input.entityId))) {
+      throw new NotFoundError('Release', input.entityId);
+    }
+    if (input.action === 'publish') {
+      const guard = await loadPublishGuard(ctx.store.workflowGraphs, scope);
+      const items = await ctx.store.releases.listItems(scope, input.entityId);
+      await assertReleaseUngated(ctx.store, scope, input.entityId, items, guard);
+    }
   }
 
   const action: ScheduledAction = {
@@ -94,7 +112,8 @@ export interface RunDueResult {
 /**
  * Runs every scheduled action whose time has arrived (across all scopes). Each
  * action is executed independently: a failure marks just that action `failed`
- * and the loop continues. Called on a timer by the worker. Idempotent by status
+ * (a publish a workflow now gates fails with the `PublishGatedError` message
+ * naming the workflow) and the loop continues. Called on a timer by the worker. Idempotent by status
  * — a completed/canceled action is never re-run.
  */
 export async function runDueScheduledActions(
