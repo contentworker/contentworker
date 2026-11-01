@@ -1,10 +1,11 @@
 # contentworker roadmap
 
 **v2: Cloudflare-only on D1 (2026-10-31).** contentworker was rebuilt on Cloudflare end to end.
-D1 replaced Postgres as the system of record, and the single platform Worker became four Workers
+D1 replaced Postgres as the system of record, and the single platform Worker became five Workers
 split by traffic profile: `apps/web` (admin + human auth), `apps/api` (Management and Preview
-REST, MCP, OAuth, media, live), `apps/delivery` (the cached public Delivery API) and
-`apps/engine` (queues, cron, Durable Objects, Workflows). Tenancy is one isolated deployment per
+REST, MCP, OAuth, uploads and signed reads, live), `apps/delivery` (the cached public Delivery
+API), `apps/media` (published asset files at the edge) and `apps/engine` (queues, cron, Durable
+Objects, Workflows). Tenancy is one isolated deployment per
 customer (`deployments/*.jsonc`, rendered by `scripts/fleet.ts`). The domain and application
 layers, and their tests, carried over.
 
@@ -55,7 +56,7 @@ Everything below is built and tested on v2.
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
   recovery codes, with the person forwarded to the api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a Durable Object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (129 tools, plus skills and the docs
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (139 tools, plus skills and the docs
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached in KV) in front of a Workers Caching entrypoint keyed by visibility profile, with ETags,
@@ -66,7 +67,7 @@ Everything below is built and tested on v2.
 - **SDKs.** `@contentworker/sdk-core`, `sdk-web`, `sdk-vue`, `sdk-edge`, `sdk-react-native`,
   `sdk-management` and `sdk-codegen`.
 - **Operations.** The fleet registry and renderer, idempotent provisioning, CI ring deploys
-  (engine → api → media → delivery → web) with a D1 Time Travel bookmark before each migration, smoke and
+  (engine → media → api → delivery → web) with a D1 Time Travel bookmark before each migration, smoke and
   latency checks, and ordered rollback.
 
 ## Planned

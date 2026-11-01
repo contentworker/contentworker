@@ -76,22 +76,36 @@ const deliverable = (s: PublishedAsset): DeliverableAsset => ({
 });
 
 /**
+ * The media origin's URL builder for one published snapshot (its version, and that version's
+ * path token), or `undefined` when no media origin is set up.
+ */
+function mediaUrlsOf(
+  ctx: Pick<AppContext, 'mediaPublicUrl' | 'mediaPaths'>,
+  scope: Scope,
+  snapshot: PublishedAsset,
+): ((variant: AssetVariant) => string) | undefined {
+  if (!ctx.mediaPublicUrl || !ctx.mediaPaths) return undefined;
+  const version = snapshot.version ?? 1;
+  return publicAssetUrls(ctx.mediaPublicUrl, scope, {
+    id: snapshot.assetId,
+    version,
+    fileName: snapshot.file.fileName,
+    token: ctx.mediaPaths.token(scope, snapshot.assetId, version),
+  });
+}
+
+/**
  * A published asset as Delivery serves it. Pure over what {@link assetProjectionContext} read:
- * its URLs are on the media origin (`ctx.mediaPublicUrl`), at the published file's version.
+ * its URLs are on the media origin (`ctx.mediaPublicUrl`), at the published file's version, with
+ * that version's path token.
  */
 export function projectPublishedAsset(
-  ctx: Pick<AppContext, 'mediaPublicUrl'>,
+  ctx: Pick<AppContext, 'mediaPublicUrl' | 'mediaPaths'>,
   scope: Scope,
   snapshot: PublishedAsset,
   pc: AssetProjectionContext,
 ): DeliveredAsset {
-  const urlFor = ctx.mediaPublicUrl
-    ? publicAssetUrls(ctx.mediaPublicUrl, scope, {
-        id: snapshot.assetId,
-        version: snapshot.version ?? 1,
-        fileName: snapshot.file.fileName,
-      })
-    : undefined;
+  const urlFor = mediaUrlsOf(ctx, scope, snapshot);
   return deliveredAsset(deliverable(snapshot), {
     ...(urlFor ? { urlFor } : {}),
     renditions: pc.renditions.map((r) => r.name),
@@ -146,9 +160,9 @@ export async function assetTransformTarget(
   id: string,
   q: { readonly width?: number; readonly rendition?: string },
 ): Promise<string> {
-  const origin = ctx.mediaPublicUrl;
-  if (!origin) throw new ValidationError([{ field: 'asset', message: 'No media origin is set' }]);
   const snapshot = await getPublishedAsset(ctx, scope, id);
+  const urlFor = mediaUrlsOf(ctx, scope, snapshot);
+  if (!urlFor) throw new ValidationError([{ field: 'asset', message: 'No media origin is set' }]);
   const variant = variantForTransform(q);
   if (variant.kind !== 'original' && !isTransformableImage(snapshot.file.contentType)) {
     throw new ValidationError([{ field: 'asset', message: 'Asset is not a resizable image' }]);
@@ -156,11 +170,6 @@ export async function assetTransformTarget(
   if (variant.kind === 'rendition' && !(await ctx.store.assetRenditions.get(scope, variant.name))) {
     throw new NotFoundError('AssetRendition', variant.name);
   }
-  const urlFor = publicAssetUrls(origin, scope, {
-    id: snapshot.assetId,
-    version: snapshot.version ?? 1,
-    fileName: snapshot.file.fileName,
-  });
   return urlFor(variant);
 }
 

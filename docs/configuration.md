@@ -82,7 +82,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `DATA_KEY_PREVIOUS`      | ✓ | ✓ | ✓ | ✓ | Rotation only: opens values sealed under the old key until the daily 03:30 UTC reseal has moved them                                                            |
 | `TOKEN_PEPPER`           |   | ✓ | ✓ | ✓ | Mixed into every API key hash. Required. Never changes                                                                                                          |
 | `PASSWORD_PEPPER`        | ✓ |   |   |   | Mixed into every password hash (`pbkdf2p:`). Never change or remove once set                                                                                   |
-| `MEDIA_SIGNING_SECRET`   |   | ✓ | ✓ | ✓ | HMAC key for `/media/*` URLs. Required when `MEDIA_BUCKET` is bound. The media Worker holds it too, to verify Preview's short-lived signed reads                 |
+| `MEDIA_SIGNING_SECRET`   |   | ✓ | ✓ | ✓ | HMAC key for `/media/*` URLs and for the token in published media URLs (made wherever `MEDIA_PUBLIC_URL` is set). Required when `MEDIA_BUCKET` is bound. The media Worker holds it too, to verify both |
 | `SETUP_TOKEN`            | ✓ |   |   |   | One-time setup code redeemed at `/setup` for the first (or a recovery) administrator; its hash is recorded on use                                              |
 | `OIDC_CLIENT_SECRET`     | ✓ |   |   |   | The identity provider's client secret for admin SSO                                                                                                             |
 | `ADMIN_TOKEN`            |   | ✓ |   |   | Root bearer token: all scopes, all spaces. Dev default `dev-admin-token`, refused when secure secrets are required                                              |
@@ -161,7 +161,7 @@ it serves from, all read-only:
 | `IMAGES`                      | Width steps and renditions; absent → only originals are served                              |
 | `METRICS` (Analytics Engine)  | `contentworker_media_purge_dead_letters_total`                                              |
 | `QUEUE_SUFFIX`, `ROLE=media`  | Template vars; consumers `contentworker-media-purge` (+ `-dlq`, logged and acked)           |
-| `MEDIA_SIGNING_SECRET`        | Its only secret: verifies signed `/media/*` GETs (with `exp`). Absent → `/media/*` is a 404 |
+| `MEDIA_SIGNING_SECRET`        | Its only secret: verifies published paths' tokens and signed `/media/*` GETs (with `exp`). Required with `DB` bound; dev uses the dev key, as the api does |
 
 Its `exports` put Workers Caching on the `Media` entrypoint only; the default (gateway) entrypoint
 is uncached.

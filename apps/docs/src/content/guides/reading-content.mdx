@@ -68,7 +68,8 @@ renditions, srcset, video?, rights?, file }`. With `?locale=`, the title, descri
 are one locale's text. The list pages with `limit` and `cursor` (the response's `nextCursor`) and
 filters by `kind`, `tag` and `folder`.
 
-Their URLs point at the workspace's `media.` address and are immutable: `url` is the original,
+Their URLs point at the workspace's `media.` address, are immutable and carry a signature (use
+them as given; an edited one is a `404`): `url` is the original,
 `renditions` your space's named sizes and `srcset` a ladder of widths for responsive images.
 Unpublishing an asset stops its URLs. Preview's `…/assets` routes return drafts in the same shape
 with short-lived signed URLs. See [Delivering assets](/guides/delivering-assets/).

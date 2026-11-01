@@ -54,7 +54,7 @@ secrets, bindings) are the references; read the relevant section first.
 ## Rollout order
 
 CI deploys every deployment from `main` in ring order (`staging` → `internal` → `canary` →
-`general`), and within one deployment engine → api → media → delivery → web. Nothing provisions during CI.
+`general`), and within one deployment engine → media → api → delivery → web. Nothing provisions during CI.
 
 - **A new resource a deploy needs** (a queue the engine consumes, a KV id a render needs) must
   exist in every deployment **before** the merge that binds it. The user runs

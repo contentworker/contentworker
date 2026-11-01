@@ -8,12 +8,13 @@ import {
   createEnvironment,
   createSpace,
   createVideoAsset,
+  deleteEnvironment,
   publishAsset,
   refreshVideoAsset,
   unpublishAsset,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
-import type { DomainEvent } from '@contentworker/domain';
+import type { DomainEvent, Principal } from '@contentworker/domain';
 import type { PurgeMessage } from '@contentworker/platform/messages';
 import { FakeBlobStore, FakeVideoHost, RecordingWebhookSender } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
@@ -145,6 +146,48 @@ describe('asset events in the engine', () => {
       `cw:${scope.spaceId}:staging`,
     ]);
     expect([...plan.revoked]).toEqual([`cwr:${scope.spaceId}:thumb`]);
+  });
+
+  it('clear a deleted environment’s gate and purge its media now and once more later', async () => {
+    const { ctx, scope } = await space();
+    await createEnvironment(ctx, scope.spaceId, 'feature', 'Feature');
+    const feature = { spaceId: scope.spaceId, environmentId: 'feature' };
+    const { asset } = await createAsset(ctx, new FakeBlobStore(), feature, {
+      fileName: 'a.png',
+      contentType: 'image/png',
+    });
+    let mark = await lastRowid();
+    await publishAsset(ctx, feature, asset.id);
+    await consume(ctx, await eventsSince(scope, mark));
+    expect(await env.KV_CACHE.get(assetGateKey(feature, asset.id))).not.toBeNull();
+
+    mark = await lastRowid();
+    const admin = { spaceId: '*', kind: 'admin', scopes: [] } as unknown as Principal;
+    await deleteEnvironment(ctx, scope.spaceId, 'feature', {
+      confirm: 'feature',
+      principal: admin,
+    });
+    // The deletion's events, then each purge step's hand-on, as the queue would bring them.
+    const plan = newPurgePlan();
+    const seen: string[] = [];
+    for (let events = await eventsSince(scope, mark); events.length > 0; ) {
+      mark = await lastRowid();
+      for (const e of events) {
+        seen.push(e.type);
+        await consumeEvent(ctx, { sender: new RecordingWebhookSender(), assetGate: gate }, e);
+        await planPurges(ctx, plan, e);
+      }
+      events = await eventsSince(scope, mark);
+    }
+    expect(seen).toContain('environment.deleted');
+    expect(seen).toContain('environment.purge_due');
+    expect(await env.KV_CACHE.get(assetGateKey(feature, asset.id))).toBeNull();
+
+    const { q, sent } = queues();
+    await sendPurges(q, plan, () => {});
+    const tag = `cwe:${scope.spaceId}:feature`;
+    const media = sent.filter((m) => m.queue === 'media-purge' && m.body.tags.includes(tag));
+    expect(media.map((m) => m.delaySeconds)).toEqual([undefined, REVOCATION_REPURGE_SECONDS]);
   });
 
   it('send nothing to a queue that isn’t bound, and survive a failed send', async () => {

@@ -4,19 +4,20 @@
  * This default entrypoint is the gateway, with no cache in front of it. It trusts no request
  * header: it reads `Accept` only to pick an output format and `If-None-Match` only to answer 304.
  * Per request it either
- * 1. maps a public URL (`/<space>/<env>/<asset>/v<n>/<variant>/<file>`) to its canonical form
- *    (the path, and for a variant the negotiated format) and asks the cached `Media` entrypoint,
- *    which checks the engine's gate on a miss; or
+ * 1. checks a public URL's token (`/<space>/<env>/<asset>/v<n>/<token>/<variant>/<file>`), maps
+ *    it to its canonical form (the path, and for a variant the negotiated format) and asks the
+ *    cached `Media` entrypoint, which checks the engine's gate on a miss; or
  * 2. serves a short-lived signed read (`/media/<key>?exp=…&sig=…`, Preview's drafts), uncached,
  *    when the signature and expiry hold. Never an upload, never a URL without an expiry.
  *
  * Its queue consumer drains `contentworker-media-purge`, rationed like delivery's.
  */
-import { createMediaUrlSigner, handleMediaRequest } from '@contentworker/adapters/blob-r2';
+import { handleMediaRequest } from '@contentworker/adapters/blob-r2';
 import { type ImagesBindingLike, transformImage } from '@contentworker/adapters/images-cf';
 import { type EdgeEnv, queueName } from '@contentworker/platform/env';
 import type { PurgeMessage } from '@contentworker/platform/messages';
 import { drain } from '@contentworker/platform/purge';
+import { wireMedia } from '@contentworker/platform/wire';
 import type { Media } from './media';
 import { canonicalMediaUrl } from './serve';
 
@@ -56,14 +57,13 @@ export default {
       return withPublic(new Response('read only', { status: 405 }), { allow: 'GET, HEAD' });
     }
 
+    const wired = wireMedia(env);
     if (url.pathname.startsWith('/media/')) {
-      if (!env.MEDIA_BUCKET || !env.MEDIA_SIGNING_SECRET) {
-        return withPublic(new Response('not found', { status: 404 }));
-      }
+      if (!env.MEDIA_BUCKET) return withPublic(new Response('not found', { status: 404 }));
       const images = env.IMAGES;
       const res = await handleMediaRequest(request, {
         bucket: env.MEDIA_BUCKET,
-        signer: createMediaUrlSigner(env.MEDIA_SIGNING_SECRET),
+        signer: wired.mediaSigner,
         requireExpiry: true,
         readOnly: true,
         ...(images
@@ -82,7 +82,7 @@ export default {
       return withPublic(res);
     }
 
-    const canonical = canonicalMediaUrl(url, request.headers.get('accept'));
+    const canonical = canonicalMediaUrl(url, request.headers.get('accept'), wired.mediaPaths);
     if (!canonical) {
       return withPublic(new Response('not found', { status: 404 }), {
         'cache-control': 'no-store',

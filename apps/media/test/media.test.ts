@@ -1,23 +1,39 @@
 import { createExecutionContext, createMessageBatch, getQueueResult, SELF } from 'cloudflare:test';
 import { env, exports } from 'cloudflare:workers';
 import { createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
-import { createMediaUrlSigner, signedMediaUrl } from '@contentworker/adapters/blob-r2';
+import {
+  createMediaPathSigner,
+  createMediaUrlSigner,
+  signedMediaUrl,
+} from '@contentworker/adapters/blob-r2';
 import {
   type AppContext,
+  cloneEnvironment,
   createAsset,
   createAssetRendition,
+  createEnvironment,
   createSpace,
+  deleteEnvironment,
+  dispatchEvent,
   publishAsset,
+  runEnvironmentPurge,
   setAssetMetadata,
   syncAssetGate,
   unpublishAsset,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
-import { type Asset, type AssetVariant, assetMediaPath } from '@contentworker/domain';
+import {
+  type Asset,
+  type AssetVariant,
+  assetMediaPath,
+  type Principal,
+} from '@contentworker/domain';
 import type { PurgeMessage } from '@contentworker/platform/messages';
-import { FakeBlobStore } from '@contentworker/test-kit';
+import type { AssetGate, ContentStore } from '@contentworker/ports';
+import { FakeBlobStore, RecordingWebhookSender } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import worker from '../src/index';
+import { serveMedia } from '../src/serve';
 
 const ORIGIN = 'https://media.example.test';
 
@@ -31,6 +47,8 @@ function context(): AppContext {
 }
 
 const gate = createKvAssetGate(env.KV_CACHE);
+/** The api and delivery make each path's token with the same secret the Worker checks. */
+const paths = createMediaPathSigner(env.MEDIA_SIGNING_SECRET);
 
 /** A body read as bytes (`.text()` on an image type warns), then as text or JSON. */
 const textOf = async (res: Response) => new TextDecoder().decode(await res.arrayBuffer());
@@ -65,14 +83,26 @@ const urlOf = (
   u: { scope: { spaceId: string; environmentId: string }; asset: Asset },
   variant: AssetVariant,
   version = 1,
+  token = paths.token(u.scope, u.asset.id, version),
 ) =>
   `${ORIGIN}${assetMediaPath({
     scope: u.scope,
     assetId: u.asset.id,
     version,
+    token,
     variant,
     fileName: u.asset.file.fileName,
   })}`;
+
+/** Drains one media purge through this Worker's consumer, as the engine's message would. */
+async function purgeMedia(tags: string[]) {
+  const batch = createMessageBatch<PurgeMessage>('contentworker-media-purge', [
+    { id: `purge-${++seq}`, timestamp: new Date(), attempts: 1, body: { tags } },
+  ]);
+  const ctx = Object.assign(createExecutionContext(), { exports });
+  await worker.queue(batch, env as never, ctx);
+  await getQueueResult(batch, ctx);
+}
 
 describe('the media Worker', () => {
   it('serves a published original, immutable and tagged for purges', async () => {
@@ -151,7 +181,7 @@ describe('the media Worker', () => {
       original.replace('/o/', '/w123/'), // off the ladder
       original.replace('/o/', '/w4000/'),
       original.replace('/o/', '/x/'),
-      original.replace('/v1/', '/v2/'), // not the published version
+      urlOf(u, { kind: 'original' }, 2), // not the published version (a token of its own)
       original.replace(/\/[^/]+$/, '/other.jpg'),
       urlOf(u, { kind: 'rendition', name: 'no-such-preset' }),
       `${ORIGIN}/${u.scope.spaceId}/main/${u.asset.id}`,
@@ -249,5 +279,147 @@ describe('the media Worker', () => {
       new URLSearchParams({ ct: 'image/jpeg', exp: String(now + 600) }),
     );
     expect((await SELF.fetch(put, { method: 'PUT', body: 'x' })).status).toBe(405);
+  });
+
+  it('caps a 200 at the time its rights have left, then answers 410', async () => {
+    const u = await uploaded();
+    const now = Date.now();
+    await u.ctx.store.assets.save(u.scope, {
+      ...u.asset,
+      rights: { expiresAt: new Date(now + 60_000).toISOString() },
+    });
+    await publishAsset(u.ctx, u.scope, u.asset.id);
+    await syncAssetGate(u.ctx, gate, u.scope, u.asset.id);
+    const deps = {
+      bucket: env.MEDIA_BUCKET,
+      paths,
+      gate,
+      store: createD1Store(env.DB),
+    };
+    const req = () => new Request(urlOf(u, { kind: 'original' }));
+
+    const fresh = await serveMedia(req(), { ...deps, now: () => now });
+    expect(fresh.status).toBe(200);
+    const cc = fresh.headers.get('cache-control') as string;
+    expect(cc).not.toContain('immutable');
+    expect(Number(/max-age=(\d+)/.exec(cc)?.[1])).toBeLessThanOrEqual(60);
+    expect(Number(/max-age=(\d+)/.exec(cc)?.[1])).toBeGreaterThan(0);
+
+    const later = await serveMedia(req(), { ...deps, now: () => now + 61_000 });
+    expect(later.status).toBe(410);
+    expect(later.headers.get('cache-control')).toBe('no-store');
+  });
+});
+
+describe('the path token', () => {
+  /** A gate and a store that count their reads. */
+  function counted() {
+    const reads = { gate: 0, store: 0 };
+    const store = createD1Store(env.DB);
+    const countingGate: AssetGate = {
+      ...gate,
+      get: async (s, id) => {
+        reads.gate += 1;
+        return gate.get(s, id);
+      },
+    };
+    const countingStore = {
+      assets: {
+        ...store.assets,
+        getPublished: async (
+          s: Parameters<ContentStore['assets']['getPublished']>[0],
+          id: string,
+        ) => {
+          reads.store += 1;
+          return store.assets.getPublished(s, id);
+        },
+      },
+      assetRenditions: store.assetRenditions,
+    } as unknown as Pick<ContentStore, 'assets' | 'assetRenditions'>;
+    return {
+      reads,
+      deps: { bucket: env.MEDIA_BUCKET, paths, gate: countingGate, store: countingStore },
+    };
+  }
+
+  it('refuses a bad token before reading the gate or a replica', async () => {
+    const u = await published();
+    const { reads, deps } = counted();
+    const forged = urlOf(u, { kind: 'original' }, 1, 'A'.repeat(22));
+    const other = urlOf(u, { kind: 'original' }, 1, paths.token(u.scope, 'another-asset', 1));
+    for (const bad of [forged, other]) {
+      expect((await serveMedia(new Request(bad), deps)).status).toBe(404);
+      // The gateway answers it too, without asking the cached entrypoint.
+      const res = await SELF.fetch(bad);
+      expect(res.status).toBe(404);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+    }
+    expect(reads).toEqual({ gate: 0, store: 0 });
+    // The right token does read.
+    expect((await serveMedia(new Request(urlOf(u, { kind: 'original' })), deps)).status).toBe(200);
+    expect(reads.gate).toBe(1);
+  });
+
+  it('keeps an environment’s URL from reaching another environment’s copy of the asset', async () => {
+    const u = await published();
+    const staging = { spaceId: u.scope.spaceId, environmentId: 'staging' };
+    await createEnvironment(u.ctx, u.scope.spaceId, 'staging');
+    await cloneEnvironment(u.ctx, u.scope, staging);
+    expect(await syncAssetGate(u.ctx, gate, staging, u.asset.id)).toBe('written');
+    const inStaging = { scope: staging, asset: u.asset };
+    expect((await SELF.fetch(urlOf(inStaging, { kind: 'original' }))).status).toBe(200);
+
+    // Taken down in main; staging still publishes its copy.
+    await unpublishAsset(u.ctx, u.scope, u.asset.id);
+    await syncAssetGate(u.ctx, gate, u.scope, u.asset.id);
+    await purgeMedia([`cwa:${u.scope.spaceId}:main:${u.asset.id}`]);
+    const mainUrl = urlOf(u, { kind: 'original' });
+    expect((await SELF.fetch(mainUrl)).status).toBe(404);
+    // Swapping the environment in main's URL keeps main's token, which staging's path refuses.
+    const swapped = mainUrl.replace(`/${u.scope.spaceId}/main/`, `/${u.scope.spaceId}/staging/`);
+    expect(swapped).not.toBe(mainUrl);
+    expect((await SELF.fetch(swapped)).status).toBe(404);
+  });
+
+  it('serves nothing of a deleted environment, nor of one re-created with its id', async () => {
+    const u = await published();
+    const spaceId = u.scope.spaceId;
+    const clone = { spaceId, environmentId: 'feature' };
+    await createEnvironment(u.ctx, spaceId, 'feature');
+    await cloneEnvironment(u.ctx, u.scope, clone);
+    await syncAssetGate(u.ctx, gate, clone, u.asset.id);
+    const url = urlOf({ scope: clone, asset: u.asset }, { kind: 'original' });
+    expect((await SELF.fetch(url)).status).toBe(200);
+
+    const admin = { spaceId: '*', kind: 'admin', scopes: [] } as unknown as Principal;
+    await deleteEnvironment(u.ctx, spaceId, 'feature', { confirm: 'feature', principal: admin });
+    const deps = { sender: new RecordingWebhookSender(), assetGate: gate as AssetGate };
+    const at = new Date().toISOString();
+    await dispatchEvent(u.ctx, deps, {
+      id: crypto.randomUUID(),
+      type: 'environment.deleted',
+      scope: clone,
+      occurredAt: at,
+      entryIds: [],
+    });
+    // A late event for the asset, handled while its rows are still there, writes nothing back.
+    expect(await syncAssetGate(u.ctx, gate, clone, u.asset.id)).toBe('removed');
+    let outcome = 'continued';
+    while (outcome === 'continued') {
+      outcome = await runEnvironmentPurge(
+        u.ctx,
+        { assetGate: gate },
+        { id: crypto.randomUUID(), type: 'environment.purge_due', scope: clone, occurredAt: at },
+      );
+    }
+    await purgeMedia([`cwe:${spaceId}:feature`]);
+    expect(await gate.get(clone, u.asset.id)).toBeNull();
+    expect((await SELF.fetch(url)).status).toBe(404);
+
+    // The same id again, the asset back as a draft: still nothing to serve.
+    await createEnvironment(u.ctx, spaceId, 'feature');
+    await cloneEnvironment(u.ctx, u.scope, clone, { publish: false });
+    expect(await u.ctx.store.assets.get(clone, u.asset.id)).toMatchObject({ status: 'draft' });
+    expect((await SELF.fetch(url)).status).toBe(404);
   });
 });

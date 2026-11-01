@@ -6,6 +6,7 @@ import type {
   HookDispatcher,
   IdGenerator,
   ImageTransformer,
+  MediaPathSigner,
   VideoHost,
 } from '@contentworker/ports';
 import type { AiCallRecord } from './ai-provenance';
@@ -63,9 +64,14 @@ export interface AppContext {
   /**
    * Public origin of the media Worker (`https://media.<domain>`, MEDIA_PUBLIC_URL). Delivered
    * assets get their URLs there, built at read time. Absent → the stored file URL, without
-   * renditions or a srcset (nothing would serve them).
+   * renditions or a srcset (nothing would serve them). Used with {@link mediaPaths}.
    */
   readonly mediaPublicUrl?: string;
+  /**
+   * Makes the unguessable token in a published asset's media URL (the media Worker checks it).
+   * Without it, published assets get the stored file URL, as without {@link mediaPublicUrl}.
+   */
+  readonly mediaPaths?: MediaPathSigner;
   /**
    * Video host (Cloudflare Stream on edge). Absent → video-asset use-cases
    * refuse with NotConfiguredError; plain blob uploads of video files still work.

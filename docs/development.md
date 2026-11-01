@@ -229,6 +229,9 @@ rendition presets, not environment-scoped. `0006_asset_published_delivery.sql` a
 `r2_key`, `kind` and `rights` to `asset_published` (backfilled from each snapshot's asset row), with
 the indexes `asset_published_by_time` (publish order, keyset paging) and
 `asset_published_by_kind`; the delivery list's folder filter reads `assets.folder_id` live.
+`0007_asset_published_backfill_again.sql` changes no schema: it runs 0006's backfill again, only
+for snapshots still holding the column defaults (`kind` `'other'` or no `r2_key`) whose asset row
+knows better, which the pre-0006 api wrote while a deployment rolled out.
 
 ## Testing approach
 

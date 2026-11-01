@@ -559,4 +559,17 @@ export interface AssetGate {
   get(scope: Scope, assetId: string): Promise<AssetGateEntry | null>;
   put(scope: Scope, assetId: string, entry: AssetGateEntry): Promise<void>;
   delete(scope: Scope, assetId: string): Promise<void>;
+  /** Removes every entry of the scope (a deleted environment). Idempotent. */
+  deleteScope(scope: Scope): Promise<void>;
+}
+
+/**
+ * The unguessable segment of a published asset's media URL: a keyed MAC over the scope, the asset
+ * and the version, so a URL can't be had by editing another one (another environment's copy of
+ * the same asset id, another version). Synchronous, so projecting an asset stays a pure function.
+ */
+export interface MediaPathSigner {
+  token(scope: Scope, assetId: string, version: number): string;
+  /** Whether `token` is the one {@link token} gives; constant-time. */
+  verify(scope: Scope, assetId: string, version: number, token: string): boolean;
 }

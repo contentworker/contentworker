@@ -20,6 +20,16 @@ function fakeKv() {
     async delete(key) {
       values.delete(key);
     },
+    // Two keys a page, so a scope's removal has to follow the cursor (which, as KV's, resumes
+    // after the page's last key, whatever was deleted meanwhile).
+    async list({ prefix, cursor }) {
+      const rest = [...values.keys()]
+        .filter((k) => k.startsWith(prefix) && (!cursor || k > cursor))
+        .sort();
+      const keys = rest.slice(0, 2).map((name) => ({ name }));
+      const done = rest.length <= 2;
+      return { keys, list_complete: done, ...(done ? {} : { cursor: keys.at(-1)?.name }) };
+    },
   };
   return { kv, values, reads };
 }
@@ -40,6 +50,30 @@ describe('the KV asset gate', () => {
     expect(await gate.get({ ...scope, environmentId: 'staging' }, 'a')).toBeNull();
     await gate.delete(scope, 'a');
     expect(await gate.get(scope, 'a')).toBeNull();
+  });
+
+  it('removes a whole environment’s entries, page by page, and nothing of any other', async () => {
+    const { kv, values } = fakeKv();
+    const gate = createKvAssetGate(kv);
+    for (const id of ['a', 'b', 'c', 'd', 'e']) await gate.put(scope, id, entry);
+    // `main:x` shares the prefix `asset-gate:shop:main:`; its entries must stay.
+    const colon = { spaceId: 'shop', environmentId: 'main:x' };
+    await gate.put(colon, 'a', entry);
+    await gate.put({ ...scope, environmentId: 'staging' }, 'a', entry);
+    await gate.put({ spaceId: 'shop2', environmentId: 'main' }, 'a', entry);
+
+    await gate.deleteScope(scope);
+
+    expect([...values.keys()].sort()).toEqual(
+      [
+        assetGateKey(colon, 'a'),
+        assetGateKey({ ...scope, environmentId: 'staging' }, 'a'),
+        assetGateKey({ spaceId: 'shop2', environmentId: 'main' }, 'a'),
+      ].sort(),
+    );
+    // Again (a redelivered event): nothing left, nothing else touched.
+    await gate.deleteScope(scope);
+    expect(values.size).toBe(3);
   });
 
   it('gates nothing for an entry it can’t read', async () => {

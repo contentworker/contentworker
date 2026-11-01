@@ -225,31 +225,47 @@ configured".
   with every URL signed and expiring together, on `MEDIA_PUBLIC_URL` when it is set.
 
 **Published files** are served by the media Worker (`apps/media`) at
-`https://media.<domain>/<space>/<env>/<assetId>/v<n>/<variant>/<fileName>`, where `variant` is
-`o` (the original), `w<width>` from the fixed ladder 320/640/960/1280/1920/2560 (`fm=auto`
+`https://media.<domain>/<space>/<env>/<assetId>/v<n>/<token>/<variant>/<fileName>`. The `token`
+makes the URL unguessable: HMAC-SHA256 under `MEDIA_SIGNING_SECRET` over the space, environment,
+asset id and version, truncated to 16 bytes as base64url (`createMediaPathSigner`, through the
+`MediaPathSigner` port), so editing a URL (another environment's copy of the same asset id, which
+an import keeps, or another version) reaches nothing, and a takedown in one environment can't be
+read around through another. `variant` is `o` (the original), `w<width>` from the fixed ladder 320/640/960/1280/1920/2560 (`fm=auto`
 negotiates the format), or `r-<name>`, a space's rendition preset (`asset_renditions`, migration
-`0005`; at most 20 per space). Delivery builds these URLs at read time from `MEDIA_PUBLIC_URL`
-and the published snapshot's `version` (migration `0006`), through one projector,
+`0005`; at most 20 per space). Delivery builds these URLs at read time from `MEDIA_PUBLIC_URL`,
+the published snapshot's `version` (migration `0006`) and that version's token, through one
+projector,
 `deliveredAsset` (`packages/domain/src/asset/delivered.ts`), used by REST get and list, entry
 embeds, Preview and GraphQL's `Asset` type.
 
-- The **gateway** (default entrypoint, uncached) trusts no header: it maps the URL to a canonical
+- The **gateway** (default entrypoint, uncached) trusts no header. It checks the path's token
+  first, so a guessed or edited URL is a `404` (`no-store`) that costs a MAC and no cache, KV or
+  D1 read. It then maps the URL to a canonical
   one on `https://media.internal` (the path, plus `?f=avif|webp|src` for a variant, negotiated
   from `Accept`; every other parameter dropped), adds `Vary: Accept` when it negotiated, answers
   `304` on `If-None-Match`, and serves signed `/media/*` GETs (never a PUT, never one without
   `exp`) uncached.
-- The cached **`Media`** entrypoint, on a miss, reads the **gate**
+- The cached **`Media`** entrypoint, on a miss, checks the token again and then reads the **gate**
   (`asset-gate:<space>:<env>:<id>` in `KV_CACHE`: `{v, r2Key, contentType, fileName, focal,
   expiresAt}`, `@contentworker/adapters/asset-gate-kv`), falling back to a D1 replica
-  (`first-unconstrained`). No entry, another version or file name, an unknown variant, or a
-  variant of something Images can't resize is `404`; past `expiresAt` is `410`; both `no-store`.
-  A `200` is `public, max-age=31536000, immutable`, tagged `cwa:<space>:<env>:<id>`,
-  `cwe:<space>:<env>` and, for a rendition, `cwr:<space>:<name>`. It writes nothing.
+  (`first-unconstrained`), and applies one rule, `mediaServability`
+  (`packages/application/src/asset-gate.ts`): no entry, another version or file name is `404`
+  (as are an unknown variant and a variant of something Images can't resize); past `expiresAt` is
+  `410`; both `no-store`. A `200` is `public, max-age=31536000, immutable`, except for an asset
+  whose rights expire: then `public, max-age=<seconds left>`, without `immutable`, so no cache
+  holds it past the expiry. A `200` is tagged `cwa:<space>:<env>:<id>`, `cwe:<space>:<env>` and,
+  for a rendition, `cwr:<space>:<name>`. Its ports (the gate, a replica store, the path signer)
+  come from `wireMedia`, the media Worker's composition root. It writes nothing.
 - The **engine** owns the gate: `syncAssetGate` runs for `asset.published`, `asset.unpublished`
   and `asset.deleted` and writes or removes the entry from the current published snapshot (so a
-  redelivered event converges; a hosted video gets none). It sends the asset's tag on
+  redelivered event converges; a hosted video gets none, nor does an asset of an environment
+  being deleted). Deleting an environment removes all of its gate entries (`AssetGate.deleteScope`,
+  a paged KV prefix delete) on `environment.deleted` and again when its purge finishes, before the
+  environment's id is free, so a re-created environment never inherits them. It sends the asset's
+  tag on
   `contentworker-media-purge`; a revocation (unpublish, archive, delete, a rendition change,
-  environment deletion) is sent again after `REVOCATION_REPURGE_SECONDS` (90 s), past KV's 60 s
+  environment deletion and each purge step, whose last one follows the final gate removal) is
+  sent again after `REVOCATION_REPURGE_SECONDS` (90 s), past KV's 60 s
   read cache and replica lag, so a colo that re-cached from a stale gate is purged too.
 - The media Worker drains `contentworker-media-purge` with the same rationed `drain` as delivery.
   `/assets/:id/transform` on Delivery is deprecated: a cacheable `301` to the matching ladder step
@@ -318,8 +334,9 @@ way state changes: the HTTP API, MCP, and the queue consumers all call them.
   `migrations/0001_init.sql` (content), `0002_auth.sql` (the web app's users, sessions,
   passkeys, SCIM groups, admin audit), `0003_environment_purges.sql` (deleted environments
   still being purged), `0004_dam.sql` (the asset library), `0005_asset_renditions.sql` (a space's
-  rendition presets) and `0006_asset_published_delivery.sql` (the published asset's version, key,
-  kind and rights). Timestamps are epoch milliseconds; JSON is `TEXT`.
+  rendition presets), `0006_asset_published_delivery.sql` (the published asset's version, key,
+  kind and rights) and `0007_asset_published_backfill_again.sql` (0006's backfill again, for
+  snapshots the old api wrote mid-deploy). Timestamps are epoch milliseconds; JSON is `TEXT`.
 - `exec.ts`: `directExec` and the `UnitOfWork` behind `withTransaction`: writes are buffered and
   sent as one `db.batch()`; `expectChanged()` adds a guard statement
   (`INSERT INTO _guard SELECT changes() = n`, with `CHECK (ok = 1)`) so a lost compare-and-set

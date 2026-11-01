@@ -1,7 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import { createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
-import { createD1Store } from '@contentworker/db';
 import type { EdgeEnv } from '@contentworker/platform/env';
+import { wireMedia } from '@contentworker/platform/wire';
 import { type MediaDeps, serveMedia } from './serve';
 
 type CachePurge = {
@@ -14,16 +13,17 @@ type CachePurge = {
  * calls it, with no client header at all.
  */
 export class Media extends WorkerEntrypoint<EdgeEnv> {
-  /** The bindings the miss path reads, all read-only. */
+  /** The ports the miss path reads, all read-only, from the composition root. */
   protected deps(): MediaDeps {
-    const env = this.env;
-    if (!env.MEDIA_BUCKET) throw new Error('MEDIA_BUCKET is not bound');
+    if (!this.env.MEDIA_BUCKET) throw new Error('MEDIA_BUCKET is not bound');
+    // Any replica: a gate miss tolerates replica lag, which the engine's second purge covers.
+    const wired = wireMedia(this.env, { bookmark: 'first-unconstrained' });
     return {
-      bucket: env.MEDIA_BUCKET,
-      ...(env.IMAGES ? { images: env.IMAGES } : {}),
-      ...(env.KV_CACHE ? { gate: createKvAssetGate(env.KV_CACHE) } : {}),
-      // Any replica: a gate miss tolerates replica lag, which the engine's second purge covers.
-      ...(env.DB ? { store: createD1Store(env.DB.withSession('first-unconstrained')) } : {}),
+      bucket: this.env.MEDIA_BUCKET,
+      paths: wired.mediaPaths,
+      ...(this.env.IMAGES ? { images: this.env.IMAGES } : {}),
+      ...(wired.assetGate ? { gate: wired.assetGate } : {}),
+      ...(wired.store ? { store: wired.store } : {}),
     };
   }
 

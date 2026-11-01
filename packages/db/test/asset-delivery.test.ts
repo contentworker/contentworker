@@ -233,3 +233,65 @@ describe('the 0006 backfill', () => {
     ]);
   });
 });
+
+describe('the 0007 backfill', () => {
+  it('fills only the snapshots the old code wrote after 0006, from their asset', async () => {
+    const spaceId = `dl-${uid()}`;
+    const asset = (id: string, kind: string, r2Key: string | null, rights: string | null) =>
+      testDb
+        .prepare(
+          `insert into assets (space_id, environment_id, id, status, file, title, description, updated_at, kind, version, r2_key, rights)
+           values (?, 'main', ?, 'published', '{}', '{}', '{}', 0, ?, 1, ?, ?)`,
+        )
+        .bind(spaceId, id, kind, r2Key, rights)
+        .run();
+    const published = (id: string, kind: string, r2Key: string | null, rights: string | null) =>
+      testDb
+        .prepare(
+          `insert into asset_published (space_id, environment_id, asset_id, file, title, description, published_at, kind, r2_key, rights)
+           values (?, 'main', ?, '{"url":"","fileName":"f","contentType":"image/png"}', '{}', '{}', 0, ?, ?, ?)`,
+        )
+        .bind(spaceId, id, kind, r2Key, rights)
+        .run();
+    // Published by the old api mid-deploy: the column defaults.
+    await asset('late', 'image', `${spaceId}/main/late/f`, '{"credit":"Ada"}');
+    await published('late', 'other', null, null);
+    // Written by the new code: left alone, even where the asset row now differs.
+    await asset('current', 'image', `${spaceId}/main/current/f`, null);
+    await published('current', 'image', `${spaceId}/main/current/old`, '{"license":"cc"}');
+    // A genuinely 'other' file the new code published: nothing better to copy.
+    await asset('zip', 'other', `${spaceId}/main/zip/f`, null);
+    await published('zip', 'other', `${spaceId}/main/zip/f`, null);
+    // Its asset row is gone: keeps the defaults.
+    await published('orphan', 'other', null, null);
+
+    const migrations = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS;
+    const m = migrations.find((x) => x.name.startsWith('0007_'));
+    const updates = (m?.queries ?? []).filter((q) => /UPDATE `asset_published`/.test(q));
+    expect(updates).toHaveLength(1);
+    for (const q of updates) await testDb.prepare(q).run();
+
+    const rows = await testDb
+      .prepare(
+        'select asset_id, r2_key, kind, rights from asset_published where space_id = ? order by asset_id',
+      )
+      .bind(spaceId)
+      .all();
+    expect(rows.results).toEqual([
+      {
+        asset_id: 'current',
+        r2_key: `${spaceId}/main/current/old`,
+        kind: 'image',
+        rights: '{"license":"cc"}',
+      },
+      {
+        asset_id: 'late',
+        r2_key: `${spaceId}/main/late/f`,
+        kind: 'image',
+        rights: '{"credit":"Ada"}',
+      },
+      { asset_id: 'orphan', r2_key: null, kind: 'other', rights: null },
+      { asset_id: 'zip', r2_key: `${spaceId}/main/zip/f`, kind: 'other', rights: null },
+    ]);
+  });
+});

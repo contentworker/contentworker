@@ -6,7 +6,9 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  getPreviewAsset,
   listAssetRenditions,
+  listPreviewAssets,
   publishAsset,
   publishContentType,
   publishEntry,
@@ -268,5 +270,51 @@ describe('asset library tools (MCP), on the same use-cases as the HTTP routes', 
       await client.callTool({ name: 'asset_archive', arguments: { space: SPACE, id: a.id } }),
     ) as { file: { url: string } };
     expect(archived.file.url).toMatch(/\?ttl=900$/);
+  });
+
+  it('reads assets as Preview does, with the same use-cases, scope and refusals as REST', async () => {
+    const { ctx, deps, add } = await setup();
+    const blob = new FakeBlobStore();
+    const draft = await add('draft.png', 'image/png');
+    const live = await add('live.pdf', 'application/pdf');
+    await publishAsset(ctx, scope, live.id);
+    const withBlob = { ...deps, blob };
+    const client = await connect(withBlob, reader);
+    const call = async (name: string, args: Record<string, unknown>) =>
+      client.callTool({ name, arguments: { space: SPACE, ...args } });
+
+    // The same payloads the use-cases (and so the REST routes) give.
+    const got = await call('asset_preview_get', { id: draft.id });
+    expect(got.isError).toBeFalsy();
+    expect(payload(got)).toEqual(
+      JSON.parse(JSON.stringify(await getPreviewAsset(ctx, blob, scope, draft.id))),
+    );
+    const page = await listPreviewAssets(ctx, blob, scope, { filters: { kind: 'image' } });
+    expect(payload(await call('asset_preview_list', { kind: 'image' }))).toEqual(
+      JSON.parse(JSON.stringify({ ...page, total: page.items.length })),
+    );
+    expect(page.items.map((a) => a.id)).toEqual([draft.id]);
+
+    // previewRead is required: a Delivery-only key is refused both.
+    const cda: Principal = { spaceId: SPACE, kind: 'cda', scopes: [SCOPES.deliveryRead] };
+    const delivery = await connect(withBlob, cda);
+    for (const name of ['asset_preview_get', 'asset_preview_list']) {
+      const res = await delivery.callTool({ name, arguments: { space: SPACE, id: draft.id } });
+      expect(res.isError, name).toBe(true);
+    }
+
+    // A key with content grants reads no assets: an empty list, a refused get.
+    const granted = await connect(withBlob, {
+      ...reader,
+      contentGrants: [{ contentTypeApiId: 'page', actions: ['read'] }],
+    } as Principal);
+    expect(
+      payload(await granted.callTool({ name: 'asset_preview_list', arguments: { space: SPACE } })),
+    ).toEqual({ items: [], total: 0 });
+    const refused = await granted.callTool({
+      name: 'asset_preview_get',
+      arguments: { space: SPACE, id: draft.id },
+    });
+    expect(refused.isError).toBe(true);
   });
 });

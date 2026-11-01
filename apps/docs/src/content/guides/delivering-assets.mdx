@@ -26,16 +26,16 @@ curl -s "$CDN/delivery/$SPACE/main/assets/$ASSET_ID?locale=en-US" \
   "width": 2400,
   "height": 1600,
   "kind": "image",
-  "url": "https://media.acme.contentworker.app/acme/main/0193…/v1/o/trail.jpg",
+  "url": "https://media.acme.contentworker.app/acme/main/0193…/v1/kJ3x…Qw/o/trail.jpg",
   "renditions": {
-    "card": "https://media.acme.contentworker.app/acme/main/0193…/v1/r-card/trail.jpg"
+    "card": "https://media.acme.contentworker.app/acme/main/0193…/v1/kJ3x…Qw/r-card/trail.jpg"
   },
   "srcset": [
-    { "width": 320, "url": "https://media.acme.contentworker.app/acme/main/0193…/v1/w320/trail.jpg?fm=auto" },
+    { "width": 320, "url": "https://media.acme.contentworker.app/acme/main/0193…/v1/kJ3x…Qw/w320/trail.jpg?fm=auto" },
     { "width": 640, "url": "…/w640/trail.jpg?fm=auto" }
   ],
   "rights": { "credit": "Ada Lovelace", "license": "CC-BY-4.0" },
-  "file": { "url": "…/v1/o/trail.jpg", "fileName": "trail.jpg", "contentType": "image/jpeg" }
+  "file": { "url": "…/v1/kJ3x…Qw/o/trail.jpg", "fileName": "trail.jpg", "contentType": "image/jpeg" }
 }
 ```
 
@@ -58,8 +58,13 @@ shape, flattened to the entry request's `locale`.
 ## URLs
 
 ```
-https://media.{workspace}/{space}/{env}/{assetId}/v{version}/{variant}/{fileName}
+https://media.{workspace}/{space}/{env}/{assetId}/v{version}/{token}/{variant}/{fileName}
 ```
+
+Use the URLs Delivery gives you; don't build them. The `token` is a signature over the space,
+environment, asset and version, so a URL can't be had by editing another one: swapping the
+environment, or the version, gives a `404`. That also means an asset taken down in one
+environment can't be reached through another environment's copy of it.
 
 | Variant     | Serves                                                                          |
 | ----------- | ------------------------------------------------------------------------------- |
@@ -68,20 +73,22 @@ https://media.{workspace}/{space}/{env}/{assetId}/v{version}/{variant}/{fileName
 | `r-{name}`  | One of your space's renditions                                                  |
 
 - **Immutable.** The version is in the URL, so a URL's bytes never change; responses are
-  `Cache-Control: public, max-age=31536000, immutable` and carry an `ETag`.
+  `Cache-Control: public, max-age=31536000, immutable` and carry an `ETag`. An asset whose rights
+  expire is cached only until they do (`max-age` is the time left, without `immutable`), and is
+  `410` after.
 - **Formats.** `srcset` URLs end in `?fm=auto`: the image comes back as AVIF or WebP when the
   browser's `Accept` header allows, else in its own format, with `Vary: Accept`. Other query
   parameters are ignored.
 - **Crops follow the focal point.** A rendition that crops (`fit: crop`) keeps the asset's focal
   point in frame.
-- **Nothing else exists.** Widths off the ladder, unknown renditions, an older version and a wrong
-  file name are `404`. Only JPEG, PNG, WebP, AVIF and GIF images have variants; SVGs, documents
+- **Nothing else exists.** Widths off the ladder, unknown renditions, an older version, a wrong
+  token and a wrong file name are `404`. Only JPEG, PNG, WebP, AVIF and GIF images have variants; SVGs, documents
   and other files have only `o`. Videos play from their own stream URLs.
 
 ```html
 <img
-  src="https://media.…/v1/w960/trail.jpg?fm=auto"
-  srcset="https://media.…/v1/w320/trail.jpg?fm=auto 320w, https://media.…/v1/w640/trail.jpg?fm=auto 640w, https://media.…/v1/w960/trail.jpg?fm=auto 960w"
+  src="https://media.…/v1/kJ3x…Qw/w960/trail.jpg?fm=auto"
+  srcset="https://media.…/v1/kJ3x…Qw/w320/trail.jpg?fm=auto 320w, https://media.…/v1/kJ3x…Qw/w640/trail.jpg?fm=auto 640w, https://media.…/v1/kJ3x…Qw/w960/trail.jpg?fm=auto 960w"
   sizes="(min-width: 960px) 960px, 100vw"
   alt="A runner on a mountain trail at dawn"
 />

@@ -2,7 +2,7 @@
 
 contentworker deploys to Cloudflare as **one isolated stack per customer**: each deployment has
 its own D1 database, R2 bucket, KV namespace, Vectorize index, queues, AI Gateway and five
-Workers (engine, api, media, delivery, web). Spaces and environments live inside a deployment's D1.
+Workers (engine, media, api, delivery, web). Spaces and environments live inside a deployment's D1.
 Merging to `main` is releasing: CI migrates D1 and deploys every deployment, ring by ring.
 Nobody deploys from a workstation or an agent session.
 
@@ -95,7 +95,7 @@ survives). Which Worker gets which is `SECRETS` in `scripts/fleet.ts`:
 | api      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN` |
 | engine   | `ASSISTANT_PRINCIPAL_KEY`, `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` (derived from the `PRINCIPAL_KEY` pair; never the pair itself), `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET` |
 | delivery | `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`                                                                   |
-| media    | `MEDIA_SIGNING_SECRET` (verifies Preview's short-lived signed reads; it signs nothing)                                                    |
+| media    | `MEDIA_SIGNING_SECRET` (verifies published paths' tokens and Preview's short-lived signed reads; it signs nothing)                        |
 
 `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER` and `MEDIA_SIGNING_SECRET` are required
 (`REQUIRED_SECRETS`); keys must be at least 32 characters (`openssl rand -hex 32`). Every
@@ -134,7 +134,7 @@ how these paths are signed has to roll out in two steps (verifiers accept both, 
 `.github/workflows/ci.yml`:
 
 - **verify** (every push and pull request): lint, type-check and build in one parallel turbo
-  run (the build is `wrangler deploy --dry-run` for engine, api, media and delivery), then the tests on
+  run (the build is `wrangler deploy --dry-run` for engine, media, api and delivery), then the tests on
   their own (including the engine's Workflow runs in workerd with `AI_MODE=mock`),
   `pnpm test:fleet`, `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`.
 - **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
@@ -150,8 +150,9 @@ how these paths are signed has to roll out in two steps (verifiers accept both, 
 2. **Record a D1 Time Travel bookmark** (the restore point for this deploy).
 3. **Migrate D1**: `wrangler d1 migrations apply DB --remote`. Migrations run before the new
    code, so they must be additive (expand).
-4. Deploy **engine** (it owns the DO and Workflow classes the others bind), then **api**, then
-   **media** (whose URLs delivery hands out), then **delivery**, then build and deploy **web**.
+4. Deploy **engine** (it owns the DO and Workflow classes the others bind), then **media** (so it
+   already verifies the URLs the api and delivery hand out), then **api**, then **delivery**, then
+   build and deploy **web**.
 5. Smoke test: `https://<domain>/health`, `/health/deep` (D1 and the api over the binding),
    `/login`, `https://api.<domain>/health` and `/openapi.json`, `https://cdn.<domain>/health`,
    `https://media.<domain>/health`; an anonymous delivery read must answer 401 and an unknown
@@ -159,7 +160,7 @@ how these paths are signed has to roll out in two steps (verifiers accept both, 
 6. Latency check (warns only): `/login` 1.5 s, `/health/deep` 1.0 s, `cdn.<domain>/health` 0.3 s.
 7. On any failure after the engine shipped, **roll back in order**: engine first (Cloudflare
    refuses to roll a Worker back past a Durable Object migration; if the engine can't go back,
-   nothing else is rolled back and a person decides), then api, media, delivery and web, each only if
+   nothing else is rolled back and a person decides), then media, api, delivery and web, each only if
    it deployed. A first deploy has no earlier version and stays. D1 migrations are not rolled
    back.
 8. The deployment with `docs: true` then deploys and smoke-tests the docs site, rolling it back

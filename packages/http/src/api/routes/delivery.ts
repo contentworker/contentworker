@@ -280,7 +280,7 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       if (c.get('principal').contentGrants) return c.body(null, 403);
-      if (ctx.mediaPublicUrl) {
+      if (ctx.mediaPublicUrl && ctx.mediaPaths) {
         const w = c.req.query('w');
         const rendition = c.req.query('rendition');
         const url = await assetTransformTarget(ctx, scopeOf(c), c.req.param('id'), {

@@ -29,7 +29,7 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 | ---------------------------- | --------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
 | `api.<domain>`               | `apps/api`      | `management,preview,delivery`   | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads   |
 | `cdn.<domain>`               | `apps/delivery` | `delivery`                      | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request    |
-| `media.<domain>`             | `apps/media`    | `media`                         | Published asset files (`/<space>/<env>/<id>/v<n>/<variant>/<file>`), immutable and cached; Preview's signed `/media/*` reads (GET only, `exp` required) |
+| `media.<domain>`             | `apps/media`    | `media`                         | Published asset files (`/<space>/<env>/<id>/v<n>/<token>/<variant>/<file>`), cached (immutable unless rights expire); Preview's signed `/media/*` reads (GET only, `exp` required) |
 | `<domain>` (admin origin)    | `apps/web`      | —                               | Forwards `/spaces*`, `/preview/*`, `/delivery/*`, `/mcp`, `/oauth/*`, `/.well-known/oauth-*`, `/media/*`, `/docs*`, `/guides*`, `/openapi.json` to the api; OAuth's issuer on a fleet deployment |
 
 Public delivery clients should use `cdn.<domain>`; it answers only `GET`/`HEAD` (cached) and
@@ -721,7 +721,9 @@ Base path: `/preview/:space/:env`. Reads **draft/current** versions. Supports th
 | GET    | `/preview/:space/:env/assets/:id`  | `preview:read` | One current asset in Delivery's shape |
 
 Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
-least 15 minutes), on the media origin when one is set.
+least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and
+`asset_preview_get` are the same reads, with the same scope; a key with content grants gets an
+empty list and a refused get on both surfaces.
 
 ---
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createMediaPathSigner,
   createMediaUrlSigner,
   createR2BlobStore,
   handleMediaRequest,
@@ -286,5 +287,37 @@ describe('short-lived reads', () => {
       strict,
     );
     expect(put.status).toBe(405);
+  });
+});
+
+describe('the media path signer', () => {
+  const signer = createMediaPathSigner('path-secret-0123456789abcdef0123456789');
+  const main = { spaceId: 'shop', environmentId: 'main' };
+
+  it('makes one 22-character base64url token per scope, asset and version', () => {
+    const t = signer.token(main, 'a1', 1);
+    expect(t).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(signer.token(main, 'a1', 1)).toBe(t);
+    for (const other of [
+      signer.token({ ...main, environmentId: 'staging' }, 'a1', 1),
+      signer.token({ ...main, spaceId: 'shop2' }, 'a1', 1),
+      signer.token(main, 'a2', 1),
+      signer.token(main, 'a1', 2),
+      createMediaPathSigner('another-secret-0123456789abcdef01234').token(main, 'a1', 1),
+    ]) {
+      expect(other).not.toBe(t);
+    }
+    expect(signer.verify(main, 'a1', 1, t)).toBe(true);
+  });
+
+  it('refuses another address’s token, a tampered one, and non-canonical encodings', () => {
+    const t = signer.token(main, 'a1', 1);
+    expect(signer.verify({ ...main, environmentId: 'staging' }, 'a1', 1, t)).toBe(false);
+    expect(signer.verify(main, 'a1', 2, t)).toBe(false);
+    const flipped = `${t.slice(0, -1)}${t.endsWith('A') ? 'B' : 'A'}`;
+    expect(signer.verify(main, 'a1', 1, flipped)).toBe(false);
+    expect(signer.verify(main, 'a1', 1, `${t}==`)).toBe(false);
+    expect(signer.verify(main, 'a1', 1, t.slice(0, 20))).toBe(false);
+    expect(signer.verify(main, 'a1', 1, '')).toBe(false);
   });
 });

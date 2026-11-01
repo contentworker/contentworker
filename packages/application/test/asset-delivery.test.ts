@@ -7,6 +7,7 @@ import {
 import {
   FakeBlobStore,
   FakeImageTransformer,
+  FakeMediaPathSigner,
   FakeVideoHost,
   FixedClock,
   InMemoryContentStore,
@@ -40,6 +41,10 @@ import {
 
 const MEDIA = 'https://media.shop.test';
 const scope = { spaceId: 'shop', environmentId: 'main' };
+const paths = new FakeMediaPathSigner();
+/** Where a published asset's files live on the media origin, at a version. */
+const mediaBase = (id: string, version = 1) =>
+  `${MEDIA}/shop/main/${id}/v${version}/${paths.token(scope, id, version)}`;
 
 function setup(opts: { media?: boolean } = {}) {
   const store = new InMemoryContentStore();
@@ -52,7 +57,7 @@ function setup(opts: { media?: boolean } = {}) {
     ids: new SequenceIdGenerator('d'),
     images,
     video,
-    ...(opts.media === false ? {} : { mediaPublicUrl: MEDIA }),
+    ...(opts.media === false ? {} : { mediaPublicUrl: MEDIA, mediaPaths: paths }),
   };
   return { ctx, store, blob, images, video };
 }
@@ -107,7 +112,7 @@ describe('delivered assets', () => {
     await publishAsset(h.ctx, scope, a.id);
 
     const d = await getDeliveredAsset(h.ctx, scope, a.id);
-    const base = `${MEDIA}/shop/main/${a.id}/v1`;
+    const base = mediaBase(a.id);
     expect(d).toMatchObject({
       id: a.id,
       kind: 'image',
@@ -148,7 +153,7 @@ describe('delivered assets', () => {
     for (const a of [svg, pdf]) {
       await publishAsset(h.ctx, scope, a.id);
       const d = await getDeliveredAsset(h.ctx, scope, a.id);
-      expect(d.url).toBe(`${MEDIA}/shop/main/${a.id}/v1/o/${a.file.fileName}`);
+      expect(d.url).toBe(`${mediaBase(a.id)}/o/${a.file.fileName}`);
       expect(d.renditions).toEqual({});
       expect(d.srcset).toEqual([]);
     }
@@ -293,7 +298,7 @@ describe('delivered assets', () => {
       height: 400,
       fit: 'crop',
     });
-    const base = `${MEDIA}/shop/main/${a.id}/v1`;
+    const base = mediaBase(a.id);
     expect(await assetTransformTarget(h.ctx, scope, a.id, { width: 500 })).toBe(
       `${base}/w640/hero.jpg?fm=auto`,
     );
@@ -402,6 +407,24 @@ describe('a hosted video refreshed after it was published', () => {
     // Refreshed again (a redelivered webhook): the same snapshot, one more purge.
     await refreshVideoAsset(h.ctx, scope, asset.id);
     expect((await h.store.assets.getPublished(scope, asset.id))?.file).toEqual(snapshot?.file);
+  });
+
+  it('refuses, rather than brings back, an asset deleted while the host was asked', async () => {
+    const h = setup();
+    await space(h);
+    const { asset } = await createVideoAsset(h.ctx, scope, {
+      fileName: 'clip.mp4',
+      contentType: 'video/mp4',
+    });
+    const videoId = asset.file.video?.videoId as string;
+    h.video.setVideo(videoId, { status: 'ready', hlsUrl: 'x.m3u8' });
+    const getVideo = h.video.getVideo.bind(h.video);
+    h.video.getVideo = async (id) => {
+      await h.store.assets.delete(scope, asset.id);
+      return getVideo(id);
+    };
+    await expect(refreshVideoAsset(h.ctx, scope, asset.id)).rejects.toBeInstanceOf(NotFoundError);
+    expect(await h.store.assets.get(scope, asset.id)).toBeNull();
   });
 
   it('touches only the draft while the asset isn’t published', async () => {

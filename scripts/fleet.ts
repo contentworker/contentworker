@@ -14,8 +14,8 @@
  *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and hosts put in,
  * written next to it so its relative paths still resolve. Deploy order (CI): engine first (it owns
- * the Durable Object and Workflow classes the others bind by script name), then api, media (whose
- * URLs delivery hands out), delivery, web.
+ * the Durable Object and Workflow classes the others bind by script name), then media (so it
+ * verifies the URLs the api and delivery hand out before they hand them out), api, delivery, web.
  */
 
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -29,7 +29,7 @@ export const RINGS = ['staging', 'internal', 'canary', 'general'] as const;
 type Ring = (typeof RINGS)[number];
 
 /** The Workers a deployment runs, in deploy order. */
-export const APPS = ['engine', 'api', 'media', 'delivery', 'web'] as const;
+export const APPS = ['engine', 'media', 'api', 'delivery', 'web'] as const;
 export type App = (typeof APPS)[number];
 
 /** Ids a customer can't have: `<id>.contentworker.app` would read as part of the product. */

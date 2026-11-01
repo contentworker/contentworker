@@ -100,14 +100,23 @@ const image: DeliveredAsset = {
   width: 1000,
   height: 600,
   kind: 'image',
-  url: 'https://media.test/s1/main/a1/v1/o/hero.jpg',
-  renditions: { thumb: 'https://media.test/s1/main/a1/v1/r-thumb/hero.jpg' },
+  url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/o/hero.jpg',
+  renditions: { thumb: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/r-thumb/hero.jpg' },
   srcset: [
-    { width: 320, url: 'https://media.test/s1/main/a1/v1/w320/hero.jpg?fm=auto' },
-    { width: 640, url: 'https://media.test/s1/main/a1/v1/w640/hero.jpg?fm=auto' },
-    { width: 960, url: 'https://media.test/s1/main/a1/v1/w960/hero.jpg?fm=auto' },
+    {
+      width: 320,
+      url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/w320/hero.jpg?fm=auto',
+    },
+    {
+      width: 640,
+      url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/w640/hero.jpg?fm=auto',
+    },
+    {
+      width: 960,
+      url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/w960/hero.jpg?fm=auto',
+    },
   ],
-  file: { url: 'https://media.test/s1/main/a1/v1/o/hero.jpg' },
+  file: { url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/o/hero.jpg' },
 };
 
 describe('assets', () => {

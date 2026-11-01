@@ -371,8 +371,9 @@ segment); `assetRenditionSpec` requires a width, height or format; a space has a
 
 An `AssetVariant` is the original (`o`), a width from `ASSET_WIDTH_LADDER` (320, 640, 960, 1280,
 1920, 2560; `w<width>`) or a rendition (`r-<name>`). `assetMediaPath` / `parseAssetMediaPath`
-build and read `/<space>/<env>/<assetId>/v<n>/<variant>/<fileName>`; a width off the ladder is no
-variant. `isTransformableImage` says which types have variants (JPEG, PNG, WebP, AVIF, GIF; not
+build and read `/<space>/<env>/<assetId>/v<n>/<token>/<variant>/<fileName>`; a width off the
+ladder is no variant, and the parser checks only the token's shape (22 base64url characters): the
+`MediaPathSigner` port makes and verifies it, outside the domain, so the projector stays pure. `isTransformableImage` says which types have variants (JPEG, PNG, WebP, AVIF, GIF; not
 SVG). `variantForTransform` maps a legacy `?w=` to the next step up (the largest past it).
 
 `deliveredAsset(asset, { urlFor?, renditions, locale? })` is the one projector for Delivery

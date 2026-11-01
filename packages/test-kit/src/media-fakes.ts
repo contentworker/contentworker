@@ -5,6 +5,7 @@ import type {
   HostedVideo,
   ImageTransformer,
   ImageTransformSpec,
+  MediaPathSigner,
   VideoHost,
   VideoUpload,
 } from '@contentworker/ports';
@@ -38,6 +39,27 @@ export class FakeImageTransformer implements ImageTransformer {
   }
 }
 
+/**
+ * A MediaPathSigner with no key: the token is a deterministic 22-character digest of the scope,
+ * the asset and the version, so tests can tell tokens apart without a secret. Not a MAC.
+ */
+export class FakeMediaPathSigner implements MediaPathSigner {
+  token(scope: Scope, assetId: string, version: number): string {
+    const input = `${scope.spaceId}\n${scope.environmentId}\n${assetId}\n${version}`;
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    let h = 0x811c9dc5;
+    let out = '';
+    for (let i = 0; i < 22; i++) {
+      for (const ch of `${i}${input}`) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+      out += alphabet[h % 64];
+    }
+    return out;
+  }
+  verify(scope: Scope, assetId: string, version: number, token: string): boolean {
+    return token === this.token(scope, assetId, version);
+  }
+}
+
 /** An in-memory AssetGate (the media origin's KV gate), inspectable by tests. */
 export class InMemoryAssetGate implements AssetGate {
   readonly entries = new Map<string, AssetGateEntry>();
@@ -51,6 +73,13 @@ export class InMemoryAssetGate implements AssetGate {
   }
   async delete(scope: Scope, assetId: string) {
     this.entries.delete(this.key(scope, assetId));
+  }
+  async deleteScope(scope: Scope) {
+    // As the KV adapter: only keys with no ':' past the prefix (an environment id may hold one).
+    const prefix = `${scope.spaceId}:${scope.environmentId}:`;
+    for (const k of [...this.entries.keys()]) {
+      if (k.startsWith(prefix) && !k.slice(prefix.length).includes(':')) this.entries.delete(k);
+    }
   }
 }
 

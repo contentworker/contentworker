@@ -8,7 +8,7 @@ import {
   transformImage,
   transformParams,
 } from '@contentworker/adapters/images-cf';
-import { assetGateEntry } from '@contentworker/application';
+import { assetGateEntry, mediaServability, variantTransform } from '@contentworker/application';
 import {
   type AssetMediaAddress,
   type AssetRendition,
@@ -25,13 +25,12 @@ import type {
   AssetGateEntry,
   ContentStore,
   ImageTransformSpec,
+  MediaPathSigner,
 } from '@contentworker/ports';
 
 /** Internal origin for gateway → cached entrypoint requests (never resolvable publicly). */
 export const INTERNAL_ORIGIN = 'https://media.internal';
 
-/** A published file's URL never changes meaning (the version is in it), so it keeps a year. */
-export const IMMUTABLE = 'public, max-age=31536000, immutable';
 const NO_STORE = 'no-store';
 
 /** The output encoding a variant is negotiated to: AVIF, WebP, or the source's own format. */
@@ -46,15 +45,31 @@ export function formatClass(accept: string | null): FormatClass {
 }
 
 /**
+ * A published file's address, when the path is one and its token is the one the signer made for
+ * this scope, asset and version; `null` otherwise. Checked before anything is read (the cache, the
+ * gate, a replica), so a guessed or edited URL costs a MAC and nothing more.
+ */
+export function verifiedAddress(
+  pathname: string,
+  paths: MediaPathSigner,
+): AssetMediaAddress | null {
+  const a = parseAssetMediaPath(pathname);
+  if (!a || !paths.verify(a.scope, a.assetId, a.version, a.token)) return null;
+  return a;
+}
+
+/**
  * The cache key a public request maps to: the parsed path, and for a variant the one format class
  * it negotiates to (`?f=`). Every other query parameter and header is dropped, so nothing a
- * client adds can mint another cache entry or another transform. `null`: not a media URL.
+ * client adds can mint another cache entry or another transform. `null`: not a media URL, or one
+ * whose token doesn't verify.
  */
 export function canonicalMediaUrl(
   url: URL,
   accept: string | null,
+  paths: MediaPathSigner,
 ): { readonly url: string; readonly negotiated: boolean } | null {
-  const address = parseAssetMediaPath(url.pathname);
+  const address = verifiedAddress(url.pathname, paths);
   if (!address) return null;
   const path = `${INTERNAL_ORIGIN}${url.pathname}`;
   switch (address.variant.kind) {
@@ -73,6 +88,8 @@ export function canonicalMediaUrl(
 
 export interface MediaDeps {
   readonly bucket: R2BucketLike;
+  /** Checks the token in the path, before any lookup. */
+  readonly paths: MediaPathSigner;
   readonly images?: ImagesBindingLike;
   /** The engine's gate (KV). */
   readonly gate?: AssetGate;
@@ -99,44 +116,39 @@ async function gateFor(deps: MediaDeps, a: AssetMediaAddress): Promise<AssetGate
   return snapshot ? assetGateEntry(a.scope, snapshot) : null;
 }
 
-/** The transform a variant asks of the image service, or `null` for one that isn't served. */
+/**
+ * The transform a variant asks of the image service (the same as Preview's, from
+ * `variantTransform`), or `null` for one that isn't served. `auto` stands for the negotiated
+ * format, so a request that negotiated none (`?f=src`) keeps the source's.
+ */
 function variantSpec(
   a: AssetMediaAddress,
   f: FormatClass,
   rendition: AssetRendition | null,
 ): ImageTransformSpec | null {
-  const negotiated = f === 'src' ? undefined : 'auto';
-  if (a.variant.kind === 'width') {
-    // Never upscaled (`max`), so a step past the image's width is the image itself.
-    return { width: a.variant.width, fit: 'max', ...(negotiated ? { format: negotiated } : {}) };
-  }
-  if (!rendition) return null;
-  const format = rendition.format === 'auto' ? negotiated : rendition.format;
-  return {
-    ...(rendition.width !== undefined ? { width: rendition.width } : {}),
-    ...(rendition.height !== undefined ? { height: rendition.height } : {}),
-    ...(rendition.fit !== undefined ? { fit: rendition.fit } : {}),
-    ...(format ? { format } : {}),
-    ...(rendition.quality !== undefined ? { quality: rendition.quality } : {}),
-  };
+  const spec = variantTransform(a.variant, rendition ? [rendition] : []);
+  if (!spec || spec.format !== 'auto' || f !== 'src') return spec;
+  const { format: _auto, ...rest } = spec;
+  return rest;
 }
 
 /**
- * Serves one canonical media request (the cached entrypoint's miss path). 200s are immutable and
- * tagged so the engine's purges reach them: by asset, by environment, and by rendition. Anything
+ * Serves one canonical media request (the cached entrypoint's miss path). 200s are tagged so the
+ * engine's purges reach them (by asset, by environment, and by rendition) and cached as
+ * {@link mediaServability} says: a year and immutable, or only until the rights expire. Anything
  * else is `no-store`, so a 404 never outlives a publish and a 410 never outlives a restored right.
  */
 export async function serveMedia(request: Request, deps: MediaDeps): Promise<Response> {
   const url = new URL(request.url);
-  const a = parseAssetMediaPath(url.pathname);
+  // The gateway checked the token already; checked again here, still before any lookup, so this
+  // entrypoint answers nothing for a path nobody was given.
+  const a = verifiedAddress(url.pathname, deps.paths);
   if (!a) return plain(404, 'not found');
   const gate = await gateFor(deps, a);
-  // Not published (or an older version, whose URLs end with the publish that replaced it).
-  if (!gate || gate.v !== a.version || gate.fileName !== a.fileName) {
-    return plain(404, 'not found');
+  const verdict = mediaServability(a, gate, deps.now?.() ?? Date.now());
+  if (verdict.status !== 200 || !gate) {
+    return verdict.status === 410 ? plain(410, 'gone') : plain(404, 'not found');
   }
-  const now = deps.now?.() ?? Date.now();
-  if (gate.expiresAt && Date.parse(gate.expiresAt) <= now) return plain(410, 'gone');
 
   const f = (url.searchParams.get('f') ?? 'src') as FormatClass;
   const tags = [
@@ -183,7 +195,7 @@ export async function serveMedia(request: Request, deps: MediaDeps): Promise<Res
     headers.set('etag', object.httpEtag);
     response = new Response(object.body, { status: 200, headers });
   }
-  response.headers.set('cache-control', IMMUTABLE);
+  response.headers.set('cache-control', verdict.cacheControl);
   response.headers.set('cache-tag', tags.join(','));
   return response;
 }

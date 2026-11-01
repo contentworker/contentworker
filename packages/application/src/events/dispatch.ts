@@ -111,7 +111,14 @@ export async function dispatchEvent(
   // A deleted environment's next purge steps. A control event: no webhooks/cache/RAG apply.
   // (Normally routed to the bulk topic, so a long purge never delays entry events.)
   if (event.type === 'environment.purge_due') {
-    await runEnvironmentPurge(ctx, { ...(deps.blob ? { blob: deps.blob } : {}) }, event);
+    await runEnvironmentPurge(
+      ctx,
+      {
+        ...(deps.blob ? { blob: deps.blob } : {}),
+        ...(deps.assetGate ? { assetGate: deps.assetGate } : {}),
+      },
+      event,
+    );
     return;
   }
 
@@ -219,6 +226,9 @@ export async function dispatchEvent(
       await searchIndex?.remove(scope, entryId);
     }
     if (deps.cache) await deps.cache.invalidateTag(epochTag(scope));
+    // Its media stops at once: every gate entry goes (the engine then purges the environment's
+    // cached media, now and once more later). The purge clears the gate again when it finishes.
+    await deps.assetGate?.deleteScope(scope);
     // Its rows and files go with the purge (`environment.purge_due`), once, not per event.
   }
 

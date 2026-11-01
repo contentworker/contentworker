@@ -1,4 +1,6 @@
-import type { BlobStore, DownloadUrlOptions } from '@contentworker/ports';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { Scope } from '@contentworker/domain';
+import type { BlobStore, DownloadUrlOptions, MediaPathSigner } from '@contentworker/ports';
 
 /**
  * The subset of an R2 object (with body) this adapter reads. Structural, so the
@@ -30,6 +32,40 @@ export interface R2BucketLike {
 
 /** Path prefix the Worker serves blobs under (see {@link handleMediaRequest}). */
 export const MEDIA_PATH_PREFIX = '/media/';
+
+/** Bytes of MAC a published media path carries: 128 bits, 22 base64url characters. */
+export const MEDIA_PATH_TOKEN_BYTES = 16;
+
+/**
+ * The token in a published asset's media URL: HMAC-SHA256 under the media signing secret over
+ * the scope, the asset and the version, truncated to {@link MEDIA_PATH_TOKEN_BYTES}. The message
+ * starts `asset-path`, so it can never equal a signed `/media/*` URL's (which starts with the
+ * method), and each part is URI-encoded, so no two addresses share one. Synchronous (node:crypto),
+ * so projecting an asset needs no await.
+ */
+export function createMediaPathSigner(secret: string): MediaPathSigner {
+  if (!secret) throw new Error('media URL signing secret must not be empty');
+  const mac = (scope: Scope, assetId: string, version: number): Buffer => {
+    const e = encodeURIComponent;
+    return createHmac('sha256', secret)
+      .update(
+        `asset-path\n${e(scope.spaceId)}\n${e(scope.environmentId)}\n${e(assetId)}\n${version}`,
+      )
+      .digest()
+      .subarray(0, MEDIA_PATH_TOKEN_BYTES);
+  };
+  return {
+    token: (scope, assetId, version) => mac(scope, assetId, version).toString('base64url'),
+    verify(scope, assetId, version, token) {
+      const given = Buffer.from(token, 'base64url');
+      // Canonical form only: a token with padding or stray characters decodes to the same bytes.
+      if (given.length !== MEDIA_PATH_TOKEN_BYTES || given.toString('base64url') !== token) {
+        return false;
+      }
+      return timingSafeEqual(given, mac(scope, assetId, version));
+    },
+  };
+}
 
 /**
  * Signs and verifies media URLs.

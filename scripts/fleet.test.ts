@@ -144,8 +144,8 @@ test('the media Worker gets its own route, purge queue and the deployment’s me
   assert.equal(shellVars(acme).MEDIA_DOMAIN, 'media.acme.contentworker.app');
 });
 
-test('Workers deploy engine first, then api, media, delivery and web', () => {
-  assert.deepEqual([...APPS], ['engine', 'api', 'media', 'delivery', 'web']);
+test('Workers deploy engine first, then media, api, delivery and web', () => {
+  assert.deepEqual([...APPS], ['engine', 'media', 'api', 'delivery', 'web']);
 });
 
 test('rate-limit namespaces move with the slot and never collide across Workers', () => {

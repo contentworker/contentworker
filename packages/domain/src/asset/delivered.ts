@@ -154,27 +154,40 @@ export interface AssetMediaAddress {
   readonly scope: Scope;
   readonly assetId: string;
   readonly version: number;
+  /**
+   * The unguessable segment: a keyed MAC over the scope, the asset and the version, made and
+   * checked outside the domain (`MediaPathSigner`). Without it, editing a URL (another
+   * environment's copy of the same asset id, another version) would reach files nobody was given.
+   */
+  readonly token: string;
   readonly variant: AssetVariant;
   readonly fileName: string;
 }
 
+/** A path token's shape: 16 bytes as unpadded base64url. */
+const PATH_TOKEN = /^[A-Za-z0-9_-]{22}$/;
+
 /**
- * `/<space>/<env>/<assetId>/v<n>/<variant>/<fileName>`. The version makes the URL immutable (a
- * replaced file gets a new one); the file name is there for people and for downloads.
+ * `/<space>/<env>/<assetId>/v<n>/<token>/<variant>/<fileName>`. The version makes the URL
+ * immutable (a replaced file gets a new one), the token makes it unguessable, and the file name is
+ * there for people and for downloads.
  */
 export function assetMediaPath(a: AssetMediaAddress): string {
   const e = encodeURIComponent;
-  return `/${e(a.scope.spaceId)}/${e(a.scope.environmentId)}/${e(a.assetId)}/v${a.version}/${variantSegment(a.variant)}/${e(a.fileName)}`;
+  return `/${e(a.scope.spaceId)}/${e(a.scope.environmentId)}/${e(a.assetId)}/v${a.version}/${a.token}/${variantSegment(a.variant)}/${e(a.fileName)}`;
 }
 
-/** Reverses {@link assetMediaPath}; `null` for anything else (a malformed path is a 404). */
+/**
+ * Reverses {@link assetMediaPath}; `null` for anything else (a malformed path is a 404). It checks
+ * the token's shape only: whether it is the right one is the signer's to say.
+ */
 export function parseAssetMediaPath(pathname: string): AssetMediaAddress | null {
   const parts = pathname.split('/');
-  if (parts.length !== 7 || parts[0] !== '') return null;
-  const [, space, env, id, v, segment, name] = parts as [string, ...string[]];
+  if (parts.length !== 8 || parts[0] !== '') return null;
+  const [, space, env, id, v, token, segment, name] = parts as [string, ...string[]];
   const version = /^v([1-9][0-9]{0,8})$/.exec(v ?? '');
   const variant = parseAssetVariant(segment ?? '');
-  if (!version || !variant) return null;
+  if (!version || !variant || !PATH_TOKEN.test(token ?? '')) return null;
   try {
     const decoded = [space, env, id, name].map((s) => decodeURIComponent(s ?? ''));
     if (decoded.some((s) => s === '' || s === '.' || s === '..')) return null;
@@ -183,6 +196,7 @@ export function parseAssetMediaPath(pathname: string): AssetMediaAddress | null 
       scope: { spaceId, environmentId },
       assetId,
       version: Number(version[1]),
+      token: token as string,
       variant,
       fileName,
     };
@@ -318,13 +332,19 @@ export function deliveredAsset(
 }
 
 /**
- * The media origin's URL builder for one published asset version. Width steps ask for `fm=auto`,
- * so a reader gets AVIF or WebP when it accepts them; renditions carry their own format.
+ * The media origin's URL builder for one published asset version, given its path token. Width
+ * steps ask for `fm=auto`, so a reader gets AVIF or WebP when it accepts them; renditions carry
+ * their own format.
  */
 export function publicAssetUrls(
   origin: string,
   scope: Scope,
-  asset: { readonly id: string; readonly version: number; readonly fileName: string },
+  asset: {
+    readonly id: string;
+    readonly version: number;
+    readonly fileName: string;
+    readonly token: string;
+  },
 ): (variant: AssetVariant) => string {
   const base = origin.replace(/\/$/, '');
   return (variant) => {
@@ -332,6 +352,7 @@ export function publicAssetUrls(
       scope,
       assetId: asset.id,
       version: asset.version,
+      token: asset.token,
       variant,
       fileName: asset.fileName,
     });

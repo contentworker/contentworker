@@ -77,6 +77,10 @@ export async function planPurges(
       break;
     }
     case 'environment.deleted':
+    // Each purge step too: the last one clears the gate again (an entry written back while the
+    // rows were still there), so the environment's cached media is purged after it, now and once
+    // more after the delay. Cheap: one tag, coalesced per batch.
+    case 'environment.purge_due':
       plan.revoked.add(mediaEnvironmentTag(spaceId, environmentId));
       break;
     default:

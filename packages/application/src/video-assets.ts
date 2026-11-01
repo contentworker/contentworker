@@ -156,8 +156,9 @@ export async function refreshVideoAsset(ctx: AppContext, scope: Scope, id: strin
   });
   return ctx.store.withTransaction(async (tx) => {
     // Re-read inside the unit: the host call took time, and an edit or publish in between must
-    // not be overwritten with the copy read before it.
-    const current = (await tx.assets.get(scope, id)) ?? asset;
+    // not be overwritten with the copy read before it, nor a delete undone by saving it again.
+    const current = await tx.assets.get(scope, id);
+    if (!current) throw new NotFoundError('Asset', id);
     const published =
       current.status === 'published' ? await tx.assets.getPublished(scope, id) : null;
     const updated = refreshed(current);

@@ -14,6 +14,8 @@ import {
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
+/** A path token's shape (16 bytes, base64url); the signer makes real ones. */
+const T = 'AAAAAAAAAAAAAAAAAAAAAA';
 
 describe('media URLs', () => {
   it('round-trip every variant, encoding what needs it', () => {
@@ -22,24 +24,35 @@ describe('media URLs', () => {
       { kind: 'width' as const, width: 640 },
       { kind: 'rendition' as const, name: 'hero-2x' },
     ]) {
-      const address = { scope, assetId: 'a1', version: 3, variant, fileName: 'my photo #1.jpg' };
+      const address = {
+        scope,
+        assetId: 'a1',
+        version: 3,
+        token: T,
+        variant,
+        fileName: 'my photo #1.jpg',
+      };
       const path = assetMediaPath(address);
-      expect(path).toBe(`/shop/main/a1/v3/${variantSegment(variant)}/my%20photo%20%231.jpg`);
+      expect(path).toBe(`/shop/main/a1/v3/${T}/${variantSegment(variant)}/my%20photo%20%231.jpg`);
       expect(parseAssetMediaPath(path)).toEqual(address);
     }
   });
 
-  it('refuse a width off the ladder, a bad version or segment, and traversal', () => {
+  it('refuse a width off the ladder, a bad version, token or segment, and traversal', () => {
     for (const bad of [
-      '/shop/main/a1/v1/w641/x.jpg',
-      '/shop/main/a1/v1/w100/x.jpg',
-      '/shop/main/a1/v0/o/x.jpg',
-      '/shop/main/a1/1/o/x.jpg',
-      '/shop/main/a1/v1/r-Hero/x.jpg',
-      '/shop/main/a1/v1/q/x.jpg',
-      '/shop/main/../v1/o/x.jpg',
-      '/shop/main/a1/v1/o/x.jpg/extra',
-      '/shop/main/a1/v1/o/%E0%A4%A',
+      `/shop/main/a1/v1/${T}/w641/x.jpg`,
+      `/shop/main/a1/v1/${T}/w100/x.jpg`,
+      `/shop/main/a1/v0/${T}/o/x.jpg`,
+      `/shop/main/a1/1/${T}/o/x.jpg`,
+      `/shop/main/a1/v1/${T}/r-Hero/x.jpg`,
+      `/shop/main/a1/v1/${T}/q/x.jpg`,
+      `/shop/main/../v1/${T}/o/x.jpg`,
+      `/shop/main/a1/v1/${T}/o/x.jpg/extra`,
+      `/shop/main/a1/v1/${T}/o/%E0%A4%A`,
+      // No token (the old shape), a short one, and one with a character outside base64url.
+      '/shop/main/a1/v1/o/x.jpg',
+      '/shop/main/a1/v1/AAAA/o/x.jpg',
+      `/shop/main/a1/v1/${T.slice(1)}=/o/x.jpg`,
     ]) {
       expect(parseAssetMediaPath(bad), bad).toBeNull();
     }
@@ -92,12 +105,15 @@ describe('deliveredAsset', () => {
         id: 'a1',
         version: 2,
         fileName: 'x.png',
+        token: T,
       }),
       renditions: ['thumb'],
     });
-    expect(d.url).toBe('https://media.test/shop/main/a1/v2/o/x.png');
+    expect(d.url).toBe(`https://media.test/shop/main/a1/v2/${T}/o/x.png`);
     expect(d.file.url).toBe(d.url);
-    expect(d.renditions).toEqual({ thumb: 'https://media.test/shop/main/a1/v2/r-thumb/x.png' });
+    expect(d.renditions).toEqual({
+      thumb: `https://media.test/shop/main/a1/v2/${T}/r-thumb/x.png`,
+    });
     expect(d.srcset.map((s) => s.width)).toEqual([320, 640]);
     expect(d.title).toEqual({ 'en-US': 'Title' });
     expect(d.rights).toBeUndefined();

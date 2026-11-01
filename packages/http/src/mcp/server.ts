@@ -58,6 +58,7 @@ import {
   getBulkJob,
   getBulkJobReport,
   getContentType,
+  getPreviewAsset,
   getPreviewEntry,
   getRelease,
   getVersion,
@@ -83,6 +84,7 @@ import {
   listEnvironmentAliases,
   listFunctions,
   listPlugins,
+  listPreviewAssets,
   listPreviewEntries,
   listReleases,
   listRolePresets,
@@ -3001,6 +3003,97 @@ export function buildServer(
               ? { sort: { field: args.sort ?? 'updatedAt', direction: args.order ?? 'desc' } }
               : {}),
           }),
+        ),
+      );
+    },
+  );
+
+  // Preview's asset reads (`GET /preview/…/assets[/:id]`): drafts included, archived left out, in
+  // the shape Delivery serves, every URL signed and short-lived. Same scope and the same refusal
+  // of a content-granted key as the REST routes.
+  const previewBlob = () => {
+    if (!deps.blob) throw new NotConfiguredError('blob', 'Preview asset reads need a blob store');
+    return deps.blob;
+  };
+  server.registerTool(
+    'asset_preview_list',
+    {
+      description:
+        'List the asset library as Preview serves it: drafts and published (archived left out), ' +
+        'in the delivered shape (url, renditions, srcset) with short-lived signed URLs. Filter ' +
+        'by kind, tag or folder; pass nextCursor back as cursor for the next page. A key with ' +
+        'content grants reads none.',
+      inputSchema: toolSchema('asset_preview_list', () =>
+        z.object({
+          limit: z.number().int().positive().max(100).optional(),
+          cursor: z.string().optional().describe('nextCursor from the previous page'),
+          kind: z.enum(ASSET_KINDS as unknown as [string, ...string[]]).optional(),
+          tag: z.string().max(128).optional().describe('taxonomy tag id'),
+          folderId: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('assets filed in this folder; null for those in no folder'),
+          locale: z
+            .string()
+            .optional()
+            .describe('resolve title, description and alt text for one locale'),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      // As the REST route: a key with content grants reads no assets.
+      if (principal.contentGrants) return ok({ items: [], total: 0 });
+      const page = await listPreviewAssets(
+        ctx,
+        previewBlob(),
+        scopeOf(args),
+        {
+          ...(args.limit ? { limit: args.limit } : {}),
+          ...(args.cursor ? { cursor: args.cursor } : {}),
+          filters: {
+            ...(args.kind ? { kind: args.kind as (typeof ASSET_KINDS)[number] } : {}),
+            ...(args.tag ? { tag: args.tag } : {}),
+            ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
+          },
+        },
+        args.locale !== undefined ? { locale: args.locale } : {},
+      );
+      return ok({ ...page, total: page.items.length });
+    },
+  );
+
+  server.registerTool(
+    'asset_preview_get',
+    {
+      description:
+        'Get one asset as Preview serves it, draft or published (not archived), in the ' +
+        'delivered shape with short-lived signed URLs. Refused for a key with content grants.',
+      inputSchema: toolSchema('asset_preview_get', () =>
+        z.object({
+          id: z.string(),
+          locale: z
+            .string()
+            .optional()
+            .describe('resolve title, description and alt text for one locale'),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      if (principal.contentGrants) {
+        throw new ForbiddenError('assets (a key with content grants reads no assets)');
+      }
+      return ok(
+        await getPreviewAsset(
+          ctx,
+          previewBlob(),
+          scopeOf(args),
+          args.id,
+          args.locale !== undefined ? { locale: args.locale } : {},
         ),
       );
     },

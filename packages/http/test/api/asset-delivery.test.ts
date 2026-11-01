@@ -1,5 +1,5 @@
 import type { ApiConfig } from '@contentworker/platform/config';
-import { FakeImageTransformer } from '@contentworker/test-kit';
+import { FakeImageTransformer, FakeMediaPathSigner } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -21,6 +21,9 @@ const config: ApiConfig = testConfig({
 });
 
 const MEDIA = 'https://media.example.test';
+const paths = new FakeMediaPathSigner();
+const mediaBase = (id: string) =>
+  `${MEDIA}/s1/main/${id}/v1/${paths.token({ spaceId: 's1', environmentId: 'main' }, id, 1)}`;
 const cma = { Authorization: 'Bearer cma', 'Content-Type': 'application/json' };
 const cda = { Authorization: 'Bearer cda' };
 const cpa = { Authorization: 'Bearer cpa' };
@@ -33,7 +36,7 @@ function makeApp(opts: { media?: boolean } = {}) {
     {
       ...ctx,
       images: new FakeImageTransformer(),
-      ...(opts.media === false ? {} : { mediaPublicUrl: MEDIA }),
+      ...(opts.media === false ? {} : { mediaPublicUrl: MEDIA, mediaPaths: paths }),
     },
     config,
     rag,
@@ -93,7 +96,7 @@ describe('delivered assets over REST', () => {
     const d = await json<Record<string, unknown>>(
       app.request(`${D}/assets/${a.id}`, { headers: cda }),
     );
-    const base = `${MEDIA}/s1/main/${a.id}/v1`;
+    const base = mediaBase(a.id);
     expect(d).toMatchObject({
       id: a.id,
       title: { 'en-US': 'Hero', 'de-DE': 'Held' },
@@ -148,7 +151,7 @@ describe('delivered assets over REST', () => {
       headers: cda,
     });
     expect(res.status).toBe(301);
-    expect(res.headers.get('location')).toBe(`${MEDIA}/s1/main/${a.id}/v1/w960/hero.jpg?fm=auto`);
+    expect(res.headers.get('location')).toBe(`${mediaBase(a.id)}/w960/hero.jpg?fm=auto`);
     const unknown = await app.request(`${D}/assets/${a.id}/transform?rendition=nope`, {
       headers: cda,
     });
@@ -239,7 +242,7 @@ describe('the GraphQL Asset type', () => {
       }),
     );
     expect(res.errors).toBeUndefined();
-    const base = `${MEDIA}/s1/main/${a.id}/v1`;
+    const base = mediaBase(a.id);
     expect(res.data.asset).toMatchObject({
       id: a.id,
       title: 'Held',
