@@ -87,6 +87,11 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** How long typing pauses before the library searches. */
 const SEARCH_DEBOUNCE_MS = 250;
 
+/** How often the library looks again while an asset on screen is still being processed. */
+const INGEST_POLL_MS = 4000;
+
+const ingesting = (a: Asset) => a.ingestStatus === 'pending' || a.ingestStatus === 'processing';
+
 /** `value`, once it has stopped changing for `ms`. */
 function useDebounced<T>(value: T, ms: number): T {
   const [settled, setSettled] = useState(value);
@@ -139,6 +144,9 @@ export function AssetLibrary(props: { locale: string }) {
     initialPageParam: '',
     getNextPageParam: (last) => last.nextCursor,
     enabled: !searching,
+    // Ingest finishes on its own time: look again while anything shown is still processing.
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((p) => p.items.some(ingesting)) ? INGEST_POLL_MS : false,
     // Another folder or filter keeps the assets on screen (dimmed if slow) until its own arrive.
     placeholderData: keepPreviousData,
   });
@@ -148,6 +156,7 @@ export function AssetLibrary(props: { locale: string }) {
     queryKey: keys.assetLibrary({ search: searchQuery }),
     queryFn: () => client.searchAssets(searchQuery),
     enabled: searching,
+    refetchInterval: (query) => (query.state.data?.items.some(ingesting) ? INGEST_POLL_MS : false),
     // A chip narrowing the search keeps the results (and the chips) up while the next ones load.
     placeholderData: keepPreviousData,
   });
@@ -156,9 +165,26 @@ export function AssetLibrary(props: { locale: string }) {
       searching ? (search.data?.items ?? []) : (pages.data?.pages.flatMap((p) => p.items) ?? []),
     [searching, search.data, pages.data],
   );
+  // The open asset follows what the library fetched (a poll that saw ingest finish); the sheet
+  // keeps the editor's unsaved values, since it fills its form only when another asset opens.
+  useEffect(() => {
+    setOpen((current) => {
+      if (!current) return current;
+      const fresh = assets.find((a) => a.id === current.id);
+      return fresh && fresh !== current ? fresh : current;
+    });
+  }, [assets]);
   const loading = searching ? search.isPending : pages.isPending;
   const loadError = searching ? search.error : pages.error;
   const refreshing = searching ? search.isPlaceholderData : pages.isPlaceholderData;
+  const searchBusy = searching && (search.isPending || search.isPlaceholderData);
+  const searchSummary = !searching
+    ? ''
+    : searchBusy || !search.data
+      ? 'Searching…'
+      : search.data.total === 0
+        ? `No matches for “${q}”`
+        : `${search.data.total} ${search.data.total === 1 ? 'match' : 'matches'} for “${q}”`;
   // Skeletons: the first page comes back as long as the library was last time (this session);
   // the next page, as a row of them after the last asset.
   const countKey = `assets:${view}`;
@@ -190,6 +216,13 @@ export function AssetLibrary(props: { locale: string }) {
   };
   const changeFilters = (next: AssetFilterState) => {
     setFilters(next);
+    setSelected(new Set());
+    setBulkFailures(null);
+  };
+  // A new search shows other assets: a selection (or its failures) the results hide would
+  // otherwise still be acted on.
+  const changeSearch = (next: string) => {
+    setSearchText(next);
     setSelected(new Set());
     setBulkFailures(null);
   };
@@ -749,7 +782,7 @@ export function AssetLibrary(props: { locale: string }) {
             dragging && 'ring-2 ring-ring/50 ring-offset-4 ring-offset-background',
           )}
         >
-          <AssetSearchBox value={searchText} onChange={setSearchText} />
+          <AssetSearchBox value={searchText} onChange={changeSearch} />
           <AssetFilterBar
             value={filters}
             onChange={changeFilters}
@@ -760,13 +793,14 @@ export function AssetLibrary(props: { locale: string }) {
           {searching && chips && (
             <AssetFacetChips groups={chips} isActive={chipActive} onToggle={toggleChip} />
           )}
-          {searching && search.data && (
-            <p className="caption text-muted-foreground" aria-live="polite">
-              {search.data.total === 0
-                ? `No matches for “${q}”`
-                : `${search.data.total} ${search.data.total === 1 ? 'match' : 'matches'} for “${q}”`}
-            </p>
-          )}
+          {/* Always mounted, so the first result is announced too; empty (and hidden) at rest. */}
+          <p
+            className={cn('text-ui text-muted-foreground', !searchSummary && 'sr-only')}
+            aria-live="polite"
+            aria-busy={searchBusy || undefined}
+          >
+            {searchSummary}
+          </p>
           {dragging && (
             <p className="caption" aria-live="polite">
               Drop files to upload {openFolder ? `to “${openFolder.name}”` : 'here'}
@@ -831,7 +865,8 @@ export function AssetLibrary(props: { locale: string }) {
           />
           {loading ? (
             <>
-              <LoadingStatus>{searching ? 'Searching assets…' : 'Loading assets…'}</LoadingStatus>
+              {/* A search says so in its summary line, above. */}
+              {searching ? null : <LoadingStatus>Loading assets…</LoadingStatus>}
               {view === 'grid' ? grid : list}
             </>
           ) : loadError && assets.length === 0 ? (

@@ -22,9 +22,10 @@ import { SkeletonText } from '@contentworker/ui/skeleton';
 import { Textarea } from '@contentworker/ui/textarea';
 import { useEffect, useRef, useState } from 'react';
 import { AssetPreview, FallbackTile } from '~/cms/components/AssetPreview';
-import { AssetIngestBadges } from '~/cms/components/assets/AssetIngestBadges';
+import { AssetIngestBadges, BADGE_BUTTON_FOCUS } from '~/cms/components/assets/AssetIngestBadges';
+import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
-import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { StatusBadge, StatusDot, ToneBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { ImageTransform } from '../lib/management';
 import { useToast } from '../lib/toast';
@@ -61,14 +62,26 @@ export function AssetDetailSheet(props: {
   const [previewFailed, setPreviewFailed] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // The original a possible duplicate points at, waiting on "discard your edits?".
+  const [confirmOpen, setConfirmOpen] = useState<string | null>(null);
   const imgRef = useRef<HTMLButtonElement>(null);
+  // The values the form was filled from: what "changed" and "unsaved" are measured against.
+  const [base, setBase] = useState<FormValues>({ altText: '', tagIds: [] });
 
-  // Hydrate form state from the asset whenever the sheet opens on a new asset.
+  // Hydrate the form when the sheet opens on an asset, and only then: the same asset coming back
+  // refreshed (a Retry, a video's new status, a poll) keeps what the editor has typed.
+  const assetRef = useRef(asset);
+  assetRef.current = asset;
+  const assetId = asset?.id;
   useEffect(() => {
+    const asset = assetRef.current;
     if (!asset || !props.open) return;
-    setAltText(String(asset.metadata.altText?.[locale] ?? ''));
-    setFocal(asset.metadata.focalPoint);
-    setTagIds([...asset.metadata.tags]);
+    const values = formValues(asset, locale);
+    setBase(values);
+    setAltText(values.altText);
+    setFocal(values.focal);
+    setTagIds([...values.tagIds]);
+    setConfirmOpen(null);
     setUsage(null);
     setPreview(null);
     setPreviewFailed(false);
@@ -81,7 +94,7 @@ export function AssetDetailSheet(props: {
       .assetUsage(asset.id)
       .then(setUsage)
       .catch(() => setUsage([]));
-  }, [asset, props.open, locale, client]);
+  }, [assetId, props.open, locale, client]);
 
   if (!asset) return null;
   const isImage = asset.file.contentType.startsWith('image/');
@@ -107,8 +120,20 @@ export function AssetDetailSheet(props: {
     }
   };
 
-  // What ingest filled from a model and no one has saved yet. Editing the field and saving makes
-  // it the editor's (the API clears the mark), so the badge goes once the value is changed here.
+  const altChanged = altText !== base.altText;
+  const tagsChanged = !sameSet(tagIds, base.tagIds);
+  const dirty = altChanged || tagsChanged || !sameFocal(focal, base.focal);
+
+  // Opening the original replaces this form: with edits in it, that is asked in place first.
+  const openOriginal = (id: string) => {
+    if (dirty) setConfirmOpen(id);
+    else props.onOpenAsset?.(id);
+  };
+
+  // What ingest filled from a model and no one has saved yet. A save sends alt text and tags only
+  // when they changed here, and the API clears the mark only on what changed (this locale's alt
+  // text, the tags added or removed), so saving the focal point leaves suggestions marked. The
+  // alt text badge goes as soon as the value here differs from the suggestion.
   const altSuggested =
     asset.aiSuggestions?.altText?.includes(locale) === true &&
     altText === String(asset.metadata.altText?.[locale] ?? '');
@@ -174,8 +199,8 @@ export function AssetDetailSheet(props: {
     setBusy(true);
     try {
       await client.setAssetMetadata(asset.id, {
-        altText: { ...asset.metadata.altText, [locale]: altText },
-        tags: tagIds,
+        ...(altChanged ? { altText: { ...asset.metadata.altText, [locale]: altText } } : {}),
+        ...(tagsChanged ? { tags: tagIds } : {}),
         focalPoint: focal,
       });
       toast.success('Metadata saved');
@@ -205,12 +230,30 @@ export function AssetDetailSheet(props: {
                 <AssetIngestBadges
                   asset={asset}
                   name={asset.file.fileName}
-                  {...(props.onOpenAsset ? { onOpenOriginal: props.onOpenAsset } : {})}
+                  {...(props.onOpenAsset ? { onOpenOriginal: openOriginal } : {})}
                   onRetry={() => void retryIngest()}
                 />
               </div>
-              {asset.ingestStatus === 'error' && asset.ingestError && (
-                <p className="text-destructive text-xs">{asset.ingestError}</p>
+              {confirmOpen && (
+                <InlineConfirm
+                  message="Open the original and discard your changes?"
+                  note="Alt text, tags and the focal point here are not saved."
+                  cancelLabel="Keep editing"
+                  onCancel={() => setConfirmOpen(null)}
+                >
+                  {/* The ink pill: nothing stored is deleted, only this form's unsaved values. */}
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      const id = confirmOpen;
+                      setConfirmOpen(null);
+                      props.onOpenAsset?.(id);
+                    }}
+                  >
+                    Discard and open
+                  </Button>
+                </InlineConfirm>
               )}
               {asset.duplicateOf && (
                 <p className="text-muted-foreground text-xs">
@@ -411,12 +454,20 @@ export function AssetDetailSheet(props: {
                     type="button"
                     aria-pressed={tagIds.includes(t.id)}
                     onClick={() => toggleTag(t.id)}
-                    className="rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+                    className={BADGE_BUTTON_FOCUS}
                   >
                     <Badge variant={tagIds.includes(t.id) ? 'default' : 'outline'}>
+                      {suggestedTags.has(t.id) && tagIds.includes(t.id) && (
+                        <StatusDot status="suggested" className="ring-1 ring-background" />
+                      )}
                       {t.name}
                       {suggestedTags.has(t.id) && tagIds.includes(t.id) && (
-                        <span className="sr-only"> (AI suggestion)</span>
+                        <>
+                          <span aria-hidden="true" className="font-normal">
+                            AI
+                          </span>
+                          <span className="sr-only"> (AI suggestion)</span>
+                        </>
                       )}
                     </Badge>
                   </button>
@@ -457,3 +508,24 @@ export function AssetDetailSheet(props: {
     </Sheet>
   );
 }
+
+interface FormValues {
+  readonly altText: string;
+  readonly tagIds: readonly string[];
+  readonly focal?: { x: number; y: number };
+}
+
+/** The editable values of an asset, in `locale`, as the form starts them. */
+function formValues(asset: Asset, locale: string): FormValues {
+  return {
+    altText: String(asset.metadata.altText?.[locale] ?? ''),
+    tagIds: [...asset.metadata.tags],
+    ...(asset.metadata.focalPoint ? { focal: asset.metadata.focalPoint } : {}),
+  };
+}
+
+const sameSet = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((x) => b.includes(x));
+
+const sameFocal = (a?: { x: number; y: number }, b?: { x: number; y: number }) =>
+  a?.x === b?.x && a?.y === b?.y;

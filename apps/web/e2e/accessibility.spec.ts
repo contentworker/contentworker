@@ -8,6 +8,7 @@ import {
   seedAsset,
   seedAssetFolder,
   seedCms,
+  seedIngestFindings,
   useCmsScope,
   withoutAssistant,
 } from './cms';
@@ -122,6 +123,30 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
   // A search: the box, its summary and (when anything is indexed) the facet chips.
   await library.getByRole('searchbox', { name: 'Search assets' }).fill(`a11y ${stamp}`);
   await expect(library.getByText(new RegExp(`for “a11y ${stamp}”`))).toBeVisible();
+  await scan(page, testInfo);
+});
+
+// What ingest found, in sight: a possible duplicate, a failed ingest with its reason and Retry,
+// and the copy's sheet asking before an edit is discarded.
+test('the asset library with ingest badges has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  const stamp = Date.now();
+  const { copy, broken } = await seedIngestFindings(request, stamp);
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  const duplicateBadge = `Possible duplicate: open the asset “${copy}” duplicates`;
+  await expect(library.getByRole('button', { name: duplicateBadge })).toBeVisible();
+  await expect(library.getByRole('button', { name: `Retry processing “${broken}”` })).toBeVisible();
+  await scan(page, testInfo);
+
+  await library.getByRole('button', { name: `Open “${copy}”` }).click();
+  const sheet = page.getByRole('dialog');
+  await sheet.getByLabel('Alt text (en-US)').fill('Not saved yet');
+  await sheet.getByRole('button', { name: duplicateBadge }).click();
+  await expect(sheet.getByRole('alertdialog')).toBeVisible();
   await scan(page, testInfo);
 });
 

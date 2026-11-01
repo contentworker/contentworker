@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { Asset, AssetFolder, Tag } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -78,6 +78,7 @@ const client = {
   })),
   getAsset: vi.fn(async (id: string) => asset({ id, title: { 'en-US': 'The original' } })),
   reingestAsset: vi.fn(async (id: string) => asset({ id, ingestStatus: 'pending' })),
+  setAssetMetadata: vi.fn(async (id: string, _patch: unknown) => asset({ id })),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -93,6 +94,7 @@ const { AssetLibrary } = await import('~/cms/components/AssetLibrary');
 const { ApiError } = await import('~/cms/lib/management');
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
   assets = [];
   folders = [];
@@ -813,5 +815,203 @@ describe('what ingest found', () => {
     const dialog = await screen.findByRole('dialog');
     await within(dialog).findByRole('button', { name: 'Hero' });
     expect(within(dialog).queryByText('AI suggestion')).toBeNull();
+  });
+});
+
+describe('unsaved edits in the detail sheet', () => {
+  const openSheet = async (name: string) => {
+    fireEvent.click(await screen.findByRole('button', { name: `Open “${name}”` }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('button', { name: /Hero/ });
+    return dialog;
+  };
+  const altBox = (dialog: HTMLElement) =>
+    within(dialog).getByLabelText('Alt text (en-US)') as HTMLTextAreaElement;
+
+  it('keeps what was typed when Retry brings the same asset back, and the list with it', async () => {
+    assets = [
+      asset({
+        id: 'e',
+        ingestStatus: 'error',
+        ingestError: 'Timed out',
+        file: { fileName: 'b.jpg' },
+      }),
+    ];
+    renderLibrary();
+    const dialog = await openSheet('b.jpg');
+    fireEvent.change(altBox(dialog), { target: { value: 'Typed, not saved' } });
+    // The server's copy changes meanwhile; the refetch that follows Retry must not overwrite.
+    assets = [
+      asset({
+        id: 'e',
+        ingestStatus: 'pending',
+        metadata: { altText: { 'en-US': 'Server' }, tags: [] },
+        file: { fileName: 'b.jpg' },
+      }),
+    ];
+    const listCalls = client.listAssets.mock.calls.length;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retry processing “b.jpg”' }));
+    await waitFor(() => expect(client.reingestAsset).toHaveBeenCalledWith('e'));
+    await waitFor(() => expect(client.listAssets.mock.calls.length).toBeGreaterThan(listCalls));
+    await waitFor(() => expect(within(dialog).getByText('Processing')).toBeTruthy());
+    expect(altBox(dialog).value).toBe('Typed, not saved');
+  });
+
+  it('keeps what was typed when a poll finds ingest finished', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    assets = [asset({ id: 'p', ingestStatus: 'processing', file: { fileName: 'busy.jpg' } })];
+    renderLibrary();
+    const dialog = await openSheet('busy.jpg');
+    fireEvent.change(altBox(dialog), { target: { value: 'Mine' } });
+    assets = [
+      asset({
+        id: 'p',
+        ingestStatus: 'ready',
+        metadata: { altText: { 'en-US': 'From the model' }, tags: [] },
+        file: { fileName: 'busy.jpg' },
+      }),
+    ];
+    const listCalls = client.listAssets.mock.calls.length;
+    await act(() => vi.advanceTimersByTimeAsync(4500));
+    await waitFor(() => expect(client.listAssets.mock.calls.length).toBeGreaterThan(listCalls));
+    await waitFor(() => expect(within(dialog).queryByText('Processing')).toBeNull());
+    expect(altBox(dialog).value).toBe('Mine');
+  });
+
+  it('stops polling once nothing shown is processing', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    assets = [asset({ id: 'r', ingestStatus: 'ready' })];
+    renderLibrary();
+    await screen.findByRole('button', { name: 'Open “photo.jpg”' });
+    const listCalls = client.listAssets.mock.calls.length;
+    await act(() => vi.advanceTimersByTimeAsync(9000));
+    expect(client.listAssets.mock.calls.length).toBe(listCalls);
+  });
+
+  it('asks before the duplicate badge replaces unsaved edits, and opens the original on yes', async () => {
+    assets = [asset({ id: 'copy', duplicateOf: 'orig', file: { fileName: 'copy.jpg' } })];
+    renderLibrary();
+    const dialog = await openSheet('copy.jpg');
+    fireEvent.change(altBox(dialog), { target: { value: 'Half written' } });
+    const badge = () =>
+      within(dialog).getByRole('button', {
+        name: 'Possible duplicate: open the asset “copy.jpg” duplicates',
+      });
+    fireEvent.click(badge());
+    const ask = within(dialog).getByRole('alertdialog', {
+      name: 'Open the original and discard your changes?',
+    });
+    expect(client.getAsset).not.toHaveBeenCalled();
+    fireEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull();
+    expect(altBox(dialog).value).toBe('Half written');
+
+    fireEvent.click(badge());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard and open' }));
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith('orig'));
+    await waitFor(() => expect(altBox(screen.getByRole('dialog')).value).toBe(''));
+  });
+
+  it('opens the original at once from the badge when nothing was edited', async () => {
+    assets = [asset({ id: 'copy', duplicateOf: 'orig', file: { fileName: 'copy.jpg' } })];
+    renderLibrary();
+    const dialog = await openSheet('copy.jpg');
+    fireEvent.click(
+      within(dialog).getByRole('button', {
+        name: 'Possible duplicate: open the asset “copy.jpg” duplicates',
+      }),
+    );
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith('orig'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('saves without accepting AI suggestions it did not touch', async () => {
+    assets = [
+      asset({
+        metadata: { altText: { 'en-US': 'A red mug' }, tags: ['t1'] },
+        aiSuggestions: { altText: ['en-US'], tags: ['t1'] },
+      }),
+    ];
+    renderLibrary();
+    const dialog = await openSheet('photo.jpg');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save metadata' }));
+    await waitFor(() => expect(client.setAssetMetadata).toHaveBeenCalled());
+    const patch = client.setAssetMetadata.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect('altText' in patch).toBe(false);
+    expect('tags' in patch).toBe(false);
+  });
+
+  it('sends only the field that changed', async () => {
+    assets = [
+      asset({
+        metadata: { altText: { 'en-US': 'A red mug' }, tags: ['t1'] },
+        aiSuggestions: { altText: ['en-US'], tags: ['t1'] },
+      }),
+    ];
+    renderLibrary();
+    const dialog = await openSheet('photo.jpg');
+    fireEvent.change(altBox(dialog), { target: { value: 'A red mug on a shelf' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save metadata' }));
+    await waitFor(() => expect(client.setAssetMetadata).toHaveBeenCalled());
+    const patch = client.setAssetMetadata.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(patch.altText).toEqual({ 'en-US': 'A red mug on a shelf' });
+    expect('tags' in patch).toBe(false);
+  });
+
+  it('marks an AI-suggested tag in sight, not only to a screen reader', async () => {
+    assets = [asset({ metadata: { altText: {}, tags: ['t1'] }, aiSuggestions: { tags: ['t1'] } })];
+    renderLibrary();
+    const dialog = await openSheet('photo.jpg');
+    const tag = within(dialog).getByRole('button', { name: /Hero/ });
+    expect(within(tag).getByText('AI').getAttribute('aria-hidden')).toBe('true');
+    expect(within(tag).getByText('(AI suggestion)')).toBeTruthy();
+  });
+
+  it('reads a failure reason once, in the sheet as in the grid', async () => {
+    assets = [
+      asset({
+        id: 'e',
+        ingestStatus: 'error',
+        ingestError: 'Timed out',
+        file: { fileName: 'b.jpg' },
+      }),
+    ];
+    renderLibrary();
+    expect(await screen.findAllByText('Timed out')).toHaveLength(1);
+    const dialog = await openSheet('b.jpg');
+    expect(within(dialog).getAllByText(/Timed out/)).toHaveLength(1);
+  });
+});
+
+describe('searching with a selection', () => {
+  it('clears the selection and its failures when the search changes', async () => {
+    assets = [asset({ id: 'a1', file: { fileName: 'one.jpg' } })];
+    renderLibrary();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select “one.jpg”' }));
+    expect(screen.getByRole('group', { name: 'Selected assets' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search assets' }), {
+      target: { value: 'two' },
+    });
+    expect(screen.queryByRole('group', { name: 'Selected assets' })).toBeNull();
+  });
+
+  it('says Searching… and is busy while the next results load, in an always-present live line', async () => {
+    let resolve: (v: unknown) => void = () => {};
+    client.searchAssets.mockImplementationOnce(
+      () => new Promise((r) => (resolve = r as (v: unknown) => void)) as never,
+    );
+    renderLibrary();
+    await waitFor(() => expect(client.listAssets).toHaveBeenCalled());
+    const live = document.querySelector('p[aria-live="polite"].text-ui');
+    expect(live).toBeTruthy();
+    expect(live?.textContent).toBe('');
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search assets' }), {
+      target: { value: 'mug' },
+    });
+    await waitFor(() => expect(live?.textContent).toBe('Searching…'));
+    expect(live?.getAttribute('aria-busy')).toBe('true');
+    resolve({ items: [], total: 0, facets: { kind: {}, tag: {}, folder: {} } });
+    await waitFor(() => expect(live?.textContent).toBe('No matches for “mug”'));
+    expect(live?.getAttribute('aria-busy')).toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import {
   SPACE,
   seedAsset,
   seedCms,
+  seedIngestFindings,
   statusOf,
   useCmsScope,
   withoutAssistant,
@@ -604,4 +605,49 @@ test.describe('publishing from a row, without the assistant', () => {
     expect(await statusOf(request, id)).toBe('draft');
     await expect(row.getByText('Draft', { exact: true })).toBeVisible();
   });
+});
+
+test('the asset library shows what ingest found: a duplicate opens its original, and a failed ingest retries', async ({
+  page,
+  request,
+}) => {
+  // Waits for ingest to find the twin and to give up on the missing file (after its retries).
+  test.setTimeout(240_000);
+  const stamp = Date.now();
+  const { original, copy, broken } = await seedIngestFindings(request, stamp);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  const duplicateBadge = `Possible duplicate: open the asset “${copy}” duplicates`;
+
+  // From the grid: the badge opens the original's sheet.
+  await library.getByRole('button', { name: duplicateBadge }).click();
+  let sheet = page.getByRole('dialog');
+  await expect(sheet.getByRole('heading', { name: original })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+
+  // From the copy's sheet with an edit in it: asked in place first, then the original.
+  await library.getByRole('button', { name: `Open “${copy}”` }).click();
+  sheet = page.getByRole('dialog');
+  await sheet.getByLabel('Alt text (en-US)').fill('Not saved yet');
+  await sheet.getByRole('button', { name: duplicateBadge }).click();
+  const ask = sheet.getByRole('alertdialog', {
+    name: 'Open the original and discard your changes?',
+  });
+  await expect(ask).toBeVisible();
+  await ask.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(sheet.getByLabel('Alt text (en-US)')).toHaveValue('Not saved yet');
+  await sheet.getByRole('button', { name: duplicateBadge }).click();
+  await sheet.getByRole('button', { name: 'Discard and open' }).click();
+  await expect(sheet.getByRole('heading', { name: original })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  // The failure's reason is on the card, in sight; Retry sends the asset through ingest again.
+  await expect(library.getByText('The file is not in storage').first()).toBeVisible();
+  await library.getByRole('button', { name: `Retry processing “${broken}”` }).click();
+  await expect(page.getByText(`Processing “${broken}” again`)).toBeVisible();
+  await expect(library.getByRole('button', { name: `Retry processing “${broken}”` })).toHaveCount(
+    0,
+  );
 });

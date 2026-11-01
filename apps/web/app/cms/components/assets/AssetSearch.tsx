@@ -1,7 +1,9 @@
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
+import { cn } from '@contentworker/ui/lib/utils';
 import { Search, X } from 'lucide-react';
+import { BADGE_BUTTON_FOCUS } from '~/cms/components/assets/AssetIngestBadges';
 import type { FacetChip } from '~/cms/lib/assets';
 
 /**
@@ -21,6 +23,10 @@ export function AssetSearchBox(props: { value: string; onChange: (next: string) 
         aria-label="Search assets"
         className="h-9 pr-8 pl-8"
         placeholder="Search names, alt text, tags, text…"
+        enterKeyHint="search"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
         value={value}
         maxLength={256}
         onChange={(e) => onChange(e.target.value)}
@@ -85,11 +91,14 @@ export function AssetFacetChips(props: {
                 type="button"
                 aria-pressed={on}
                 onClick={() => props.onToggle(chip)}
-                className="rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+                className={BADGE_BUTTON_FOCUS}
               >
                 {/* Named by what it shows (“Images 3 matches”), so speech and sight agree. */}
                 <Badge variant={on ? 'default' : 'outline'}>
-                  {chip.label} <span className="tabular-nums opacity-70">{chip.count}</span>{' '}
+                  {chip.label}{' '}
+                  <span className={cn('tabular-nums', !on && 'text-muted-foreground')}>
+                    {chip.count}
+                  </span>{' '}
                   <span className="sr-only">{chip.count === 1 ? 'match' : 'matches'}</span>
                 </Badge>
               </button>
