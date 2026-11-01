@@ -162,18 +162,28 @@ What an import preserves:
 - **Assets** as records, published as they were; their files stay where they are.
 
 **Deleting an environment** (`DELETE …/environments/:env?confirm=:env`, MCP `environment_delete`)
-removes its rows (content model, entries and versions, assets, references, releases, schedules,
-workflows and runs, taxonomy, comments, tasks, jobs) in one atomic write; its audit history stays.
+removes it and everything in it (content model, entries and versions, assets, references,
+releases, schedules, workflows and runs, taxonomy, comments, tasks, jobs); its audit history stays.
 `confirm` must repeat the environment id. It takes a person holding `space:admin` in that space
 (signed in, or through their OAuth or personal access token) or the deployment admin token; a
 plain API key gets `403`, even one with `space:admin`. It refuses `main` (`422`) and any environment an alias
-points at (`409`: repoint or remove the alias first). The same write records an
-`environment.deleted` audit row naming the caller (on both surfaces, so a deletion never commits
-unrecorded) and appends `environment.deleted` events (published entry ids in chunks of 500). From
-those the engine removes the entries' search documents and vectors, deletes the environment's asset
-files from the blob store (keeping any another environment's asset records still point at, as a
-clone's do), and purges its delivery cache. Search results only ever include entries published now,
-so an index document that outlives its entry is never served.
+points at (`409`: repoint or remove the alias first).
+
+One atomic write takes the environment out of the registry, so from that moment it answers `404`
+to reads and writes on every surface. The same write records an `environment.deleted` audit row
+naming the caller (on both surfaces, so a deletion never commits unrecorded), appends
+`environment.deleted` events (published entry ids in chunks of 500) and the first
+`environment.purge_due`. From the first, the engine removes the entries' search documents and
+vectors and purges the delivery cache. Search results only ever include entries published now, so
+an index document that outlives its entry is never served.
+
+The rows themselves go afterwards, in bounded steps: D1 refuses one statement that modifies
+hundreds of thousands of rows. Each step deletes at most 500 rows from each of the environment's
+tables, and each `environment.purge_due` runs up to 20 steps before handing on to the next. When
+nothing is left, the environment's asset files go from the blob store (keeping any another
+environment's asset records still point at, as a clone's do) and its id is free again. Until then,
+creating an environment with that id is refused (`409`). A purge whose event is lost is restarted by
+the engine's cron after five minutes without progress.
 
 **An import checks before it writes.** Every entry is validated against the snapshot's content
 model and the target space's locales, and every link in what will be published must point at an

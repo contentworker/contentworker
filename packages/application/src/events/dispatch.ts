@@ -8,9 +8,9 @@ import type {
 } from '@contentworker/ports';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
+import { runEnvironmentPurge } from '../environment-purge';
 import { invokeFunctionsForEvent } from '../functions';
 import { importChunkRunner } from '../import-jobs';
-import { allPages } from '../paging';
 import {
   extractTextByLocale,
   indexEntryEmbeddings,
@@ -98,6 +98,13 @@ export async function dispatchEvent(
     return;
   }
 
+  // A deleted environment's next purge steps. A control event: no webhooks/cache/RAG apply.
+  // (Normally routed to the bulk topic, so a long purge never delays entry events.)
+  if (event.type === 'environment.purge_due') {
+    await runEnvironmentPurge(ctx, { ...(deps.blob ? { blob: deps.blob } : {}) }, event);
+    return;
+  }
+
   // Coalesced bulk fact: the bulk-shaped fan-out replaces N per-entry events.
   if (event.type === 'entries.published_bulk') {
     await dispatchBulkPublished(ctx, deps, event);
@@ -173,24 +180,7 @@ export async function dispatchEvent(
       await searchIndex?.remove(scope, entryId);
     }
     if (deps.cache) await deps.cache.invalidateTag(epochTag(scope));
-    // Its asset files, except any another environment's asset records still point at: an
-    // environment import keeps asset ids and their files, so a clone shares its source's files.
-    if (deps.blob?.deletePrefix) {
-      const inUse = new Set<string>();
-      for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
-        if (env.id === scope.environmentId) continue;
-        const other = { spaceId: scope.spaceId, environmentId: env.id };
-        for (const asset of await allPages((skip, limit) =>
-          ctx.store.assets.list(other, { skip, limit }),
-        )) {
-          inUse.add(asset.id);
-        }
-      }
-      // Keys are `${space}/${environment}/${assetId}/${fileName}` (assetObjectKey).
-      await deps.blob.deletePrefix(`${scope.spaceId}/${scope.environmentId}/`, (key) =>
-        inUse.has(key.split('/')[2] ?? ''),
-      );
-    }
+    // Its rows and files go with the purge (`environment.purge_due`), once, not per event.
   }
 
   // Terminal bulk-job fact: the unconditional scope-epoch bump — the
