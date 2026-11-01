@@ -7,8 +7,10 @@
  * and removes the failure mode where the tools exist but find nothing. The cost
  * is bundle weight — a few hundred KB of prose, which compresses well.
  *
- * Run `pnpm --filter @contentworker/docs generate` after editing docs/. The
- * output is committed and a test fails if it drifts.
+ * The output is gitignored, never committed (committed, it conflicted between
+ * every pair of PRs that touched docs/). `pnpm install` runs this as
+ * postinstall, and turbo's `generate` task reruns it before every
+ * check-types, test, build and dev whenever docs/*.md changes.
  */
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

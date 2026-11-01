@@ -60,7 +60,8 @@ For a site page:
 5. `pnpm docs:build`, which includes the internal link check, and `pnpm test:toolkit` for the map.
 
 For a maintainer page: write it, add it to `docs/README.md`, add its surface-map rows, then
-`pnpm --filter @contentworker/docs generate` and commit `generated.ts` with it.
+`pnpm generate` (the embed is gitignored and rebuilt by every check-types, test and build;
+never commit it).
 
 ## Use the source, not a copy of it
 

@@ -104,9 +104,9 @@ node --test scripts/*.test.ts
 # Bundle check for a Worker (nothing is uploaded)
 pnpm --filter @contentworker/api exec wrangler deploy --dry-run --outdir /tmp/api
 
-# Regenerate committed embeds after editing docs/ or MCP skills
-pnpm --filter @contentworker/docs generate
-pnpm --filter @contentworker/http generate:skills
+# Rebuild the docs and MCP skills embeds (gitignored; install and every turbo
+# check-types, test, build and dev already do this)
+pnpm generate
 ```
 
 ### Where each suite runs
@@ -119,7 +119,7 @@ pnpm --filter @contentworker/http generate:skills
 | `@contentworker/http`          | node, in-memory fakes                                                                                                                             | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                                                                            |
 | `@contentworker/engine`        | workerd                                                                                                                                           | Durable Objects (search shard, live hub, cost guard, rate limiter), real Workflow runs with `AI_MODE=mock`, the media gate and both purge queues                   |
 | `@contentworker/media`         | workerd, Miniflare KV, R2 and D1, a fake Images binding                                                                                           | The media Worker end to end: gate and replica fallback, 404/410, `Accept` negotiation, purge drain, signed draft reads                                             |
-| `@contentworker/docs`          | node                                                                                                                                              | The `docs/` embed matches disk                                                                                                                                     |
+| `@contentworker/docs`          | node                                                                                                                                              | The `docs/` embed (built, not committed) matches disk                                                                                                                                     |
 | `@contentworker/adapters`      | node, fakes of each binding                                                                                                                       | One suite per adapter subpath (`test/<adapter>/`), including the structured and WXR import parsers                                                                 |
 | `@contentworker/agent-runtime` | node                                                                                                                                              | The agent workflows and the graph interpreter, without Cloudflare                                                                                                  |
 | `@contentworker/security`      | node                                                                                                                                              | The signed principal, the derived assistant key, roles and session lifetimes                                                                                       |
