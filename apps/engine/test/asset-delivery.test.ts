@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { assetGateKey, createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
 import {
   type AppContext,
+  commitAssetFile,
   consumeEvent,
   createAsset,
   createAssetRendition,
@@ -12,6 +13,9 @@ import {
   finishIngest,
   publishAsset,
   refreshVideoAsset,
+  replaceAssetFile,
+  runDueAssetExpiries,
+  setAssetRights,
   unpublishAsset,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
@@ -257,6 +261,92 @@ describe('asset events in the engine', () => {
     const events = await eventsSince(scope, mark);
     expect(events.map((e) => e.type)).toEqual(['asset.published']);
     // A hosted video is never gated: it plays from its host.
+    await consume(ctx, events);
+    expect(await env.KV_CACHE.get(assetGateKey(scope, asset.id))).toBeNull();
+  });
+});
+
+describe('asset versions and rights in the engine', () => {
+  it('purge an old version’s media as a revocation once a republish replaces it', async () => {
+    const { ctx, scope } = await space();
+    const blob = new FakeBlobStore();
+    const { asset } = await createAsset(ctx, blob, scope, {
+      fileName: 'a.png',
+      contentType: 'image/png',
+    });
+    await publishAsset(ctx, scope, asset.id);
+    await consume(ctx, await eventsSince(scope, 0));
+    const r = await replaceAssetFile(ctx, blob, scope, asset.id, {
+      fileName: 'b.png',
+      contentType: 'image/png',
+    });
+    const key = `${scope.spaceId}/main/${asset.id}/v2/file/b.png`;
+    await blob.put(key, 'b', 'image/png');
+    let mark = await lastRowid();
+    await commitAssetFile(ctx, blob, scope, asset.id, r.commit);
+    // The draft's new file changes nothing delivered: no purge, and the gate keeps v1.
+    const replaced = await consume(ctx, await eventsSince(scope, mark));
+    expect([...replaced.media, ...replaced.revoked, ...replaced.delivery]).toEqual([]);
+    expect(
+      JSON.parse((await env.KV_CACHE.get(assetGateKey(scope, asset.id))) as string),
+    ).toMatchObject({ v: 1, r2Key: asset.r2Key });
+
+    mark = await lastRowid();
+    await publishAsset(ctx, scope, asset.id);
+    const plan = await consume(ctx, await eventsSince(scope, mark));
+    expect(
+      JSON.parse((await env.KV_CACHE.get(assetGateKey(scope, asset.id))) as string),
+    ).toMatchObject({ v: 2, r2Key: key, fileName: 'b.png' });
+    const { q, sent } = queues();
+    await sendPurges(q, plan, () => {});
+    const tag = `cwa:${scope.spaceId}:main:${asset.id}`;
+    expect(sent.filter((s) => s.queue === 'media-purge')).toEqual([
+      { queue: 'media-purge', body: { tags: [tag] } },
+      { queue: 'media-purge', body: { tags: [tag] }, delaySeconds: REVOCATION_REPURGE_SECONDS },
+    ]);
+  });
+
+  it('carry a rights change into the gate and purge both caches', async () => {
+    const { ctx, scope } = await space();
+    const { asset } = await createAsset(ctx, new FakeBlobStore(), scope, {
+      fileName: 'a.png',
+      contentType: 'image/png',
+    });
+    await publishAsset(ctx, scope, asset.id);
+    const mark = await lastRowid();
+    const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
+    await setAssetRights(ctx, scope, asset.id, { credit: 'Ana', expiresAt });
+    const plan = await consume(ctx, await eventsSince(scope, mark));
+    expect(
+      JSON.parse((await env.KV_CACHE.get(assetGateKey(scope, asset.id))) as string),
+    ).toMatchObject({ expiresAt });
+    expect([...plan.delivery]).toEqual([`cw:${scope.spaceId}:main`]);
+    expect([...plan.revoked]).toEqual([`cwa:${scope.spaceId}:main:${asset.id}`]);
+  });
+
+  it('take an expired asset out: the sweep unpublishes it, the gate goes, media is revoked', async () => {
+    let now = Date.now();
+    const { ctx, scope } = await space({ clock: { now: () => new Date(now) } });
+    const { asset } = await createAsset(ctx, new FakeBlobStore(), scope, {
+      fileName: 'a.png',
+      contentType: 'image/png',
+    });
+    await setAssetRights(ctx, scope, asset.id, { expiresAt: new Date(now + 60_000).toISOString() });
+    await publishAsset(ctx, scope, asset.id);
+    await consume(ctx, await eventsSince(scope, 0));
+    expect(await env.KV_CACHE.get(assetGateKey(scope, asset.id))).not.toBeNull();
+
+    now += 60_000;
+    const mark = await lastRowid();
+    const swept = await runDueAssetExpiries(ctx, { limit: 1000 });
+    expect(swept.expired).toBeGreaterThanOrEqual(1);
+    const events = await eventsSince(scope, mark);
+    expect(events.map((e) => e.type)).toEqual(['asset.unpublished', 'asset.expired']);
+    const plan = await consume(ctx, events);
+    expect(await env.KV_CACHE.get(assetGateKey(scope, asset.id))).toBeNull();
+    expect([...plan.revoked]).toEqual([`cwa:${scope.spaceId}:main:${asset.id}`]);
+    expect([...plan.delivery]).toEqual([`cw:${scope.spaceId}:main`]);
+    // A redelivered pair converges on the same state.
     await consume(ctx, events);
     expect(await env.KV_CACHE.get(assetGateKey(scope, asset.id))).toBeNull();
   });

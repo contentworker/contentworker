@@ -1,7 +1,7 @@
 /**
  * The engine Worker: everything asynchronous and stateful. Queue consumers (domain events, bulk
- * chunks, agent jobs, dead letters), the cron sweeper (outbox relay, scheduled actions, bulk-stall
- * recovery, retention, secret reseal, agent schedules), and the owner of every Durable Object and
+ * chunks, agent jobs, dead letters), the cron sweeper (outbox relay, scheduled actions, asset
+ * expiry, bulk-stall recovery, retention, secret reseal, agent schedules), and the owner of every Durable Object and
  * Workflow class (the admin's assistant among them). It has no public route; the api and delivery
  * Workers reach it through bindings.
  */
@@ -20,6 +20,7 @@ import {
   resumeStalledBulkJobs,
   resumeStalledEnvironmentPurges,
   runDueAgentSchedules,
+  runDueAssetExpiries,
   runDueScheduledActions,
   runPublishAgents,
   startAssetIngestForObject,
@@ -442,7 +443,8 @@ export default {
 
   /**
    * Cron sweeper (every minute): drains any outbox rows the post-commit nudge
-   * missed (crash/eviction) and fires due scheduled publish/unpublish actions.
+   * missed (crash/eviction), fires due scheduled publish/unpublish actions and
+   * unpublishes assets whose rights expired.
    */
   async scheduled(ctrl: ScheduledController, rawEnv: EdgeEnv, _exec: ExecutionContext) {
     const env = withJurisdiction(rawEnv);
@@ -508,6 +510,32 @@ export default {
       } catch (err) {
         console.error('scheduled actions failed', redactCredentials(err));
         metrics.count('contentworker_scheduled_actions_total', 1, { outcome: 'error' });
+      }
+      // Assets whose rights expired leave Delivery (their outbox events relay below, which purges
+      // the media and delivery caches and removes the gate). Before the relay for the same reason.
+      try {
+        const { expired, errors } = await runDueAssetExpiries(wired.ctx);
+        if (expired > 0) {
+          metrics.count('contentworker_asset_expiries_total', expired, { outcome: 'expired' });
+          console.log(JSON.stringify({ msg: 'expired assets unpublished', expired }));
+        }
+        if (errors.length > 0) {
+          metrics.count('contentworker_asset_expiries_total', errors.length, { outcome: 'failed' });
+          console.error(
+            JSON.stringify({
+              msg: 'asset expiry failed',
+              errors: errors.map((e) => ({
+                spaceId: e.scope.spaceId,
+                environmentId: e.scope.environmentId,
+                assetId: e.assetId,
+                error: redactCredentials(e.error),
+              })),
+            }),
+          );
+        }
+      } catch (err) {
+        console.error('asset expiry sweep failed', redactCredentials(err));
+        metrics.count('contentworker_asset_expiries_total', 1, { outcome: 'error' });
       }
       // A relay error must not abort the tick (agent schedules still run).
       if (wired.queue) {

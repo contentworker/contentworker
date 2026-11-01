@@ -1,5 +1,6 @@
 import {
   AssetInUseError,
+  AssetRightsError,
   ConflictError,
   DomainError,
   HookRejectedError,
@@ -30,6 +31,20 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
       status: 409,
       body: {
         error: { code: err.code, message: err.message, usage: err.usage, total: err.total },
+      },
+    };
+  }
+  // The asset's rights hold it back (an embargo not yet lifted, an expiry passed): a conflict with
+  // its state, naming the instant that decides it.
+  if (err instanceof AssetRightsError) {
+    return {
+      status: 409,
+      body: {
+        error: {
+          code: err.code,
+          message: err.message,
+          ...(err.details as Record<string, string>),
+        },
       },
     };
   }

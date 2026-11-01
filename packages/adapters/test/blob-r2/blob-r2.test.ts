@@ -79,6 +79,29 @@ describe('createR2BlobStore', () => {
     expect(await store.open?.('s/e/a/missing')).toBeNull();
   });
 
+  it('describes an object without its bytes, through head or a read let go unread', async () => {
+    const { bucket } = fakeBucket();
+    const viaGet = createR2BlobStore(bucket, { signer });
+    await viaGet.put('s/e/a/v2/file/new.png', 'bytes', 'image/png');
+    expect(await viaGet.head?.('s/e/a/v2/file/new.png')).toEqual({
+      size: 5,
+      etag: '"etag-5"',
+      contentType: 'image/png',
+    });
+    expect(await viaGet.head?.('s/e/a/v2/file/missing.png')).toBeNull();
+    const heads: string[] = [];
+    const withHead: R2BucketLike = {
+      ...bucket,
+      async head(key) {
+        heads.push(key);
+        return key.endsWith('new.png') ? { size: 5, httpEtag: '"h"' } : null;
+      },
+    };
+    const viaHead = createR2BlobStore(withHead, { signer });
+    expect(await viaHead.head?.('s/e/a/v2/file/new.png')).toEqual({ size: 5, etag: '"h"' });
+    expect(heads).toEqual(['s/e/a/v2/file/new.png']);
+  });
+
   it('issues signed media URLs under the configured origin, encoding key segments', async () => {
     const { bucket } = fakeBucket();
     const blob = createR2BlobStore(bucket, { signer, baseUrl: 'https://api.example/' });

@@ -516,6 +516,26 @@ export interface PublishedAsset {
   readonly rights?: AssetRights;
 }
 
+/**
+ * A file an asset had before its current one. `replacedAt`/`replacedBy`: when, and by whom, it
+ * stopped being current (the upload or restore that took its place).
+ */
+export interface AssetVersionRecord {
+  readonly version: number;
+  readonly file: Asset['file'];
+  readonly r2Key?: string;
+  readonly contentHash?: string;
+  readonly replacedAt: string;
+  readonly replacedBy?: string;
+}
+
+/** A published asset whose rights have expired, as the expiry sweep finds it. */
+export interface ExpiredPublishedAsset {
+  readonly scope: Scope;
+  readonly assetId: string;
+  readonly expiresAt: string;
+}
+
 /** What a delivery asset listing keeps; every filter narrows. */
 export interface PublishedAssetFilters {
   readonly kind?: AssetKind;
@@ -582,8 +602,30 @@ export interface AssetRepo {
     version: number,
     file: { readonly size?: number; readonly width?: number; readonly height?: number },
   ): Promise<void>;
+  /**
+   * Makes `next` the asset's file and keeps `previous` (the file it had) in its history, only
+   * while the asset is still on `previous.version`: replaced since the caller read it, the unit
+   * throws {@link TransactionConflictError} at commit and nothing is written. `next` is written
+   * whole, the columns ingest owns included (what ingest found about the old file says nothing
+   * about the new one).
+   */
+  replaceFile(scope: Scope, next: Asset, previous: AssetVersionRecord): Promise<void>;
+  /** The files the asset had before its current one, newest first. */
+  listVersions(scope: Scope, id: string): Promise<AssetVersionRecord[]>;
+  getVersion(scope: Scope, id: string, version: number): Promise<AssetVersionRecord | null>;
   putPublished(scope: Scope, snapshot: PublishedAsset): Promise<void>;
   removePublished(scope: Scope, id: string): Promise<void>;
+  /**
+   * Published assets in every scope whose rights expired by `at`, soonest first (an index read:
+   * the expiry sweep runs it every minute).
+   */
+  findExpiredPublished(at: Date, limit: number): Promise<ExpiredPublishedAsset[]>;
+  /**
+   * Removes the published snapshot while its rights still expire by `at`: one republished or
+   * given a later expiry since the caller read it throws {@link TransactionConflictError} at
+   * commit (in a unit of work), and stays published.
+   */
+  removeExpiredPublished(scope: Scope, id: string, at: Date): Promise<void>;
   getPublished(scope: Scope, id: string): Promise<PublishedAsset | null>;
   /** Batch point-read of published assets; missing ids are absent, order unspecified. */
   getPublishedMany(scope: Scope, ids: readonly string[]): Promise<PublishedAsset[]>;
@@ -1395,8 +1437,39 @@ export interface StoredSecretRepo {
 
 // ---- Bulk jobs ------------------------------------------------------------
 
-/** `asset_reindex`: the chunk's ids are assets, each sent through ingest again. */
-export type BulkJobAction = 'publish' | 'unpublish' | 'import' | 'asset_reindex';
+/**
+ * `asset_reindex`: the chunk's ids are assets, each sent through ingest again. The other `asset_*`
+ * actions are the asset library's bulk actions ({@link ASSET_BULK_ACTIONS}), over asset ids.
+ */
+export type BulkJobAction =
+  | 'publish'
+  | 'unpublish'
+  | 'import'
+  | 'asset_reindex'
+  | AssetBulkJobAction;
+
+/** What an asset bulk job does to each asset of the selection. */
+export type AssetBulkJobAction =
+  | 'asset_move'
+  | 'asset_tag'
+  | 'asset_publish'
+  | 'asset_unpublish'
+  | 'asset_archive';
+
+export const ASSET_BULK_ACTIONS: readonly AssetBulkJobAction[] = [
+  'asset_move',
+  'asset_tag',
+  'asset_publish',
+  'asset_unpublish',
+  'asset_archive',
+];
+
+/** One item a chunk could not process. `name` is how a person knows it (an asset's file name). */
+export interface BulkItemFailure {
+  readonly id: string;
+  readonly error: string;
+  readonly name?: string;
+}
 export type BulkJobStatus = 'running' | 'completed' | 'cancelled';
 export type BulkChunkStatus = 'pending' | 'running' | 'completed' | 'failed';
 
@@ -1440,7 +1513,7 @@ export interface BulkJobChunk {
   readonly status: BulkChunkStatus;
   readonly attempts: number;
   /** Per-item failures recorded when the chunk completed. */
-  readonly failures: readonly { id: string; error: string }[];
+  readonly failures: readonly BulkItemFailure[];
 }
 
 /** A stalled/pending chunk paired with its scope (the sweep polls all scopes). */
@@ -1486,7 +1559,7 @@ export interface BulkJobRepo {
       status: Extract<BulkChunkStatus, 'completed' | 'failed'>;
       succeeded: number;
       failed: number;
-      failures: readonly { id: string; error: string }[];
+      failures: readonly BulkItemFailure[];
     },
   ): Promise<BulkJob>;
   /** Transitions a running job terminal; no-ops (returns null) otherwise. */

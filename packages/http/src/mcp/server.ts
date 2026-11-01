@@ -17,6 +17,7 @@ import {
   cancelBulkJob,
   cancelWorkflowRun,
   canvasToEntry,
+  commitAssetFile,
   compareEnvironments,
   countEntriesByContentType,
   countPendingApprovals,
@@ -82,6 +83,7 @@ import {
   listAssetFolders,
   listAssetRenditions,
   listAssets,
+  listAssetVersions,
   listAuditLog,
   listBulkJobs,
   listComments,
@@ -109,6 +111,7 @@ import {
   listWorkflows,
   listWorkflowTasks,
   listWorkflowVersions,
+  MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
   mergeEnvironments,
   moderateEntry,
@@ -122,12 +125,14 @@ import {
   reingestAsset,
   rejectPromotion,
   relatedEntries,
+  replaceAssetFile,
   requestPromotion,
   requestReindex,
   resolveEnvironment,
   resolveTask,
   resolveWritableEnvironment,
   restoreAsset,
+  restoreAssetVersion,
   restoreEntry,
   restoreVersion,
   revokeConnectedApp,
@@ -139,10 +144,12 @@ import {
   searchIndexHealth,
   semanticSearch,
   setAssetMetadata,
+  setAssetRights,
   setEntryMetadata,
   setEnvironmentAlias,
   setPluginEnabled,
   setWorkflowSeparationDefault,
+  startAssetBulkJob,
   startAssetReindex,
   startBulkJob,
   startEnvironmentClone,
@@ -183,6 +190,7 @@ import {
   FIELD_TYPES,
   ForbiddenError,
   inScope,
+  MAX_ASSET_RIGHTS_TEXT,
   MAX_PROMOTION_CONTENT_TYPES,
   MAX_PROMOTION_ENTRIES,
   maskDeniedFields,
@@ -3662,6 +3670,189 @@ export function buildServer(
           tags: args.tags,
           focalPoint: args.focalPoint,
           fields: args.fields,
+        }),
+      );
+    },
+  );
+
+  // --- asset versions, rights and bulk jobs ------------------------------------------------
+  // The same use-cases and scopes as the REST routes: replacing or restoring a file is
+  // content:write (Delivery keeps the published file until a republish), rights are
+  // content:publish (they decide whether the asset is delivered).
+  const fileBlob = () => {
+    if (!deps.blob) throw new NotConfiguredError('blob', 'Replacing files needs a blob store');
+    return deps.blob;
+  };
+  const actor = principal.subject ?? principal.kind;
+
+  server.registerTool(
+    'asset_replace_file',
+    {
+      description:
+        'Start replacing an asset’s file: returns a signed PUT URL (upload.url, with ' +
+        'upload.headers) for the next version and a commit object. PUT the bytes there, then ' +
+        'call asset_commit_file with commit. Nothing changes until then; a published asset ' +
+        'keeps delivering its published file until it is published again.',
+      inputSchema: toolSchema('asset_replace_file', () =>
+        z.object({
+          id: z.string(),
+          fileName: z.string().min(1).max(1024),
+          contentType: z.string().min(1).max(256),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const replacement = await replaceAssetFile(ctx, fileBlob(), scopeOf(args), args.id, {
+        fileName: args.fileName,
+        contentType: args.contentType,
+      });
+      return ok({ ...replacement, asset: await signedOne(scopeOf(args), replacement.asset) });
+    },
+  );
+
+  server.registerTool(
+    'asset_commit_file',
+    {
+      description:
+        'Commit a replacement uploaded through asset_replace_file: the file becomes current as ' +
+        'a new version, the old one is kept in the history, and ingest runs on it. Pass the ' +
+        'commit object back unchanged. Refused when nothing was uploaded, or when another ' +
+        'replace or restore committed first.',
+      inputSchema: toolSchema('asset_commit_file', () =>
+        z.object({
+          id: z.string(),
+          version: z.int().min(2),
+          fileName: z.string().min(1).max(1024),
+          contentType: z.string().min(1).max(256),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const asset = await commitAssetFile(
+        ctx,
+        fileBlob(),
+        scopeOf(args),
+        args.id,
+        { version: args.version, fileName: args.fileName, contentType: args.contentType },
+        { by: actor },
+      );
+      return ok(await signedOne(scopeOf(args), asset));
+    },
+  );
+
+  server.registerTool(
+    'asset_versions_list',
+    {
+      description:
+        'List an asset’s file versions, newest first: the current file and every earlier one, ' +
+        'with when each became the asset’s and which one Delivery serves (published).',
+      inputSchema: toolSchema('asset_versions_list', () =>
+        z.object({ id: z.string(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok({
+        items: await listAssetVersions(
+          ctx,
+          scopeOf(args),
+          args.id,
+          deps.blob ? { blob: deps.blob } : {},
+        ),
+      });
+    },
+  );
+
+  server.registerTool(
+    'asset_restore_version',
+    {
+      description:
+        'Make an earlier file version current again, as a new version pointing at the same ' +
+        'bytes. Delivery keeps its published file until the asset is published again.',
+      inputSchema: toolSchema('asset_restore_version', () =>
+        z.object({ id: z.string(), version: z.int().min(1), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const asset = await restoreAssetVersion(
+        ctx,
+        deps.blob,
+        scopeOf(args),
+        args.id,
+        args.version,
+        { by: actor },
+      );
+      return ok(await signedOne(scopeOf(args), asset));
+    },
+  );
+
+  server.registerTool(
+    'asset_set_rights',
+    {
+      description:
+        'Set an asset’s usage rights, replacing what it had (omit every field to clear them): ' +
+        'license and credit (delivered with it), expiresAt (it is unpublished then) and ' +
+        'embargoUntil (publishing is refused before then). Dates are ISO-8601 with a zone. On a ' +
+        'published asset they apply at once; an embargo cannot be set on one.',
+      inputSchema: toolSchema('asset_set_rights', () =>
+        z.object({
+          id: z.string(),
+          license: z.string().max(MAX_ASSET_RIGHTS_TEXT).optional(),
+          credit: z.string().max(MAX_ASSET_RIGHTS_TEXT).optional(),
+          expiresAt: z.string().max(64).optional(),
+          embargoUntil: z.string().max(64).optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      const rights = {
+        ...(args.license !== undefined ? { license: args.license } : {}),
+        ...(args.credit !== undefined ? { credit: args.credit } : {}),
+        ...(args.expiresAt !== undefined ? { expiresAt: args.expiresAt } : {}),
+        ...(args.embargoUntil !== undefined ? { embargoUntil: args.embargoUntil } : {}),
+      };
+      return ok(
+        await signedOne(scopeOf(args), await setAssetRights(ctx, scopeOf(args), args.id, rights)),
+      );
+    },
+  );
+
+  server.registerTool(
+    'assets_bulk',
+    {
+      description:
+        'Act on many assets as a resumable bulk job: move (folderId; null for the root), tag ' +
+        '(addTags, removeTags), publish, unpublish or archive. Each asset gets the same checks ' +
+        'as one at a time. Follow it with bulk_job_status; bulk_job_report names each asset that ' +
+        'failed. move and tag need content:write; publish, unpublish and archive content:publish.',
+      inputSchema: toolSchema('assets_bulk', () =>
+        z.object({
+          action: z.enum(['move', 'tag', 'publish', 'unpublish', 'archive']),
+          ids: z.array(z.string()).min(1).max(BULK_JOB_MAX_ITEMS),
+          folderId: z.string().nullable().optional(),
+          addTags: z.array(z.string()).max(MAX_ASSET_BULK_TAGS).optional(),
+          removeTags: z.array(z.string()).max(MAX_ASSET_BULK_TAGS).optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      const writes = args.action === 'move' || args.action === 'tag';
+      guard(writes ? SCOPES.contentWrite : SCOPES.contentPublish, scopeOf(args));
+      return ok(
+        await startAssetBulkJob(ctx, scopeOf(args), {
+          action: args.action,
+          ids: args.ids,
+          ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
+          ...(args.addTags ? { addTags: args.addTags } : {}),
+          ...(args.removeTags ? { removeTags: args.removeTags } : {}),
         }),
       );
     },

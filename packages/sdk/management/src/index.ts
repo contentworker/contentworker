@@ -209,6 +209,84 @@ export interface CreateAssetInput {
   readonly folderId?: string;
 }
 
+/** A file replacement in progress: PUT the bytes to `upload.url`, then pass `commit` back. */
+export interface AssetFileReplacement {
+  readonly asset: Asset;
+  readonly upload: { readonly url: string; readonly headers: Readonly<Record<string, string>> };
+  readonly commit: {
+    readonly version: number;
+    readonly fileName: string;
+    readonly contentType: string;
+  };
+}
+
+/** One file an asset has had (`assets.versions`). */
+export interface AssetVersion {
+  readonly version: number;
+  /** `file.url` is a short-lived signed read URL. */
+  readonly file: Readonly<Record<string, unknown>>;
+  readonly contentHash?: string;
+  /** When this file became the asset's, and who made it so. */
+  readonly createdAt?: string;
+  readonly createdBy?: string;
+  readonly current: boolean;
+  /** The file Delivery serves now. */
+  readonly published: boolean;
+  /** For a restore: the earliest version with the same file. */
+  readonly restoredFrom?: number;
+}
+
+/** An asset's usage rights; dates are ISO-8601 with a zone. */
+export interface AssetRights {
+  readonly license?: string;
+  readonly credit?: string;
+  /** It is unpublished then, and its media answers 410. */
+  readonly expiresAt?: string;
+  /** Publishing is refused before then. */
+  readonly embargoUntil?: string;
+}
+
+/** A bulk action over a selection of assets (`assets.bulk`). */
+export type AssetBulkInput =
+  | { readonly action: 'move'; readonly ids: readonly string[]; readonly folderId: string | null }
+  | {
+      readonly action: 'tag';
+      readonly ids: readonly string[];
+      readonly addTags?: readonly string[];
+      readonly removeTags?: readonly string[];
+    }
+  | { readonly action: 'publish' | 'unpublish' | 'archive'; readonly ids: readonly string[] };
+
+/** A durable bulk job; poll `bulkJobs.get` until `status` is no longer `running`. */
+export interface BulkJob {
+  readonly id: string;
+  readonly action: string;
+  readonly status: 'running' | 'completed' | 'cancelled';
+  readonly totalItems: number;
+  readonly totalChunks: number;
+  readonly completedChunks: number;
+  readonly succeeded: number;
+  readonly failed: number;
+  readonly createdAt: string;
+  readonly completedAt?: string;
+}
+
+/** A bulk job's per-item report: every failure, per chunk (`name`: an asset's title or file). */
+export interface BulkJobReport {
+  readonly job: BulkJob;
+  readonly chunks: readonly {
+    readonly chunkId: string;
+    readonly status: string;
+    readonly attempts: number;
+    readonly itemCount: number;
+    readonly failures: readonly {
+      readonly id: string;
+      readonly error: string;
+      readonly name?: string;
+    }[];
+  }[];
+}
+
 export interface Webhook {
   readonly id: string;
   readonly url: string;
@@ -532,6 +610,32 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Files assets in a folder (`null`: the root), up to 500 at once. */
       move: (ids: readonly string[], folderId: string | null) =>
         post<{ moved: number }>(`${envBase}/assets/move`, { ids, folderId }),
+      /**
+       * Moves, tags, publishes, unpublishes or archives many assets as a resumable bulk job.
+       * Follow it with `bulkJobs.get`; `bulkJobs.report` names each asset that failed.
+       */
+      bulk: (input: AssetBulkInput) => post<BulkJob>(`${envBase}/assets/bulk`, input),
+      /**
+       * Starts replacing the file: PUT the bytes to `upload.url` with `upload.headers`, then
+       * `commitFile(id, commit)`. A published asset keeps its published file until republished.
+       */
+      replaceFile: (id: string, input: { fileName: string; contentType: string }) =>
+        post<AssetFileReplacement>(`${envBase}/assets/${e(id)}/file`, input),
+      /** Makes an uploaded replacement current as a new version. */
+      commitFile: (id: string, commit: AssetFileReplacement['commit']) =>
+        post<Asset>(`${envBase}/assets/${e(id)}/file/commit`, commit),
+      /** Every file the asset has had, newest first. */
+      versions: (id: string) =>
+        items(get<{ items: AssetVersion[] }>(`${envBase}/assets/${e(id)}/versions`)),
+      /** Makes an earlier version's file current again, as a new version. */
+      restoreVersion: (id: string, version: number) =>
+        post<Asset>(`${envBase}/assets/${e(id)}/versions/${version}/restore`),
+      /**
+       * Replaces the asset's usage rights (`{}` clears them). On a published asset they apply at
+       * once; needs content:publish.
+       */
+      setRights: (id: string, rights: AssetRights) =>
+        put<Asset>(`${envBase}/assets/${e(id)}/rights`, rights),
       folders: {
         list: () => items(get<{ items: AssetFolder[] }>(`${envBase}/asset-folders`)),
         create: (input: { name: string; parentId?: string | null }) =>
@@ -542,6 +646,15 @@ export function createManagementClient(opts: ManagementClientOptions) {
         /** Only an empty folder; one with subfolders or assets is a 409. */
         delete: (id: string) => del<void>(`${envBase}/asset-folders/${e(id)}`),
       },
+    },
+
+    /** Durable bulk jobs (asset bulk actions, entry bulk publishing, imports), newest first. */
+    bulkJobs: {
+      list: (o: { limit?: number } = {}) =>
+        get<BulkJob[]>(`${envBase}/bulk/jobs`, { limit: o.limit }),
+      get: (id: string) => get<BulkJob>(`${envBase}/bulk/jobs/${e(id)}`),
+      report: (id: string) => get<BulkJobReport>(`${envBase}/bulk/jobs/${e(id)}/report`),
+      cancel: (id: string) => post<BulkJob>(`${envBase}/bulk/jobs/${e(id)}/cancel`),
     },
 
     webhooks: {

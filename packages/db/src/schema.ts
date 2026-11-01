@@ -357,11 +357,14 @@ export const assetPublished = sqliteTable(
     r2Key: text('r2_key'),
     kind: text('kind').$type<AssetKind>().notNull().default('other'),
     rights: text('rights', { mode: 'json' }).$type<AssetRights>(),
+    // `rights.expiresAt` copied out on every write (0012_asset_expiry), for the expiry sweep.
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.assetId] }),
     index('asset_published_by_time').on(t.spaceId, t.environmentId, t.publishedAt, t.assetId),
     index('asset_published_by_kind').on(t.spaceId, t.environmentId, t.kind, t.publishedAt),
+    index('asset_published_by_expiry').on(t.expiresAt).where(sql`${t.expiresAt} IS NOT NULL`),
   ],
 );
 

@@ -8,6 +8,7 @@ import type {
   SearchIndex,
   WebhookSender,
 } from '@contentworker/ports';
+import { assetBulkChunkRunner } from '../asset-bulk';
 import { syncAssetGate } from '../asset-gate';
 import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
 import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../asset-search';
@@ -114,6 +115,7 @@ export async function dispatchEvent(
   // topic; handled here too so a single-topic deployment still works.)
   if (event.type === 'bulk.chunk_due') {
     await runBulkChunk(ctx, event, {
+      assetBulkChunk: assetBulkChunkRunner(ctx),
       ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob) } : {}),
       ...(deps.assetIngest
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
@@ -180,7 +182,13 @@ export async function dispatchEvent(
   // entries — nothing else would. The reference graph already stores asset
   // edges, so the same bounded reverse closure finds the embedders (including
   // transitively, e.g. page -> card -> asset).
-  if (deps.cache && (event.type === 'asset.published' || event.type === 'asset.unpublished')) {
+  // Rights changes too: the delivered credit and license are embedded with the file.
+  if (
+    deps.cache &&
+    (event.type === 'asset.published' ||
+      event.type === 'asset.unpublished' ||
+      event.type === 'asset.rights_changed')
+  ) {
     const embedders = await ctx.store.references.findReverseClosure(scope, [event.assetId], {
       maxDepth: MAX_INVALIDATION_DEPTH,
       maxEntries: MAX_INVALIDATION_ENTRIES,
@@ -209,9 +217,17 @@ export async function dispatchEvent(
     deps.assetGate &&
     (event.type === 'asset.published' ||
       event.type === 'asset.unpublished' ||
-      event.type === 'asset.deleted')
+      event.type === 'asset.deleted' ||
+      event.type === 'asset.rights_changed')
   ) {
     await syncAssetGate(ctx, deps.assetGate, scope, event.assetId);
+  }
+
+  // A replaced (or restored) file goes through ingest as an upload does: the same message the
+  // api sends when a signed PUT completes, so the run id is the bytes' and R2's own notification
+  // of the upload, whenever it arrives, starts no second run.
+  if (deps.assetIngest && event.type === 'asset.file_replaced') {
+    await deps.assetIngest.objectCreated(event.r2Key, event.etag);
   }
 
   // 2d. A rendition preset changed: delivered assets list the space's renditions, embedded in

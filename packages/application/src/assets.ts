@@ -2,9 +2,13 @@ import {
   type Asset,
   AssetInUseError,
   type AssetMetadata,
+  type AssetRights,
   type AssetUsage,
+  type AssetVersion,
   applyAssetMetadata,
   archiveAsset as archiveAssetState,
+  assertRightsAllowDelivery,
+  ConflictError,
   clearAcceptedSuggestions,
   emptyAssetMetadata,
   isReservedSpaceId,
@@ -17,10 +21,12 @@ import {
   type Scope,
   unpublishAsset as unpublishAssetState,
   ValidationError,
+  validateAssetRights,
 } from '@contentworker/domain';
 import {
   type AssetListQuery,
   type AssetPage,
+  type AssetVersionRecord,
   type BlobStore,
   type PublishedAsset,
   type PublishedAssetPage,
@@ -63,9 +69,21 @@ function safeObjectName(fileName: string): string {
   return base.slice(0, 200);
 }
 
-/** Where an asset's bytes live in blob storage. */
-export function assetObjectKey(scope: Scope, assetId: string, fileName: string): string {
-  return `${scope.spaceId}/${scope.environmentId}/${assetId}/${safeObjectName(fileName)}`;
+/**
+ * Where an asset's bytes live in blob storage: `space/environment/assetId/fileName` for its first
+ * file (four segments, as every key was before versions), `space/environment/assetId/v<n>/file/
+ * fileName` for the file of version `n` > 1 (six). Never five: that is where files derived from a
+ * version live (`…/v<n>/text.md`, {@link assetDerivedPrefix}), which nothing may serve.
+ */
+export function assetObjectKey(
+  scope: Scope,
+  assetId: string,
+  fileName: string,
+  version = 1,
+): string {
+  const base = `${scope.spaceId}/${scope.environmentId}/${assetId}`;
+  const name = safeObjectName(fileName);
+  return version > 1 ? `${base}/v${version}/file/${name}` : `${base}/${name}`;
 }
 
 /**
@@ -151,14 +169,25 @@ export async function allAssets(ctx: AppContext, scope: Scope): Promise<Asset[]>
   return out;
 }
 
-/** Publishes an asset — writes the denormalized snapshot served by Delivery. */
+/**
+ * Publishes an asset — writes the denormalized snapshot served by Delivery. Refused while its
+ * rights hold it back ({@link AssetRightsError}: under embargo, or expired). A republish after
+ * the file was replaced delivers the new file; the event names the version it replaced, whose
+ * media URLs stop working.
+ */
 export async function publishAsset(ctx: AppContext, scope: Scope, id: string): Promise<Asset> {
   return ctx.store.withTransaction(async (tx) => {
-    const asset = await tx.assets.get(scope, id);
+    const [asset, before] = await Promise.all([
+      tx.assets.get(scope, id),
+      tx.assets.getPublished(scope, id),
+    ]);
     if (!asset) throw new NotFoundError('Asset', id);
+    const now = ctx.clock.now();
+    assertRightsAllowDelivery(id, asset.rights, now);
     const published = publishAssetState(asset);
     await tx.assets.save(scope, published);
-    await tx.assets.putPublished(scope, publishedSnapshot(scope, published, ctx.clock.now()));
+    await tx.assets.putPublished(scope, publishedSnapshot(scope, published, now));
+    const replaced = before ? (before.version ?? 1) : undefined;
     // Same transaction as the write: delivery renders embed this asset's
     // file/title/description into linking entries, so the invalidation event
     // must be enqueued iff the publish commits.
@@ -166,8 +195,11 @@ export async function publishAsset(ctx: AppContext, scope: Scope, id: string): P
       id: ctx.ids.newId(),
       type: 'asset.published',
       scope,
-      occurredAt: ctx.clock.now().toISOString(),
+      occurredAt: now.toISOString(),
       assetId: published.id,
+      ...(replaced !== undefined && replaced !== (published.version ?? 1)
+        ? { replacedVersion: replaced }
+        : {}),
     });
     return published;
   });
@@ -228,36 +260,68 @@ export function publishedSnapshot(scope: Scope, asset: Asset, at: Date): Publish
 }
 
 /**
- * Where an asset's current bytes are: its recorded key, or its own key prefix (older rows). A
- * recorded key can come from an imported snapshot, and every read (signed URLs, the media gate)
- * serves whatever this names, so one that isn't an asset key for this asset is ignored.
+ * Where the bytes of an asset's file (its current one, or a snapshot's) are: its recorded key, or
+ * its own key for that version (older rows). A recorded key can come from an imported snapshot,
+ * and every read (signed URLs, the media gate, ingest) serves whatever this names, so one that
+ * isn't a file key of this asset, or names a version past `version` (an upload not committed, which
+ * nobody has reviewed), is ignored. An earlier version's key is allowed: a restore makes that file
+ * current again without copying it.
  */
 export function assetFileKey(
   scope: Scope,
-  asset: { readonly id: string; readonly r2Key?: string; readonly file: { fileName: string } },
+  asset: {
+    readonly id: string;
+    readonly r2Key?: string;
+    readonly version?: number;
+    readonly file: { fileName: string };
+  },
 ): string {
-  return asset.r2Key && isAssetObjectKey(asset.r2Key, asset.id)
+  const version = asset.version ?? 1;
+  const recorded = asset.r2Key ? assetKeyVersion(asset.r2Key, asset.id) : null;
+  return asset.r2Key && recorded !== null && recorded <= version
     ? asset.r2Key
-    : assetObjectKey(scope, asset.id, asset.file.fileName);
+    : assetObjectKey(scope, asset.id, asset.file.fileName, version);
 }
 
 /** Whether `key` has the shape {@link assetObjectKey} gives asset `assetId`, in any environment
  *  (an imported asset keeps its source's), outside the bucket's shared prefixes
  *  (`RESERVED_SPACE_IDS`, which no space can take). */
 function isAssetObjectKey(key: string, assetId: string): boolean {
+  return assetKeyVersion(key, assetId) !== null;
+}
+
+/**
+ * The file version an asset file key holds (four segments: 1; `…/v<n>/file/<name>`: n, never 1),
+ * or `null` when `key` is no file key of asset `assetId`: another asset's, a file derived from a
+ * version (`…/v<n>/text.md`), anything under the bucket's shared prefixes, or a path with an empty,
+ * `.` or `..` segment.
+ */
+export function assetKeyVersion(key: string, assetId: string): number | null {
   const parts = key.split('/');
+  if (parts[2] !== assetId || !isAssetFileKey(key)) return null;
+  return parts.length === 4 ? 1 : Number((parts[3] ?? '').slice(1));
+}
+
+/** Whether `key` has the shape of an asset file key ({@link assetObjectKey}), for any asset. */
+export function isAssetFileKey(key: string): boolean {
+  const parts = key.split('/');
+  if (parts.some((p) => p === '' || p === '.' || p === '..')) return false;
+  if (isReservedSpaceId(parts[0] ?? '')) return false;
+  if (parts.length === 4) return true;
+  // A version past the first, in its canonical spelling only (no `v01`, no `v1`): one file, one key.
   return (
-    parts.length === 4 &&
-    parts[2] === assetId &&
-    parts.every((p) => p !== '' && p !== '.' && p !== '..') &&
-    !isReservedSpaceId(parts[0] ?? '')
+    parts.length === 6 &&
+    /^v[1-9][0-9]{0,8}$/.test(parts[3] ?? '') &&
+    parts[3] !== 'v1' &&
+    parts[4] === 'file'
   );
 }
 
 /**
- * The asset an object key belongs to, read from its shape: `space/environment/assetId/fileName`
- * outside the bucket's shared namespaces, or `null` for anything else (a derived file such as
- * extracted text, a version body, a staged job). For an R2 notification, which names only a key.
+ * The asset an object key belongs to, read from its shape: an asset file key ({@link
+ * assetObjectKey}, any version) outside the bucket's shared namespaces, or `null` for anything else
+ * (a derived file such as extracted text, a version body, a staged job). For an R2 notification,
+ * which names only a key.
  */
 export function parseAssetObjectKey(key: string): { scope: Scope; assetId: string } | null {
   const [spaceId, environmentId, assetId] = key.split('/');
@@ -510,9 +574,11 @@ export async function deleteAssetFiles(
   // vector, and its extracted text (`space/environment/assetId/v<n>/…`, five segments deep).
   await removeAssetFromSearch(deps.search, scope, assetId);
   const derived = assetDerivedPrefix(scope, assetId, 0);
-  if (derived && deps.blob?.deletePrefix) {
-    const assetPrefix = derived.slice(0, -'v0/'.length);
-    await deps.blob.deletePrefix(assetPrefix, (key) => key.split('/').length <= 4);
+  const ownPrefix = derived ? derived.slice(0, -'v0/'.length) : null;
+  if (ownPrefix && deps.blob?.deletePrefix) {
+    // Every version's files stay for now (another environment may share them); what was derived
+    // from them goes.
+    await deps.blob.deletePrefix(ownPrefix, isAssetFileKey);
   }
   for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
     if (env.id === scope.environmentId) continue;
@@ -530,7 +596,12 @@ export async function deleteAssetFiles(
     const [space, environment] = event.r2Key.split('/');
     if (space !== scope.spaceId) return;
     if (deps.blob.deletePrefix) {
+      // Every version's files: those uploaded where the current one was, and (for an imported
+      // asset whose file was replaced here) those uploaded in this environment.
       await deps.blob.deletePrefix(`${space}/${environment}/${assetId}/`, () => false);
+      if (ownPrefix && ownPrefix !== `${space}/${environment}/${assetId}/`) {
+        await deps.blob.deletePrefix(ownPrefix, () => false);
+      }
     } else {
       await deps.blob.delete(event.r2Key);
     }
@@ -573,4 +644,437 @@ async function getAssetFolderOrThrow(ctx: AppContext, scope: Scope, id: string) 
   const folder = await ctx.store.assetFolders.get(scope, id);
   if (!folder) throw new NotFoundError('AssetFolder', id);
   return folder;
+}
+
+// ---- versions -------------------------------------------------------------------------------
+
+/** What the client sends back to commit a replacement it uploaded (`replaceAssetFile` gave it). */
+export interface CommitAssetFileInput {
+  readonly version: number;
+  readonly fileName: string;
+  readonly contentType: string;
+}
+
+export interface AssetFileReplacement {
+  readonly asset: Asset;
+  /** Presigned upload target for the new file — the client PUTs the bytes here directly. */
+  readonly upload: { url: string; headers: Record<string, string> };
+  /** Pass back to `commitAssetFile` once the bytes are uploaded. */
+  readonly commit: CommitAssetFileInput;
+}
+
+/**
+ * Starts replacing an asset's file: returns a presigned upload for the next version's key
+ * (`…/v<n+1>/file/<name>`). Nothing changes until the upload is committed
+ * ({@link commitAssetFile}); an upload never committed is never served (the media origin and the
+ * signed reads serve only a committed version's key) and goes with the asset. A hosted video is
+ * replaced through its video host, not here.
+ */
+export async function replaceAssetFile(
+  ctx: AppContext,
+  blob: BlobStore,
+  scope: Scope,
+  id: string,
+  input: { readonly fileName: string; readonly contentType: string },
+): Promise<AssetFileReplacement> {
+  const asset = await getAsset(ctx, scope, id);
+  assertNotHostedVideo(asset);
+  // The same policy as a new upload's (allowed types, names): a replacement is one too.
+  const checked = await runHook(ctx, 'asset:beforeCreate', scope, {
+    fileName: input.fileName,
+    contentType: input.contentType,
+  });
+  const version = (asset.version ?? 1) + 1;
+  const key = assetObjectKey(scope, id, checked.fileName, version);
+  const upload = await blob.getUploadUrl(key, checked.contentType);
+  return {
+    asset,
+    upload,
+    commit: { version, fileName: checked.fileName, contentType: checked.contentType },
+  };
+}
+
+/**
+ * Makes an uploaded replacement the asset's file, in one unit: the version goes up, the file it
+ * had is kept in its history, and `asset.file_replaced` is appended (the engine starts ingest on
+ * the new file). The bytes must be in storage. A published asset keeps delivering the file it was
+ * published with until it is published again. Committing what is already committed returns the
+ * asset as it is; a replace or restore that committed first is a `ConflictError`.
+ */
+export async function commitAssetFile(
+  ctx: AppContext,
+  blob: BlobStore,
+  scope: Scope,
+  id: string,
+  input: CommitAssetFileInput,
+  opts: { readonly by?: string } = {},
+): Promise<Asset> {
+  const asset = await getAsset(ctx, scope, id);
+  assertNotHostedVideo(asset);
+  const current = asset.version ?? 1;
+  const key = assetObjectKey(scope, id, input.fileName, input.version);
+  // A retried commit (the response was lost) finds its own work done.
+  if (input.version === current && assetFileKey(scope, asset) === key) return asset;
+  if (input.version !== current + 1) throw replacedMeanwhile(id, current);
+  if (!blob.head) {
+    throw new ValidationError([
+      {
+        field: 'version',
+        message: 'This storage cannot confirm uploads; files cannot be replaced',
+      },
+    ]);
+  }
+  const stored = await blob.head(key);
+  if (!stored) {
+    throw new ValidationError([
+      {
+        field: 'version',
+        message: `No file has been uploaded for version ${input.version}; PUT it to the upload URL first`,
+      },
+    ]);
+  }
+  const next: Asset = {
+    ...withoutIngest(asset),
+    version: input.version,
+    r2Key: key,
+    file: {
+      url: await blob.getDownloadUrl(key),
+      fileName: input.fileName,
+      contentType: stored.contentType ?? input.contentType,
+      size: stored.size,
+    },
+  };
+  return commitReplacement(ctx, scope, asset, next, {
+    ...(stored.etag ? { etag: stored.etag } : {}),
+    ...(opts.by ? { by: opts.by } : {}),
+  });
+}
+
+/**
+ * Makes an earlier version's file current again, as a new version that points at the same bytes
+ * (nothing is copied): the history stays a straight line, and the URLs of the version being
+ * restored are never reused. What ingest found about that file (its hash) comes with it; ingest
+ * runs on the new version for the rest. Restoring the current version is refused.
+ */
+export async function restoreAssetVersion(
+  ctx: AppContext,
+  blob: BlobStore | undefined,
+  scope: Scope,
+  id: string,
+  version: number,
+  opts: { readonly by?: string } = {},
+): Promise<Asset> {
+  const asset = await getAsset(ctx, scope, id);
+  assertNotHostedVideo(asset);
+  const current = asset.version ?? 1;
+  if (version === current) {
+    throw new ValidationError([
+      { field: 'version', message: `Version ${version} is already the current file` },
+    ]);
+  }
+  const old = await ctx.store.assets.getVersion(scope, id, version);
+  if (!old) throw new NotFoundError('AssetVersion', `${id}@v${version}`);
+  const key = assetFileKey(scope, { id, file: old.file, version, ...optionalKey(old.r2Key) });
+  const stored = blob?.head ? await blob.head(key) : undefined;
+  if (stored === null) {
+    throw new ValidationError([
+      { field: 'version', message: `Version ${version}'s file is no longer in storage` },
+    ]);
+  }
+  const next: Asset = {
+    ...withoutIngest(asset),
+    version: current + 1,
+    r2Key: key,
+    file: old.file,
+    ...(old.contentHash ? { contentHash: old.contentHash } : {}),
+  };
+  return commitReplacement(ctx, scope, asset, next, {
+    restoredFrom: version,
+    ...(stored?.etag ? { etag: stored.etag } : {}),
+    ...(opts.by ? { by: opts.by } : {}),
+  });
+}
+
+/** The replace or restore unit: history row, the new current file, and the event. */
+async function commitReplacement(
+  ctx: AppContext,
+  scope: Scope,
+  asset: Asset,
+  next: Asset,
+  opts: { readonly etag?: string; readonly restoredFrom?: number; readonly by?: string },
+): Promise<Asset> {
+  const now = ctx.clock.now().toISOString();
+  const previous: AssetVersionRecord = {
+    version: asset.version ?? 1,
+    file: asset.file,
+    ...(asset.file.video ? {} : { r2Key: assetFileKey(scope, asset) }),
+    ...(asset.contentHash ? { contentHash: asset.contentHash } : {}),
+    replacedAt: now,
+    ...(opts.by ? { replacedBy: opts.by } : {}),
+  };
+  try {
+    await ctx.store.withTransaction(async (tx) => {
+      await tx.assets.replaceFile(scope, next, previous);
+      await tx.outbox.append({
+        id: ctx.ids.newId(),
+        type: 'asset.file_replaced',
+        scope,
+        occurredAt: now,
+        assetId: asset.id,
+        version: next.version ?? 1,
+        previousVersion: previous.version,
+        r2Key: next.r2Key ?? assetFileKey(scope, next),
+        ...(opts.etag ? { etag: opts.etag } : {}),
+        ...(opts.restoredFrom !== undefined ? { restoredFrom: opts.restoredFrom } : {}),
+      });
+    });
+  } catch (err) {
+    if (err instanceof TransactionConflictError) {
+      const now = await ctx.store.assets.get(scope, asset.id);
+      throw replacedMeanwhile(asset.id, now?.version ?? previous.version);
+    }
+    throw err;
+  }
+  return next;
+}
+
+const replacedMeanwhile = (id: string, version: number) =>
+  new ConflictError(
+    `Asset "${id}"'s file was replaced meanwhile (it is on version ${version} now); replace it again`,
+    { version },
+  );
+
+function assertNotHostedVideo(asset: Asset): void {
+  if (asset.file.video) {
+    throw new ValidationError([
+      {
+        field: 'id',
+        message: "A hosted video's file is kept by its video host, not replaced here",
+      },
+    ]);
+  }
+}
+
+/** The asset without what ingest found about its file (none of it holds for another file). */
+function withoutIngest(asset: Asset): Asset {
+  const {
+    contentHash: _hash,
+    ingestStatus: _status,
+    ingestError: _error,
+    duplicateOf: _duplicate,
+    ...rest
+  } = asset;
+  return rest;
+}
+
+const optionalKey = (r2Key: string | undefined) => (r2Key ? { r2Key } : {});
+
+/**
+ * Every file the asset has had, newest first: the current one, and each earlier one with when it
+ * became the asset's and who made it so. `published` marks the one Delivery serves. With `blob`,
+ * each carries a short-lived signed read URL, never a stored one.
+ */
+export async function listAssetVersions(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  opts: { readonly blob?: BlobStore } = {},
+): Promise<AssetVersion[]> {
+  const [asset, earlier, published] = await Promise.all([
+    ctx.store.assets.get(scope, id),
+    ctx.store.assets.listVersions(scope, id),
+    ctx.store.assets.getPublished(scope, id),
+  ]);
+  if (!asset) throw new NotFoundError('Asset', id);
+  const current = asset.version ?? 1;
+  const all = [
+    {
+      version: current,
+      file: asset.file,
+      ...(asset.file.video ? {} : { r2Key: assetFileKey(scope, asset) }),
+      ...(asset.contentHash ? { contentHash: asset.contentHash } : {}),
+    },
+    ...earlier.map((v) => ({
+      version: v.version,
+      file: v.file,
+      ...(v.file.video ? {} : { r2Key: assetFileKey(scope, { id, ...v }) }),
+      ...(v.contentHash ? { contentHash: v.contentHash } : {}),
+    })),
+  ];
+  // Version k became the asset's file when version k-1 was replaced; the first, when it was made.
+  const replaced = new Map(earlier.map((v) => [v.version, v]));
+  const items = all.map((v): AssetVersion => {
+    const madeBy = replaced.get(v.version - 1);
+    const createdAt = v.version === 1 ? asset.createdAt : madeBy?.replacedAt;
+    const createdBy = v.version === 1 ? asset.createdBy : madeBy?.replacedBy;
+    // A restore points at the bytes of the version it brought back: the earliest with its key.
+    const origin = all
+      .filter((o) => o.version < v.version && o.r2Key && o.r2Key === v.r2Key)
+      .sort((a, b) => a.version - b.version)[0];
+    return {
+      ...v,
+      ...(createdAt ? { createdAt } : {}),
+      ...(createdBy ? { createdBy } : {}),
+      current: v.version === current,
+      published: published !== null && (published.version ?? 1) === v.version,
+      ...(origin ? { restoredFrom: origin.version } : {}),
+    };
+  });
+  const blob = opts.blob;
+  if (!blob) return items;
+  return Promise.all(
+    items.map(async (v) =>
+      v.file.video || !v.r2Key
+        ? v
+        : {
+            ...v,
+            file: {
+              ...v.file,
+              url: await blob.getDownloadUrl(v.r2Key, { expiresInSeconds: READ_URL_TTL_SECONDS }),
+            },
+          },
+    ),
+  );
+}
+
+// ---- rights and expiry ------------------------------------------------------------------------
+
+/**
+ * Sets an asset's usage rights (`null` clears them), validated ({@link validateAssetRights}).
+ * Rights decide whether the asset may be delivered, so on a published asset they take effect at
+ * once, without a republish: the snapshot's credit, license and expiry change in the same unit, and
+ * `asset.rights_changed` brings the media gate and the caches in line. An embargo can't be put on
+ * an asset that is already delivered (unpublish it first); an expiry already past takes it out of
+ * Delivery on the expiry sweep's next run.
+ */
+export async function setAssetRights(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  rights: AssetRights | null,
+): Promise<Asset> {
+  const validated = rights ? validateAssetRights(rights) : undefined;
+  const now = ctx.clock.now();
+  return ctx.store.withTransaction(async (tx) => {
+    const [asset, published] = await Promise.all([
+      tx.assets.get(scope, id),
+      tx.assets.getPublished(scope, id),
+    ]);
+    if (!asset) throw new NotFoundError('Asset', id);
+    if (
+      published &&
+      validated?.embargoUntil &&
+      Date.parse(validated.embargoUntil) > now.getTime()
+    ) {
+      throw new ValidationError([
+        {
+          field: 'rights.embargoUntil',
+          message: 'The asset is already published: unpublish it before putting it under embargo',
+        },
+      ]);
+    }
+    const { rights: _old, ...rest } = asset;
+    const updated: Asset = validated ? { ...rest, rights: validated } : rest;
+    await tx.assets.save(scope, updated);
+    if (published) {
+      const { rights: _was, ...snapshot } = published;
+      await tx.assets.putPublished(
+        scope,
+        validated ? { ...snapshot, rights: validated } : snapshot,
+      );
+      await tx.outbox.append({
+        id: ctx.ids.newId(),
+        type: 'asset.rights_changed',
+        scope,
+        occurredAt: now.toISOString(),
+        assetId: id,
+      });
+    }
+    return updated;
+  });
+}
+
+/**
+ * Takes a published asset whose rights expired out of Delivery: back to a draft, its snapshot
+ * removed, and `asset.unpublished` with `asset.expired` appended, in one unit. Re-checked at commit:
+ * an asset republished or given a later expiry meanwhile stays published (`false`), as does one
+ * whose snapshot doesn't expire by `at`.
+ */
+export async function expireAsset(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  at: Date,
+): Promise<boolean> {
+  try {
+    return await ctx.store.withTransaction(async (tx) => {
+      const [asset, snapshot] = await Promise.all([
+        tx.assets.get(scope, id),
+        tx.assets.getPublished(scope, id),
+      ]);
+      const expiresAt = snapshot?.rights?.expiresAt;
+      if (!snapshot || !expiresAt || !(Date.parse(expiresAt) <= at.getTime())) return false;
+      await tx.assets.removeExpiredPublished(scope, id, at);
+      if (asset?.status === 'published') await tx.assets.save(scope, { ...asset, status: 'draft' });
+      const occurredAt = ctx.clock.now().toISOString();
+      await tx.outbox.append({
+        id: ctx.ids.newId(),
+        type: 'asset.unpublished',
+        scope,
+        occurredAt,
+        assetId: id,
+      });
+      await tx.outbox.append({
+        id: ctx.ids.newId(),
+        type: 'asset.expired',
+        scope,
+        occurredAt,
+        assetId: id,
+        expiresAt,
+      });
+      return true;
+    });
+  } catch (err) {
+    // Republished, or its expiry moved, after the read: it is no longer due.
+    if (err instanceof TransactionConflictError) return false;
+    throw err;
+  }
+}
+
+/** Most expired assets one sweep takes out of Delivery; the rest wait a minute. */
+export const ASSET_EXPIRY_BATCH = 100;
+
+export interface AssetExpiryResult {
+  readonly expired: number;
+  readonly failed: number;
+  /** Why each failure failed, for the engine's log. */
+  readonly errors: readonly {
+    readonly scope: Scope;
+    readonly assetId: string;
+    readonly error: string;
+  }[];
+}
+
+/**
+ * The expiry sweep (the engine's cron, every minute): every published asset whose rights have
+ * expired, across all scopes, is unpublished ({@link expireAsset}). One failure is counted and the
+ * rest go on; the failed asset comes back on the next run. Idempotent: an asset already taken out
+ * is no longer found.
+ */
+export async function runDueAssetExpiries(
+  ctx: AppContext,
+  opts: { readonly limit?: number } = {},
+): Promise<AssetExpiryResult> {
+  const now = ctx.clock.now();
+  const due = await ctx.store.assets.findExpiredPublished(now, opts.limit ?? ASSET_EXPIRY_BATCH);
+  let expired = 0;
+  const errors: { scope: Scope; assetId: string; error: string }[] = [];
+  for (const { scope, assetId } of due) {
+    try {
+      if (await expireAsset(ctx, scope, assetId, now)) expired += 1;
+    } catch (err) {
+      errors.push({ scope, assetId, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { expired, failed: errors.length, errors };
 }

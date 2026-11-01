@@ -1,4 +1,4 @@
-import type { BlobObject, BlobStore, DownloadUrlOptions } from '@contentworker/ports';
+import type { BlobHead, BlobObject, BlobStore, DownloadUrlOptions } from '@contentworker/ports';
 
 /**
  * An in-memory BlobStore for dev/tests. It hands out deterministic fake
@@ -30,6 +30,23 @@ export class FakeBlobStore implements BlobStore {
   async put(key: string, body: string | Uint8Array, contentType: string) {
     this.objects.set(key, body);
     this.types.set(key, contentType);
+    this.etags.set(key, `etag-${++this.writes}`);
+  }
+
+  /** An etag per write, as R2 gives one: the same key written again names other bytes. */
+  private readonly etags = new Map<string, string>();
+  private writes = 0;
+
+  async head(key: string): Promise<BlobHead | null> {
+    const bytes = this.bytes(key);
+    if (!bytes) return null;
+    const contentType = this.types.get(key);
+    const etag = this.etags.get(key);
+    return {
+      size: bytes.byteLength,
+      ...(contentType ? { contentType } : {}),
+      ...(etag ? { etag } : {}),
+    };
   }
   async get(key: string) {
     const body = this.objects.get(key);

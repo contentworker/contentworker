@@ -9,15 +9,19 @@ import {
 import {
   type AppContext,
   cloneEnvironment,
+  commitAssetFile,
   createAsset,
   createAssetRendition,
   createEnvironment,
   createSpace,
   deleteEnvironment,
   dispatchEvent,
+  expireAsset,
   publishAsset,
+  replaceAssetFile,
   runEnvironmentPurge,
   setAssetMetadata,
+  setAssetRights,
   syncAssetGate,
   unpublishAsset,
 } from '@contentworker/application';
@@ -161,17 +165,65 @@ describe('the media Worker', () => {
     expect(await gate.get(u.scope, u.asset.id)).toBeNull();
   });
 
-  it('answers 410 once the asset’s rights have expired', async () => {
-    const u = await uploaded();
-    await u.ctx.store.assets.save(u.scope, {
-      ...u.asset,
-      rights: { license: 'editorial', expiresAt: '2020-01-01T00:00:00.000Z' },
+  it('answers 410 once the asset’s rights have expired, and 404 once the sweep takes it out', async () => {
+    const u = await published();
+    expect((await SELF.fetch(urlOf(u, { kind: 'original' }))).status).toBe(200);
+    // Rights on a published asset apply at once: the engine carries them into the gate.
+    await setAssetRights(u.ctx, u.scope, u.asset.id, {
+      license: 'editorial',
+      expiresAt: '2020-01-01T00:00:00.000Z',
     });
-    await publishAsset(u.ctx, u.scope, u.asset.id);
     await syncAssetGate(u.ctx, gate, u.scope, u.asset.id);
+    await purgeMedia([`cwa:${u.scope.spaceId}:main:${u.asset.id}`]);
     const res = await SELF.fetch(urlOf(u, { kind: 'original' }));
     expect(res.status).toBe(410);
     expect(res.headers.get('cache-control')).toBe('no-store');
+
+    // The engine's expiry sweep unpublishes it; its events remove the gate and purge again.
+    expect(await expireAsset(u.ctx, u.scope, u.asset.id, new Date())).toBe(true);
+    expect(await syncAssetGate(u.ctx, gate, u.scope, u.asset.id)).toBe('removed');
+    await purgeMedia([`cwa:${u.scope.spaceId}:main:${u.asset.id}`]);
+    expect((await SELF.fetch(urlOf(u, { kind: 'original' }))).status).toBe(404);
+  });
+
+  it('keeps serving the published version after a replace, and 404s it once a republish retires it', async () => {
+    const u = await published({ bytes: 'V1-BYTES' });
+    const blob = new FakeBlobStore();
+    const v1 = urlOf(u, { kind: 'original' });
+    expect(await textOf(await SELF.fetch(v1))).toBe('V1-BYTES');
+
+    const r = await replaceAssetFile(u.ctx, blob, u.scope, u.asset.id, {
+      fileName: 'second take.jpg',
+      contentType: 'image/jpeg',
+    });
+    const key = `${u.scope.spaceId}/main/${u.asset.id}/v2/file/second take.jpg`;
+    await blob.put(key, 'x', 'image/jpeg');
+    await env.MEDIA_BUCKET.put(key, 'V2-BYTES', { httpMetadata: { contentType: 'image/jpeg' } });
+    await commitAssetFile(u.ctx, blob, u.scope, u.asset.id, r.commit);
+    // The draft has a new file; Delivery still serves the published one, under its URL.
+    expect(await syncAssetGate(u.ctx, gate, u.scope, u.asset.id)).toBe('written');
+    const before = await SELF.fetch(v1);
+    expect(before.status).toBe(200);
+    expect(await textOf(before)).toBe('V1-BYTES');
+
+    await publishAsset(u.ctx, u.scope, u.asset.id);
+    await syncAssetGate(u.ctx, gate, u.scope, u.asset.id);
+    await purgeMedia([`cwa:${u.scope.spaceId}:main:${u.asset.id}`]);
+    const old = await SELF.fetch(v1);
+    expect(old.status).toBe(404);
+    expect(old.headers.get('cache-control')).toBe('no-store');
+    const v2 = `${ORIGIN}${assetMediaPath({
+      scope: u.scope,
+      assetId: u.asset.id,
+      version: 2,
+      token: paths.token(u.scope, u.asset.id, 2),
+      variant: { kind: 'original' },
+      fileName: 'second take.jpg',
+    })}`;
+    const current = await SELF.fetch(v2);
+    expect(current.status).toBe(200);
+    expect(await textOf(current)).toBe('V2-BYTES');
+    expect(current.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
   });
 
   it('answers 404 for an unknown variant, version or file name', async () => {

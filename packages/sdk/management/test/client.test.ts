@@ -396,6 +396,16 @@ describe('@contentworker/sdk-management client', () => {
     await c.assets.folders.create({ name: 'Brand' });
     await c.assets.folders.update('f1', { parentId: null });
     await c.assets.folders.delete('f1');
+    await c.assets.replaceFile('a1', { fileName: 'b.png', contentType: 'image/png' });
+    await c.assets.commitFile('a1', { version: 2, fileName: 'b.png', contentType: 'image/png' });
+    await c.assets.versions('a1');
+    await c.assets.restoreVersion('a1', 1);
+    await c.assets.setRights('a1', { license: 'CC BY', expiresAt: '2030-01-01T00:00:00Z' });
+    await c.assets.bulk({ action: 'move', ids: ['a1'], folderId: null });
+    await c.bulkJobs.list({ limit: 5 });
+    await c.bulkJobs.get('j1');
+    await c.bulkJobs.report('j1');
+    await c.bulkJobs.cancel('j1');
     await c.webhooks.list();
     await c.webhooks.create({ url: 'https://x.test', topics: ['*'], secret: 's' });
     await c.webhooks.update('w1', { active: false });
@@ -433,6 +443,16 @@ describe('@contentworker/sdk-management client', () => {
       `POST ${env}/asset-folders`,
       `PATCH ${env}/asset-folders/f1`,
       `DELETE ${env}/asset-folders/f1`,
+      `POST ${env}/assets/a1/file`,
+      `POST ${env}/assets/a1/file/commit`,
+      `GET ${env}/assets/a1/versions`,
+      `POST ${env}/assets/a1/versions/1/restore`,
+      `PUT ${env}/assets/a1/rights`,
+      `POST ${env}/assets/bulk`,
+      `GET ${env}/bulk/jobs?limit=5`,
+      `GET ${env}/bulk/jobs/j1`,
+      `GET ${env}/bulk/jobs/j1/report`,
+      `POST ${env}/bulk/jobs/j1/cancel`,
       `GET ${env}/webhooks`,
       `POST ${env}/webhooks`,
       `PUT ${env}/webhooks/w1`,

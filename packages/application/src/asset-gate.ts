@@ -17,6 +17,7 @@ export function assetGateEntry(scope: Scope, snapshot: PublishedAsset): AssetGat
     r2Key: assetFileKey(scope, {
       id: snapshot.assetId,
       file: snapshot.file,
+      version: snapshot.version ?? 1,
       ...(snapshot.r2Key ? { r2Key: snapshot.r2Key } : {}),
     }),
     contentType: snapshot.file.contentType,

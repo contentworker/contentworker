@@ -21,6 +21,7 @@ export const PURGING_EVENTS = new Set<string>([
   'asset.published',
   'asset.unpublished',
   'asset.deleted',
+  'asset.rights_changed',
   'content_type.published',
   'release.published',
   'environment_alias.changed',
@@ -65,11 +66,21 @@ export async function planPurges(
   }
   switch (event.type) {
     case 'asset.published':
-      // A republish can move the focal point (so a crop) under the same URL.
-      plan.media.add(mediaAssetTag(spaceId, environmentId, event.assetId));
+      // A republish with a new file takes the old version out of Delivery: its URLs must stop
+      // working, so they are purged as a revocation is (now, and again once every colo sees the
+      // new gate). Otherwise a republish can still move the focal point (so a crop) under the
+      // same URL.
+      if (event.replacedVersion !== undefined) {
+        plan.revoked.add(mediaAssetTag(spaceId, environmentId, event.assetId));
+      } else {
+        plan.media.add(mediaAssetTag(spaceId, environmentId, event.assetId));
+      }
       break;
     case 'asset.unpublished':
     case 'asset.deleted':
+    // New rights change how long a cached file may be kept (an expiry caps it), and an immutable
+    // response cached before must not outlive them: purged as a revocation is.
+    case 'asset.rights_changed':
       plan.revoked.add(mediaAssetTag(spaceId, environmentId, event.assetId));
       break;
     case 'asset_renditions.changed': {

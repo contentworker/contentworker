@@ -6,6 +6,7 @@ import {
 } from '@contentworker/domain';
 import {
   type BlobStore,
+  type BulkItemFailure,
   type BulkJob,
   type BulkJobAction,
   type BulkJobChunk,
@@ -27,6 +28,8 @@ export const BULK_CHUNK_MAX_ATTEMPTS = 5;
 export interface StartBulkJobInput {
   readonly action: BulkJobAction;
   readonly entryIds: readonly string[];
+  /** What the job's chunks need to know of the request (an asset move's folder). */
+  readonly config?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -77,6 +80,7 @@ export async function startBulkJob(
     succeeded: 0,
     failed: 0,
     createdAt: now,
+    ...(input.config ? { config: input.config } : {}),
   };
   return persistJob(ctx, scope, job, chunks, now);
 }
@@ -141,7 +145,7 @@ export interface RunBulkChunkResult {
 /** What one chunk of work reported. */
 export interface BulkChunkOutcome {
   readonly succeeded: number;
-  readonly failures: readonly { id: string; error: string }[];
+  readonly failures: readonly BulkItemFailure[];
 }
 
 export interface BulkChunkDeps {
@@ -165,6 +169,15 @@ export interface BulkChunkDeps {
    * the same reason: it needs the ingest queue. Absent, the chunk stays claimable.
    */
   readonly assetReindexChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
+  /**
+   * Runs an asset library bulk action's chunk (`asset-bulk.ts`), injected because that module
+   * starts its jobs through this one. Absent, the chunk stays claimable.
+   */
+  readonly assetBulkChunk?: (
     scope: Scope,
     job: BulkJob,
     chunk: BulkJobChunk,
@@ -217,6 +230,10 @@ export async function runBulkChunk(
   // An asset reindex chunk hands its assets to ingest: nothing is written here but the report.
   if (job.action === 'asset_reindex') {
     return runChunkAndFold(ctx, deps.assetReindexChunk, scope, job, chunk);
+  }
+  // An asset library action: each asset through its own use-case, failures reported by name.
+  if (job.action !== 'publish' && job.action !== 'unpublish') {
+    return runChunkAndFold(ctx, deps.assetBulkChunk, scope, job, chunk);
   }
 
   const runTx = job.action === 'publish' ? publishEntriesTx : unpublishEntriesTx;
@@ -418,7 +435,7 @@ export interface BulkJobReport {
     readonly status: string;
     readonly attempts: number;
     readonly itemCount: number;
-    readonly failures: readonly { id: string; error: string }[];
+    readonly failures: readonly BulkItemFailure[];
   }[];
 }
 

@@ -14,6 +14,9 @@ export type DomainEvent =
   | AssetUnpublishedEvent
   | AssetDeletedEvent
   | AssetIngestedEvent
+  | AssetFileReplacedEvent
+  | AssetRightsChangedEvent
+  | AssetExpiredEvent
   | AssetRenditionsChangedEvent
   | SearchReindexRequestedEvent
   | BulkChunkDueEvent
@@ -57,11 +60,51 @@ export interface EntryUnpublishedEvent extends BaseEvent {
 export interface AssetPublishedEvent extends BaseEvent {
   readonly type: 'asset.published';
   readonly assetId: string;
+  /**
+   * The file version this publish took out of Delivery, when it put a newer one in its place (a
+   * republish after the file was replaced or restored): that version's media URLs stop working.
+   */
+  readonly replacedVersion?: number;
 }
 
 export interface AssetUnpublishedEvent extends BaseEvent {
   readonly type: 'asset.unpublished';
   readonly assetId: string;
+}
+
+/**
+ * An asset's file was replaced: `version` is current now and `previousVersion`'s file is kept in
+ * its history. `restoredFrom` names the older version whose file was made current again, for a
+ * restore. The published snapshot is untouched (Delivery serves the old file until a republish);
+ * the engine starts ingest on the new file (`r2Key`, `etag` naming the bytes).
+ */
+export interface AssetFileReplacedEvent extends BaseEvent {
+  readonly type: 'asset.file_replaced';
+  readonly assetId: string;
+  readonly version: number;
+  readonly previousVersion: number;
+  readonly r2Key: string;
+  readonly etag?: string;
+  readonly restoredFrom?: number;
+}
+
+/**
+ * A published asset's rights changed, and with them what is delivered: the credit and license
+ * Delivery shows, and the expiry the media origin caches up to. Sent only while it is published.
+ */
+export interface AssetRightsChangedEvent extends BaseEvent {
+  readonly type: 'asset.rights_changed';
+  readonly assetId: string;
+}
+
+/**
+ * A published asset's rights expired (`expiresAt`) and the engine's sweep unpublished it. Sent
+ * with the `asset.unpublished` that takes it out of Delivery, in the same unit.
+ */
+export interface AssetExpiredEvent extends BaseEvent {
+  readonly type: 'asset.expired';
+  readonly assetId: string;
+  readonly expiresAt: string;
 }
 
 /**
@@ -233,7 +276,16 @@ export interface BulkJobCompletedEvent extends BaseEvent {
    * Which kind of job finished. An import creates drafts; it publishes nothing. An asset reindex
    * sent assets through ingest again.
    */
-  readonly action: 'publish' | 'unpublish' | 'import' | 'asset_reindex';
+  readonly action:
+    | 'publish'
+    | 'unpublish'
+    | 'import'
+    | 'asset_reindex'
+    | 'asset_move'
+    | 'asset_tag'
+    | 'asset_publish'
+    | 'asset_unpublish'
+    | 'asset_archive';
   readonly total: number;
   readonly succeeded: number;
   readonly failed: number;
