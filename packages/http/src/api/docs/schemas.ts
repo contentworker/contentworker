@@ -43,6 +43,19 @@ export const contentType = z.object({
   status: z.enum(['draft', 'published']),
 });
 
+export const contentTypeEntryCounts = z.object({
+  items: z.array(
+    z.object({
+      contentType: z.string().describe('Content type apiId'),
+      total: z.int().describe('Live entries: draft, changed and published (not the trash)'),
+      draft: z.int(),
+      changed: z.int().describe('Published, with unpublished edits'),
+      published: z.int(),
+      archived: z.int().describe('In the trash'),
+    }),
+  ),
+});
+
 export const entry = z.object({
   id: z.uuid().describe('UUIDv7 entry id'),
   contentTypeApiId: z.string(),
@@ -151,3 +164,52 @@ export const createdSpace = spaceRef.extend({
 
 export const health = z.object({ status: z.literal('ok') });
 export const ready = z.object({ status: z.literal('ready'), role: z.string() });
+
+export const releaseList = z.object({
+  items: z.array(
+    z.object({
+      id: z.uuid(),
+      title: z.string(),
+      description: z.string().optional(),
+      status: z.enum(['open', 'published', 'archived']),
+      createdAt: z.iso.datetime(),
+      publishedAt: z.iso.datetime().optional(),
+      itemCount: z.int().describe('Members (entries) in the release, from one grouped count'),
+    }),
+  ),
+});
+
+const workflowTrigger = z.object({
+  type: z.string().describe('Trigger node type, e.g. trigger.manual or trigger.entry_published'),
+  label: z.string().describe('The node catalog’s name for it, e.g. "Submit for review"'),
+});
+
+export const workflowList = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      description: z.string(),
+      contentTypes: z.array(z.string()).describe('Content type apiIds; empty covers every type'),
+      graph: z
+        .object({ nodes: z.array(z.unknown()), edges: z.array(z.unknown()) })
+        .describe('The DRAFT graph (what the editor shows), not necessarily what runs'),
+      steps: z.array(z.unknown()).describe('Legacy steps, derived from the graph'),
+      gatesPublish: z.boolean(),
+      latestVersion: z.int().nullable().describe('Highest published version; null if never'),
+      legacy: z.boolean(),
+      updatedAt: z.iso.datetime().nullable(),
+      publishedTrigger: workflowTrigger
+        .nullable()
+        .describe('What starts the latest PUBLISHED version; null when never published'),
+      startsAlongside: z
+        .array(z.string())
+        .nullable()
+        .describe(
+          'Ids of the other published workflows that start on the same trigger for an ' +
+            'overlapping content type (each of them starts too; for trigger.manual the editor ' +
+            'chooses). Null when never published',
+        ),
+    }),
+  ),
+});

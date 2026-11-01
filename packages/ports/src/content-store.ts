@@ -11,6 +11,7 @@ import type {
   Entry,
   EntryFields,
   EntryMetadata,
+  EntryStatus,
   EntryVersion,
   EntryWorkflowState,
   EventType,
@@ -297,6 +298,11 @@ export interface WorkflowGraphRepo {
   getVersion(scope: Scope, workflowId: string, version: number): Promise<WorkflowVersion | null>;
   /** The highest-numbered version, or null if none has been published. */
   getLatestVersion(scope: Scope, workflowId: string): Promise<WorkflowVersion | null>;
+  /**
+   * The highest-numbered version of each of `workflowIds` that has one, in one round of queries
+   * (however many ids). Order is unspecified; a workflow never published is absent.
+   */
+  listLatestVersions(scope: Scope, workflowIds: readonly string[]): Promise<WorkflowVersion[]>;
 }
 
 export interface WorkflowRunQuery {
@@ -625,6 +631,11 @@ export interface ReleaseRepo {
   addItem(scope: Scope, releaseId: string, item: ReleaseItem): Promise<void>;
   removeItem(scope: Scope, releaseId: string, entityId: string): Promise<void>;
   listItems(scope: Scope, releaseId: string): Promise<ReleaseItem[]>;
+  /**
+   * How many members each of `releaseIds` holds, from one grouped count (however many ids). A
+   * release with no members is absent.
+   */
+  countItems(scope: Scope, releaseIds: readonly string[]): Promise<ReadonlyMap<string, number>>;
 }
 
 /** A due scheduled action paired with the scope it belongs to (the worker polls
@@ -827,6 +838,13 @@ export interface EntryWithFields {
   readonly fields: EntryFields;
 }
 
+/** How many entries of one content type are in one status (a row of {@link EntryRepo.countByStatus}). */
+export interface EntryStatusCount {
+  readonly contentType: string;
+  readonly status: EntryStatus;
+  readonly count: number;
+}
+
 /** The denormalized published snapshot served by the Delivery API. */
 export interface PublishedEntry {
   readonly entryId: string;
@@ -909,6 +927,12 @@ export interface EntryRepo {
   getMany(scope: Scope, ids: readonly string[]): Promise<EntryWithFields[]>;
   /** Lists draft/current entries (the Preview read path), newest-affected first. */
   list(scope: Scope, query: EntryQuery): Promise<EntryWithFields[]>;
+  /**
+   * How many entries this scope holds, per content type and status (trash included, as
+   * `archived`): one grouped count, never a page of rows measured. Groups with no entries are
+   * absent; order unspecified.
+   */
+  countByStatus(scope: Scope): Promise<EntryStatusCount[]>;
   /** Persists a new entry and its first version. */
   create(scope: Scope, entry: Entry, version: EntryVersion): Promise<void>;
   /** Persists the updated aggregate plus a new version snapshot. */

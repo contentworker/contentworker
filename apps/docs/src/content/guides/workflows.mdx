@@ -62,7 +62,10 @@ validates. Nodes fall into four groups:
 - **Triggers** say what starts a run: a person submitting an entry for review, an entry being
   created, saved, published or unpublished, a publish request, a release going live, or a
   schedule. A workflow has exactly one trigger and can be narrowed to some content types. Today
-  only `trigger.manual` starts runs (see the caution above).
+  only `trigger.manual` starts runs (see the caution above). The workflow list
+  (`GET …/workflows`, or the `workflow_list` MCP tool) reports each workflow's published trigger
+  (`publishedTrigger`, whatever its draft says now) and the other published workflows on the same
+  trigger whose content types overlap.
 - **Content** nodes act on the entry: validate it, check editorial policy, publish, unpublish,
   schedule, add it to a release, publish a release (`content.publish_release`), set fields or
   tags, record a stage, assign someone, comment, notify, or call a webhook.

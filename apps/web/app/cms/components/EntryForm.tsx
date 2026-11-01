@@ -17,6 +17,7 @@ import type { AppExtension } from '../lib/management';
 import { EntityPicker } from './EntityPicker';
 import { ExtensionFrame } from './ExtensionFrame';
 import { RichTextEditor } from './RichTextEditor';
+import { RequiredMark } from './required-mark';
 
 const SCALAR = new Set(['Symbol', 'Slug', 'Text', 'Integer', 'Number', 'Boolean', 'Date']);
 
@@ -370,7 +371,7 @@ export function EntryForm(props: {
               <div className="space-y-1.5" key={f.apiId}>
                 <Label id={`${id}-label`} htmlFor={id} className="gap-1">
                   {f.name}
-                  {f.required && <span className="text-destructive">*</span>}
+                  {f.required && <RequiredMark />}
                   {locales.length > 1 && (
                     <span className="ml-1 font-normal text-muted-foreground">
                       {f.localized ? activeLocale : 'all locales'}
@@ -707,7 +708,7 @@ function ComponentInput(props: NestedProps) {
           <div key={f.apiId} className="space-y-1.5">
             <Label id={`${nestedId}-label`} htmlFor={nestedId} className="gap-1">
               {f.name}
-              {f.required && <span className="text-destructive">*</span>}
+              {f.required && <RequiredMark />}
             </Label>
             <FieldInput
               id={nestedId}

@@ -15,6 +15,7 @@ import {
   canvasToEntry,
   cloneEnvironment,
   compareEnvironments,
+  countEntriesByContentType,
   createAgentSchedule,
   createAIAction,
   createApiKey,
@@ -1090,6 +1091,26 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json(ct, 201);
     },
   );
+  // Before `/content-types/:apiId`, which would take "entry-counts" for an apiId (apiIds have no
+  // hyphens, so no real type is shadowed).
+  app.get(
+    `${BASE}/content-types/entry-counts`,
+    doc('Content types', 'Count entries per content type', {
+      description:
+        'Entries per content type by status (`draft`, `changed`, `published`, and `archived` ' +
+        'for the trash), from one grouped count. `total` is the live entries, without the ' +
+        'trash. Types the caller cannot read are left out.',
+      ok: docs.contentTypeEntryCounts,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const principal = c.get('principal');
+      const counts = await countEntriesByContentType(ctx, scopeOf(c));
+      return c.json({
+        items: counts.filter((n) => canAccessContentType(principal, 'read', n.contentType)),
+      });
+    },
+  );
   app.get(
     `${BASE}/content-types/:apiId`,
     doc('Content types', 'Get a content type', { ok: docs.contentType }),
@@ -1827,8 +1848,16 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   // --- releases -----------------------------------------------------------
   // Bundle entries and ship them atomically. Authoring (create/add/remove) is a
   // write; shipping the bundle requires publish.
-  app.get(`${BASE}/releases`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listReleases(ctx, scopeOf(c)) }),
+  app.get(
+    `${BASE}/releases`,
+    doc('Releases & scheduling', 'List releases', {
+      description:
+        'Every release, newest first, each with `itemCount` (its members, from one grouped ' +
+        'count), so a list never fetches each release for its size.',
+      ok: docs.releaseList,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listReleases(ctx, scopeOf(c)) }),
   );
   app.post(`${BASE}/releases`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(await createRelease(ctx, scopeOf(c), await parseBody(c, createReleaseBody)), 201),
@@ -2010,8 +2039,17 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   });
 
   // --- workflows ---------------------------------------------------------
-  app.get(`${BASE}/workflows`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listWorkflows(ctx, scopeOf(c)) }),
+  app.get(
+    `${BASE}/workflows`,
+    doc('Workflows', 'List workflows', {
+      description:
+        'Every workflow with its draft `graph`, plus how its latest PUBLISHED version starts: ' +
+        '`publishedTrigger`, and `startsAlongside`, the other published workflows that start on ' +
+        'the same trigger for an overlapping content type. Both are null until it is published.',
+      ok: docs.workflowList,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listWorkflows(ctx, scopeOf(c)) }),
   );
   // Graph workflows: create, drafts, versions, validation, copilot, runs, tasks, settings.
   app.route('/', workflowRoutes(deps));

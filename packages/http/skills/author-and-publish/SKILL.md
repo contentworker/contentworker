@@ -24,6 +24,9 @@ publishing does.
 - `entries_create` makes a draft. `entries_update` saves a **new draft version** whose fields are
   exactly what you pass — an omitted field is dropped. To change one field, `entries_get` the entry
   and send all of its fields back with that one changed.
+- A `RichText` value is a node tree under `{ "nodeType": "document", "content": [...] }`. A table
+  is `table` → `table-row`s → `table-header-cell` or `table-cell` → blocks, each with
+  `"data": {}`; put a cell's text in a `paragraph`, never directly in the cell.
 - Validation errors come back with the field that failed. Fix the value; do not retry unchanged.
 
 ## Publish
@@ -45,6 +48,8 @@ leaves the site half-updated, and a release cannot.
 A workflow is a published graph (approvals, waits for events, AI checks, publish). Runs act as
 whoever started them, so a run can do only what that caller could.
 
+- Find the workflow: `workflow_list` gives each one's id, what starts its published version and
+  which others start alongside it.
 - Submit: `workflow_run_start` with the entry and workflow. One active run per workflow and entry.
 - Follow it: `workflow_run_get` (`include: ["timeline"]` for what happened) or `workflow_run_list`.
 - Approvals waiting: `workflow_task_list` with `status: "pending"`, then `workflow_task_decide`.

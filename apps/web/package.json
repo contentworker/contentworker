@@ -29,6 +29,7 @@
     "@simplewebauthn/server": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tiptap/core": "catalog:",
+    "@tiptap/extension-table": "catalog:",
     "@tiptap/pm": "catalog:",
     "@tiptap/react": "catalog:",
     "@tiptap/starter-kit": "catalog:",

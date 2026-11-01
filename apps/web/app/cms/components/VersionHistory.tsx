@@ -13,6 +13,7 @@ import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
 import { History, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
+import { Ago } from '~/cms/components/ago';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { ToneBadge } from '~/cms/components/status';
 import { useAssistantEdit } from '../lib/assistant';
@@ -21,7 +22,6 @@ import type { VersionDiff } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
-const fmt = (iso?: string) => (iso ? new Date(iso).toLocaleString() : '');
 const show = (v: unknown): string =>
   v === undefined || v === null ? '—' : typeof v === 'string' ? v : JSON.stringify(v);
 
@@ -130,7 +130,9 @@ export function VersionHistory(props: {
                     <span className="font-medium text-sm">v{v.version}</span>
                     {isCurrent && <Badge variant="secondary">current</Badge>}
                     {isPublished && <ToneBadge tone="ok" label="Live" />}
-                    <span className="text-muted-foreground text-xs">{fmt(v.createdAt)}</span>
+                    <span className="text-muted-foreground text-xs">
+                      {v.createdAt ? <Ago at={v.createdAt} /> : null}
+                    </span>
                   </div>
                   <div className="flex items-center gap-1">
                     {!isCurrent && (

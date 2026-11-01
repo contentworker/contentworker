@@ -75,7 +75,10 @@ In the order reviews most often find them broken:
    entrypoint is never routable; no trusted header on a publicly routed handler.
 7. **Env parity.** A new var or binding is in `EdgeEnv`, config, every `wrangler.jsonc` that reads
    it, `scripts/fleet.ts` when it varies per deployment, and `docs/configuration.md`.
-8. **Completeness.** A documented surface has its docs updated in the same change (`docs-sync`).
+8. **Structured content.** Content is typed fields and `RichTextDocument` trees, never an HTML
+   or Markdown string: HTML is converted on the way in (`richTextFromHtml`) and rendered by the
+   consumer on the way out.
+9. **Completeness.** A documented surface has its docs updated in the same change (`docs-sync`).
 
 ## Before you say a change is done
 

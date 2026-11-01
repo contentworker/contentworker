@@ -127,6 +127,8 @@ function FlowNodeCard({ id, data, selected, draggable }: NodeProps<FlowRfNode>) 
         ) : null}
       </div>
       <div className="px-3 pt-0.5">
+        {/* The step's name (never its id: `stepName` falls back to its kind); the id, which
+            expressions use, beneath in mono as a detail. */}
         <div className="truncate font-semibold text-ink text-ui leading-tight">{data.label}</div>
         <div className="truncate font-mono text-2xs text-muted-foreground">{id}</div>
       </div>

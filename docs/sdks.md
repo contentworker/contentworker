@@ -227,7 +227,7 @@ The surface is namespaced; every method maps 1:1 onto a Management route:
 ```ts
 cma.me()                                              // principal probe (/auth/me)
 
-cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId)
+cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
 
 cma.entries.create({ contentTypeApiId, fields })      // fields are locale-keyed
 cma.entries.get(id) / .update(id, fields)             // update = new draft version
@@ -244,7 +244,7 @@ cma.assets.publish(id) / .unpublish(id)
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
 
 cma.releases.create({ title }) / .addEntry(id, { entityId }) / .removeEntry(id, entityId)
-cma.releases.list() / .get(id) / .publish(id) / .delete(id)
+cma.releases.list() / .get(id) / .publish(id) / .delete(id)   // list: each with itemCount
 
 cma.scheduledActions.list({ status? }) / .create(input) / .cancel(id)
 

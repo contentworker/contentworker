@@ -1,4 +1,9 @@
-import { WORKFLOW_TEMPLATES, type WorkflowTemplateId } from '@contentworker/domain';
+import {
+  isTrigger,
+  nodeSpec,
+  WORKFLOW_TEMPLATES,
+  type WorkflowTemplateId,
+} from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import {
   Field,
@@ -9,18 +14,11 @@ import {
   FieldSet,
 } from '@contentworker/ui/field';
 import { Input } from '@contentworker/ui/input';
-import {
-  Item,
-  ItemContent,
-  ItemDescription,
-  ItemFooter,
-  ItemMedia,
-  ItemTitle,
-} from '@contentworker/ui/item';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Skeleton } from '@contentworker/ui/skeleton';
-import { PencilLine, Search, Sparkles, Trash2, Workflow } from 'lucide-react';
+import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
+import { Search, Trash2, Workflow } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Ago } from '~/cms/components/ago';
@@ -30,18 +28,21 @@ import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
 import { plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import type { WorkflowSummary } from '../lib/management';
+import type { WorkflowListItem } from '../lib/management';
 import { useContentTypesQuery, useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
 /*
- * The workflows list: each workflow as a muted Item (its live version as the tile, its name as
- * the link stretched over the item, its state, description, what it covers, and its actions in the
- * footer), a filter, and one "New workflow" sheet (template or blank) beside "Draft with AI". Each
- * workflow says which content types it covers and whether it gates publishing; creating, duplicating and drafting call the workflow
- * routes directly (the assistant-driven path is PR 11). Archive/restore is deferred: there is no
- * archive use-case yet, so delete (with its in-place confirm) stays.
+ * The workflows list: one table row per workflow (its name as the link, what starts it, what it
+ * covers, whether it gates publishing and its live version), a filter, and one "New workflow" sheet
+ * (template or blank) beside "Draft with AI". Two workflows that start on the same thing for the same
+ * content types both run, so each row names the others; creating, duplicating and drafting call
+ * the workflow routes directly. Archive/restore is deferred: there is no archive use-case yet, so
+ * delete (with its in-place confirm) stays.
  */
+
+/** The table's columns, for the confirm row that spans them. */
+const COLUMNS = 6;
 
 const TEMPLATES = Object.entries(WORKFLOW_TEMPLATES).map(([id, make]) => {
   const t = make();
@@ -90,7 +91,7 @@ export function Workflows() {
         actions={
           <>
             <Button type="button" size="sm" variant="outline" onClick={() => setCopilotOpen(true)}>
-              <Sparkles aria-hidden="true" /> Draft with AI
+              Draft with AI
             </Button>
             <FormSheet open={sheetOpen} onOpenChange={setSheetOpen} label="New workflow">
               <NewWorkflowForm
@@ -123,25 +124,40 @@ export function Workflows() {
       </div>
 
       {workflowsQuery.isPending ? (
-        <div className="space-y-2">
-          {[0, 1].map((i) => (
-            <Skeleton key={i} className="h-28 w-full" />
+        <div className="card space-y-3 p-5">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-12 w-full" />
           ))}
         </div>
       ) : shown.length ? (
         <Section
           title="All workflows"
+          flush
           actions={
             <span className="text-muted-foreground text-xs tabular">
               {plural(shown.length, 'workflow')}
             </span>
           }
         >
-          <ul className="flex flex-col gap-2">
-            {shown.map((w) => (
-              <WorkflowItem key={w.id} w={w} typeName={typeName} onOpen={open} />
-            ))}
-          </ul>
+          <Table stack="cards" caption="All workflows">
+            <TableHead>
+              <Tr>
+                <Th>Workflow</Th>
+                <Th>Starts</Th>
+                <Th>Covers</Th>
+                <Th>Publishing</Th>
+                <Th>Version</Th>
+                <Th>
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </Tr>
+            </TableHead>
+            <TableBody>
+              {shown.map((w) => (
+                <WorkflowRow key={w.id} w={w} all={workflows} typeName={typeName} onOpen={open} />
+              ))}
+            </TableBody>
+          </Table>
         </Section>
       ) : (
         <Section title="All workflows">
@@ -289,17 +305,26 @@ function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<voi
   );
 }
 
+/** The draft's trigger, in words ("Submit for review"); null when it has none yet. */
+const draftTriggerOf = (w: WorkflowListItem) => {
+  const t = w.graph.nodes.find(isTrigger);
+  return t ? { type: t.type, label: nodeSpec(t.type)?.label ?? t.label } : null;
+};
+
 /**
- * One workflow, as a muted Item: its live version as the tile, then its name
- * (the link, stretched over the Item), state, description and what it covers, and its actions in
- * the footer above the link.
+ * One workflow as a table row: its name (the link) over its description, what starts its published
+ * version (and which other published workflows start on the same thing, as the API reports it),
+ * what it covers, whether it gates publishing, its live version, and Duplicate and Delete. Delete
+ * asks in a row of its own beneath.
  */
-function WorkflowItem({
+function WorkflowRow({
   w,
+  all,
   typeName,
   onOpen,
 }: {
-  w: WorkflowSummary;
+  w: WorkflowListItem;
+  all: readonly WorkflowListItem[];
   typeName: (apiId: string) => string;
   onOpen: (id: string) => void;
 }) {
@@ -308,7 +333,6 @@ function WorkflowItem({
   const invalidate = useInvalidate();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const titleId = useId();
   const deleteId = `workflow-delete-${w.id}`;
 
   const act = async (fn: () => Promise<void>) => {
@@ -341,105 +365,116 @@ function WorkflowItem({
       await invalidate(['workflows']);
     });
 
+  // What runs is the published version; the draft's trigger shows only where it differs.
+  const published = w.publishedTrigger;
+  const draft = draftTriggerOf(w);
+  const draftDiffers = !!draft && draft.type !== published?.type;
+  const alongside = (w.startsAlongside ?? []).flatMap((id) => {
+    const other = all.find((o) => o.id === id);
+    return other ? [other.name] : [];
+  });
+  const manual = published?.type === 'trigger.manual';
   const steps = w.graph.nodes.length;
   const approvals = w.graph.nodes.filter((n) => n.type === 'control.approval').length;
   return (
-    <Item asChild variant="muted" size="sm" className="relative items-start hover:bg-muted">
-      <li aria-labelledby={titleId}>
-        <ItemMedia aria-hidden="true">
-          <span className="flex size-11 items-center justify-center rounded-xl border bg-card font-semibold text-sm tabular">
-            {w.latestVersion ? (
-              `v${w.latestVersion}`
-            ) : (
-              <PencilLine className="size-4 text-muted-foreground" />
-            )}
-          </span>
-        </ItemMedia>
-        <ItemContent className="min-w-0">
-          <ItemTitle className="w-full">
-            <h3 id={titleId} className="min-w-0 truncate">
-              <Link
-                to={`/workflows/${encodeURIComponent(w.id)}`}
-                className="after:absolute after:inset-0 after:rounded-2xl hover:underline focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-[var(--ring)]"
-              >
-                {w.name}
-              </Link>
-            </h3>
-          </ItemTitle>
-          <p className="text-xs">
-            {w.latestVersion ? (
-              <span className="font-medium text-foreground">Published v{w.latestVersion}</span>
-            ) : (
-              <span className="font-medium text-muted-foreground">Draft, never published</span>
-            )}
-            {w.updatedAt ? (
-              <span className="text-muted-foreground">
-                {' '}
-                · edited <Ago at={w.updatedAt} />
-              </span>
-            ) : null}
-          </p>
-          <ItemDescription className="mt-1 leading-relaxed">
+    <>
+      <Tr>
+        <Td className="min-w-0 max-w-md">
+          <Link
+            to={`/workflows/${encodeURIComponent(w.id)}`}
+            className="font-medium text-foreground hover:underline"
+          >
+            {w.name}
+          </Link>
+          <p className="line-clamp-2 text-muted-foreground text-xs leading-relaxed">
             {w.description || 'No description yet.'}
-          </ItemDescription>
-          <dl className="mt-2 space-y-0.5 text-xs">
-            <div className="flex gap-1.5">
-              <dt className="shrink-0 text-muted-foreground">Covers</dt>
-              <dd>
-                {w.contentTypes.length
-                  ? w.contentTypes.map(typeName).join(', ')
-                  : 'Every content type'}
-              </dd>
-            </div>
-            <div className="flex gap-1.5">
-              <dt className="shrink-0 text-muted-foreground">Publishing</dt>
-              <dd className={w.gatesPublish ? 'text-foreground' : 'text-muted-foreground'}>
-                {w.gatesPublish ? 'Gated: entries publish only through this workflow' : 'Not gated'}
-              </dd>
-            </div>
-            <div className="flex gap-1.5">
-              <dt className="shrink-0 text-muted-foreground">Steps</dt>
-              <dd className="text-muted-foreground">
-                {[
-                  plural(steps, 'step'),
-                  approvals
-                    ? approvals === 1
-                      ? 'a person approves'
-                      : `${approvals} approvals`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </dd>
-            </div>
-          </dl>
-        </ItemContent>
-        <ItemFooter className="relative z-10 flex-wrap justify-start border-t pt-2">
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={busy}
-            aria-label={`Duplicate “${w.name}”`}
-            onClick={() => void duplicate()}
-          >
-            Duplicate
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            id={deleteId}
-            disabled={busy}
-            aria-label={`Delete “${w.name}”`}
-            aria-expanded={confirming}
-            onClick={() => setConfirming((v) => !v)}
-          >
-            <Trash2 aria-hidden="true" /> Delete
-          </Button>
-          {confirming ? (
+          </p>
+          <p className="text-muted-foreground text-xs tabular">
+            {[
+              plural(steps, 'step'),
+              approvals ? (approvals === 1 ? 'a person approves' : `${approvals} approvals`) : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+        </Td>
+        <Td label="Starts">
+          {published ? (
+            published.label
+          ) : (
+            <span className="text-muted-foreground">
+              {w.latestVersion ? 'No trigger' : 'Not published'}
+            </span>
+          )}
+          {draftDiffers ? (
+            <p className="text-muted-foreground text-xs">Draft starts on {draft.label}</p>
+          ) : null}
+          {alongside.length ? (
+            <p className="text-muted-foreground text-xs">
+              {manual ? 'Editors choose between this and ' : 'Also starts: '}
+              {alongside.join(', ')}
+            </p>
+          ) : null}
+        </Td>
+        <Td label="Covers">
+          {w.contentTypes.length ? (
+            w.contentTypes.map(typeName).join(', ')
+          ) : (
+            <span className="text-muted-foreground">Every content type</span>
+          )}
+        </Td>
+        <Td label="Publishing">
+          {w.gatesPublish ? (
+            'Only through this workflow'
+          ) : (
+            <span className="text-muted-foreground">Not gated</span>
+          )}
+        </Td>
+        <Td label="Version" className="whitespace-nowrap">
+          {w.latestVersion ? (
+            <span className="font-medium">Published v{w.latestVersion}</span>
+          ) : (
+            <span className="text-muted-foreground">Draft, never published</span>
+          )}
+          {w.updatedAt ? (
+            <p className="text-muted-foreground text-xs">
+              Edited <Ago at={w.updatedAt} />
+            </p>
+          ) : null}
+        </Td>
+        <Td className="text-right">
+          <div className="flex justify-end gap-1">
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              className="hit-area"
+              disabled={busy}
+              aria-label={`Duplicate “${w.name}”`}
+              onClick={() => void duplicate()}
+            >
+              Duplicate
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              className="hit-area"
+              id={deleteId}
+              disabled={busy}
+              aria-label={`Delete “${w.name}”`}
+              aria-expanded={confirming}
+              onClick={() => setConfirming((v) => !v)}
+            >
+              <Trash2 aria-hidden="true" /> Delete
+            </Button>
+          </div>
+        </Td>
+      </Tr>
+      {confirming ? (
+        <Tr>
+          <Td colSpan={COLUMNS}>
             <InlineConfirm
-              className="mt-2"
               message={`Delete “${w.name}”?`}
               note="Runs already started keep their version; the draft can’t be recovered."
               onCancel={() => setConfirming(false)}
@@ -458,9 +493,9 @@ function WorkflowItem({
                 Delete workflow
               </Button>
             </InlineConfirm>
-          ) : null}
-        </ItemFooter>
-      </li>
-    </Item>
+          </Td>
+        </Tr>
+      ) : null}
+    </>
   );
 }

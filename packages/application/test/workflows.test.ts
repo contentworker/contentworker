@@ -7,6 +7,7 @@ import {
   SCOPES,
   ValidationError,
   validateGraph,
+  WorkflowBuilder,
 } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -271,6 +272,75 @@ describe('versioned workflow graphs', () => {
     await expect(getWorkflowVersion(ctx, other, workflow.id, 1)).rejects.toBeInstanceOf(
       NotFoundError,
     );
+  });
+
+  describe('how published workflows start', () => {
+    const startsOn = (type: string) =>
+      new WorkflowBuilder()
+        .n('start', type, 'Start')
+        .n('done', 'control.end', 'Done')
+        .e('start', 'done')
+        .graph();
+    const make = async (
+      name: string,
+      type: string,
+      contentTypes: string[],
+      { publish = true, at = scope } = {},
+    ) => {
+      const { workflow } = await createWorkflowDraft(ctx, at, {
+        name,
+        contentTypes,
+        graph: startsOn(type),
+      });
+      if (publish) await publishWorkflowVersion(ctx, at, workflow.id);
+      return workflow.id;
+    };
+    const byName = async (at = scope) => {
+      const list = await listWorkflows(ctx, at);
+      const name = new Map(list.map((w) => [w.id, w.name]));
+      return Object.fromEntries(
+        list.map((w) => [
+          w.name,
+          {
+            trigger: w.publishedTrigger,
+            alongside: w.startsAlongside?.map((id) => name.get(id)).sort() ?? null,
+          },
+        ]),
+      );
+    };
+
+    it('reads the trigger and the overlapping workflows from the published versions', async () => {
+      await make('Articles', 'trigger.manual', ['article']);
+      await make('Everything', 'trigger.manual', []);
+      await make('Pages', 'trigger.manual', ['page']);
+      await make('Announce', 'trigger.entry_published', ['article']);
+      await make('Unpublished', 'trigger.manual', ['article'], { publish: false });
+      // Published on "Entry published"; its draft has since moved to "Submit for review".
+      const moved = await make('Moved', 'trigger.entry_published', []);
+      await saveWorkflowDraft(ctx, scope, moved, { graph: startsOn('trigger.manual') });
+
+      const manual = { type: 'trigger.manual', label: 'Submit for review' };
+      const published = { type: 'trigger.entry_published', label: 'Entry published' };
+      expect(await byName()).toEqual({
+        // An empty content-type list covers every type, so it meets both narrower ones.
+        Articles: { trigger: manual, alongside: ['Everything'] },
+        Everything: { trigger: manual, alongside: ['Articles', 'Pages'] },
+        Pages: { trigger: manual, alongside: ['Everything'] },
+        // The published version decides, not the draft: Moved still starts on publish.
+        Announce: { trigger: published, alongside: ['Moved'] },
+        Moved: { trigger: published, alongside: ['Announce'] },
+        // A draft never published starts nothing and is nobody's neighbour.
+        Unpublished: { trigger: null, alongside: null },
+      });
+    });
+
+    it('never counts a workflow published in another environment', async () => {
+      const staging = { spaceId: 'space-1', environmentId: 'staging' };
+      await make('Here', 'trigger.manual', []);
+      await make('There', 'trigger.manual', [], { at: staging });
+      expect((await byName()).Here?.alongside).toEqual([]);
+      expect((await byName(staging)).There?.alongside).toEqual([]);
+    });
   });
 
   it('validates a graph without saving it', () => {

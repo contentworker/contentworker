@@ -4,8 +4,10 @@ import {
   type EntryWorkflowState,
   type GraphIssue,
   graphToLegacySteps,
+  isTrigger,
   legacyStepsToGraph,
   NotFoundError,
+  nodeSpec,
   parseWorkflowGraph,
   type Scope,
   ValidationError,
@@ -332,8 +334,65 @@ export async function getWorkflowVersion(
   return found;
 }
 
-export async function listWorkflows(ctx: AppContext, scope: Scope): Promise<WorkflowSummary[]> {
-  return (await ctx.store.workflowGraphs.list(scope)).map(toSummary);
+/** What starts a workflow: its trigger node's type and the catalog's name for it. */
+export interface WorkflowTrigger {
+  /** The trigger node type (`trigger.manual`, `trigger.entry_published`, …). */
+  readonly type: string;
+  /** The node catalog's label ("Submit for review", "Entry published"). */
+  readonly label: string;
+}
+
+/**
+ * A workflow as the list returns it: the summary (with its draft graph) plus how its PUBLISHED
+ * version starts, which is what runs, whatever the draft says now.
+ */
+export interface WorkflowListItem extends WorkflowSummary {
+  /** The latest published version's trigger; null when never published (or it has none). */
+  readonly publishedTrigger: WorkflowTrigger | null;
+  /**
+   * The ids of the other published workflows whose latest version starts on the same trigger for
+   * some of the same content types (no content types covers every type). Each of them starts too:
+   * an event starts every matching workflow, and Submit for review asks the editor which one.
+   * Null when this workflow has never been published.
+   */
+  readonly startsAlongside: readonly string[] | null;
+}
+
+const triggerOf = (graph: WorkflowGraph): WorkflowTrigger | null => {
+  const t = graph.nodes.find(isTrigger);
+  return t ? { type: t.type, label: nodeSpec(t.type)?.label ?? t.label } : null;
+};
+
+/** True when two workflows' coverage meets: an empty list covers every content type. */
+const overlaps = (a: readonly string[], b: readonly string[]) =>
+  a.length === 0 || b.length === 0 || a.some((t) => b.includes(t));
+
+/** Every workflow, with how its published version starts and which others start alongside it. */
+export async function listWorkflows(ctx: AppContext, scope: Scope): Promise<WorkflowListItem[]> {
+  const records = await ctx.store.workflowGraphs.list(scope);
+  const latest = await ctx.store.workflowGraphs.listLatestVersions(
+    scope,
+    records.filter((r) => r.latestVersion !== null).map((r) => r.id),
+  );
+  const published = new Map(
+    latest.map((v) => [v.id, { trigger: triggerOf(v.graph), contentTypes: v.contentTypes }]),
+  );
+  return records.map((record) => {
+    const own = published.get(record.id);
+    const startsAlongside = !own
+      ? null
+      : own.trigger
+        ? [...published]
+            .filter(
+              ([id, other]) =>
+                id !== record.id &&
+                other.trigger?.type === own.trigger?.type &&
+                overlaps(own.contentTypes, other.contentTypes),
+            )
+            .map(([id]) => id)
+        : [];
+    return { ...toSummary(record), publishedTrigger: own?.trigger ?? null, startsAlongside };
+  });
 }
 
 export async function getWorkflow(
