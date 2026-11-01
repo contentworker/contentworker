@@ -90,6 +90,28 @@ describe('webhook delivery retries', () => {
     expect(d.scheduled).toHaveLength(1);
   });
 
+  it('retries each failed per-entry delivery of a bulk publish under its stable id', async () => {
+    const d = deps(false);
+    const bulk = {
+      id: 'evt-bulk',
+      type: 'entries.published_bulk',
+      scope,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      jobId: 'job1',
+      chunkId: 'c00000',
+      action: 'unpublish',
+      entryIds: ['e1', 'e2'],
+    } as DomainEvent;
+    await dispatchEvent(ctx, d, bulk);
+    expect(d.scheduled.map((r) => [r.event.id, r.event.type, r.attempt, r.delaySeconds])).toEqual([
+      ['job1:c00000:e1', 'entry.unpublished', 2, 30],
+      ['job1:c00000:e2', 'entry.unpublished', 2, 30],
+    ]);
+    // A retry finds the webhook by the per-entry event's type, as it subscribed.
+    const retried = await redeliverWebhook(ctx, deps(true), d.scheduled[0] as WebhookRetry);
+    expect(retried).toEqual({ delivered: true });
+  });
+
   it('sends nothing to a webhook deleted since the delivery failed', async () => {
     await deleteWebhook(ctx, scope, webhookId);
     const d = deps(true);

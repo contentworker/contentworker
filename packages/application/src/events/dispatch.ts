@@ -314,6 +314,7 @@ async function dispatchBulkPublished(
   for (const webhook of perEntryWebhooks) {
     let failed = 0;
     let lastError: string | undefined;
+    const retries: DomainEvent[] = [];
     const sendOne = async (entryId: string) => {
       const snapshot = snapshotById.get(entryId);
       // Derived id from STABLE coordinates (jobId, chunkId, entryId) — a
@@ -345,6 +346,7 @@ async function dispatchBulkPublished(
       if (!result.delivered) {
         failed += 1;
         lastError = result.error ?? `HTTP ${result.statusCode}`;
+        retries.push(perEntryEvent);
       }
     };
     // Per-endpoint failures are recorded, never thrown: the retry unit stays
@@ -362,21 +364,22 @@ async function dispatchBulkPublished(
       error:
         failed === 0 ? undefined : `${failed}/${webhookIds.length} deliveries failed: ${lastError}`,
     });
+    // Each failed per-entry delivery is retried on its own, under its stable derived id, like
+    // any other webhook delivery (redeliverWebhook records each later attempt).
+    for (const failedEvent of retries) {
+      await deps.scheduleWebhookRetry?.({
+        webhookId: webhook.id,
+        event: failedEvent,
+        attempt: 2,
+        delaySeconds: webhookRetryDelay(1),
+      });
+    }
   }
   const bulkWebhooks = (await ctx.store.webhooks.listByTopic(scope, event.type)).filter(
     (w: Webhook) => !perEntryWebhooks.some((p) => p.id === w.id),
   );
   for (const webhook of bulkWebhooks) {
-    const result = await deps.sender.send(webhook, event);
-    deps.onWebhookDelivery?.({ delivered: result.delivered });
-    await ctx.store.webhooks.recordDelivery(scope, {
-      webhookId: webhook.id,
-      eventId: event.id,
-      status: result.delivered ? 'success' : 'failed',
-      statusCode: result.statusCode,
-      attempts: 1,
-      error: result.error,
-    });
+    await deliverWebhook(ctx, deps, webhook, event, 1);
   }
 
   // 2. Cache: one epoch bump for the whole chunk.

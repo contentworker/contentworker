@@ -187,7 +187,8 @@ The engine's consumer re-sends it (`redeliverWebhook`) with backoff of 30 s, 2 m
 ~2 h, then 6 h, up to `WEBHOOK_MAX_ATTEMPTS` (8, about a day), after which the last failed row is
 the record. A webhook deleted, deactivated or unsubscribed in the meantime gets nothing. Receivers
 should dedupe on the event `id`, since a retry can follow a delivery whose response was lost.
-Per-entry webhooks synthesized from a bulk publish are recorded but not retried.
+The per-entry deliveries synthesized from a bulk publish are retried the same way, each under
+its stable derived id (`jobId:chunkId:entryId`).
 
 ### Event payloads
 
