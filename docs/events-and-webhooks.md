@@ -179,8 +179,15 @@ The `WebhookSender` (`createWebhookSender` in `@contentworker/adapters/http-effe
 `x-contentworker-event` headers. Redirects are not followed and each attempt times out after 10 s.
 The `secret` and every header value are encrypted at rest under `DATA_KEY` (see
 [Auth → Secrets at rest](./auth-and-rbac.md#secrets-at-rest)); the dispatcher reads them decrypted.
-Each attempt is logged as a `webhook_deliveries` row for observability. A failed dispatch throws,
-so Cloudflare Queues retries the message and finally dead-letters it.
+Each attempt is logged as a `webhook_deliveries` row with its attempt number. A failed delivery
+is retried **for that webhook alone**: dispatch hands it to `scheduleWebhookRetry`, and the engine
+enqueues a `webhook.retry` message on the events queue with a delay, so a down receiver neither
+loses the event nor re-drives the rest of the dispatch (cache purges, indexing, other webhooks).
+The engine's consumer re-sends it (`redeliverWebhook`) with backoff of 30 s, 2 min, 8 min, 32 min,
+~2 h, then 6 h, up to `WEBHOOK_MAX_ATTEMPTS` (8, about a day), after which the last failed row is
+the record. A webhook deleted, deactivated or unsubscribed in the meantime gets nothing. Receivers
+should dedupe on the event `id`, since a retry can follow a delivery whose response was lost.
+Per-entry webhooks synthesized from a bulk publish are recorded but not retried.
 
 ### Event payloads
 

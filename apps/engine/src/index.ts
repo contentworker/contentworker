@@ -13,6 +13,7 @@ import {
   consumeEvent,
   drainOutbox,
   pruneEventHistory,
+  redeliverWebhook,
   resealSecrets,
   resumeStalledBulkJobs,
   runDueAgentSchedules,
@@ -31,7 +32,9 @@ import {
   deliveryScopeTag,
   isAgentJob,
   isDomainEvent,
+  isWebhookRetryMessage,
   type PurgeMessage,
+  type WebhookRetryMessage,
 } from '@contentworker/platform/messages';
 import { makeMetrics } from '@contentworker/platform/metrics';
 import {
@@ -78,7 +81,10 @@ const EVENT_LANES = 6;
  * else (asset, content type, release, workflow, bulk events) shares one lane per scope, in order.
  */
 function eventLane(msg: Message<unknown>): string {
-  const event = payloadOf(msg) as {
+  const body = payloadOf(msg);
+  // A webhook retry touches that webhook only: its own lane.
+  if (isWebhookRetryMessage(body)) return `webhook:${body.webhookId}`;
+  const event = body as {
     scope?: { spaceId?: string; environmentId?: string };
     entryId?: unknown;
   };
@@ -96,6 +102,20 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     // cache tag once instead of once per message (KV rate-limits per key).
     invalidatedTags: new Set<string>(),
     sender: createWebhookSender(),
+    // A failed webhook delivery comes back later for that webhook alone.
+    ...(env.EVENTS_QUEUE
+      ? {
+          scheduleWebhookRetry: async ({ webhookId, event, attempt, delaySeconds }) => {
+            const message: WebhookRetryMessage = {
+              kind: 'webhook.retry',
+              webhookId,
+              event,
+              attempt,
+            };
+            await env.EVENTS_QUEUE?.send(message, { delaySeconds });
+          },
+        }
+      : {}),
     invoker: createHttpFunctionInvoker(),
     cache: wired.cache,
     // RAG indexing only when embeddings are
@@ -116,9 +136,23 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
   // rationed, so a burst of publishes in one space costs one tag, not one call per entry).
   const stale = new Set<string>();
   const handle = async (msg: Message<unknown>): Promise<void> => {
+    const body = payloadOf(msg);
+    if (isWebhookRetryMessage(body)) {
+      try {
+        const outcome = await redeliverWebhook(wired.ctx, deps, body);
+        metrics.count('contentworker_webhook_retries_total', 1, {
+          outcome: outcome === null ? 'dropped' : outcome.delivered ? 'delivered' : 'failed',
+        });
+        msg.ack();
+      } catch (err) {
+        console.error('webhook retry failed; retrying', err);
+        msg.retry();
+      }
+      return;
+    }
     // Validate the message shape before treating it as a DomainEvent. A
     // malformed/poison message is acked (dropped) rather than retried forever.
-    const event = payloadOf(msg);
+    const event = body;
     if (!isDomainEvent(event)) {
       console.error('dropping malformed queue message', { id: msg.id });
       metrics.count('contentworker_events_consumed_total', 1, {
