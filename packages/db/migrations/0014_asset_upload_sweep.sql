@@ -1,4 +1,4 @@
--- 0012_asset_upload_sweep: finds the assets whose presigned upload never completed, for the
+-- 0014_asset_upload_sweep: finds the assets whose presigned upload never completed, for the
 -- engine's abandoned-upload sweep. Mirrors `assets_awaiting_upload` in packages/db/src/schema.ts.
 --
 -- A draft created for an upload carries no measurements and no ingest status until its bytes land

@@ -361,7 +361,7 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   prune) the engine runs `sweepAbandonedUploads` (`packages/application/src/assets.ts`) over
   drafts created more than `ABANDONED_UPLOAD_TTL_MS` (24 h) ago, across every space and
   environment, oldest first, at most 50 per sweep (`AssetRepo.listAwaitingUpload`, served by the
-  partial index `assets_awaiting_upload`, migration `0012`). Per draft, `BlobStore.head` on its
+  partial index `assets_awaiting_upload`, migration `0014`). Per draft, `BlobStore.head` on its
   key (a store without `head` sweeps nothing): bytes exist → the size is recorded and the
   reindex job ingests it (`landed`); no bytes and an entry links it → `ingest_status` `error`,
   "The upload never completed", the asset kept (`linked`); no bytes and unlinked → `deleteAsset`

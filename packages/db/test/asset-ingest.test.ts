@@ -233,7 +233,7 @@ describe('a purge’s progress mark on D1', () => {
   });
 });
 
-describe('drafts awaiting their upload on D1 (0012_asset_upload_sweep)', () => {
+describe('drafts awaiting their upload on D1 (0014_asset_upload_sweep)', () => {
   // Creation times far from every other test's, so the cross-scope read sees only these.
   const at = (minute: number) => new Date(Date.UTC(2001, 0, 1, 0, minute)).toISOString();
 
