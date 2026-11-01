@@ -5,7 +5,7 @@ import {
   unsafeRegexReason,
   ValidationError,
   validateEntryFields,
-} from '../src/index.js';
+} from '../src/index';
 
 const vctx = { defaultLocale: 'en-US', locales: ['en-US'] };
 

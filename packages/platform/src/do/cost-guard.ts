@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { type AiBudgetLimits, agentBudgetLimits, aiBudgetLimits } from '@contentworker/application';
 import type { Scope } from '@contentworker/domain';
 import type { AiBudgetDecision, CostGuard } from '@contentworker/ports';
-import type { EdgeEnv } from '../env.js';
+import type { EdgeEnv } from '../env';
 
 const STATE_KEY = 'window';
 

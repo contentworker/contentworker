@@ -2,9 +2,9 @@ import { ConflictError } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
 import { and, eq, ne } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { chunked, createDb, UnitOfWork } from '../src/exec.js';
-import * as schema from '../src/schema.js';
-import { testDb } from './env.js';
+import { chunked, createDb, UnitOfWork } from '../src/exec';
+import * as schema from '../src/schema';
+import { testDb } from './env';
 
 const db = createDb(testDb);
 const scope = { spaceId: 's1', environmentId: 'main' };

@@ -1,11 +1,11 @@
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import { LIVE_ACCESS_HEADER, liveHubName } from '@contentworker/platform/do/live-access';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { createApiHasher } from '../../src/api/auth.js';
-import { liveRoutes } from '../../src/routes/live.js';
-import { testConfig } from './config.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { createApiHasher } from '../../src/api/auth';
+import { liveRoutes } from '../../src/routes/live';
+import { testConfig } from './config';
+import { wire } from './wire';
 
 const config = testConfig({
   role: 'all',

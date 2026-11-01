@@ -13,7 +13,7 @@ import {
   createApiKey,
   LAST_USED_RESOLUTION_MS,
   revokeApiKey,
-} from '../src/index.js';
+} from '../src/index';
 
 const hasher = { hash: (v: string) => `h:${v}` };
 
@@ -77,7 +77,7 @@ describe('lastUsedAt throttling', () => {
 
 describe('assertSecureSecrets and the principal key', () => {
   it('refuses the repo’s public dev principal key, and a short one', async () => {
-    const { assertSecureSecrets } = await import('../src/index.js');
+    const { assertSecureSecrets } = await import('../src/index');
     const base = { requireSecureSecrets: true, seedDev: false, adminToken: '' };
     expect(() =>
       assertSecureSecrets({ ...base, principalKeys: ['contentworker-local-dev-principal-key'] }),

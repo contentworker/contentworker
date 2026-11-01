@@ -8,7 +8,7 @@ import {
   richTextToPlainText,
   validateEntryFields,
   validateRichText,
-} from '../src/index.js';
+} from '../src/index';
 
 const ctx = { defaultLocale: 'en-US', locales: ['en-US'] };
 

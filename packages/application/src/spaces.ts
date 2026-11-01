@@ -14,9 +14,9 @@ import {
   type SpaceConfig,
   TransactionConflictError,
 } from '@contentworker/ports';
-import { auditActor } from './audit.js';
-import type { AppContext } from './context.js';
-import { ensureRolePresets } from './team.js';
+import { auditActor } from './audit';
+import type { AppContext } from './context';
+import { ensureRolePresets } from './team';
 
 export interface CreateSpaceInput {
   readonly spaceId: string;

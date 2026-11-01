@@ -3,7 +3,7 @@
  * `changes`, and the editor's proposal banner shows `describeDiff` before anything is applied.
  */
 
-import type { WorkflowGraph, WorkflowNode } from './graph-types.js';
+import type { WorkflowGraph, WorkflowNode } from './graph-types';
 
 /** Counted against the graph a proposal started from. */
 export interface WorkflowGraphChanges {

@@ -50,11 +50,11 @@ import {
   tool,
   type UIMessage,
 } from 'ai';
-import type { McpDeps } from '../mcp/deps.js';
-import { readContext } from './context.js';
-import { assistantCaller, engineKeys } from './gate.js';
-import { BUDGET_SPENT, meterTurn } from './meter.js';
-import { assistantModel, type EmittedCall, type ModelSource, recordingCalls } from './model.js';
+import type { McpDeps } from '../mcp/deps';
+import { readContext } from './context';
+import { assistantCaller, engineKeys } from './gate';
+import { BUDGET_SPENT, meterTurn } from './meter';
+import { assistantModel, type EmittedCall, type ModelSource, recordingCalls } from './model';
 import {
   callAssistantTool,
   errorLine,
@@ -64,7 +64,7 @@ import {
   listAssistantTools,
   NOT_THROUGH,
   ToolRefused,
-} from './tools.js';
+} from './tools';
 
 /** The person behind a socket as they are now. */
 export interface PersonNow {

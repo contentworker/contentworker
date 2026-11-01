@@ -25,7 +25,7 @@ import {
   setPluginEnabled,
   uninstallPlugin,
   upgradePlugin,
-} from '../src/index.js';
+} from '../src/index';
 
 const SPACE = 's1';
 let ctx: AppContext;

@@ -7,7 +7,7 @@ import {
   WorkersAIError,
   type WorkersAiRun,
   workersAiModelsFromEnv,
-} from '../../src/ai-workers/index.js';
+} from '../../src/ai-workers/index';
 
 const schema = {
   type: 'object',

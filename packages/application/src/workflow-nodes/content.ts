@@ -18,16 +18,16 @@ import {
   validateEntryFields,
   type Webhook,
 } from '@contentworker/domain';
-import { addComment } from '../comments.js';
-import { getEntry, updateEntry } from '../entries.js';
-import { publishEntry, unpublishEntry } from '../publishing.js';
-import { addEntryToRelease, getRelease, publishRelease } from '../releases.js';
-import { listScheduledActions, scheduleAction } from '../scheduling.js';
-import { createTask } from '../tasks.js';
-import { createTag, getEntryMetadata, listTags, setEntryMetadata } from '../taxonomy.js';
-import { assertSafeExternalUrl } from '../url-safety.js';
-import { defaultLocaleOf, guard, interpolateDeep, isRecord, loadRunEntry, str } from './support.js';
-import type { Exec, ExecInput } from './types.js';
+import { addComment } from '../comments';
+import { getEntry, updateEntry } from '../entries';
+import { publishEntry, unpublishEntry } from '../publishing';
+import { addEntryToRelease, getRelease, publishRelease } from '../releases';
+import { listScheduledActions, scheduleAction } from '../scheduling';
+import { createTask } from '../tasks';
+import { createTag, getEntryMetadata, listTags, setEntryMetadata } from '../taxonomy';
+import { assertSafeExternalUrl } from '../url-safety';
+import { defaultLocaleOf, guard, interpolateDeep, isRecord, loadRunEntry, str } from './support';
+import type { Exec, ExecInput } from './types';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 

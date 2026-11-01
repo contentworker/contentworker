@@ -7,8 +7,8 @@ import {
   transitionEntry,
 } from '@contentworker/application';
 import { scopesForKind } from '@contentworker/domain';
-import { pick, WORDS } from './helpers.js';
-import type { SeedRun } from './types.js';
+import { pick, WORDS } from './helpers';
+import type { SeedRun } from './types';
 
 const AUTHORS = [
   'jordan@example.com',

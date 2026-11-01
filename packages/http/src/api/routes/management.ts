@@ -183,10 +183,10 @@ import {
   environmentMiddleware,
   principalMiddleware,
   requireScope,
-} from '../auth.js';
-import { doc } from '../docs/openapi.js';
-import * as docs from '../docs/schemas.js';
-import { clampCount, MAX_PAGE_LIMIT } from '../query.js';
+} from '../auth';
+import { doc } from '../docs/openapi';
+import * as docs from '../docs/schemas';
+import { clampCount, MAX_PAGE_LIMIT } from '../query';
 import {
   agentScheduleBody,
   agentSchedulePatchBody,
@@ -246,8 +246,8 @@ import {
   updateWebhookBody,
   upgradePluginFromUrlBody,
   webhookBody,
-} from '../validation.js';
-import { workflowRoutes } from './workflows.js';
+} from '../validation';
+import { workflowRoutes } from './workflows';
 
 // Reads the route's scope, preferring the alias-resolved environment id stamped
 // by environmentMiddleware over the raw `:env` param.

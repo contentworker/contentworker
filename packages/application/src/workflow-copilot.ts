@@ -17,11 +17,11 @@ import {
   withDefaults,
 } from '@contentworker/domain';
 import type { AIProvider } from '@contentworker/ports';
-import { generateJson } from './ai-json.js';
-import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt.js';
-import type { AiProvenance } from './ai-provenance.js';
-import type { AppContext } from './context.js';
-import { MAX_WORKFLOW_EDGES, MAX_WORKFLOW_NODES, validateWorkflowGraph } from './workflows.js';
+import { generateJson } from './ai-json';
+import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import type { AiProvenance } from './ai-provenance';
+import type { AppContext } from './context';
+import { MAX_WORKFLOW_EDGES, MAX_WORKFLOW_NODES, validateWorkflowGraph } from './workflows';
 
 /*
  * The workflow copilot: drafts or edits a workflow graph from a plain-language request. The

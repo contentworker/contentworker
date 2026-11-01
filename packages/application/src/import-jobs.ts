@@ -1,8 +1,8 @@
 import { type Scope, ValidationError } from '@contentworker/domain';
 import type { BlobStore, BulkJob, BulkJobChunk, ImportSource } from '@contentworker/ports';
-import { persistJob } from './bulk-jobs.js';
-import type { AppContext } from './context.js';
-import { createEntry, updateEntry } from './entries.js';
+import { persistJob } from './bulk-jobs';
+import type { AppContext } from './context';
+import { createEntry, updateEntry } from './entries';
 import {
   IMPORT_JOB_CHUNK_SIZE,
   IMPORT_JOB_MAX_RECORDS,
@@ -11,7 +11,7 @@ import {
   type ImportRunOptions,
   type PlannedRecord,
   planImport,
-} from './import.js';
+} from './import';
 
 /**
  * Importing more than one request can hold.

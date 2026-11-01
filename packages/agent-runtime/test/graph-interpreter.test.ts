@@ -1,7 +1,7 @@
 import { decideWorkflowTask, deliverWorkflowEvent } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
-import { EDITOR, flow, makeHarness, scope, WRITER } from './graph-harness.js';
+import { EDITOR, flow, makeHarness, scope, WRITER } from './graph-harness';
 
 const DAY = 86_400_000;
 
@@ -389,7 +389,7 @@ describe('graph interpreter', () => {
         };
       },
     };
-    const { makeGraphActivities } = await import('../src/index.js');
+    const { makeGraphActivities } = await import('../src/index');
     const act = makeGraphActivities({ ctx: h.ctx, engine: h.engine, nodes: { ai } });
     const graph = flow()
       .n('enrich', 'ai.enrich', 'Enrich', { awaitReview: true })
@@ -403,7 +403,7 @@ describe('graph interpreter', () => {
     const run = await h.start(graph, WRITER);
     const inst = h.instances.get(run.id);
     if (!inst) throw new Error('no instance');
-    const { runGraph } = await import('../src/index.js');
+    const { runGraph } = await import('../src/index');
     const pass = () => inst.steps.run(() => runGraph(inst.steps, act, inst.params));
     expect((await pass()).status).toBe('waiting');
     const [task] = await h.tasks(run.id);
@@ -458,7 +458,7 @@ describe('graph interpreter', () => {
         };
       },
     };
-    const { makeGraphActivities, runGraph } = await import('../src/index.js');
+    const { makeGraphActivities, runGraph } = await import('../src/index');
     const act = makeGraphActivities({ ctx: h.ctx, engine: h.engine, nodes: { ai } });
     const graph = flow()
       .n('route', 'ai.router', 'Route', {

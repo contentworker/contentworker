@@ -18,8 +18,8 @@ import {
   type PluginSourcePolicy,
   setPluginEnabled,
   upgradePluginFromUrl,
-} from '../src/index.js';
-import { sha256Hex } from '../src/token-crypto.js';
+} from '../src/index';
+import { sha256Hex } from '../src/token-crypto';
 
 const SPACE = 's1';
 const admin: Principal = { spaceId: '*', kind: 'admin', scopes: Object.values(SCOPES) };

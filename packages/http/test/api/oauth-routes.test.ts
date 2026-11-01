@@ -3,8 +3,8 @@ import { SCOPES } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { principalTarget, signPrincipal } from '@contentworker/security/principal';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { wire } from './wire';
 
 const SESSION_SECRET = 's'.repeat(40);
 /** The key the web Worker signs `x-cw-principal` with (PRINCIPAL_KEY). */

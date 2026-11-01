@@ -5,8 +5,8 @@
  * the scopes below, so keys, SSO people and the existing `authorize` checks treat it exactly like
  * a custom role. Each preset can do everything the presets before it can.
  */
-import { DomainError } from '../errors.js';
-import { type ContentTypeGrant, type PermissionScope, type Role, SCOPES } from './auth.js';
+import { DomainError } from '../errors';
+import { type ContentTypeGrant, type PermissionScope, type Role, SCOPES } from './auth';
 
 export const ROLE_PRESETS = ['viewer', 'approver', 'editor', 'manager', 'admin'] as const;
 export type RolePreset = (typeof ROLE_PRESETS)[number];

@@ -17,7 +17,7 @@ import {
   DEFAULT_AI_TIMEOUT_MS,
   generateJson,
   isUncheckedFallback,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 

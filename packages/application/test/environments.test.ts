@@ -1,6 +1,6 @@
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
-import { type AppContext, createEnvironment, createSpace, listEnvironments } from '../src/index.js';
+import { type AppContext, createEnvironment, createSpace, listEnvironments } from '../src/index';
 
 function ctx(): AppContext {
   return {

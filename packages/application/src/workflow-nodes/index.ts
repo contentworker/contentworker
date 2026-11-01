@@ -21,17 +21,17 @@ import {
   type WorkflowRunActor,
   withDefaults,
 } from '@contentworker/domain';
-import type { AppContext } from '../context.js';
-import { AI_EXECUTORS, AI_RESUMES } from './ai.js';
-import { WORKFLOW_COMPENSATIONS } from './compensations.js';
-import { CONTENT_EXECUTORS } from './content.js';
-import { isRecord } from './support.js';
-import type { Exec, NodeResult, Resume, WorkflowNodeDeps } from './types.js';
+import type { AppContext } from '../context';
+import { AI_EXECUTORS, AI_RESUMES } from './ai';
+import { WORKFLOW_COMPENSATIONS } from './compensations';
+import { CONTENT_EXECUTORS } from './content';
+import { isRecord } from './support';
+import type { Exec, NodeResult, Resume, WorkflowNodeDeps } from './types';
 
-export { assessHeuristic } from './ai.js';
-export { WORKFLOW_COMPENSATIONS } from './compensations.js';
-export { loadRunEntry } from './support.js';
-export type * from './types.js';
+export { assessHeuristic } from './ai';
+export { WORKFLOW_COMPENSATIONS } from './compensations';
+export { loadRunEntry } from './support';
+export type * from './types';
 
 /** Node types the interpreter runs itself (durable timers, events, loops, endings). */
 export const INTERPRETED_NODE_TYPES: readonly string[] = [

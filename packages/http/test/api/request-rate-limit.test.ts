@@ -1,15 +1,15 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { loadConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
+import { createApp } from '../../src/api/app';
 import {
   classifyRequest,
   InProcessRequestRateLimiter,
   type RateLimitClass,
   type RequestRateLimit,
   rateLimitEnabled,
-} from '../../src/api/request-rate-limit.js';
-import { wire } from './wire.js';
+} from '../../src/api/request-rate-limit';
+import { wire } from './wire';
 
 const base = {
   role: 'all',

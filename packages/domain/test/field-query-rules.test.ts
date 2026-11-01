@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertQueryRespectsFieldRules, ForbiddenError, type Principal } from '../src/index.js';
+import { assertQueryRespectsFieldRules, ForbiddenError, type Principal } from '../src/index';
 
 const restricted: Principal = {
   spaceId: 's1',

@@ -1,7 +1,7 @@
-import type { EntryFields, LocaleCode, LocalizedValue } from '../types.js';
-import type { ContentType } from './content-type.js';
-import { type FieldDefinition, UNIQUE_FIELD_TYPES } from './field.js';
-import { normalizeSlug } from './slug.js';
+import type { EntryFields, LocaleCode, LocalizedValue } from '../types';
+import type { ContentType } from './content-type';
+import { type FieldDefinition, UNIQUE_FIELD_TYPES } from './field';
+import { normalizeSlug } from './slug';
 
 /**
  * Field-value transformations that sit between "what the caller sent" and

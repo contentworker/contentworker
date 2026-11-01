@@ -7,24 +7,24 @@ import type { AIProvider, BlobStore, EventBus } from '@contentworker/ports';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
-import { WEB_SIGN_IN } from './access-policy.js';
-import type { AuthDeps, AuthRateLimit } from './auth.js';
-import { createApiHasher } from './auth.js';
-import { describeDelivery } from './docs/delivery-docs.js';
-import { doc, mountDocs } from './docs/openapi.js';
-import { health, ready } from './docs/schemas.js';
-import { onError } from './http.js';
-import { oauthEnabled, oauthRoutes } from './oauth/routes.js';
+import { WEB_SIGN_IN } from './access-policy';
+import type { AuthDeps, AuthRateLimit } from './auth';
+import { createApiHasher } from './auth';
+import { describeDelivery } from './docs/delivery-docs';
+import { doc, mountDocs } from './docs/openapi';
+import { health, ready } from './docs/schemas';
+import { onError } from './http';
+import { oauthEnabled, oauthRoutes } from './oauth/routes';
 import {
   InProcessRequestRateLimiter,
   type RequestRateLimit,
   rateLimitEnabled,
   requestRateLimitMiddleware,
-} from './request-rate-limit.js';
-import { deliveryRoutes } from './routes/delivery.js';
-import { managementRoutes } from './routes/management.js';
-import { previewRoutes } from './routes/preview.js';
-import { teamRoutes } from './routes/team.js';
+} from './request-rate-limit';
+import { deliveryRoutes } from './routes/delivery';
+import { managementRoutes } from './routes/management';
+import { previewRoutes } from './routes/preview';
+import { teamRoutes } from './routes/team';
 
 /** A bus that never emits — the Live Content API then yields only keepalives. */
 const noopBus: EventBus = {

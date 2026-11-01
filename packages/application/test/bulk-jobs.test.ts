@@ -30,7 +30,7 @@ import {
   runBulkChunk,
   startBulkJob,
   unpublishEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
 

@@ -15,7 +15,7 @@ import {
   indexEntryEmbeddings,
   publishEntry,
   type RagDeps,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'kb', environmentId: 'main' };
 

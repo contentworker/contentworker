@@ -4,7 +4,7 @@
  * would call. The target is an entry or a whole release.
  */
 
-import { InvalidStateError } from '../errors.js';
+import { InvalidStateError } from '../errors';
 
 export type ScheduledActionType = 'publish' | 'unpublish';
 export type ScheduledEntityType = 'Entry' | 'Release';

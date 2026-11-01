@@ -1,7 +1,7 @@
 import type { AIProvider, CostGuard } from '@contentworker/ports';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
-import { type AppContext, generateWithBudget } from '../src/index.js';
+import { type AppContext, generateWithBudget } from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 const neverCalled: AIProvider = {

@@ -7,12 +7,12 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { AIProvider, ModelTier } from '@contentworker/ports';
-import { recordAgentRun } from './agent-audit.js';
-import { generateWithBudget } from './ai-budget.js';
-import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt.js';
-import type { AppContext } from './context.js';
-import { getEntry, updateEntry } from './entries.js';
-import { createTag, getEntryMetadata, listTags, setEntryMetadata } from './taxonomy.js';
+import { recordAgentRun } from './agent-audit';
+import { generateWithBudget } from './ai-budget';
+import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import type { AppContext } from './context';
+import { getEntry, updateEntry } from './entries';
+import { createTag, getEntryMetadata, listTags, setEntryMetadata } from './taxonomy';
 
 /** Field types whose values are free text we can translate/summarize over. */
 const TEXT_TYPES = new Set(['Symbol', 'Text']);

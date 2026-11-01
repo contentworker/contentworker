@@ -9,9 +9,9 @@
  * - the `content.*` specs each act on entries through an existing use-case.
  */
 
-import { SCOPES } from '../auth/auth.js';
-import { assertValidCron } from '../scheduling/cron.js';
-import { assessConfigErrors, assessOutputs, assessQuestionsIssues } from './assess.js';
+import { SCOPES } from '../auth/auth';
+import { assertValidCron } from '../scheduling/cron';
+import { assessConfigErrors, assessOutputs, assessQuestionsIssues } from './assess';
 import {
   type ConfigField,
   type NodeSpec,
@@ -19,9 +19,9 @@ import {
   specOutputs,
   stringList,
   validateFields,
-} from './catalog.js';
-import { logicIssues } from './logic.js';
-import { parsePolicyRules } from './policy.js';
+} from './catalog';
+import { logicIssues } from './logic';
+import { parsePolicyRules } from './policy';
 
 const OUT = ['out'];
 

@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { AuthRateLimit } from '../auth-rate-limit.js';
-import type { EdgeEnv } from '../env.js';
+import type { AuthRateLimit } from '../auth-rate-limit';
+import type { EdgeEnv } from '../env';
 
 const ATTEMPTS_KEY = 'attempts';
 

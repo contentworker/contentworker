@@ -20,8 +20,8 @@ import {
 import { type Clock, type IdGenerator, TransactionConflictError } from '@contentworker/ports';
 import { RecordingWorkflowEngine } from '@contentworker/test-kit';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createD1Store } from '../src/store.js';
-import { testDb } from './env.js';
+import { createD1Store } from '../src/store';
+import { testDb } from './env';
 
 /**
  * What the D1 store guarantees beyond the port's basics: `withTransaction` as a unit of work (atomic

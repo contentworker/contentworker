@@ -1,7 +1,7 @@
 import type { CostGuard } from '@contentworker/ports';
 import { jsonSchema, type LanguageModel, stepCountIs, streamText, tool } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { meterTurn } from '../../src/assistant/meter.js';
+import { meterTurn } from '../../src/assistant/meter';
 
 type Model = Extract<LanguageModel, { specificationVersion: 'v4' }>;
 type StreamPart =

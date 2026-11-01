@@ -8,20 +8,20 @@ import {
 } from '@contentworker/application';
 import { type ApiKeyKind, scopesForKind } from '@contentworker/domain';
 import { logger } from '@contentworker/telemetry';
-import { seedAgents } from './agents.js';
-import { seedAssets } from './assets.js';
-import { seedAutomation } from './automation.js';
-import { seedCollaboration } from './collaboration.js';
-import { seedContentModel } from './content-model.js';
-import { seedCorpus } from './corpus.js';
-import { seedGovernance } from './governance.js';
-import { seedReleases } from './releases.js';
-import { seedTaxonomy } from './taxonomy.js';
-import type { SeedConfig, SeedDeps, SeedRun } from './types.js';
+import { seedAgents } from './agents';
+import { seedAssets } from './assets';
+import { seedAutomation } from './automation';
+import { seedCollaboration } from './collaboration';
+import { seedContentModel } from './content-model';
+import { seedCorpus } from './corpus';
+import { seedGovernance } from './governance';
+import { seedReleases } from './releases';
+import { seedTaxonomy } from './taxonomy';
+import type { SeedConfig, SeedDeps, SeedRun } from './types';
 
-export { volumes } from './corpus.js';
-export type { SeedConfig, SeedDeps } from './types.js';
-export { seedConfigFrom } from './types.js';
+export { volumes } from './corpus';
+export type { SeedConfig, SeedDeps } from './types';
+export { seedConfigFrom } from './types';
 
 /**
  * Bump when the dataset changes shape; the marker tag short-circuits every

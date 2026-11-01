@@ -5,7 +5,7 @@ import {
   type SecretSealerKeys,
 } from '@contentworker/application';
 import type { SecretSealer } from '@contentworker/ports';
-import type { EdgeEnv } from './env.js';
+import type { EdgeEnv } from './env';
 
 /**
  * The keys sealing secrets at rest (`DATA_KEY`, plus `DATA_KEY_PREVIOUS` while

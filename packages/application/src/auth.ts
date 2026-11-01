@@ -9,10 +9,10 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { Hasher } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { invalidateCachedPrincipals, principalCacheTag } from './principal-cache.js';
-import { type AccessPolicy, assertKeepsAnAdmin, NO_SSO, readAccessSettings } from './team.js';
-import { randomSecret } from './token-crypto.js';
+import type { AppContext } from './context';
+import { invalidateCachedPrincipals, principalCacheTag } from './principal-cache';
+import { type AccessPolicy, assertKeepsAnAdmin, NO_SSO, readAccessSettings } from './team';
+import { randomSecret } from './token-crypto';
 
 export interface CreateApiKeyInput {
   readonly spaceId: string;

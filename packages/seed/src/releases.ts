@@ -1,5 +1,5 @@
 import { addEntryToRelease, createRelease, listReleases } from '@contentworker/application';
-import type { SeedRun } from './types.js';
+import type { SeedRun } from './types';
 
 export interface ReleaseSeed {
   /** The open "Autumn launch" release — target for a scheduled publish. */

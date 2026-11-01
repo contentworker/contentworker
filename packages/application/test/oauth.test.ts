@@ -21,7 +21,7 @@ import {
   sha256Base64Url,
   startDeviceAuthorization,
   validateAuthorizationRequest,
-} from '../src/index.js';
+} from '../src/index';
 
 const hasher = { hash: (v: string) => `h:${v}` };
 

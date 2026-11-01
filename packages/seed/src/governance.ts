@@ -8,8 +8,8 @@ import {
   listRoles,
   setEnvironmentAlias,
 } from '@contentworker/application';
-import { backdated, pick } from './helpers.js';
-import type { SeedConfig, SeedRun } from './types.js';
+import { backdated, pick } from './helpers';
+import type { SeedConfig, SeedRun } from './types';
 
 /**
  * Governance surfaces: custom roles, a role-bound API key, a second

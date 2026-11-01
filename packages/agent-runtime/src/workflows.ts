@@ -6,8 +6,8 @@ import type {
   PublishRunsInput,
   ReviewWatchInput,
   WorkflowInput,
-} from './types.js';
-import { DEFAULT_REVIEW_TIMEOUT_MS } from './types.js';
+} from './types';
+import { DEFAULT_REVIEW_TIMEOUT_MS } from './types';
 
 const ZERO = { inputTokens: 0, outputTokens: 0 };
 

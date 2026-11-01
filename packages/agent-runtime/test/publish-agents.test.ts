@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Activities, AgentRunResult, PublishAgentsHooks } from '../src/types.js';
-import { publishAgentsWorkflow } from '../src/workflows.js';
+import type { Activities, AgentRunResult, PublishAgentsHooks } from '../src/types';
+import { publishAgentsWorkflow } from '../src/workflows';
 
 const scope = { spaceId: 's', environmentId: 'main' };
 const ZERO = { inputTokens: 0, outputTokens: 0 };

@@ -15,9 +15,9 @@ import {
 } from '@contentworker/domain';
 import { redactCredentials } from '@contentworker/redaction';
 import type { JSONSchema7 } from 'ai';
-import type { McpDeps } from '../mcp/deps.js';
-import { authInfoFor, createHandler } from '../mcp/http.js';
-import { INTERNAL_TOOL_ERROR } from '../mcp/server.js';
+import type { McpDeps } from '../mcp/deps';
+import { authInfoFor, createHandler } from '../mcp/http';
+import { INTERNAL_TOOL_ERROR } from '../mcp/server';
 
 /** An MCP tool as `tools/list` describes it. */
 export interface ListedTool {

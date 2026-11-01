@@ -9,8 +9,8 @@ import {
 } from '@contentworker/domain';
 import { preloadSchemas } from '@modelcontextprotocol/server';
 import { Hono } from 'hono';
-import type { McpDeps } from './deps.js';
-import { authInfoFor, createHandler } from './http.js';
+import type { McpDeps } from './deps';
+import { authInfoFor, createHandler } from './http';
 
 // Module scope runs during isolate warm-up, which is not billed per request;
 // left lazy, building the SDK's wire schemas would land on the first MCP

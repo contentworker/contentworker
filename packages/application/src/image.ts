@@ -1,8 +1,8 @@
 import type { Scope } from '@contentworker/domain';
 import { type Asset, type FocalPoint, ValidationError } from '@contentworker/domain';
 import type { ImageFit, ImageFormat, ImageTransformSpec } from '@contentworker/ports';
-import { getAsset, getPublishedAsset } from './assets.js';
-import type { AppContext } from './context.js';
+import { getAsset, getPublishedAsset } from './assets';
+import type { AppContext } from './context';
 
 export type { ImageFit, ImageFormat } from '@contentworker/ports';
 

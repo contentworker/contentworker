@@ -19,7 +19,7 @@ import {
   type WorkflowGraph,
   type WorkflowNode,
   type WorkflowNodeStatus,
-} from './graph-types.js';
+} from './graph-types';
 
 export const LOOP_INPUT = 'next';
 export const DEFAULT_OUTPUT = 'out';

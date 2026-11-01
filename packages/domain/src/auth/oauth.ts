@@ -1,5 +1,5 @@
-import { DomainError } from '../errors.js';
-import { SCOPES } from './auth.js';
+import { DomainError } from '../errors';
+import { SCOPES } from './auth';
 
 /**
  * OAuth 2.1 / MCP authorization primitives.

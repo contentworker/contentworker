@@ -11,8 +11,8 @@
  * The catalog itself (`NODE_SPECS`) lives in `nodes.ts`.
  */
 
-import { cloneJson } from './graph-types.js';
-import { logicIssues } from './logic.js';
+import { cloneJson } from './graph-types';
+import { logicIssues } from './logic';
 
 export type NodeCategory = 'trigger' | 'content' | 'control' | 'ai';
 

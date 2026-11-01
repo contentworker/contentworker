@@ -10,7 +10,7 @@ import {
   resourceMetadataPaths,
   resourceMetadataUrl,
   verifyPkce,
-} from '../src/index.js';
+} from '../src/index';
 
 describe('RFC 9728 resource metadata URLs', () => {
   it('inserts the well-known segment between host and path, not after it', () => {
