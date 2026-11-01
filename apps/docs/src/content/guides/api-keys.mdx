@@ -11,7 +11,13 @@ curl -s "$API/auth/me" -H "Authorization: Bearer $TOKEN"
 
 `GET /auth/me` returns who the token is and what it may do, which makes it the quickest check that
 a key works. A missing or unknown token is answered with **401**; a valid token without the scope a
-route needs, or used against another space, with **403**.
+route needs, or used against another space, with **403**. The full list of error responses is in
+the [REST API reference](/reference/rest-api/#errors).
+
+## Before you start
+
+Minting and revoking keys, creating roles and listing tokens need `space:admin` in the space. In
+the admin that is the Administrator [role](/guides/team-and-roles/).
 
 ## Key kinds
 
@@ -75,25 +81,23 @@ which you can assign, edit and clone like your own; see [Team and roles](/guides
 ## Personal access tokens
 
 A **personal access token** acts for a person rather than an integration: it carries their
-identity in the audit log and can never do more than they can. Create one for a script or CI job
-at `POST /spaces/{space}/personal-access-tokens` with a name, scopes, and optionally an expiry of
-up to a year (`expiresInDays`). If the person's role is later narrowed, the token narrows with it.
+identity in the audit log and can never do more than they can. Use one for a script or CI job.
 
-AI clients connecting over MCP get a token the same way through an approval screen; see
+Minting one needs both `space:admin` and a signed-in person. API keys and OAuth-connected apps are
+refused (403): a credential must not be able to mint a longer-lived one for itself, and there is no
+MCP tool for it. In the admin, create one under **Settings → Access → Connected apps**; over the API,
+a signed-in administrator calls `POST /spaces/{space}/personal-access-tokens` with a `name`, a
+non-empty list of `scopes` and optionally an expiry of 1 to 365 days (`expiresInDays`). The scopes
+you ask for are intersected with your own, and the raw token is shown once. If the person's role is
+later narrowed, the token narrows with it. `GET /spaces/{space}/personal-access-tokens` lists them,
+and they revoke through the API-key routes.
+
+AI clients connecting over MCP get a token a different way, through an approval screen; see
 [MCP server](/guides/mcp/#connect-with-oauth).
 
-## Errors
+## Next steps
 
-Every error body has the same shape:
-
-```json
-{ "error": { "code": "validation_failed", "message": "…", "issues": [{ "field": "title", "message": "Required" }] } }
-```
-
-| Status | When                                                                   |
-| ------ | ---------------------------------------------------------------------- |
-| 401    | No token, or one that isn't valid                                      |
-| 403    | The token lacks the scope, the content-type grant, or the space        |
-| 404    | No such entry, type, release…                                          |
-| 409    | A conflict: a unique value already taken, a delete blocked by links    |
-| 422    | Validation failed; `issues` lists each field and why                   |
+- [Team and roles](/guides/team-and-roles/) for the built-in roles and who can do what.
+- [Permission scopes](/reference/scopes/) for the full list.
+- [Reading content](/guides/reading-content/) and [SDKs](/guides/sdks/) for using a key.
+- [REST API](/reference/rest-api/) for conventions and errors.

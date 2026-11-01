@@ -1,0 +1,169 @@
+---
+title: Media and assets
+description: Upload images, video and files, publish them, add alt text and a focal point, see where an asset is used, and serve resized images.
+---
+
+An asset is a file in a space: an image, a PDF, a video. You will upload one, describe it, publish
+it so delivery serves it, and reference it from entries. Assets belong to an environment, like
+entries.
+
+## Before you start
+
+- Uploading, editing metadata and generating alt text or tags needs `content:write`.
+- Publishing and unpublishing an asset needs `content:publish`.
+- Listing assets, reading usage and resolving transforms needs `preview:read`.
+
+`…` in the routes below stands for `/spaces/{space}/environments/{env}`.
+
+## Upload a file
+
+In the admin, open **Assets** and press **Upload** (or drop files on the library); with a folder
+open, the files go into it. Images and other files are uploaded and published in one go. A video is uploaded to the video host and stays a draft until it finishes
+processing (see [Upload a video](#upload-a-video)).
+
+Over the API, an upload is three calls, because the bytes go straight to storage rather than
+through the API:
+
+```sh
+# 1. Create the asset. The response has the asset and a short-lived signed upload.
+curl -s "$API/spaces/$SPACE/environments/main/assets" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "fileName": "hero.jpg", "contentType": "image/jpeg", "title": { "en-US": "Hero" } }'
+
+# 2. PUT the file to upload.url, sending upload.headers.
+curl -s -X PUT "$UPLOAD_URL" -H "content-type: image/jpeg" --data-binary @hero.jpg
+
+# 3. Publish it, so delivery serves it.
+curl -s -X POST "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/published" \
+  -H "Authorization: Bearer $CMA"
+```
+
+Send every header in `upload.headers` with the `PUT`. A new asset is a draft until you publish
+it, and `DELETE …/assets/{id}/published` unpublishes it. Title and description are localized maps
+set at creation, and an optional `folderId` files the asset in a folder. MCP has no tool to create
+an image asset; it can list, file, archive and delete assets, edit metadata and create videos
+(below).
+
+## Upload a video
+
+Video is hosted by Cloudflare Stream, not stored as a file, and plays as adaptive streaming with a
+poster frame. If the deployment has no video host, the API answers `501` and the admin stores the
+video as a plain file.
+
+1. `POST …/assets/videos` with `fileName`, `contentType`, optional `title`, `description` and
+   `maxDurationSeconds`. The response has `upload.uploadUrl` and `upload.fileField`.
+2. `POST` the file as multipart form data to `upload.uploadUrl`, in the field `upload.fileField`.
+3. Poll `POST …/assets/{id}/video/refresh` (the admin's **Refresh status** button) until
+   `file.video.status` is `ready`; the other statuses are `pending`, `processing` and `error`.
+4. Publish the asset, so the delivered copy carries the playback URLs (`hlsUrl`, `dashUrl`,
+   `thumbnailUrl`).
+
+The MCP tools are `asset_video_create` and `asset_video_refresh`.
+
+## Add alt text, a focal point and tags
+
+Click an asset in **Assets** to open its details. The metadata is:
+
+| Field         | What it is                                                                 |
+| ------------- | -------------------------------------------------------------------------- |
+| `altText`     | Alt text per locale, for accessibility                                     |
+| `focalPoint`  | `{ "x": 0.4, "y": 0.3 }`, each from 0 to 1; crops are anchored to it       |
+| `tags`        | Tag ids from the space's taxonomy                                          |
+| `fields`      | Free-form custom values                                                    |
+
+In the admin, set **Alt text** for the current locale, click the image to place the **Focal
+point**, choose **Tags**, and press **Save metadata**. Over the API:
+
+```sh
+curl -s -X PATCH "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/metadata" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "altText": { "en-US": "A hand holding a coffee cup" }, "focalPoint": { "x": 0.5, "y": 0.4 } }'
+```
+
+Only the keys you send change. Editing metadata changes the draft; publish the asset again to
+carry it into delivery. The MCP tool is `asset_set_metadata`.
+
+### Generate alt text and tags with AI
+
+For images, **✨ Generate** beside **Alt text** and **✨ Auto-tag** beside **Tags** return
+suggestions you review before saving (`POST …/assets/{id}/alt-text` and `…/auto-tag`; the MCP
+tools are `asset_generate_alt_text` and `asset_auto_tag`). Both work from the file name, title and
+description (and a `context` hint for alt text), not from the image itself, so give the asset a
+meaningful title first. Auto-tag matches your existing tags and lists new tag ideas to add in
+**Taxonomy**. See [AI features](/guides/ai/).
+
+## Organize the library
+
+**Folders** nest up to 16 deep, and a name is unique among its siblings. Create one in the folder
+tree with **New folder**, or with `POST …/asset-folders` (`{ name, parentId? }`); rename or move one
+with `PATCH …/asset-folders/{id}`, its subfolders along with it. A folder is deleted only when it is
+empty. The MCP tools are `asset_folders_list`, `asset_folders_create`, `asset_folders_update` and
+`asset_folders_delete`.
+
+**Filter and sort** the list with `GET …/assets?kind=image&folder={id}&tag={id}&sort=size&order=desc`:
+`kind` (`image`, `video`, `audio`, `document`, `other`), `mime` (`image/*` works), `tag`, `folder`
+(an id, or `root`), `status`, `sort` (`updatedAt`, `createdAt`, `size`) and `order`. Results come a
+page at a time; pass the response's `nextCursor` as `cursor` for the next one.
+
+**Move** up to 500 assets at once: select them and choose **Move to folder**, or
+`POST …/assets/move` with `{ "ids": [...], "folderId": "..." }` (`null` for the root; MCP
+`assets_move`).
+
+**Archive** what you no longer use: an archived asset is hidden from the list (filter on
+`status=archived` to see it) and leaves delivery if it was published. **Restore** brings it back
+as a draft. Select several to archive them together. The routes are `POST …/assets/{id}/archive`
+(`content:publish`) and `…/restore` (`content:write`); the MCP tools are `asset_archive` and
+`asset_restore`.
+
+**Delete** removes an asset and its files for good (`DELETE …/assets/{id}`, `content:publish`; MCP
+`asset_delete`). It is refused with `409 asset_in_use` while any entry links to it, and the answer
+names those entries, so archive the asset or remove the links first.
+
+## See where an asset is used
+
+`GET …/assets/{id}/usage` lists the entries that link to the asset, and the details sheet shows the
+same as **Referenced by** (or "Not referenced by any entry."). The MCP tool is `asset_usage`.
+Check it before you unpublish something a live page depends on.
+
+## Reference an asset from an entry
+
+An entry points at an asset with a `Link` field with `linkType` `Asset`. Publishing the entry
+checks that the asset exists. See [Content modeling](/guides/content-modeling/#references).
+
+## Serve resized images
+
+Ask for a transformed copy of a published image from the Delivery API:
+
+```
+GET /delivery/{space}/{env}/assets/{id}/transform?w=800&fm=webp
+```
+
+It redirects (`302`) to the resized image, so it works as an `<img src>`. The parameters are:
+
+| Param | Values                                              |
+| ----- | --------------------------------------------------- |
+| `w`, `h` | Width and height in pixels, 1 to 10000           |
+| `fit` | `clip`, `crop`, `fill`, `max` or `scale`            |
+| `fm`  | `auto`, `jpg`, `png`, `webp` or `avif`              |
+| `q`   | Quality, 1 to 100                                   |
+
+With `fit=crop`, the crop is anchored to the asset's focal point. Only images can be transformed.
+The Management API has the same route at `GET …/assets/{id}/transform` and answers with the URL as
+JSON instead of redirecting (`asset_transform_url` over MCP); the details sheet has a **Transform
+preview**. For listing and fetching published assets, see
+[Reading content](/guides/reading-content/#assets).
+
+## Locales
+
+Alt text, titles and descriptions are per locale, and the locales available are the space's: a
+default locale and an optional list of others with fallbacks. They are set when the space is
+created (`POST /spaces` with `defaultLocale`, `locales` and `fallbacks`; the admin's new space
+dialog only asks for the default locale). `GET …/space-config` reads them. There is no route, MCP
+tool or admin screen to change a space's locales afterwards.
+
+## Next steps
+
+- [Reading content](/guides/reading-content/#assets): list and fetch published assets.
+- [Content modeling](/guides/content-modeling/#references): link assets from entries.
+- [Editing and publishing](/guides/editing-and-publishing/): publish entries that use them.
+- [AI features](/guides/ai/): the other AI helpers and their budget.

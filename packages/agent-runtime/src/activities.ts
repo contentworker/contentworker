@@ -2,7 +2,11 @@ import {
   type AppContext,
   applyProposedFields,
   createAgentReview,
+  DEFAULT_MODERATION_THRESHOLD,
+  decideWithBudget,
   generateWithBudget,
+  moderationQuestions,
+  moderationVerdict,
   recordAgentRun,
   settleReviewOutcome,
   UNTRUSTED_CONTENT_GUARD,
@@ -133,6 +137,22 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
     },
 
     async classify(scope, text) {
+      // With a decision model: the same questions the ai.moderate node asks, the text only ever the
+      // state. A failure throws (the workflow step retries); a question left unanswered flags.
+      if (ctx.decisions) {
+        const questions = moderationQuestions();
+        const result = await decideWithBudget(ctx, ctx.decisions, scope, {
+          state: text.slice(0, MODERATION_STATE_CHARS),
+          tier: 'fast',
+          questions,
+        });
+        const verdict = moderationVerdict(questions, result.answers, DEFAULT_MODERATION_THRESHOLD);
+        return {
+          flagged: verdict.flagged,
+          categories: [...verdict.categories],
+          usage: { inputTokens: result.usage.inputTokens, outputTokens: 0 },
+        };
+      }
       const schema = {
         type: 'object',
         properties: {
@@ -161,6 +181,9 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
     },
   };
 }
+
+/** The most of an entry's text the moderation decision sees. */
+const MODERATION_STATE_CHARS = 20_000;
 
 /** What the classifier's answer is taken to mean when it says nothing usable. */
 export const UNCLASSIFIED = 'unclassified: the classifier gave no usable answer';

@@ -29,6 +29,7 @@ follow Claude Code's [subagents](https://code.claude.com/docs/en/sub-agents) and
 | Change CI, the fleet or provisioning                           | `devops` agent                                                                                  |
 | Check the repo's instructions still match reality              | `dx-reviewer` agent                                                                             |
 | Audit a deployment's production readiness on Cloudflare        | `readiness-auditor` agent                                                                       |
+| Decide go/no-go for a launch under a feature freeze            | `launch-reviewer` agent (pair it with `readiness-auditor`)                                      |
 | Review Workers AI, AI Gateway and search: gaps, robustness     | `ai-reviewer` agent                                                                             |
 | Keep the docs true                                             | `docs-sync` agent or skill, `/docs-page`, `/docs-audit`                                         |
 
@@ -46,7 +47,8 @@ follow Claude Code's [subagents](https://code.claude.com/docs/en/sub-agents) and
 | `devops`             | Read, Grep, Glob, Edit, Write, Bash                       | `infra-change`, `ci-triage`             | Workflows, the fleet registry, `fleet.ts`, `provision.sh`, `wrangler.jsonc`, rollout order, CI triage. Never deploys               |
 | `docs-sync`          | Bash, Read, Grep, Glob, Edit, Write                       | `docs-sync`, `docs-page`                | Mapping a change to doc pages, verifying claims against the source, regenerating the embed, rebuilding                             |
 | `dx-reviewer`        | Read, Grep, Glob, Bash                                    | none                                    | Instructions vs reality: README, AGENTS.md, `docs/development.md`, scripts, this toolkit. **Read-only**                            |
-| `readiness-auditor`  | Read, Grep, Glob, Bash, Cloudflare API MCP (GET only)     | `infra-change`                          | Template and live-account audit: DNS, TLS, edge, config, DOs and Workflows, durability, rollback, alerting, cost. **Read-only**     |
+| `readiness-auditor`  | Read, Grep, Glob, Bash, WebFetch, Cloudflare API MCP (GET only) and docs MCP | `infra-change` | Template and live-account audit grounded in current Cloudflare docs: DNS, TLS, edge, config, DOs and Workflows, durability, rollback, performance, alerting, cost, plus a DR runbook skeleton. **Read-only** |
+| `launch-reviewer`    | Read, Grep, Glob, Bash, WebFetch, Cloudflare API MCP (read-only) and docs MCP | `contentworker-conventions`, `security-model` | Feature-freeze go/no-go: spec-to-code traceability, backlog classification, ASVS 5.0, OWASP LLM and agentic Top 10s, AI-generated-code failure modes, resilience, data, operability, delivery, tests. **Read-only**, may run tests |
 | `ai-reviewer`        | Read, Grep, Glob, Bash, Cloudflare API MCP (GET, plus read-only GraphQL analytics) | `contentworker-conventions` | Model calls and tiers, AI Gateway settings, model choice against the current catalog, live error and usage numbers. **Read-only** |
 
 The reviewers can't edit, so their findings don't depend on a fix they made. Give them the base

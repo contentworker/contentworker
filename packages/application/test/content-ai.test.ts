@@ -4,6 +4,7 @@ import {
   InMemoryContentStore,
   SequenceIdGenerator,
   StubAIProvider,
+  StubDecisionModel,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -164,6 +165,47 @@ describe('suggestEntryTags', () => {
     const meta = await getEntryMetadata(ctx, scope, id);
     expect(meta?.tags).toContain(greetings.id);
     expect(meta?.tags).toHaveLength(2); // greetings + created "intro"
+  });
+
+  it('picks existing tags with the decision model, asking the generative model nothing', async () => {
+    const id = await newPost(ctx);
+    const greetings = await createTag(ctx, scope, { name: 'greetings' });
+    await createTag(ctx, scope, { name: 'finance' });
+    const decisions = new StubDecisionModel((req) => {
+      const yes: Record<string, { type: 'noul'; probability: number }> = {};
+      for (const [qid, q] of Object.entries(req.questions)) {
+        yes[qid] = {
+          type: 'noul',
+          probability: q.instructions.includes('"greetings"') ? 0.9 : 0.1,
+        };
+      }
+      return yes;
+    });
+    const ai = new StubAIProvider(() => ({ existingTags: ['finance'], newTags: ['x'] }));
+    const result = await suggestEntryTags({ ...ctx, decisions }, ai, scope, id);
+    expect(result.tagIds).toEqual([greetings.id]);
+    expect(result.newTags).toEqual([]);
+    expect(ai.requests).toEqual([]);
+  });
+
+  it('asks for new tag names only when no existing tag fits, and keeps that decision', async () => {
+    const id = await newPost(ctx);
+    await createTag(ctx, scope, { name: 'finance' });
+    const decisions = new StubDecisionModel(); // every tag: no
+    // The generative model tries to pick an existing tag anyway; only its new names are taken.
+    const ai = new StubAIProvider(() => ({ existingTags: ['finance'], newTags: ['intro'] }));
+    const result = await suggestEntryTags({ ...ctx, decisions }, ai, scope, id);
+    expect(result.tagIds).toEqual([]);
+    expect(result.newTags).toEqual(['intro']);
+    expect(ai.requests).toHaveLength(1);
+  });
+
+  it('asks about a large vocabulary 64 tags at a time', async () => {
+    const id = await newPost(ctx);
+    for (let n = 0; n < 70; n++) await createTag(ctx, scope, { name: `tag-${n}` });
+    const decisions = new StubDecisionModel();
+    await suggestEntryTags({ ...ctx, decisions }, new StubAIProvider(() => ({})), scope, id);
+    expect(decisions.requests.map((r) => Object.keys(r.questions).length)).toEqual([64, 6]);
   });
 
   it('apply merges tags without wiping the entry’s concepts', async () => {

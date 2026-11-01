@@ -392,17 +392,25 @@ export async function deleteAssetFiles(
   if (event.videoId) await ctx.video?.delete(event.videoId);
   if (event.r2Key && deps.blob) {
     // `space/environment/assetId/…`: the prefix of the environment the bytes were uploaded in,
-    // which for an imported asset is its source's.
-    const prefix = event.r2Key.split('/').slice(0, 3).join('/');
-    // Never outside this space, whatever the key says.
-    if (!prefix.startsWith(`${scope.spaceId}/`)) return;
-    if (deps.blob.deletePrefix && prefix.split('/').length === 3) {
-      await deps.blob.deletePrefix(`${prefix}/`, () => false);
+    // which for an imported asset is its source's. The key can come from an imported snapshot, so
+    // it is checked rather than trusted: this space, this asset, and never a namespace the bucket
+    // shares with other data. A space named `versions` would otherwise reach other spaces'
+    // archived version bodies (`versions/space/environment/entryId/…`); its own asset files are
+    // left behind instead, which loses nothing.
+    const [space, environment, keyAssetId] = event.r2Key.split('/');
+    if (space !== scope.spaceId || keyAssetId !== assetId || !environment) return;
+    if (SHARED_BLOB_NAMESPACES.has(space)) return;
+    if (deps.blob.deletePrefix) {
+      await deps.blob.deletePrefix(`${space}/${environment}/${assetId}/`, () => false);
     } else {
       await deps.blob.delete(event.r2Key);
     }
   }
 }
+
+/** The bucket's top-level prefixes that aren't a space's asset files: archived version bodies
+ *  (`version-archive.ts`) and staged job chunks (`job-staging.ts`). */
+const SHARED_BLOB_NAMESPACES = new Set(['versions', 'imports']);
 
 /** Most assets one move takes. The ids ride as one JSON parameter, so this bounds the request,
  *  not D1's parameter cap. */

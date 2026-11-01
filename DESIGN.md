@@ -151,15 +151,15 @@ Neutral greys with no tint carry everything; colour is reserved for one blue and
 Each contentworker status maps to one token (`cms/lib/format.ts` `statusTone`), and every badge, dot
 and chart series for a status reads it through `var()`, so it switches with the theme:
 
-| Token             | Means                       | contentworker statuses                                                      |
-| ----------------- | --------------------------- | --------------------------------------------------------------------------- |
-| `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                    |
-| `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, unsaved changes |
-| `run` (work blue) | in progress or on a clock   | scheduled, running, queued, processing                                      |
-| `idle`            | at rest, or ended otherwise | draft, open (release), archived, revoked, expired, disabled, cancelled      |
-| `bad`             | failed                      | failed, error, rejected, removed                                            |
-| `undo`            | taken back                  | rolled back, reverted                                                       |
-| `ai`              | a model's work              | proposed, suggested, generated (agent output awaiting review)               |
+| Token             | Means                       | contentworker statuses                                                            |
+| ----------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                          |
+| `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, unsaved changes       |
+| `run` (work blue) | in progress or on a clock   | scheduled, running, queued, processing                                            |
+| `idle`            | at rest, or ended otherwise | draft, open (release), archived, revoked, expired, disabled, cancelled            |
+| `bad`             | failed                      | failed, error, rejected, removed                                                  |
+| `undo`            | taken back                  | rolled back, reverted                                                             |
+| `ai`              | a model's work              | proposed, suggested, generated, needs review, held (agent output awaiting review) |
 
 ### Named Rules
 
@@ -339,10 +339,19 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 
 - **Overview** (`cms/components/Dashboard.tsx`): what needs attention as cards (not yet published,
   coming up, agent proposals, live activity), then search, AI usage and recent agent runs.
-- **Content:** the content types as cards (`PageHeader` with New content type); a content type's
-  entries beside the list of types (from md); the entry editor: the title wraps, the status, version
-  and save state sit under it, and the actions wrap beside it; below md the secondary actions fold
-  into a ghost ⋯ menu ("More entry actions"). Beside the form sits the **side pane** (after felix's):
+- **Content:** the content types as a table (`PageHeader` with New content type): each type's
+  name linked to its entries with its API id in mono under it, then its entries, drafts, changed
+  entries and fields as figures, and Edit; a Draft badge only on a type whose schema isn't
+  published. Below md it stacks into cards; a content type's
+  entries beside the list of types (from md); the entry editor: the title wraps; under it an action bar (status,
+  version and save state, then the one primary verb for the state: Save draft for a new entry,
+  Publish while anything isn't live, a disabled "Published" when live and clean) stays under the
+  shell's header from md, and below md its buttons sit above the tab bar. The secondary actions
+  (Draft from prose, Generate with AI, Copy preview link) are ghost and fold into a ghost ⋯ menu
+  ("More entry actions") when the editor is narrower than 56rem. Publishing an entry that has been
+  live confirms with what changed, from the editor and from an entries row alike
+  (`entries/PublishConfirm.tsx`). A first publish confirms in the editor, where the whole entry is
+  in front of you, and goes at once from a row, with Undo in the toast. Beside the form sits the **side pane** (after felix's):
   where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
   the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
   narrower, it stacks under the form. The divider is an ARIA splitter (drag, arrows, Shift for a
@@ -375,10 +384,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   ("Brand / Logos") with a Folder actions button that opens the folder actions in a bottom sheet.
 - **Settings:** one page, its section nav beside the section (a grouped select on a phone); each
   section is cards and stacked tables. The install hint sits at the top of Connection.
-- **Workflows list:** each workflow a muted Item in one card: its live version as the tile (a
-  pencil while it is a draft never published), its name the link stretched over the item, then
-  what it covers (content types), whether it gates publishing and its steps; Duplicate and Delete
-  (in-place confirm) in the footer. "New workflow" is a form sheet (template or blank) and "Draft
+- **Workflows list:** a table, flush in one section (stacking into cards below md): each
+  workflow's name linked to its editor with its description and steps under it; what starts its
+  published version (from the API's `publishedTrigger`, with "Draft starts on …" when the draft
+  starts differently, and the other workflows that start alongside it, from `startsAlongside`);
+  what it covers; whether it gates publishing; its live version; then Duplicate and Delete
+  (confirmed in a row beneath). "New workflow" is a form sheet (template or blank) and "Draft
   with AI" a dialog whose proposal is reviewed in a Confirmation before a draft is created.
 
 ## Screens that change shape
@@ -479,7 +490,10 @@ for code and data blocks only.
 - **Install hint** (`components/install-hint.tsx`): on an iPhone or iPad in Safari, in More and on
   Connection, until it's dismissed.
 - **Rich text editor** (signature): TipTap styled as content, not chrome; entry and asset
-  reference links in the work blue with dotted underlines; code in mono on muted.
+  reference links in the work blue with dotted underlines; code in mono on muted; tables in
+  hairline cells, header cells semibold on muted, scrolling inside their wrapper when wide. Table
+  controls (icon and words, since "delete row" isn't something an icon says alone) appear in a
+  second toolbar row only while the cursor is in a table.
 
 ## Installed
 

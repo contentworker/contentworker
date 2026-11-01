@@ -22,6 +22,8 @@ export type DomainEvent =
   | WorkflowWebhookEvent
   | EnvironmentAliasChangedEvent
   | EnvironmentDeletedEvent
+  | PromotionAwaitingApprovalEvent
+  | EnvironmentPromotedEvent
   | EnvironmentPurgeDueEvent;
 
 export interface BaseEvent {
@@ -101,6 +103,27 @@ export interface EnvironmentDeletedEvent extends BaseEvent {
  */
 export interface EnvironmentPurgeDueEvent extends BaseEvent {
   readonly type: 'environment.purge_due';
+}
+
+/**
+ * A promotion is waiting for a person's approval (`scope` is the target environment). For
+ * notifying approvers by webhook.
+ */
+export interface PromotionAwaitingApprovalEvent extends BaseEvent {
+  readonly type: 'promotion.awaiting_approval';
+  readonly promotionId: string;
+  readonly source: string;
+  readonly requestedBy: string;
+  readonly reasons: readonly string[];
+}
+
+/** A promotion was applied (`scope` is the target environment). */
+export interface EnvironmentPromotedEvent extends BaseEvent {
+  readonly type: 'environment.promoted';
+  readonly promotionId: string;
+  readonly source: string;
+  readonly contentTypes: number;
+  readonly entries: number;
 }
 
 export interface ContentTypePublishedEvent extends BaseEvent {

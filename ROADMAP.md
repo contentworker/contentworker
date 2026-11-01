@@ -30,9 +30,9 @@ Everything below is built and tested on v2.
   trash, purge, duplicate); versions with diff and restore; references and `include`; rich text
   with HTML import; slugs.
 - **Publishing.** Releases (atomic multi-entry publish), scheduled actions, bulk actions as
-  resumable jobs, branch compare and merge, environment snapshots (export, plus import and clone
-  as resumable jobs; a clone's export and checks run in the engine too), CSV, JSON and WordPress
-  import.
+  resumable jobs, branch compare and merge, environment promotion with a risk check and approval,
+  environment snapshots (export, plus import and clone as resumable jobs; a clone's export and
+  checks run in the engine too), CSV, JSON and WordPress import.
 - **Assets.** Signed R2 uploads and downloads, Images transforms, Stream video, localized alt text
   and focal point, AI alt text and auto-tagging, asset usage; a library with folders, filters and
   keyset paging, bulk moves, archive and restore, and delete refused while entries link to an
@@ -53,7 +53,7 @@ Everything below is built and tested on v2.
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
   recovery codes, with the person forwarded to the api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a Durable Object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (123 tools, plus skills and the docs
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (145 tools, plus skills and the docs
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached in KV) in front of a Workers Caching entrypoint keyed by visibility profile, with ETags,
@@ -76,6 +76,8 @@ Everything below is built and tested on v2.
   Worker onto their own edge-placed Worker at `media.<domain>`.
 - [ ] **Load testing, rewritten.** A delivery and management load profile against a seeded
   deployment (`SEED_SCALE`), confirming cache hits never reach D1.
-- [ ] **Version bodies in R2.** Keep immutable version bodies in R2 with only the index in D1, so
-  an append-heavy space stays well inside D1's per-database size limit.
-- [ ] **Per-environment content promotion tooling** (diff and promote `main` → `staging`).
+- [ ] **Version history without the bodies.** Store a content hash and a change summary on each
+  version at write time, so history lists need no archived bodies from R2 (one read per version
+  today) and identical bodies can share an object.
+- [ ] **Required plugins.** A per-plugin `required` flag so a plugin whose refusal is load-bearing
+  blocks the write when it throws or times out, instead of being skipped.

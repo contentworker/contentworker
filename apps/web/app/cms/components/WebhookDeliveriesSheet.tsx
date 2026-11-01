@@ -16,6 +16,7 @@ import {
 } from '@contentworker/ui/table';
 import { Send } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Ago } from '~/cms/components/ago';
 import { EmptyState } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
@@ -85,7 +86,7 @@ export function WebhookDeliveriesSheet(props: {
                     <TableCell className="text-muted-foreground">{d.statusCode ?? '—'}</TableCell>
                     <TableCell className="text-muted-foreground">{d.attempts}</TableCell>
                     <TableCell className="text-muted-foreground">
-                      {new Date(d.createdAt).toLocaleString()}
+                      <Ago at={d.createdAt} />
                     </TableCell>
                     <TableCell className="max-w-48 truncate text-muted-foreground" title={d.error}>
                       {d.error ?? '—'}

@@ -10,6 +10,7 @@ import {
   InMemoryContentStore,
   SequenceIdGenerator,
   StubAIProvider,
+  StubDecisionModel,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { InProcessAgentRuntime, makeActivities, UNCLASSIFIED, verdictOf } from '../src/index';
@@ -330,5 +331,48 @@ describe('verdictOf', () => {
       categories: [],
     });
     expect(verdictOf(undefined)).toEqual({ flagged: true, categories: [UNCLASSIFIED] });
+  });
+});
+
+describe('the moderation classifier with a decision model', () => {
+  const stubAI = new StubAIProvider(() => ({ flagged: false, categories: [] }));
+
+  it('asks the shared moderation questions and flags a category at or above the threshold', async () => {
+    const decisions = new StubDecisionModel(() => ({
+      violence: { type: 'noul', probability: 0.8 },
+    }));
+    const activities = makeActivities({ ctx: { ...makeCtx(), decisions }, ai: stubAI });
+    const verdict = await activities.classify(scope, 'some text');
+    expect(verdict).toMatchObject({ flagged: true, categories: ['violence'] });
+    expect(verdict.usage).toEqual({ inputTokens: 10, outputTokens: 0 });
+    expect(Object.keys(decisions.requests[0]?.questions ?? {})).toContain('other_unsafe');
+    expect(decisions.requests[0]?.state).toBe('some text');
+    expect(stubAI.requests).toEqual([]);
+  });
+
+  it('passes content every category is confident about', async () => {
+    const decisions = new StubDecisionModel(); // every question: no
+    const activities = makeActivities({ ctx: { ...makeCtx(), decisions }, ai: stubAI });
+    expect(await activities.classify(scope, 'a recipe')).toMatchObject({
+      flagged: false,
+      categories: [],
+    });
+  });
+
+  it('flags a question left unanswered, and lets a failure throw for the step to retry', async () => {
+    const partial = {
+      async decide() {
+        return { answers: {}, model: 'x', usage: { inputTokens: 1 } };
+      },
+    };
+    const held = makeActivities({ ctx: { ...makeCtx(), decisions: partial }, ai: stubAI });
+    expect((await held.classify(scope, 'x')).flagged).toBe(true);
+    const down = {
+      async decide(): Promise<never> {
+        throw new Error('decisions down');
+      },
+    };
+    const failing = makeActivities({ ctx: { ...makeCtx(), decisions: down }, ai: stubAI });
+    await expect(failing.classify(scope, 'x')).rejects.toThrow('decisions down');
   });
 });

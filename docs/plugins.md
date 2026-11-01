@@ -100,6 +100,7 @@ required) is treated as **requesting exactly the access it already holds**, and 
 - Because its declaration is built from its grant, re-approving it can keep or narrow that grant,
   never widen it. Re-approving saves the declaration and clears the flag. So does upgrading it to a
   version whose manifest declares capabilities.
+
 ## Hooks
 
 | Hook                  | Fires                                                                | May mutate | May veto |
@@ -119,9 +120,7 @@ Plugins registered for the same hook run sequentially in id order, each seeing t
 mutations. The first veto wins and the rest do not run.
 
 A plugin that throws, times out, or fails its checksum check is **skipped**, and the write proceeds.
-A broken plugin must not make the CMS unwritable. A plugin whose refusal is load-bearing is a policy
-question the registry will answer with a per-plugin `required` flag; until that exists, failure
-means "did not run".
+A broken plugin must not make the CMS unwritable: failure means "did not run".
 
 ## The sandbox
 
@@ -151,17 +150,10 @@ severed either way. A plugin with the capability gets `caps.network.fetch(url)`,
 manifest's `allowedHosts` before anything leaves. The sandbox adapter checks it first and records a
 `host-not-allowed` denial, and the application checks it again behind that.
 
-That is not the obvious design, and the obvious one does not work. Filtering the isolate's own
-outbound needs `globalOutbound` to be a real `Fetcher` carrying a _per-plugin_ allowlist, and the
-runtime offers no way to build one — verified against a real workerd:
-
-| Attempt                                             | Result                                                    |
-| --------------------------------------------------- | --------------------------------------------------------- |
-| A plain `{ fetch }` object                          | `TypeError: not of type 'Fetcher'`                        |
-| A dynamically-loaded guard worker's entrypoint      | `DataCloneError` — by design; the system cannot reload it |
-| The parent's own entrypoint, constructed per plugin | No RPC constructor on the binding                         |
-
-So network access arrives the way every other capability does: handed in as an RPC argument. Ambient
+That is not the obvious design, because the obvious one does not work: filtering the isolate's own
+outbound needs `globalOutbound` to be a real `Fetcher` carrying a _per-plugin_ allowlist, and
+workerd offers no way to build one (a plain `{ fetch }` object, a dynamically loaded guard worker's
+entrypoint and a per-plugin parent entrypoint were all tried and refused). So network access arrives the way every other capability does: handed in as an RPC argument. Ambient
 `fetch` stays dead, which means there is nothing to bypass — a plugin cannot reach the network except
 through the method, and the method cannot reach a host nobody approved.
 
@@ -234,17 +226,20 @@ has no port. A capability goes into the vocabulary when there is something real 
 
 ## Managing plugins
 
-Space-admin scope, on both surfaces:
+Space-admin scope (`space:admin`). HTTP has every operation; MCP has three of them (below):
 
-| Operation            | HTTP                                           |
-| -------------------- | ---------------------------------------------- |
-| List                 | `GET /spaces/:space/plugins`                   |
-| Get                  | `GET /spaces/:space/plugins/:id`               |
-| Install              | `POST /spaces/:space/plugins`                  |
-| Upgrade              | `PUT /spaces/:space/plugins/:id`               |
-| Approve capabilities | `POST /spaces/:space/plugins/:id/capabilities` |
-| Enable / disable     | `POST /spaces/:space/plugins/:id/enabled`      |
-| Uninstall            | `DELETE /spaces/:space/plugins/:id`            |
+| Operation             | HTTP                                           |
+| --------------------- | ---------------------------------------------- |
+| List                  | `GET /spaces/:space/plugins`                   |
+| Get                   | `GET /spaces/:space/plugins/:id`               |
+| Install               | `POST /spaces/:space/plugins`                  |
+| Upgrade               | `PUT /spaces/:space/plugins/:id`               |
+| Inspect a package URL | `POST /spaces/:space/plugins/from-url/inspect` |
+| Install from a URL    | `POST /spaces/:space/plugins/from-url`         |
+| Upgrade from a URL    | `PUT /spaces/:space/plugins/:id/from-url`      |
+| Approve capabilities  | `POST /spaces/:space/plugins/:id/capabilities` |
+| Enable / disable      | `POST /spaces/:space/plugins/:id/enabled`      |
+| Uninstall             | `DELETE /spaces/:space/plugins/:id`            |
 
 A plugin summary carries `requestedCapabilities` (the manifest), `approvedCapabilities` (the human
 decision), `grantedCapabilities` (the effective grant, what it runs with) and `needsReapproval`.
@@ -331,23 +326,4 @@ capabilities its own principal was never given.
 
 ## Installing one
 
-Settings → Plugins, which is a consent surface before it is a list. Installing takes the manifest
-and the bundle as two files, and only once the manifest has been read does the screen ask for
-anything: what the code will run on, what it is asking to be able to do (in plain language, one
-checkbox each, pre-approved as requested so that the only direction consent can move without a
-second look is _narrower_), and which of those this deployment cannot enforce. The plugin lands
-disabled regardless — the button says so.
-
-The list then shows, per plugin, what it runs on, what it can do (its effective grant), and what it
-asked for and did not get. That last column exists because a plugin behaving oddly is usually a
-plugin doing without something, and nothing else on the screen would say so.
-
-**Access** opens the same checkboxes in place, as a confirmation under the row. If ticking a box
-would grow the grant, the button reads _Approve and disable_ before it is pressed. A plugin flagged
-`needsReapproval` shows _Needs review_ instead of a running state. Its only way back on is
-**Review access**.
-
-**Upgrade** takes a new manifest and bundle for the same plugin id. Capabilities the installed
-version never asked for are marked _New_ and pre-checked. Earlier decisions carry over: a granted
-capability stays checked and a declined one stays unchecked. If the upgrade would grow the grant,
-the button reads _Upgrade disabled_.
+Settings → Plugins is a consent surface before it is a list; see [Admin UI](./admin-ui.md#installing-plugins).

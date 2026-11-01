@@ -318,4 +318,42 @@ describe('deleting an asset', () => {
     );
     expect(h.blob.keys()).toContain('other/main/x/file.png');
   });
+
+  it('never removes archived version bodies, even for a space named like their prefix', async () => {
+    // `versions/shop/main/…` is the shop space's archived bodies, and also the shape of an asset
+    // key in a space named `versions` (environment `shop`, asset `main`), as a snapshot can claim.
+    const body = 'versions/shop/main/entry-1/1.json';
+    await h.blob.put(body, '{}', 'application/json');
+    const forge = (assetId: string, r2Key: string): DomainEvent => ({
+      id: `evt-${assetId}`,
+      type: 'asset.deleted',
+      scope: { spaceId: 'versions', environmentId: 'shop' },
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      assetId,
+      r2Key,
+    });
+    const deps = { sender: new RecordingWebhookSender(), blob: h.blob };
+    await dispatchEvent(h.ctx, deps, forge('main', 'versions/shop/main/file.png'));
+    // A key whose third segment isn't the asset's own is refused as well.
+    await dispatchEvent(h.ctx, deps, forge('a1', 'versions/shop/main/file.png'));
+    expect(h.blob.keys()).toContain(body);
+  });
+
+  it('removes only the deleted asset’s files, not a neighbour sharing a key prefix', async () => {
+    await h.blob.put('shop/main/b2/file.png', 'bytes', 'image/png');
+    await h.blob.put('shop/main/a1/file.png', 'bytes', 'image/png');
+    await dispatchEvent(
+      h.ctx,
+      { sender: new RecordingWebhookSender(), blob: h.blob },
+      {
+        id: 'evt-neighbour',
+        type: 'asset.deleted',
+        scope,
+        occurredAt: '2026-01-01T00:00:00.000Z',
+        assetId: 'a1',
+        r2Key: 'shop/main/b2/file.png',
+      },
+    );
+    expect(h.blob.keys()).toContain('shop/main/b2/file.png');
+  });
 });

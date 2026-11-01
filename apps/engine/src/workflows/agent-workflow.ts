@@ -26,7 +26,7 @@ import { doAgentCostGuardFromEnv } from '@contentworker/platform/do/cost-guard';
 import { type EdgeEnv, withJurisdiction } from '@contentworker/platform/env';
 import { newId } from '@contentworker/platform/ids';
 import { makeMetrics } from '@contentworker/platform/metrics';
-import { aiContextFromEnv, makeAI } from '@contentworker/platform/wire';
+import { aiContextFromEnv, makeAI, makeDecisions } from '@contentworker/platform/wire';
 import {
   type AgentWfParams,
   REVIEW_DECISION_EVENT,
@@ -122,6 +122,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<EdgeEnv, AgentWfParams> {
     // invocations don't pass through wireEdge, so the guard is repeated here.
     const fakes: FakeAdapterBinding[] = [];
     const ai: AIProvider = makeAI(this.env, fakes);
+    const decisions = makeDecisions(this.env, fakes);
     const aiContext = aiContextFromEnv(this.env, fakes);
     assertNoFakeAdapters({
       persistent,
@@ -137,6 +138,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<EdgeEnv, AgentWfParams> {
       clock: { now: () => new Date() },
       ids,
       costGuard,
+      decisions,
       ai: aiContext,
     };
 

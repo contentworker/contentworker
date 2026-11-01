@@ -9,7 +9,7 @@ import { testDb } from './env';
 
 /**
  * The asset library on D1: filtered, keyset-paged listings, folders as materialized paths, moves
- * that pass ids as one JSON parameter, the guards that refuse a delete at commit, and the 0004
+ * that pass ids as one JSON parameter, the guards that refuse a delete at commit, and the 0007
  * backfill of the new columns from the `file` JSON. The file shares one database: each test makes
  * its own space.
  */
@@ -283,7 +283,7 @@ describe('asset folders on D1', () => {
   });
 });
 
-describe('the 0004 backfill', () => {
+describe('the 0007 backfill', () => {
   it('fills the new columns of rows the older code wrote, from their file JSON', async () => {
     const spaceId = `dam-${uid()}`;
     const insert = (id: string, file: Record<string, unknown>) =>
@@ -321,7 +321,7 @@ describe('the 0004 backfill', () => {
 
     // The migration's backfill statements, run again over these rows.
     const migrations = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS;
-    const dam = migrations.find((m) => m.name.startsWith('0004_'));
+    const dam = migrations.find((m) => m.name.startsWith('0007_'));
     const updates = (dam?.queries ?? []).filter((q) => /UPDATE `assets`/.test(q));
     expect(updates.length).toBeGreaterThan(0);
     for (const q of updates) await testDb.prepare(q).run();

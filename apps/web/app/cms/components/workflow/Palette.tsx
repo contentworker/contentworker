@@ -80,7 +80,7 @@ export function Palette({ onPick }: { onPick: (type: string) => void }) {
                               {/* Named by what it shows, so a voice command can say it. */}
                               <span className="sr-only">Add</span> {s.label}
                             </ItemTitle>
-                            <ItemDescription className="line-clamp-1 text-xs">
+                            <ItemDescription className="line-clamp-2 text-xs">
                               {s.description}
                             </ItemDescription>
                           </ItemContent>

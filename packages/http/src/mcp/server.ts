@@ -5,6 +5,7 @@ import {
   analyzeImport,
   applyEntryTags,
   approvePluginCapabilities,
+  approvePromotion,
   archiveAsset,
   assignRolePreset,
   auditEntry,
@@ -16,6 +17,7 @@ import {
   cancelWorkflowRun,
   canvasToEntry,
   compareEnvironments,
+  countEntriesByContentType,
   createAgentSchedule,
   createAIAction,
   createAppExtension,
@@ -30,6 +32,7 @@ import {
   createTag,
   createTask,
   createVideoAsset,
+  createWebhook,
   createWorkflowDraft,
   decideAgentReview,
   decideWorkflowTask,
@@ -41,6 +44,7 @@ import {
   deleteEnvironmentAlias,
   deleteFunction,
   deleteRole,
+  deleteWebhook,
   deliverWorkflowEvent,
   diffVersions,
   draftEntry,
@@ -57,6 +61,7 @@ import {
   getBulkJobReport,
   getContentType,
   getPreviewEntry,
+  getPromotion,
   getRelease,
   getVersion,
   getWorkflowRun,
@@ -81,6 +86,7 @@ import {
   listFunctions,
   listPlugins,
   listPreviewEntries,
+  listPromotions,
   listReleases,
   listRolePresets,
   listRoles,
@@ -89,8 +95,11 @@ import {
   listTasks,
   listTeam,
   listVersions,
+  listWebhookDeliveries,
+  listWebhooks,
   listWorkflowNodeRuns,
   listWorkflowRuns,
+  listWorkflows,
   listWorkflowTasks,
   listWorkflowVersions,
   MAX_ASSET_MOVE,
@@ -103,7 +112,9 @@ import {
   publishWorkflowVersion,
   purgeEntry,
   refreshVideoAsset,
+  rejectPromotion,
   relatedEntries,
+  requestPromotion,
   requestReindex,
   resolveEnvironment,
   resolveTask,
@@ -138,6 +149,7 @@ import {
   updateAssetFolder,
   updateEntry,
   updateRole,
+  updateWebhook,
   validateWorkflowGraph,
   visibleSearchHits,
   workflowRunView,
@@ -157,10 +169,13 @@ import {
   FIELD_TYPES,
   ForbiddenError,
   inScope,
+  MAX_PROMOTION_CONTENT_TYPES,
+  MAX_PROMOTION_ENTRIES,
   maskDeniedFields,
   NotConfiguredError,
   NotFoundError,
   type PermissionScope,
+  PROMOTION_STATUSES,
   type Principal,
   principalActorId,
   ROLE_PRESETS,
@@ -168,6 +183,7 @@ import {
   type Scope,
   SPACE_ID_PATTERN,
   ValidationError,
+  type Webhook,
   WORKFLOW_RUN_STATUSES,
   type WorkflowRunStatus,
 } from '@contentworker/domain';
@@ -178,7 +194,8 @@ import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { toHttpError } from '../api/http';
-import { snapshotBody } from '../api/validation';
+import { MAX_PAGE_LIMIT } from '../api/query';
+import { snapshotBody, updateWebhookBody, webhookBody } from '../api/validation';
 import type { McpDeps } from './deps';
 
 /**
@@ -344,6 +361,9 @@ export function buildServer(
   // name as given: deleting refuses an alias name itself, and a deleted environment's audit
   // history stays readable.
   const LITERAL_ENVIRONMENT = new Set(['environment_delete', 'audit_log_list']);
+  // The `environment` each call named, before resolution, keyed by the resolved args object: a tool
+  // that must not pin anything to an alias's current target (the webhook tools) reads it back.
+  const requestedEnvironment = new WeakMap<object, string>();
   const register = server.registerTool.bind(server);
   server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) =>
     register(
@@ -360,6 +380,7 @@ export function buildServer(
               ? await resolveWritableEnvironment(ctx, spaceId, a.environment)
               : await resolveEnvironment(ctx, spaceId, a.environment, { refusePurging: false });
             args = { ...a, environment };
+            requestedEnvironment.set(args as object, a.environment);
           }
           return await handler(args, ...rest);
         } catch (err) {
@@ -463,6 +484,22 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
       return ok(await getContentType(ctx, scopeOf(args), args.apiId));
+    },
+  );
+
+  server.registerTool(
+    'model_entry_counts',
+    {
+      description:
+        'How many entries each content type holds, by status (draft, changed, published, and ' +
+        'archived for the trash); `total` is the live entries. One grouped count, so use it ' +
+        'instead of paging entries_query to size a type.',
+      inputSchema: toolSchema('model_entry_counts', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      const counts = await countEntriesByContentType(ctx, scopeOf(args));
+      return ok(counts.filter((n) => canAccessContentType(principal, 'read', n.contentType)));
     },
   );
 
@@ -957,7 +994,8 @@ export function buildServer(
   server.registerTool(
     'entries_bulk_action',
     {
-      description: 'Publish or unpublish many entries in one call; returns a per-item summary.',
+      description:
+        'Publish or unpublish many entries in one call; returns a per-item summary (an entry a gated workflow covers fails as its own item).',
       inputSchema: toolSchema('entries_bulk_action', () =>
         z.object({
           action: z.enum(['publish', 'unpublish']),
@@ -1473,6 +1511,117 @@ export function buildServer(
     },
   );
 
+  // --- webhooks (admin) ----------------------------------------------------
+  // The REST routes' twins: the same use-cases, the same space-admin check, the same body schemas,
+  // and the same projection (never the signing secret or the headers, which may carry credentials).
+  // A hook is scoped to one environment or, with allEnvironments, space-wide (environmentId null).
+  const webhookView = (h: Webhook) => ({
+    id: h.id,
+    url: h.url,
+    topics: h.topics,
+    active: h.active,
+    environmentId: h.environmentId,
+  });
+
+  server.registerTool(
+    'webhooks_list',
+    {
+      description:
+        "List an environment's webhooks and every space-wide one (environmentId null). " +
+        'Secrets and headers are never returned.',
+      inputSchema: toolSchema('webhooks_list', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      return ok({ items: (await listWebhooks(ctx, scopeOf(args))).map(webhookView) });
+    },
+  );
+
+  server.registerTool(
+    'webhook_create',
+    {
+      description:
+        'Register a webhook: signed POSTs of the events matching topics ("*" for all) to url. ' +
+        "It receives only the given environment's events, or every environment's with " +
+        'allEnvironments: true. Named through an alias it is space-wide (allEnvironments: false is ' +
+        'refused). secret is yours to choose and is never returned.',
+      inputSchema: toolSchema('webhook_create', () => webhookBody.extend(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      const { space: _s, environment: _e, ...input } = args;
+      return ok(
+        webhookView(
+          await createWebhook(ctx, scopeOf(args), input as Parameters<typeof createWebhook>[2], {
+            requestedEnvironment: requestedEnvironment.get(args),
+          }),
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    'webhook_update',
+    {
+      description:
+        'Change a webhook; omitted fields are kept. allEnvironments: true makes it space-wide, ' +
+        'false scopes it to the given environment (refused for an alias); omitted, its scope is ' +
+        'unchanged.',
+      inputSchema: toolSchema('webhook_update', () =>
+        updateWebhookBody.extend({ id: z.string(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      const { id, space: _s, environment: _e, ...changes } = args;
+      return ok(
+        webhookView(
+          await updateWebhook(
+            ctx,
+            scopeOf(args),
+            id,
+            changes as Parameters<typeof updateWebhook>[3],
+            { requestedEnvironment: requestedEnvironment.get(args) },
+          ),
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    'webhook_delete',
+    {
+      description: 'Delete a webhook by id.',
+      inputSchema: toolSchema('webhook_delete', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      await deleteWebhook(ctx, scopeOf(args), args.id);
+      return ok({ deleted: args.id });
+    },
+  );
+
+  server.registerTool(
+    'webhook_deliveries',
+    {
+      description: "A webhook's recent delivery attempts, newest first (default 50, at most 100).",
+      inputSchema: toolSchema('webhook_deliveries', () =>
+        z.object({
+          id: z.string(),
+          limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      const items = await listWebhookDeliveries(ctx, scopeOf(args), args.id, {
+        limit: args.limit,
+      });
+      return ok({ items });
+    },
+  );
+
   // --- functions (event-triggered, HTTP-invoked) -------------------------
   server.registerTool(
     'functions_list',
@@ -1748,7 +1897,8 @@ export function buildServer(
   server.registerTool(
     'entries_publish',
     {
-      description: 'Publish an entry (validates references; emits an entry.published event).',
+      description:
+        'Publish an entry (validates references; emits an entry.published event). Refused (publish_gated) when a workflow that gates publishing covers the entry: only a run of that workflow publishes it.',
       inputSchema: toolSchema('entries_publish', () =>
         z.object({
           id: z.string(),
@@ -1879,7 +2029,10 @@ export function buildServer(
       // action that cannot be undone.
       guard(SCOPES.contentPublish, scopeOf(args));
       await guardEntry(scopeOf(args), args.id, 'publish');
-      await purgeEntry(ctx, scopeOf(args), args.id, { force: args.force });
+      await purgeEntry(ctx, scopeOf(args), args.id, {
+        force: args.force,
+        ...(deps.blob ? { blob: deps.blob } : {}),
+      });
       return ok({ purged: args.id });
     },
   );
@@ -1978,7 +2131,9 @@ export function buildServer(
   server.registerTool(
     'releases_list',
     {
-      description: 'List releases (entry bundles published together) in a space/environment.',
+      description:
+        'List releases (entry bundles published together) in a space/environment, newest ' +
+        'first, each with itemCount (how many members it holds).',
       inputSchema: toolSchema('releases_list', () => z.object(scopeArgs)),
     },
     async (args) => {
@@ -2049,7 +2204,8 @@ export function buildServer(
   server.registerTool(
     'releases_publish',
     {
-      description: 'Ship a release: publish/unpublish every member atomically in one transaction.',
+      description:
+        'Ship a release: publish/unpublish every member atomically in one transaction. Refused whole (publish_gated) when a gated workflow covers a member it publishes.',
       inputSchema: toolSchema('releases_publish', () => z.object({ id: z.string(), ...scopeArgs })),
     },
     async (args) => {
@@ -2187,6 +2343,24 @@ export function buildServer(
     );
   };
   const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true } as const;
+
+  server.registerTool(
+    'workflow_list',
+    {
+      description:
+        'List the editorial workflows: each with its draft graph and latestVersion, plus how its ' +
+        'latest PUBLISHED version starts (publishedTrigger: { type, label }) and startsAlongside, ' +
+        'the ids of the other published workflows that start on the same trigger for an ' +
+        'overlapping content type (each of them starts too; for trigger.manual the editor ' +
+        'chooses). Both are null for a workflow never published.',
+      inputSchema: toolSchema('workflow_list', () => z.object(scopeArgs)),
+      annotations: READ_ONLY,
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await listWorkflows(ctx, scopeOf(args)));
+    },
+  );
 
   server.registerTool(
     'workflow_save_draft',
@@ -2706,7 +2880,7 @@ export function buildServer(
     'schedule_action',
     {
       description:
-        'Schedule a publish/unpublish of an entry or release for a future ISO-8601 instant.',
+        'Schedule a publish/unpublish of an entry or release for a future ISO-8601 instant. A publish a gated workflow covers is refused (publish_gated) now, and fails if gating is on when it fires.',
       inputSchema: toolSchema('schedule_action', () =>
         z.object({
           action: z.enum(['publish', 'unpublish']),
@@ -3393,6 +3567,108 @@ export function buildServer(
         starter: created.starter,
         ...(created.installed ? { installed: created.installed } : {}),
       });
+    },
+  );
+
+  // --- promotions (environment → environment, with approval) -------------
+  server.registerTool(
+    'promotion_request',
+    {
+      description:
+        'Promote content from one environment to another. Pins the entries to copy (what is live ' +
+        'in the source goes live in the target; drafts go as drafts) and runs a risk check. ' +
+        'Applies at once when nothing stops it; otherwise it waits as `awaiting_approval` (into ' +
+        'main or an aliased environment, a field removed or retyped, or the risk check flagged ' +
+        'it), and someone other than you approves it with promotion_approve. Omit contentTypes ' +
+        'and entries to promote everything that differs (at most 200 entries).',
+      inputSchema: toolSchema('promotion_request', () =>
+        z.object({
+          source: z.string(),
+          target: z.string(),
+          contentTypes: z.array(z.string()).max(MAX_PROMOTION_CONTENT_TYPES).optional(),
+          entries: z.array(z.string()).max(MAX_PROMOTION_ENTRIES).optional(),
+          space: z.string().optional(),
+        }),
+      ),
+    },
+    async (args) => {
+      const spaceId = args.space ?? DEFAULT_SPACE;
+      guard(SCOPES.contentManage, { spaceId, environmentId: args.target });
+      guard(SCOPES.contentPublish, { spaceId, environmentId: args.target });
+      return ok(
+        await requestPromotion(ctx, principal, spaceId, {
+          source: args.source,
+          target: args.target,
+          ...(args.contentTypes ? { contentTypes: args.contentTypes } : {}),
+          ...(args.entries ? { entries: args.entries } : {}),
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'promotion_list',
+    {
+      description: 'List promotions, newest first, optionally only those with one status.',
+      inputSchema: toolSchema('promotion_list', () =>
+        z.object({
+          status: z.enum(PROMOTION_STATUSES).optional(),
+          space: z.string().optional(),
+        }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const spaceId = args.space ?? DEFAULT_SPACE;
+      guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
+      return ok(await listPromotions(ctx, spaceId, args.status ? { status: args.status } : {}));
+    },
+  );
+
+  server.registerTool(
+    'promotion_get',
+    {
+      description: 'Get a promotion: what it copies, its risk check and why, and its result.',
+      inputSchema: toolSchema('promotion_get', () =>
+        z.object({ id: z.string(), space: z.string().optional() }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const spaceId = args.space ?? DEFAULT_SPACE;
+      guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
+      return ok(await getPromotion(ctx, spaceId, args.id));
+    },
+  );
+
+  server.registerTool(
+    'promotion_approve',
+    {
+      description:
+        'Approve a promotion waiting for approval, and apply it. Refused for whoever requested it.',
+      inputSchema: toolSchema('promotion_approve', () =>
+        z.object({ id: z.string(), space: z.string().optional() }),
+      ),
+    },
+    async (args) => {
+      const spaceId = args.space ?? DEFAULT_SPACE;
+      guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
+      return ok(await approvePromotion(ctx, principal, spaceId, args.id));
+    },
+  );
+
+  server.registerTool(
+    'promotion_reject',
+    {
+      description: 'Reject a promotion waiting for approval; nothing is copied.',
+      inputSchema: toolSchema('promotion_reject', () =>
+        z.object({ id: z.string(), space: z.string().optional() }),
+      ),
+    },
+    async (args) => {
+      const spaceId = args.space ?? DEFAULT_SPACE;
+      guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
+      return ok(await rejectPromotion(ctx, principal, spaceId, args.id));
     },
   );
 

@@ -38,7 +38,6 @@ import {
   MessageSquareText,
   Monitor,
   Moon,
-  ScrollText,
   Search,
   Sun,
   UserRound,
@@ -54,6 +53,7 @@ import {
   useNavigate,
   useNavigation,
 } from 'react-router';
+import { Breadcrumbs } from '~/cms/components/layout/Breadcrumbs';
 import { CommandPalette, openCommandPalette } from '~/cms/components/layout/CommandPalette';
 import { OPEN_SHORTCUTS_EVENT } from '~/cms/components/layout/KeyboardShortcuts';
 import { NewEntry } from '~/cms/components/layout/NewEntry';
@@ -140,10 +140,25 @@ function navGroups(pages: typeof PAGES): { title?: string; items: NavItem[] }[] 
   ].filter((g) => g.items.length > 0);
 }
 
-/** The deployment's own pages, for admins: the sidebar's last group, and More's on a phone. */
+/**
+ * The deployment's own pages, for admins: the sidebar's last group, and More's on a phone. Its
+ * audit log (sign-ins, people, single sign-on) opens from People and sign-in, which reads as
+ * current there: the one "Audit log" in the nav is the space's, under Settings › Workspace.
+ */
 const DEPLOYMENT: NavItem[] = [
-  { to: '/team', label: 'People and sign-in', icon: UsersRound },
-  { to: '/audit', label: 'Audit log', icon: ScrollText },
+  {
+    to: '/team',
+    label: 'People and sign-in',
+    icon: UsersRound,
+    match: (path) => isAt(path, { to: '/team' }) || isAt(path, { to: '/audit' }),
+  },
+];
+
+/** Pages outside nav.ts, named for the header's breadcrumbs as their headers name them. */
+const OUTSIDE_NAV = [
+  { to: '/team', label: 'People and sign-in' },
+  { to: '/audit', label: 'Audit log' },
+  { to: '/account', label: 'Account' },
 ];
 
 const THEMES: { value: ThemeChoice; label: string; icon: typeof Sun }[] = [
@@ -475,6 +490,8 @@ function ShellFrame() {
               <Mark className="size-5" />
               <span>contentworker</span>
             </Link>
+            {/* Where you are, from md (below it the page's own title says so). */}
+            {showNav ? <ShellCrumbs /> : null}
             {/* The space, environment and locale every CMS screen works in (on a phone, in More). */}
             {showNav ? (
               <div className="hidden min-w-0 lg:flex">
@@ -885,6 +902,16 @@ function SearchButton() {
       {/* Named by its word (visible from sm), so a voice command can say it. */}
       <span className="max-sm:sr-only">Search</span>
     </button>
+  );
+}
+
+/** The header's breadcrumbs, once a space is in scope (they name types and entries from it). */
+function ShellCrumbs() {
+  if (!useOptionalClient()?.ready) return null;
+  return (
+    <div className="hidden min-w-0 text-ui md:flex">
+      <Breadcrumbs pages={OUTSIDE_NAV} />
+    </div>
   );
 }
 

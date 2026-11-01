@@ -29,16 +29,17 @@ and infrastructure is bound only at the edges.
 
 Each deployment runs four Workers (plus the docs site on contentworker's own deployment). They
 are split by how their traffic behaves, so each has its own CPU limit, placement, sampling rate
-and failure blast radius. Routes are rendered per deployment by `scripts/fleet.ts`
+and failure blast radius. `AGENTS.md` lists each Worker's role; this table adds where it is
+served and how it is configured. Routes are rendered per deployment by `scripts/fleet.ts`
 (`hosts()`): the admin at `<domain>`, the api at `api.<domain>`, delivery at `cdn.<domain>`.
 
-| Worker          | Route            | Role                                                                                         | Config highlights (`apps/*/wrangler.jsonc`)                                                             |
-| --------------- | ---------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `apps/web`      | `<domain>`       | Admin UI (React Router 8 SSR) and human auth: passwords, passkeys, TOTP, OIDC SSO, SCIM, `/setup` | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery) |
-| `apps/api`      | `api.<domain>`   | Management + Preview REST, MCP, OAuth 2.1, media (`/media/*`), live SSE                      | Smart Placement, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine DOs/Workflows by script |
-| `apps/delivery` | `cdn.<domain>`   | Public Content Delivery API (REST, GraphQL, search, live); drains the purge queue           | No Smart Placement, `cpu_ms` 2000, head sampling 0.05, Workers Caching on the `Delivery` entrypoint     |
-| `apps/engine`   | none             | Queue consumers, the every-minute cron, every Durable Object and Workflow class              | Smart Placement, `cpu_ms` 30000; owns DO migrations                                                     |
-| `apps/docs`     | docs host        | Public docs (Astro Starlight, static assets)                                                 | Deployed only by the deployment with `docs: true`                                                       |
+| Worker          | Route          | Config highlights (`apps/*/wrangler.jsonc`)                                                              |
+| --------------- | -------------- | -------------------------------------------------------------------------------------------------------- |
+| `apps/web`      | `<domain>`     | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery) |
+| `apps/api`      | `api.<domain>` | Smart Placement, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine DOs/Workflows by script |
+| `apps/delivery` | `cdn.<domain>` | No Smart Placement, `cpu_ms` 2000, head sampling 0.05, Workers Caching on the `Delivery` entrypoint      |
+| `apps/engine`   | none           | Smart Placement, `cpu_ms` 30000; owns DO migrations                                                      |
+| `apps/docs`     | docs host      | Deployed only by the deployment with `docs: true`                                                        |
 
 ### apps/web: the admin and the gateway
 
@@ -60,9 +61,10 @@ Credentials never cross the binding as the browser sent them:
 2. Otherwise a same-origin request with a live web session has its cookies removed and a signed
    `x-cw-principal` added (`@contentworker/security/principal`): HMAC-SHA256 under
    `PRINCIPAL_KEY`, payload `{ sub, email, name, role, sid?, iat, exp, path }` (`sid`: the
-   session it came on), valid for 60 seconds and for that exact path. The assistant's paths
-   (`/agents/*`) are signed with a key derived from `PRINCIPAL_KEY` instead (HKDF,
-   `ASSISTANT_PRINCIPAL_KEY` on the engine), which the REST surface never accepts.
+   session it came on), valid for 60 seconds and for that exact method and path
+   (`principalTarget`, `packages/security/src/principal.ts`). The assistant's paths (`/agents/*`)
+   are signed with a key derived from `PRINCIPAL_KEY` instead (HKDF, `ASSISTANT_PRINCIPAL_KEY` on
+   the engine), which the REST surface never accepts.
 3. Otherwise it goes through with no credentials, and the api answers 401 where it needs one.
 
 `x-cw-bookmark` passes through both ways untouched. While a deployment has no people yet, every
@@ -125,46 +127,37 @@ bind them by `script_name`) and handles:
 - **Queues**: `contentworker-events` (batch 25, concurrency 10), `contentworker-bulk` (batch 1),
   `contentworker-agents` (batch 25, concurrency 4), and `contentworker-events-dlq` (logged and
   acked). The events consumer runs `consumeEvent` per message (webhooks, KV cache tags, search
-  and vector indexing, functions, reindex slices, bulk chunks, live fan-out), forwards
-  `entry.published` to the agents queue when it is bound, and sends one coalesced purge message
+  and vector indexing, functions, reindex slices, bulk chunks, environment purge steps, live
+  fan-out), in 6 lanes at once (`runInLanes`, `apps/engine/src/lanes.ts`): one entry's events
+  keep their order, other entries run side by side. Environment import and clone are bulk jobs,
+  so their chunks run here too ([Environments and snapshots](./environments-and-snapshots.md)).
+  It forwards `entry.published` to the agents queue when it is bound, and sends one coalesced purge message
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
   `asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
   `environment_alias.changed`, `environment.deleted`).
 - **Cron** (`* * * * *`): due scheduled actions, the outbox relay sweep, bulk-job stall recovery,
-  agent schedules (`AGENTS_SCHEDULES=true`), retention at the top of each hour, and the daily
+  the restart of deleted-environment purges that stopped progressing, agent schedules
+  (`AGENTS_SCHEDULES=true`), retention at the top of each hour, and the daily
   secret reseal at 03:30 UTC.
 
-| Durable Object  | Keyed by                         | Purpose                                                                  |
-| --------------- | -------------------------------- | ------------------------------------------------------------------------ |
-| `LiveHubDO`     | space:environment                | Live Content SSE fan-out                                                 |
-| `SearchShardDO` | space:environment:shard (8 default, `SEARCH_SHARDS`) | FTS5 lexical index (`packages/platform/src/do/search-shard.ts`) |
-| `CostGuardDO`   | space                            | AI request/token budget windows (interactive and background)             |
-| `RateLimiterDO` | client IP                        | Failed-authentication limiter                                            |
-| `AssistantAgent` | person (`usr_…`, or `local`)    | The admin's assistant: its conversation, model turns and page edits      |
+| Durable Object   | Keyed by                                             | Purpose                                                             |
+| ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| `LiveHubDO`      | space:environment                                    | Live Content SSE fan-out                                            |
+| `SearchShardDO`  | space:environment:shard (8 default, `SEARCH_SHARDS`) | FTS5 lexical index (`packages/platform/src/do/search-shard.ts`)     |
+| `CostGuardDO`    | space                                                | AI request/token budget windows (interactive and background)        |
+| `RateLimiterDO`  | client IP                                            | Failed-authentication limiter                                       |
+| `AssistantAgent` | person (`usr_…`, or `local`)                         | The admin's assistant: its conversation, model turns and page edits |
 
 The assistant (`packages/http/src/assistant/`, hosted by `apps/engine/src/assistant.ts`) is an
 AIChatAgent whose tools are the MCP tools `ASSISTANT_TOOLS` names (`@contentworker/domain`), run
 in-process through the `/mcp` handler as the person's own principal, always in the space and
-environment the page sent. The api forwards `/agents/assistant-agent/<person>` to it only when
-the signed `x-cw-principal` names that person (`@contentworker/http/assistant/gate`, which also
-drops any SDK-internal `x-agents-*`/`x-partykit-*` header a caller sent); the object verifies the
-signature again itself and keeps who it names per connection. Every frame a socket sends, and every
-turn and page edit, first re-reads the person (enabled, their session live): a socket whose person
-no longer is is closed (4401), and every other socket is checked the same way before anything is
-broadcast. Their access to the page's space is resolved with `principalForWebUser` for each call.
-
-What a client sends is held to what the object made: only new user text is taken from the
-messages a client saves (stored messages are kept as stored, client tool results are dropped); a
-model tool call runs only if the model emitted it, with the input and scope it emitted (`model:`
-records); a page's action (`act`) waits at a card that `resolve` answers, held to a fingerprint of
-what the card was made for. Writes the model proposes wait for the person's confirm. Tool results
-reach the model inside the untrusted-content delimiter, and only summaries of them are kept once a
-turn ends. The model is Workers AI's flagship tier through AI Gateway, then its fast tier, then a
-deterministic mock (always, under `AI_MODE=mock`); each model step is a request against
-`CostGuardDO` and the turn's tokens are settled however it ends. A person gets at most 30 page
-edits and turns a minute; a conversation untouched for 30 days is deleted (an alarm), and so is a
-person's whose account is disabled or gone.
+environment the page sent. The api forwards `/agents/assistant-agent/<person>` to it; who may open
+that socket, what a client may send and how writes are confirmed are in
+[Auth & RBAC](./auth-and-rbac.md#the-assistants-socket). The model is Workers AI's flagship tier
+through AI Gateway, then its fast tier, then a deterministic mock (always, under `AI_MODE=mock`);
+each model step is a request against `CostGuardDO` and the turn's tokens are settled however it
+ends.
 
 Workflows: `AgentWorkflow` (`contentworker-agent`) and `EditorialWorkflow`
 (`contentworker-editorial`), in `apps/engine/src/workflows/`.
@@ -208,8 +201,8 @@ Served by the api (`packages/http/src/routes/media.ts`, `@contentworker/adapters
   clients cannot mint arbitrary transforms; `fm=auto` picks AVIF/WebP from `Accept`; the focal
   point becomes gravity when `fit=crop`.
 - **Stream (`STREAM`)**: `POST …/assets/videos` creates a draft asset and a one-time direct
-  upload; `POST /webhooks/stream` verifies `Webhook-Signature` (`STREAM_WEBHOOK_SECRET`) and then
-  re-reads the video from the Stream API; `POST …/assets/:id/video/refresh` does the same on
+  upload; `POST /webhooks/stream` (mounted only with both `STREAM` and `STREAM_WEBHOOK_SECRET`)
+  verifies `Webhook-Signature` and then re-reads the video from the Stream API; `POST …/assets/:id/video/refresh` does the same on
   demand.
 - **Deleting** an asset (`DELETE …/assets/:id`, refused with `409 asset_in_use` while entries link
   to it) removes the row in one unit with an `asset.deleted` event; the engine then deletes the
@@ -221,15 +214,15 @@ routes: folders, filters, archive and delete. The api's `/media/*` byte route ke
 
 ## Data placement
 
-| Store                            | Holds                                                                                                                                          |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Store                             | Holds                                                                                                                                                                                                                                                                              |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **D1** (`DB`, primary + replicas) | Everything authoritative: spaces, environments, aliases, content types, entries and versions, published read models, assets, releases, schedules, taxonomy, workflows, roles, team, API keys, OAuth, webhooks, the outbox, audit; plus the web app's auth tables (`0002_auth.sql`) |
-| **R2** (`MEDIA_BUCKET`)          | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle)                            |
-| **KV** (`KV_CACHE`)              | Tag-versioned delivery cache and the authenticated-principal cache (shared by api, engine and delivery)                                        |
-| **DO SQLite**                    | Search shards, live hubs, AI budgets, auth-failure counters                                                                                    |
-| **Vectorize**                    | Embeddings (768 dims, cosine), metadata-indexed on `spaceId` and `environmentId`                                                               |
-| **Analytics Engine** (`METRICS`) | Operational counters (`contentworker_*`)                                                                                                       |
-| **Workers Caching**              | Delivery responses, keyed by visibility profile and canonical URL                                                                              |
+| **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle)                                                                                                                                                                 |
+| **KV** (`KV_CACHE`)               | Tag-versioned delivery cache and the authenticated-principal cache (shared by api, engine and delivery)                                                                                                                                                                            |
+| **DO SQLite**                     | Search shards, live hubs, AI budgets, auth-failure counters                                                                                                                                                                                                                        |
+| **Vectorize**                     | Embeddings (768 dims, cosine), metadata-indexed on `spaceId` and `environmentId`                                                                                                                                                                                                   |
+| **Analytics Engine** (`METRICS`)  | Operational counters (`contentworker_*`)                                                                                                                                                                                                                                           |
+| **Workers Caching**               | Delivery responses, keyed by visibility profile and canonical URL                                                                                                                                                                                                                  |
 
 ## The layers
 
@@ -250,9 +243,11 @@ Interfaces only:
   the unit do not see its own writes; a lost compare-and-set surfaces at commit as
   `TransactionConflictError`). No SQL, ORM or driver type crosses this boundary.
 - `infra.ts`: `Queue`, `EventBus`, `BlobStore`, `Cache`, `WebhookSender`, `AIProvider`,
-  `EmbeddingsProvider`, `VectorStore`, `SearchIndex`, `HookDispatcher`, `WorkflowEngine` and
-  friends.
-- `support.ts`: `Clock`, `IdGenerator`, `Hasher`, which keep use-cases deterministic.
+  `EmbeddingsProvider`, `VectorStore`, `SearchIndex`, `HookDispatcher` and friends.
+- `workflow-engine.ts`: `WorkflowEngine`, the durable-run port.
+- `import.ts`: the import source port (`ImportSource`) that `import-structured` implements.
+- `support.ts`: `Clock`, `IdGenerator`, `Hasher`, which keep use-cases deterministic, and
+  `SecretSealer`, which seals secrets at rest.
 
 ### `packages/application`: the use-cases
 
@@ -267,8 +262,11 @@ way state changes: the HTTP API, MCP, and the queue consumers all call them.
 
 - `schema.ts` and `auth-schema.ts` (drizzle `sqlite-core`) mirror the hand-written migrations
   `migrations/0001_init.sql` (content), `0002_auth.sql` (the web app's users, sessions,
-  passkeys, SCIM groups, admin audit) and `0003_environment_purges.sql` (deleted environments
-  still being purged). Timestamps are epoch milliseconds; JSON is `TEXT`.
+  passkeys, SCIM groups, admin audit), `0003_environment_purges.sql` (deleted environments
+  still being purged), `0004_version_bodies.sql` (`entry_versions.body_key`, for superseded
+  version bodies moved to R2), `0005_webhook_environments.sql` (`webhooks.environment_id`),
+  `0006_environment_promotions.sql` (promotions between environments) and `0007_dam.sql` (the
+  asset library's columns, `asset_folders` and `asset_versions`). Timestamps are epoch milliseconds; JSON is `TEXT`.
 - `exec.ts`: `directExec` and the `UnitOfWork` behind `withTransaction`: writes are buffered and
   sent as one `db.batch()`; `expectChanged()` adds a guard statement
   (`INSERT INTO _guard SELECT changes() = n`, with `CHECK (ok = 1)`) so a lost compare-and-set
@@ -283,19 +281,20 @@ way state changes: the HTTP API, MCP, and the queue consumers all call them.
 
 One subpath per adapter, each implementing a port against one binding:
 
-| Subpath             | Port(s)                                  | Technology                                     |
-| ------------------- | ---------------------------------------- | ---------------------------------------------- |
-| `ai-workers`        | `AIProvider`, `EmbeddingsProvider`       | Workers AI, through AI Gateway when configured |
-| `blob-r2`           | `BlobStore`, media URL signer            | R2 binding + signed `/media/*` route           |
-| `cache-kv`          | `Cache`                                  | Workers KV, tag-versioned                      |
-| `queue-cf`          | `Queue`                                  | Cloudflare Queues producer                     |
-| `vector-vectorize`  | `VectorStore`                            | Vectorize                                      |
-| `images-cf`         | image transformer                        | Cloudflare Images binding                      |
-| `video-stream`      | video host                               | Cloudflare Stream binding                      |
-| `email-cf`          | `EmailSender`                            | Email Sending (`send_email`)                   |
-| `plugins-cf-loader` | plugin runtime                           | Worker Loader isolates                         |
-| `http-effects`      | `WebhookSender`, function invoker, fetch | `fetch`                                        |
-| `import-structured` | import sources                           | CSV / JSON / WordPress parsers                 |
+| Subpath             | Port(s)                                  | Technology                                                                                                                           |
+| ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ai-workers`        | `AIProvider`, `EmbeddingsProvider`       | Workers AI, through AI Gateway when configured                                                                                       |
+| `blob-r2`           | `BlobStore`, media URL signer            | R2 binding + signed `/media/*` route                                                                                                 |
+| `cache-kv`          | `Cache`                                  | Workers KV, tag-versioned                                                                                                            |
+| `queue-cf`          | `Queue`                                  | Cloudflare Queues producer                                                                                                           |
+| `vector-vectorize`  | `VectorStore`                            | Vectorize                                                                                                                            |
+| `vector-kv-dev`     | `VectorStore`                            | Local-dev only (`VECTOR_STORE=kv`): brute-force cosine over KV, shared by the Workers of a dev session; counts as the fake `vectors` |
+| `images-cf`         | image transformer                        | Cloudflare Images binding                                                                                                            |
+| `video-stream`      | video host                               | Cloudflare Stream binding                                                                                                            |
+| `email-cf`          | `EmailSender`                            | Email Sending (`send_email`)                                                                                                         |
+| `plugins-cf-loader` | plugin runtime                           | Worker Loader isolates                                                                                                               |
+| `http-effects`      | `WebhookSender`, function invoker, fetch | `fetch`                                                                                                                              |
+| `import-structured` | import sources                           | CSV / JSON / WordPress parsers                                                                                                       |
 
 ### `packages/platform`: wiring
 
@@ -382,10 +381,12 @@ Rules the seam holds:
 - **A veto writes nothing.** `entry:beforePublish` runs before the unit of work commits, so a
   refusal discards the aggregate, read model and outbox row together. Hooks are pre-commit only:
   nothing can roll back after D1 commits the batch.
-- **Hooks never see the store**, run sequentially in registration order, and
-  `entry:beforeSave` runs before normalization and validation.
-- **Failure policy is per handler**: `onError: 'ignore'` (default) logs and continues;
-  `onError: 'reject'` turns a failure or timeout into a veto.
+- **Hooks never see the store**, and `entry:beforeSave` runs before normalization and
+  validation. Handlers for one hook run sequentially in plugin id order, each seeing the previous
+  one's mutations; the first veto wins and the rest do not run.
+- **A failing handler is skipped.** One that throws, times out or fails its checksum check is
+  logged and the write proceeds: a broken plugin must not make the CMS unwritable. There is no
+  per-handler `reject` policy; only an explicit veto from a plugin refuses a write.
 
 A veto with field issues surfaces as `ValidationError` (422); anything else as
 `HookRejectedError` (422) naming the handler.
@@ -394,7 +395,7 @@ Hooks are registered by installing plugins. With a `PLUGIN_LOADER` binding, `wir
 `AppContext.hooks` to `createPluginHookDispatcher` over the Worker Loader runtime; without it,
 installed plugins never execute. Manifests, grants and checksums live in D1 (`plugins`); bundle
 bytes in R2 at `plugins/<space>/<id>/<checksum>.js`, with the checksum verified on every load.
-See [Plugins](./plugins.md).
+See [Plugins](./plugins.md#hooks).
 
 ## Why these choices
 

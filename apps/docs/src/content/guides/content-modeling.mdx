@@ -3,7 +3,8 @@ title: Content modeling
 description: Content types, the thirteen field types, components and repeaters, validations, and how to change a model safely.
 ---
 
-A content model is the set of content types in a space. Good models describe content by what it
+A content model is the set of content types in a space. You define it in the admin (**Content →
+New content type**) or over the API and MCP. Good models describe content by what it
 *is* (an article, an author, a promo block) rather than where it appears, so the same entry can
 feed a website, an app, an email and an agent.
 
@@ -16,9 +17,10 @@ A content type has:
 - a **display field**, the field used as each entry's title in lists, pickers and search results;
 - an ordered list of **fields**.
 
-Creating or changing a content type makes a draft definition; publishing it makes the change live
-for authoring and delivery. Each publish bumps the type's version, and an
-`content_type.published` event lets integrations (generated types, caches) react.
+Creating or changing a content type makes a draft definition. Each revision bumps the type's
+`version`; publishing marks that version live for authoring and delivery and emits a
+`content_type.published` event, so integrations (generated types, caches) can react. The admin's
+content type dialog publishes as it saves.
 
 ## Field types
 
@@ -27,7 +29,7 @@ for authoring and delivery. Each publish bumps the type's version, and an
 | `Symbol`    | Short, single-line text: titles, names, labels       | string                         |
 | `Slug`      | A URL-safe identifier, normalized as you type        | string                         |
 | `Text`      | Long, multi-line plain text                          | string                         |
-| `RichText`  | A structured document: headings, lists, links, embeds | object                        |
+| `RichText`  | A structured document: headings, lists, tables, links, embeds | object                |
 | `Integer`   | A whole number                                       | integer                        |
 | `Number`    | A decimal number                                     | number                         |
 | `Boolean`   | Yes or no                                            | boolean                        |
@@ -55,6 +57,10 @@ deep.
 A `Component` field groups nested fields that belong together: a hero block's heading, image and
 button. An `Array` of components is a **repeater**: a list of feature cards, FAQ items or table
 rows that editors add, remove and reorder.
+
+The admin's content type dialog can't author a `Component` field, because it has no way to define
+the nested fields: create one with the API (`POST …/content-types`) or the
+`model_create_content_type` MCP tool. Existing component fields load and edit in the dialog.
 
 Nested fields are ordinary fields, with three exceptions. They can't be localized on their own
 (localization is decided once, on the field holding the component), they can't be unique, and they
@@ -88,18 +94,13 @@ agents. An AI agent can't save an entry a person couldn't.
   [AI features](/guides/ai/)) before making it required.
 - **Renaming** a field's name is safe; its `apiId` is what code depends on, so treat that as
   permanent.
-- **Try risky changes in an environment.** Create a `staging` environment from `main`, change the
+- **Try risky changes in an environment.** Clone `main` into a `staging` environment, change the
   model there, point a preview at it, then merge it back. See
-  [Concepts](/start/concepts/#spaces-and-environments).
+  [Environments](/guides/environments/).
 
-## Types for your code
+## Next steps
 
-Every space can describe its model as TypeScript, so code reading entries is typed by the model as
-it is right now:
-
-```sh
-curl -s "$API/spaces/$SPACE/environments/main/content-types?format=typescript" \
-  -H "Authorization: Bearer $CPA" > src/contentworker.d.ts
-```
-
-The `contentworker-codegen` CLI does the same from a build script. See [SDKs](/guides/sdks/#typed-content).
+- [Editing and publishing](/guides/editing-and-publishing/): write entries against the model.
+- [SDKs](/guides/sdks/#typed-content): generate TypeScript types from the model
+  (`GET …/content-types?format=typescript` returns the same output).
+- [Environments](/guides/environments/): change the model on a copy before it reaches `main`.

@@ -9,6 +9,11 @@ import type {
   FieldDefinition,
   LocalizedValue,
   PluginManifest,
+  PromotedContentType,
+  PromotedEntry,
+  PromotionResult,
+  PromotionRisk,
+  PromotionStatus,
   RolePreset,
   WorkflowGraph,
   WorkflowGraphDefinition,
@@ -95,6 +100,35 @@ export const environmentPurges = sqliteTable(
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
 );
 
+/**
+ * Content promoted from one environment to another, with its risk check and approval
+ * (0006_environment_promotions). Space-level: it keeps its history when an environment goes.
+ */
+export const environmentPromotions = sqliteTable(
+  'environment_promotions',
+  {
+    spaceId: text('space_id').notNull(),
+    id: text('id').notNull(),
+    sourceEnvironmentId: text('source_environment_id').notNull(),
+    targetEnvironmentId: text('target_environment_id').notNull(),
+    contentTypes: text('content_types', { mode: 'json' }).$type<PromotedContentType[]>().notNull(),
+    entries: text('entries', { mode: 'json' }).$type<PromotedEntry[]>().notNull(),
+    status: text('status').$type<PromotionStatus>().notNull(),
+    risk: text('risk', { mode: 'json' }).$type<PromotionRisk>().notNull(),
+    requestedBy: text('requested_by').notNull(),
+    decidedBy: text('decided_by'),
+    result: text('result', { mode: 'json' }).$type<PromotionResult>(),
+    error: text('error'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    decidedAt: integer('decided_at', { mode: 'timestamp_ms' }),
+    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.id] }),
+    index('environment_promotions_by_created').on(t.spaceId, t.createdAt),
+  ],
+);
+
 export const contentTypes = sqliteTable(
   'content_types',
   {
@@ -164,8 +198,30 @@ export const entryVersions = sqliteTable(
     version: integer('version').notNull(),
     fields: text('fields', { mode: 'json' }).$type<EntryFields>().notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** Set once the body has moved to object storage under this key; `fields` is then `{}`
+     *  (0004_version_bodies). */
+    bodyKey: text('body_key'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.entryId, t.version] })],
+);
+
+/**
+ * Superseded versions waiting for their body to move to object storage (0004_version_bodies).
+ * Queued when a newer version is saved, due a day later; the archive sweep drains due rows.
+ */
+export const versionArchiveQueue = sqliteTable(
+  'version_archive_queue',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    entryId: text('entry_id').notNull(),
+    version: integer('version').notNull(),
+    dueAt: integer('due_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.entryId, t.version] }),
+    index('version_archive_queue_due').on(t.dueAt),
+  ],
 );
 
 export const entryPublished = sqliteTable(
@@ -204,7 +260,7 @@ export const assets = sqliteTable(
       .notNull()
       .default({ altText: {}, tags: [] }),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
-    // Copied out of `file` on every write (0004_dam), so the library filters and sorts in SQL.
+    // Copied out of `file` on every write (0007_dam), so the library filters and sorts in SQL.
     kind: text('kind').$type<AssetKind>().notNull().default('other'),
     mime: text('mime'),
     size: integer('size'),
@@ -214,7 +270,7 @@ export const assets = sqliteTable(
     folderId: text('folder_id'),
     version: integer('version').notNull().default(1),
     r2Key: text('r2_key'),
-    /** 0 on a row the pre-0004 code inserted during a deploy; read as unknown. */
+    /** 0 on a row the pre-0007 code inserted during a deploy; read as unknown. */
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`0`),
     createdBy: text('created_by'),
     archivedAt: integer('archived_at', { mode: 'timestamp_ms' }),
@@ -476,16 +532,22 @@ export const appExtensions = sqliteTable(
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
 );
 
-export const webhooks = sqliteTable('webhooks', {
-  id: text('id').primaryKey(),
-  spaceId: text('space_id').notNull(),
-  url: text('url').notNull(),
-  topics: text('topics', { mode: 'json' }).$type<string[]>().notNull(),
-  secret: text('secret').notNull(),
-  active: integer('active', { mode: 'boolean' }).notNull().default(true),
-  headers: text('headers', { mode: 'json' }).$type<Record<string, string>>(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
-});
+export const webhooks = sqliteTable(
+  'webhooks',
+  {
+    id: text('id').primaryKey(),
+    spaceId: text('space_id').notNull(),
+    url: text('url').notNull(),
+    topics: text('topics', { mode: 'json' }).$type<string[]>().notNull(),
+    secret: text('secret').notNull(),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    headers: text('headers', { mode: 'json' }).$type<Record<string, string>>(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** The one environment whose events it receives; NULL for every environment (0005). */
+    environmentId: text('environment_id'),
+  },
+  (t) => [index('webhooks_by_environment').on(t.spaceId, t.environmentId)],
+);
 
 export const webhookDeliveries = sqliteTable(
   'webhook_deliveries',

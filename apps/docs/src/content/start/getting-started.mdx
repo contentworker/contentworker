@@ -5,20 +5,26 @@ description: Model a content type, write and publish an entry, then read it back
 
 import { Steps } from '@astrojs/starlight/components';
 
-This walks through the whole loop once: a content type, an entry, a delivery key and a request
-that returns the published entry. Each step shows the admin and the API; use whichever you prefer.
+You will model a content type, write and publish an entry, create a delivery key and read the
+published entry back. Each step shows the admin and the API; use whichever you prefer.
 
-The examples use four shell variables. Set them to your workspace's values:
+## Before you start
+
+You need an account on the workspace and a role in the space that can do the whole loop: minting
+an API key needs `space:admin`, modeling a type needs `content:manage`, and publishing needs
+`content:publish` (the Administrator role has all of them; see [Team and roles](/guides/team-and-roles/)).
+
+The examples use shell variables. Set the first three to your workspace's values; steps 1, 3 and 5
+set the rest:
 
 ```sh
 export API=https://api.your-workspace.contentworker.app   # the Management and Preview API
 export CDN=https://cdn.your-workspace.contentworker.app   # the public Delivery API
 export SPACE=your-space                                   # the space id, shown in the admin's header
-export CMA=cwk_cma_...                                     # a Management key (see step 1)
 ```
 
-A workspace has three addresses: the admin at its own domain, the API at `api.` and the cached
-public Delivery API at `cdn.`.
+A workspace (one contentworker deployment) has three addresses: the admin at its own domain, the
+API at `api.` and the cached public Delivery API at `cdn.`.
 
 Every Management route lives under `/spaces/$SPACE/environments/main/…`; `main` is the
 environment every space starts with. See [Concepts](/start/concepts/#spaces-and-environments).
@@ -36,7 +42,7 @@ locale, and choose what it starts with:
 - **Empty space**: no content types and no entries, to model your own from scratch.
 
 The admin switches to the new space when it's created. Later spaces come from the space menu in
-the header (**New space…**), with the same choice. Creating a space takes a deployment admin;
+the header (**New space…**), with the same choice. Creating a space takes a workspace admin;
 someone who signs in before being added to a space is asked to have an admin add them.
 
 Over the API, `POST /spaces` does the same. It takes a credential that spans the workspace (its
@@ -60,10 +66,12 @@ step 2.
 
 <Steps>
 
-1. **Get a Management key.** In the admin, open **Settings → API keys** and create a key of kind
-   **Management (CMA)**. The token is shown once; copy it into `$CMA`. Check it works:
+1. **Get a Management key.** In the admin, open **Settings → API keys**, choose **CMA —
+   Management (full author/publish)** and press **Create key**. The token is shown once; copy it
+   into `$CMA`. Check it works:
 
    ```sh
+   export CMA=cwk_cma_...
    curl -s "$API/auth/me" -H "Authorization: Bearer $CMA"
    ```
 
@@ -105,11 +113,13 @@ step 2.
          "title": { "en-US": "Hello, world" },
          "body":  { "en-US": "Our first published entry." }
        }
-     }'
+     }' | tee entry.json
+   export ENTRY_ID=$(jq -r .entry.id entry.json)
    ```
 
-   The response is the new entry, in <span class="cw-badge" data-state="draft">Draft</span>. Note
-   its `id`.
+   The response is `{ "entry": { "id": … }, "fields": … }`: the new entry, in
+   <span class="cw-badge" data-state="draft">Draft</span>. The second line keeps its id in
+   `$ENTRY_ID` for the next step.
 
 4. **Publish it.** Click **Publish** in the entry editor, or:
 
@@ -121,10 +131,16 @@ step 2.
    The entry is now <span class="cw-badge" data-state="published">Published</span>, and every
    webhook subscribed to `entry.published` is notified.
 
-5. **Read it as your site would.** Create a **Delivery (CDA)** key: it can read published content
-   and nothing else, so it is the one to ship in a site or app.
+5. **Read it as your site would.** Create a **CDA — Delivery (read published)** key in
+   **Settings → API keys**, or over the API with your Management key. A Delivery key can read
+   published content and nothing else, so it is the one to ship in a site or app. The token is
+   shown once:
 
    ```sh
+   export CDA=$(curl -s "$API/spaces/$SPACE/api-keys" \
+     -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+     -d '{ "kind": "cda", "name": "my site" }' | jq -r .token)
+
    curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article&locale=en-US" \
      -H "Authorization: Bearer $CDA"
    ```
@@ -134,8 +150,9 @@ step 2.
 
 </Steps>
 
-## Next
+## Next steps
 
 - [Concepts](/start/concepts/): the vocabulary the rest of these docs use.
+- [Content modeling](/guides/content-modeling/): field types, validations and references.
 - [SDKs](/guides/sdks/): typed clients for the Delivery and Management APIs.
 - [Workflows](/guides/workflows/): put a review between "save" and "publish".

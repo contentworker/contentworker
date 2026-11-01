@@ -98,7 +98,9 @@ export function editorialReviewWorkflow(): WorkflowGraphDefinition {
       description:
         'Publish requests are validated, reviewed by an editor and, when tagged legal, signed off by legal before they publish.',
       contentTypes: [],
-      gatesPublish: true,
+      // Not gated: nothing starts a run from trigger.publish_requested yet, so a gate here would
+      // lock every entry (and publishing a gated version that no run can publish is refused).
+      gatesPublish: false,
     });
 }
 
@@ -138,7 +140,9 @@ export function moderateThenPublishWorkflow(): WorkflowGraphDefinition {
       description:
         'The moderation agent checks every publish request; clean entries publish, flagged ones wait for a reviewer.',
       contentTypes: [],
-      gatesPublish: true,
+      // Not gated: nothing starts a run from trigger.publish_requested yet, so a gate here would
+      // lock every entry (and publishing a gated version that no run can publish is refused).
+      gatesPublish: false,
     });
 }
 

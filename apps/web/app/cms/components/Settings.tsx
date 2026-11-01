@@ -46,6 +46,7 @@ import { StatusBadge } from '~/cms/components/status';
 import { Team } from '~/cms/components/Team';
 import { WebhookDeliveriesSheet } from '~/cms/components/WebhookDeliveriesSheet';
 import { WebhookDialog } from '~/cms/components/WebhookDialog';
+import { KEY_KINDS, keyKindApi, keyKindLabel } from '../lib/key-kinds';
 import {
   type ApiKeyKind,
   type CreatedApiKey,
@@ -353,11 +354,6 @@ function AuditLog(props: { client: ManagementClient }) {
   );
 }
 
-const KEY_KINDS: { value: ApiKeyKind; label: string }[] = [
-  { value: 'cda', label: 'CDA — Delivery (read published)' },
-  { value: 'cpa', label: 'CPA — Preview (read drafts)' },
-  { value: 'cma', label: 'CMA — Management (full author/publish)' },
-];
 const ROLE_NONE = '__none__';
 
 function RolesSettings(props: { client: ManagementClient }) {
@@ -541,7 +537,8 @@ function ApiKeys(props: { client: ManagementClient }) {
           <Alert>
             <KeyRound />
             <AlertTitle>
-              New {minted.kind.toUpperCase()} token — copy it now, it won't be shown again.
+              New {keyKindLabel(minted.kind).toLowerCase()} token: copy it now, it won’t be shown
+              again.
             </AlertTitle>
             <AlertDescription>
               <code className="break-all text-sm text-foreground">{minted.token}</code>
@@ -568,6 +565,7 @@ function ApiKeys(props: { client: ManagementClient }) {
               {KEY_KINDS.map((k) => (
                 <SelectItem key={k.value} value={k.value}>
                   {k.label}
+                  <span className="text-muted-foreground">: {k.reads}</span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -613,7 +611,9 @@ function ApiKeys(props: { client: ManagementClient }) {
             {keys.map((k) => (
               <TableRow key={k.id}>
                 <TableCell>
-                  <Badge variant="outline">{k.kind.toUpperCase()}</Badge>
+                  <Badge variant="outline" title={keyKindApi(k.kind)}>
+                    {keyKindLabel(k.kind)}
+                  </Badge>
                 </TableCell>
                 <TableCell label="Name" className="font-mono text-xs">
                   {k.name ?? <span className="text-muted-foreground">—</span>}
@@ -632,7 +632,7 @@ function ApiKeys(props: { client: ManagementClient }) {
                 <TableCell className="text-right">
                   {!k.revoked && (
                     <RevokeKeyButton
-                      name={k.name ?? k.kind.toUpperCase()}
+                      name={k.name ?? `${keyKindLabel(k.kind)} key`}
                       onConfirm={() => revoke(k.id)}
                     />
                   )}
@@ -679,13 +679,14 @@ function RevokeKeyButton(props: { name: string; onConfirm: () => void }) {
   );
 }
 
-function Webhooks(props: { client: ManagementClient }) {
+export function Webhooks(props: { client: ManagementClient }) {
   const { client } = props;
   const toast = useToast();
   const invalidate = useInvalidate();
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
   const [topics, setTopics] = useState<WebhookTopic[]>(['*']);
+  const [everywhere, setEverywhere] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<WebhookSummary | null>(null);
   const [deliveriesFor, setDeliveriesFor] = useState<WebhookSummary | null>(null);
@@ -718,6 +719,7 @@ function Webhooks(props: { client: ManagementClient }) {
     topics: WebhookTopic[];
     active: boolean;
     secret?: string;
+    allEnvironments?: boolean;
   }) => {
     if (!editing) return;
     await client.updateWebhook(editing.id, changes);
@@ -733,10 +735,18 @@ function Webhooks(props: { client: ManagementClient }) {
     if (!url.trim() || !secret.trim() || topics.length === 0) return;
     setBusy(true);
     try {
-      await client.createWebhook({ url: url.trim(), secret: secret.trim(), topics });
+      // Off, the hook hears only the environment being viewed (allEnvironments is left out rather
+      // than sent false: viewed through an alias, the API makes it space-wide instead).
+      await client.createWebhook({
+        url: url.trim(),
+        secret: secret.trim(),
+        topics,
+        ...(everywhere ? { allEnvironments: true } : {}),
+      });
       setUrl('');
       setSecret('');
       setTopics(['*']);
+      setEverywhere(false);
       await reload();
       toast.success('Webhook added');
     } catch (err) {
@@ -787,6 +797,14 @@ function Webhooks(props: { client: ManagementClient }) {
               </Label>
             ))}
           </div>
+          <Label className="flex items-center gap-2 font-normal">
+            <Checkbox
+              aria-label="Send events from every environment"
+              checked={everywhere}
+              onCheckedChange={(c) => setEverywhere(c === true)}
+            />
+            <span>Send events from every environment</span>
+          </Label>
         </form>
 
         <Table edge="flush" stack="cards" caption="Webhooks">
@@ -794,6 +812,7 @@ function Webhooks(props: { client: ManagementClient }) {
             <TableRow>
               <TableHead>Endpoint</TableHead>
               <TableHead>Topics</TableHead>
+              <TableHead>Environments</TableHead>
               <TableHead className="w-24">Status</TableHead>
               <TableHead className="w-64">
                 <span className="sr-only">Actions</span>
@@ -806,6 +825,15 @@ function Webhooks(props: { client: ManagementClient }) {
                 <TableCell className="break-all font-mono text-xs">{h.url}</TableCell>
                 <TableCell label="Topics" className="text-muted-foreground">
                   {h.topics.join(', ')}
+                </TableCell>
+                <TableCell label="Environments">
+                  {h.environmentId === null ? (
+                    <Badge variant="outline">All environments</Badge>
+                  ) : (
+                    <Badge variant="outline" className="font-mono">
+                      {h.environmentId}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell label="Status">
                   <StatusBadge status={h.active ? 'active' : 'paused'} />
@@ -833,7 +861,7 @@ function Webhooks(props: { client: ManagementClient }) {
             ))}
             {hooks.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-muted-foreground">
+                <TableCell colSpan={5} className="text-muted-foreground">
                   No webhooks yet.
                 </TableCell>
               </TableRow>

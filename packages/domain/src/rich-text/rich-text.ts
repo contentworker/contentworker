@@ -61,8 +61,7 @@ function isReferenceNodeType(nodeType: string): nodeType is ReferenceNodeType {
 
 /**
  * Block node types: what a `document` and the block containers (lists, list
- * items, quotes, tables) hold. The table nodes are accepted here so documents
- * carrying them validate; their structure is not yet constrained.
+ * items, quotes, tables) hold. Table structure is checked by `validateTable`.
  */
 export const RICH_TEXT_BLOCK_NODE_TYPES = [
   'paragraph',
@@ -152,6 +151,92 @@ export function safeLinkUri(raw: string | undefined): string | undefined {
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** Node types that sit inside a block, among text, rather than being blocks themselves. */
+const INLINE_NODE_TYPES: ReadonlySet<string> = new Set(RICH_TEXT_INLINE_NODE_TYPES);
+
+/** The two kinds of table cell; a header cell labels its row or column. */
+export const TABLE_CELL_NODE_TYPES = ['table-header-cell', 'table-cell'] as const;
+
+/**
+ * Table bounds. Rich text is one field of one entry: a table past these is a
+ * spreadsheet, and better modeled as entries (or a JSON field) than as prose.
+ * They also keep a hostile document from costing the editor a million cells.
+ */
+export const MAX_TABLE_ROWS = 500;
+export const MAX_TABLE_COLUMNS = 50;
+
+function isTableCell(nodeType: string): boolean {
+  return (TABLE_CELL_NODE_TYPES as readonly string[]).includes(nodeType);
+}
+
+/**
+ * A table's structure: `table` → `table-row`[] → cells → blocks, every level
+ * non-empty and within bounds. A cell may span (`data.colspan`/`data.rowspan`,
+ * positive integers), which is how merged cells survive the editor's round trip.
+ * Only the shape is checked here; the walk still visits every child.
+ */
+function validateTable(node: RichTextNode, path: string, issues: string[]): void {
+  const rows = node.content ?? [];
+  if (rows.length === 0) issues.push(`${path}: table must have at least one table-row`);
+  if (rows.length > MAX_TABLE_ROWS) {
+    issues.push(`${path}: table has ${rows.length} rows (at most ${MAX_TABLE_ROWS})`);
+  }
+  rows.forEach((row, r) => {
+    const rowPath = `${path}.content[${r}]`;
+    if (row?.nodeType !== 'table-row') {
+      issues.push(`${rowPath}: a table holds only table-row nodes`);
+      return;
+    }
+    const cells = row.content ?? [];
+    if (cells.length === 0) issues.push(`${rowPath}: table-row must have at least one cell`);
+    if (cells.length > MAX_TABLE_COLUMNS) {
+      issues.push(`${rowPath}: table-row has ${cells.length} cells (at most ${MAX_TABLE_COLUMNS})`);
+    }
+    cells.forEach((cell, c) => {
+      const cellPath = `${rowPath}.content[${c}]`;
+      if (!isTableCell(cell?.nodeType)) {
+        issues.push(`${cellPath}: a table-row holds only table-header-cell or table-cell nodes`);
+        return;
+      }
+      for (const [span, max] of [
+        ['colspan', MAX_TABLE_COLUMNS],
+        ['rowspan', MAX_TABLE_ROWS],
+      ] as const) {
+        const value = cell.data?.[span];
+        if (
+          value !== undefined &&
+          !(Number.isInteger(value) && Number(value) >= 1 && Number(value) <= max)
+        ) {
+          issues.push(`${cellPath}: data.${span} must be an integer from 1 to ${max}`);
+        }
+      }
+      const blocks = cell.content ?? [];
+      if (blocks.length === 0)
+        issues.push(`${cellPath}: ${cell.nodeType} must hold at least one block`);
+      // A row or cell nested here is reported by the walk, as a stray outside its parent.
+      blocks.forEach((child, b) => {
+        if (INLINE_NODE_TYPES.has(child?.nodeType)) {
+          issues.push(
+            `${cellPath}.content[${b}]: a table cell holds blocks, not ${child.nodeType}; wrap it in a paragraph`,
+          );
+        }
+      });
+    });
+  });
+}
+
+/**
+ * Whether `node` is a table whose own structure is sound (rows of cells of
+ * blocks, within bounds), so a renderer or editor can draw it as a grid. Tables
+ * nested in its cells are judged when they are reached.
+ */
+export function isWellFormedTable(node: RichTextNode): boolean {
+  if (node?.nodeType !== 'table') return false;
+  const issues: string[] = [];
+  validateTable(node, '', issues);
+  return issues.length === 0;
+}
+
 /** Validates a node tree, collecting issue messages (empty when valid). */
 export function validateRichText(value: unknown): string[] {
   if (!isRichTextDocument(value))
@@ -165,7 +250,7 @@ export function validateRichText(value: unknown): string[] {
     return ['Rich text is not serializable'];
   }
   const issues: string[] = [];
-  const walk = (node: unknown, path: string, depth: number): void => {
+  const walk = (node: unknown, path: string, depth: number, parent?: string): void => {
     if (depth > MAX_RICH_TEXT_DEPTH) {
       issues.push(`${path}: nodes nest more than ${MAX_RICH_TEXT_DEPTH} deep`);
       return;
@@ -187,6 +272,16 @@ export function validateRichText(value: unknown): string[] {
       issues.push(`${path}: content must be an array`);
       return;
     }
+    if (nodeType === 'table') validateTable(node as unknown as RichTextNode, path, issues);
+    // validateTable reports whatever is misplaced inside a table or a row; these
+    // are the rows and cells that turn up anywhere else.
+    const inTableStructure = parent === 'table' || parent === 'table-row';
+    if (!inTableStructure && nodeType === 'table-row') {
+      issues.push(`${path}: table-row must be inside a table`);
+    }
+    if (!inTableStructure && isTableCell(nodeType)) {
+      issues.push(`${path}: ${nodeType} must be inside a table-row`);
+    }
     if (nodeType === 'text' && typeof node.value !== 'string') {
       issues.push(`${path}: text node must have a string value`);
     }
@@ -207,7 +302,7 @@ export function validateRichText(value: unknown): string[] {
       }
     }
     content?.forEach((child, i) => {
-      walk(child, `${path}.content[${i}]`, depth + 1);
+      walk(child, `${path}.content[${i}]`, depth + 1, nodeType);
     });
   };
   value.content.forEach((node, i) => {
@@ -218,11 +313,12 @@ export function validateRichText(value: unknown): string[] {
 
 /**
  * Flattens a rich-text value to plain text. Text within a block is concatenated;
- * blocks are joined with blank lines. Reference nodes contribute nothing (the
- * domain has no access to their display names). Non-documents yield `''`.
+ * blocks are joined with blank lines. A table reads as one block, a line per row
+ * with its cells separated by ` | `, so a row stays together for search and
+ * embedding rather than scattering into one block per cell. Reference nodes
+ * contribute nothing (the domain has no access to their display names).
+ * Non-documents yield `''`.
  */
-const INLINE_NODE_TYPES: ReadonlySet<string> = new Set(RICH_TEXT_INLINE_NODE_TYPES);
-
 export function richTextToPlainText(value: unknown): string {
   if (!isRichTextDocument(value)) return '';
   const inlineText = (node: RichTextNode): string => {
@@ -234,17 +330,33 @@ export function richTextToPlainText(value: unknown): string {
   // subtree (including inline nodes such as hyperlinks) reads as one block.
   const isLeafBlock = (node: RichTextNode): boolean =>
     (node.content ?? []).some((c) => INLINE_NODE_TYPES.has(c.nodeType));
-  const blocks: string[] = [];
-  const walk = (node: RichTextNode): void => {
-    if (node.nodeType === 'text' || isLeafBlock(node)) {
-      const text = inlineText(node).trim();
-      if (text) blocks.push(text);
-      return;
-    }
-    node.content?.forEach(walk);
+  // A cell is one line of its row, however many blocks or breaks it holds.
+  const cellText = (cell: RichTextNode): string =>
+    blockTexts(cell.content ?? [])
+      .join(' ')
+      .replace(/\s*\n\s*/g, ' ');
+  const tableText = (table: RichTextNode): string =>
+    (table.content ?? [])
+      .map((row) => (row.content ?? []).map(cellText))
+      .filter((cells) => cells.some(Boolean))
+      .map((cells) => cells.join(' | '))
+      .join('\n');
+  const blockTexts = (nodes: readonly RichTextNode[]): string[] => {
+    const blocks: string[] = [];
+    const walk = (node: RichTextNode): void => {
+      const text =
+        node.nodeType === 'table'
+          ? tableText(node)
+          : node.nodeType === 'text' || isLeafBlock(node)
+            ? inlineText(node).trim()
+            : undefined;
+      if (text === undefined) node.content?.forEach(walk);
+      else if (text) blocks.push(text);
+    };
+    nodes.forEach(walk);
+    return blocks;
   };
-  value.content.forEach(walk);
-  return blocks.join('\n\n');
+  return blockTexts(value.content).join('\n\n');
 }
 
 /** Extracts every embedded entry/asset target in a rich-text value. */

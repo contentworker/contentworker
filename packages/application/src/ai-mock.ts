@@ -1,4 +1,10 @@
-import type { GenerateRequest, GenerateResult } from '@contentworker/ports';
+import type {
+  DecisionAnswer,
+  DecisionRequest,
+  DecisionResult,
+  GenerateRequest,
+  GenerateResult,
+} from '@contentworker/ports';
 
 interface JsonSchema {
   readonly type?: string | readonly string[];
@@ -63,4 +69,40 @@ export function mockGenerate(req: GenerateRequest): GenerateResult {
   }
   const object = sample({ type: 'object', ...(req.outputSchema as JsonSchema) }, 'value');
   return { text: JSON.stringify(object), object, usage: { inputTokens: 0, outputTokens: 0 } };
+}
+
+/**
+ * A decision without a model (AI_MODE=mock): deterministic, from the state's text. A `choice`
+ * picks the option whose id or description appears in the state, else the first; a `noul` is a
+ * confident no; a `score` is the lowest level. Enough to drive every caller's code path.
+ */
+export function mockDecide(req: DecisionRequest): DecisionResult {
+  const text = (
+    typeof req.state === 'string' ? req.state : JSON.stringify(req.state)
+  ).toLowerCase();
+  const answers: Record<string, DecisionAnswer> = {};
+  for (const [id, q] of Object.entries(req.questions)) {
+    if (q.type === 'noul') {
+      answers[id] = { type: 'noul', probability: 0.1 };
+    } else if (q.type === 'choice') {
+      const options = Object.keys(q.options);
+      const hit =
+        options.find(
+          (o) =>
+            text.includes(o.replace(/_/g, ' ').toLowerCase()) ||
+            text.includes((q.options[o] ?? '').toLowerCase()),
+        ) ?? (options[0] as string);
+      const probabilities = Object.fromEntries(
+        options.map((o) => [o, o === hit ? 0.8 : 0.2 / Math.max(1, options.length - 1)]),
+      );
+      answers[id] = { type: 'choice', choice: hit, confidence: 0.8, probabilities };
+    } else {
+      answers[id] = {
+        type: 'score',
+        score: 0,
+        probabilities: q.levels.map((_, i) => (i === 0 ? 1 : 0)),
+      };
+    }
+  }
+  return { answers, model: 'mock', usage: { inputTokens: 0 } };
 }

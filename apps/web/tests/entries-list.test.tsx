@@ -18,7 +18,13 @@ const client = {
   listEntries: vi.fn<() => Promise<PreviewEntry[]>>(),
   trashEntry: vi.fn(async () => {}),
   restoreEntry: vi.fn(async () => {}),
-  publishEntry: vi.fn(async () => ({})),
+  publishEntry: vi.fn<(id: string) => Promise<unknown>>(async () => ({})),
+  getPublished: vi.fn(async (id: string) => ({
+    id,
+    contentType: 'article',
+    fields: { title: 'Pricing' },
+    publishedAt: '2026-10-01T00:00:00.000Z',
+  })),
   unpublishEntry: vi.fn<(id: string) => Promise<unknown>>(async () => ({})),
   bulkEntryAction: vi.fn(async (_action: string, ids: string[]) => ({
     succeeded: ids.length,
@@ -118,11 +124,19 @@ function setup() {
 }
 
 // Radix menus open on pointerdown (left button, no modifiers).
+/**
+ * The first wait after rendering: on a CI runner the list's first render can take longer than
+ * testing-library's default second (it failed at 1.5 s), so this one waits up to five.
+ */
+const FIRST_RENDER_MS = 5000;
+
 async function rowMenu(title: string, item: string) {
-  fireEvent.pointerDown(await screen.findByRole('button', { name: `More actions for ${title}` }), {
-    button: 0,
-    ctrlKey: false,
-  });
+  const trigger = await screen.findByRole(
+    'button',
+    { name: `More actions for ${title}` },
+    { timeout: FIRST_RENDER_MS },
+  );
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
   fireEvent.click(screen.getByRole('menuitem', { name: item }));
 }
 
@@ -214,6 +228,71 @@ describe('EntriesList unpublish and Undo', () => {
   });
 });
 
+describe('EntriesList row Publish', () => {
+  it('publishes a draft at once and offers Undo, which unpublishes it', async () => {
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish “Spring launch”' }));
+    await screen.findByText('“Spring launch” published');
+    expect(client.publishEntry).toHaveBeenCalledExactlyOnceWith('e-draft');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await screen.findByText('“Spring launch” is back to draft');
+    expect(client.unpublishEntry).toHaveBeenCalledExactlyOnceWith('e-draft');
+  });
+
+  it('confirms a changed entry with what changes before anything goes live', async () => {
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish “Pricing page”' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Pricing page”?' });
+    // The draft against what delivery serves now, as the editor's confirm compares it.
+    await within(dialog).findByText('1 field changed');
+    expect(client.getPublished).toHaveBeenCalledWith('e-changed');
+    expect(client.publishEntry).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish entry' }));
+    await screen.findByText('“Pricing page” published');
+    expect(client.publishEntry).toHaveBeenCalledExactlyOnceWith('e-changed');
+    // Replacing a live version has no exact inverse, so there is no Undo to offer.
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('keeps a changed entry as a draft when the confirmation is declined', async () => {
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish “Pricing page”' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Pricing page”?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep as draft' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(client.publishEntry).not.toHaveBeenCalled();
+    expect(within(rowOf('Pricing page')).getByText('Changed')).toBeTruthy();
+  });
+
+  it('sends a changed entry to the assistant’s card, with no dialog of its own', async () => {
+    const edit = vi.fn(async () => ({ output: { id: 'e-changed', status: 'published' } }));
+    assistant.edit = edit;
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish “Pricing page”' }));
+    await screen.findByText('“Pricing page” published');
+    expect(edit).toHaveBeenCalledExactlyOnceWith(
+      'entries_publish',
+      { id: 'e-changed', expectedVersion: 1 },
+      'Pricing page',
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(client.publishEntry).not.toHaveBeenCalled();
+  });
+
+  it('rolls a draft back and offers no Undo when its publish fails', async () => {
+    setup();
+    client.publishEntry.mockRejectedValueOnce(new Error('Validation failed'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish “Spring launch”' }));
+    await waitFor(() => expect(client.publishEntry).toHaveBeenCalledOnce());
+    await waitFor(() => expect(within(rowOf('Spring launch')).getByText('Draft')).toBeTruthy());
+    expect(screen.queryByText('“Spring launch” published')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+});
+
 describe('EntriesList optimistic status', () => {
   it('rolls the status badge back when the change fails', async () => {
     setup();
@@ -244,7 +323,7 @@ describe('EntriesList through the assistant', () => {
     assistant.edit = edit;
     setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Publish “Spring launch”' }));
-    await screen.findByText('Entry published');
+    await screen.findByText('“Spring launch” published');
     expect(edit).toHaveBeenCalledExactlyOnceWith(
       'entries_publish',
       { id: 'e-draft', expectedVersion: 1 },

@@ -1,10 +1,13 @@
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { cn } from '@contentworker/ui/lib/utils';
+import { isInTable, selectedRect } from '@tiptap/pm/tables';
 import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
 import {
   AtSign,
+  BetweenHorizontalEnd,
+  BetweenVerticalEnd,
   Bold,
   Code,
   FileImage,
@@ -19,10 +22,13 @@ import {
   List,
   ListOrdered,
   Minus,
+  PanelTop,
   Quote,
   Redo2,
   SquareCode,
   Strikethrough,
+  Table,
+  Trash2,
   Underline,
   Undo2,
 } from 'lucide-react';
@@ -55,6 +61,36 @@ function ToolbarButton(props: {
       onClick={props.onClick}
     >
       {props.children}
+    </Button>
+  );
+}
+
+/**
+ * A table control: icon and words, because "delete column" and "delete row"
+ * are not things an icon alone says. Like ToolbarButton it keeps the editor's
+ * selection on press, so the command acts on the cell the cursor is in.
+ */
+function TableButton(props: {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  pressed?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const Icon = props.icon;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className={cn(props.pressed && 'bg-muted text-foreground')}
+      aria-pressed={props.pressed}
+      disabled={props.disabled}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={props.onClick}
+    >
+      <Icon className="size-4" />
+      {props.label}
     </Button>
   );
 }
@@ -112,9 +148,38 @@ const IDLE_STATE = {
   orderedList: false,
   blockquote: false,
   codeBlock: false,
+  inTable: false,
+  headerRow: false,
+  canDeleteRow: false,
+  canDeleteColumn: false,
   canUndo: false,
   canRedo: false,
 };
+
+/**
+ * The table around the cursor: whether it leads with a row of header cells, and
+ * whether the selected rows or columns can go. Removing every row or column is
+ * deleting the table, which prosemirror-tables refuses only on dispatch — `can()`
+ * reports true — so the rect is read here instead.
+ */
+function tableState(editor: Editor) {
+  const { state } = editor;
+  if (!isInTable(state)) {
+    return { inTable: false, headerRow: false, canDeleteRow: false, canDeleteColumn: false };
+  }
+  const rect = selectedRect(state);
+  const first = rect.table.firstChild;
+  let headerRow = !!first && first.childCount > 0;
+  first?.forEach((cell) => {
+    if (cell.type.name !== 'tableHeader') headerRow = false;
+  });
+  return {
+    inTable: true,
+    headerRow,
+    canDeleteRow: !(rect.top === 0 && rect.bottom === rect.map.height),
+    canDeleteColumn: !(rect.left === 0 && rect.right === rect.map.width),
+  };
+}
 
 export function Toolbar(props: { editor: Editor }) {
   const { editor } = props;
@@ -150,6 +215,7 @@ export function Toolbar(props: { editor: Editor }) {
         orderedList: e.isActive('orderedList'),
         blockquote: e.isActive('blockquote'),
         codeBlock: e.isActive('codeBlock'),
+        ...tableState(e),
         canUndo: e.can().undo(),
         canRedo: e.can().redo(),
       };
@@ -308,6 +374,15 @@ export function Toolbar(props: { editor: Editor }) {
         <ToolbarButton label="Horizontal rule" onClick={() => chain().setHorizontalRule().run()}>
           <Minus className="size-4" />
         </ToolbarButton>
+        <ToolbarButton
+          label="Insert table"
+          // A table in a table is legal but never what the button meant; the
+          // table row below edits the one the cursor is in.
+          disabled={state.inTable}
+          onClick={() => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
+        >
+          <Table className="size-4" />
+        </ToolbarButton>
 
         <span className="mx-1 h-5 w-px bg-border" />
 
@@ -337,6 +412,48 @@ export function Toolbar(props: { editor: Editor }) {
         </ToolbarButton>
       </div>
 
+      {state.inTable && (
+        <div
+          role="toolbar"
+          aria-label="Table"
+          className="flex flex-wrap items-center gap-0.5 border-t p-1"
+        >
+          <TableButton
+            label="Row below"
+            icon={BetweenHorizontalEnd}
+            onClick={() => chain().addRowAfter().run()}
+          />
+          <TableButton
+            label="Column right"
+            icon={BetweenVerticalEnd}
+            onClick={() => chain().addColumnAfter().run()}
+          />
+          <TableButton
+            label="Header row"
+            icon={PanelTop}
+            pressed={state.headerRow}
+            onClick={() => chain().toggleHeaderRow().run()}
+          />
+          <span className="mx-1 h-5 w-px bg-border" />
+          <TableButton
+            label="Delete row"
+            icon={Trash2}
+            disabled={!state.canDeleteRow}
+            onClick={() => chain().deleteRow().run()}
+          />
+          <TableButton
+            label="Delete column"
+            icon={Trash2}
+            disabled={!state.canDeleteColumn}
+            onClick={() => chain().deleteColumn().run()}
+          />
+          <TableButton
+            label="Delete table"
+            icon={Trash2}
+            onClick={() => chain().deleteTable().run()}
+          />
+        </div>
+      )}
       {row === 'link' && (
         <div className="flex items-center gap-2 border-t p-2">
           <Input

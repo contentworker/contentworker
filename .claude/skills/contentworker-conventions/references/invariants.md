@@ -167,6 +167,29 @@ writes them from the deployment's GitHub environment (`SECRETS` in `scripts/flee
 
 **Check.** The `guard-invariants` hook denies the rest; `scripts/catalog.test.ts` in CI.
 
+## Structured content, not serialized HTML
+
+**Rule.** Content is stored, validated, versioned, diffed and delivered as typed fields, and rich
+text as a `RichTextDocument` tree (`packages/domain/src/rich-text/rich-text.ts`): block, inline
+and reference nodes with marks. It is never an HTML or Markdown string in a store column, an API
+or MCP response, a webhook payload, or a value a model writes back. Markup exists only at the
+edges: inbound, `richTextFromHtml` (`from-html.ts`) converts imports (WXR, CSV) into the tree;
+outbound, the consumer (a site, an app, an SDK helper) renders the tree for its own channel.
+
+**Why.** A tree is what makes the rest of the system work: references inside rich text join the
+reference graph (`extractRichTextTargets`), validation and the size and depth caps are structural
+(`validateRichText`), search and embeddings read clean text (`richTextToPlainText`), diffs and
+collaboration operate on nodes, and one entry renders to web, app, email or voice without
+scraping markup. Stored HTML couples content to one presentation and smuggles script and style
+into every channel.
+
+**Check.**
+- A new field or AI feature that produces rich text emits a `RichTextDocument` that passes
+  `validateRichText`, not a string; model output is parsed into nodes, never stored as markup.
+- `grep -rniE "innerHTML|dangerouslySetInnerHTML|toHtml|\.html\b" packages/domain/src packages/application/src packages/db/src`
+  should find no content serialized to HTML.
+- Unknown `nodeType`s are rendered defensively by consumers, never rejected or flattened to HTML.
+
 ## Endpoints, deploys, naming
 
 - No trailing "z" in endpoint names: `/health`, `/ready`, never `/healthz` (the

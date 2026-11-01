@@ -15,6 +15,12 @@ export interface Webhook {
   readonly active: boolean;
   /** Extra static headers to send with each delivery. */
   readonly headers?: Readonly<Record<string, string>>;
+  /**
+   * The one environment whose events it receives, or `null` for every environment in the space.
+   * A scoped hook is visible (listed, editable) only under its environment; a space-wide one
+   * under every environment.
+   */
+  readonly environmentId: string | null;
 }
 
 /** Outcome of a single delivery attempt, recorded for observability. */
@@ -25,6 +31,11 @@ export interface WebhookDelivery {
   readonly statusCode?: number;
   readonly attempts: number;
   readonly error?: string;
+}
+
+/** True if the webhook is space-wide or scoped to `environmentId`. */
+export function coversEnvironment(webhook: Webhook, environmentId: string): boolean {
+  return webhook.environmentId === null || webhook.environmentId === environmentId;
 }
 
 /** True if the webhook subscribes to the given event type. */

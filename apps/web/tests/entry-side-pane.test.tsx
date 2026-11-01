@@ -116,6 +116,69 @@ describe('EntryPreview', () => {
     expect(screen.getByText('click').getAttribute('title')).toBe('javascript:alert(1)');
   });
 
+  it('draws a table as a grid, header cells and spans included', () => {
+    const cell = (nodeType: string, value: string, data = {}) => ({
+      nodeType,
+      data,
+      content: [{ nodeType: 'paragraph', content: [text(value)] }],
+    });
+    const row = (...content: unknown[]) => ({ nodeType: 'table-row', data: {}, content });
+    render(
+      <EntryPreview
+        contentType={ARTICLE}
+        fields={{
+          body: {
+            'en-US': doc({
+              nodeType: 'table',
+              data: {},
+              content: [
+                row(cell('table-header-cell', 'Plan'), cell('table-header-cell', 'Price')),
+                row(cell('table-cell', 'Contact us', { colspan: 2 })),
+              ],
+            }),
+          },
+        }}
+        locale="en-US"
+        localeConfig={LOCALES}
+        pickers={PICKERS}
+      />,
+    );
+    const grid = screen.getByRole('table');
+    expect(
+      within(grid)
+        .getAllByRole('columnheader')
+        .map((c) => c.textContent),
+    ).toEqual(['Plan', 'Price']);
+    expect(within(grid).getByRole('cell', { name: 'Contact us' }).getAttribute('colspan')).toBe(
+      '2',
+    );
+  });
+
+  it('reads a malformed table as its text rather than drawing broken markup', () => {
+    render(
+      <EntryPreview
+        contentType={ARTICLE}
+        fields={{
+          body: {
+            'en-US': doc(
+              { nodeType: 'table', content: [text('loose text')] },
+              // A row of a table missing its cells, and a row with no table at all.
+              { nodeType: 'table', content: [{ nodeType: 'table-row', content: [] }] },
+              { nodeType: 'table-row', content: [text('stray row')] },
+            ),
+          },
+        }}
+        locale="en-US"
+        localeConfig={LOCALES}
+        pickers={PICKERS}
+      />,
+    );
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByRole('row')).toBeNull();
+    expect(screen.getByText('loose text')).toBeTruthy();
+    expect(screen.getByText('stray row')).toBeTruthy();
+  });
+
   it('follows the form as it is typed in', () => {
     const onValuesChange = vi.fn();
     render(

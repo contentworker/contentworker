@@ -14,6 +14,7 @@ import type {
   Entry,
   EntryFields,
   EntryMetadata,
+  EntryStatus,
   EntryVersion,
   EntryWorkflowState,
   EventType,
@@ -23,6 +24,9 @@ import type {
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
+  Promotion,
+  PromotionStatus,
+  PublishGate,
   QueryFilter,
   QueryOrder,
   ReferenceEdge,
@@ -96,6 +100,7 @@ export interface ContentStore {
   readonly settings: DeploymentSettingsRepo;
   readonly agentRuns: AgentRunRepo;
   readonly releases: ReleaseRepo;
+  readonly promotions: PromotionRepo;
   readonly scheduledActions: ScheduledActionRepo;
   readonly agentSchedules: AgentScheduleRepo;
   readonly agentReviews: AgentReviewRepo;
@@ -301,6 +306,17 @@ export interface WorkflowGraphRepo {
   getVersion(scope: Scope, workflowId: string, version: number): Promise<WorkflowVersion | null>;
   /** The highest-numbered version, or null if none has been published. */
   getLatestVersion(scope: Scope, workflowId: string): Promise<WorkflowVersion | null>;
+  /**
+   * The highest-numbered version of each of `workflowIds` that has one, in one round of queries
+   * (however many ids). Order is unspecified; a workflow never published is absent.
+   */
+  listLatestVersions(scope: Scope, workflowIds: readonly string[]): Promise<WorkflowVersion[]>;
+  /**
+   * Every workflow (whose definition still exists) whose latest published version gates
+   * publishing and `canPublishThroughRun`, with that version's content types. One query for the
+   * scope, whatever the number of entries a publish touches: every publish path reads it once.
+   */
+  listPublishGates(scope: Scope): Promise<PublishGate[]>;
 }
 
 export interface WorkflowRunQuery {
@@ -709,7 +725,36 @@ export interface ContentStoreTx {
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;
   readonly workflowTasks: WorkflowTaskRepo;
+  /** Read-only: a publish inside the unit checks the workflows gating it. */
+  readonly workflowGraphs: Pick<WorkflowGraphRepo, 'listPublishGates'>;
   readonly outbox: OutboxRepo;
+  /** A promotion's record is created in the same unit as the event that announces it. */
+  readonly promotions: PromotionRepo;
+}
+
+/** Promotion fields a status change may set. */
+export type PromotionPatch = Partial<
+  Pick<Promotion, 'status' | 'decidedBy' | 'decidedAt' | 'result' | 'error' | 'completedAt'>
+>;
+
+export interface PromotionRepo {
+  create(promotion: Promotion): Promise<void>;
+  get(spaceId: string, id: string): Promise<Promotion | null>;
+  /** Newest first; optionally only one status. */
+  list(
+    spaceId: string,
+    opts?: { readonly status?: PromotionStatus; readonly limit?: number },
+  ): Promise<Promotion[]>;
+  /**
+   * Moves a promotion out of `from`, applying `patch`: a compare-and-set, so exactly one caller
+   * wins. Returns the promotion as it now is, or null when it was not in `from` (or not there).
+   */
+  transition(
+    spaceId: string,
+    id: string,
+    from: PromotionStatus,
+    patch: PromotionPatch,
+  ): Promise<Promotion | null>;
 }
 
 export interface ReleaseRepo {
@@ -723,6 +768,11 @@ export interface ReleaseRepo {
   addItem(scope: Scope, releaseId: string, item: ReleaseItem): Promise<void>;
   removeItem(scope: Scope, releaseId: string, entityId: string): Promise<void>;
   listItems(scope: Scope, releaseId: string): Promise<ReleaseItem[]>;
+  /**
+   * How many members each of `releaseIds` holds, from one grouped count (however many ids). A
+   * release with no members is absent.
+   */
+  countItems(scope: Scope, releaseIds: readonly string[]): Promise<ReadonlyMap<string, number>>;
 }
 
 /** A due scheduled action paired with the scope it belongs to (the worker polls
@@ -910,10 +960,26 @@ export interface ContentTypeRepo {
   save(scope: Scope, contentType: ContentType): Promise<void>;
 }
 
+/** A superseded entry version whose body can move to object storage. */
+export interface ArchivableVersion {
+  readonly scope: Scope;
+  readonly entryId: string;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly fields: EntryFields;
+}
+
 /** A draft entry together with the field values of its current version. */
 export interface EntryWithFields {
   readonly entry: Entry;
   readonly fields: EntryFields;
+}
+
+/** How many entries of one content type are in one status (a row of {@link EntryRepo.countByStatus}). */
+export interface EntryStatusCount {
+  readonly contentType: string;
+  readonly status: EntryStatus;
+  readonly count: number;
 }
 
 /** The denormalized published snapshot served by the Delivery API. */
@@ -998,6 +1064,12 @@ export interface EntryRepo {
   getMany(scope: Scope, ids: readonly string[]): Promise<EntryWithFields[]>;
   /** Lists draft/current entries (the Preview read path), newest-affected first. */
   list(scope: Scope, query: EntryQuery): Promise<EntryWithFields[]>;
+  /**
+   * How many entries this scope holds, per content type and status (trash included, as
+   * `archived`): one grouped count, never a page of rows measured. Groups with no entries are
+   * absent; order unspecified.
+   */
+  countByStatus(scope: Scope): Promise<EntryStatusCount[]>;
   /** Persists a new entry and its first version. */
   create(scope: Scope, entry: Entry, version: EntryVersion): Promise<void>;
   /** Persists the updated aggregate plus a new version snapshot. */
@@ -1036,10 +1108,37 @@ export interface EntryRepo {
   /** Drops every claim held by an entry, freeing its values for reuse. */
   releaseUniqueClaims(scope: Scope, entryId: string): Promise<void>;
 
-  /** Lists every saved version of an entry, newest first. */
+  /**
+   * Lists every saved version of an entry, newest first. Versions whose body has moved to
+   * object storage ({@link markVersionsArchived}) are read back from there.
+   */
   listVersions(scope: Scope, entryId: string): Promise<EntryVersion[]>;
-  /** Reads one specific version snapshot, or null if it doesn't exist. */
+  /** Reads one specific version snapshot, or null if it doesn't exist (from object storage if
+   *  its body has moved there). */
   getVersion(scope: Scope, entryId: string, version: number): Promise<EntryVersion | null>;
+  /**
+   * Superseded versions due to have their body moved to object storage, across every space and
+   * environment, with their bodies, for the archive sweep: at most `limit` from the archive queue
+   * (versions are queued when a newer one is saved, and due a day later). A due version that is
+   * not archivable now — still its entry's current or published version — is put back a day; one
+   * that no longer needs it (gone, already moved, its environment being purged) leaves the queue.
+   */
+  claimArchivableVersions(limit: number, now: Date): Promise<ArchivableVersion[]>;
+  /**
+   * Records that each version's body now lives in object storage under `bodyKey`, and drops it
+   * from the store, re-checking in the same write that the version is still superseded and not
+   * published (and is the same row, by `createdAt`). Returns how many it marked; a version that
+   * fails the check keeps its body.
+   */
+  markVersionsArchived(
+    versions: readonly {
+      readonly scope: Scope;
+      readonly entryId: string;
+      readonly version: number;
+      readonly createdAt: string;
+      readonly bodyKey: string;
+    }[],
+  ): Promise<number>;
 
   /** Writes the published read model for an entry. */
   putPublished(scope: Scope, snapshot: PublishedEntry): Promise<void>;
@@ -1110,11 +1209,16 @@ export interface WebhookDeliveryRecord extends WebhookDelivery {
   readonly createdAt: string;
 }
 
+/**
+ * Webhooks belong to a space; each is scoped to one environment (`environmentId`) or to every
+ * environment (`null`). Every read, update and delete sees only the hooks the scope's environment
+ * covers: its own and the space-wide ones.
+ */
 export interface WebhookRepo {
   create(scope: Scope, webhook: Webhook): Promise<void>;
   get(scope: Scope, id: string): Promise<Webhook | null>;
   list(scope: Scope): Promise<Webhook[]>;
-  /** Active webhooks subscribed to a given event type. */
+  /** Active webhooks subscribed to a given event type, in the scope's environment. */
   listByTopic(scope: Scope, type: EventType): Promise<Webhook[]>;
   /** Persists the full updated webhook (the use-case merges changes first). */
   update(scope: Scope, webhook: Webhook): Promise<void>;
