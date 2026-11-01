@@ -128,7 +128,7 @@ gateway always applies `RATE_LIMIT_READ` by client IP.
 | Var                               | Default                           | Purpose                                                                                                     |
 | --------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `OAUTH_ISSUER`                    | empty; rendered `https://<domain>` (the admin host) | Enables the authorization server (`/oauth/*`, `/.well-known/oauth-*`). The web gateway forwards those paths and `/mcp`, so consent uses the person's web sign-in |
-| `OAUTH_RESOURCE`                  | `<issuer>/mcp`                    | Canonical URI of the protected MCP resource                                                                 |
+| `OAUTH_RESOURCE`                  | `<issuer>/mcp`                    | Canonical URI of the protected MCP resource (empty, as the templates declare it, means the default)          |
 | `OAUTH_ACCESS_TOKEN_TTL_SECONDS`  | `3600`                            | Access-token lifetime                                                                                       |
 | `OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000`                         | Refresh-token lifetime                                                                                      |
 

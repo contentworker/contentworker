@@ -245,6 +245,10 @@ describe('OAuth authorization endpoint', () => {
     expect(html).toContain('Test Client');
     expect(html).toContain('Read published content');
     expect(html).toContain('admin@example.com');
+    // Under no-referrer a browser posts the consent form with `Origin: null`, which the web
+    // gateway treats as cross-site and so forwards without the session: approval could never
+    // succeed. same-origin keeps the Origin on the form post and still sends nothing elsewhere.
+    expect(res.headers.get('referrer-policy')).toBe('same-origin');
   });
 
   it('escapes a hostile client name rather than rendering it as markup', async () => {

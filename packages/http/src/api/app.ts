@@ -68,7 +68,11 @@ export function createApp(
       xFrameOptions: 'DENY',
       xContentTypeOptions: 'nosniff',
       strictTransportSecurity: 'max-age=31536000; includeSubDomains',
-      referrerPolicy: 'no-referrer',
+      // same-origin, not no-referrer: under no-referrer a browser sends `Origin: null` on a form
+      // POST, so the OAuth consent form (served here, on the admin origin) reads as cross-site
+      // and the web gateway rightly withholds the session. same-origin still sends nothing to
+      // another origin, so an OAuth redirect never leaks its code in a Referer.
+      referrerPolicy: 'same-origin',
     }),
   );
 

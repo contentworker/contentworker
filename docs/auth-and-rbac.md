@@ -388,7 +388,14 @@ What the implementation guarantees:
 - **Registration is open but bounded.** Dynamic client registration (RFC 7591) is unauthenticated
   by necessity, so a registering client can never ask for `space:admin` or `content:manage` — it
   must not be able to put "administer this space" in front of a human as one approve button. A
-  registered client holds no authority at all until a human approves a grant.
+  registered client holds no authority at all until a human approves a grant. A client that
+  registers without a `scope` (as MCP clients commonly do, choosing scopes when they authorize) may
+  later ask for anything under that ceiling (read, write, publish); the person approving still
+  sees every scope, and the token never exceeds their role.
+- **The consent form keeps its Origin.** The api sends `Referrer-Policy: same-origin`, not
+  `no-referrer`: under `no-referrer` a browser posts the form with `Origin: null`, which the web
+  gateway treats as cross-site and forwards without the session, so approval would fail.
+  `same-origin` still sends no Referer to another origin, so the redirect never leaks its code.
 - **A grant is intersected with the approver.** Granted scopes are `requested ∩ approver's own`. If
   the human holds none of them the approval is refused rather than issuing an empty token.
 - **Codes are single-use, and replay is treated as compromise.** Redeeming an already-consumed

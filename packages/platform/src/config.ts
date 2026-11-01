@@ -147,8 +147,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     principalKeys: [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS].filter((k): k is string =>
       Boolean(k),
     ),
-    oauthIssuer: env.OAUTH_ISSUER,
-    oauthResource: env.OAUTH_RESOURCE,
+    // The Worker configs declare both as "" (unset); an empty string must mean unset, or the
+    // resource becomes "" instead of `${issuer}/mcp` and no authorization request can match it.
+    oauthIssuer: env.OAUTH_ISSUER || undefined,
+    oauthResource: env.OAUTH_RESOURCE || undefined,
     oauthAccessTokenTtlSeconds: Number(env.OAUTH_ACCESS_TOKEN_TTL_SECONDS ?? 3600),
     oauthRefreshTokenTtlSeconds: Number(env.OAUTH_REFRESH_TOKEN_TTL_SECONDS ?? 30 * 24 * 3600),
     maxBodyBytes: Number(env.MAX_BODY_BYTES ?? 5 * 1024 * 1024),

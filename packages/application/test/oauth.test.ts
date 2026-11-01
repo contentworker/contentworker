@@ -89,7 +89,12 @@ const fullApproval: OAuthApproval = {
   ],
 };
 
-async function publicClient(c: AppContext, cfg = config(), scope?: string) {
+/** A public client registered for the read scopes unless `scope` says otherwise. */
+async function publicClient(
+  c: AppContext,
+  cfg = config(),
+  scope = `${SCOPES.deliveryRead} ${SCOPES.previewRead} ${SCOPES.searchRead}`,
+) {
   const { client } = await registerOAuthClient(c, hasher, cfg, {
     clientName: 'Test MCP Client',
     redirectUris: ['https://client.example.com/callback'],
@@ -132,7 +137,7 @@ describe('OAuth: dynamic client registration', () => {
     c = ctx();
   });
 
-  it('registers a public client with no secret and defaults to read scopes', async () => {
+  it('registers a public client with no secret, allowed anything under the registration ceiling', async () => {
     const { client, clientSecret } = await registerOAuthClient(c, hasher, config(), {
       clientName: 'Claude',
       redirectUris: ['https://claude.ai/api/mcp/auth_callback'],
@@ -141,7 +146,12 @@ describe('OAuth: dynamic client registration', () => {
     expect(client.hashedClientSecret).toBeUndefined();
     expect(client.tokenEndpointAuthMethod).toBe('none');
     expect(client.grantTypes).toEqual(['authorization_code']);
-    expect(client.scopes).toEqual([SCOPES.deliveryRead, SCOPES.previewRead, SCOPES.searchRead]);
+    // MCP clients commonly register without scopes and choose them when authorizing; the person
+    // approving still sees each one, and the token is capped by their role.
+    expect(client.scopes).toEqual(config().maxClientScopes);
+    expect(client.scopes).toContain(SCOPES.contentWrite);
+    expect(client.scopes).not.toContain(SCOPES.spaceAdmin);
+    expect(client.scopes).not.toContain(SCOPES.contentManage);
   });
 
   it('returns a confidential client secret once and stores only its hash', async () => {
