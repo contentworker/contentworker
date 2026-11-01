@@ -40,8 +40,14 @@ export function entryTitle(
  * Breadcrumb trail derived from the URL and named from NAV and the query
  * cache: Content / Article / “Hello world”. Every crumb is sentence case; an
  * entry reads as its title (never its id), or "Entry" until it has loaded.
+ * `pages` names top-level pages NAV doesn't list (the deployment's own, the
+ * account), so they read as their titles rather than their URL.
  */
-export function Breadcrumbs() {
+export function Breadcrumbs({
+  pages = [],
+}: {
+  pages?: readonly { readonly to: string; readonly label: string }[];
+}) {
   const segments = useLocation().pathname.split('/').filter(Boolean);
   const { conn } = useClient();
   const isContent = segments[0] === 'content';
@@ -65,7 +71,10 @@ export function Breadcrumbs() {
 
   const labelAt = (i: number): string => {
     const seg = segments[i] ?? '';
-    if (i === 0) return navItemFor(`/${seg}`)?.label ?? sentence(seg);
+    if (i === 0) {
+      const to = `/${seg}`;
+      return navItemFor(to)?.label ?? pages.find((p) => p.to === to)?.label ?? sentence(seg);
+    }
     if (segments[0] === 'settings' && i === 1) {
       return SETTINGS_SECTIONS.find((s) => s.id === seg)?.label ?? sentence(seg);
     }

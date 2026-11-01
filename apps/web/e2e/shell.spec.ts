@@ -59,6 +59,8 @@ test('wider screens get the sidebar, grouped, with the deployment pages for admi
     'People and sign-in',
   ])
     await expect(side.getByRole('link', { name, exact: true })).toBeAttached();
+  // One audit log in the nav (Settings › Workspace); the deployment's opens from People and sign-in.
+  await expect(side.getByRole('link', { name: 'Audit log', exact: true })).toHaveCount(0);
   await expect(side.getByRole('link', { name: 'Content', exact: true })).toHaveAttribute(
     'aria-current',
     'page',

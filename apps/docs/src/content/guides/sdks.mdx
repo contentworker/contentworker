@@ -13,6 +13,20 @@ description: Typed clients for the Delivery and Management APIs, React and Vue b
 | `@contentworker/sdk-management`    | The Management API: model, author, publish, administer           |
 | `@contentworker/sdk-codegen`       | TypeScript types generated from your content model               |
 
+Install what you need; each is a separate package:
+
+```sh
+npm install @contentworker/sdk-core            # Delivery and Preview, any runtime
+npm install @contentworker/sdk-web react       # React hooks and inline editing
+npm install @contentworker/sdk-vue vue         # Vue 3 composables
+npm install @contentworker/sdk-edge            # single-locale client for edge functions
+npm install @contentworker/sdk-react-native    # Delivery with offline sync
+npm install @contentworker/sdk-management      # Management API (server-side only)
+npm install -D @contentworker/sdk-codegen      # contentworker-codegen
+```
+
+The web, Vue and React Native packages take `react` or `vue` as a peer dependency.
+
 ## Reading content
 
 ```ts
@@ -69,6 +83,31 @@ function Article({ id }: { id: string }) {
 `useSemanticSearch`), installed with `app.use(createContentworker(client))`. Both fetch on the
 client only, so server rendering stays predictable.
 
+### Edge devices and mobile
+
+`@contentworker/sdk-edge` is a tiny client for edge functions, kiosks and devices. It always asks
+for one locale, so values come back flat with no reference graph, and can project to the fields
+you name:
+
+```ts
+import { createEdgeClient } from '@contentworker/sdk-edge';
+
+const edge = createEdgeClient({
+  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.CONTENTWORKER_CDA_TOKEN!,
+  locale: 'en-US',
+});
+const posts = await edge.list('article', { limit: 10, pick: ['title', 'slug'] });
+```
+
+`@contentworker/sdk-react-native` adds offline sync. `createOfflineDelivery` pulls entries
+published since its last cursor (the [`since`](/guides/reading-content/#entries) parameter) into
+storage you pass it, then reads from there without a network. Storage is pluggable: any object
+with `getItem`, `setItem` and `removeItem`, such as `AsyncStorage` or MMKV; `InMemoryStorage` is
+there for tests. Entries unpublished since the last sync are not removed locally yet. `useOfflineEntries(store)` wraps it in a hook.
+
 ## Writing content
 
 ```ts
@@ -81,17 +120,24 @@ const cma = createManagementClient({
   token: process.env.CONTENTWORKER_CMA_TOKEN!,
 });
 
-const entry = await cma.entries.create({
+const { entry } = await cma.entries.create({
   contentTypeApiId: 'article',
   fields: { title: { 'en-US': 'Hello, world' } },
 });
-await cma.entries.publish(entry.id);
+await cma.entries.publish(entry.id, { expectedVersion: entry.currentVersion });
 ```
+
+`create`, `get` and `update` return an `EntryView`, `{ entry, fields }`: the entry's metadata
+(`id`, `currentVersion`, status) and its draft values. `publish`, `unpublish` and
+`versions.restore` take an optional `{ expectedVersion }`, the `currentVersion` you read; if the
+draft has moved on, the call fails with a **409** and changes nothing, so you never publish text
+you haven't seen.
 
 Every method maps to one Management route: content types, entries and their versions, assets
 (with direct uploads), releases, scheduled actions, webhooks, environments and keys. The client is
 exactly as powerful as its token; the server checks every call. Failures throw `ManagementError`
-with the status and the error body.
+with the `status` and the error `body`; see [errors](/reference/rest-api/#errors). Keep the token on
+a server: a Management key never belongs in a browser or app bundle.
 
 ## Typed content
 
@@ -117,12 +163,35 @@ allowed values. The same output is served at `GET …/content-types?format=types
 ## Inline editing
 
 On a preview, the SDKs can mark each rendered value with the entry and field it came from; an
-overlay then outlines a value on hover and opens that field in the editor on click.
+overlay then outlines a value on hover and opens that field in the editor on click. Two parts: mark
+the values, and mount the overlay once.
 
 ```tsx
-const editable = useEditable();
-<h1 {...editable(entry, 'title')}>{entry.fields.title}</h1>
+import { InlineEditor, useEditable } from '@contentworker/sdk-web';
+
+function Title({ entry }) {
+  const editable = useEditable();
+  return <h1 {...editable(entry, 'title')}>{entry.fields.title}</h1>;
+}
+
+// Once, near the root of the preview site:
+<InlineEditor adminUrl="https://your-workspace.contentworker.app" />
 ```
 
-`editable()` adds a `data-cw-ref` attribute only when the client is in preview mode. In production
-it returns nothing, so the same components ship without revealing entry ids or field names.
+`editable()` adds a `data-cw-ref` attribute only when the client was created with `preview: true`.
+In production it returns nothing, so the same components ship without revealing entry ids or field
+names. Outside React, call `client.editable(entry, 'title')` for the attributes and
+`mountInlineEditor({ adminUrl })` from `@contentworker/sdk-core/inline-edit` to mount the overlay;
+it returns a handle with `setEnabled()` and `destroy()`.
+
+Editing starts off, because intercepting every click would stop you following links on the preview.
+A built-in toggle switches it on; pass `defaultEnabled` to start with it on, `toggle={false}` to
+drive it from your own control, or `onEdit` to handle the click yourself (open a side panel, say)
+instead of navigating to the admin.
+
+## Next steps
+
+- [Reading content](/guides/reading-content/) for the parameters the clients map to.
+- [API keys and access](/guides/api-keys/) for the key each client needs.
+- [Webhooks](/guides/webhooks/) to rebuild when content changes.
+- [REST API](/reference/rest-api/) for every Management route.

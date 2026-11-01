@@ -1,4 +1,5 @@
 import {
+  createWorkersAIDecisionModel,
   createWorkersAIEmbeddings,
   createWorkersAIProvider,
   type WorkersAiRun,
@@ -47,6 +48,7 @@ import type {
   BlobStore,
   Cache,
   ContentStore,
+  DecisionModel,
   EmailSender,
   EmbeddingsProvider,
   EventBus,
@@ -65,6 +67,7 @@ import {
   InMemoryVectorStore,
   LocalEmbeddingsProvider,
   StubAIProvider,
+  StubDecisionModel,
 } from '@contentworker/test-kit';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
@@ -91,6 +94,8 @@ export interface EdgeWired {
    */
   readonly assetGate?: AssetGate;
   readonly ai: AIProvider;
+  /** Decision model (Clef on Workers AI): typed questions in, probabilities out. */
+  readonly decisions: DecisionModel;
   readonly bus: EventBus;
   readonly cache?: Cache;
   /** Producer onto the contentworker-events queue; absent when the binding is not set. */
@@ -152,12 +157,6 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
   const persistent = Boolean(env.DB);
   // Secrets at rest: fails closed (throws) on a persistent deployment without DATA_KEY.
   const sealer = sealerFromEnv(env, persistent);
-  const session = env.DB?.withSession(options.bookmark ?? 'first-primary');
-  const store: ContentStore = withSealedSecrets(
-    session ? createD1Store(session) : inMemoryStore(config),
-    sealer,
-  );
-
   // Fail fast when a persistent (D1-backed) deployment would run
   // behind dev fakes.
   const fakes: FakeAdapterBinding[] = [];
@@ -166,7 +165,14 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     ? createMediaUrlSigner(mediaSigningSecret(env, persistent))
     : undefined;
   const blob = makeBlob(env, fakes, mediaSigner);
+  const session = env.DB?.withSession(options.bookmark ?? 'first-primary');
+  const store: ContentStore = withSealedSecrets(
+    // Archived version bodies live in the media bucket (version-archive.ts).
+    session ? createD1Store(session, { versionBodies: blob }) : inMemoryStore(config),
+    sealer,
+  );
   const ai = makeAI(env, fakes);
+  const decisions = makeDecisions(env, fakes);
   const aiContext = aiContextFromEnv(env, fakes);
   assertNoFakeAdapters({
     persistent,
@@ -186,6 +192,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     clock,
     ids,
     cache,
+    decisions,
     ...(Number.isFinite(ttlRaw) && ttlRaw > 0 ? { deliveryCacheTtlSeconds: ttlRaw } : {}),
     ...(posNum(env.DELIVERY_LIST_TTL_SECONDS) !== undefined
       ? { deliveryListTtlSeconds: posNum(env.DELIVERY_LIST_TTL_SECONDS) as number }
@@ -251,11 +258,17 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     config,
     rag,
     ...(workflowEngine ? { workflowEngine } : {}),
-    workflowNodes: { ai, webhooks: createWebhookSender(), ...(email ? { email } : {}) },
+    workflowNodes: {
+      ai,
+      decisions,
+      webhooks: createWebhookSender(),
+      ...(email ? { email } : {}),
+    },
     blob,
     ...(mediaSigner ? { mediaSigner } : {}),
     ...(env.KV_CACHE ? { assetGate: createKvAssetGate(env.KV_CACHE) } : {}),
     ai,
+    decisions,
     bus: new InMemoryEventBus(),
     cache,
     queue,
@@ -393,6 +406,26 @@ export function makeAI(env: EdgeEnv, fakes?: FakeAdapterBinding[]): AIProvider {
     detail: 'StubAIProvider (placeholder generations) — bind AI and set AI_PROVIDER=workers-ai',
   });
   return new StubAIProvider(devGenerate);
+}
+
+/**
+ * The decision model: Clef on Workers AI wherever the AI binding is (it shares the binding and
+ * the AI Gateway settings with generation). Without one, a stub that answers the first option,
+ * no, or the lowest level — refused on a persistent deployment like the other fakes.
+ */
+export function makeDecisions(env: EdgeEnv, fakes?: FakeAdapterBinding[]): DecisionModel {
+  if (env.AI_PROVIDER === 'workers-ai' || (env.AI_PROVIDER === undefined && env.AI)) {
+    return createWorkersAIDecisionModel({
+      run: workersAiRun(env),
+      gatewayId: env.AI_GATEWAY_ID || undefined,
+      ...gatewayLogs(env),
+    });
+  }
+  fakes?.push({
+    key: 'decisions',
+    detail: 'StubDecisionModel (placeholder decisions) — bind AI and set AI_PROVIDER=workers-ai',
+  });
+  return new StubDecisionModel();
 }
 
 /** Placeholder generation from the requested JSON schema (dev/no-key fallback). */

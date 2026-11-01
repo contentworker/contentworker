@@ -130,6 +130,7 @@
     "AGENTS_MODERATE": "false",
     "AGENTS_AUTO_APPLY": "false",
     "AGENTS_SCHEDULES": "false",
+    "VERSION_ARCHIVE": "false",
     "PLUGIN_MIN_RELEASE_AGE_HOURS": "",
     "PLUGIN_SOURCE_HOSTS": "",
     "AI_PROVIDER": "workers-ai",

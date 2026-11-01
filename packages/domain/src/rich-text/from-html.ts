@@ -17,6 +17,8 @@
  */
 
 import {
+  MAX_TABLE_COLUMNS,
+  MAX_TABLE_ROWS,
   type RichTextDocument,
   type RichTextMark,
   type RichTextNode,
@@ -94,17 +96,14 @@ const TRANSPARENT_BLOCKS = new Set([
   'nav',
   'section',
   'summary',
-  'table',
-  'tbody',
-  'td',
-  'tfoot',
-  'th',
-  'thead',
-  'tr',
 ]);
+
+/** A table's parts; `table` itself converts (see `table`), and these only ever appear inside it. */
+const TABLE_PARTS = new Set(['tbody', 'td', 'tfoot', 'th', 'thead', 'tr']);
 
 const BLOCK = new Set([
   ...TRANSPARENT_BLOCKS,
+  ...TABLE_PARTS,
   ...Object.keys(HEADINGS),
   'blockquote',
   'hr',
@@ -112,6 +111,7 @@ const BLOCK = new Set([
   'ol',
   'p',
   'pre',
+  'table',
   'ul',
 ]);
 
@@ -261,9 +261,19 @@ function parseHtml(html: string): HtmlElement {
     }
 
     // The implied end tags that matter in practice: a block closes an open
-    // paragraph, and a list item closes the previous one.
+    // paragraph, a list item closes the previous one, and a table's parts close
+    // their open siblings — never past the nearest `table`, so a table nested in
+    // a cell keeps the outer cell open.
     if (BLOCK.has(name) && top().tag === 'p') stack.pop();
     if (name === 'li') closeTo('li', ['ul', 'ol']);
+    if (name === 'td' || name === 'th') {
+      closeTo('td', ['tr', 'table']);
+      closeTo('th', ['tr', 'table']);
+    }
+    if (name === 'tr') closeTo('tr', ['table']);
+    if (name === 'thead' || name === 'tbody' || name === 'tfoot') {
+      for (const section of ['thead', 'tbody', 'tfoot']) closeTo(section, ['table']);
+    }
 
     const element: HtmlElement = { tag: name, attributes, children: [] };
     top().children.push(element);
@@ -392,7 +402,7 @@ function block(element: HtmlElement): RichTextNode[] {
       for (const node of element.children) {
         if (typeof node !== 'string' && node.tag === 'li') {
           flushStray();
-          items.push({ nodeType: 'list-item', data: {}, content: listItemContent(node) });
+          items.push({ nodeType: 'list-item', data: {}, content: nonEmptyBlocks(node) });
         } else {
           stray.push(node);
         }
@@ -403,6 +413,8 @@ function block(element: HtmlElement): RichTextNode[] {
         { nodeType: tag === 'ul' ? 'unordered-list' : 'ordered-list', data: {}, content: items },
       ];
     }
+    case 'table':
+      return table(element);
     case 'li':
       // A list item outside a list reads as what it holds.
       return blocks(element.children, false);
@@ -411,12 +423,73 @@ function block(element: HtmlElement): RichTextNode[] {
   }
 }
 
-/** A list item always holds at least one block, so it is never an empty bullet. */
-function listItemContent(li: HtmlElement): RichTextNode[] {
-  const content = blocks(li.children, false);
+/**
+ * A list item or table cell always holds at least one block, so it is never an
+ * empty bullet or a cell the editor cannot put a cursor in.
+ */
+function nonEmptyBlocks(element: HtmlElement): RichTextNode[] {
+  const content = blocks(element.children, false);
   return content.length
     ? content
     : [{ nodeType: 'paragraph', data: {}, content: [textNode('', [])] }];
+}
+
+/**
+ * A `<table>` becomes a `table` of `table-row`s of cells (`th` a header cell),
+ * whether its rows sit in `thead`/`tbody`/`tfoot` or directly in the table.
+ *
+ * What a table holds outside its cells — a `<caption>`, or text a careless
+ * export left between rows — is kept as blocks before it, which is where a
+ * browser shows it too. A table past the domain's bounds, or with no cells at
+ * all, reads as what it holds instead: its text survives, its grid does not.
+ */
+function table(element: HtmlElement): RichTextNode[] {
+  const rows: RichTextNode[] = [];
+  const outside: HtmlNode[] = [];
+  let tooLarge = false;
+  const readRow = (tr: HtmlElement) => {
+    const cells: RichTextNode[] = [];
+    for (const node of tr.children) {
+      if (typeof node !== 'string' && (node.tag === 'td' || node.tag === 'th')) {
+        cells.push({
+          nodeType: node.tag === 'th' ? 'table-header-cell' : 'table-cell',
+          data: spans(node),
+          content: nonEmptyBlocks(node),
+        });
+      } else {
+        outside.push(node);
+      }
+    }
+    if (cells.length > MAX_TABLE_COLUMNS) tooLarge = true;
+    if (cells.length) rows.push({ nodeType: 'table-row', data: {}, content: cells });
+  };
+  for (const node of element.children) {
+    if (typeof node === 'string') outside.push(node);
+    else if (node.tag === 'tr') readRow(node);
+    else if (node.tag === 'thead' || node.tag === 'tbody' || node.tag === 'tfoot') {
+      for (const child of node.children) {
+        if (typeof child !== 'string' && child.tag === 'tr') readRow(child);
+        else outside.push(child);
+      }
+    } else if (node.tag !== 'colgroup') outside.push(node);
+  }
+  if (!rows.length || tooLarge || rows.length > MAX_TABLE_ROWS) {
+    return blocks(element.children, false);
+  }
+  return [...blocks(outside, false), { nodeType: 'table', data: {}, content: rows }];
+}
+
+/** A cell's `colspan`/`rowspan`, kept only when it actually spans and stays in bounds. */
+function spans(cell: HtmlElement): Record<string, number> {
+  const data: Record<string, number> = {};
+  for (const [name, max] of [
+    ['colspan', MAX_TABLE_COLUMNS],
+    ['rowspan', MAX_TABLE_ROWS],
+  ] as const) {
+    const value = Number(cell.attributes[name]);
+    if (Number.isInteger(value) && value > 1) data[name] = Math.min(value, max);
+  }
+  return data;
 }
 
 function withInline(nodeType: string, element: HtmlElement): RichTextNode[] {

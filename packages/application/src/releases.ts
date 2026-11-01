@@ -8,6 +8,7 @@ import {
   type Scope,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
+import { assertReleaseUngated, loadPublishGuard, type PublishGrant } from './publish-gate';
 import { publishEntryTx, unpublishEntryTx } from './publishing';
 
 export interface CreateReleaseInput {
@@ -32,8 +33,19 @@ export async function createRelease(
   return release;
 }
 
-export async function listReleases(ctx: AppContext, scope: Scope): Promise<Release[]> {
-  return ctx.store.releases.list(scope);
+/** A release in the list, with how many members it holds (so a list never reads each one). */
+export interface ReleaseSummary extends Release {
+  readonly itemCount: number;
+}
+
+/** Every release, newest first, each with its member count from one grouped query. */
+export async function listReleases(ctx: AppContext, scope: Scope): Promise<ReleaseSummary[]> {
+  const releases = await ctx.store.releases.list(scope);
+  const counts = await ctx.store.releases.countItems(
+    scope,
+    releases.map((r) => r.id),
+  );
+  return releases.map((r) => ({ ...r, itemCount: counts.get(r.id) ?? 0 }));
 }
 
 /** Returns a release with its members. */
@@ -105,11 +117,17 @@ export async function deleteRelease(ctx: AppContext, scope: Scope, id: string): 
  * so the bundle is all-or-nothing. Each member emits its usual `entry.published`
  * event (reusing the full publish fan-out), plus a summary `release.published`
  * event. If any member fails, the whole transaction rolls back and nothing ships.
+ *
+ * A release holding an entry a gated workflow covers is refused whole, naming every such entry
+ * (adding one is allowed: gating can change before the release ships, so it is checked here, at
+ * publish time). Only a run of the covering workflow (`content.publish_release`, which passes its
+ * `grant`) may ship it.
  */
 export async function publishRelease(
   ctx: AppContext,
   scope: Scope,
   id: string,
+  opts: { readonly grant?: PublishGrant } = {},
 ): Promise<ReleaseWithItems> {
   return ctx.store.withTransaction(async (tx) => {
     const release = await tx.releases.get(scope, id);
@@ -117,12 +135,15 @@ export async function publishRelease(
     const items = await tx.releases.listItems(scope, id);
     if (items.length === 0) throw new InvalidStateError('Cannot publish an empty release');
 
+    const guard = await loadPublishGuard(tx.workflowGraphs, scope, opts.grant);
+    await assertReleaseUngated(tx, scope, id, items, guard);
+
     const shipped = publishReleaseState(release, ctx.clock.now().toISOString());
 
     const entryIds: string[] = [];
     for (const item of items) {
       if (item.action === 'publish') {
-        await publishEntryTx(ctx, tx, scope, item.entityId);
+        await publishEntryTx(ctx, tx, scope, item.entityId, {}, guard);
       } else {
         await unpublishEntryTx(ctx, tx, scope, item.entityId);
       }

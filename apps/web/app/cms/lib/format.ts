@@ -58,8 +58,11 @@ const TONE: Record<string, Tone> = {
   rolled_back: 'undo',
   reverted: 'undo',
   unpublished: 'undo',
-  // A model's work.
+  // A model's work, awaiting a person's decision: an agent run that stopped for review
+  // (`needs_review`) or that moderation held reads as the model's, not as an ordinary wait.
   proposed: 'ai',
+  needs_review: 'ai',
+  held: 'ai',
   suggested: 'ai',
   generated: 'ai',
   agent: 'ai',

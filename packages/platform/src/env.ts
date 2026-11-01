@@ -241,6 +241,11 @@ export interface EdgeEnv {
   readonly AGENTS_AUTO_APPLY?: string;
   /** `true` runs recurring agent schedules from the cron trigger. */
   readonly AGENTS_SCHEDULES?: string;
+  /**
+   * `true` moves superseded entry version bodies to the media bucket from the cron trigger.
+   * Off until every Worker in the ring reads archived bodies (0004_version_bodies).
+   */
+  readonly VERSION_ARCHIVE?: string;
   readonly AGENT_SCHEDULE_MAX_ENTRIES?: string;
   readonly AGENT_SCHEDULE_MAX_RUN_TOKENS?: string;
   readonly AGENT_RUNTIME?: string;

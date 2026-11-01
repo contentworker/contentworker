@@ -3,6 +3,7 @@ import type {
   Clock,
   ContentStore,
   CostGuard,
+  DecisionModel,
   HookDispatcher,
   IdGenerator,
   ImageTransformer,
@@ -38,6 +39,12 @@ export interface AppContext {
   readonly deliveryListTtlSeconds?: number;
   /** Optional per-space AI budget governor; when absent, AI calls are unmetered. */
   readonly costGuard?: CostGuard;
+  /**
+   * Decision model (Clef on Workers AI): AI work that chooses among answers (moderation, picking
+   * tags) asks it rather than a generative model. Absent → those use-cases ask the generative
+   * model for JSON instead.
+   */
+  readonly decisions?: DecisionModel;
   /**
    * How `generateJson` calls the model: `mock` answers from the deterministic
    * heuristic without calling it (AI_MODE), `timeoutMs` caps each call

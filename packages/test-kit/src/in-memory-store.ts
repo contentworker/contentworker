@@ -12,14 +12,17 @@ import {
   ConflictError,
   type ContentType,
   cloneJson,
+  coversEnvironment,
   type DomainEvent,
   type Entry,
+  type EntryFields,
   type EntryMetadata,
   type EntryVersion,
   type EntryWorkflowState,
   type InstalledPlugin,
   matchesTopic,
   type OAuthClient,
+  type Promotion,
   projectFields,
   type ReferenceEdge,
   type Release,
@@ -32,6 +35,7 @@ import {
   type Task,
   type UniqueClaim,
   ValidationError,
+  versionGatesPublish,
   type Webhook,
   type WorkflowDefinition,
   type WorkflowNodeRunRecord,
@@ -50,12 +54,14 @@ import type {
   AIActionRepo,
   AppExtension,
   AppExtensionRepo,
+  ArchivableVersion,
   AssetFolderRepo,
   AssetRenditionRepo,
   AssetRepo,
   AuditEntry,
   AuditRepo,
   AuthRepo,
+  BlobStore,
   BulkJob,
   BulkJobChunk,
   BulkJobRepo,
@@ -66,6 +72,7 @@ import type {
   DeploymentSettingsRepo,
   EntryQuery,
   EntryRepo,
+  EntryStatusCount,
   EntryWithFields,
   EnvironmentAlias,
   FunctionDefinition,
@@ -78,6 +85,7 @@ import type {
   PluginRepo,
   PreviewTokenRecord,
   PreviewTokenRepo,
+  PromotionRepo,
   PublishedAsset,
   PublishedEntry,
   ReferenceRepo,
@@ -137,6 +145,18 @@ export class InMemoryContentStore implements ContentStore {
   private readonly contentTypeData = new Map<string, ContentType>();
   private readonly entryData = new Map<string, Entry>();
   private readonly versionData = new Map<string, EntryVersion[]>();
+  /** Archived versions' object keys, by `${scopeKey}::${entryId}::${version}`. */
+  private readonly archivedBodies = new Map<string, string>();
+  /** Where archived version bodies are read from (as the D1 store's `versionBodies`). */
+  versionBodies?: BlobStore;
+
+  private async resolveVersion(scope: Scope, v: EntryVersion): Promise<EntryVersion> {
+    const bodyKey = this.archivedBodies.get(`${scopeKey(scope)}::${v.entryId}::${v.version}`);
+    if (!bodyKey) return v;
+    const raw = this.versionBodies ? await this.versionBodies.get(bodyKey) : null;
+    if (raw === null) return { ...v, fields: {}, bodyUnavailable: true };
+    return { ...v, fields: JSON.parse(raw) as EntryFields };
+  }
   private readonly publishedData = new Map<string, PublishedEntry>();
   private readonly outboxData: { event: DomainEvent; relayed: boolean; relayedAt?: number }[] = [];
 
@@ -264,6 +284,16 @@ export class InMemoryContentStore implements ContentStore {
         }
         deleted += fromThis;
       }
+      // The hooks scoped to it (kept per space here, not by scope key); space-wide ones stay.
+      const hooks = this.webhookData.get(spaceId) ?? [];
+      const doomed = hooks.filter((w) => w.environmentId === environmentId).slice(0, rowsPerTable);
+      if (doomed.length > 0) {
+        this.webhookData.set(
+          spaceId,
+          hooks.filter((w) => !doomed.includes(w)),
+        );
+        deleted += doomed.length;
+      }
       const purge = this.purgeData.get(`${spaceId}::${environmentId}`);
       if (purge) purge.nudgedAt = at;
       return deleted;
@@ -342,6 +372,21 @@ export class InMemoryContentStore implements ContentStore {
         fields: projectFields(r.fields, query.select as string[]),
       }));
     },
+    countByStatus: async (scope) => {
+      const prefix = `${scopeKey(scope)}::`;
+      const groups = new Map<string, EntryStatusCount>();
+      for (const [k, e] of this.entryData) {
+        if (!k.startsWith(prefix)) continue;
+        const key = `${e.contentTypeApiId}\u0000${e.status}`;
+        const g = groups.get(key);
+        groups.set(key, {
+          contentType: e.contentTypeApiId,
+          status: e.status,
+          count: (g?.count ?? 0) + 1,
+        });
+      }
+      return [...groups.values()];
+    },
     create: async (scope, entry, version) => {
       this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
       this.versionData.set(`${scopeKey(scope)}::${entry.id}`, [version]);
@@ -392,12 +437,69 @@ export class InMemoryContentStore implements ContentStore {
       this.releaseClaims(scope, entryId);
     },
     listVersions: async (scope, entryId) =>
-      [...(this.versionData.get(`${scopeKey(scope)}::${entryId}`) ?? [])].sort(
-        (a, b) => b.version - a.version,
+      Promise.all(
+        [...(this.versionData.get(`${scopeKey(scope)}::${entryId}`) ?? [])]
+          .sort((a, b) => b.version - a.version)
+          .map((v) => this.resolveVersion(scope, v)),
       ),
-    getVersion: async (scope, entryId, version) =>
-      this.versionData.get(`${scopeKey(scope)}::${entryId}`)?.find((v) => v.version === version) ??
-      null,
+    getVersion: async (scope, entryId, version) => {
+      const found = this.versionData
+        .get(`${scopeKey(scope)}::${entryId}`)
+        ?.find((v) => v.version === version);
+      return found ? this.resolveVersion(scope, found) : null;
+    },
+    // The D1 store queues versions as they are superseded and makes them due a day later; here
+    // every superseded, unpublished version is due at once (tests drive the sweep directly).
+    claimArchivableVersions: async (limit, _now) => {
+      const out: ArchivableVersion[] = [];
+      for (const [key, versions] of this.versionData) {
+        const entry = this.entryData.get(key);
+        if (!entry) continue;
+        const [spaceId = '', environmentId = ''] = key.split('::');
+        for (const v of versions) {
+          if (out.length >= limit) return out;
+          if (
+            !this.archivedBodies.has(`${key}::${v.version}`) &&
+            v.version < entry.currentVersion &&
+            v.version !== entry.publishedVersion
+          ) {
+            out.push({
+              scope: { spaceId, environmentId },
+              entryId: v.entryId,
+              version: v.version,
+              createdAt: v.createdAt ?? '',
+              fields: v.fields,
+            });
+          }
+        }
+      }
+      return out;
+    },
+    markVersionsArchived: async (versions) => {
+      let marked = 0;
+      for (const a of versions) {
+        const key = `${scopeKey(a.scope)}::${a.entryId}`;
+        const entry = this.entryData.get(key);
+        const list = this.versionData.get(key) ?? [];
+        const i = list.findIndex((v) => v.version === a.version);
+        const existing = list[i];
+        // As on D1: re-checked as it marks.
+        if (
+          !entry ||
+          !existing ||
+          this.archivedBodies.has(`${key}::${a.version}`) ||
+          (existing.createdAt ?? '') !== a.createdAt ||
+          a.version >= entry.currentVersion ||
+          a.version === entry.publishedVersion
+        ) {
+          continue;
+        }
+        list[i] = { ...existing, fields: {} };
+        this.archivedBodies.set(`${key}::${a.version}`, a.bodyKey);
+        marked += 1;
+      }
+      return marked;
+    },
     putPublished: async (scope, snapshot) => {
       this.publishedData.set(`${scopeKey(scope)}::${snapshot.entryId}`, snapshot);
     },
@@ -833,6 +935,12 @@ export class InMemoryContentStore implements ContentStore {
   };
 
   private readonly webhookData = new Map<string, Webhook[]>();
+  /** As the D1 store: the hooks scoped to the scope's environment, and the space-wide ones. */
+  private visibleWebhooks(scope: Scope): Webhook[] {
+    return (this.webhookData.get(scope.spaceId) ?? []).filter((w) =>
+      coversEnvironment(w, scope.environmentId),
+    );
+  }
   readonly webhookDeliveries: WebhookDeliveryRecord[] = [];
   private deliverySeq = 0;
 
@@ -843,23 +951,24 @@ export class InMemoryContentStore implements ContentStore {
       list.push(webhook);
       this.webhookData.set(key, list);
     },
-    get: async (scope, id) =>
-      (this.webhookData.get(scope.spaceId) ?? []).find((w) => w.id === id) ?? null,
-    list: async (scope) => this.webhookData.get(scope.spaceId) ?? [],
+    get: async (scope, id) => this.visibleWebhooks(scope).find((w) => w.id === id) ?? null,
+    list: async (scope) => this.visibleWebhooks(scope),
     listByTopic: async (scope, type) =>
-      (this.webhookData.get(scope.spaceId) ?? []).filter((w) => matchesTopic(w, type)),
+      this.visibleWebhooks(scope).filter((w) => matchesTopic(w, type)),
     update: async (scope, webhook) => {
       const list = this.webhookData.get(scope.spaceId) ?? [];
       this.webhookData.set(
         scope.spaceId,
-        list.map((w) => (w.id === webhook.id ? webhook : w)),
+        list.map((w) =>
+          w.id === webhook.id && coversEnvironment(w, scope.environmentId) ? webhook : w,
+        ),
       );
     },
     delete: async (scope, id) => {
       const list = this.webhookData.get(scope.spaceId) ?? [];
       this.webhookData.set(
         scope.spaceId,
-        list.filter((w) => w.id !== id),
+        list.filter((w) => !(w.id === id && coversEnvironment(w, scope.environmentId))),
       );
     },
     recordDelivery: async (_scope, delivery) => {
@@ -1054,6 +1163,33 @@ export class InMemoryContentStore implements ContentStore {
   private readonly releaseData = new Map<string, Release>();
   private readonly releaseItemData = new Map<string, ReleaseItem[]>();
 
+  private readonly promotionData = new Map<string, Promotion>();
+
+  readonly promotions: PromotionRepo = {
+    create: async (promotion) => {
+      this.promotionData.set(`${promotion.spaceId}::${promotion.id}`, cloneJson(promotion));
+    },
+    get: async (spaceId, id) => {
+      const found = this.promotionData.get(`${spaceId}::${id}`);
+      return found ? cloneJson(found) : null;
+    },
+    list: async (spaceId, opts = {}) =>
+      [...this.promotionData.values()]
+        .filter((p) => p.spaceId === spaceId && (!opts.status || p.status === opts.status))
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+        .slice(0, Math.min(opts.limit ?? 50, 200))
+        .map((p) => cloneJson(p)),
+    transition: async (spaceId, id, from, patch) => {
+      const key = `${spaceId}::${id}`;
+      const found = this.promotionData.get(key);
+      // As the D1 store: a compare-and-set on the status it leaves.
+      if (!found || found.status !== from) return null;
+      const updated: Promotion = { ...found, ...patch };
+      this.promotionData.set(key, updated);
+      return cloneJson(updated);
+    },
+  };
+
   readonly releases: ReleaseRepo = {
     create: async (scope, release) => {
       this.releaseData.set(`${scopeKey(scope)}::${release.id}`, release);
@@ -1090,6 +1226,14 @@ export class InMemoryContentStore implements ContentStore {
     },
     listItems: async (scope, releaseId) =>
       this.releaseItemData.get(`${scopeKey(scope)}::${releaseId}`) ?? [],
+    countItems: async (scope, releaseIds) => {
+      const counts = new Map<string, number>();
+      for (const id of new Set(releaseIds)) {
+        const n = this.releaseItemData.get(`${scopeKey(scope)}::${id}`)?.length ?? 0;
+        if (n > 0) counts.set(id, n);
+      }
+      return counts;
+    },
   };
 
   private readonly scheduledActionData = new Map<string, ScopedScheduledAction>();
@@ -1377,6 +1521,26 @@ export class InMemoryContentStore implements ContentStore {
       const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${workflowId}`)?.at(-1);
       return latest ? clone(latest) : null;
     },
+    listLatestVersions: async (scope, workflowIds) =>
+      [...new Set(workflowIds)].flatMap((id) => {
+        const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${id}`)?.at(-1);
+        return latest ? [clone(latest)] : [];
+      }),
+    // As the D1 store: a deleted definition no longer gates, whatever its versions say, and
+    // nor does a version no run of which could publish.
+    listPublishGates: async (scope) =>
+      this.workflowRows(scope).flatMap((row) => {
+        const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${row.id}`)?.at(-1);
+        if (!latest || !versionGatesPublish(latest)) return [];
+        return [
+          {
+            workflowId: row.id,
+            name: row.name,
+            version: latest.version,
+            contentTypes: [...latest.contentTypes],
+          },
+        ];
+      }),
   };
 
   // ---- workflow runs / tasks ------------------------------------------------
@@ -1874,6 +2038,7 @@ export class InMemoryContentStore implements ContentStore {
   /** The collections a transaction can mutate, for snapshot/rollback. */
   private txCollections(): Map<string, unknown>[] {
     return [
+      this.promotionData,
       this.contentTypeData,
       this.entryData,
       this.versionData,
@@ -1922,7 +2087,9 @@ export class InMemoryContentStore implements ContentStore {
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,
+        workflowGraphs: this.workflowGraphs,
         outbox: this.outbox,
+        promotions: this.promotions,
       });
     } catch (err) {
       for (const [m, entries] of snapshot) {

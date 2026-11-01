@@ -1,6 +1,6 @@
--- 0007_asset_published_backfill_again: 0006's backfill once more, for the snapshots it missed.
--- While a deployment rolls out, the api still running the pre-0006 code publishes assets after
--- 0006 has run, writing snapshots with the column defaults (`kind` 'other', no `r2_key`), which
+-- 0010_asset_published_backfill_again: 0009's backfill once more, for the snapshots it missed.
+-- While a deployment rolls out, the api still running the pre-0009 code publishes assets after
+-- 0009 has run, writing snapshots with the column defaults (`kind` 'other', no `r2_key`), which
 -- the delivery list's kind filter and the media Worker's gate then read wrongly. Only such rows
 -- are touched, and only where their asset's row knows better; a snapshot the new code wrote is
 -- left as it is. No schema change, so nothing to mirror in schema.ts.

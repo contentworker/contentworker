@@ -16,13 +16,13 @@ const event: DomainEvent = {
 
 const webhook: Webhook = {
   id: 'wh-1',
-  scope,
   url: 'https://example.test/hook',
   topics: ['entry.published'],
   secret: 'shh',
   headers: { 'x-custom': 'yes' },
   active: true,
-} as Webhook;
+  environmentId: scope.environmentId,
+};
 
 function fakeFetch(response: () => Response | Promise<Response>) {
   const calls: { url: string; init: RequestInit }[] = [];

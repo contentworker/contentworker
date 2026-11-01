@@ -1,5 +1,5 @@
 /** Ports that composition roots may silently satisfy with dev fakes. */
-export type FakeAdapterKey = 'ai' | 'blob' | 'embeddings' | 'vectors';
+export type FakeAdapterKey = 'ai' | 'decisions' | 'blob' | 'embeddings' | 'vectors';
 
 /** A dev fake bound where a persistent deployment expected a real adapter. */
 export interface FakeAdapterBinding {

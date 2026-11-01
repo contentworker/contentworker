@@ -1,4 +1,4 @@
--- 0004_dam: the asset library becomes a DAM. Mirrors `assets`, `assetFolders` and `assetVersions`
+-- 0007_dam: the asset library becomes a DAM. Mirrors `assets`, `assetFolders` and `assetVersions`
 -- in packages/db/src/schema.ts.
 --
 -- `assets` gains columns that until now lived only inside the `file` JSON (or nowhere), so the

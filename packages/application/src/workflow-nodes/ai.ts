@@ -28,12 +28,14 @@ import {
   stringList,
   UNSURE,
 } from '@contentworker/domain';
-import type { AIProvider } from '@contentworker/ports';
+import type { AIProvider, DecisionAnswer, DecisionQuestion } from '@contentworker/ports';
 import { applyProposedFields, createAgentReview } from '../agent-reviews';
+import { decide } from '../ai-decide';
 import { generateJson } from '../ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from '../ai-prompt';
 import { type AiProvenance, isUncheckedFallback } from '../ai-provenance';
 import { autofillField, suggestEntryTags, summarizeEntry, translateEntry } from '../content-ai';
+import { moderationQuestions, moderationThreshold, moderationVerdict } from '../moderation';
 import { defaultLocaleOf, guard, isRecord, loadRunEntry, num, str } from './support';
 import type { Exec, ExecInput, NodeResult, Resume } from './types';
 
@@ -49,6 +51,9 @@ function aiOf(i: ExecInput): AIProvider {
 }
 
 const call = (i: ExecInput, prompt: string) => ({ prompt, retry: i.retriesLeft });
+
+/** The decision model the run can use: the node deps', else the context's. */
+const decisionsOf = (i: ExecInput) => i.deps.decisions ?? i.ctx.decisions;
 
 /** Text fields of the entry, for prompts and heuristics. */
 function entryText(run: RunContext): string {
@@ -131,11 +136,185 @@ async function viaUseCase<T>(
   }
 }
 
+/** The most of a run's state a decision sees, as the generative prompts cap theirs. */
+const STATE_CHARS = 20_000;
+
+/** Which category a moderation keyword belongs to (the offline heuristic). */
+const MODERATION_TERM_CATEGORY: Readonly<Record<string, string>> = {
+  kill: 'violence',
+  bomb: 'violence',
+  terror: 'violence',
+  hate: 'hate',
+  nazi: 'hate',
+  porn: 'sexual',
+};
+
+/** A choice answer for a fallback: `chosen` at `p`, the rest sharing what is left. */
+function choiceAnswer(options: readonly string[], chosen: string, p: number): DecisionAnswer {
+  const rest = options.length > 1 ? (1 - p) / (options.length - 1) : 0;
+  return {
+    type: 'choice',
+    choice: chosen,
+    confidence: p,
+    probabilities: Object.fromEntries(options.map((o) => [o, o === chosen ? p : rest])),
+  };
+}
+
+const asText = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v ?? ''));
+
+/** An assess node's questions as decision questions (same System One shape, text normalised). */
+function toDecisionQuestions(questions: AssessQuestions): Record<string, DecisionQuestion> {
+  const out: Record<string, DecisionQuestion> = {};
+  for (const [id, q] of Object.entries(questions)) {
+    if (q.type === 'noul') {
+      out[id] = {
+        type: 'noul',
+        instructions: asText(q.instructions),
+        // Both sides, or neither: half a definition would send the model an empty string.
+        ...(q.criteria?.true != null && q.criteria?.false != null
+          ? { criteria: { true: asText(q.criteria.true), false: asText(q.criteria.false) } }
+          : {}),
+      };
+    } else if (q.type === 'choice') {
+      out[id] = {
+        type: 'choice',
+        instructions: asText(q.instructions),
+        options: Object.fromEntries(
+          Object.entries(q.criteria).map(([opt, d]) => [opt, d == null ? opt : asText(d)]),
+        ),
+      };
+    } else {
+      out[id] = {
+        type: 'score',
+        instructions: asText(q.instructions),
+        levels: q.criteria.map(asText),
+      };
+    }
+  }
+  return out;
+}
+
+/** Decision answers in the raw form `clampAnswers` repairs into an assessment. */
+function toAssessRaw(answers: Readonly<Record<string, DecisionAnswer>>): Record<string, unknown> {
+  const raw: Record<string, unknown> = {};
+  for (const [id, a] of Object.entries(answers)) {
+    if (a.type === 'noul') raw[id] = { noul: a.probability };
+    else if (a.type === 'choice')
+      raw[id] = { probabilities: a.probabilities, confidence: a.confidence };
+    else
+      raw[id] = {
+        probabilities: Object.fromEntries(a.probabilities.map((p, i) => [String(i), p])),
+      };
+  }
+  return raw;
+}
+
+/** The heuristic's assessment as decision answers (for the decision path's fallback). */
+function fromAssessAnswers(answers: AssessAnswers): Record<string, DecisionAnswer> {
+  const out: Record<string, DecisionAnswer> = {};
+  for (const [id, a] of Object.entries(answers)) {
+    if (a.type === 'noul') out[id] = { type: 'noul', probability: a.noul };
+    else if (a.type === 'choice') {
+      out[id] = {
+        type: 'choice',
+        choice: a.choice,
+        confidence: a.confidence,
+        probabilities: a.probabilities,
+      };
+    } else {
+      out[id] = {
+        type: 'score',
+        score: a.score,
+        probabilities: Object.keys(a.probabilities)
+          .sort((x, y) => Number(x) - Number(y))
+          .map((k) => a.probabilities[k] ?? 0),
+      };
+    }
+  }
+  return out;
+}
+
+/** An assess node's result from raw answers, however they were obtained. */
+function assessResult(
+  i: ExecInput,
+  questions: AssessQuestions,
+  raw: unknown,
+  r: AiProvenance,
+): NodeResult {
+  const answers = clampAnswers(questions, raw);
+  const branchOn = str(i.config.branchOn).trim();
+  const minConfidence = num(i.config.minConfidence, 0);
+  let branch = branchOn ? assessBranch(answers[branchOn], minConfidence) : 'out';
+  const unchecked = isUncheckedFallback(r);
+  // A guess must not branch like an answer: with an "unsure" output, it goes there.
+  if (unchecked && branchOn && minConfidence > 0) branch = UNSURE;
+  return {
+    branches: [branch],
+    vars: { [str(i.config.into, 'assessment')]: answers },
+    output: { answers, ...prov(r), ...(unchecked ? { unchecked: true } : {}) },
+    summary: `${describeAnswers(answers)} (${r.source})`.slice(0, 160),
+  };
+}
+
 export const AI_EXECUTORS: Record<string, Exec> = {
   'ai.classify': async (i) => {
     guard(i, SCOPES.previewRead, 'read');
     const labels = stringList(i.config.labels, ['other']);
     const text = entryText(i.run);
+    const keywordLabel = () => {
+      const lower = text.toLowerCase();
+      return labels.find((l) => lower.includes(l.replace(/_/g, ' ').toLowerCase()));
+    };
+    const decisions = decisionsOf(i);
+    if (decisions && labels.length === 1) {
+      // One label is no decision.
+      const only = labels[0] as string;
+      return {
+        vars: { [str(i.config.into, 'category')]: only },
+        output: { label: only, confidence: 1, only: true },
+        summary: `${only} (the only label)`,
+      };
+    }
+    if (decisions) {
+      const r = await decide(
+        i.ctx,
+        decisions,
+        i.scope,
+        {
+          state: text || '(no text)',
+          tier: 'fast',
+          questions: {
+            label: {
+              type: 'choice',
+              instructions: 'Which label fits this entry best?',
+              options: Object.fromEntries(labels.map((l) => [l, l.replace(/_/g, ' ')])),
+            },
+          },
+        },
+        {
+          ...call(i, 'workflow.classify'),
+          fallback: () => {
+            const hit = keywordLabel();
+            const label = hit ?? (labels[0] as string);
+            return { label: choiceAnswer(labels, label, hit ? 0.7 : 0.3) };
+          },
+        },
+      );
+      const a = r.answers.label;
+      const label =
+        a?.type === 'choice' && labels.includes(a.choice) ? a.choice : (labels[0] as string);
+      const confidence = a?.type === 'choice' ? a.confidence : 0;
+      return {
+        vars: { [str(i.config.into, 'category')]: label },
+        output: {
+          label,
+          confidence,
+          ...(a?.type === 'choice' ? { probabilities: a.probabilities } : {}),
+          ...prov(r),
+        },
+        summary: `${label} (${Math.round(confidence * 100)}%)`,
+      };
+    }
     const r = await generateJson<{ label: string; confidence: number }>(
       i.ctx,
       aiOf(i),
@@ -154,8 +333,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       {
         ...call(i, 'workflow.classify'),
         fallback: () => {
-          const lower = text.toLowerCase();
-          const hit = labels.find((l) => lower.includes(l.replace(/_/g, ' ').toLowerCase()));
+          const hit = keywordLabel();
           return { label: hit ?? (labels[0] as string), confidence: hit ? 0.7 : 0.3 };
         },
       },
@@ -186,6 +364,95 @@ export const AI_EXECUTORS: Record<string, Exec> = {
         branches: [careful],
         output: { route: careful, reason: 'No route’s guard held.', blocked, guarded: true },
         summary: `→ ${careful} (no route allowed)`,
+      };
+    }
+    // The most careful route that is still allowed (the last, by convention): never one whose
+    // guard failed.
+    const carefulAllowed = allowed.at(-1) as string;
+    const decisions = decisionsOf(i);
+    if (decisions && allowed.length === 1) {
+      // Only one route's guard holds: that is the decision, without asking.
+      return {
+        branches: [carefulAllowed],
+        output: {
+          route: carefulAllowed,
+          reason: 'The only route whose guard held.',
+          ...(blocked.length ? { blocked } : {}),
+          guarded: true,
+        },
+        summary: `→ ${carefulAllowed} (only route allowed)`,
+      };
+    }
+    if (decisions) {
+      const r = await decide(
+        i.ctx,
+        decisions,
+        i.scope,
+        {
+          // The entry is untrusted and goes in the state; the author's instructions are the
+          // question, and the guarded routes its only possible answers.
+          state: JSON.stringify({
+            entry: i.run.entry,
+            vars: i.run.vars,
+            completed: i.run.nodes,
+          }).slice(0, STATE_CHARS),
+          tier: 'balanced',
+          questions: {
+            route: {
+              type: 'choice',
+              instructions: instructions.slice(0, 4000),
+              options: Object.fromEntries(
+                allowed.map((route) => [route, route.replace(/_/g, ' ')]),
+              ),
+            },
+          },
+        },
+        {
+          ...call(i, 'workflow.router'),
+          fallback: () => ({ route: choiceAnswer(allowed, allowed[0] as string, 0.5) }),
+        },
+      );
+      const a = r.answers.route;
+      if (isUncheckedFallback(r)) {
+        // No answer: the most careful allowed route.
+        return {
+          branches: [carefulAllowed],
+          output: {
+            route: carefulAllowed,
+            reason: 'The model was unavailable, so the entry takes the careful route.',
+            ...(blocked.length ? { blocked } : {}),
+            ...prov(r),
+            unchecked: true,
+          },
+          summary: `→ ${carefulAllowed} (model unavailable)`,
+        };
+      }
+      if (a?.type !== 'choice' || !allowed.includes(a.choice)) {
+        // An answer outside the allowed routes: the careful route, saying what was chosen.
+        return {
+          branches: [carefulAllowed],
+          output: {
+            route: carefulAllowed,
+            reason:
+              'The model chose a route that isn’t allowed, so the entry takes the careful route.',
+            ...(a?.type === 'choice' ? { chosen: a.choice } : {}),
+            ...(blocked.length ? { blocked } : {}),
+            ...prov(r),
+            guarded: true,
+          },
+          summary: `→ ${carefulAllowed} (guarded)`,
+        };
+      }
+      return {
+        branches: [a.choice],
+        output: {
+          route: a.choice,
+          reason: `Chosen with ${Math.round(a.confidence * 100)}% confidence.`,
+          probabilities: a.probabilities,
+          ...(blocked.length ? { blocked } : {}),
+          ...prov(r),
+        },
+        summary: `→ ${a.choice} (${Math.round(a.confidence * 100)}%)`,
       };
     }
     const r = await generateJson<{ route: string; reason: string }>(
@@ -224,8 +491,8 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       },
     );
     if (isUncheckedFallback(r)) {
-      // Without a model answer the last route (the most careful, by convention) is taken.
-      const route = careful;
+      // Without a model answer the most careful allowed route (the last, by convention) is taken.
+      const route = carefulAllowed;
       return {
         branches: [route],
         output: {
@@ -241,16 +508,16 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     if (!allowed.includes(r.value.route)) {
       // The model chose a route its guard forbids (or none at all): take the careful route.
       return {
-        branches: [careful],
+        branches: [carefulAllowed],
         output: {
-          route: careful,
+          route: carefulAllowed,
           chosen: r.value.route,
           reason: `“${r.value.route}” is not allowed by its guard here.`,
           blocked,
           ...prov(r),
           guarded: true,
         },
-        summary: `→ ${careful} (guard refused ${r.value.route})`,
+        summary: `→ ${carefulAllowed} (guard refused ${r.value.route})`,
       };
     }
     const route = r.value.route;
@@ -302,6 +569,24 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       i.config.state === 'entry'
         ? { entry: i.run.entry }
         : { entry: i.run.entry, vars: i.run.vars, completed: i.run.nodes };
+    const decisions = decisionsOf(i);
+    if (decisions && Object.keys(questions).length <= 64) {
+      const r = await decide(
+        i.ctx,
+        decisions,
+        i.scope,
+        {
+          state: JSON.stringify(state).slice(0, STATE_CHARS),
+          tier: 'balanced',
+          questions: toDecisionQuestions(questions),
+        },
+        {
+          ...call(i, 'workflow.assess'),
+          fallback: () => fromAssessAnswers(assessHeuristic(questions, state)),
+        },
+      );
+      return assessResult(i, questions, toAssessRaw(r.answers), r);
+    }
     const r = await generateJson<{ answers: Record<string, unknown> }>(
       i.ctx,
       aiOf(i),
@@ -326,19 +611,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
         fallback: () => ({ answers: assessHeuristic(questions, state) }),
       },
     );
-    const answers = clampAnswers(questions, r.value.answers);
-    const branchOn = str(i.config.branchOn).trim();
-    const minConfidence = num(i.config.minConfidence, 0);
-    let branch = branchOn ? assessBranch(answers[branchOn], minConfidence) : 'out';
-    const unchecked = isUncheckedFallback(r);
-    // A guess must not branch like an answer: with an "unsure" output, it goes there.
-    if (unchecked && branchOn && minConfidence > 0) branch = UNSURE;
-    return {
-      branches: [branch],
-      vars: { [str(i.config.into, 'assessment')]: answers },
-      output: { answers, ...prov(r), ...(unchecked ? { unchecked: true } : {}) },
-      summary: `${describeAnswers(answers)} (${r.source})`.slice(0, 160),
-    };
+    return assessResult(i, questions, r.value.answers, r);
   },
 
   'ai.translate': async (i) => {
@@ -425,6 +698,59 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     guard(i, SCOPES.previewRead, 'read');
     const text = entryText(i.run);
     const rules = str(i.config.instructions).trim();
+    const keywordHits = () => {
+      const lower = text.toLowerCase();
+      return MODERATION_TERMS.filter((t) => new RegExp(`\\b${t}`).test(lower));
+    };
+    const decisions = decisionsOf(i);
+    if (decisions) {
+      // A threshold outside (0, 1) would switch moderation off (at 1) or flag everything (at 0):
+      // the default answers instead. Saving such a value is refused by the node's check.
+      const threshold = moderationThreshold(i.config.threshold);
+      const questions = moderationQuestions(rules);
+      const r = await decide(
+        i.ctx,
+        decisions,
+        i.scope,
+        { state: text || '(no text)', tier: 'fast', questions },
+        {
+          ...call(i, 'workflow.moderate'),
+          fallback: () => {
+            const hit = new Set(
+              keywordHits().map((t) => MODERATION_TERM_CATEGORY[t] ?? 'other_unsafe'),
+            );
+            return Object.fromEntries(
+              Object.keys(questions).map((id) => [
+                id,
+                { type: 'noul', probability: hit.has(id) ? 1 : 0 } as DecisionAnswer,
+              ]),
+            );
+          },
+        },
+      );
+      const into = str(i.config.into, 'moderation');
+      if (isUncheckedFallback(r)) {
+        // Anything the model couldn't check goes to people, never straight through.
+        const value = { flagged: true, categories: ['unchecked'], unchecked: true };
+        return {
+          branches: ['flagged'],
+          vars: { [into]: value },
+          output: { ...value, ...prov(r) },
+          summary: 'Not checked: the model was unavailable, so flagged for review',
+        };
+      }
+      const { flagged, categories, probabilities } = moderationVerdict(
+        questions,
+        r.answers,
+        threshold,
+      );
+      return {
+        branches: [flagged ? 'flagged' : 'clean'],
+        vars: { [into]: { flagged, categories } },
+        output: { flagged, categories, probabilities, threshold, ...prov(r) },
+        summary: flagged ? `Flagged: ${categories.join(', ')}` : 'Clean',
+      };
+    }
     const r = await generateJson<{ flagged: boolean; categories: string[] }>(
       i.ctx,
       aiOf(i),
@@ -451,8 +777,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       {
         ...call(i, 'workflow.moderate'),
         fallback: () => {
-          const lower = text.toLowerCase();
-          const hits = MODERATION_TERMS.filter((t) => new RegExp(`\\b${t}`).test(lower));
+          const hits = keywordHits();
           return { flagged: hits.length > 0, categories: hits.length ? ['keyword'] : [] };
         },
       },

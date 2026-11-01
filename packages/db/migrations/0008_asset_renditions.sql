@@ -1,4 +1,4 @@
--- 0005_asset_renditions: a space's named image presets (`thumbnail`, `hero`), which the media
+-- 0008_asset_renditions: a space's named image presets (`thumbnail`, `hero`), which the media
 -- Worker serves for every published image at `…/r-<name>/…`. Mirrors `assetRenditions` in
 -- packages/db/src/schema.ts.
 --

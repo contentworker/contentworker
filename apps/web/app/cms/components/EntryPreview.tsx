@@ -5,8 +5,13 @@ import type {
   LocaleConfig,
   RichTextNode,
 } from '@contentworker/domain';
-import { isRichTextDocument, resolveLocalizedValue } from '@contentworker/domain';
+import {
+  isRichTextDocument,
+  isWellFormedTable,
+  resolveLocalizedValue,
+} from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
+import { cn } from '@contentworker/ui/lib/utils';
 import type { ReactNode } from 'react';
 import type { Pickers } from './EntryForm';
 
@@ -230,6 +235,10 @@ function RichNode({ node, pickers }: { node: RichTextNode; pickers: Pickers }): 
   if (t === 'blockquote')
     return <blockquote className="border-l-2 pl-3 text-muted-foreground">{kids}</blockquote>;
   if (t === 'hr') return <hr className="border-border" />;
+  // Only a sound table is drawn as a grid, its rows and cells from here alone:
+  // a row or cell anywhere else would be invalid markup, so a malformed table
+  // (and a stray row or cell) falls through to its text, below.
+  if (t === 'table' && isWellFormedTable(node)) return <RichTable node={node} pickers={pickers} />;
   if (t === 'hyperlink') {
     const uri = typeof node.data?.uri === 'string' ? node.data.uri : undefined;
     return (
@@ -249,6 +258,42 @@ function RichNode({ node, pickers }: { node: RichTextNode; pickers: Pickers }): 
       <RefChip label={label} />
     );
   }
-  // Tables and anything newer: their text, so nothing typed goes missing.
+  // Anything newer: its text, so nothing typed goes missing.
   return <div>{kids}</div>;
+}
+
+/** A well-formed table (see `isWellFormedTable`), its spans kept. */
+function RichTable({ node, pickers }: { node: RichTextNode; pickers: Pickers }) {
+  const span = (cell: RichTextNode, k: 'colspan' | 'rowspan') =>
+    Number.isInteger(cell.data?.[k]) ? (cell.data?.[k] as number) : undefined;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-left">
+        <tbody>
+          {(node.content ?? []).map((row, r) => (
+            <tr key={r}>
+              {(row.content ?? []).map((cell, c) => {
+                const Cell = cell.nodeType === 'table-header-cell' ? 'th' : 'td';
+                return (
+                  <Cell
+                    key={c}
+                    colSpan={span(cell, 'colspan')}
+                    rowSpan={span(cell, 'rowspan')}
+                    className={cn(
+                      'space-y-1 border border-border px-2 py-1 align-top',
+                      Cell === 'th' && 'bg-muted font-semibold',
+                    )}
+                  >
+                    {(cell.content ?? []).map((n, i) => (
+                      <RichNode key={i} node={n} pickers={pickers} />
+                    ))}
+                  </Cell>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }

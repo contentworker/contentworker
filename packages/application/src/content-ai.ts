@@ -6,9 +6,9 @@ import {
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
-import type { AIProvider, ModelTier } from '@contentworker/ports';
+import type { AIProvider, DecisionQuestion, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
-import { generateWithBudget } from './ai-budget';
+import { decideWithBudget, generateWithBudget } from './ai-budget';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import type { AppContext } from './context';
 import { getEntry, updateEntry } from './entries';
@@ -326,6 +326,42 @@ export async function suggestEntryTags(
   const { fields, ct, defaultLocale } = await loadEntryForAi(ctx, scope, id);
   const text = collectText(ct, fields, defaultLocale, defaultLocale);
   const existing = await listTags(ctx, scope);
+  // Set when the decision model has already ruled on every existing tag (and found none).
+  let decided = false;
+  if (ctx.decisions && existing.length > 0) {
+    // Picking from the vocabulary is a decision: one yes/no per existing tag, 64 to a request.
+    // A new tag name is writing, so the generative model is asked only when nothing fits, as
+    // the prompt below told it to prefer anyway.
+    const state = `Content type: ${ct.name}.\n${text || '(no text)'}`.slice(0, 20_000);
+    const picked: string[] = [];
+    let inputTokens = 0;
+    for (let at = 0; at < existing.length; at += 64) {
+      const batch = existing.slice(at, at + 64);
+      const questions = Object.fromEntries(
+        batch.map((t, i) => [
+          `t${at + i}`,
+          { type: 'noul', instructions: `Does the tag "${t.name}" describe this content?` },
+        ]),
+      ) as Record<string, DecisionQuestion>;
+      const r = await decideWithBudget(ctx, ctx.decisions, scope, {
+        state,
+        tier: input.tier ?? 'fast',
+        questions,
+      });
+      inputTokens += r.usage.inputTokens;
+      batch.forEach((t, i) => {
+        const a = r.answers[`t${at + i}`];
+        if (a?.type === 'noul' && a.probability >= TAG_THRESHOLD) picked.push(t.id);
+      });
+    }
+    if (picked.length > 0) {
+      return finishTagSuggestion(ctx, scope, id, input, picked, [], {
+        inputTokens,
+        outputTokens: 0,
+      });
+    }
+    decided = true;
+  }
   const result = await generateWithBudget(ctx, ai, scope, {
     system: `You classify content with taxonomy tags. Prefer the existing vocabulary; suggest new tag names only when nothing fits. Return tag NAMES, lowercase. ${UNTRUSTED_CONTENT_GUARD}`,
     prompt: [
@@ -348,13 +384,32 @@ export async function suggestEntryTags(
 
   const obj = (result.object ?? {}) as { existingTags?: string[]; newTags?: string[] };
   const byName = new Map(existing.map((t) => [t.name.toLowerCase(), t]));
-  const tagIds = (obj.existingTags ?? [])
-    .map((n) => byName.get(n.toLowerCase())?.id)
-    .filter((v): v is string => Boolean(v));
+  // After the decision model found no existing tag that fits, only the new names are taken:
+  // the generative model doesn't get to overrule that decision.
+  const tagIds = decided
+    ? []
+    : (obj.existingTags ?? [])
+        .map((n) => byName.get(n.toLowerCase())?.id)
+        .filter((v): v is string => Boolean(v));
   const newTags = (obj.newTags ?? [])
     .map((n) => n.trim())
     .filter((n) => n && !byName.has(n.toLowerCase()));
+  return finishTagSuggestion(ctx, scope, id, input, tagIds, newTags, result.usage);
+}
 
+/** Probability at which a decision model's yes picks an existing tag. */
+const TAG_THRESHOLD = 0.5;
+
+/** Applies (when asked), records the run, and answers: shared by both suggestion paths. */
+async function finishTagSuggestion(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  input: SuggestEntryTagsInput,
+  tagIds: readonly string[],
+  newTags: readonly string[],
+  usage: Usage,
+): Promise<SuggestEntryTagsResult> {
   let applied = false;
   if (input.apply) {
     const createdIds: string[] = [];
@@ -370,9 +425,9 @@ export async function suggestEntryTags(
     entryId: id,
     status: 'completed',
     decisions: [`Suggested ${tagIds.length + newTags.length} tag(s)`],
-    usage: result.usage,
+    usage,
   });
-  return { tagIds, newTags, applied, usage: result.usage };
+  return { tagIds: [...tagIds], newTags: [...newTags], applied, usage };
 }
 
 export interface ApplyEntryTagsInput {

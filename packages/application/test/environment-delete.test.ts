@@ -24,8 +24,10 @@ import {
   createEntry,
   createEnvironment,
   createSpace,
+  createWebhook,
   deleteEnvironment,
   dispatchEvent,
+  listWebhooks,
   mergeEnvironments,
   publishContentType,
   publishEntry,
@@ -85,6 +87,14 @@ describe('deleting an environment', () => {
   it('removes everything in it, leaves other environments alone, and announces the cleanup', async () => {
     await seed(main);
     const published = await seed(staging);
+    const hook = { topics: ['*' as const], secret: 's' };
+    await createWebhook(ctx, main, { ...hook, url: 'https://hooks.example.com/main' });
+    await createWebhook(ctx, staging, { ...hook, url: 'https://hooks.example.com/staging' });
+    await createWebhook(ctx, staging, {
+      ...hook,
+      url: 'https://hooks.example.com/everywhere',
+      allEnvironments: true,
+    });
 
     const result = await deleteEnvironment(ctx, 's1', 'staging', {
       confirm: 'staging',
@@ -107,6 +117,11 @@ describe('deleting an environment', () => {
 
     expect(await store.contentTypes.list(staging)).toEqual([]);
     expect(await store.entries.list(staging, {})).toEqual([]);
+    // Its own webhooks went with it; the space-wide one and main's stay.
+    expect((await listWebhooks(ctx, main)).map((w) => w.url).sort()).toEqual([
+      'https://hooks.example.com/everywhere',
+      'https://hooks.example.com/main',
+    ]);
     expect(await store.entries.getPublished(staging, published)).toBeNull();
     expect((await store.spaces.listEnvironments('s1')).map((e) => e.id)).toEqual(['main']);
     // main is untouched.
@@ -231,6 +246,8 @@ describe("a deleted environment's files", () => {
     await blob.put('s1/main/m1/z.png', 'z', 'image/png');
     // Staged work of an import that was running in it.
     await blob.put('imports/s1/staging/job1/c00000.json', '{}', 'application/json');
+    // And its archived version bodies.
+    await blob.put('versions/s1/staging/e1/1.json', '{}', 'application/json');
     // main holds an asset record with the staging file's id, as a clone of staging would.
     await store.assets.create(main, {
       id: 'cloned',

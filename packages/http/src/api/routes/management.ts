@@ -5,6 +5,7 @@ import {
   analyzeImport,
   applyEntryTags,
   approvePluginCapabilities,
+  approvePromotion,
   archiveAsset,
   auditActor,
   auditEntry,
@@ -17,6 +18,7 @@ import {
   canvasToEntry,
   cloneEnvironment,
   compareEnvironments,
+  countEntriesByContentType,
   createAgentSchedule,
   createAIAction,
   createApiKey,
@@ -77,6 +79,7 @@ import {
   getEntryMetadata,
   getEntryWorkflowState,
   getPlugin,
+  getPromotion,
   getRelease,
   getReverseReferences,
   getRole,
@@ -107,6 +110,7 @@ import {
   listFunctions,
   listPersonalAccessTokens,
   listPlugins,
+  listPromotions,
   listReleases,
   listRoles,
   listScheduledActions,
@@ -129,9 +133,11 @@ import {
   purgeEntry,
   reassignTask,
   refreshVideoAsset,
+  rejectPromotion,
   relatedEntries,
   removeEntryFromRelease,
   reopenTask,
+  requestPromotion,
   requestReindex,
   resolveTask,
   restoreAsset,
@@ -185,6 +191,8 @@ import {
   type InstalledPlugin,
   maskDeniedFields,
   NotFoundError,
+  PROMOTION_STATUSES,
+  type PromotionStatus,
   SCOPES,
   type Scope,
   ValidationError,
@@ -250,6 +258,7 @@ import {
   pluginCapabilitiesBody,
   pluginEnabledBody,
   previewLinkBody,
+  promotionBody,
   reindexBody,
   releaseItemBody,
   revokeConnectionBody,
@@ -312,6 +321,7 @@ const webhookSummary = (h: Webhook) => ({
   url: h.url,
   topics: h.topics,
   active: h.active,
+  environmentId: h.environmentId,
 });
 
 const BASE = '/spaces/:space/environments/:env';
@@ -591,6 +601,73 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       }),
     );
   });
+
+  // --- promotions (environment → environment, with approval) -------------
+  app.post(
+    '/spaces/:space/promotions',
+    doc('Spaces & environments', 'Promote content from one environment to another', {
+      body: promotionBody,
+      status: 201,
+      description:
+        'Pins the entries to copy (what is live in the source goes live in the target; a draft ' +
+        'goes as a draft) and runs a risk check. With nothing to stop it, it applies at once ' +
+        '(`completed`). A promotion into `main` or an aliased environment, one that would remove ' +
+        'or retype a field, or one the risk check flags waits as `awaiting_approval` for someone ' +
+        'else to approve. Omit `contentTypes` and `entries` to promote everything that differs ' +
+        '(at most 200 entries).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      // It can publish, so it needs both.
+      authorize(c.get('principal'), SCOPES.contentPublish, c.req.param('space'));
+      const body = await parseBody(c, promotionBody);
+      return c.json(
+        await requestPromotion(ctx, c.get('principal'), c.req.param('space'), body),
+        201,
+      );
+    },
+  );
+  app.get(
+    '/spaces/:space/promotions',
+    doc('Spaces & environments', 'List promotions, newest first'),
+    requireScope(SCOPES.contentPublish),
+    async (c) => {
+      const status = c.req.query('status');
+      return c.json({
+        items: await listPromotions(ctx, c.req.param('space'), {
+          ...(status && (PROMOTION_STATUSES as readonly string[]).includes(status)
+            ? { status: status as PromotionStatus }
+            : {}),
+        }),
+      });
+    },
+  );
+  app.get(
+    '/spaces/:space/promotions/:id',
+    doc('Spaces & environments', 'Get a promotion, with its risk check and result'),
+    requireScope(SCOPES.contentPublish),
+    async (c) => c.json(await getPromotion(ctx, c.req.param('space'), c.req.param('id'))),
+  );
+  app.post(
+    '/spaces/:space/promotions/:id/approve',
+    doc('Spaces & environments', 'Approve a waiting promotion and apply it', {
+      description: 'By someone other than whoever requested it (403 otherwise).',
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) =>
+      c.json(
+        await approvePromotion(ctx, c.get('principal'), c.req.param('space'), c.req.param('id')),
+      ),
+  );
+  app.post(
+    '/spaces/:space/promotions/:id/reject',
+    doc('Spaces & environments', 'Reject a waiting promotion'),
+    requireScope(SCOPES.contentPublish),
+    async (c) =>
+      c.json(
+        await rejectPromotion(ctx, c.get('principal'), c.req.param('space'), c.req.param('id')),
+      ),
+  );
 
   // --- API key management (admin) ----------------------------------------
   app.get(
@@ -1110,6 +1187,26 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json(ct, 201);
     },
   );
+  // Before `/content-types/:apiId`, which would take "entry-counts" for an apiId (apiIds have no
+  // hyphens, so no real type is shadowed).
+  app.get(
+    `${BASE}/content-types/entry-counts`,
+    doc('Content types', 'Count entries per content type', {
+      description:
+        'Entries per content type by status (`draft`, `changed`, `published`, and `archived` ' +
+        'for the trash), from one grouped count. `total` is the live entries, without the ' +
+        'trash. Types the caller cannot read are left out.',
+      ok: docs.contentTypeEntryCounts,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const principal = c.get('principal');
+      const counts = await countEntriesByContentType(ctx, scopeOf(c));
+      return c.json({
+        items: counts.filter((n) => canAccessContentType(principal, 'read', n.contentType)),
+      });
+    },
+  );
   app.get(
     `${BASE}/content-types/:apiId`,
     doc('Content types', 'Get a content type', { ok: docs.contentType }),
@@ -1239,6 +1336,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       await guardEntry(c, c.req.param('id'), 'publish');
       await purgeEntry(ctx, scopeOf(c), c.req.param('id'), {
         force: c.req.query('force') === 'true',
+        ...(blob ? { blob } : {}),
       });
       return c.body(null, 204);
     },
@@ -1498,7 +1596,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Entries', 'Publish an entry', {
       ok: docs.entry,
       description:
-        'Writes the delivery read model and appends entry.published to the transactional outbox atomically.',
+        'Writes the delivery read model and appends entry.published to the transactional outbox atomically. ' +
+        'Refused with 409 `publish_gated` when a workflow that gates publishing covers the entry: only a run of that workflow publishes it.',
       query: {
         expectedVersion:
           "The entry's currentVersion as the caller read it; 409 if it has changed since",
@@ -1965,38 +2064,71 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
 
   // --- webhooks (admin) ---------------------------------------------------
+  // A hook is scoped to one environment (`environmentId`) or space-wide (`null`). Under an
+  // environment, every route sees that environment's hooks and the space-wide ones; a hook scoped to
+  // another environment is a 404 here. The raw `:env` goes to the use-case so a hook is never pinned
+  // to an alias's current target.
   app.get(
     `${BASE}/webhooks`,
-    doc('Webhooks', 'List webhooks'),
+    doc('Webhooks', 'List webhooks', {
+      description:
+        "The environment's own webhooks and every space-wide one (`environmentId: null`). " +
+        'Signing secrets and headers are never returned.',
+      ok: docs.webhookList,
+    }),
     requireScope(SCOPES.spaceAdmin),
     async (c) => {
       const hooks = await listWebhooks(ctx, scopeOf(c));
       return c.json({ items: hooks.map(webhookSummary) });
     },
   );
-  app.post(`${BASE}/webhooks`, requireScope(SCOPES.spaceAdmin), async (c) =>
-    c.json(
-      webhookSummary(
-        await createWebhook(
-          ctx,
-          scopeOf(c),
-          (await parseBody(c, webhookBody)) as Parameters<typeof createWebhook>[2],
+  app.post(
+    `${BASE}/webhooks`,
+    doc('Webhooks', 'Create a webhook', {
+      description:
+        "Receives only the path environment's events, or every environment's with " +
+        '`allEnvironments: true`. Under an alias it is space-wide, and `allEnvironments: false` is ' +
+        'refused (422). The URL must be http(s) and not a loopback, link-local or private address.',
+      body: webhookBody,
+      ok: docs.webhook,
+      status: 201,
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) =>
+      c.json(
+        webhookSummary(
+          await createWebhook(
+            ctx,
+            scopeOf(c),
+            (await parseBody(c, webhookBody)) as Parameters<typeof createWebhook>[2],
+            { requestedEnvironment: c.req.param('env') },
+          ),
         ),
+        201,
       ),
-      201,
-    ),
   );
-  app.put(`${BASE}/webhooks/:id`, requireScope(SCOPES.spaceAdmin), async (c) =>
-    c.json(
-      webhookSummary(
-        await updateWebhook(
-          ctx,
-          scopeOf(c),
-          c.req.param('id'),
-          (await parseBody(c, updateWebhookBody)) as Parameters<typeof updateWebhook>[3],
+  app.put(
+    `${BASE}/webhooks/:id`,
+    doc('Webhooks', 'Update a webhook', {
+      description:
+        'Omitted fields are kept. `allEnvironments: true` makes the hook space-wide, `false` ' +
+        "scopes it to the path's environment (422 under an alias); omitted, its scope is unchanged.",
+      body: updateWebhookBody,
+      ok: docs.webhook,
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) =>
+      c.json(
+        webhookSummary(
+          await updateWebhook(
+            ctx,
+            scopeOf(c),
+            c.req.param('id'),
+            (await parseBody(c, updateWebhookBody)) as Parameters<typeof updateWebhook>[3],
+            { requestedEnvironment: c.req.param('env') },
+          ),
         ),
       ),
-    ),
   );
   app.delete(`${BASE}/webhooks/:id`, requireScope(SCOPES.spaceAdmin), async (c) => {
     await deleteWebhook(ctx, scopeOf(c), c.req.param('id'));
@@ -2013,8 +2145,16 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   // --- releases -----------------------------------------------------------
   // Bundle entries and ship them atomically. Authoring (create/add/remove) is a
   // write; shipping the bundle requires publish.
-  app.get(`${BASE}/releases`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listReleases(ctx, scopeOf(c)) }),
+  app.get(
+    `${BASE}/releases`,
+    doc('Releases & scheduling', 'List releases', {
+      description:
+        'Every release, newest first, each with `itemCount` (its members, from one grouped ' +
+        'count), so a list never fetches each release for its size.',
+      ok: docs.releaseList,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listReleases(ctx, scopeOf(c)) }),
   );
   app.post(`${BASE}/releases`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(await createRelease(ctx, scopeOf(c), await parseBody(c, createReleaseBody)), 201),
@@ -2196,8 +2336,17 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   });
 
   // --- workflows ---------------------------------------------------------
-  app.get(`${BASE}/workflows`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listWorkflows(ctx, scopeOf(c)) }),
+  app.get(
+    `${BASE}/workflows`,
+    doc('Workflows', 'List workflows', {
+      description:
+        'Every workflow with its draft `graph`, plus how its latest PUBLISHED version starts: ' +
+        '`publishedTrigger`, and `startsAlongside`, the other published workflows that start on ' +
+        'the same trigger for an overlapping content type. Both are null until it is published.',
+      ok: docs.workflowList,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listWorkflows(ctx, scopeOf(c)) }),
   );
   // Graph workflows: create, drafts, versions, validation, copilot, runs, tasks, settings.
   app.route('/', workflowRoutes(deps));

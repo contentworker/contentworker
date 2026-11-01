@@ -20,6 +20,7 @@ import {
 } from '@contentworker/domain';
 import { addComment } from '../comments';
 import { getEntry, updateEntry } from '../entries';
+import { grantWorkflowRunPublish } from '../publish-gate';
 import { publishEntry, unpublishEntry } from '../publishing';
 import { addEntryToRelease, getRelease, publishRelease } from '../releases';
 import { listScheduledActions, scheduleAction } from '../scheduling';
@@ -97,7 +98,12 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
     // was published before the run): publishing again would only repeat the event.
     const alreadyLive =
       current !== null && current.entry.publishedVersion === current.entry.currentVersion;
-    const published = alreadyLive ? current.entry : await publishEntry(i.ctx, i.scope, i.entryId);
+    // The run's grant: a workflow that gates publishing lets its own runs publish what it covers.
+    const published = alreadyLive
+      ? current.entry
+      : await publishEntry(i.ctx, i.scope, i.entryId, {
+          grant: grantWorkflowRunPublish(i.workflowId, i.runId),
+        });
     return {
       output: {
         version: published.publishedVersion,
@@ -192,7 +198,9 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
         summary: `${release.release.title} already shipped`,
       };
     }
-    const shipped = await publishRelease(i.ctx, i.scope, releaseId);
+    const shipped = await publishRelease(i.ctx, i.scope, releaseId, {
+      grant: grantWorkflowRunPublish(i.workflowId, i.runId),
+    });
     return {
       output: { releaseId, published: true, entries: shipped.items.length },
       summary: `Published ${release.release.title} (${plural(shipped.items.length, 'entry', 'entries')})`,
@@ -364,6 +372,7 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
       // Node-configured targets carry no shared secret; the signature header is not a credential.
       secret: '',
       active: true,
+      environmentId: i.scope.environmentId,
     };
     const res = await i.deps.webhooks.send(hook, event);
     if (!res.delivered) {

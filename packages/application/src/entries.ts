@@ -20,10 +20,11 @@ import {
   uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
-import type { ContentStoreTx } from '@contentworker/ports';
+import type { BlobStore, ContentStoreTx } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { runHook } from './hooks';
 import { unpublishEntryTx } from './publishing';
+import { versionBodyPrefix } from './version-archive';
 
 /** Loads the validation context (locales) for a scope. */
 async function loadValidationContext(ctx: AppContext, scope: Scope): Promise<ValidationContext> {
@@ -249,6 +250,8 @@ export interface PurgeEntryOptions {
    * links dangling. Off by default: the caller has to say they mean it.
    */
   readonly force?: boolean;
+  /** Where its archived version bodies live (version-archive.ts), removed with it. */
+  readonly blob?: BlobStore;
 }
 
 /**
@@ -309,6 +312,8 @@ export async function purgeEntry(
       ctx.store.tasks.delete(scope, t.id).catch(() => {}),
     ),
   ]);
+  // Its archived version bodies, likewise best-effort: their rows are gone, so nothing reads them.
+  await options.blob?.deletePrefix?.(versionBodyPrefix(scope, id), () => false).catch(() => {});
 }
 
 /**

@@ -4,12 +4,16 @@ import {
   type EntryWorkflowState,
   type GraphIssue,
   graphToLegacySteps,
+  isTrigger,
   legacyStepsToGraph,
   NotFoundError,
+  nodeSpec,
   parseWorkflowGraph,
+  publishGateIssue,
   type Scope,
   ValidationError,
   validateGraph,
+  versionGatesPublish,
   type WorkflowGraph,
   type WorkflowGraphDefinition,
   type WorkflowStep,
@@ -43,7 +47,13 @@ const MAX_CONTENT_TYPES = 100;
 export interface WorkflowSummary extends WorkflowGraphDefinition {
   /** Assignable to the legacy `WorkflowDefinition` (`{id, name, steps}`). */
   readonly steps: readonly WorkflowStep[];
+  /** The draft's flag; {@link publishGated} says whether gating is in force. */
   readonly gatesPublish: boolean;
+  /**
+   * Whether publish gating is in force: the latest published version gates and a run of it can
+   * publish. What publishing checks, which the draft's `gatesPublish` may not match yet.
+   */
+  readonly publishGated: boolean;
   /** The highest published version, or null if the draft has never been published. */
   readonly latestVersion: number | null;
   /** True when the row is still stored only as legacy steps (its graph is derived on read). */
@@ -61,7 +71,7 @@ export interface WorkflowGraphValidation {
 
 const EMPTY_GRAPH: WorkflowGraph = { nodes: [], edges: [] };
 
-function toSummary(record: WorkflowGraphRecord): WorkflowSummary {
+function toSummary(record: WorkflowGraphRecord, publishGated: boolean): WorkflowSummary {
   const legacy = record.graph === null;
   const graph =
     record.graph ?? (record.steps.length > 0 ? legacyStepsToGraph(record) : EMPTY_GRAPH);
@@ -72,6 +82,7 @@ function toSummary(record: WorkflowGraphRecord): WorkflowSummary {
     contentTypes: [...record.contentTypes],
     graph,
     gatesPublish: record.gatesPublish,
+    publishGated,
     steps: legacy ? [...record.steps] : graphToLegacySteps(graph),
     latestVersion: record.latestVersion,
     legacy,
@@ -82,7 +93,11 @@ function toSummary(record: WorkflowGraphRecord): WorkflowSummary {
 async function loadSummary(ctx: AppContext, scope: Scope, id: string): Promise<WorkflowSummary> {
   const record = await ctx.store.workflowGraphs.get(scope, id);
   if (!record) throw new NotFoundError('Workflow', id);
-  return toSummary(record);
+  const latest =
+    record.latestVersion === null
+      ? null
+      : await ctx.store.workflowGraphs.getLatestVersion(scope, id);
+  return toSummary(record, latest !== null && versionGatesPublish(latest));
 }
 
 /** Parses untrusted graph input or throws a ValidationError naming every shape problem. */
@@ -227,7 +242,21 @@ export async function createWorkflowDraft(
     graph,
     gatesPublish: input.gatesPublish ?? false,
   });
-  return { workflow, validation: validateWorkflowGraph(graph) };
+  return { workflow, validation: withGateWarning(validateWorkflowGraph(graph), workflow) };
+}
+
+/**
+ * A draft that gates publishing on a graph no run could publish from saves (drafts may be
+ * incomplete), with a warning; publishing it is refused ({@link publishWorkflowVersion}).
+ */
+function withGateWarning(
+  validation: WorkflowGraphValidation,
+  draft: Pick<WorkflowGraphDefinition, 'graph' | 'gatesPublish'>,
+): WorkflowGraphValidation {
+  const issue = draft.gatesPublish ? publishGateIssue(draft.graph) : null;
+  return issue
+    ? { ...validation, warnings: [...validation.warnings, { message: issue }] }
+    : validation;
 }
 
 export interface SaveWorkflowDraftInput extends DraftFields {
@@ -256,7 +285,7 @@ export async function saveWorkflowDraft(
     graph,
     gatesPublish: input.gatesPublish ?? current.gatesPublish,
   });
-  return { workflow, validation: validateWorkflowGraph(graph) };
+  return { workflow, validation: withGateWarning(validateWorkflowGraph(graph), workflow) };
 }
 
 export interface PublishWorkflowOptions {
@@ -266,7 +295,9 @@ export interface PublishWorkflowOptions {
 
 /**
  * Publishes the current draft as the next immutable version (`POST /workflows/:id/versions`).
- * Refuses with a ValidationError when `validateGraph` reports errors; warnings do not block.
+ * Refuses with a ValidationError when `validateGraph` reports errors; warnings do not block. A
+ * draft that gates publishing must be one a run can publish from (`canPublishThroughRun`):
+ * otherwise the gate would lock every entry it covers.
  */
 export async function publishWorkflowVersion(
   ctx: AppContext,
@@ -276,9 +307,10 @@ export async function publishWorkflowVersion(
 ): Promise<WorkflowVersion> {
   const draft = await loadSummary(ctx, scope, id);
   const { errors } = validateGraph(draft.graph);
-  if (errors.length > 0) {
-    throw new ValidationError(
-      errors.map((e) => ({
+  const gateIssue = draft.gatesPublish ? publishGateIssue(draft.graph) : null;
+  if (errors.length > 0 || gateIssue) {
+    throw new ValidationError([
+      ...errors.map((e) => ({
         field: e.nodeId
           ? `graph.nodes.${e.nodeId}`
           : e.edgeId
@@ -286,7 +318,8 @@ export async function publishWorkflowVersion(
             : 'graph',
         message: e.message,
       })),
-    );
+      ...(gateIssue ? [{ field: 'gatesPublish', message: gateIssue }] : []),
+    ]);
   }
   const definition: WorkflowGraphDefinition = {
     id: draft.id,
@@ -332,8 +365,72 @@ export async function getWorkflowVersion(
   return found;
 }
 
-export async function listWorkflows(ctx: AppContext, scope: Scope): Promise<WorkflowSummary[]> {
-  return (await ctx.store.workflowGraphs.list(scope)).map(toSummary);
+/** What starts a workflow: its trigger node's type and the catalog's name for it. */
+export interface WorkflowTrigger {
+  /** The trigger node type (`trigger.manual`, `trigger.entry_published`, …). */
+  readonly type: string;
+  /** The node catalog's label ("Submit for review", "Entry published"). */
+  readonly label: string;
+}
+
+/**
+ * A workflow as the list returns it: the summary (with its draft graph) plus how its PUBLISHED
+ * version starts, which is what runs, whatever the draft says now.
+ */
+export interface WorkflowListItem extends WorkflowSummary {
+  /** The latest published version's trigger; null when never published (or it has none). */
+  readonly publishedTrigger: WorkflowTrigger | null;
+  /**
+   * The ids of the other published workflows whose latest version starts on the same trigger for
+   * some of the same content types (no content types covers every type). Each of them starts too:
+   * an event starts every matching workflow, and Submit for review asks the editor which one.
+   * Null when this workflow has never been published.
+   */
+  readonly startsAlongside: readonly string[] | null;
+}
+
+const triggerOf = (graph: WorkflowGraph): WorkflowTrigger | null => {
+  const t = graph.nodes.find(isTrigger);
+  return t ? { type: t.type, label: nodeSpec(t.type)?.label ?? t.label } : null;
+};
+
+/** True when two workflows' coverage meets: an empty list covers every content type. */
+const overlaps = (a: readonly string[], b: readonly string[]) =>
+  a.length === 0 || b.length === 0 || a.some((t) => b.includes(t));
+
+/** Every workflow, with how its published version starts and which others start alongside it. */
+export async function listWorkflows(ctx: AppContext, scope: Scope): Promise<WorkflowListItem[]> {
+  const records = await ctx.store.workflowGraphs.list(scope);
+  const latest = await ctx.store.workflowGraphs.listLatestVersions(
+    scope,
+    records.filter((r) => r.latestVersion !== null).map((r) => r.id),
+  );
+  const published = new Map(
+    latest.map((v) => [
+      v.id,
+      { trigger: triggerOf(v.graph), contentTypes: v.contentTypes, gated: versionGatesPublish(v) },
+    ]),
+  );
+  return records.map((record) => {
+    const own = published.get(record.id);
+    const startsAlongside = !own
+      ? null
+      : own.trigger
+        ? [...published]
+            .filter(
+              ([id, other]) =>
+                id !== record.id &&
+                other.trigger?.type === own.trigger?.type &&
+                overlaps(own.contentTypes, other.contentTypes),
+            )
+            .map(([id]) => id)
+        : [];
+    return {
+      ...toSummary(record, own?.gated ?? false),
+      publishedTrigger: own?.trigger ?? null,
+      startsAlongside,
+    };
+  });
 }
 
 export async function getWorkflow(

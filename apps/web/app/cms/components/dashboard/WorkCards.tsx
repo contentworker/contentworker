@@ -4,6 +4,7 @@ import { Skeleton } from '@contentworker/ui/skeleton';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { StatusBadge } from '~/cms/components/status';
+import { humanize } from '../../lib/format';
 import type { AgentRun } from '../../lib/management';
 import { type EntryRef, entryPath, shortDateTime } from './entry-titles';
 
@@ -143,7 +144,7 @@ export function UpcomingCard(props: {
   entryById: (id: string) => EntryRef | undefined;
 }) {
   const releaseTitle = (id: string) =>
-    props.releases.data?.find((r) => r.id === id)?.title ?? `Release ${id.slice(0, 8)}`;
+    props.releases.data?.find((r) => r.id === id)?.title ?? 'Release no longer open';
   return (
     <WorkCard
       title="Coming up"
@@ -166,7 +167,7 @@ export function UpcomingCard(props: {
                 title={
                   a.entityType === 'Release'
                     ? releaseTitle(a.entityId)
-                    : (entry?.title ?? `Entry ${a.entityId.slice(0, 8)}`)
+                    : (entry?.title ?? 'Entry no longer available')
                 }
                 meta={`${verb} ${a.entityType === 'Release' ? 'release' : (entry?.typeName ?? 'entry')}`}
                 trailing={
@@ -203,7 +204,7 @@ export function UpcomingCard(props: {
   );
 }
 
-/** Agent runs that stopped for a human: proposals to review, held content. */
+/** Agent runs that stopped for a human: proposals to review, content moderation held. */
 export function AgentReviewCard(props: {
   runs: Loadable<readonly AgentRun[]>;
   entryById: (id: string) => EntryRef | undefined;
@@ -214,6 +215,13 @@ export function AgentReviewCard(props: {
       title="Agent proposals awaiting review"
       count={n}
       description="Agent output is never applied silently. These runs stopped for a decision."
+      footer={
+        n ? (
+          <Link to="/approvals" className="text-link text-sm underline-offset-2 hover:underline">
+            Review in Approvals
+          </Link>
+        ) : null
+      }
     >
       <Rows
         slice={props.runs}
@@ -221,26 +229,21 @@ export function AgentReviewCard(props: {
         error="Couldn’t load agent runs."
         render={(r) => {
           const entry = r.entryId ? props.entryById(r.entryId) : undefined;
+          const meta = [humanize(r.workflow), r.decisions[0], shortDateTime(r.createdAt)]
+            .filter(Boolean)
+            .join(' · ');
           return (
             <Row
               key={r.id}
               to={entry ? entryPath(entry) : undefined}
-              // Space-level runs (no entry) are named by their decision instead.
+              // A space-level run (no entry) is named by its decision instead. An entry the lookup
+              // couldn't find was deleted or is hidden: say so rather than show its id.
               title={
                 entry?.title ??
-                (r.entryId ? `Entry ${r.entryId.slice(0, 8)}` : (r.decisions[0] ?? r.workflow))
+                (r.entryId ? 'Entry no longer available' : (r.decisions[0] ?? humanize(r.workflow)))
               }
-              meta={
-                r.entryId
-                  ? [r.workflow, r.decisions[0]].filter(Boolean).join(' · ')
-                  : `${r.workflow} · ${shortDateTime(r.createdAt)}`
-              }
-              trailing={
-                <StatusBadge
-                  status={r.status}
-                  label={r.status === 'needs_review' ? 'needs review' : r.status}
-                />
-              }
+              meta={entry ? `${entry.typeName} · ${meta}` : meta}
+              trailing={<StatusBadge status={r.status} />}
             />
           );
         }}

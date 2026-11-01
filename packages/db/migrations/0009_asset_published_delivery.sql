@@ -1,4 +1,4 @@
--- 0006_asset_published_delivery: the published asset snapshot carries what Delivery and the media
+-- 0009_asset_published_delivery: the published asset snapshot carries what Delivery and the media
 -- Worker build its URLs from, so neither reads the draft row: the file `version` the URLs carry,
 -- the `r2_key` of its bytes, its `kind` (for the delivery list's filter) and its `rights` (credit,
 -- license, expiry). Mirrors `assetPublished` in packages/db/src/schema.ts.
@@ -6,7 +6,7 @@
 -- Every column is nullable or has a constant default, so the code already deployed keeps writing
 -- snapshots; the new code writes them all on every publish. Existing snapshots are backfilled
 -- from their asset's row, which until replacing files ships holds the same file. A key that is
--- NULL there (0004 couldn't decode it) stays NULL, and the code falls back to the asset's own key
+-- NULL there (0007 couldn't decode it) stays NULL, and the code falls back to the asset's own key
 -- prefix.
 ALTER TABLE `asset_published` ADD `version` integer DEFAULT 1 NOT NULL;
 ALTER TABLE `asset_published` ADD `r2_key` text;

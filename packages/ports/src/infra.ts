@@ -312,6 +312,62 @@ export interface AIProvider {
   generate(req: GenerateRequest): Promise<GenerateResult>;
 }
 
+/**
+ * A question for a {@link DecisionModel}. Decision models don't write text: they read a state
+ * and answer each question with a probability for every allowed answer.
+ * - `noul`: yes or no; answered with the probability of yes.
+ * - `choice`: one of `options` (id → description); answered with the most probable option,
+ *   the probability of each, and a confidence.
+ * - `score`: a level on an ordered rubric (`levels`, lowest first); answered with a
+ *   probability-weighted score (0 = the lowest level) and the probability of each level.
+ */
+export type DecisionQuestion =
+  | {
+      readonly type: 'noul';
+      readonly instructions: string;
+      /** What yes and no mean, when the instructions alone leave it open. */
+      readonly criteria?: { readonly true: string; readonly false: string };
+    }
+  | {
+      readonly type: 'choice';
+      readonly instructions: string;
+      readonly options: Readonly<Record<string, string>>;
+    }
+  | { readonly type: 'score'; readonly instructions: string; readonly levels: readonly string[] };
+
+export interface DecisionRequest {
+  /** What to decide about: text, or structured data. Untrusted content is fine here: the model
+   *  can only answer the questions, from the options they define. */
+  readonly state: string | Readonly<Record<string, unknown>> | readonly unknown[];
+  /** 1 to 64 questions, by id (letters, digits, `_`, `.`, `-`). Answers come back by the same ids. */
+  readonly questions: Readonly<Record<string, DecisionQuestion>>;
+  /** `flagship` for the most precise decisions, `fast` for the hot path. */
+  readonly tier?: ModelTier;
+}
+
+export type DecisionAnswer =
+  | { readonly type: 'noul'; readonly probability: number }
+  | {
+      readonly type: 'choice';
+      readonly choice: string;
+      readonly confidence: number;
+      readonly probabilities: Readonly<Record<string, number>>;
+    }
+  | { readonly type: 'score'; readonly score: number; readonly probabilities: readonly number[] };
+
+export interface DecisionResult {
+  readonly answers: Readonly<Record<string, DecisionAnswer>>;
+  /** The model that answered. */
+  readonly model: string;
+  /** Decision models bill input only. */
+  readonly usage: { readonly inputTokens: number };
+}
+
+/** Decision provider: typed questions in, probabilities out. Workers AI (Clef) by default. */
+export interface DecisionModel {
+  decide(req: DecisionRequest): Promise<DecisionResult>;
+}
+
 /** Verdict from a {@link CostGuard} on whether a scope may make an AI call now. */
 export interface AiBudgetDecision {
   readonly allowed: boolean;

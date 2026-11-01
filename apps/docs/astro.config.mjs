@@ -78,7 +78,9 @@ export default defineConfig({
           items: [
             { label: 'Content modeling', slug: 'guides/content-modeling' },
             { label: 'Editing and publishing', slug: 'guides/editing-and-publishing' },
+            { label: 'Media and assets', slug: 'guides/media' },
             { label: 'Releases and scheduling', slug: 'guides/releases-and-scheduling' },
+            { label: 'Environments', slug: 'guides/environments' },
             { label: 'Workflows', slug: 'guides/workflows' },
             { label: 'Approvals and reviews', slug: 'guides/approvals' },
             { label: 'AI features', slug: 'guides/ai' },

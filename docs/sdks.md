@@ -1,13 +1,31 @@
 # SDKs
 
+Method-level reference for the client packages. For a task-oriented tour, see the
+[SDKs guide](https://docs.contentworker.app/guides/sdks/).
+
 Five client packages target the read-only **Delivery API**, one, `@contentworker/sdk-management`,
 targets the **Management API** for programmatic authoring, and `@contentworker/sdk-codegen`
 generates typed field shapes. Point Delivery clients at the delivery host, `https://cdn.<domain>`
 (cached; served by the delivery Worker), and the Management client and codegen at the api host,
 `https://api.<domain>`. A Delivery client in `preview: true` mode reads `/preview/*`, which only the
-api serves, so give it the api host.
-The Delivery clients share a model (`DeliveredEntry`, `SearchHit`) but differ in surface and
-footprint.
+api serves, so give it the api host. The Delivery clients share a model (`DeliveredEntry`,
+`SearchHit`) but differ in surface and footprint.
+
+## Choosing a client
+
+| Use case                                                            | Package                           |
+| ------------------------------------------------------------------- | --------------------------------- |
+| Node/SSR/backend, or building your own integration                  | `@contentworker/sdk-core`         |
+| React apps                                                          | `@contentworker/sdk-web`          |
+| Vue 3 / Nuxt apps                                                   | `@contentworker/sdk-vue`          |
+| Edge functions, constrained devices, single-locale, minimal payload | `@contentworker/sdk-edge`         |
+| React Native apps with offline sync                                 | `@contentworker/sdk-react-native` |
+| Programmatic authoring/publishing (writes)                          | `@contentworker/sdk-management`   |
+| Types for entry fields                                              | `@contentworker/sdk-codegen`      |
+
+The five Delivery packages are **read-only**. For writes and publishing, use
+`@contentworker/sdk-management`, call the Management API directly, or drive the MCP tools
+([MCP server](./mcp.md)).
 
 ## `@contentworker/sdk-core` — framework-agnostic Delivery client
 
@@ -95,16 +113,9 @@ const client = createDeliveryClient({ baseUrl, space, environment, token });
 function App() {
   return (
     <ContentworkerProvider client={client}>
-      <Article id="42" />
+      <YourApp />
     </ContentworkerProvider>
   );
-}
-
-function Article({ id }: { id: string }) {
-  const { data, error, loading } = useEntry(id, { locale: 'en-US', include: 1 });
-  if (loading) return <Spinner />;
-  if (error) return <Error error={error} />;
-  return <h1>{String(data!.fields.title)}</h1>;
 }
 ```
 
@@ -114,6 +125,11 @@ Hooks (all return `AsyncState<T> = { data?: T; error?: Error; loading: boolean }
 - `useEntries<F>(query?)`
 - `useSemanticSearch(query, { topK? })` — returns `[]` for an empty query (no request)
 - `useDeliveryClient()` — the injected client
+- `useEditable()` — returns `editable(entry, field, locale?)`, which spreads the inline-edit mark
+  onto an element (see [Inline editing](#inline-editing))
+
+`<InlineEditor adminUrl onEdit defaultEnabled toggle />` mounts the click-to-edit overlay and
+renders no markup. `createDeliveryClient` is re-exported, so `sdk-web` alone is enough.
 
 SSR-safe: no fetch happens on the server unless a hook is actually invoked.
 
@@ -156,7 +172,7 @@ not observed. For server-fetched Nuxt data, wrap the client's promise methods in
 
 ## `@contentworker/sdk-edge` — tiny single-locale client
 
-Minimal client for IoT, wearables, and kiosks. Always resolves to **one locale** and supports
+Minimal client for edge functions and constrained devices (IoT, wearables, kiosks). Always resolves to **one locale** and supports
 field projection to keep payloads small.
 
 ```ts
@@ -171,26 +187,34 @@ await client.list('article', { limit: 20, pick: ['title'] });
 Returns `CompactEntry` = `{ id, contentType, fields }` where `fields` is already flattened to the
 client locale (no locale nesting).
 
-| Use case                                            | Package                           |
-| --------------------------------------------------- | --------------------------------- |
-| Node/SSR/backend, or building your own integration  | `@contentworker/sdk-core`         |
-| React apps                                          | `@contentworker/sdk-web`          |
-| Vue 3 / Nuxt apps                                   | `@contentworker/sdk-vue`          |
-| Constrained devices, single-locale, minimal payload | `@contentworker/sdk-edge`         |
-| React Native apps with offline sync                 | `@contentworker/sdk-react-native` |
-| Programmatic authoring/publishing (writes)          | `@contentworker/sdk-management`   |
-
 ## `@contentworker/sdk-react-native` — offline Delivery sync
 
-Hooks and helpers for React Native: offline entry cache, delta sync via `since`, and image URL
-helpers. Builds on `@contentworker/sdk-core` with AsyncStorage-backed persistence.
+Hooks and helpers for React Native: an offline entry cache, delta sync via `since`, and image URL
+helpers. Builds on `@contentworker/sdk-core`.
 `imageUrl(asset, { width?, dpr?, rendition? })` takes a delivered asset and returns the rendition
 when it exists, else the ladder step for `ceil(width × dpr)` (through `assetUrl`), else `url`; it
 never appends parameters to a URL.
 
 ```ts
-import { createOfflineDelivery, useOfflineEntries } from '@contentworker/sdk-react-native';
+import {
+  createDeliveryClient, // re-exported from sdk-core
+  createOfflineDelivery,
+  InMemoryStorage,
+  imageUrl,
+  useOfflineEntries,
+} from '@contentworker/sdk-react-native';
 ```
+
+- **Storage is injected.** `createOfflineDelivery({ client, storage, contentType, locale?, pageSize? })`
+  writes through a `Storage` interface (`getItem` / `setItem` / `removeItem`, sync or async), which
+  both AsyncStorage and MMKV satisfy. `InMemoryStorage` ships for tests.
+- `store.sync()` delta-syncs entries published since the stored cursor and returns
+  `{ synced, cursor }`; `get(id)`, `list()` and `reset()` read and clear local storage. An entry
+  unpublished on the server is not removed locally yet.
+- `useOfflineEntries(store)` serves the cache first, syncs in the background, and returns
+  `{ entries, syncing, error, sync }`; call `sync()` on reconnect or pull-to-refresh.
+- `imageUrl(url, { width?, height?, quality?, format?, dpr? })` appends `w`, `h`, `q`, `fm` and
+  `dpr` query parameters to an asset URL for device-density sizing.
 
 ## `@contentworker/sdk-management` — Management (CMA) client
 
@@ -216,14 +240,15 @@ The surface is namespaced; every method maps 1:1 onto a Management route:
 ```ts
 cma.me()                                              // principal probe (/auth/me)
 
-cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId)
+cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
 
 cma.entries.create({ contentTypeApiId, fields })      // fields are locale-keyed
 cma.entries.get(id) / .update(id, fields)             // update = new draft version
-cma.entries.publish(id) / .unpublish(id)
+cma.entries.publish(id, { expectedVersion? }) / .unpublish(id, { expectedVersion? })
 cma.entries.bulkCreate(items) / .bulkPublish(ids) / .bulkUnpublish(ids)
 cma.entries.reverseReferences(id)                     // "what links here"
-cma.entries.versions.list(id) / .get(id, v) / .diff(id, from, to) / .restore(id, v)
+cma.entries.versions.list(id) / .get(id, v) / .diff(id, from, to)
+cma.entries.versions.restore(id, v, { expectedVersion? })
 
 cma.assets.create({ fileName, contentType })          // → { asset, upload } (presigned PUT)
 cma.assets.list(query) / .get(id) / .setMetadata(id, patch) / .usage(id) / .archive(id) / .restore(id) / .delete(id) / .move(ids, folderId)
@@ -233,7 +258,7 @@ cma.assets.publish(id) / .unpublish(id)
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
 
 cma.releases.create({ title }) / .addEntry(id, { entityId }) / .removeEntry(id, entityId)
-cma.releases.list() / .get(id) / .publish(id) / .delete(id)
+cma.releases.list() / .get(id) / .publish(id) / .delete(id)   // list: each with itemCount
 
 cma.scheduledActions.list({ status? }) / .create(input) / .cancel(id)
 
@@ -248,6 +273,9 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
 - `assets.create` returns a presigned upload target: PUT the bytes to `upload.url` with
   `upload.headers`, then `assets.publish(id)` to make it deliverable.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
+- `publish`, `unpublish` and `versions.restore` take `{ expectedVersion }`, the `currentVersion` you
+  read; if a draft was saved since, the server answers 409 and changes nothing (`?expectedVersion=`
+  on the route; see [Consistency](./consistency.md#invariants)).
 - `spaces.create` takes the deployment's admin token (a space's own keys are refused);
   `starter: 'sample'` installs the sample content before it returns.
 - Failed requests throw `ManagementError` with `status` and the parsed error `body`.
@@ -286,14 +314,7 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   `@contentworker/sdk-management`.
 - `ContentTypeApiId` (union of apiIds), `FieldsByContentType`, and `DraftFieldsByContentType`.
 
-```ts
-import { createDeliveryClient } from '@contentworker/sdk-core';
-import type { ArticleFields } from './generated/content-types.js';
-
-const client = createDeliveryClient({ baseUrl, space, environment, token });
-const article = await client.getEntry<ArticleFields>('42', { locale: 'en-US' });
-article.fields.title; // string — typed, not unknown
-```
+Pass the shape as the type argument, e.g. `client.getEntry<ArticleFields>(id, { locale })`.
 
 The generator is also importable (`generateTypes(contentTypes)`) for build-tool integration.
 Generated modules are self-contained and compile clean under `strict`.
@@ -354,15 +375,8 @@ preview a site rather than one entry — would be impossible. While it is on, cl
 elements are claimed in the capture phase, so a heading inside a link opens the editor instead of
 navigating.
 
-**In the admin.** The link lands on `/content/:type/:entryId?field=&locale=&space=&env=`, which
-selects the locale tab and focuses that field. If the link names a different space or environment
-than the current connection, the editor says so rather than loading: the id either 404s or — if it
-happens to exist in both — opens the wrong entry looking entirely correct.
-
-## Choosing a client
-
-The five Delivery packages are **read-only** clients. For writes/publishing, use
-`@contentworker/sdk-management`, call the Management API directly, or drive the MCP tools.
+**In the admin.** The link opens the entry editor on the referenced field; see
+[Admin UI](./admin-ui.md#inline-edit-links).
 
 ## GraphQL
 

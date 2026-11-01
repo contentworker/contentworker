@@ -224,12 +224,37 @@ export function publishedSnapshot(scope: Scope, asset: Asset, at: Date): Publish
   };
 }
 
-/** Where an asset's current bytes are: its recorded key, or its own key prefix (older rows). */
+/**
+ * Where an asset's current bytes are: its recorded key, or its own key prefix (older rows). A
+ * recorded key can come from an imported snapshot, and every read (signed URLs, the media gate)
+ * serves whatever this names, so one that isn't an asset key for this asset is ignored.
+ */
 export function assetFileKey(
   scope: Scope,
   asset: { readonly id: string; readonly r2Key?: string; readonly file: { fileName: string } },
 ): string {
-  return asset.r2Key ?? assetObjectKey(scope, asset.id, asset.file.fileName);
+  return asset.r2Key && isAssetObjectKey(asset.r2Key, asset.id)
+    ? asset.r2Key
+    : assetObjectKey(scope, asset.id, asset.file.fileName);
+}
+
+/**
+ * The bucket's top-level prefixes that aren't a space's asset files: archived version bodies
+ * (`version-archive.ts`), staged job chunks (`job-staging.ts`), plugin bundles (`plugins.ts`) and
+ * dead letters. A space can be named like one, so its asset keys are refused rather than trusted.
+ */
+const SHARED_BLOB_NAMESPACES = new Set(['versions', 'imports', 'plugins', 'dlq']);
+
+/** Whether `key` has the shape {@link assetObjectKey} gives asset `assetId`, in any environment
+ *  (an imported asset keeps its source's), outside the bucket's shared namespaces. */
+function isAssetObjectKey(key: string, assetId: string): boolean {
+  const parts = key.split('/');
+  return (
+    parts.length === 4 &&
+    parts[2] === assetId &&
+    parts.every((p) => p !== '' && p !== '.' && p !== '..') &&
+    !SHARED_BLOB_NAMESPACES.has(parts[0] ?? '')
+  );
 }
 
 /** How long a URL handed out by a Management or Preview read works (15 minutes, at least). */
@@ -433,12 +458,16 @@ export async function deleteAssetFiles(
   if (event.videoId) await ctx.video?.delete(event.videoId);
   if (event.r2Key && deps.blob) {
     // `space/environment/assetId/…`: the prefix of the environment the bytes were uploaded in,
-    // which for an imported asset is its source's.
-    const prefix = event.r2Key.split('/').slice(0, 3).join('/');
-    // Never outside this space, whatever the key says.
-    if (!prefix.startsWith(`${scope.spaceId}/`)) return;
-    if (deps.blob.deletePrefix && prefix.split('/').length === 3) {
-      await deps.blob.deletePrefix(`${prefix}/`, () => false);
+    // which for an imported asset is its source's. The key can come from an imported snapshot, so
+    // it is checked rather than trusted: this space, this asset, and never a namespace the bucket
+    // shares with other data. A space named `versions` would otherwise reach other spaces'
+    // archived version bodies (`versions/space/environment/entryId/…`); its own asset files are
+    // left behind instead, which loses nothing.
+    if (!isAssetObjectKey(event.r2Key, assetId)) return;
+    const [space, environment] = event.r2Key.split('/');
+    if (space !== scope.spaceId) return;
+    if (deps.blob.deletePrefix) {
+      await deps.blob.deletePrefix(`${space}/${environment}/${assetId}/`, () => false);
     } else {
       await deps.blob.delete(event.r2Key);
     }

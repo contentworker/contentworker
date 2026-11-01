@@ -5,9 +5,16 @@ import {
   InMemoryContentStore,
   InMemoryCostGuard,
   SequenceIdGenerator,
+  StubDecisionModel,
 } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
-import { type AppContext, aiBudgetLimits, generateWithBudget } from '../src/index';
+import {
+  type AppContext,
+  aiBudgetLimits,
+  decide,
+  decideWithBudget,
+  generateWithBudget,
+} from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 const scopeB = { spaceId: 's2', environmentId: 'main' };
@@ -110,5 +117,37 @@ describe('aiBudgetLimits', () => {
         AI_BUDGET_WINDOW_SECONDS: '30',
       }),
     ).toEqual({ maxRequests: 10, maxTokens: 5000, windowSeconds: 30 });
+  });
+});
+
+describe('decisions under the budget', () => {
+  const question = {
+    state: 'x',
+    questions: { ok: { type: 'noul' as const, instructions: 'OK?' } },
+  };
+
+  it('meters a decision by its input tokens, and refuses one over the budget', async () => {
+    const guard = new InMemoryCostGuard({ maxRequests: 1, maxTokens: 1000, windowSeconds: 60 });
+    const ctx = ctxWith(guard);
+    const model = new StubDecisionModel();
+    const r = await decideWithBudget(ctx, model, scope, question);
+    expect(r.answers.ok).toEqual({ type: 'noul', probability: 0 });
+    await expect(decideWithBudget(ctx, model, scope, question)).rejects.toBeInstanceOf(
+      RateLimitedError,
+    );
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it('answers with the caller’s heuristic on a budget refusal, and records why', async () => {
+    const guard = new InMemoryCostGuard({ maxRequests: 1, maxTokens: 1000, windowSeconds: 60 });
+    await guard.consume(scope); // the window's one request is already spent
+    const model = new StubDecisionModel();
+    const r = await decide(ctxWith(guard), model, scope, question, {
+      prompt: 'test.decision',
+      fallback: () => ({ ok: { type: 'noul', probability: 0.9 } }),
+    });
+    expect(r).toMatchObject({ source: 'heuristic', answers: { ok: { probability: 0.9 } } });
+    expect(String(r.fallback)).toMatch(/^budget:/);
+    expect(model.requests).toEqual([]);
   });
 });

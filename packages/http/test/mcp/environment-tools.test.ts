@@ -299,3 +299,67 @@ describe('environment_import over MCP', () => {
     expect(await deps.ctx.store.contentTypes.list(target)).toEqual([]);
   });
 });
+
+describe('promotions over MCP', () => {
+  it('requests a promotion into main, refuses the requester’s approval, and applies another’s', async () => {
+    const deps = makeDeps();
+    await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
+    await createEnvironment(deps.ctx, 'space-1', 'staging');
+    for (const environmentId of ['staging', 'main']) {
+      const scope = { spaceId: 'space-1', environmentId };
+      await createContentType(deps.ctx, scope, {
+        apiId: 'note',
+        name: 'Note',
+        displayField: 'title',
+        fields: [
+          {
+            apiId: 'title',
+            name: 'Title',
+            type: 'Symbol',
+            localized: false,
+            required: true,
+            position: 0,
+          },
+        ],
+      } as Parameters<typeof createContentType>[2]);
+      await publishContentType(deps.ctx, scope, 'note');
+    }
+    const { entry } = await createEntry(
+      deps.ctx,
+      { spaceId: 'space-1', environmentId: 'staging' },
+      {
+        contentTypeApiId: 'note',
+        fields: { title: { 'en-US': 'Hello' } },
+      },
+    );
+    const person = (subject: string): Principal => ({
+      spaceId: 'space-1',
+      kind: 'user',
+      subject,
+      scopes: [...scopesForKind('cma')],
+    });
+    const ada = await connect(deps, person('ada'));
+    const body = (r: Awaited<ReturnType<Client['callTool']>>) =>
+      JSON.parse((r.content as { text: string }[])[0]?.text ?? '{}');
+    const requested = body(
+      await ada.callTool({
+        name: 'promotion_request',
+        arguments: { space: 'space-1', source: 'staging', target: 'main', entries: [entry.id] },
+      }),
+    );
+    expect(requested.status).toBe('awaiting_approval');
+    const own = await ada.callTool({
+      name: 'promotion_approve',
+      arguments: { space: 'space-1', id: requested.id },
+    });
+    expect(own.isError).toBe(true);
+    const grace = await connect(deps, person('grace'));
+    const approved = body(
+      await grace.callTool({
+        name: 'promotion_approve',
+        arguments: { space: 'space-1', id: requested.id },
+      }),
+    );
+    expect(approved).toMatchObject({ status: 'completed', decidedBy: 'grace' });
+  });
+});

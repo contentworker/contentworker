@@ -8,8 +8,8 @@ import { testDb } from './env';
 
 /**
  * What Delivery and the media Worker read on D1: the published snapshot's version, key, kind and
- * rights (0006), the published listing's keyset paging and filters, and the space's rendition
- * presets (0005). The file shares one database: each test makes its own space.
+ * rights (0009), the published listing's keyset paging and filters, and the space's rendition
+ * presets (0008). The file shares one database: each test makes its own space.
  */
 const store = createD1Store(testDb);
 const uid = () => crypto.randomUUID();
@@ -181,7 +181,7 @@ describe('rendition presets', () => {
   });
 });
 
-describe('the 0006 backfill', () => {
+describe('the 0009 backfill', () => {
   it('copies each snapshot’s version, key, kind and rights from its asset', async () => {
     const spaceId = `dl-${uid()}`;
     const asset = (id: string, kind: string, r2Key: string | null, rights: string | null) =>
@@ -192,7 +192,7 @@ describe('the 0006 backfill', () => {
         )
         .bind(spaceId, id, kind, r2Key, rights)
         .run();
-    // Snapshots as the code before 0006 wrote them: none of the new columns set.
+    // Snapshots as the code before 0009 wrote them: none of the new columns set.
     const published = (id: string) =>
       testDb
         .prepare(
@@ -208,7 +208,7 @@ describe('the 0006 backfill', () => {
     await published('orphan');
 
     const migrations = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS;
-    const m = migrations.find((x) => x.name.startsWith('0006_'));
+    const m = migrations.find((x) => x.name.startsWith('0009_'));
     const updates = (m?.queries ?? []).filter((q) => /UPDATE `asset_published`/.test(q));
     expect(updates).toHaveLength(1);
     for (const q of updates) await testDb.prepare(q).run();
@@ -234,8 +234,8 @@ describe('the 0006 backfill', () => {
   });
 });
 
-describe('the 0007 backfill', () => {
-  it('fills only the snapshots the old code wrote after 0006, from their asset', async () => {
+describe('the 0010 backfill', () => {
+  it('fills only the snapshots the old code wrote after 0009, from their asset', async () => {
     const spaceId = `dl-${uid()}`;
     const asset = (id: string, kind: string, r2Key: string | null, rights: string | null) =>
       testDb
@@ -266,7 +266,7 @@ describe('the 0007 backfill', () => {
     await published('orphan', 'other', null, null);
 
     const migrations = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS;
-    const m = migrations.find((x) => x.name.startsWith('0007_'));
+    const m = migrations.find((x) => x.name.startsWith('0010_'));
     const updates = (m?.queries ?? []).filter((q) => /UPDATE `asset_published`/.test(q));
     expect(updates).toHaveLength(1);
     for (const q of updates) await testDb.prepare(q).run();

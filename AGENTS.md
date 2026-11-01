@@ -8,7 +8,8 @@ The rules every change to contentworker keeps, for people and for every coding a
 `contentworker` is an API-first, AI-agentic-first headless CMS that runs **entirely on
 Cloudflare**: D1 is the system of record, with Workers, Queues, KV, R2, Durable Objects,
 Workflows, Vectorize, Workers AI (through AI Gateway), Images, Stream, Email Sending and Worker
-Loader. It is a pnpm + Turborepo monorepo with a **ports & adapters (hexagonal)** core, deployed
+Loader. Content is **structured, not serialized HTML**: rich text is a typed document tree
+(`RichTextDocument`), and every channel renders it for itself. It is a pnpm + Turborepo monorepo with a **ports & adapters (hexagonal)** core, deployed
 as one isolated stack per customer (`deployments/*.jsonc`, rendered by `scripts/fleet.ts`); spaces
 and environments live inside a deployment's D1. Shipped and planned work is in `ROADMAP.md`.
 
@@ -51,6 +52,11 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
   `selectChunked` / a JSON parameter with `json_each`), one writer per database (no per-request
   writes on read paths: e.g. `lastUsedAt` is throttled), 10 GB per database (append-heavy data
   goes to R2, derived indexes to Durable Objects).
+- **Structured content, not serialized HTML.** Content is stored, validated, versioned and
+  delivered as typed fields and `RichTextDocument` trees (`packages/domain/src/rich-text`), never
+  as an HTML (or Markdown) string. HTML is converted at the edge on the way in
+  (`richTextFromHtml`, for imports) and rendered by the consumer on the way out; no store column,
+  API response, MCP tool, webhook payload or model output carries content as markup.
 - **Both surfaces.** Every capability is a use-case in `@contentworker/application`, exposed
   through both the HTTP API (`packages/http/src/api/routes`) and MCP
   (`packages/http/src/mcp/server.ts`), so an agent can never do what a human client can't, or
@@ -71,7 +77,7 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
   `scripts/do-migrations.test.ts`, in the same change). Never `deleted_classes` without a plan
   for the data.
 - **Trust boundaries:** the api believes `x-cw-principal` only when signed with `PRINCIPAL_KEY`,
-  bound to the request path and under 60 s old; the delivery `Delivery` entrypoint trusts its
+  bound to the request method and path and under 60 s old; the delivery `Delivery` entrypoint trusts its
   principal header only because nothing outside the Worker can reach it. Never add a trusted
   header to a publicly routed handler.
 - Never use a trailing "z" in endpoint names (`/health`, `/ready`, not `/healthz`).

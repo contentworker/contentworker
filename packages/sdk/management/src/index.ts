@@ -41,6 +41,16 @@ export interface ContentType {
   readonly status: ContentTypeStatus;
 }
 
+/** How many entries a content type holds, by status; `total` is the live ones (not the trash). */
+export interface ContentTypeEntryCounts {
+  readonly contentType: string;
+  readonly total: number;
+  readonly draft: number;
+  readonly changed: number;
+  readonly published: number;
+  readonly archived: number;
+}
+
 export interface ContentTypeDraft {
   readonly apiId: string;
   readonly name: string;
@@ -155,6 +165,8 @@ export interface Webhook {
   readonly url: string;
   readonly topics: readonly string[];
   readonly active: boolean;
+  /** The one environment whose events it receives; `null` for every environment in the space. */
+  readonly environmentId: string | null;
 }
 
 export interface CreateWebhookInput {
@@ -163,8 +175,14 @@ export interface CreateWebhookInput {
   readonly secret: string;
   readonly active?: boolean;
   readonly headers?: Readonly<Record<string, string>>;
+  /** `true`: every environment's events. Otherwise only the client's environment's. */
+  readonly allEnvironments?: boolean;
 }
 
+/**
+ * Omitted fields are kept. `allEnvironments: true` makes the hook space-wide, `false` scopes it to
+ * the client's environment; omitted, its scope is unchanged.
+ */
 export type UpdateWebhookInput = Partial<CreateWebhookInput>;
 
 export interface Release {
@@ -174,6 +192,11 @@ export interface Release {
   readonly status: ReleaseStatus;
   readonly createdAt: string;
   readonly publishedAt?: string;
+}
+
+/** A release as `releases.list()` returns it: with how many members it holds. */
+export interface ReleaseSummary extends Release {
+  readonly itemCount: number;
 }
 
 export interface ReleaseItem {
@@ -362,6 +385,9 @@ export function createManagementClient(opts: ManagementClientOptions) {
       create: (draft: ContentTypeDraft) => post<ContentType>(`${envBase}/content-types`, draft),
       publish: (apiId: string) =>
         post<ContentType>(`${envBase}/content-types/${e(apiId)}/published`),
+      /** Entries per content type, by status, from one grouped count. */
+      entryCounts: () =>
+        items(get<{ items: ContentTypeEntryCounts[] }>(`${envBase}/content-types/entry-counts`)),
     },
 
     entries: {
@@ -458,7 +484,7 @@ export function createManagementClient(opts: ManagementClientOptions) {
     },
 
     releases: {
-      list: () => items(get<{ items: Release[] }>(`${envBase}/releases`)),
+      list: () => items(get<{ items: ReleaseSummary[] }>(`${envBase}/releases`)),
       get: (id: string) => get<ReleaseWithItems>(`${envBase}/releases/${e(id)}`),
       create: (input: { title: string; description?: string }) =>
         post<Release>(`${envBase}/releases`, input),

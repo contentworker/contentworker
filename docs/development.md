@@ -1,5 +1,8 @@
 # Development
 
+How to run contentworker locally, test it, and extend it: setup, suites, adding a use-case, changing
+the D1 schema and the schema reference.
+
 ## Prerequisites
 
 - Node.js ≥ 24 (`.nvmrc`) and pnpm 10 (`packageManager` in the root `package.json`).
@@ -10,9 +13,12 @@
 
 ```bash
 pnpm install
-pnpm db:migrate:local   # applies packages/db/migrations to the local D1, via the web Worker's config
-pnpm dev                # the api seeds the demo dataset into space-1 on its first request
+pnpm dev     # applies packages/db/migrations to the local D1 (db:migrate:local), then starts the stack;
+             # the api seeds the demo dataset into space-1 on its first request
 ```
+
+`pnpm db:migrate:local` is also the way to apply a new migration without restarting, and
+`pnpm dev:reset` deletes `apps/web/.wrangler/state` and migrates again, for a fresh database.
 
 `pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173; `PORT=5174 pnpm
 dev` for another port). The port is fixed rather than "the next free one": the local OAuth issuer
@@ -24,22 +30,24 @@ Objects and Workflows emulated. The media Worker isn't routable from the browser
 `MEDIA_PUBLIC_URL` stays empty, so delivered assets keep the api's signed URLs (no renditions or
 srcset); its suite (`pnpm --filter @contentworker/media test`) runs it in workerd instead. Their vars are overridden with `LOCAL_STACK_VARS`:
 
-| Var                       | Local value                             | Why                                                          |
-| ------------------------- | --------------------------------------- | ------------------------------------------------------------ |
-| `REQUIRE_SECURE_SECRETS`  | `false`                                 | Allow the dev tokens below                                   |
-| `ADMIN_TOKEN`             | `dev-admin-token`                       | Root bearer token                                            |
-| `MCP_TOKEN`               | `dev-mcp-token`                         | Mounts `/mcp`                                                |
-| `TOKEN_PEPPER`            | `dev-pepper`                            |                                                              |
-| `MEDIA_SIGNING_SECRET`    | `dev-media-signing-secret`              |                                                              |
-| `PRINCIPAL_KEY`           | `contentworker-local-dev-principal-key` | The same `DEV_PRINCIPAL_KEY` the web Worker uses locally     |
-| `ASSISTANT_PRINCIPAL_KEY` | `DEV_ASSISTANT_PRINCIPAL_KEY`           | Derived from the dev `PRINCIPAL_KEY`, for the engine         |
-| `AI_MODE`                 | `mock`                                  | No model calls                                               |
-| `AI_GATEWAY_ID`           | empty                                   | No AI Gateway                                                |
-| `EMBEDDINGS_PROVIDER`     | `local`                                 | Hash embeddings                                              |
-| `VECTOR_STORE`            | `kv`                                    | Vectorize has no local emulator; KV is shared by the Workers |
-| `ALLOW_FAKE_ADAPTERS`     | `all`                                   | Accept every dev fake                                        |
-| `SEED_DEV`                | `true`                                  | Load the demo dataset                                        |
-| `SEED_SCALE`              | `1`, or the shell's `SEED_SCALE`        | Demo size (~550 entries); raise it for a benchmark corpus    |
+| Var                               | Local value                                   | Why                                                                 |
+| --------------------------------- | --------------------------------------------- | ------------------------------------------------------------------- |
+| `REQUIRE_SECURE_SECRETS`          | `false`                                       | Allow the dev tokens below                                          |
+| `ADMIN_TOKEN`                     | `dev-admin-token`                             | Root bearer token                                                   |
+| `CMA_KEY` / `CDA_KEY` / `CPA_KEY` | `dev-cma-key` / `dev-cda-key` / `dev-cpa-key` | The seeded space's Management, Delivery and Preview keys            |
+| `MCP_TOKEN`                       | `dev-mcp-token`                               | Mounts `/mcp`                                                       |
+| `TOKEN_PEPPER`                    | `dev-pepper`                                  |                                                                     |
+| `MEDIA_SIGNING_SECRET`            | `dev-media-signing-secret`                    |                                                                     |
+| `PRINCIPAL_KEY`                   | `contentworker-local-dev-principal-key`       | The same `DEV_PRINCIPAL_KEY` the web Worker uses locally            |
+| `ASSISTANT_PRINCIPAL_KEY`         | `DEV_ASSISTANT_PRINCIPAL_KEY`                 | Derived from the dev `PRINCIPAL_KEY`, for the engine                |
+| `OAUTH_ISSUER`                    | `http://localhost:<port>`                     | OAuth for MCP clients on the admin origin, as on a deployment       |
+| `AI_MODE`                         | `mock`                                        | No model calls                                                      |
+| `AI_GATEWAY_ID`                   | empty                                         | No AI Gateway                                                       |
+| `EMBEDDINGS_PROVIDER`             | `local`                                       | Hash embeddings                                                     |
+| `VECTOR_STORE`                    | `kv`                                          | Vectorize has no local emulator; KV is shared by the Workers        |
+| `ALLOW_FAKE_ADAPTERS`             | `all`                                         | Accept every dev fake                                               |
+| `SEED_DEV`                        | `true` (`false` under the e2e harness)        | Load the demo dataset; refused wherever secure secrets are required |
+| `SEED_SCALE`                      | `1`, or the shell's `SEED_SCALE`              | Demo size (~550 entries); raise it for a benchmark corpus           |
 
 Local dev always runs on the demo dataset (`@contentworker/seed`): on its first request the api
 seeds a space, dev API keys and a corpus covering every capability (content model, entries,
@@ -47,7 +55,7 @@ assets, taxonomy, releases, workflows, automation, agents). Seeded images and do
 files in the local bucket (gradient PNGs and one-page PDFs generated by
 `packages/seed/src/placeholders.ts`), so the media library and image transforms work; videos are
 metadata only. Seeding is idempotent, so restarts
-keep the data; to start over, delete `apps/web/.wrangler/state` and apply the migrations again.
+keep the data; to start over, run `pnpm dev:reset`.
 
 The same package holds the **sample starter** a real space can start with (`installStarter` and
 `createSpaceWithStarter` in `packages/seed/src/starter.ts`, behind `POST /spaces` `starter:
@@ -103,16 +111,26 @@ pnpm --filter @contentworker/http generate:skills
 
 ### Where each suite runs
 
-| Package                      | Environment                                                             | What it covers                                                                                                |
-| ---------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `@contentworker/domain`      | node                                                                    | Pure rules                                                                                                    |
-| `@contentworker/application` | node, `@contentworker/test-kit` fakes                                   | Every use-case                                                                                                |
-| `@contentworker/db`          | workerd (vitest-pool-workers), Miniflare D1 with the migrations applied | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest                   |
-| `@contentworker/http`        | node, in-memory fakes                                                   | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                       |
-| `@contentworker/engine`      | workerd                                                                 | Durable Objects (search shard, live hub, cost guard, rate limiter), real Workflow runs with `AI_MODE=mock`, the media gate and both purge queues |
-| `@contentworker/media`       | workerd, Miniflare KV, R2 and D1, a fake Images binding                 | The media Worker end to end: gate and replica fallback, 404/410, `Accept` negotiation, purge drain, signed draft reads |
-| `@contentworker/docs`        | node                                                                    | The `docs/` embed matches disk                                                                                |
-| `@contentworker/web`         | vitest; Playwright (`pnpm --filter @contentworker/web e2e`)             | Auth and lib units; device and CMS e2e with axe in WebKit and Chromium                                        |
+| Package                        | Environment                                                                                                                                       | What it covers                                                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@contentworker/domain`        | node                                                                                                                                              | Pure rules                                                                                                                                                         |
+| `@contentworker/application`   | node, `@contentworker/test-kit` fakes                                                                                                             | Every use-case                                                                                                                                                     |
+| `@contentworker/db`            | workerd (`@cloudflare/vitest-plugin`), Miniflare D1 with the migrations applied                                                                   | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest                                                                        |
+| `@contentworker/http`          | node, in-memory fakes                                                                                                                             | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                                                                            |
+| `@contentworker/engine`        | workerd                                                                                                                                           | Durable Objects (search shard, live hub, cost guard, rate limiter), real Workflow runs with `AI_MODE=mock`, the media gate and both purge queues                   |
+| `@contentworker/media`         | workerd, Miniflare KV, R2 and D1, a fake Images binding                                                                                           | The media Worker end to end: gate and replica fallback, 404/410, `Accept` negotiation, purge drain, signed draft reads                                             |
+| `@contentworker/docs`          | node                                                                                                                                              | The `docs/` embed matches disk                                                                                                                                     |
+| `@contentworker/adapters`      | node, fakes of each binding                                                                                                                       | One suite per adapter subpath (`test/<adapter>/`), including the structured and WXR import parsers                                                                 |
+| `@contentworker/agent-runtime` | node                                                                                                                                              | The agent workflows and the graph interpreter, without Cloudflare                                                                                                  |
+| `@contentworker/security`      | node                                                                                                                                              | The signed principal, the derived assistant key, roles and session lifetimes                                                                                       |
+| `@contentworker/delivery`      | node                                                                                                                                              | Visibility profiles, canonical URLs, client cache headers and the purge drain                                                                                      |
+| `@contentworker/web`           | vitest, two projects: `node` (`tests/**/*.test.ts`) and `dom` (jsdom, `tests/**/*.test.tsx`); Playwright (`pnpm --filter @contentworker/web e2e`) | Auth and lib units; CMS screens; device and CMS e2e with axe in WebKit and Chromium                                                                                |
+| `packages/sdk/*`               | node (vitest)                                                                                                                                     | The Delivery and Management clients, `contentworker-codegen`                                                                                                       |
+| `scripts/*.test.ts`            | `node --test` (`pnpm test:fleet`)                                                                                                                 | Fleet registry rendering, DO migration tags (append-only), the pnpm catalog, assistant key derivation, and a guard on names that must not appear in the repository |
+
+`@contentworker/platform` has no suite of its own: its wiring is exercised through the http, db and
+engine suites. Also `@contentworker/graphql-gen`, `seed`, `redaction`, `design` and `docs` run
+`vitest` in node.
 
 The web e2e harness starts its own dev server on port 5390 with a fresh local D1 in
 `.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings, and unseeded: the tests
@@ -133,25 +151,10 @@ node apps/api/scripts/mcp-search-smoke.mjs   # search tools
 
 ## Conventions
 
-- **Strict TypeScript** (`packages/typescript-config/base.json`): `noUncheckedIndexedAccess`,
-  `noUnusedLocals`, `verbatimModuleSyntax`. ESM: internal packages import relative paths without
-  an extension; the SDKs (`packages/sdk/*`) keep `.js` specifiers and `scripts/*.ts` use `.ts`.
-- **TypeScript 7** is the native compiler and has no JS API: run `tsc`, never
-  `import ts from 'typescript'`. The SDKs bundle JS with tsup and emit `.d.ts` with `tsc`.
-- **Dependencies come from the pnpm catalog.** Every version lives in `catalog:` in
-  `pnpm-workspace.yaml` (`catalogMode: strict`); a `package.json` says `"catalog:"`, or
-  `"workspace:*"` for a `@contentworker/*` package. To add one, put its latest stable version in
-  the catalog, then `"name": "catalog:"` in the package and `pnpm install`. Only
-  `peerDependencies` keep their own ranges. `scripts/catalog.test.ts` fails CI on a stray version
-  or an unused entry.
-- **Type-only imports** use `import type`.
-- **Biome**: single quotes, semicolons, trailing commas, 2-space indent, width 100.
-- **IDs** from `ctx.ids.newId()` (UUIDv7), never `crypto.randomUUID()`.
-- **Time** from `ctx.clock.now()`, never `new Date()` inside use-cases.
-- **Scope everything**: thread `{ spaceId, environmentId }` through every store and use-case call.
-- **workerd only**: `nodejs_compat`, no filesystem, no long-lived sockets, no Node servers.
-- **Unit of work**: inside `withTransaction`, read everything first, then write; never rely on
-  reading your own buffered writes (see [Consistency](./consistency.md)).
+The rules every change keeps (strict TypeScript, ESM import specifiers, TypeScript 7 having no JS
+API, the pnpm catalog, Biome, UUIDv7 ids from `ctx.ids`, time from `ctx.clock`, scoped operations,
+workerd-only code, and the unit of work) are in `AGENTS.md`; see also
+[Consistency](./consistency.md) for the unit-of-work rule.
 
 ## Adding a use-case
 
@@ -175,10 +178,10 @@ node apps/api/scripts/mcp-search-smoke.mjs   # search tools
 2. Mirror it in `packages/db/src/schema.ts` (or `auth-schema.ts` for web auth tables).
    Timestamps are `integer` epoch milliseconds (`mode: 'timestamp_ms'`), JSON is `text`
    (`mode: 'json'`), booleans are `integer` 0/1.
-3. Apply locally: `cd apps/web && npx wrangler d1 migrations apply DB --local`. The
+3. Apply locally with `pnpm db:migrate:local` (`pnpm dev` does it too). The
    `@contentworker/db` tests apply the migrations to Miniflare D1 themselves.
 4. Remote databases are migrated only by CI, before the new code deploys
-   ([Deployment](./deployment.md#the-pipeline)).
+   ([Deployment](./deployment.md#migrations)); never by hand.
 
 Keep the D1 limits in mind: at most 100 bound parameters per statement (`chunked`,
 `selectChunked`, or one JSON parameter with `json_each`), one writer per database (no writes on
@@ -207,6 +210,35 @@ read paths), 10 GB per database.
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
 | `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost              |
 
+`0008_asset_renditions.sql` adds `asset_renditions` (`space_id`, `name`, `width`, `height`, `fit`,
+`format`, `quality`, `created_at`, `updated_at`; primary key `(space_id, name)`): a space's
+rendition presets, not environment-scoped. `0009_asset_published_delivery.sql` adds `version`,
+`r2_key`, `kind` and `rights` to `asset_published` (backfilled from each snapshot's asset row), with
+the indexes `asset_published_by_time` (publish order, keyset paging) and
+`asset_published_by_kind`; the delivery list's folder filter reads `assets.folder_id` live.
+`0010_asset_published_backfill_again.sql` changes no schema: it runs 0009's backfill again, only
+for snapshots still holding the column defaults (`kind` `'other'` or no `r2_key`) whose asset row
+knows better, which the pre-0009 api wrote while a deployment rolled out.
+
+`0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
+`height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
+`archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)
+and two tables: `asset_folders` (materialized `path`, sibling names unique) and `asset_versions`
+(the files an asset had before its current one).
+
+`0005_webhook_environments.sql` adds `webhooks.environment_id` (the one environment a webhook
+receives events from; `NULL`, as every existing row stays, means every environment) and the
+`webhooks_by_environment` index on `(space_id, environment_id)` (see
+[Events & webhooks](./events-and-webhooks.md#webhooks)).
+
+`0006_environment_promotions.sql` adds `environment_promotions`: promotions between environments
+with their pinned entries, risk check, status and result (see [API reference](./api-reference.md)).
+
+`0004_version_bodies.sql` adds `entry_versions.body_key` (a superseded version's body moves to R2
+under that key, and `fields` becomes `{}`) and `version_archive_queue` (versions waiting to move,
+queued as they are superseded and due a day later), backfilling the queue with every version already
+superseded (see [Consistency](./consistency.md)).
+
 `0003_environment_purges.sql` adds `environment_purges`: deleted environments whose rows the engine
 is still removing in bounded steps (their ids can't be reused until it finishes).
 
@@ -216,22 +248,6 @@ is still removing in bounded steps (their ids can't be reused until it finishes)
 
 The lexical search index is not in D1: it lives in `SearchShardDO` (FTS5). Vectors live in
 Vectorize. See [AI, agents & search](./ai-agents-and-search.md).
-
-`0004_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
-`height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
-`archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)
-and two tables: `asset_folders` (materialized `path`, sibling names unique) and `asset_versions`
-(the files an asset had before its current one).
-
-`0005_asset_renditions.sql` adds `asset_renditions` (`space_id`, `name`, `width`, `height`, `fit`,
-`format`, `quality`, `created_at`, `updated_at`; primary key `(space_id, name)`): a space's
-rendition presets, not environment-scoped. `0006_asset_published_delivery.sql` adds `version`,
-`r2_key`, `kind` and `rights` to `asset_published` (backfilled from each snapshot's asset row), with
-the indexes `asset_published_by_time` (publish order, keyset paging) and
-`asset_published_by_kind`; the delivery list's folder filter reads `assets.folder_id` live.
-`0007_asset_published_backfill_again.sql` changes no schema: it runs 0006's backfill again, only
-for snapshots still holding the column defaults (`kind` `'other'` or no `r2_key`) whose asset row
-knows better, which the pre-0006 api wrote while a deployment rolled out.
 
 ## Testing approach
 

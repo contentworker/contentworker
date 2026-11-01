@@ -65,6 +65,7 @@ const summary = (graph: WorkflowGraph) => ({
   description: '',
   contentTypes: [],
   gatesPublish: false,
+  publishGated: false,
   graph,
   steps: [],
   latestVersion: null,
@@ -179,6 +180,33 @@ describe('workflow editor', () => {
     expect(screen.queryByRole('combobox', { name: 'Connect out to' })).toBeNull();
     expect(wouldCycle(GRAPH, 'b', 'a')).toBe(true);
     expect(wouldCycle(GRAPH, 'b', 'c')).toBe(false);
+  });
+
+  it('names a step whose label is only its id by its kind, never by the id', async () => {
+    client.getWorkflow.mockImplementation(async () =>
+      summary({
+        nodes: GRAPH.nodes.map((n) => (n.id === 'c' ? { ...n, label: 'c' } : n)),
+        edges: GRAPH.edges,
+      }),
+    );
+    renderEditor();
+    await screen.findByRole('textbox', { name: 'Workflow name' });
+    pickCheck(/Comment B has no outgoing edge/);
+    const connect = screen.getByRole('combobox', { name: 'Connect out to' });
+    const names = within(connect)
+      .getAllByRole('option')
+      .map((o) => o.textContent);
+    expect(names).toEqual(['Connect to…', 'Comment']);
+  });
+
+  it('offers Discard changes only once there is something to discard', async () => {
+    renderEditor();
+    const name = await screen.findByRole('textbox', { name: 'Workflow name' });
+    expect(screen.queryByRole('button', { name: 'Discard changes' })).toBeNull();
+    fireEvent.change(name, { target: { value: 'Renamed' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect((name as HTMLInputElement).value).toBe('Editorial review'));
+    expect(screen.queryByRole('button', { name: 'Discard changes' })).toBeNull();
   });
 
   it('shows a step’s validation problems in the inspector until they are fixed', async () => {

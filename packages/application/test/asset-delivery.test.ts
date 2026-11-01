@@ -17,6 +17,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
   archiveAsset,
+  assetGateEntry,
+  assetObjectKey,
   assetTransformTarget,
   createAsset,
   createAssetRendition,
@@ -27,6 +29,7 @@ import {
   getAsset,
   getDeliveredAsset,
   getPreviewAsset,
+  getPublishedAsset,
   getPublishedEntry,
   listDeliveredAssets,
   listPreviewAssets,
@@ -355,6 +358,32 @@ describe('preview and management reads', () => {
       fit: 'max',
       format: 'auto',
     });
+  });
+
+  it('never serves a recorded key that is not this asset’s (as an imported snapshot can claim)', async () => {
+    const a = await image(h);
+    const own = assetObjectKey(scope, a.id, a.file.fileName);
+    for (const forged of [
+      'versions/other/main/entry-1/1.json', // another space's archived version body
+      `versions/main/${a.id}/x.jpg`, // the same, through a space named `versions`
+      'other/main/someone-elses-asset/x.jpg', // another asset's file
+      `shop/../${a.id}/x.jpg`,
+    ]) {
+      await h.store.assets.save(scope, { ...a, r2Key: forged });
+      const read = await withReadUrl(h.blob, scope, await getAsset(h.ctx, scope, a.id));
+      expect(read.file.url).toBe(`https://blob.local/${own}?ttl=${READ_URL_TTL_SECONDS}`);
+      await publishAsset(h.ctx, scope, a.id);
+      const snapshot = await getPublishedAsset(h.ctx, scope, a.id);
+      expect(snapshot && assetGateEntry(scope, snapshot)?.r2Key).toBe(own);
+    }
+  });
+
+  it('keeps a recorded key from another environment (an import shares its source’s files)', async () => {
+    const a = await image(h);
+    const source = `shop/staging/${a.id}/hero.jpg`;
+    await h.store.assets.save(scope, { ...a, r2Key: source });
+    const read = await withReadUrl(h.blob, scope, await getAsset(h.ctx, scope, a.id));
+    expect(read.file.url).toBe(`https://blob.local/${source}?ttl=${READ_URL_TTL_SECONDS}`);
   });
 
   it('lists drafts for Preview but never an archived asset', async () => {

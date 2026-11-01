@@ -1,10 +1,11 @@
 /**
- * Tiptap extensions for the rich-text editor: the MIT StarterKit plus custom
- * atom nodes for embedded entries/assets and the lossless unknown-node
- * carriers used by the mapper (see `@/lib/rich-text-mapper.ts`).
+ * Tiptap extensions for the rich-text editor: the MIT StarterKit and table
+ * nodes, plus custom atom nodes for embedded entries/assets and the lossless
+ * unknown-node carriers used by the mapper (see `@/lib/rich-text-mapper.ts`).
  */
 
 import { Mark, Node } from '@tiptap/core';
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { EmbedNodeView, InlineEmbedNodeView, UnknownNodeView } from './EmbedNodeView';
@@ -106,6 +107,12 @@ export function buildExtensions() {
       heading: { levels: [1, 2, 3] },
       link: { openOnClick: false },
     }),
+    // Column widths aren't part of the stored model, so there is nothing to
+    // resize; the wrapper is what scrolls a wide table on a narrow screen.
+    Table.configure({ resizable: false, renderWrapper: true }),
+    TableRow,
+    TableHeader,
+    TableCell,
     EmbeddedEntryBlock,
     EmbeddedAssetBlock,
     EmbeddedEntryInline,

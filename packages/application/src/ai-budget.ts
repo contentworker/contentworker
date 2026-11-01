@@ -1,6 +1,13 @@
 import { RateLimitedError, type Scope } from '@contentworker/domain';
-import type { AIProvider, GenerateRequest, GenerateResult } from '@contentworker/ports';
-import { mockGenerate } from './ai-mock';
+import type {
+  AIProvider,
+  DecisionModel,
+  DecisionRequest,
+  DecisionResult,
+  GenerateRequest,
+  GenerateResult,
+} from '@contentworker/ports';
+import { mockDecide, mockGenerate } from './ai-mock';
 import type { AppContext } from './context';
 
 export interface AiBudgetLimits {
@@ -80,5 +87,32 @@ export async function generateWithBudget(
     const total = result.usage.inputTokens + result.usage.outputTokens;
     await ctx.costGuard.settle(scope, total);
   }
+  return result;
+}
+
+/**
+ * Asks a decision model under the space's budget, exactly as {@link generateWithBudget} does for
+ * generation: AI_MODE=mock answers without the model, the cost guard is consulted first
+ * ({@link RateLimitedError} when over), and the observed tokens are recorded after (decision
+ * models bill input only).
+ */
+export async function decideWithBudget(
+  ctx: AppContext,
+  model: DecisionModel,
+  scope: Scope,
+  req: DecisionRequest,
+): Promise<DecisionResult> {
+  if (ctx.ai?.mode === 'mock') return mockDecide(req);
+  if (ctx.costGuard) {
+    const decision = await ctx.costGuard.consume(scope);
+    if (!decision.allowed) {
+      throw new RateLimitedError(
+        `AI ${decision.reason === 'tokens' ? 'token' : 'request'} budget exceeded for this space; retry later`,
+        decision.retryAfterSeconds,
+      );
+    }
+  }
+  const result = await model.decide(req);
+  if (ctx.costGuard) await ctx.costGuard.settle(scope, result.usage.inputTokens);
   return result;
 }

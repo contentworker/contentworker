@@ -131,6 +131,24 @@ describe('@contentworker/sdk-management client', () => {
     expect(calls[0]?.url).toBe('https://cms.test/spaces/s1/environments/main/content-types');
   });
 
+  it('reads entry counts per content type from their own route', async () => {
+    const fetchImpl = fakeFetch((url) => {
+      calls.push({ url });
+      return {
+        items: [
+          { contentType: 'article', total: 3, draft: 1, changed: 1, published: 1, archived: 2 },
+        ],
+      };
+    });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+
+    const counts = await client.contentTypes.entryCounts();
+    expect(counts[0]?.total).toBe(3);
+    expect(calls[0]?.url).toBe(
+      'https://cms.test/spaces/s1/environments/main/content-types/entry-counts',
+    );
+  });
+
   it('passes query params for version diffs and drops undefined ones', async () => {
     const fetchImpl = fakeFetch((url) => {
       calls.push({ url });

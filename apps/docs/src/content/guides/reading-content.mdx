@@ -3,11 +3,13 @@ title: Reading content
 description: The Delivery and Preview APIs - filtering, sorting, locales, embedded references, delta sync, search, GraphQL and live updates.
 ---
 
-Sites and apps read content through two read-only APIs with the same shape:
+Sites and apps read content through two read-only APIs:
 
 - **Delivery**, `/delivery/{space}/{env}`, serves **published** content. Use a Delivery (CDA) key.
+  This page is about Delivery.
 - **Preview**, `/preview/{space}/{env}`, serves the **latest saved** version, drafts included. Use
-  a Preview (CPA) key, and only from a staging site or server.
+  a Preview (CPA) key, and only from a staging site or server. See [Preview](#preview) for how it
+  differs.
 
 Delivery is served from the workspace's `cdn.` address (`$CDN` below), a cached read path of its
 own; Preview is served from its `api.` address (`$API`), uncached. `{env}` may be an environment
@@ -22,7 +24,8 @@ curl -s "$CDN/delivery/$SPACE/main/entries/$ENTRY_ID?locale=en-US&include=1" \
 ```
 
 A delivered entry is `{ id, contentType, fields, publishedAt }`. Lists return
-`{ items, total }`.
+`{ items, total }`, where `total` is the number of items on this page, not the number of matches;
+page with `limit` and `skip` until a page comes back short.
 
 `include` embeds links wherever an entry holds them: in `Link` and list fields, inside components,
 and inside rich text, where an embed or entry link's `data.target` becomes the linked entry or
@@ -32,7 +35,7 @@ asset. A link to something unpublished, or beyond the depth, stays `{ "id": …,
 | -------------- | ------------------------------- | ---------------------------------------------------------- |
 | `content_type` | `content_type=article`          | Only entries of this type                                  |
 | `locale`       | `locale=de-DE`                  | Resolve every field to this locale, following fallbacks     |
-| `include`      | `include=2`                     | Embed linked entries and assets, up to this depth (0 to 5)  |
+| `include`      | `include=2`                     | Embed linked entries and assets, up to this depth (0 to 10) |
 | `limit`, `skip`| `limit=20&skip=40`              | Paging; `limit` is at most 100                             |
 | `order`        | `order=-sys.publishedAt,fields.title` | Sort; `-` for descending                             |
 | `select`       | `select=fields.title,fields.slug` | Return only these fields                                 |
@@ -74,6 +77,13 @@ them as given; an edited one is a `404`): `url` is the original,
 Unpublishing an asset stops its URLs. Preview's `…/assets` routes return drafts in the same shape
 with short-lived signed URLs. See [Delivering assets](/guides/delivering-assets/).
 
+`…/assets/{id}/transform?w=800&fm=webp` (also `h`, `fit` and `q`) redirects to a resized or
+re-encoded image.
+
+A key bound to a [role](/guides/api-keys/#roles) with content grants gets an empty asset list
+(`{ "items": [], "total": 0 }`) and a **403** on a single asset: assets aren't covered by
+per-content-type grants, so they stay closed to it.
+
 ## Search
 
 ```sh
@@ -97,26 +107,56 @@ curl -s "$CDN/delivery/$SPACE/main/graphql" \
   -d '{ "query": "{ articleCollection(limit: 5, locale: \"en-US\") { id title } }" }'
 ```
 
+Each content type gets `article(id:, locale:)` and `articleCollection(...)` root queries, plus
+`asset(id:)` and `search(query:, topK:)`. A collection takes:
+
+| Argument | Meaning |
+| --- | --- |
+| `locale` | Resolve every field to this locale |
+| `limit`, `skip` | Paging; `limit` is at most 100 |
+| `where` | A JSON object of the [filters](#filters) above, keyed the same way: `{"fields.category[in]": ["news", "events"], "fields.price[gte]": 10}` |
+| `order` | A list of sort keys, `["-sys.publishedAt", "fields.title"]` |
+| `search` | Full-text match over text fields, like `query=` |
+
 Each field resolves to one value, in the `locale` you pass or, without one, the space's default
-locale. The schema changes when a content type is published. A GraphiQL page at
+locale. Linked entries resolve one level deep. The schema changes when a content type is published. A GraphiQL page at
 `/graphiql/{space}/{env}` lets you explore it (queries still need a key).
 
 ## Live updates
 
-`GET /delivery/{space}/{env}/live` is a Server-Sent Events stream of publish and unpublish events
-for the environment. A key sees only what it could read: with a role that limits content types or
+`GET /delivery/{space}/{env}/live` is a Server-Sent Events stream of published-content events for
+the environment: `entry.published`, `entry.unpublished`, `entries.published_bulk`,
+`asset.published`, `asset.unpublished`, `content_type.published`, `release.published` and
+`environment_alias.changed`. Add `?types=entry.published,entry.unpublished` to receive only those
+types. A key sees only what it could read: with a role that limits content types or
 hides fields, it gets events for its types only, with those fields left out. The server ends each
 stream after ten minutes, so reconnect when it closes (as `EventSource` does on its own); that is
-also when a revoked key or a changed role takes effect. Use it to refresh a page or invalidate a cache the moment content changes,
-instead of polling. For server-to-server notifications, use [webhooks](/guides/webhooks/).
+also when a revoked key or a changed role takes effect. Use it to refresh a page or invalidate a cache the moment content changes, instead of polling. For server-to-server notifications, use [webhooks](/guides/webhooks/).
 
 ## Caching
 
 Delivery answers from a cache in front of the database. Your key is checked on every request,
-before the cache, so revoking a key or narrowing its role takes effect at once; keys that may see
-the same content share cached responses. A cached response is fresh for a minute and is purged
+before the cache, so revoking a key or narrowing its role takes effect at once where it was made
+and within about a minute in other locations; keys that may see the same content share cached
+responses. A cached response is fresh for a minute and is purged
 when anything in its environment is published, unpublished or re-pointed by an alias change;
 responses carry an `ETag`, so `If-None-Match` gets a `304` when nothing changed.
 
 You don't need a long cache of your own in front of it. For static sites, rebuild on the
 `entry.published` [webhook](/guides/webhooks/) or use `since=` to fetch only what changed.
+
+## Preview
+
+Preview is served from the `api.` address (uncached) and has three routes: `GET
+/preview/{space}/{env}/entries`, `…/entries/{id}` and `…/suggest`. It takes `locale`, `content_type`
+and the same filters as Delivery, but ignores `include`, so linked entries stay as references, and
+it has no assets, search, GraphQL or live routes. `…/entries/{id}` also accepts
+`?preview_token=`, a shareable link token minted from the entry, in place of a bearer key. Roles and
+denied fields apply as they do on Delivery.
+
+## Next steps
+
+- [SDKs](/guides/sdks/) wrap these routes for JavaScript, React, Vue, edge and mobile.
+- [Webhooks](/guides/webhooks/) push changes to your server.
+- [API keys and access](/guides/api-keys/) covers keys, roles and scopes.
+- [REST API](/reference/rest-api/) lists every route.

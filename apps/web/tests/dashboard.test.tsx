@@ -35,6 +35,25 @@ const unpublished = [
   entry('0190a000-0000-7000-8000-000000000002', 'Edited launch post', 'changed'),
 ];
 
+// Not in the capped list the dashboard loads: only the by-id lookup can name these. Their ids
+// share a UUIDv7 prefix with every other, so a prefix would read the same for all of them.
+const offList = [
+  entry('0190a000-0000-7000-8000-0000000000a1', 'Spring menu', 'draft'),
+  { ...entry('0190a000-0000-7000-8000-0000000000a2', '', 'draft'), fields: {} },
+];
+const DELETED = '0190a000-0000-7000-8000-0000000000ff';
+
+const reviewRun = (id: string, entryId: string, status = 'needs_review'): AgentRun => ({
+  id,
+  workflow: 'enrich',
+  entryId,
+  status,
+  decisions: [],
+  inputTokens: 10,
+  outputTokens: 5,
+  createdAt: iso(-2 * DAY),
+});
+
 const runs: AgentRun[] = [
   {
     id: 'run-1',
@@ -57,10 +76,21 @@ const runs: AgentRun[] = [
     // Outside the 14-day window: must not count toward any usage card.
     createdAt: iso(-30 * DAY),
   },
+  reviewRun('run-3', offList[0]!.id),
+  reviewRun('run-4', offList[1]!.id, 'held'),
+  reviewRun('run-5', DELETED),
 ];
 
+type ListArgs = [string | undefined, { filters?: { field: string; value?: unknown }[] }?];
+
 const client = {
-  listEntries: vi.fn(async () => unpublished),
+  // The by-id lookup filters on `sys.id[in]`; any other list is the unpublished work.
+  listEntries: vi.fn(async (...[, query]: ListArgs) => {
+    const byId = query?.filters?.find((f) => f.field === 'sys.id');
+    if (!byId) return unpublished;
+    const ids = byId.value as string[];
+    return [...unpublished, ...offList].filter((e) => ids.includes(e.id));
+  }),
   listScheduledActions: vi.fn(async () => [
     {
       id: 'sa-2',
@@ -112,6 +142,8 @@ vi.mock('~/cms/lib/queries', () => ({
 
 const { Dashboard } = await import('~/cms/components/Dashboard');
 const { ToastProvider } = await import('~/cms/lib/toast');
+const { fetchEntriesById } = await import('~/cms/components/dashboard/entry-titles');
+const { statusTone } = await import('~/cms/lib/format');
 
 afterEach(cleanup);
 
@@ -155,12 +187,45 @@ describe('Dashboard', () => {
     expect(within(upcoming).queryByText('Shipped bundle')).toBeNull();
   });
 
-  it('shows agent runs that stopped for review', async () => {
+  it('names and links every agent run awaiting review by its entry, never by an id', async () => {
     renderDashboard();
     const review = card('Agent proposals awaiting review');
-    expect(within(review).getByText('needs review')).toBeTruthy();
-    expect(within(review).getByText('moderate · flagged tone')).toBeTruthy();
+    // Resolved by one batched lookup, including entries the capped list doesn't hold.
+    const spring = await within(review).findByRole('link', { name: 'Spring menu' });
+    expect(spring.getAttribute('href')).toBe(`/content/article/${offList[0]!.id}`);
     expect(within(review).getByRole('link', { name: 'Edited launch post' })).toBeTruthy();
+    // Untitled: named as such (its type beside it) and still linked.
+    expect(within(review).getByRole('link', { name: 'Untitled entry' }).getAttribute('href')).toBe(
+      `/content/article/${offList[1]!.id}`,
+    );
+    // Gone: said in words, not shown as an id.
+    expect(within(review).getByText('Entry no longer available')).toBeTruthy();
+    expect(within(review).queryByText(/0190a000/)).toBeNull();
+    expect(within(review).getByText(/^Article · Moderate · flagged tone · /)).toBeTruthy();
+    // The review states read in sentence case, in the model's-work token.
+    expect(within(review).getAllByText('Needs review').length).toBe(3);
+    expect(within(review).getByText('Held')).toBeTruthy();
+    expect(statusTone('needs_review')).toBe('ai');
+    expect(statusTone('held')).toBe('ai');
+    expect(within(review).getByRole('link', { name: 'Review in Approvals' })).toBeTruthy();
+    const lookups = client.listEntries.mock.calls.filter(([, q]) =>
+      q?.filters?.some((f) => f.field === 'sys.id'),
+    );
+    expect(lookups.length).toBeGreaterThan(0);
+  });
+
+  it('batches the by-id lookup under the preview page cap', async () => {
+    const listEntries = vi.fn(async () => []);
+    const ids = Array.from({ length: 230 }, (_, i) => `id-${i}`);
+    await fetchEntriesById({ listEntries }, [...ids, ...ids.slice(0, 10), '']);
+    expect(listEntries).toHaveBeenCalledTimes(3);
+    const sizes = listEntries.mock.calls.map(
+      (c) => ((c as unknown as ListArgs)[1]?.filters?.[0]?.value as string[] | undefined)?.length,
+    );
+    expect(sizes).toEqual([100, 100, 30]);
+    listEntries.mockClear();
+    expect(await fetchEntriesById({ listEntries }, [])).toEqual([]);
+    expect(listEntries).not.toHaveBeenCalled();
   });
 
   it('keeps AI usage in one labelled 14-day window and drops the credentials card', async () => {

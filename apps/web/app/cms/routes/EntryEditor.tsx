@@ -9,12 +9,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
-import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@contentworker/ui/dropdown-menu';
 import { cn } from '@contentworker/ui/lib/utils';
@@ -39,9 +39,11 @@ import { VersionHistory } from '~/cms/components/VersionHistory';
 import { CanvasDialog } from '../components/CanvasDialog';
 import type { Pickers, PickOption } from '../components/EntryForm';
 import { EntryForm } from '../components/EntryForm';
+import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
+import { dateTime, toMs } from '../lib/format';
 import type { EntryAggregate, EntryView, FieldChange, ModelTier } from '../lib/management';
 import {
   useAllEntriesQuery,
@@ -259,17 +261,19 @@ export function EntryEditor() {
     setFormKey((k) => k + 1);
   };
 
-  // ⌘S / Ctrl+S saves the draft (validation still runs via the form submit).
+  // ⌘S / Ctrl+S saves the draft (validation still runs via the form submit), as Save draft
+  // would: a saved entry with no edits has nothing to save.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
+        if (isEdit && !dirtyRef.current) return;
         submitForm();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [isEdit]);
 
   // Builds the publish confirmation, diffing published → current when we know
   // the published version (fresh save/publish response). No `run` here: callers
@@ -359,16 +363,33 @@ export function EntryEditor() {
       about,
     );
     if (r === null) return computePublishConfirm(agg);
-    if ('output' in r) published(r.output);
+    if ('output' in r) published(r.output, neverPublished(agg));
   };
 
-  const published = (agg: EntryAggregate) => {
+  // `firstPublish`: nothing was live before, so unpublishing is the exact inverse and the toast
+  // offers it. Replacing a live version can't be undone that way (the old one is gone).
+  const published = (agg: EntryAggregate, firstPublish: boolean) => {
     if (!entryId) return;
     setLastAggregate(agg);
     void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
     void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
-    toast.success(`Published v${agg.publishedVersion ?? agg.currentVersion}`);
+    toast.success(
+      `Published v${agg.publishedVersion ?? agg.currentVersion}`,
+      firstPublish
+        ? { action: { label: 'Undo', onAction: () => void undoPublish(entryId) } }
+        : undefined,
+    );
   };
+
+  // Undo in a toast goes straight to the API, as on the entries list.
+  const undoPublish = (id: string) =>
+    run(async () => {
+      const agg = await client.unpublishEntry(id);
+      if (id === entryId) setLastAggregate(agg);
+      void queryClient.invalidateQueries({ queryKey: keys.entry(id) });
+      void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
+      toast.success(`“${about}” is back to draft`);
+    });
 
   const requestPublish = () => {
     if (!entryId) return;
@@ -387,9 +408,15 @@ export function EntryEditor() {
   const confirmPublish = () =>
     run(async () => {
       if (!entryId) return;
-      published(await client.publishEntry(entryId));
+      const first = neverPublished(lastAggregate?.id === entryId ? lastAggregate : null);
+      published(await client.publishEntry(entryId), first);
       setPublishConfirm(null);
     });
+
+  // Whether nothing is live yet: the freshest aggregate says so exactly; else the loaded status.
+  function neverPublished(agg: EntryAggregate | null) {
+    return agg ? agg.publishedVersion == null : meta?.status === 'draft';
+  }
 
   // The side pane (after felix's): beside the form where the row has room for both, under it
   // where it hasn't. It shows the draft as a document (live, saved or not) or the entry's panels.
@@ -405,6 +432,45 @@ export function EntryEditor() {
     [defaultLocale, locales, fallbacks],
   );
 
+  // The side pane sticks under the action bar, which wraps to two lines on a narrow page: its
+  // height is measured rather than assumed.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const hasType = selectedType !== undefined;
+  useEffect(() => {
+    const root = rootRef.current;
+    const bar = barRef.current;
+    if (!hasType || !root || !bar || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() =>
+      root.style.setProperty('--editor-bar-h', `${bar.offsetHeight}px`),
+    );
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [hasType]);
+
+  // On a phone the actions are their own bar above the tab bar. Its drawn height (0 while the
+  // on-screen keyboard hides it, or once it's back in the flow from md) is --page-bar-h on the
+  // root: the toasts lift by it and the editor pads its foot by it, so neither assumes a height.
+  const pageBarRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const pageBar = pageBarRef.current;
+    const html = document.documentElement;
+    if (!pageBar || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const pinned = getComputedStyle(pageBar).position === 'fixed';
+      html.style.setProperty('--page-bar-h', `${pinned ? pageBar.offsetHeight : 0}px`);
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(pageBar);
+    window.addEventListener('resize', measure);
+    measure();
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      html.style.removeProperty('--page-bar-h');
+    };
+  }, [hasType]);
+
   const copyPreviewLink = () => {
     if (!entryId) return;
     void run(async () => {
@@ -412,94 +478,143 @@ export function EntryEditor() {
         previewBaseUrl: window.location.origin,
       });
       await navigator.clipboard.writeText(link.url);
-      toast.success(`Preview link copied (expires ${new Date(link.expiresAt).toLocaleString()})`);
+      const expires = toMs(link.expiresAt);
+      toast.success(
+        expires === null
+          ? 'Preview link copied'
+          : `Preview link copied (expires ${dateTime(expires)})`,
+      );
     });
   };
 
+  // The title's line is held while the entry loads, so the title arriving never moves the actions.
+  const titleSkeleton = (
+    <>
+      <span className="sr-only">{pageTitle}</span>
+      <Skeleton aria-hidden="true" className="h-[1lh] w-2/3 max-w-sm" />
+    </>
+  );
+  const h1 = 'break-words font-semibold text-[1.75rem] leading-tight tracking-title';
+
   if (!selectedType) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-64" />
+      <div className="space-y-4 pt-3 sm:pt-5">
+        <h1 className={h1}>{titleSkeleton}</h1>
         <Skeleton className="h-40 max-w-2xl" />
       </div>
     );
   }
 
+  const loadingEntry = isEdit && !meta;
+  const live = meta?.status === 'published' && !dirty;
+  // A new entry can always be created; a saved one has nothing to save until it is edited.
+  const canSave = !busy && initial !== null && (dirty || !isEdit);
+  const secondary = [
+    { label: 'Draft from prose', icon: PenLine, onSelect: () => setCanvasOpen(true) },
+    { label: 'Generate with AI', icon: FileText, onSelect: () => setGenOpen(true) },
+  ];
+
   return (
-    <div className="space-y-4">
-      {/* The record-page header: the title wraps (never truncates); the facts and the
-          actions wrap below it as groups. Below md the secondary actions fold into a ⋯ menu. */}
-      <div className="flex flex-wrap items-end justify-between gap-3 pt-3 sm:pt-5">
-        <div className="min-w-0">
-          <h1 className="break-words font-semibold text-[1.75rem] leading-tight tracking-title">
-            {pageTitle}
-          </h1>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-muted-foreground text-sm">
-            {meta && <StatusBadge status={meta.status} />}
-            {meta && <span className="font-mono text-xs">v{meta.version}</span>}
-            {dirty ? (
-              <ToneBadge tone="wait" label="Unsaved changes" />
-            ) : (
-              isEdit && meta && <span>All changes saved</span>
-            )}
-          </div>
+    // A named container: the secondary actions show by the room the editor has (beside the
+    // assistant's column it is narrower than the screen), and fold into ⋯ below it. On a phone the
+    // foot leaves room for the action bar above the tab bar.
+    <div ref={rootRef} className="@container/editor space-y-4 max-md:pb-(--page-bar-h)">
+      {/* The record-page header: the title wraps (never truncates). Under it, the action bar: the
+          facts (status, version, save state) and the one primary verb for the entry's state. From
+          md it stays under the shell's header on a long entry; below md its buttons sit above the
+          tab bar, in thumb reach. */}
+      <h1 className={cn(h1, 'pt-3 sm:pt-5')}>{loadingEntry ? titleSkeleton : pageTitle}</h1>
+      <div
+        ref={barRef}
+        className="-mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background py-2 md:sticky md:top-(--shell-h) md:z-20"
+      >
+        <div className="flex min-h-8 flex-wrap items-center gap-2 text-muted-foreground text-sm">
+          {loadingEntry ? (
+            <Skeleton className="h-5 w-32" />
+          ) : (
+            <>
+              {meta && <StatusBadge status={meta.status} />}
+              {meta && <span className="font-mono text-xs">v{meta.version}</span>}
+              {dirty ? (
+                <ToneBadge tone="wait" label="Unsaved changes" />
+              ) : (
+                isEdit && meta && <span>All changes saved</span>
+              )}
+            </>
+          )}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="hidden md:contents">
-            <Button type="button" variant="outline" size="sm" onClick={() => setCanvasOpen(true)}>
-              <PenLine className="size-4" /> Draft from prose
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => setGenOpen(true)}>
-              <FileText className="size-4" /> Generate with AI
-            </Button>
+        <div
+          ref={pageBarRef}
+          data-page-bar
+          className="flex items-center gap-2 max-md:fixed max-md:inset-x-0 max-md:bottom-(--tabbar-h) max-md:z-20 max-md:border-t max-md:bg-background max-md:px-safe-4 max-md:py-2 max-md:in-data-keyboard:hidden"
+        >
+          <span className="hidden @4xl/editor:contents">
+            {secondary.map(({ label, icon: Icon, onSelect }) => (
+              <Button key={label} type="button" variant="ghost" size="sm" onClick={onSelect}>
+                <Icon className="size-4" aria-hidden="true" /> {label}
+              </Button>
+            ))}
             {isEdit && entryId && (
               <Button type="button" variant="ghost" size="sm" onClick={copyPreviewLink}>
-                <Link2 className="size-4" /> Copy preview link
+                <Link2 className="size-4" aria-hidden="true" /> Copy preview link
               </Button>
             )}
+            <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
           </span>
-          <Button type="submit" size="sm" form={FORM_ID} disabled={busy || initial === null}>
-            Save draft
-          </Button>
-          {isEdit && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              // A published entry with UNSAVED edits can still publish: the
-              // click saves first (status becomes "changed"), then confirms.
-              disabled={busy || (meta?.status === 'published' && !dirty)}
-              onClick={requestPublish}
-            >
-              {meta?.status === 'published' && !dirty ? 'Published' : 'Publish'}
-            </Button>
-          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="md:hidden"
+                className="@4xl/editor:hidden"
                 aria-label="More entry actions"
               >
                 <Ellipsis aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onSelect={() => setCanvasOpen(true)}>
-                <PenLine /> Draft from prose
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setGenOpen(true)}>
-                <FileText /> Generate with AI
-              </DropdownMenuItem>
-              {isEdit && entryId && (
-                <DropdownMenuItem onSelect={() => void copyPreviewLink()}>
-                  <Link2 /> Copy preview link
+              {secondary.map(({ label, icon: Icon, onSelect }) => (
+                <DropdownMenuItem key={label} onSelect={onSelect}>
+                  <Icon /> {label}
                 </DropdownMenuItem>
+              ))}
+              {isEdit && entryId && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => void copyPreviewLink()}>
+                    <Link2 /> Copy preview link
+                  </DropdownMenuItem>
+                </>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* One primary verb by state: a new entry's is Save draft; a saved one's is Publish
+              while anything isn't live (Save draft steps back, enabled once there are edits); live
+              and clean, both rest and Publish reads "Published". */}
+          <Button
+            type="submit"
+            size="sm"
+            variant={isEdit ? 'outline' : 'default'}
+            form={FORM_ID}
+            disabled={!canSave}
+            className="max-md:h-9 max-md:flex-1"
+          >
+            Save draft
+          </Button>
+          {isEdit && (
+            <Button
+              type="button"
+              size="sm"
+              // A published entry with UNSAVED edits can still publish: the
+              // click saves first (status becomes "changed"), then confirms.
+              disabled={busy || loadingEntry || live}
+              onClick={requestPublish}
+              className="max-md:h-9 max-md:flex-1"
+            >
+              {live ? 'Published' : 'Publish'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -591,7 +706,7 @@ export function EntryEditor() {
             'w-full min-w-0 shrink-0 space-y-4',
             // Beside the form it holds still while the form scrolls, and scrolls on its own.
             pane.split &&
-              'sticky top-[calc(var(--shell-h)+1rem)] max-h-[calc(100dvh-var(--shell-h)-2rem)] overflow-y-auto pl-5',
+              'sticky top-[calc(var(--shell-h)+var(--editor-bar-h,0px)+1rem)] max-h-[calc(100dvh-var(--shell-h)-var(--editor-bar-h,0px)-2rem)] overflow-y-auto pl-5',
           )}
         >
           {/* A new entry has no panels yet: its pane is the preview alone. */}
@@ -704,49 +819,21 @@ export function EntryEditor() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog
+      <PublishConfirm
         open={publishConfirm !== null}
         onOpenChange={(open) => {
           if (!open) setPublishConfirm(null);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Publish “{pageTitle}”?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {publishConfirm?.changes
-                ? publishConfirm.changes.length === 0
-                  ? 'The draft matches the published version; publishing re-confirms it.'
-                  : `${publishConfirm.changes.length} ${
-                      publishConfirm.changes.length === 1 ? 'field goes' : 'fields go'
-                    } live:`
-                : meta?.status === 'draft'
-                  ? 'This entry hasn’t been published before, so the whole entry goes live.'
-                  : 'Everything changed since the last publish goes live.'}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {publishConfirm?.changes && publishConfirm.changes.length > 0 && (
-            <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
-              {publishConfirm.changes.map((c) => (
-                <li key={c.field} className="flex items-center gap-2">
-                  <span className="font-medium">
-                    {selectedType.fields.find((f) => f.apiId === c.field)?.name ?? c.field}
-                  </span>
-                  <Badge variant="outline" className="capitalize">
-                    {c.kind}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep as draft</AlertDialogCancel>
-            <AlertDialogAction disabled={busy} onClick={() => void confirmPublish()}>
-              Publish entry
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={about}
+        contentType={selectedType}
+        status={lastAggregate && lastAggregate.id === entryId ? lastAggregate.status : meta?.status}
+        changes={publishConfirm?.changes}
+        compare={
+          entryQuery.data ? { client, entry: entryQuery.data, locale: conn.locale } : undefined
+        }
+        busy={busy}
+        onConfirm={() => void confirmPublish()}
+      />
 
       <GenerateEntryDialog
         open={genOpen}

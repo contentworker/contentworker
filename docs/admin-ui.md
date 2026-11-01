@@ -21,17 +21,19 @@ another origin are refused (403).
 
 ## Sign-in and people
 
-| Route                                    | What it does                                                                                 |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `/setup`                                 | Redeems the one-time `SETUP_TOKEN` to create an Admin account (`app/lib/setup.server.ts`)    |
-| `/login`                                 | Email and password (PBKDF2, peppered with `PASSWORD_PEPPER`)                                 |
-| `/login/passkey`, `/account/passkeys`    | Passkeys (WebAuthn)                                                                          |
-| `/login/two-factor`                      | TOTP second factor, or a recovery code                                                       |
-| `/login/sso`, `/login/sso/callback`, `/login/sso/link` | OpenID Connect single sign-on with the deployment's provider (`app/lib/sso.server.ts`) |
-| `/scim/v2/*`                             | SCIM provisioning from the identity provider, with its own bearer token                      |
-| `/team`                                  | People, deployment roles (Member, Admin), SSO and SCIM settings (admins)                     |
-| `/audit`                                 | The deployment's admin audit log (`admin_audit`, hash-chained)                               |
-| `/account`                               | Your password, passkeys, two-factor                                                          |
+| Route                                                  | What it does                                                                                                                                                                     |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                                                    | Signed in, redirects to `/dashboard`; signed out, `requireUser` sends the browser to sign-in                                                                                     |
+| `/setup`                                               | Redeems the one-time `SETUP_TOKEN` to create an Admin account (`app/lib/setup.server.ts`)                                                                                        |
+| `/login`                                               | Email and password (PBKDF2, peppered with `PASSWORD_PEPPER`)                                                                                                                     |
+| `/login/passkey`, `/account/passkeys`                  | Passkeys (WebAuthn)                                                                                                                                                              |
+| `/login/two-factor`                                    | TOTP second factor, or a recovery code                                                                                                                                           |
+| `/logout`                                              | Signing out is a POST (the origin check covers it); a GET asks first                                                                                                             |
+| `/login/sso`, `/login/sso/callback`, `/login/sso/link` | OpenID Connect single sign-on with the deployment's provider (`app/lib/sso.server.ts`)                                                                                           |
+| `/scim/v2/*`                                           | SCIM provisioning from the identity provider, with its own bearer token. Answered by `workers/app.ts` (`scimFetch`) before React Router, so it is not a route in `app/routes.ts` |
+| `/team`                                                | People, deployment roles (Member, Admin), SSO and SCIM settings (admins)                                                                                                         |
+| `/audit`                                               | The deployment's admin audit log (`admin_audit`, hash-chained)                                                                                                                   |
+| `/account`                                             | Your password, passkeys, two-factor                                                                                                                                              |
 
 Sessions, users, passkeys and challenges live in D1 (`0002_auth.sql`). Authenticator secrets are
 sealed with `DATA_KEY`. Sign-in paths that need no session, and SCIM, are rate-limited per address
@@ -60,18 +62,27 @@ scope, search and New entry. Below `md` a bottom tab bar holds the day's work an
 `app/cms/components/layout/nav.ts` is the one source of the pages and their `g`-letter shortcuts
 (`?` lists them).
 
-Settings sections: **Access** (Space access, API keys, Roles, Connected apps), **Automation**
+`/team`, `/audit` and `/account` are not in `NAV` (`nav.ts`). The shell adds them: admins get a
+Deployment group (People and sign-in, Audit log) after Settings, and Account sits in the account
+menu at the sidebar's foot (the More sheet on a phone). Settings sections are addressed as
+`/settings/:section` (default `team`, Space access): **Access** (Space access, API keys, Roles, Connected apps), **Automation**
 (Webhooks, Functions, AI actions), **Extensions** (App extensions, Plugins), **Workspace**
 (Environments, Audit log).
 
 ## Features
 
 - **Overview** (`/dashboard`): what needs attention, live activity, AI usage and throughput.
-- **Content** (`/content`): content types and their schema editor; entries per type with filters;
+- **Content** (`/content`): content types and their schema editor; entries per type with filters
+  (`/content/:typeId`; `/content/:typeId/new` starts a new entry);
   the entry editor (TipTap rich text, components and repeaters, references, localized fields),
   version history, diff and restore, comments and tasks, metadata, AI assist; import
   (`/content/:typeId/import`) from CSV, JSON or a WordPress export, with a dry-run report before
   anything is written and a resumable job past 10,000 records.
+- **Coworker**: the assistant panel in the shell, open from any page; its conversation and any
+  confirm card waiting for an answer survive navigation. A page's edit can go through it (the
+  exact MCP tool call, no model); when the assistant is off or its socket is down, the page makes
+  the edit through the API itself. See
+  [AI, agents & search](./ai-agents-and-search.md#coworker-the-admins-assistant).
 - **Approvals** (`/approvals`): the editorial workflow task inbox.
 - **Releases** (`/releases`): bundle entries and assets, publish as a unit, schedule.
 - **Workflows** (`/workflows`, `/workflows/:id`): editorial workflow definitions and the graph
@@ -96,6 +107,38 @@ Settings sections: **Access** (Space access, API keys, Roles, Connected apps), *
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch
   compare/merge, the space audit log.
 
+### Inline-edit links
+
+The `@contentworker/sdk-web` inline editor links to
+`/content/:type/:entryId?field=&locale=&space=&env=` ([SDKs](./sdks.md#inline-editing)). The entry
+editor selects the locale tab and focuses that field. If the link names a different space or
+environment than the current connection, the editor says so rather than loading: the id either
+404s or, if it exists in both, opens the wrong entry looking entirely correct.
+
+### Installing plugins
+
+Settings → Plugins is a consent surface before it is a list ([Plugins](./plugins.md) covers the
+model). Installing takes either two files (the manifest and the bundle) or an `https` package URL,
+which is inspected first so the screen shows the verified manifest and checksum. Only once the
+manifest has been read does the screen ask for anything: what the code will run on, what it is
+asking to be able to do (in plain language, one checkbox each, pre-approved as requested so that
+the only direction consent can move without a second look is _narrower_), and which of those this
+deployment cannot enforce. The plugin lands disabled regardless; the button says so.
+
+The list then shows, per plugin, what it runs on, what it can do (its effective grant), and what it
+asked for and did not get. That last column exists because a plugin behaving oddly is usually a
+plugin doing without something, and nothing else on the screen would say so.
+
+**Access** opens the same checkboxes in place, as a confirmation under the row. If ticking a box
+would grow the grant, the button reads _Approve and disable_ before it is pressed. A plugin flagged
+`needsReapproval` shows _Needs review_ instead of a running state. Its only way back on is
+**Review access**.
+
+**Upgrade** takes a new manifest and bundle for the same plugin id. Capabilities the installed
+version never asked for are marked _New_ and pre-checked. Earlier decisions carry over: a granted
+capability stays checked and a declined one stays unchecked. If the upgrade would grow the grant,
+the button reads _Upgrade disabled_.
+
 ## Testing
 
 ```bash
@@ -105,7 +148,10 @@ pnpm --filter @contentworker/web e2e    # Playwright in WebKit and Chromium, wit
 
 The e2e suite (`apps/web/e2e`) runs the dev server offline on port 5390 against a fresh local D1
 (`.wrangler/e2e`): shell layout on iPhone, iPad and desktop (both orientations), the CMS flows,
-space access, an axe WCAG 2.1 A/AA sweep (`accessibility.spec.ts`), and sign-in last (the `auth`
+space access (`space-access.spec.ts`), OAuth for MCP clients end to end (`oauth.spec.ts`), the
+workflow list and editor (`workflows.spec.ts`), an axe WCAG 2.1 A/AA sweep
+(`accessibility.spec.ts`; `contrast-settle.spec.ts` checks a re-enabled button is at full opacity
+at once, so the sweep cannot catch it mid-fade), and sign-in last (the `auth`
 project signs up the first admin, which turns sign-in on). CI runs it in the `devices` job.
 
 Assert accessible names only in Playwright: jsdom names some controls a real browser does not.

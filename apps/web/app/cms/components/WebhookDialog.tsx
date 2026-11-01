@@ -13,7 +13,7 @@ import { Label } from '@contentworker/ui/label';
 import { useState } from 'react';
 import { WEBHOOK_TOPICS, type WebhookSummary, type WebhookTopic } from '../lib/management';
 
-/** Edit a webhook's endpoint, topics, secret, and active state. */
+/** Edit a webhook's endpoint, topics, secret, active state and which environments it hears. */
 export function WebhookDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -23,11 +23,14 @@ export function WebhookDialog(props: {
     topics: WebhookTopic[];
     active: boolean;
     secret?: string;
+    allEnvironments?: boolean;
   }) => Promise<void>;
 }) {
   const [url, setUrl] = useState(props.webhook.url);
   const [topics, setTopics] = useState<WebhookTopic[]>([...props.webhook.topics]);
   const [active, setActive] = useState(props.webhook.active);
+  const wasEverywhere = props.webhook.environmentId === null;
+  const [everywhere, setEverywhere] = useState(wasEverywhere);
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -50,6 +53,8 @@ export function WebhookDialog(props: {
         topics,
         active,
         ...(secret.trim() ? { secret: secret.trim() } : {}),
+        // Only a change of scope is sent: unticking scopes it to the environment being viewed.
+        ...(everywhere !== wasEverywhere ? { allEnvironments: everywhere } : {}),
       });
       props.onOpenChange(false);
     } catch (err) {
@@ -106,6 +111,14 @@ export function WebhookDialog(props: {
               onCheckedChange={(c) => setActive(c === true)}
             />
             <span>Active (deliver events)</span>
+          </Label>
+          <Label className="flex items-center gap-2 font-normal">
+            <Checkbox
+              aria-label="Send events from every environment"
+              checked={everywhere}
+              onCheckedChange={(c) => setEverywhere(c === true)}
+            />
+            <span>Send events from every environment</span>
           </Label>
 
           {error && <p className="text-sm text-destructive">{error}</p>}

@@ -2,11 +2,14 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
 import {
   asFreshDeployment,
+  createChanged,
   openCms,
+  PROPOSAL_TARGET,
   seedAsset,
   seedAssetFolder,
   seedCms,
   useCmsScope,
+  withoutAssistant,
 } from './cms';
 import { settle } from './settle';
 
@@ -79,6 +82,11 @@ for (const [name, path] of ROUTES) {
         .or(page.getByRole('main').getByRole('button'))
         .first(),
     ).toBeVisible();
+    // The inbox holds the seeded agent proposal: scan it once its diff has loaded and the decision
+    // buttons are enabled, not while they are still dimmed and fading in.
+    if (path === '/approvals') {
+      await expect(page.getByRole('button', { name: 'Approve and apply' }).first()).toBeEnabled();
+    }
     await scan(page, testInfo);
   });
 }
@@ -206,5 +214,36 @@ test('the import wizard has no accessibility violations', async ({ page }, testI
     buffer: Buffer.from('headline,body\nHello,World\n'),
   });
   await expect(page.getByText(/2 columns/)).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('an agent proposal in the approvals diff table has no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  // The global setup (warm.ts) seeded one pending proposal for this entry: the plain /approvals
+  // sweep sees it too, so the diff table is always scanned.
+  const title = PROPOSAL_TARGET;
+  await openCms(page, '/approvals');
+  const proposal = page.getByRole('listitem', { name: `Proposal for ${title}` });
+  await expect(proposal.getByRole('table', { name: `Changes proposed to ${title}` })).toBeVisible();
+  await expect(proposal.getByText('Agent proposed body')).toBeVisible();
+  await expect(proposal.getByRole('button', { name: 'Approve and apply' })).toBeEnabled();
+  await scan(page, testInfo);
+});
+
+test('the publish confirmation has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  await withoutAssistant(page);
+  const title = `Confirm ${Date.now()}`;
+  await createChanged(request, title);
+  await openCms(page, '/content/article');
+  await page
+    .getByRole('row', { name: new RegExp(title) })
+    .getByRole('button', { name: `Publish “${title}”` })
+    .click();
+  const dialog = page.getByRole('alertdialog');
+  await expect(dialog.getByText('1 field changed')).toBeVisible();
   await scan(page, testInfo);
 });

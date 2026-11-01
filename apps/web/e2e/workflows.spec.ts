@@ -50,7 +50,7 @@ test('creates a workflow from a template, edits it and publishes it', async ({ p
   await expect(page.getByText(/Published v1 · up to date/)).toBeVisible();
 
   await page.getByRole('link', { name: 'Workflows', exact: true }).first().click();
-  const item = page.getByRole('listitem').filter({ hasText: `${name} (edited)` });
+  const item = page.getByRole('row').filter({ hasText: `${name} (edited)` });
   await expect(item.getByText('Published v1')).toBeVisible();
 });
 
