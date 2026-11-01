@@ -237,7 +237,7 @@ describe('rich-text mapper round-trips', () => {
     expect(toDocument(toTiptap(value))).toEqual(value);
   });
 
-  it('carries hyperlinks without a uri through raw (domain does not require one)', () => {
+  it('carries hyperlinks without a uri through raw (never dropped, though validation refuses them)', () => {
     const value = doc([
       paragraph(
         text('before '),

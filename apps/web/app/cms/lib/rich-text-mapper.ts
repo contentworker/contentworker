@@ -206,8 +206,9 @@ function inlineToPm(node: RichTextNode): PmNode[] {
       return [{ type: 'hardBreak' }];
     case 'hyperlink': {
       const uri = node.data?.uri;
-      // A hyperlink without a uri is domain-valid but can't form a link-mark
-      // run (marks need a truthy value to group); carry it raw instead.
+      // A hyperlink without a uri can't form a link-mark run (marks need a
+      // truthy value to group); carry it raw so the editor never drops it.
+      // Saving it is refused by validation until the link is fixed.
       if (typeof uri !== 'string' || !uri) {
         return [{ type: 'unknownInline', attrs: { raw: node } }];
       }
