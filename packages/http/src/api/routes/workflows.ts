@@ -1,5 +1,6 @@
 import {
   cancelWorkflowRun,
+  countPendingApprovals,
   createWorkflowDraft,
   decideWorkflowTask,
   defineWorkflow,
@@ -34,6 +35,7 @@ import {
 } from '@contentworker/domain';
 import type { WorkflowEngine } from '@contentworker/ports';
 import { type Context, Hono } from 'hono';
+import { z } from 'zod';
 import { type AuthDeps, type AuthVars, requireScope } from '../auth';
 import { doc } from '../docs/openapi';
 import {
@@ -50,6 +52,13 @@ import {
 } from '../validation';
 
 const BASE = '/spaces/:space/environments/:env';
+
+/** `GET …/approvals/count`'s answer, for the OpenAPI document. */
+const PENDING_APPROVALS_COUNT = z.object({
+  workflowTasks: z.number().int().describe('Workflow steps paused for a person'),
+  agentReviews: z.number().int().describe('Agent proposals awaiting review'),
+  total: z.number().int(),
+});
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({
   spaceId: c.req.param('space') as string,
@@ -374,6 +383,18 @@ export function workflowRoutes(deps: AuthDeps): Hono<AuthVars> {
           c.get('principal'),
         ),
       }),
+  );
+  app.get(
+    `${BASE}/approvals/count`,
+    doc('Workflows', 'Count what waits in Approvals', {
+      ok: PENDING_APPROVALS_COUNT,
+      description:
+        'Pending workflow tasks and pending agent proposals, counted without listing them (no ' +
+        'cap). Items on content types the caller can’t read are left out, as the lists leave ' +
+        'them out.',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await countPendingApprovals(ctx, scopeOf(c), c.get('principal'))),
   );
   app.get(
     `${BASE}/workflow-tasks/:id`,

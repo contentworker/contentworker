@@ -149,6 +149,17 @@ describe('@contentworker/sdk-management client', () => {
     );
   });
 
+  it('counts what waits in Approvals', async () => {
+    const fetchImpl = fakeFetch((url) => {
+      calls.push({ url });
+      return { workflowTasks: 2, agentReviews: 1, total: 3 };
+    });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+
+    expect(await client.approvals.count()).toEqual({ workflowTasks: 2, agentReviews: 1, total: 3 });
+    expect(calls[0]?.url).toBe('https://cms.test/spaces/s1/environments/main/approvals/count');
+  });
+
   it('passes query params for version diffs and drops undefined ones', async () => {
     const fetchImpl = fakeFetch((url) => {
       calls.push({ url });

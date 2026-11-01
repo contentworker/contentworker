@@ -373,6 +373,15 @@ export interface WorkflowTaskQuery {
   readonly limit?: number;
 }
 
+/**
+ * How many pending items one content type holds, for the Approvals count. `contentTypeApiId` is
+ * null for an agent review whose entry no longer exists.
+ */
+export interface PendingCount {
+  readonly contentTypeApiId: string | null;
+  readonly count: number;
+}
+
 /** Approvals, event waits and agent reviews a run holds open. */
 export interface WorkflowTaskRepo {
   /** False (and nothing written) when the run already has a task for `eventType`. */
@@ -381,6 +390,8 @@ export interface WorkflowTaskRepo {
   getByEvent(scope: Scope, runId: string, eventType: string): Promise<WorkflowTask | null>;
   /** Pending tasks soonest deadline first; anything else newest first. */
   list(scope: Scope, query?: WorkflowTaskQuery): Promise<WorkflowTask[]>;
+  /** Pending tasks, counted per content type (uncapped, unlike `list`). */
+  countPending(scope: Scope): Promise<PendingCount[]>;
   /** Settles a pending task. False when it was no longer pending (someone settled it first). */
   settle(
     scope: Scope,
@@ -883,6 +894,11 @@ export interface AgentReviewRepo {
     query?: { status?: AgentReview['status']; entryId?: string; limit?: number },
   ): Promise<AgentReview[]>;
   /**
+   * Pending reviews, counted per content type of the entry each proposes changes to (uncapped,
+   * unlike `list`); a review whose entry is gone counts under null.
+   */
+  countPending(scope: Scope): Promise<PendingCount[]>;
+  /**
    * CAS pending → decided. Returns false when the review was already decided
    * (a concurrent reviewer won) — the caller must not act on a lost race.
    */
@@ -1146,6 +1162,12 @@ export interface EntryRepo {
    * the whole id set (bulk publish). Missing ids are absent; order unspecified.
    */
   getMany(scope: Scope, ids: readonly string[]): Promise<EntryWithFields[]>;
+  /**
+   * Each existing entry's content type, by id: one narrow read with no fields or bodies (it
+   * never touches R2), for callers that only need to know what type an entry is. Missing ids
+   * are absent.
+   */
+  contentTypesOf(scope: Scope, ids: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /** Lists draft/current entries (the Preview read path), newest-affected first. */
   list(scope: Scope, query: EntryQuery): Promise<EntryWithFields[]>;
   /**

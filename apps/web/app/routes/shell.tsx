@@ -60,6 +60,7 @@ import { OPEN_SHORTCUTS_EVENT } from '~/cms/components/layout/KeyboardShortcuts'
 import { NewEntry } from '~/cms/components/layout/NewEntry';
 import {
   DEFAULT_SETTINGS_SECTION,
+  isAt as isUnder,
   type NAV as PAGES,
   SETTINGS_GROUPS,
   visibleNav,
@@ -134,9 +135,11 @@ function navGroups(pages: typeof PAGES): { title?: string; items: NavItem[] }[] 
     to: settingsPath(g.sections[0]?.id ?? DEFAULT_SETTINGS_SECTION),
     label: g.label,
     icon: g.icon,
+    // Its own sections only: the shell's `isAt` reads any /settings path as Settings as a whole,
+    // which would mark every group current on every section.
     match: (path: string) =>
       (i === 0 && path === '/settings') ||
-      g.sections.some((s) => isAt(path, { to: settingsPath(s.id) })),
+      g.sections.some((s) => isUnder(path, { to: settingsPath(s.id) })),
   }));
   return [
     { items: of(undefined) },
@@ -647,9 +650,11 @@ function AppSidebar({
                           tooltip={waitingName(item.label, count) ?? item.label}
                           className={ROW}
                         >
-                          <NavLink
+                          {/* A Link, not a NavLink: the shell decides what is current (`here`), and
+                              a NavLink would drop that aria-current wherever its own `to` doesn't
+                              match (a Settings group on any section but its first). */}
+                          <Link
                             to={item.to}
-                            end={item.end}
                             aria-current={here ? 'page' : undefined}
                             aria-label={waitingName(item.label, count)}
                           >
@@ -660,7 +665,7 @@ function AppSidebar({
                               />
                             ) : null}
                             <span>{item.label}</span>
-                          </NavLink>
+                          </Link>
                         </SidebarMenuButton>
                         {count ? (
                           <>

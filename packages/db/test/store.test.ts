@@ -650,6 +650,73 @@ describe('D1 store (contract)', () => {
     expect(decided?.appliedAt).toBe('2026-01-02T00:00:02.000Z');
   });
 
+  it('counts pending tasks and reviews per content type, uncapped, in D1', async () => {
+    // Deltas: other tests in this file leave pending work in the same scope.
+    const byType = (rows: readonly { contentTypeApiId: string | null; count: number }[]) =>
+      Object.fromEntries(rows.map((r) => [String(r.contentTypeApiId), r.count]));
+    const tasksBefore = byType(await store.workflowTasks.countPending(scope));
+    const reviewsBefore = byType(await store.agentReviews.countPending(scope));
+
+    const task = (n: number, status: 'pending' | 'approved') => ({
+      id: `count-task-${n}`,
+      runId: `count-run-${n}`,
+      workflowId: 'wf',
+      nodeId: 'approve',
+      eventType: `count-approve-${n}`,
+      kind: 'approval' as const,
+      entryId: 'any',
+      contentTypeApiId: 'count-type',
+      title: 'Sign off',
+      instructions: '',
+      assignee: null,
+      event: null,
+      requiredScope: null,
+      separateDuties: false,
+      reviewId: null,
+      deadline: '2026-12-01T00:00:00.000Z',
+      status,
+      requestedAt: '2026-11-01T00:00:00.000Z',
+      decidedAt: null,
+      decidedBy: null,
+      note: null,
+      startedBy: 'someone',
+    });
+    // Past the list's cap of 200, so the count is shown not to be a capped list.
+    for (let n = 0; n < 205; n++) await store.workflowTasks.create(scope, task(n, 'pending'));
+    await store.workflowTasks.create(scope, task(999, 'approved'));
+
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'Counted' } },
+    });
+    const proposal = { proposed: { title: { 'en-US': 'Better' } }, notes: [] };
+    await createAgentReview(ctx, scope, { workflow: 'enrich', entryId: entry.id, ...proposal });
+    await createAgentReview(ctx, scope, { workflow: 'enrich', entryId: 'count-gone', ...proposal });
+
+    const tasks = byType(await store.workflowTasks.countPending(scope));
+    expect(tasks['count-type'] ?? 0).toBe((tasksBefore['count-type'] ?? 0) + 205);
+    const reviews = byType(await store.agentReviews.countPending(scope));
+    expect(reviews.article ?? 0).toBe((reviewsBefore.article ?? 0) + 1);
+    // A review whose entry is gone counts under null (the left join finds no entry).
+    expect(reviews.null ?? 0).toBe((reviewsBefore.null ?? 0) + 1);
+    // Another environment of the same space sees none of it.
+    const elsewhere = { spaceId, environmentId: 'count-elsewhere' };
+    expect(await store.workflowTasks.countPending(elsewhere)).toEqual([]);
+    expect(await store.agentReviews.countPending(elsewhere)).toEqual([]);
+
+    // The narrow type lookup listAgentReviews filters with: past one chunk of bound parameters,
+    // duplicates folded, missing ids absent, scoped.
+    const ids = [
+      entry.id,
+      entry.id,
+      'count-gone',
+      ...Array.from({ length: 150 }, (_, n) => `x${n}`),
+    ];
+    const types = await store.entries.contentTypesOf(scope, ids);
+    expect([...types]).toEqual([[entry.id, 'article']]);
+    expect((await store.entries.contentTypesOf(elsewhere, [entry.id])).size).toBe(0);
+  });
+
   it('round-trips the functions repo', async () => {
     const fn = await createFunction(ctx, scope, {
       name: 'reindex',

@@ -15,8 +15,7 @@ const client = {
   getSpaceConfig: vi.fn(async () => ({ locales: ['en-US'], defaultLocale: 'en-US' })),
   listEnvironments: vi.fn(async () => []),
   listSpaces: vi.fn(async () => [{ id: 'acme', name: 'Acme' }]),
-  listWorkflowTasks: vi.fn(async () => [{ id: 't1' }, { id: 't2' }]),
-  listAgentReviews: vi.fn(async () => [{ id: 'r1' }]),
+  countPendingApprovals: vi.fn(async () => ({ workflowTasks: 2, agentReviews: 1, total: 3 })),
 };
 const conn = { space: 'acme', environment: 'staging', locale: 'en-US' };
 
@@ -127,16 +126,16 @@ describe('approvals count', () => {
     return <p data-testid="count">{n === undefined ? 'unknown' : n}</p>;
   }
 
-  it('adds the pending workflow steps and agent proposals', async () => {
+  it('shows the server’s total, not a count of capped lists', async () => {
     renderAt('/', <Count enabled />);
     await waitFor(() => expect(screen.getByTestId('count').textContent).toBe('3'));
   });
 
   it('asks nothing until the scope is known', () => {
-    client.listWorkflowTasks.mockClear();
+    client.countPendingApprovals.mockClear();
     renderAt('/', <Count enabled={false} />);
     expect(screen.getByTestId('count').textContent).toBe('unknown');
-    expect(client.listWorkflowTasks).not.toHaveBeenCalled();
+    expect(client.countPendingApprovals).not.toHaveBeenCalled();
   });
 
   it('writes 99+ past two digits', () => {

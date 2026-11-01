@@ -1,3 +1,4 @@
+import { type AppContext, createAgentReview } from '@contentworker/application';
 import { WorkflowBuilder } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { RecordingEmailSender } from '@contentworker/test-kit';
@@ -46,6 +47,7 @@ describe('workflow routes', () => {
   let harness: ReturnType<typeof makeTestWorkflowEngine>;
   let entryId: string;
   let pageEntryId: string;
+  let ctx: AppContext;
 
   const call = async (method: string, path: string, body?: unknown, headers = admin) => {
     const res = await app.request(`${M}${path}`, {
@@ -70,6 +72,7 @@ describe('workflow routes', () => {
 
   beforeEach(async () => {
     const wired = wire(config);
+    ctx = wired.ctx;
     harness = makeTestWorkflowEngine(wired.ctx, { email: new RecordingEmailSender() });
     app = createApp(
       wired.ctx,
@@ -346,6 +349,55 @@ describe('workflow routes', () => {
     expect(
       (await call('POST', `/entries/${pageEntryId}/workflow-runs`, { workflowId }, editor)).status,
     ).toBe(403);
+  });
+
+  it('counts what waits in Approvals, as each caller’s lists show it', async () => {
+    const workflowId = await publishedWorkflow();
+    for (const id of [entryId, pageEntryId]) {
+      const run = (await call('POST', `/entries/${id}/workflow-runs`, { workflowId })).body
+        .id as string;
+      await harness.drive(run);
+    }
+    const scope = { spaceId: 's1', environmentId: 'main' };
+    for (const id of [entryId, pageEntryId])
+      await createAgentReview(ctx, scope, {
+        workflow: 'enrich',
+        entryId: id,
+        proposed: { title: { 'en-US': 'Better' } },
+        notes: [],
+      });
+
+    const all = await call('GET', '/approvals/count', undefined, cpa);
+    expect(all).toEqual({ status: 200, body: { workflowTasks: 2, agentReviews: 2, total: 4 } });
+
+    const role = await app.request('/spaces/s1/roles', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        name: 'Post reader',
+        scopes: ['preview:read'],
+        contentGrants: [{ contentTypeApiId: 'post', actions: ['read'] }],
+      }),
+    });
+    const roleId = ((await role.json()) as Json).id;
+    const key = await app.request('/spaces/s1/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cma', roleId }),
+    });
+    const token = ((await key.json()) as Json).token;
+    const reader = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    expect((await call('GET', '/approvals/count', undefined, reader)).body).toEqual({
+      workflowTasks: 1,
+      agentReviews: 1,
+      total: 2,
+    });
+    // The list it would open agrees: only the post's proposal.
+    const reviews = await call('GET', '/agent-reviews?status=pending', undefined, reader);
+    expect((reviews.body.items as Json[]).map((r) => r.entryId)).toEqual([entryId]);
+
+    const cda = { Authorization: 'Bearer cda', 'Content-Type': 'application/json' };
+    expect((await call('GET', '/approvals/count', undefined, cda)).status).toBe(403);
   });
 
   it('refuses a direct publish a gated workflow covers with 409 publish_gated, even for the admin token; its run publishes', async () => {

@@ -77,6 +77,19 @@ test('wider screens get the sidebar, grouped, with the deployment pages for admi
     'aria-current',
     'page',
   );
+  // Each Settings section marks its own group and no other, drawn and announced alike, on a
+  // group's later sections as well as its first.
+  for (const [path, group] of [
+    ['/settings/team', 'Access'],
+    ['/settings/api-keys', 'Access'],
+    ['/settings/webhooks', 'Automation'],
+    ['/settings/plugins', 'Extensions'],
+    ['/settings/audit-log', 'Workspace'],
+  ] as const) {
+    await open(page, path);
+    await expect(side.locator('[aria-current="page"]'), path).toHaveText(group);
+    await expect(side.locator('[data-active]'), path).toHaveText(group);
+  }
 });
 
 test('the sidebar collapses to a rail, and stays as it was left', async ({ page }, info) => {

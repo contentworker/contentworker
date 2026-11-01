@@ -448,7 +448,10 @@ the entry it targets. Reviewers list and decide them on both surfaces:
 
 - HTTP: `GET …/agent-reviews?status=pending`, `POST …/agent-reviews/:id/approve`,
   `POST …/agent-reviews/:id/reject` (`preview:read` to list, `content:write` to decide).
-- MCP: `agent_review_list`, `agent_review_approve`, `agent_review_reject`.
+  A key whose role grants only some content types sees only the reviews of entries it may read,
+  with denied fields masked out of `proposed`. `GET …/approvals/count` counts what waits
+  (pending reviews and workflow tasks) without listing it.
+- MCP: `agent_review_list`, `agent_review_approve`, `agent_review_reject`, `approvals_count`.
 
 Approval applies the proposed values as a new draft version through the normal update
 use-case (validated, versioned) — **exactly once**, guarded by a CAS apply marker.

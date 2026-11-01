@@ -52,7 +52,8 @@ whoever started them, so a run can do only what that caller could.
   which others start alongside it.
 - Submit: `workflow_run_start` with the entry and workflow. One active run per workflow and entry.
 - Follow it: `workflow_run_get` (`include: ["timeline"]` for what happened) or `workflow_run_list`.
-- Approvals waiting: `workflow_task_list` with `status: "pending"`, then `workflow_task_decide`.
+- Approvals waiting: `approvals_count` says how many; `workflow_task_list` with `status: "pending"`
+  lists them, then `workflow_task_decide`.
   With separation of duties the run's starter can't decide, and an API token can't decide at all;
   hand those to a person rather than retrying.
 - A run waiting for a business event: `workflow_event_deliver` with the event name.
