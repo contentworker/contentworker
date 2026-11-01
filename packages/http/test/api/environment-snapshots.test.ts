@@ -68,25 +68,36 @@ type Started = {
 };
 
 describe('environment clone and import over HTTP', () => {
-  it('clones as a job: 202 with the report and the job to follow', async () => {
+  it('clones entirely as jobs: 202 with the job to follow, nothing written in the request', async () => {
     const res = await app.request(`${MAIN}/clone`, {
       method: 'POST',
       headers: admin,
       body: JSON.stringify({ targetEnvironmentId: 'copy' }),
     });
     expect(res.status).toBe(202);
-    const body = (await res.json()) as Started;
-    expect(body.report.entries).toBeGreaterThanOrEqual(2);
+    const body = (await res.json()) as {
+      job: { id: string; action: string; status: string };
+      createJobId: string;
+      publishJobId: string;
+    };
     expect(body.job).toMatchObject({ action: 'import', status: 'running' });
-    const job = await app.request(`${COPY}/bulk/jobs/${body.job?.id}`, { headers: admin });
+    expect(body.createJobId).toBeTruthy();
+    const job = await app.request(`${COPY}/bulk/jobs/${body.job.id}`, { headers: admin });
     expect(job.status).toBe(200);
-    // The content model is copied in the request; the entries follow in the job.
+    // The export, the checks and the model all happen in the job.
     const types = (await (
       await app.request(`${COPY}/content-types`, { headers: admin })
-    ).json()) as {
-      items: { apiId: string }[];
-    };
-    expect(types.items.map((t) => t.apiId)).toContain('note');
+    ).json()) as { items: unknown[] };
+    expect(types.items).toEqual([]);
+  });
+
+  it('refuses at once a clone into an environment that already has content types', async () => {
+    const res = await app.request(`${MAIN}/clone`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ targetEnvironmentId: 'main' }),
+    });
+    expect(res.status).toBe(422);
   });
 
   it('imports a snapshot as a job, and still answers a dry run synchronously', async () => {
