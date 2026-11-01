@@ -10,8 +10,9 @@
 @source "../node_modules/streamdown/dist/*.js";
 
 /* Ledger, on shadcn's base-luma preset: neutral greys with no tint, Inter, generous radii and pill
-   controls (buttons and one-line fields are fully round). One blue accent for links and work in
-   progress, and signal colours reserved for order and step status. Green means "succeeded" and
+   controls (buttons and one-line fields are fully round). One accent, the brand purple of the mark
+   (where you are, what you chose, focus, and a model's work); one blue for links and work in
+   progress; and signal colours reserved for order and step status. Green means "succeeded" and
    nothing else; it is never the brand. Light is the default; dark is chosen with the theme switch. */
 
 /* Dark tokens follow `data-theme` on <html> (set before paint by root.tsx), not the OS directly. */
@@ -54,6 +55,8 @@
   --color-rule: var(--rule);
   --color-ink: var(--ink);
   --color-link: var(--link);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
 
   /* shadcn's sidebar (packages/ui/src/sidebar.tsx). */
   --color-sidebar: var(--sidebar);
@@ -122,11 +125,16 @@
   --rule: oklch(0.922 0 0);
   --border: var(--rule);
   --input: oklch(0.922 0 0);
-  /* Links and live work. Focus is the preset's grey ring on fields and buttons, set dark enough that
-     its edge holds 3:1 on white and on muted fills (the preset's 0.708 doesn't); ink for the
-     page-wide outline. */
+  /* The brand: Ledger's one accent, the purple of contentworker's mark. It marks where you are and
+     what you chose (the mark, the current page, focus, checked controls, the selection and the
+     caret), and a model's work wears it too (`ai`). Never a status other than `ai`, never a large
+     fill: a primary button stays ink. Set so its edge holds 3:1 and its words 4.5:1 on paper and on
+     muted fills, in both themes. */
+  --brand: oklch(0.49 0.16 310);
+  --brand-foreground: oklch(0.985 0 0);
+  /* Links and live work. Focus is the brand, on fields and buttons and as the page-wide outline. */
   --link: oklch(0.47 0.13 256);
-  --ring: oklch(0.556 0 0);
+  --ring: var(--brand);
 
   --ok: oklch(0.455 0.105 152);
   --run: var(--link);
@@ -134,7 +142,7 @@
   --bad: oklch(0.5 0.185 28);
   --undo: oklch(0.485 0.135 42);
   --idle: oklch(0.48 0 0);
-  --ai: oklch(0.49 0.16 310);
+  --ai: var(--brand);
 
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
@@ -189,14 +197,14 @@
   --rule: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --link: oklch(0.76 0.11 250);
-  --ring: oklch(0.556 0 0);
 
   --ok: oklch(0.77 0.1 152);
   --wait: oklch(0.8 0.12 75);
   --bad: oklch(0.71 0.16 28);
   --undo: oklch(0.76 0.13 50);
   --idle: oklch(0.67 0 0);
-  --ai: oklch(0.75 0.09 305);
+  --brand: oklch(0.75 0.09 305);
+  --brand-foreground: oklch(0.145 0 0);
 
   /* The preset keeps its light ramp in dark, where the dark end disappears on a dark card; here
      it runs lightest at chart-5 so the series a chart draws strongest stay strongest. */
@@ -232,11 +240,11 @@
     @apply antialiased;
   }
   ::selection {
-    background-color: color-mix(in oklch, var(--link) 24%, transparent);
+    background-color: color-mix(in oklch, var(--brand) 22%, transparent);
   }
   /* One focus ring for every control, including raw buttons that skip the UI primitives. */
   :where(a, button, summary, [role="tab"], [tabindex]):focus-visible {
-    outline: 2px solid var(--ink);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
     border-radius: var(--radius-sm);
   }
@@ -245,7 +253,7 @@
   }
   input,
   textarea {
-    caret-color: var(--link);
+    caret-color: var(--brand);
   }
   h1,
   h2,
@@ -817,6 +825,90 @@
   }
 }
 
+/* The AI loader (`@contentworker/ui/compose-loader`): a model at work, drawn as content being
+   composed. Each mark of the icon writes itself in reading order (a stroke draws along its path, a
+   block is revealed from its leading edge, its shape exact at every frame), holds, then clears in
+   the same order while the whole icon fades, so nothing is left hanging half-erased. One cycle
+   (keep `--compose-cycle` in step with `CYCLE` in compose-loader.tsx); every mark runs the same
+   keyframes, offset by its own `animation-delay`. Where motion is reduced it is drawn whole and
+   holds still: the status line beside it says the model is working. */
+:root {
+  --compose-cycle: 2800ms;
+  --ease-write: cubic-bezier(0.65, 0, 0.35, 1);
+}
+.cw-compose > g {
+  animation: cw-compose-out var(--compose-cycle) linear infinite both;
+}
+.cw-compose [data-mark] {
+  animation: var(--compose-cycle) linear infinite both;
+}
+.cw-compose [data-mark="stroke"] {
+  stroke-dasharray: 1 2;
+  animation-name: cw-compose-stroke;
+}
+.cw-compose [data-mark="block"] {
+  animation-name: cw-compose-block;
+}
+@keyframes cw-compose-stroke {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 0;
+    animation-timing-function: var(--ease-write);
+  }
+  1%,
+  81% {
+    opacity: 1;
+  }
+  22%,
+  60% {
+    stroke-dashoffset: 0;
+    animation-timing-function: var(--ease-write);
+  }
+  82%,
+  100% {
+    stroke-dashoffset: -1;
+    opacity: 0;
+  }
+}
+@keyframes cw-compose-block {
+  0% {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0;
+    animation-timing-function: var(--ease-write);
+  }
+  1%,
+  81% {
+    opacity: 1;
+  }
+  22%,
+  60% {
+    clip-path: inset(0 0 0 0);
+    animation-timing-function: var(--ease-write);
+  }
+  82%,
+  100% {
+    clip-path: inset(0 0 0 100%);
+    opacity: 0;
+  }
+}
+@keyframes cw-compose-out {
+  0%,
+  72% {
+    opacity: 1;
+    animation-timing-function: ease-in-out;
+  }
+  88%,
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cw-compose > g,
+  .cw-compose [data-mark] {
+    animation: none;
+  }
+}
+
 /* Rows already on screen while a new query runs (a filter, a folder): they stay where they are
    and stay readable; only if the answer is slow (400ms, as the page's PendingBar) do they settle
    back a step and a link-blue rule sweeps the region's top edge. */
@@ -917,7 +1009,7 @@
     @apply border-foreground border-t;
   }
   .rich-text-editor ::selection {
-    background-color: color-mix(in oklch, var(--link) 24%, transparent);
+    background-color: color-mix(in oklch, var(--brand) 22%, transparent);
   }
   /* Entry and asset reference links read apart from URL links. */
   .rich-text-editor span[data-mark="entryLink"],

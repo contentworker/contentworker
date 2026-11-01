@@ -10,9 +10,9 @@
   --sl-color-gray-5: oklch(0.922 0 0);
   --sl-color-gray-6: oklch(0.97 0 0);
   --sl-color-gray-7: oklch(0.97 0 0);
-  --sl-color-accent: oklch(0.47 0.13 256);
-  --sl-color-accent-high: color-mix(in oklch, oklch(0.47 0.13 256) 72%, oklch(0.145 0 0));
-  --sl-color-accent-low: color-mix(in oklch, oklch(0.47 0.13 256) 14%, oklch(1 0 0));
+  --sl-color-accent: oklch(0.49 0.16 310);
+  --sl-color-accent-high: color-mix(in oklch, oklch(0.49 0.16 310) 72%, oklch(0.145 0 0));
+  --sl-color-accent-low: color-mix(in oklch, oklch(0.49 0.16 310) 14%, oklch(1 0 0));
   --sl-color-green: oklch(0.455 0.105 152);
   --sl-color-green-high: oklch(0.455 0.105 152);
   --sl-color-green-low: color-mix(in oklch, oklch(0.455 0.105 152) 11%, oklch(1 0 0));
@@ -57,6 +57,7 @@
   --ol-rule: oklch(0.922 0 0);
   --ol-input: oklch(0.922 0 0);
   --ol-link: oklch(0.47 0.13 256);
+  --ol-brand: oklch(0.49 0.16 310);
   --ol-paper: oklch(1 0 0);
   --ol-ink: oklch(0.145 0 0);
   --ol-sheet: oklch(0.985 0 0);
@@ -78,9 +79,9 @@
   --sl-color-gray-5: oklch(1 0 0 / 10%);
   --sl-color-gray-6: oklch(0.269 0 0);
   --sl-color-gray-7: oklch(0.269 0 0);
-  --sl-color-accent: oklch(0.76 0.11 250);
-  --sl-color-accent-high: color-mix(in oklch, oklch(0.76 0.11 250) 72%, oklch(0.985 0 0));
-  --sl-color-accent-low: color-mix(in oklch, oklch(0.76 0.11 250) 14%, oklch(0.145 0 0));
+  --sl-color-accent: oklch(0.75 0.09 305);
+  --sl-color-accent-high: color-mix(in oklch, oklch(0.75 0.09 305) 72%, oklch(0.985 0 0));
+  --sl-color-accent-low: color-mix(in oklch, oklch(0.75 0.09 305) 14%, oklch(0.145 0 0));
   --sl-color-green: oklch(0.77 0.1 152);
   --sl-color-green-high: oklch(0.77 0.1 152);
   --sl-color-green-low: color-mix(in oklch, oklch(0.77 0.1 152) 11%, oklch(0.145 0 0));
@@ -125,6 +126,7 @@
   --ol-rule: oklch(1 0 0 / 10%);
   --ol-input: oklch(1 0 0 / 15%);
   --ol-link: oklch(0.76 0.11 250);
+  --ol-brand: oklch(0.75 0.09 305);
   --ol-paper: oklch(0.145 0 0);
   --ol-ink: oklch(0.985 0 0);
   --ol-sheet: oklch(0.17 0 0);

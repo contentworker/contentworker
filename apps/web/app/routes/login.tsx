@@ -82,7 +82,7 @@ export default function Login() {
             You’ve signed out.
           </p>
         ) : null}
-        <Mark className="size-7" />
+        <Mark className="size-7 text-brand" />
         <h1 className="mt-4 font-semibold tracking-title text-2xl">contentworker</h1>
         <p className="mt-1 text-muted-foreground text-sm">
           {connecting
