@@ -505,6 +505,8 @@ export interface WebhookSummary {
   readonly url: string;
   readonly topics: readonly WebhookTopic[];
   readonly active: boolean;
+  /** The one environment whose events it receives; `null` for every environment in the space. */
+  readonly environmentId: string | null;
 }
 
 /** A recorded webhook delivery attempt. */

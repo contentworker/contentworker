@@ -291,6 +291,7 @@ const webhookSummary = (h: Webhook) => ({
   url: h.url,
   topics: h.topics,
   active: h.active,
+  environmentId: h.environmentId,
 });
 
 const BASE = '/spaces/:space/environments/:env';
@@ -1745,38 +1746,67 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
 
   // --- webhooks (admin) ---------------------------------------------------
+  // A hook is scoped to one environment (`environmentId`) or space-wide (`null`). Under an
+  // environment, every route sees that environment's hooks and the space-wide ones; a hook scoped to
+  // another environment is a 404 here.
   app.get(
     `${BASE}/webhooks`,
-    doc('Webhooks', 'List webhooks'),
+    doc('Webhooks', 'List webhooks', {
+      description:
+        "The environment's own webhooks and every space-wide one (`environmentId: null`). " +
+        'Signing secrets and headers are never returned.',
+      ok: docs.webhookList,
+    }),
     requireScope(SCOPES.spaceAdmin),
     async (c) => {
       const hooks = await listWebhooks(ctx, scopeOf(c));
       return c.json({ items: hooks.map(webhookSummary) });
     },
   );
-  app.post(`${BASE}/webhooks`, requireScope(SCOPES.spaceAdmin), async (c) =>
-    c.json(
-      webhookSummary(
-        await createWebhook(
-          ctx,
-          scopeOf(c),
-          (await parseBody(c, webhookBody)) as Parameters<typeof createWebhook>[2],
+  app.post(
+    `${BASE}/webhooks`,
+    doc('Webhooks', 'Create a webhook', {
+      description:
+        "Receives only the path environment's events, or every environment's with " +
+        '`allEnvironments: true`. The URL must be http(s) and not a loopback, link-local or private address.',
+      body: webhookBody,
+      ok: docs.webhook,
+      status: 201,
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) =>
+      c.json(
+        webhookSummary(
+          await createWebhook(
+            ctx,
+            scopeOf(c),
+            (await parseBody(c, webhookBody)) as Parameters<typeof createWebhook>[2],
+          ),
         ),
+        201,
       ),
-      201,
-    ),
   );
-  app.put(`${BASE}/webhooks/:id`, requireScope(SCOPES.spaceAdmin), async (c) =>
-    c.json(
-      webhookSummary(
-        await updateWebhook(
-          ctx,
-          scopeOf(c),
-          c.req.param('id'),
-          (await parseBody(c, updateWebhookBody)) as Parameters<typeof updateWebhook>[3],
+  app.put(
+    `${BASE}/webhooks/:id`,
+    doc('Webhooks', 'Update a webhook', {
+      description:
+        'Omitted fields are kept. `allEnvironments: true` makes the hook space-wide, `false` ' +
+        "scopes it to the path's environment; omitted, its scope is unchanged.",
+      body: updateWebhookBody,
+      ok: docs.webhook,
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) =>
+      c.json(
+        webhookSummary(
+          await updateWebhook(
+            ctx,
+            scopeOf(c),
+            c.req.param('id'),
+            (await parseBody(c, updateWebhookBody)) as Parameters<typeof updateWebhook>[3],
+          ),
         ),
       ),
-    ),
   );
   app.delete(`${BASE}/webhooks/:id`, requireScope(SCOPES.spaceAdmin), async (c) => {
     await deleteWebhook(ctx, scopeOf(c), c.req.param('id'));

@@ -97,7 +97,8 @@ event; up to six lanes run at once, since each event spends most of its time wai
 the search shard and the live hub (a batch of 25 went from ~2.2 s to ~0.35 s locally). It calls
 `dispatchEvent(ctx, deps, event)` (`events/dispatch.ts`), which fans out to:
 
-1. **Webhook fan-out** — active subscribers for `event.type`, HMAC-signed POST, delivery log.
+1. **Webhook fan-out** — active subscribers for `event.type` in the event's environment (its own
+   hooks and the space-wide ones), HMAC-signed POST, delivery log.
 2. **User-defined functions** — `FunctionInvoker` POSTs to registered HTTP functions for matching
    event types (`packages/application/src/functions.ts`).
 3. **Cache invalidation** (on `entry.published` / `entry.unpublished`) — tag set includes reverse
@@ -168,7 +169,8 @@ older than `EVENT_RETENTION_HOURS` (default 168).
 
 ## Webhooks
 
-Register a webhook through the Management API (`POST …/webhooks`, scope `space:admin`):
+Register a webhook through the Management API (`POST …/webhooks`, scope `space:admin`) or the
+`webhook_create` MCP tool:
 
 ```jsonc
 {
@@ -176,14 +178,33 @@ Register a webhook through the Management API (`POST …/webhooks`, scope `space
   "topics": ["entry.published", "entry.unpublished"], // or ["*"] for all
   "secret": "whsec_...", // HMAC signing secret
   "active": true,
-  "headers": { "X-Env": "prod" } // optional static headers
+  "headers": { "X-Env": "prod" }, // optional static headers
+  "allEnvironments": false // optional; true = every environment's events
 }
 ```
 
-A webhook belongs to a **space**, not an environment: the `webhooks` table has no environment
-column and dispatch reads `listByTopic`, which filters on `spaceId` alone. Every environment's
-events therefore reach every active hook subscribed to the topic, so a receiver that cares filters
-on `scope.environmentId` in the payload.
+A webhook belongs to a space and is scoped to **one environment or all of them**:
+`Webhook.environmentId` (`webhooks.environment_id`, migration `0005_webhook_environments`) is the
+environment's id, or `null` for space-wide. A hook created under `/environments/{env}` is scoped to
+that (resolved) environment; `allEnvironments: true` makes it space-wide. On update,
+`allEnvironments: true` sets `null`, `false` sets the route's environment, and omitting it keeps the
+current scope (`updateWebhook`, `packages/application/src/webhooks.ts`). Rows from before 0005 are
+`NULL`, so they stay space-wide.
+
+Every `WebhookRepo` read, update and delete sees the hooks the scope's environment covers:
+`space_id = ? AND (environment_id IS NULL OR environment_id = ?)` (`webhookVisibleIn` in
+`packages/db/src/store.ts`; `coversEnvironment` in the domain for the in-memory store). So the list
+under an environment returns its hooks plus the space-wide ones, another environment's hook is a
+404, and `listByTopic(event.scope, type)` delivers an event only to its environment's hooks and the
+space-wide ones. A space-wide hook still gets every environment's events, so its receiver filters
+on `scope.environmentId` if it cares; `environment_alias.changed` (whose scope names the alias)
+reaches only space-wide hooks. A retry re-reads the hook through `listByTopic`, so one rescoped
+away from the event's environment gets no further attempts. The environment purge deletes the hooks
+scoped to the environment (`webhooks` is in `ENVIRONMENT_SCOPED_TABLES`; a `NULL` row never matches);
+their delivery rows are left to the retention sweep.
+
+Webhooks are not part of environment snapshots (export, import, clone): their secrets are
+credentials.
 
 `url` is screened on create and update with `assertSafeExternalUrl`
 (`packages/application/src/url-safety.ts`, shared with function endpoints): `http`/`https` only,
@@ -191,18 +212,17 @@ and no loopback, link-local or private literal address, `localhost`, `*.local` o
 (a `ValidationError`, 422). It is DNS-free, so the sender complements it by not following
 redirects.
 
-Routes (all scope `space:admin`, `packages/http/src/api/routes/management.ts`):
+Routes and MCP tools (all scope `space:admin`; `packages/http/src/api/routes/management.ts` and
+`packages/http/src/mcp/server.ts`, on the same use-cases and body schemas). Both return the hook
+without its `secret` or `headers`; the secret is the caller's own and is never echoed:
 
-| Operation  | Route                                                   |
-| ---------- | ------------------------------------------------------- |
-| List       | `GET …/webhooks`                                        |
-| Create     | `POST …/webhooks` (201)                                 |
-| Update     | `PUT …/webhooks/:id` (partial; omitted fields are kept) |
-| Delete     | `DELETE …/webhooks/:id` (204)                           |
-| Deliveries | `GET …/webhooks/:id/deliveries?limit=`                  |
-
-There are **no MCP webhook tools**: webhooks are HTTP-only, which breaks the "both surfaces" rule
-in `AGENTS.md`.
+| Operation  | Route                                                   | MCP tool             |
+| ---------- | ------------------------------------------------------- | -------------------- |
+| List       | `GET …/webhooks`                                        | `webhooks_list`      |
+| Create     | `POST …/webhooks` (201)                                 | `webhook_create`     |
+| Update     | `PUT …/webhooks/:id` (partial; omitted fields are kept) | `webhook_update`     |
+| Delete     | `DELETE …/webhooks/:id` (204)                           | `webhook_delete`     |
+| Deliveries | `GET …/webhooks/:id/deliveries?limit=`                  | `webhook_deliveries` |
 
 The `WebhookSender` (`createWebhookSender` in `@contentworker/adapters/http-effects`) signs
 `<timestamp>.<body>` with HMAC-SHA256 using the webhook's `secret` and POSTs the JSON payload with

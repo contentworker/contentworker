@@ -28,6 +28,7 @@ import {
   createTag,
   createTask,
   createVideoAsset,
+  createWebhook,
   createWorkflowDraft,
   decideAgentReview,
   decideWorkflowTask,
@@ -37,6 +38,7 @@ import {
   deleteEnvironmentAlias,
   deleteFunction,
   deleteRole,
+  deleteWebhook,
   deliverWorkflowEvent,
   diffVersions,
   draftEntry,
@@ -84,6 +86,8 @@ import {
   listTasks,
   listTeam,
   listVersions,
+  listWebhookDeliveries,
+  listWebhooks,
   listWorkflowNodeRuns,
   listWorkflowRuns,
   listWorkflowTasks,
@@ -129,6 +133,7 @@ import {
   updateAgentSchedule,
   updateEntry,
   updateRole,
+  updateWebhook,
   validateWorkflowGraph,
   visibleSearchHits,
   workflowRunView,
@@ -157,6 +162,7 @@ import {
   type Scope,
   SPACE_ID_PATTERN,
   ValidationError,
+  type Webhook,
   WORKFLOW_RUN_STATUSES,
   type WorkflowRunStatus,
 } from '@contentworker/domain';
@@ -167,7 +173,8 @@ import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { toHttpError } from '../api/http';
-import { snapshotBody } from '../api/validation';
+import { MAX_PAGE_LIMIT } from '../api/query';
+import { snapshotBody, updateWebhookBody, webhookBody } from '../api/validation';
 import type { McpDeps } from './deps';
 
 /**
@@ -1459,6 +1466,112 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.spaceAdmin, scopeOf(args));
       return ok(await revokeConnectedApp(ctx, scopeOf(args).spaceId, args.clientId, args.subject));
+    },
+  );
+
+  // --- webhooks (admin) ----------------------------------------------------
+  // The REST routes' twins: the same use-cases, the same space-admin check, the same body schemas,
+  // and the same projection (never the signing secret or the headers, which may carry credentials).
+  // A hook is scoped to one environment or, with allEnvironments, space-wide (environmentId null).
+  const webhookView = (h: Webhook) => ({
+    id: h.id,
+    url: h.url,
+    topics: h.topics,
+    active: h.active,
+    environmentId: h.environmentId,
+  });
+
+  server.registerTool(
+    'webhooks_list',
+    {
+      description:
+        "List an environment's webhooks and every space-wide one (environmentId null). " +
+        'Secrets and headers are never returned.',
+      inputSchema: toolSchema('webhooks_list', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      return ok({ items: (await listWebhooks(ctx, scopeOf(args))).map(webhookView) });
+    },
+  );
+
+  server.registerTool(
+    'webhook_create',
+    {
+      description:
+        'Register a webhook: signed POSTs of the events matching topics ("*" for all) to url. ' +
+        "It receives only the given environment's events, or every environment's with " +
+        'allEnvironments: true. secret is yours to choose and is never returned.',
+      inputSchema: toolSchema('webhook_create', () => webhookBody.extend(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      const { space: _s, environment: _e, ...input } = args;
+      return ok(
+        webhookView(
+          await createWebhook(ctx, scopeOf(args), input as Parameters<typeof createWebhook>[2]),
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    'webhook_update',
+    {
+      description:
+        'Change a webhook; omitted fields are kept. allEnvironments: true makes it space-wide, ' +
+        'false scopes it to the given environment; omitted, its scope is unchanged.',
+      inputSchema: toolSchema('webhook_update', () =>
+        updateWebhookBody.extend({ id: z.string(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      const { id, space: _s, environment: _e, ...changes } = args;
+      return ok(
+        webhookView(
+          await updateWebhook(
+            ctx,
+            scopeOf(args),
+            id,
+            changes as Parameters<typeof updateWebhook>[3],
+          ),
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    'webhook_delete',
+    {
+      description: 'Delete a webhook by id.',
+      inputSchema: toolSchema('webhook_delete', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      await deleteWebhook(ctx, scopeOf(args), args.id);
+      return ok({ deleted: args.id });
+    },
+  );
+
+  server.registerTool(
+    'webhook_deliveries',
+    {
+      description: "A webhook's recent delivery attempts, newest first (default 50, at most 100).",
+      inputSchema: toolSchema('webhook_deliveries', () =>
+        z.object({
+          id: z.string(),
+          limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      const items = await listWebhookDeliveries(ctx, scopeOf(args), args.id, {
+        limit: args.limit,
+      });
+      return ok({ items });
     },
   );
 

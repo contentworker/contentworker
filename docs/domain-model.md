@@ -363,11 +363,14 @@ interface Webhook {
   secret: string; // HMAC signing secret
   active: boolean;
   headers?: Record<string, string>; // extra headers per delivery
+  environmentId: string | null; // the one environment it hears; null = every environment
 }
 ```
 
 `matchesTopic(webhook, type)` is true when the webhook is active and its topics include `*` or the
-exact event type. Delivery attempts are recorded as `WebhookDelivery` rows for observability.
+exact event type. `coversEnvironment(webhook, environmentId)` is true when the webhook is
+space-wide (`environmentId: null`) or scoped to that environment; dispatch and every webhook read
+under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows for observability.
 
 ## Domain events
 

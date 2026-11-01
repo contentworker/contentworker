@@ -9,8 +9,9 @@ a release ships.
 
 ## Before you start
 
-Managing webhooks needs `space:admin`. There are no MCP tools for webhooks; use the admin or the
-REST API.
+Managing webhooks needs `space:admin`, in the admin, over the REST API or with the
+[MCP tools](/guides/mcp/) (`webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`,
+`webhook_deliveries`), which take the same fields.
 
 ## Subscribe
 
@@ -32,20 +33,37 @@ curl -s "$API/spaces/$SPACE/environments/main/webhooks" \
   returned by the API.
 - **`headers`** are added to every request, for routing or a static credential on your side.
 - **`active: false`** pauses a webhook without deleting it.
+- **`allEnvironments: true`** sends it the events of every environment in the space (see below).
 
 The URL must be a public `http` or `https` address (use `https`). Loopback, link-local and private
 addresses, and `localhost`, `.local` and `.internal` names, are refused with a 422 on create and
 update.
 
-**Webhooks belong to the space, not to an environment.** The environment in the route is only
-where you made the call; a publish in any environment of the space fires every webhook subscribed
-to it. If `staging` changes shouldn't rebuild production, read `scope.environmentId` in the payload
-and ignore the events you don't want.
+### Which environments a webhook hears
+
+A webhook is created for the environment in the route and receives only that environment's
+events: one made under `/environments/staging` never fires for a publish in `main`. With
+`"allEnvironments": true` it is **space-wide** and receives the events of every environment in the
+space. Responses show which with `environmentId`: the environment's id, or `null` for a space-wide
+webhook. A webhook created through an alias belongs to the environment the alias pointed at then,
+and stays there when the alias moves.
+
+Under an environment, the routes see that environment's webhooks and every space-wide one: the
+list returns both, and a webhook scoped to another environment answers 404 to update, delete and
+the delivery log. To change the scope, send `allEnvironments` on update: `true` makes the webhook
+space-wide, `false` scopes it to the environment in the route (so a space-wide webhook can be moved
+to any environment), and leaving it out keeps the scope as it is.
+
+Webhooks created before environment scoping existed are space-wide. A space-wide webhook gets
+every environment's events, so if `staging` changes shouldn't rebuild production, read
+`scope.environmentId` in the payload and ignore the events you don't want (or scope the webhook).
+`environment_alias.changed` carries the alias name as `scope.environmentId`, so only space-wide
+webhooks receive it. Deleting an environment deletes the webhooks scoped to it.
 
 | Route (under `/spaces/{space}/environments/{env}`) | Does |
 | --- | --- |
-| `GET /webhooks` | List webhooks (without secrets) |
-| `POST /webhooks` | Create one: `url`, `topics`, `secret`, optional `headers`, `active` |
+| `GET /webhooks` | List this environment's webhooks and the space-wide ones (without secrets) |
+| `POST /webhooks` | Create one: `url`, `topics`, `secret`, optional `headers`, `active`, `allEnvironments` |
 | `PUT /webhooks/{id}` | Change any of those fields; send only what changes |
 | `DELETE /webhooks/{id}` | Delete it (204) |
 | `GET /webhooks/{id}/deliveries` | The delivery log; `limit` up to 100 |

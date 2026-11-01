@@ -207,6 +207,11 @@ read paths), 10 GB per database.
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
 | `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost              |
 
+`0005_webhook_environments.sql` adds `webhooks.environment_id` (the one environment a webhook
+receives events from; `NULL`, as every existing row stays, means every environment) and the
+`webhooks_by_environment` index on `(space_id, environment_id)` (see
+[Events & webhooks](./events-and-webhooks.md#webhooks)).
+
 `0004_version_bodies.sql` adds `entry_versions.body_key` (a superseded version's body moves to R2
 under that key, and `fields` becomes `{}`) and `version_archive_queue` (versions waiting to move,
 queued as they are superseded and due a day later), backfilling the queue with every version already

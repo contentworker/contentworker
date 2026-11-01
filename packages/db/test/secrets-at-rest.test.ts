@@ -61,6 +61,7 @@ describe('D1 secrets at rest (contract)', () => {
       topics: ['*'],
       secret,
       active: true,
+      environmentId: null,
       ...(headers ? { headers } : {}),
     });
 
@@ -77,6 +78,7 @@ describe('D1 secrets at rest (contract)', () => {
       topics: ['*'],
       secret: 'whsec_pg',
       active: true,
+      environmentId: null,
       headers: { Authorization: 'Bearer d1', 'X-Other': 'v' },
     });
     const row = await rawSecret(id);
@@ -124,6 +126,7 @@ describe('D1 secrets at rest (contract)', () => {
       topics: ['*'],
       secret: 's1',
       active: true,
+      environmentId: null,
       headers: { K: 'v1', Keep: 'kept' },
     });
     const ref = { column: 'webhooks.secret' as const, id };

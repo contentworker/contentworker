@@ -45,7 +45,7 @@ an ordinary API key — so an agent can still never exceed the scopes the approv
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 ## Tools
 
-The server exposes **125 tools**, one per major Management/Delivery capability (the canonical list
+The server exposes **130 tools**, one per major Management/Delivery capability (the canonical list
 is the `registerTool` calls in `packages/http/src/mcp/server.ts`). Each calls `authorize` before
 delegating to the same use-case as the HTTP route.
 
@@ -69,11 +69,13 @@ delegating to the same use-case as the HTTP route.
 | Import        | `import_sources`, `import_analyze` (writes nothing), `import_execute`                                                                                                                                                                                                                                                                                                                            |
 | Plugins       | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities` (can confirm or narrow a grant, never widen it)                                                                                                                                                                                                                                                                              |
 | Connections   | `oauth_connections_list`, `oauth_connection_revoke`                                                                                                                                                                                                                                                                                                                                              |
+| Webhooks      | `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`, `webhook_deliveries` (`space:admin`; never return the signing secret)                                                                                                                                                                                                                                                     |
 | Platform      | `functions_list`, `function_create`, `function_delete`, `app_extensions_list`, `app_extension_create`, `app_extension_delete`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `schedule_action`, `agent_schedule_create`, `agent_schedule_list`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject`, `audit_log_list` |
 
-Gaps against the HTTP API: there are no webhook tools
-([Events & webhooks](./events-and-webhooks.md#webhooks)), and plugin install, install-from-URL and
-delete are HTTP-only ([Plugins](./plugins.md)).
+Gaps against the HTTP API: plugin install, install-from-URL and delete are HTTP-only
+([Plugins](./plugins.md)). The webhook tools scope a hook the way the routes do
+([Events & webhooks](./events-and-webhooks.md#webhooks)): to the `environment` argument, or
+space-wide with `allEnvironments: true`.
 
 `environment_clone` returns `{ job, createJobId, publishJobId }` and runs in the engine as bulk
 jobs; `environment_delete` is irreversible, refuses `main` and any environment an alias points at,

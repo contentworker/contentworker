@@ -1048,11 +1048,16 @@ export interface WebhookDeliveryRecord extends WebhookDelivery {
   readonly createdAt: string;
 }
 
+/**
+ * Webhooks belong to a space; each is scoped to one environment (`environmentId`) or to every
+ * environment (`null`). Every read, update and delete sees only the hooks the scope's environment
+ * covers: its own and the space-wide ones.
+ */
 export interface WebhookRepo {
   create(scope: Scope, webhook: Webhook): Promise<void>;
   get(scope: Scope, id: string): Promise<Webhook | null>;
   list(scope: Scope): Promise<Webhook[]>;
-  /** Active webhooks subscribed to a given event type. */
+  /** Active webhooks subscribed to a given event type, in the scope's environment. */
   listByTopic(scope: Scope, type: EventType): Promise<Webhook[]>;
   /** Persists the full updated webhook (the use-case merges changes first). */
   update(scope: Scope, webhook: Webhook): Promise<void>;

@@ -48,7 +48,7 @@ environments its token can reach.
 
 ## Tools
 
-There are 125 in all; your client lists every tool with its description and input schema when it
+There are 130 in all; your client lists every tool with its description and input schema when it
 connects. Each tool checks the token's scopes and role grants before it runs, and writes go
 through the same validation, versioning and events as a person's.
 
@@ -66,6 +66,7 @@ through the same validation, versioning and events as a person's.
 | Releases | `releases_create`, `releases_add_entry`, `releases_get`, `releases_list`, `releases_publish`, `schedule_action` |
 | Team and roles | `team_list`, `role_presets_list`, `role_preset_assign`, `roles_list`, `role_create`, `role_update`, `role_delete` |
 | Plugins | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities` |
+| Webhooks | `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`, `webhook_deliveries` (`space:admin`; see [Webhooks](/guides/webhooks/)) |
 | Functions | `functions_list`, `function_create`, `function_delete` |
 | App extensions | `app_extensions_list`, `app_extension_create`, `app_extension_delete` |
 | Audit | `audit_log_list` |
@@ -73,9 +74,8 @@ through the same validation, versioning and events as a person's.
 | OAuth connections | `oauth_connections_list`, `oauth_connection_revoke` |
 | Docs | `docs_list`, `docs_read`, `docs_search` |
 
-[Webhooks](/guides/webhooks/) and API keys have no MCP tools, and a personal access token can't be
-minted over MCP: an agent can't mint itself a longer-lived credential. Manage those in the admin or
-over the REST API.
+API keys have no MCP tools, and a personal access token can't be minted over MCP: an agent can't
+mint itself a longer-lived credential. Manage those in the admin or over the REST API.
 
 ## Skills
 

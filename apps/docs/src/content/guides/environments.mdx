@@ -109,8 +109,9 @@ asset metadata. Use it for backups, or to seed an environment elsewhere.
 
 ## Delete an environment
 
-Deleting removes the environment's content model, entries, versions, assets, releases, workflows
-and files; its audit history stays. It is irreversible, so you repeat the id in `confirm`:
+Deleting removes the environment's content model, entries, versions, assets, releases, workflows,
+files and the [webhooks](/guides/webhooks/) scoped to it (space-wide webhooks stay); its audit
+history stays. It is irreversible, so you repeat the id in `confirm`:
 
 ```sh
 curl -s -X DELETE "$API/spaces/$SPACE/environments/staging?confirm=staging" \
