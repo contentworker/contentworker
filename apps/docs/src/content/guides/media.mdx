@@ -92,6 +92,42 @@ description (and a `context` hint for alt text), not from the image itself, so g
 meaningful title first. Auto-tag matches your existing tags and lists new tag ideas to add in
 **Taxonomy**. See [AI features](/guides/ai/).
 
+## What happens after an upload
+
+Every uploaded file is processed in the background, usually within seconds:
+
+- its bytes are fingerprinted, and an asset whose file is identical to an older one in the same
+  environment shows **Possible duplicate**, linking to the original (a warning; nothing is
+  blocked);
+- an image's width and height are read from the file;
+- an image with no alt text gets one, and one with no tags gets tags chosen from your existing
+  tags, both marked **AI suggestion** until someone saves that field. Values you set are never
+  replaced, and when the space's AI budget is spent this part is skipped;
+- the text of a PDF, office document or audio recording is read (documents up to 20 MiB, audio up
+  to 10 MiB), so search finds the file by what it says;
+- the asset becomes searchable.
+
+While this runs the asset shows **Processing**. If it fails, the asset shows the error and a
+**Retry**; over the API that is `POST …/assets/{id}/reingest` (the MCP tool is `asset_reingest`).
+Assets uploaded before processing existed can be sent through it in bulk:
+`POST …/assets/reindex` (`{ "all": true }` for every asset), or `assets_reindex`. Management reads
+show the state as `ingestStatus` (`pending`, `processing`, `ready`, `error`), with `ingestError`,
+`contentHash`, `duplicateOf` and `aiSuggestions`.
+
+## Search the library
+
+Type in the search box on **Assets** to search file names, titles, captions, alt text, tag names
+and the text read from documents, by words and by meaning. Chips under the box narrow the results
+by kind, tag and folder and show how many match each. Over the API:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/assets/search?q=coffee&kind=image" \
+  -H "Authorization: Bearer $CMA"
+```
+
+The response is `{ items, total, facets }`, best match first; `limit` is at most 100, and
+`status=archived` or `status=all` includes archived assets. The MCP tool is `assets_search`.
+
 ## Organize the library
 
 **Folders** nest up to 16 deep, and a name is unique among its siblings. Create one in the folder

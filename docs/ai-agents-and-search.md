@@ -263,9 +263,35 @@ Lexical-only hits derive their snippet from the published fields. Exposed at
 `GET /delivery/:space/:env/search` (hybrid by default; `?mode=semantic` / `?mode=lexical`
 selects one leg), the GraphQL `search` resolver, and the `content_search` MCP tool.
 
+## Asset search
+
+Assets are searched apart from entries (`packages/application/src/asset-search.ts`): asset
+ingest writes one vector per asset into its own Vectorize namespace (`VectorStore.upsertAsset`,
+metadata `kind: 'asset'`, `spaceId`, `environmentId`, `assetId`) and one document into the asset
+shards of `SearchShardDO` (`space:env:assets:<n>`, `RagDeps.assetSearchIndex`), so `semanticSearch`,
+`relatedEntries` and RAG answers never return an asset or its text. The indexed text is the file
+name, title, description, alt text, tag names and an excerpt of the text ingest extracted from a
+document or recording (1,500 characters embedded, 100,000 indexed), taken from the published
+snapshot when the asset is published, re-indexed on `asset.published` and `asset.unpublished`.
+
+`searchAssets` (Management `GET …/assets/search`, scope `preview:read`) and
+`searchDeliveredAssets` (Delivery `GET …/assets?q=`) take `q` (1–256 characters), `limit`
+(default 20, at most 100) and the filters `kind`, `tag`, `folder` and, for the library, `status`.
+Each leg contributes up to 100 candidates, fused by RRF; the response is `{ items, total,
+facets }`, with `facets.kind`, `facets.tag` and `facets.folder` each counted under every filter
+but its own. Delivery returns published assets only, in the delivered shape; a key with content
+grants gets none. MCP's `assets_search` runs either (`delivered: true` for Delivery's). Without a
+bound index the lexical leg scans the 500 most recent assets.
+
+Extracted text and model output are untrusted. Text from a file is only stored, embedded and
+indexed; it never reaches a generation prompt (alt text and tags are generated from the file name,
+title and description). What a model returns is written only where the field is empty, through
+`applyAssetMetadata`, as one line of at most 300 characters, and tags only from the space's
+existing vocabulary: ingest never creates a tag.
+
 ## MCP server
 
-The api Worker serves MCP at `/mcp`, with 151 tools and published agent skills. Transport, auth,
+The api Worker serves MCP at `/mcp`, with 154 tools and published agent skills. Transport, auth,
 connecting a client, the tool catalog and skills are in [MCP server](./mcp.md). The assistant in the
 admin calls the same tools in-process (see [Coworker](#coworker-the-admins-assistant)).
 

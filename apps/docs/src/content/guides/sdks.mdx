@@ -54,7 +54,7 @@ const hero = await client.getAsset(heroId, { locale: 'en-US' });
 const img = `<img src="${assetUrl(hero, { width: 960 })}" srcset="${srcset(hero)}">`;
 ```
 
-`getAsset`, `listAssets`, `assetUrl` and `srcset` read and use
+`getAsset`, `listAssets`, `searchAssets`, `assetUrl` and `srcset` read and use
 [delivered assets](/guides/delivering-assets/); React Native's `imageUrl(asset, { width, dpr })`
 picks the right width for the device.
 

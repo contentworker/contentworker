@@ -62,7 +62,9 @@ that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and Email Sendi
    - creates the Vectorize index (768 dimensions, cosine; metadata indexes on `spaceId` and
      `environmentId`), except for a demo;
    - creates the queues (events, events DLQ, bulk, agents, purge, purge DLQ, media purge, media
-     purge DLQ) with 14-day retention;
+     purge DLQ, asset events, asset events DLQ) with 14-day retention;
+   - creates the R2 event notification rule that sends the bucket's `object-create` events to
+     `contentworker-asset-events<suffix>` (asset ingest), unless one to that queue exists;
    - creates the AI Gateway (authenticated, rate-limited, retries, logs per `aiGatewayLogs`);
    - creates the GitHub environment and generates `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER`,
      `MEDIA_SIGNING_SECRET` and `PASSWORD_PEPPER` if absent (refusing to generate a new
@@ -83,6 +85,13 @@ it (`contentworker-media-purge<suffix>` and `…-dlq<suffix>`; the engine binds 
 producer and the media Worker consumes both, so a deploy without them fails). Re-run
 `./scripts/provision.sh <id>` for each such deployment first: it creates only what is missing. To receive Stream's
 webhook, point it at `https://api.<domain>/webhooks/stream` and set `STREAM_WEBHOOK_SECRET`.
+
+**A deployment that predates asset ingest** needs `contentworker-asset-events<suffix>`, its
+`…-dlq<suffix>` and the R2 notification rule before the merge that ships it: the engine consumes
+both queues and the api binds the first as a producer, so a deploy without them fails. Re-run
+`./scripts/provision.sh <id>` for each such deployment first. Assets uploaded before then were
+never ingested; once deployed, `POST /spaces/<space>/environments/<env>/assets/reindex` (or the
+`assets_reindex` MCP tool) sends them through ingest as a bulk job, per environment.
 
 ## Secrets
 
