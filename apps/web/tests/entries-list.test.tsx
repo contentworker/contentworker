@@ -124,11 +124,19 @@ function setup() {
 }
 
 // Radix menus open on pointerdown (left button, no modifiers).
+/**
+ * The first wait after rendering: on a CI runner the list's first render can take longer than
+ * testing-library's default second (it failed at 1.5 s), so this one waits up to five.
+ */
+const FIRST_RENDER_MS = 5000;
+
 async function rowMenu(title: string, item: string) {
-  fireEvent.pointerDown(await screen.findByRole('button', { name: `More actions for ${title}` }), {
-    button: 0,
-    ctrlKey: false,
-  });
+  const trigger = await screen.findByRole(
+    'button',
+    { name: `More actions for ${title}` },
+    { timeout: FIRST_RENDER_MS },
+  );
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
   fireEvent.click(screen.getByRole('menuitem', { name: item }));
 }
 
