@@ -336,11 +336,13 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
     // GraphQL types each field as one value (a String, not a map of locales), so a query that
     // names no locale reads the space's default one; REST, which can return the map, doesn't.
     let defaultLocale: Promise<string | undefined> | undefined;
-    const localeOr = async (locale: string | undefined) =>
-      locale ??
-      (await (defaultLocale ??= ctx.store.spaces
-        .getConfig(scope)
-        .then((config) => config?.defaultLocale)));
+    const localeOr = async (locale: string | undefined) => {
+      if (locale) return locale;
+      if (!defaultLocale) {
+        defaultLocale = ctx.store.spaces.getConfig(scope).then((config) => config?.defaultLocale);
+      }
+      return defaultLocale;
+    };
     return {
       entry: async (contentType, id, locale) => {
         if (!canAccessContentType(principal, 'read', contentType)) return null;
