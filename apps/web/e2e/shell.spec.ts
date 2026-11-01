@@ -47,10 +47,17 @@ test('wider screens get the sidebar, grouped, with the deployment pages for admi
   await open(page, '/content');
   const side = page.getByRole('navigation', { name: 'Main' }).first();
   // Settings is its own section groups, Workspace last; the deployment's pages follow for admins.
+  // The seeded agent proposal waits in Approvals: its name carries the count, and the eye gets a
+  // pill on the full sidebar or a dot on the rail.
+  await expect(side.getByRole('link', { name: /^Approvals, \d+ waiting$/ })).toBeAttached();
+  await expect(
+    side.locator(
+      (await sidebarWidth(page)) > 100 ? '[data-approvals-count]' : '[data-approvals-dot]',
+    ),
+  ).toBeVisible();
   for (const name of [
     'Overview',
     'Content',
-    'Approvals',
     'Releases',
     'Workflows',
     'Assets',
@@ -81,6 +88,10 @@ test('the sidebar collapses to a rail, and stays as it was left', async ({ page 
   await toggle.click();
   await expect.poll(() => sidebarWidth(page)).toBe(52);
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  // As a rail, Approvals' count is a dot at its icon.
+  const rail = page.locator('[data-slot="sidebar"]');
+  await expect(rail.locator('[data-approvals-dot]')).toBeVisible();
+  await expect(rail.locator('[data-approvals-count]')).toBeHidden();
   // A rail keeps every page by name for screen readers.
   await expect(
     page.getByRole('navigation', { name: 'Main' }).first().getByRole('link', { name: 'Assets' }),
@@ -121,6 +132,9 @@ test('phones get the tab bar, clear of the status bar and home indicator', async
   for (const name of ['Overview', 'Content', 'Approvals', 'Releases'])
     await expect(bar.getByRole('link', { name })).toBeVisible();
   await expect(bar.getByRole('button', { name: 'More' })).toBeVisible();
+  // The seeded agent proposal waits in Approvals: a pill on its tab, the count in its name.
+  await expect(bar.getByRole('link', { name: /^Approvals, \d+ waiting$/ })).toBeVisible();
+  await expect(bar.locator('[data-approvals-count]')).toBeVisible();
   const tab = await bar.getByRole('link', { name: 'Content' }).boundingBox();
   expect(tab!.y + tab!.height, 'a tab sits above the 34px home indicator').toBeLessThanOrEqual(
     page.viewportSize()!.height - 34,

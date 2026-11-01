@@ -15,6 +15,8 @@ const client = {
   getSpaceConfig: vi.fn(async () => ({ locales: ['en-US'], defaultLocale: 'en-US' })),
   listEnvironments: vi.fn(async () => []),
   listSpaces: vi.fn(async () => [{ id: 'acme', name: 'Acme' }]),
+  listWorkflowTasks: vi.fn(async () => [{ id: 't1' }, { id: 't2' }]),
+  listAgentReviews: vi.fn(async () => [{ id: 'r1' }]),
 };
 const conn = { space: 'acme', environment: 'staging', locale: 'en-US' };
 
@@ -33,6 +35,7 @@ const { Breadcrumbs } = await import('~/cms/components/layout/Breadcrumbs');
 const { NewEntry } = await import('~/cms/components/layout/NewEntry');
 const { DEFAULT_FEATURES } = await import('~/cms/lib/features');
 const { plainKeyAllowed } = await import('~/cms/lib/shortcuts');
+const { approvalsCountLabel, usePendingApprovalsCount } = await import('~/cms/lib/approvals');
 
 function Here() {
   const loc = useLocation();
@@ -109,6 +112,37 @@ describe('nav source', () => {
 
   it('shows Approvals now its inbox exists', () => {
     expect(visibleNav(DEFAULT_FEATURES).some((n) => n.to === '/approvals')).toBe(true);
+  });
+
+  it('leaves Approvals out everywhere while its feature is off', () => {
+    const off = visibleNav({ ...DEFAULT_FEATURES, approvals: false });
+    expect(off.some((n) => n.to === '/approvals')).toBe(false);
+    expect(off.some((n) => n.badge)).toBe(false);
+  });
+});
+
+describe('approvals count', () => {
+  function Count({ enabled }: { enabled: boolean }) {
+    const n = usePendingApprovalsCount(enabled);
+    return <p data-testid="count">{n === undefined ? 'unknown' : n}</p>;
+  }
+
+  it('adds the pending workflow steps and agent proposals', async () => {
+    renderAt('/', <Count enabled />);
+    await waitFor(() => expect(screen.getByTestId('count').textContent).toBe('3'));
+  });
+
+  it('asks nothing until the scope is known', () => {
+    client.listWorkflowTasks.mockClear();
+    renderAt('/', <Count enabled={false} />);
+    expect(screen.getByTestId('count').textContent).toBe('unknown');
+    expect(client.listWorkflowTasks).not.toHaveBeenCalled();
+  });
+
+  it('writes 99+ past two digits', () => {
+    expect(approvalsCountLabel(7)).toBe('7');
+    expect(approvalsCountLabel(99)).toBe('99');
+    expect(approvalsCountLabel(100)).toBe('99+');
   });
 });
 
