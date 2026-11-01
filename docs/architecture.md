@@ -60,7 +60,9 @@ Credentials never cross the binding as the browser sent them:
 2. Otherwise a same-origin request with a live web session has its cookies removed and a signed
    `x-cw-principal` added (`@contentworker/security/principal`): HMAC-SHA256 under
    `PRINCIPAL_KEY`, payload `{ sub, email, name, role, sid?, iat, exp, path }` (`sid`: the
-   session it came on), valid for 60 seconds and for that exact path.
+   session it came on), valid for 60 seconds and for that exact path. The assistant's paths
+   (`/agents/*`) are signed with a key derived from `PRINCIPAL_KEY` instead (HKDF,
+   `ASSISTANT_PRINCIPAL_KEY` on the engine), which the REST surface never accepts.
 3. Otherwise it goes through with no credentials, and the api answers 401 where it needs one.
 
 `x-cw-bookmark` passes through both ways untouched. While a deployment has no people yet, every

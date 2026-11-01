@@ -3,10 +3,16 @@
  * exact path a request takes (`/agents/assistant-agent/<person>`, and its `/get-messages`), good
  * for 60 seconds; the api checks it here before forwarding to the engine's object, and the object
  * checks it again itself (./agent.ts), so neither trusts the other's word for who is calling.
+ *
+ * These paths are signed with the assistant's own key, derived from PRINCIPAL_KEY with HKDF
+ * (`@contentworker/security/assistant-key`), not with PRINCIPAL_KEY: the engine holds only the
+ * derived key (ASSISTANT_PRINCIPAL_KEY), and a principal signed with it never verifies on the api's
+ * REST surface, which keeps to the main key.
  */
 
 import { ASSISTANT_AGENT } from '@contentworker/domain';
 import type { EdgeEnv } from '@contentworker/platform/env';
+import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import {
   PRINCIPAL_HEADER,
   principalTarget,
@@ -15,9 +21,39 @@ import {
 } from '@contentworker/security/principal';
 import { routeAgentRequest } from 'agents';
 
-/** The keys that verify the web Worker's signature: the current one, then the previous one. */
-export const principalKeys = (env: EdgeEnv) =>
-  [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS].filter((k): k is string => Boolean(k));
+/**
+ * TODO(assistant-key phase 2): set to false, delete it and the main keys below, and drop
+ * PRINCIPAL_KEY / PRINCIPAL_KEY_PREVIOUS from `SECRETS.engine` in scripts/fleet.ts, once every
+ * deployment has run this release (docs/deployment.md, "The assistant's principal key").
+ *
+ * Phase 1: CI deploys engine, api, delivery and web one after another, ring by ring, so for one
+ * release a web Worker still signing the assistant's paths with PRINCIPAL_KEY meets an api and an
+ * engine that expect the derived key. Both accept either until then.
+ */
+export const ACCEPT_MAIN_KEY_ON_ASSISTANT_PATHS = true;
+
+const present = (keys: (string | undefined)[]) => keys.filter((k): k is string => Boolean(k));
+
+/**
+ * The api's keys for the assistant's paths: derived from PRINCIPAL_KEY, then from
+ * PRINCIPAL_KEY_PREVIOUS while a rotation finishes (and, in phase 1, the main keys too).
+ */
+export async function gateKeys(env: EdgeEnv): Promise<string[]> {
+  const main = present([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS]);
+  const derived = await Promise.all(main.map(deriveAssistantPrincipalKey));
+  return ACCEPT_MAIN_KEY_ON_ASSISTANT_PATHS ? [...derived, ...main] : derived;
+}
+
+/**
+ * The engine's keys: ASSISTANT_PRINCIPAL_KEY, then ASSISTANT_PRINCIPAL_KEY_PREVIOUS while a
+ * rotation finishes (and, in phase 1, the main keys too).
+ */
+export function engineKeys(env: EdgeEnv): string[] {
+  const derived = present([env.ASSISTANT_PRINCIPAL_KEY, env.ASSISTANT_PRINCIPAL_KEY_PREVIOUS]);
+  return ACCEPT_MAIN_KEY_ON_ASSISTANT_PATHS
+    ? [...derived, ...present([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS])]
+    : derived;
+}
 
 /** True for a path the assistant's routing owns (`/agents/assistant-agent/…`). */
 export const isAssistantPath = (pathname: string) =>
@@ -56,7 +92,8 @@ export async function assistantCaller(
   const { pathname } = new URL(request.url);
   const name = assistantName(pathname);
   if (!name || namesSubAgent(pathname)) return refuse(404, 'Not found');
-  if (!keys.length) console.error('PRINCIPAL_KEY is not set: refusing every assistant request');
+  if (!keys.length)
+    console.error('No assistant principal key is set: refusing every assistant request');
   const claims = await verifyPrincipal(
     keys,
     request.headers.get(PRINCIPAL_HEADER),
@@ -74,7 +111,7 @@ export async function assistantCaller(
 export async function routeAssistant(request: Request, env: EdgeEnv): Promise<Response> {
   const namespace = env.ASSISTANT_AGENT;
   if (!namespace) return refuse(404, 'Not found');
-  const claims = await assistantCaller(principalKeys(env), request);
+  const claims = await assistantCaller(await gateKeys(env), request);
   if (claims instanceof Response) return claims;
   // Keyed on the route the SDK matched, not on the path's spelling.
   const gate = (_req: Request, route: { className: string; name: string }) =>

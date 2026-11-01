@@ -1,9 +1,12 @@
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
+import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import agents from 'agents/vite';
 import { defineConfig } from 'vitest/config';
 
 // The principal key the assistant tests sign the web Worker's header with.
 export const TEST_PRINCIPAL_KEY = 'engine-test-principal-key-0123456789abcdef';
+// …and the one it replaced, mid-rotation: the engine holds both keys derived from them.
+export const TEST_PRINCIPAL_KEY_PREVIOUS = 'engine-test-previous-principal-key-0123456789';
 
 // Runs inside workerd so the Durable Objects and the editorial Workflow execute for real
 // (storage, alarms, RPC, Miniflare's Workflows engine). The fixture worker exports only the
@@ -64,6 +67,11 @@ export default defineConfig(async () => ({
           // The assistant: the web Worker's key, the mock model, and the dev fallbacks a
           // persistent (D1-backed) wiring otherwise refuses.
           PRINCIPAL_KEY: TEST_PRINCIPAL_KEY,
+          PRINCIPAL_KEY_PREVIOUS: TEST_PRINCIPAL_KEY_PREVIOUS,
+          ASSISTANT_PRINCIPAL_KEY: await deriveAssistantPrincipalKey(TEST_PRINCIPAL_KEY),
+          ASSISTANT_PRINCIPAL_KEY_PREVIOUS: await deriveAssistantPrincipalKey(
+            TEST_PRINCIPAL_KEY_PREVIOUS,
+          ),
           AI_MODE: 'mock',
           REQUIRE_SECURE_SECRETS: 'false',
           ALLOW_FAKE_ADAPTERS: 'all',

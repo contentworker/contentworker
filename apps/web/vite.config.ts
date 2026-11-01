@@ -1,4 +1,5 @@
 import { cloudflare } from '@cloudflare/vite-plugin';
+import { DEV_ASSISTANT_PRINCIPAL_KEY } from '@contentworker/security/assistant-key';
 import { reactRouter } from '@react-router/dev/vite';
 import tailwindcss from '@tailwindcss/vite';
 import agents from 'agents/vite';
@@ -35,6 +36,8 @@ const LOCAL_STACK_VARS = {
   TOKEN_PEPPER: 'dev-pepper',
   MEDIA_SIGNING_SECRET: 'dev-media-signing-secret',
   PRINCIPAL_KEY: 'contentworker-local-dev-principal-key',
+  // The engine's assistant key: derived from the dev PRINCIPAL_KEY, as CI derives a deployment's.
+  ASSISTANT_PRINCIPAL_KEY: DEV_ASSISTANT_PRINCIPAL_KEY,
   AI_MODE: 'mock',
   AI_GATEWAY_ID: '',
   EMBEDDINGS_PROVIDER: 'local',

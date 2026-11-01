@@ -1,5 +1,9 @@
 import { env } from 'cloudflare:workers';
 import {
+  deriveAssistantPrincipalKey,
+  isAssistantPrincipalPath,
+} from '@contentworker/security/assistant-key';
+import {
   DEV_PRINCIPAL_KEY,
   PRINCIPAL_HEADER,
   signPrincipal,
@@ -15,6 +19,10 @@ export type SignedPrincipal = Principal & { sid?: string };
  * the api at `path`, replacing whatever the caller sent. The api checks it with the same
  * `PRINCIPAL_KEY` (`verifyPrincipal` in `@contentworker/security`); it is good for 60 seconds and
  * for that exact path only. Local dev (`vite dev`) uses a fixed key when none is set.
+ *
+ * The assistant's paths (`/agents/*`) are signed with the key derived from it for the assistant
+ * (`deriveAssistantPrincipalKey`), never with `PRINCIPAL_KEY` itself: the engine that hosts the
+ * assistant holds only the derived key, and the api's REST surface verifies with the main one.
  */
 export async function setPrincipalHeader(
   headers: Headers,
@@ -22,7 +30,10 @@ export async function setPrincipalHeader(
   path: string,
   now = Date.now(),
 ) {
-  headers.set(PRINCIPAL_HEADER, await signPrincipal(principalKey(), webPrincipal(p), path, now));
+  const key = isAssistantPrincipalPath(path)
+    ? await deriveAssistantPrincipalKey(principalKey())
+    : principalKey();
+  headers.set(PRINCIPAL_HEADER, await signPrincipal(key, webPrincipal(p), path, now));
 }
 
 /**

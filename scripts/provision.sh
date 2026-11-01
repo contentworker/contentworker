@@ -101,6 +101,9 @@ WORKER_SECRETS=""
 if WORKER_SECRETS=$(wrangler secret list --name "$API_WORKER" 2>/dev/null); then
   WORKER_SECRETS=$(jq -r '.[].name' <<<"$WORKER_SECRETS" 2>/dev/null || true)
 fi
+# The engine's ASSISTANT_PRINCIPAL_KEY (and _PREVIOUS) isn't generated here: it is derived from
+# PRINCIPAL_KEY (and PRINCIPAL_KEY_PREVIOUS) at every deploy, by `fleet.ts secrets`, so a new
+# deployment gets it on its first deploy and a rotation of PRINCIPAL_KEY carries it along.
 for KEY in PRINCIPAL_KEY DATA_KEY TOKEN_PEPPER MEDIA_SIGNING_SECRET PASSWORD_PEPPER; do
   if grep -qx "$KEY" <<<"$EXISTING"; then
     echo "$ENVIRONMENT already has $KEY"

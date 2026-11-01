@@ -1,5 +1,6 @@
 import { assistantName, routeAssistant } from '@contentworker/http/assistant/gate';
 import type { EdgeEnv } from '@contentworker/platform/env';
+import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import {
   PRINCIPAL_HEADER,
   principalTarget,
@@ -52,6 +53,35 @@ describe('the assistant’s gate', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]!.headers.get('x-agents-lifecycle-props')).toBeNull();
     expect(seen[0]!.headers.get('x-partykit-room')).toBeNull();
+  });
+
+  it('accepts the key derived for the assistant, and (phase 1) the main key', async () => {
+    const path = '/agents/assistant-agent/usr_ada/get-messages';
+    for (const key of [await deriveAssistantPrincipalKey(KEY), KEY]) {
+      const { env, seen } = envSeeing();
+      const res = await routeAssistant(
+        new Request(`https://api${path}`, {
+          headers: {
+            [PRINCIPAL_HEADER]: await signPrincipal(key, ada, principalTarget('GET', path)),
+          },
+        }),
+        env,
+      );
+      expect(res.status).toBe(200);
+      expect(seen).toHaveLength(1);
+    }
+    // A key derived from anything else is refused.
+    const { env } = envSeeing();
+    const other = await deriveAssistantPrincipalKey('another-principal-key-0123456789abcdef');
+    const res = await routeAssistant(
+      new Request(`https://api${path}`, {
+        headers: {
+          [PRINCIPAL_HEADER]: await signPrincipal(other, ada, principalTarget('GET', path)),
+        },
+      }),
+      env,
+    );
+    expect(res.status).toBe(401);
   });
 
   it('refuses another person’s assistant before anything reaches it', async () => {
