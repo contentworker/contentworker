@@ -24,7 +24,6 @@ import {
   OAuthError,
   protectedResourceMetadata,
   resourceMetadataPaths,
-  scopesForKind,
 } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import {
@@ -253,29 +252,6 @@ function spacePicker(spaces: readonly string[], selected?: string): string {
 <select id="space" name="space">${options}</select>`;
 }
 
-/**
- * The dev escape hatch: approve without a human, using the configured default
- * space and role. Gated on an explicit env flag AND refused whenever secure
- * secrets are required, because it reduces consent to a formality.
- */
-async function devApproval(deps: AuthDeps, config: ApiConfig): Promise<OAuthApproval | null> {
-  if (!config.oauthDevAutoApprove) return null;
-  if (process.env.REQUIRE_SECURE_SECRETS === 'true' || process.env.NODE_ENV === 'production') {
-    logger.warn('oauth: OAUTH_DEV_AUTO_APPROVE ignored — secure secrets are required');
-    return null;
-  }
-  const roleId = config.oauthDevRole;
-  const scopes = roleId
-    ? ((await deps.ctx.store.roles.get(config.oauthDevSpace, roleId))?.scopes ?? [])
-    : scopesForKind('cma');
-  return {
-    spaceId: config.oauthDevSpace,
-    subject: 'dev-auto-approve',
-    roleId,
-    approverScopes: scopes,
-  };
-}
-
 // --- routes -----------------------------------------------------------------
 
 export function oauthRoutes(deps: AuthDeps, config: ApiConfig): Hono {
@@ -361,12 +337,6 @@ export function oauthRoutes(deps: AuthDeps, config: ApiConfig): Hono {
       // redirected to the client; errors above it must never be, or the
       // endpoint becomes an open redirect.
       const request = await validateAuthorizationRequest(ctx, cfg, authRequestFrom(c));
-
-      const dev = await devApproval(deps, config);
-      if (dev) {
-        const { redirectTo } = await approveAuthorization(ctx, hasher, cfg, request, dev);
-        return c.redirect(redirectTo);
-      }
 
       const current = await webUserOf(deps, c);
       if (!current) return toSignIn(c);

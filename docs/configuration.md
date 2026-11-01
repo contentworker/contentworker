@@ -131,9 +131,6 @@ gateway always applies `RATE_LIMIT_READ` by client IP.
 | `OAUTH_RESOURCE`                  | `<issuer>/mcp`                    | Canonical URI of the protected MCP resource                                                                 |
 | `OAUTH_ACCESS_TOKEN_TTL_SECONDS`  | `3600`                            | Access-token lifetime                                                                                       |
 | `OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000`                         | Refresh-token lifetime                                                                                      |
-| `OAUTH_DEV_AUTO_APPROVE`          | `false`                           | Dev only: approve with no human, as `OAUTH_DEV_SPACE` / `OAUTH_DEV_ROLE`. Refused with secure secrets |
-| `OAUTH_DEV_SPACE`                 | `SEED_SPACE_ID`, else `space-1`   | Space `OAUTH_DEV_AUTO_APPROVE` approves in                                                                  |
-| `OAUTH_DEV_ROLE`                  | —                                 | Role `OAUTH_DEV_AUTO_APPROVE` binds; unset grants the full CMA scope set                                    |
 
 Consent forms are signed with a key derived from `PRINCIPAL_KEY`. See
 [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).

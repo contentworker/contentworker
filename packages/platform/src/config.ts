@@ -75,16 +75,6 @@ export interface ApiConfig {
   readonly oauthResource?: string;
   readonly oauthAccessTokenTtlSeconds: number;
   readonly oauthRefreshTokenTtlSeconds: number;
-  /**
-   * Dev-only: auto-approve authorization requests without a person, as
-   * {@link oauthDevSpace} with {@link oauthDevRole}. Refused when secure
-   * secrets are required, since it turns consent into a formality.
-   */
-  readonly oauthDevAutoApprove: boolean;
-  /** The space dev auto-approve grants into (OAUTH_DEV_SPACE; default the seed space). */
-  readonly oauthDevSpace: string;
-  /** The role dev auto-approve binds (OAUTH_DEV_ROLE); unset grants CMA scopes. */
-  readonly oauthDevRole?: string;
   /** Max accepted request body size in bytes (DoS guard). Default 5 MiB. */
   readonly maxBodyBytes?: number;
   /** Trusted reverse proxies in front (spoof-resistant X-Forwarded-For parsing). */
@@ -157,13 +147,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     principalKeys: [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS].filter((k): k is string =>
       Boolean(k),
     ),
-    oauthDevSpace: env.OAUTH_DEV_SPACE ?? env.SEED_SPACE_ID ?? 'space-1',
-    oauthDevRole: env.OAUTH_DEV_ROLE,
     oauthIssuer: env.OAUTH_ISSUER,
     oauthResource: env.OAUTH_RESOURCE,
     oauthAccessTokenTtlSeconds: Number(env.OAUTH_ACCESS_TOKEN_TTL_SECONDS ?? 3600),
     oauthRefreshTokenTtlSeconds: Number(env.OAUTH_REFRESH_TOKEN_TTL_SECONDS ?? 30 * 24 * 3600),
-    oauthDevAutoApprove: env.OAUTH_DEV_AUTO_APPROVE === 'true',
     maxBodyBytes: Number(env.MAX_BODY_BYTES ?? 5 * 1024 * 1024),
     trustedProxyCount: Number(env.TRUSTED_PROXY_COUNT ?? 1),
     moderateBeforePublish: env.AGENTS_MODERATE_BLOCKING === 'true',

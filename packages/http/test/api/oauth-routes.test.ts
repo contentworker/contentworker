@@ -29,7 +29,6 @@ const config = {
   oauthIssuer: ISSUER,
   oauthAccessTokenTtlSeconds: 3600,
   oauthRefreshTokenTtlSeconds: 2592000,
-  oauthDevAutoApprove: false,
 } as unknown as ApiConfig;
 
 type App = ReturnType<typeof createApp>;

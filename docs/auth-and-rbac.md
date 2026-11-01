@@ -369,11 +369,11 @@ Consent is approved through web sign-in:
   person back to the same request after signing in.
 - The consent screen offers a space picker over the spaces the person can act in
   (`spacesForWebUser`, `packages/application/src/web-principal.ts`); someone on no team gets 403.
-- The grant binds the person's team role in the chosen space (`webUserAccess`): the token's
-  permissions resolve live from that role, and the person's scopes cap what it may carry. A
-  deployment admin not on the space's team approves with the full CMA scope set.
-- `OAUTH_DEV_AUTO_APPROVE` (dev only, refused with secure secrets) skips the human and approves as
-  `OAUTH_DEV_SPACE` / `OAUTH_DEV_ROLE`.
+- The grant binds the person's team role in the chosen space (`memberAccess`): the token's
+  permissions resolve live from that role on every use, capped by the scopes consented to, and it
+  stops working when the person is disabled or leaves the team. Only team members can approve: a
+  deployment admin who isn't on a space's team can administer it but can't connect applications
+  to it (the picker lists only spaces where the person is a member).
 
 What the implementation guarantees:
 
