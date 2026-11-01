@@ -5,6 +5,8 @@ import {
   PublishGatedError,
   type RunContext,
   SCOPES,
+  ValidationError,
+  WorkflowBuilder,
 } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -23,8 +25,10 @@ import {
   exportSnapshot,
   getBulkJobReport,
   getRelease,
+  getWorkflow,
   importSnapshot,
   listScheduledActions,
+  listWorkflows,
   loadRunEntry,
   publishEntry,
   publishRelease,
@@ -44,6 +48,20 @@ const editor: Principal = {
   subject: 'editor@example.com',
   scopes: [SCOPES.contentWrite, SCOPES.contentPublish, SCOPES.previewRead],
 };
+
+/** Submit for review → approval → publish: a graph a run can publish from. */
+const reviewGraph = () =>
+  new WorkflowBuilder()
+    .n('start', 'trigger.manual', 'Submit for review')
+    .n('review', 'control.approval', 'Review')
+    .n('publish', 'content.publish', 'Publish')
+    .n('done', 'control.end', 'Done')
+    .n('no', 'control.end', 'Declined', { outcome: 'declined' })
+    .e('start', 'review')
+    .e('review.approved', 'publish')
+    .e('review.rejected', 'no')
+    .e('publish', 'done')
+    .graph();
 
 const field = {
   apiId: 'title',
@@ -86,7 +104,7 @@ describe('publish gating', () => {
     const { workflow: created } = await createWorkflowDraft(ctx, scope, {
       name,
       contentTypes: opts.contentTypes ?? [],
-      graph: editorialReviewWorkflow().graph,
+      graph: reviewGraph(),
       gatesPublish: opts.gatesPublish ?? true,
     });
     if (opts.publish !== false) await publishWorkflowVersion(ctx, scope, created.id);
@@ -222,6 +240,81 @@ describe('publish gating', () => {
       gated(await publishEntry(ctx, scope, id, { grant: forged }).catch((e) => e));
       const parsed = JSON.parse(JSON.stringify({ grant: forged }));
       gated(await publishEntry(ctx, scope, id, parsed).catch((e) => e));
+    });
+  });
+
+  describe('only a gate a run can publish through counts', () => {
+    it('refuses to publish a gated version no run could publish from (422), naming why', async () => {
+      const { workflow: noPublish, validation } = await createWorkflowDraft(ctx, scope, {
+        name: 'No publish node',
+        gatesPublish: true,
+        graph: new WorkflowBuilder()
+          .n('start', 'trigger.manual', 'Submit')
+          .n('done', 'control.end', 'Done')
+          .e('start', 'done')
+          .graph(),
+      });
+      // Saving a draft only warns: drafts may be incomplete.
+      expect(validation.warnings.map((w) => w.message)).toContainEqual(
+        expect.stringMatching(/needs a Publish or Publish release node/),
+      );
+      const err = await publishWorkflowVersion(ctx, scope, noPublish.id).catch((e) => e);
+      expect(err).toBeInstanceOf(ValidationError);
+      expect((err as ValidationError).issues).toEqual([
+        { field: 'gatesPublish', message: expect.stringMatching(/Publish or Publish release/) },
+      ]);
+
+      // The editorial template's trigger (publish_requested) starts no runs yet.
+      const { workflow: template, validation: saved } = await createWorkflowDraft(ctx, scope, {
+        name: 'Template',
+        gatesPublish: true,
+        graph: editorialReviewWorkflow().graph,
+      });
+      expect(saved.warnings.map((w) => w.message)).toContainEqual(
+        expect.stringMatching(/people can start/),
+      );
+      await expect(publishWorkflowVersion(ctx, scope, template.id)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+      // Ungated, the same graph publishes as before.
+      await saveWorkflowDraft(ctx, scope, template.id, { gatesPublish: false });
+      await expect(publishWorkflowVersion(ctx, scope, template.id)).resolves.toMatchObject({
+        version: 1,
+      });
+    });
+
+    it('an existing gated version whose trigger can’t start runs doesn’t gate', async () => {
+      // As a version published before the rule: written straight to the store.
+      const { workflow: created } = await createWorkflowDraft(ctx, scope, {
+        name: 'Old editorial review',
+        graph: editorialReviewWorkflow().graph,
+      });
+      await store.workflowGraphs.publishVersion(
+        scope,
+        { ...editorialReviewWorkflow(), id: created.id, gatesPublish: true },
+        { publishedAt: '2026-04-01T00:00:00.000Z' },
+      );
+      expect((await store.workflowGraphs.getLatestVersion(scope, created.id))?.gatesPublish).toBe(
+        true,
+      );
+      const id = await draft('post');
+      await expect(publishEntry(ctx, scope, id)).resolves.toMatchObject({ status: 'published' });
+      expect((await getWorkflow(ctx, scope, created.id)).publishGated).toBe(false);
+    });
+
+    it('reports whether gating is in force on the workflow, separately from the draft flag', async () => {
+      const wf = await workflow('Editorial review');
+      expect(await getWorkflow(ctx, scope, wf)).toMatchObject({
+        gatesPublish: true,
+        publishGated: true,
+      });
+      await saveWorkflowDraft(ctx, scope, wf, { gatesPublish: false });
+      expect((await listWorkflows(ctx, scope))[0]).toMatchObject({
+        gatesPublish: false,
+        publishGated: true,
+      });
+      await publishWorkflowVersion(ctx, scope, wf);
+      expect((await getWorkflow(ctx, scope, wf)).publishGated).toBe(false);
     });
   });
 

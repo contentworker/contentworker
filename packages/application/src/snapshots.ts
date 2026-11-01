@@ -518,7 +518,8 @@ export async function publishSnapshotEntry(
   if (!current) throw new NotFoundError('Entry', publication.id);
   const status = current.entry.status;
   if (status === 'changed') return; // published, and its draft is already on top
-  // Past any publish gate: the copy reproduces the source's published state (see the grant).
+  // Past every publish gate in the target, including any it held before the import: the copy
+  // reproduces the source's published state (see `grantSnapshotImport`).
   if (status !== 'published') {
     await publishEntry(ctx, target, publication.id, { grant: grantSnapshotImport() });
   }

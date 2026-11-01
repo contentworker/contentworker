@@ -379,6 +379,11 @@ describe('workflow routes', () => {
     // Bulk publish reports the gated entry as its own failed item.
     const bulk = await call('POST', '/bulk/entries/publish', { ids: [entryId] });
     expect(bulk.body).toMatchObject({ succeeded: 0, failed: 1 });
+    expect((bulk.body.results as Json[])[0]).toMatchObject({
+      id: entryId,
+      ok: false,
+      error: expect.stringContaining('publishes only through a run of the workflow "Gate"'),
+    });
 
     const runId = (await call('POST', `/entries/${entryId}/workflow-runs`, { workflowId })).body
       .id as string;

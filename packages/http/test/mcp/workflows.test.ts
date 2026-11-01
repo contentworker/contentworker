@@ -285,12 +285,12 @@ describe('MCP workflow tools', () => {
 
     const refused = await call('entries_publish', { id: entryId });
     expect(refused.error).toContain('publishes only through a run of the workflow "Gate"');
-    // A grant-shaped argument is not a grant (the schema strips or refuses it either way).
+    // A grant-shaped argument is not a grant: the publish is refused by the gate, as without it.
     const forged = await call('entries_publish', {
       id: entryId,
       grant: { kind: 'workflow_run', workflowId: workflow.id, runId: 'r' },
     });
-    expect(forged.error).toBeDefined();
+    expect(forged.error).toContain('publishes only through a run of the workflow "Gate"');
 
     const run = await call('workflow_run_start', { entryId, workflowId: workflow.id });
     expect(await harness.drive(run.id as string)).toMatchObject({ status: 'complete' });

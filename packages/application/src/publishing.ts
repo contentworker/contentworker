@@ -14,7 +14,12 @@ import {
 import type { ContentStoreTx, EntryWithFields, PublishedEntry } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { runHook } from './hooks';
-import { loadPublishGuard, type PublishGrant, type PublishGuard } from './publish-gate';
+import {
+  loadPublishGuard,
+  type PublishGrant,
+  type PublishGuard,
+  trustedGuard,
+} from './publish-gate';
 
 /**
  * Holds a write to the version its caller saw. A confirm card, a page's button and an API client
@@ -65,7 +70,9 @@ export async function publishEntryTx(
   if (!found) throw new NotFoundError('Entry', id);
   assertExpectedVersion(found.entry, opts);
   // A read, before anything in the unit writes.
-  const gate = guard ?? (await loadPublishGuard(tx.workflowGraphs, scope, opts.grant));
+  // A guard this module didn't build (any object of the right shape) is ignored.
+  const gate =
+    trustedGuard(guard) ?? (await loadPublishGuard(tx.workflowGraphs, scope, opts.grant));
   gate.assert(id, found.entry.contentTypeApiId);
 
   // Inside the transaction on purpose: a veto here rolls back everything the

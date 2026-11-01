@@ -42,7 +42,10 @@ import type {
 /** A workflow: the legacy `{id, name, steps}` plus its draft graph and version bookkeeping. */
 export interface WorkflowSummary extends WorkflowGraphDefinition {
   readonly steps: readonly WorkflowStep[];
+  /** The draft's flag. */
   readonly gatesPublish: boolean;
+  /** Gating in force: the latest published version gates and a run of it can publish. */
+  readonly publishGated: boolean;
   readonly latestVersion: number | null;
   readonly legacy: boolean;
   readonly updatedAt: string | null;

@@ -43,9 +43,10 @@ export function grantWorkflowRunPublish(workflowId: string, runId: string): Publ
 }
 
 /**
- * A snapshot import republishing what was published in its source. The target environment starts
- * empty (`prepareSnapshotImport`), so any gate in it came from the snapshot the importer chose;
- * the import is a copy of published state, not an editorial publish.
+ * A snapshot import republishing what was published in its source (`publishSnapshotEntry`, the one
+ * exempt path): a copy of published state, not an editorial publish. It passes every gate in the
+ * target, those the import wrote from the snapshot and any the target already held
+ * (`prepareSnapshotImport` requires the target to have no content types, not no workflows).
  */
 export function grantSnapshotImport(): PublishGrant {
   return mint({ kind: 'snapshot_import' });
@@ -59,8 +60,22 @@ export interface PublishGuard {
   assert(entryId: string, contentTypeApiId: string): void;
 }
 
+/** Guards {@link loadPublishGuard} built; any other object of the same shape is not one. */
+const loaded = new WeakSet<PublishGuard>();
+
+function register(guard: PublishGuard): PublishGuard {
+  const frozen = Object.freeze(guard);
+  loaded.add(frozen);
+  return frozen;
+}
+
+/** `guard` when this module built it; otherwise null, and the caller loads a real one. */
+export function trustedGuard(guard: PublishGuard | undefined): PublishGuard | null {
+  return guard && loaded.has(guard) ? guard : null;
+}
+
 /** No gate covers anything, or the grant passes them all. */
-const OPEN: PublishGuard = { refusal: () => null, assert: () => {} };
+const OPEN: PublishGuard = register({ refusal: () => null, assert: () => {} });
 
 /**
  * Reads the scope's gates (one query) and returns the guard for a publish made with `grant`. A
@@ -85,13 +100,13 @@ export async function loadPublishGuard(
       return null;
     return { entryId, workflows: covering.map((g) => ({ id: g.workflowId, name: g.name })) };
   };
-  return {
+  return register({
     refusal,
     assert(entryId, contentTypeApiId) {
       const refused = refusal(entryId, contentTypeApiId);
       if (refused) throw new PublishGatedError([refused]);
     },
-  };
+  });
 }
 
 /**

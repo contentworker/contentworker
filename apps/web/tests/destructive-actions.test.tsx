@@ -31,6 +31,7 @@ const client = {
       description: '',
       contentTypes: [],
       gatesPublish: false,
+      publishGated: false,
       graph: { nodes: [], edges: [] },
       steps: [],
       latestVersion: 1,

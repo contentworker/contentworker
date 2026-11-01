@@ -687,18 +687,28 @@ describe('D1 store (contract)', () => {
     ];
 
     it('round-trips a draft (JSON graph + content types) and numbers versions', async () => {
-      const t = editorialReviewWorkflow();
+      // Gated, so a graph a run can publish from (a gated template graph can't be published), on
+      // content types no other test in this shared scope publishes.
+      const t = {
+        graph: new WorkflowBuilder()
+          .n('start', 'trigger.manual', 'Submit')
+          .n('publish', 'content.publish', 'Publish')
+          .n('done', 'control.end', 'Done')
+          .e('start', 'publish')
+          .e('publish', 'done')
+          .graph(),
+      };
       const { workflow } = await createWorkflowDraft(ctx, scope, {
         name: 'Review',
         description: 'desc',
-        contentTypes: ['article', 'page'],
+        contentTypes: ['landing', 'page'],
         graph: t.graph,
         gatesPublish: true,
       });
       expect(await getWorkflow(ctx, scope, workflow.id)).toMatchObject({
         name: 'Review',
         description: 'desc',
-        contentTypes: ['article', 'page'],
+        contentTypes: ['landing', 'page'],
         graph: t.graph,
         gatesPublish: true,
         legacy: false,
@@ -765,7 +775,13 @@ describe('D1 store (contract)', () => {
     it('lists publish gates from each workflow’s latest published version, in one scope', async () => {
       // A scope of its own: gates here would refuse the other tests' publishes.
       const gatedScope = { spaceId: `g-${uuidv7()}`, environmentId: 'main' };
-      const graph = editorialReviewWorkflow().graph;
+      const graph = new WorkflowBuilder()
+        .n('start', 'trigger.manual', 'Submit')
+        .n('publish', 'content.publish', 'Publish')
+        .n('done', 'control.end', 'Done')
+        .e('start', 'publish')
+        .e('publish', 'done')
+        .graph();
       const draft = async (name: string, gatesPublish: boolean, contentTypes: string[] = []) =>
         (await createWorkflowDraft(ctx, gatedScope, { name, graph, gatesPublish, contentTypes }))
           .workflow.id;
@@ -785,6 +801,15 @@ describe('D1 store (contract)', () => {
       await publishWorkflowVersion(ctx, gatedScope, later);
       await saveWorkflowDraft(ctx, gatedScope, later, { gatesPublish: true, name: 'Later gate' });
       await publishWorkflowVersion(ctx, gatedScope, later);
+
+      // Gated on a graph no run can start (the editorial template's publish_requested trigger), as
+      // a version published before that was refused: written straight to the store.
+      const locked = await draft('Locked', false);
+      await store.workflowGraphs.publishVersion(
+        gatedScope,
+        { ...editorialReviewWorkflow(), id: locked, name: 'Locked', gatesPublish: true },
+        { publishedAt: '2026-01-01T00:00:00.000Z' },
+      );
 
       // Gated only in a draft; gated and then deleted.
       await draft('Draft only', true);

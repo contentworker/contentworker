@@ -172,6 +172,19 @@ export function Workflows() {
   );
 }
 
+/**
+ * Whether publishing is gated, as publishing checks it (the latest published version), and what
+ * the draft would change once published.
+ */
+export function gatingLabel(w: Pick<WorkflowSummary, 'gatesPublish' | 'publishGated'>): string {
+  if (w.publishGated) {
+    return w.gatesPublish
+      ? 'Gated: entries publish only through this workflow'
+      : 'Gated (the draft turns it off; publish to apply)';
+  }
+  return w.gatesPublish ? 'Not gated (the draft gates; not in force until published)' : 'Not gated';
+}
+
 /** The New workflow sheet's form: a name, then a template or a blank start. */
 function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<void> }) {
   const { client } = useClient();
@@ -393,8 +406,8 @@ function WorkflowItem({
             </div>
             <div className="flex gap-1.5">
               <dt className="shrink-0 text-muted-foreground">Publishing</dt>
-              <dd className={w.gatesPublish ? 'text-foreground' : 'text-muted-foreground'}>
-                {w.gatesPublish ? 'Gated: entries publish only through this workflow' : 'Not gated'}
+              <dd className={w.publishGated ? 'text-foreground' : 'text-muted-foreground'}>
+                {gatingLabel(w)}
               </dd>
             </div>
             <div className="flex gap-1.5">

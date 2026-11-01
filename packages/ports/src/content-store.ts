@@ -300,7 +300,7 @@ export interface WorkflowGraphRepo {
   getLatestVersion(scope: Scope, workflowId: string): Promise<WorkflowVersion | null>;
   /**
    * Every workflow (whose definition still exists) whose latest published version gates
-   * publishing, with that version's content types. One query for the scope, whatever the
+   * publishing and `canPublishThroughRun`, with that version's content types. One query for the scope, whatever the
    * number of entries a publish touches: every publish path reads it once.
    */
   listPublishGates(scope: Scope): Promise<PublishGate[]>;

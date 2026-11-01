@@ -7,6 +7,7 @@ import {
   type Concept,
   ConflictError,
   type ContentType,
+  canPublishThroughRun,
   type DomainEvent,
   type Entry,
   type EntryFields,
@@ -3559,9 +3560,9 @@ function makeWorkflowGraphRepo(x: Exec): WorkflowGraphRepo {
     },
     async listPublishGates(scope) {
       // One grouped query: SQLite takes the bare columns of a `max()` aggregate from the row
-      // holding the max, so each workflow's gating and content types come from its latest
-      // version. Only those two keys are extracted; the graph never leaves the database. The
-      // join drops a deleted workflow, which no admin could otherwise ungate.
+      // holding the max, so each workflow's gating, content types and nodes come from its
+      // latest version (the nodes only to tell whether a run can publish; edges stay behind).
+      // The join drops a deleted workflow, which no admin could otherwise ungate.
       const rows = await db
         .select({
           workflowId: v.workflowId,
@@ -3569,6 +3570,7 @@ function makeWorkflowGraphRepo(x: Exec): WorkflowGraphRepo {
           name: d.name,
           gatesPublish: sql<number | null>`json_extract(${v.definition}, '$.gatesPublish')`,
           contentTypes: sql<string | null>`json_extract(${v.definition}, '$.contentTypes')`,
+          nodes: sql<string | null>`json_extract(${v.definition}, '$.graph.nodes')`,
         })
         .from(v)
         .innerJoin(
@@ -3582,7 +3584,13 @@ function makeWorkflowGraphRepo(x: Exec): WorkflowGraphRepo {
         .where(scopeFilter(v, scope))
         .groupBy(v.workflowId);
       return rows
-        .filter((r) => Number(r.gatesPublish) === 1)
+        .filter(
+          (r) =>
+            Number(r.gatesPublish) === 1 &&
+            canPublishThroughRun({
+              nodes: r.nodes ? (JSON.parse(r.nodes) as { type: string }[]) : [],
+            }),
+        )
         .map((r) => ({
           workflowId: r.workflowId,
           name: r.name,

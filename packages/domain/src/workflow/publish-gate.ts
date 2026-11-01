@@ -1,8 +1,44 @@
 import { DomainError } from '../errors';
+import type { WorkflowNode } from './graph-types';
+import { isTrigger } from './planner';
+
+/** The trigger a person (or an API client) can start a run from (`startWorkflowRun`). */
+export const MANUAL_TRIGGER = 'trigger.manual';
+
+/** The nodes through which a run publishes. */
+export const PUBLISHING_NODE_TYPES: readonly string[] = [
+  'content.publish',
+  'content.publish_release',
+];
+
+/**
+ * Whether a run of this graph can ever publish: it starts by hand (the only trigger that starts
+ * runs today) and holds a publishing node. A gate on a graph that can't is no gate but a lock,
+ * since nothing could publish what it covers, so it neither gates nor publishes.
+ */
+export function canPublishThroughRun(graph: {
+  readonly nodes: readonly Pick<WorkflowNode, 'type'>[];
+}): boolean {
+  return (
+    graph.nodes.find(isTrigger)?.type === MANUAL_TRIGGER &&
+    graph.nodes.some((n) => PUBLISHING_NODE_TYPES.includes(n.type))
+  );
+}
+
+/** Why a gated graph can't be published, or null when it can. */
+export function publishGateIssue(graph: {
+  readonly nodes: readonly Pick<WorkflowNode, 'type'>[];
+}): string | null {
+  if (canPublishThroughRun(graph)) return null;
+  return graph.nodes.find(isTrigger)?.type !== MANUAL_TRIGGER
+    ? 'Gate publishing needs a workflow people can start (a Submit for review trigger, trigger.manual): with any other trigger no run could ever publish the entries it covers'
+    : 'Gate publishing needs a Publish or Publish release node: without one no run could ever publish the entries it covers';
+}
 
 /**
  * A workflow that gates publishing, as its latest published version has it: entries of the
- * content types it covers publish only from one of its runs. Only published versions run, so a
+ * content types it covers publish only from one of its runs. Only a version that
+ * {@link canPublishThroughRun} gates. Only published versions run, so a
  * draft's gating means nothing until it is published, and publishing a version with gating off
  * is how an admin lets entries publish directly again.
  */
@@ -52,10 +88,10 @@ export class PublishGatedError extends DomainError {
             .map((e) => `"${e.entryId}" (${quoted(e.workflows)})`)
             .join(
               ', ',
-            )}. Publish them through a run of the workflow, or turn off its publish gating.`
+            )}. Publish them through a run of the workflow, or have an admin publish a version of it with publish gating off.`
         : `Entry "${first.entryId}" publishes only through a run of the workflow ${quoted(
             first.workflows,
-          )}. Start a run of it, or turn off its publish gating.`;
+          )}. Start a run of the workflow on it, or have an admin publish a version of the workflow with publish gating off.`;
     super('publish_gated', message, { entries, ...context });
     this.entries = entries;
   }

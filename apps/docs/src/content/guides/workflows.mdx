@@ -111,6 +111,11 @@ content types in its `contentTypes`, or every type when that list is empty. Gati
 **latest published version**, never the draft: a gate you switch on in the draft does nothing
 until you publish it.
 
+A gated workflow must be one a run can publish from: it starts from **Submit for review**
+(`trigger.manual`, the only trigger that starts runs today) and has a **Publish** or **Publish
+release** node. Saving a gated draft that isn't reports a warning, and publishing it is refused
+with `422`. A published version that isn't (one published before this rule) doesn't gate.
+
 Every other way of publishing a covered entry is refused with `409` and the code `publish_gated`,
 whoever asks, administrators and the admin token included:
 
@@ -128,14 +133,14 @@ whoever asks, administrators and the admin token included:
 The error body names each refused entry and the workflows whose runs may publish it:
 
 ```json
-{ "error": { "code": "publish_gated", "message": "Entry \"…\" publishes only through a run of the workflow \"Editorial review\". Start a run of it, or turn off its publish gating.", "entries": [{ "entryId": "…", "workflows": [{ "id": "…", "name": "Editorial review" }] }] } }
+{ "error": { "code": "publish_gated", "message": "Entry \"…\" publishes only through a run of the workflow \"Legal review\". Start a run of the workflow on it, or have an admin publish a version of the workflow with publish gating off.", "entries": [{ "entryId": "…", "workflows": [{ "id": "…", "name": "Legal review" }] }] } }
 ```
 
 When several gated workflows cover an entry, a run of any one of them may publish it; a run of a
 workflow that doesn't cover the entry may not. There is no override: to publish directly, switch
 **Gate publishing** off and publish the workflow, or delete the workflow. Unpublishing is never
 gated, and an environment [snapshot import](/guides/environments/#export-and-import-a-snapshot)
-republishes what was live in its source whatever gates it copies.
+republishes what was live in its source past every gate in the target.
 
 ## Stages
 

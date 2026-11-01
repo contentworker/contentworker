@@ -251,15 +251,17 @@ newer draft since, the call returns **409** and changes nothing, rather than pub
 overwriting content the caller never saw. The MCP tools `entries_publish`, `entries_unpublish` and
 `entries_restore_version` take the same `expectedVersion` argument.
 
-**Publish gating.** When the latest published version of a workflow has `gatesPublish` on, an
-entry of a content type it covers (its `contentTypes`, or every type when empty) publishes only
-from a run of that workflow (its `content.publish` or `content.publish_release` node). Every other
-publish is refused with **409** `publish_gated`, for every caller including the admin token: the
-publish route and `entries_publish`, bulk publish and bulk jobs (a failed item each, the rest
-publish), a release holding such an entry (refused whole), and a scheduled publish (refused when
-created, and failed when it fires if gating came on since). The body's `entries` names each refused
-entry and the workflows whose runs may publish it. To publish directly, publish a version of the
-workflow with `gatesPublish` off, or delete the workflow.
+**Publish gating.** When the latest published version of a workflow has `gatesPublish` on and a run
+of it can publish (a `trigger.manual` trigger and a `content.publish` or `content.publish_release`
+node; publishing a gated version that can't is refused with **422**), an entry of a content type it
+covers (its `contentTypes`, or every type when empty) publishes only from a run of that workflow
+(its `content.publish` or `content.publish_release` node). Every other publish is refused with
+**409** `publish_gated`, for every caller including the admin token: the publish route and
+`entries_publish`, bulk publish and bulk jobs (a failed item each, the rest publish), a release
+holding such an entry (refused whole), and a scheduled publish (refused when created, and failed
+when it fires if gating came on since). The body's `entries` names each refused entry and the
+workflows whose runs may publish it. To publish directly, publish a version of the workflow with
+`gatesPublish` off, or delete the workflow.
 
 **Unique fields.** Creating or updating an entry whose `unique` field collides returns **409**
 with a message naming the field, the value and the entry holding it. Trashing an entry frees its

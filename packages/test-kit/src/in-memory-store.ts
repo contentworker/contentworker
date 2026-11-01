@@ -8,6 +8,7 @@ import {
   type ConceptScheme,
   ConflictError,
   type ContentType,
+  canPublishThroughRun,
   cloneJson,
   type DomainEvent,
   type Entry,
@@ -1227,11 +1228,12 @@ export class InMemoryContentStore implements ContentStore {
       const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${workflowId}`)?.at(-1);
       return latest ? clone(latest) : null;
     },
-    // As the D1 store: a deleted definition no longer gates, whatever its versions say.
+    // As the D1 store: a deleted definition no longer gates, whatever its versions say, and
+    // nor does a version no run of which could publish.
     listPublishGates: async (scope) =>
       this.workflowRows(scope).flatMap((row) => {
         const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${row.id}`)?.at(-1);
-        if (!latest?.gatesPublish) return [];
+        if (!latest?.gatesPublish || !canPublishThroughRun(latest.graph)) return [];
         return [
           {
             workflowId: row.id,
