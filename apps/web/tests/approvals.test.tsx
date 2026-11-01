@@ -170,7 +170,10 @@ describe('Approvals', () => {
     expect(new URL(lookups[0]!.url, 'http://x').searchParams.get('sys.id[in]')).toBe(
       'entry-1,entry-2,entry-gone',
     );
-    expect(calls.some((c) => c.url === `${BASE}/workflow-tasks?status=pending`)).toBe(true);
+    // Up to the API's cap of 200, so the shell's count reads 99+ past it, not the default 50.
+    expect(calls.some((c) => c.url === `${BASE}/workflow-tasks?status=pending&limit=200`)).toBe(
+      true,
+    );
     expect(calls.some((c) => c.url === `${BASE}/agent-reviews?status=pending`)).toBe(true);
     // No id is ever shown as a name.
     await proposalFor('Proposal for Winter menu');

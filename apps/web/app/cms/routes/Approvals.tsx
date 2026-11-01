@@ -11,10 +11,11 @@ import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
 import { type FieldChange, FieldChanges } from '~/cms/components/EntryDiff';
 import { EmptyState, PageHeader, Section } from '~/cms/components/page';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { usePendingAgentReviews, usePendingWorkflowTasks } from '../lib/approvals';
 import { useClient, useLocalRun } from '../lib/client-context';
 import { humanize, plural, toMs, until } from '../lib/format';
 import type { PreviewEntry } from '../lib/management';
-import { useContentTypesQuery, useInvalidate, useScopedQuery } from '../lib/queries';
+import { useContentTypesQuery, useInvalidate } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
 /**
@@ -26,13 +27,8 @@ import { useToast } from '../lib/toast';
  * nothing is applied unseen.
  */
 export function Approvals() {
-  const { client } = useClient();
-  const tasks = useScopedQuery(['workflow-tasks', 'pending'], () =>
-    client.listWorkflowTasks({ status: 'pending' }),
-  );
-  const reviews = useScopedQuery(['agent-reviews', 'pending'], () =>
-    client.listAgentReviews({ status: 'pending' }),
-  );
+  const tasks = usePendingWorkflowTasks();
+  const reviews = usePendingAgentReviews();
   const types = useContentTypesQuery().data;
   const taskItems = useMemo(
     () =>

@@ -22,6 +22,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -43,7 +44,7 @@ import {
   UserRound,
   UsersRound,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Link,
   NavLink,
@@ -59,11 +60,12 @@ import { OPEN_SHORTCUTS_EVENT } from '~/cms/components/layout/KeyboardShortcuts'
 import { NewEntry } from '~/cms/components/layout/NewEntry';
 import {
   DEFAULT_SETTINGS_SECTION,
-  NAV as PAGES,
+  type NAV as PAGES,
   SETTINGS_GROUPS,
   visibleNav,
 } from '~/cms/components/layout/nav';
 import { SpaceSwitcher } from '~/cms/components/layout/SpaceSwitcher';
+import { approvalsCountLabel, usePendingApprovalsCount } from '~/cms/lib/approvals';
 import { AssistantProvider, useAssistant } from '~/cms/lib/assistant';
 import { useOptionalClient } from '~/cms/lib/client-context';
 import { useFeatures } from '~/cms/lib/features';
@@ -112,6 +114,8 @@ type NavItem = {
   icon?: LucideIcon;
   end?: boolean;
   match?: (path: string) => boolean;
+  /** Carries the Approvals count (nav.ts). */
+  badge?: boolean;
 };
 
 const settingsPath = (id: string) => `/settings/${id}`;
@@ -123,7 +127,9 @@ const settingsPath = (id: string) => `/settings/${id}`;
  */
 function navGroups(pages: typeof PAGES): { title?: string; items: NavItem[] }[] {
   const of = (section?: string) =>
-    pages.filter((p) => p.section === section).map(({ to, label, icon }) => ({ to, label, icon }));
+    pages
+      .filter((p) => p.section === section)
+      .map(({ to, label, icon, badge }) => ({ to, label, icon, badge }));
   const settings = SETTINGS_GROUPS.map((g, i) => ({
     to: settingsPath(g.sections[0]?.id ?? DEFAULT_SETTINGS_SECTION),
     label: g.label,
@@ -167,12 +173,18 @@ const THEMES: { value: ThemeChoice; label: string; icon: typeof Sun }[] = [
   { value: 'system', label: 'Match system', icon: Monitor },
 ];
 
-/** Go-to keys: G, then the page's letter (nav.ts). Settings opens on its first section. */
-const GO: { key: string; to: string; label: string }[] = PAGES.map((p) => ({
-  key: p.shortcutKey,
-  to: p.section === 'Settings' ? settingsPath(DEFAULT_SETTINGS_SECTION) : p.to,
-  label: p.label,
-}));
+type GoKey = { key: string; to: string; label: string };
+
+/**
+ * Go-to keys: G, then the page's letter (nav.ts), for the pages this deployment shows (a page
+ * behind a feature that's off has no key). Settings opens on its first section.
+ */
+const goKeys = (pages: typeof PAGES): GoKey[] =>
+  pages.map((p) => ({
+    key: p.shortcutKey,
+    to: p.section === 'Settings' ? settingsPath(DEFAULT_SETTINGS_SECTION) : p.to,
+    label: p.label,
+  }));
 
 /** Whether `path` is the link's page or under it. Settings' sections all count as Settings. */
 const isAt = (path: string, { to, end, match }: Pick<NavItem, 'to' | 'end' | 'match'>) => {
@@ -186,7 +198,7 @@ const isAt = (path: string, { to, end, match }: Pick<NavItem, 'to' | 'end' | 'ma
  * typing or with a menu open), and the listener runs first, so a page's own keys never see the
  * letter that finished a G.
  */
-function useGoKeys(onHelp: () => void) {
+function useGoKeys(go: GoKey[], onHelp: () => void) {
   const navigate = useNavigate();
   useEffect(() => {
     let armed = 0;
@@ -201,19 +213,19 @@ function useGoKeys(onHelp: () => void) {
         onHelp();
         return;
       }
-      const go = Date.now() - armed < 1500 ? GO.find((g) => g.key === e.key) : undefined;
-      if (go) {
+      const to = Date.now() - armed < 1500 ? go.find((g) => g.key === e.key) : undefined;
+      if (to) {
         e.preventDefault();
         e.stopImmediatePropagation();
         armed = 0;
-        navigate(go.to);
+        navigate(to.to);
         return;
       }
       armed = e.key === 'g' ? Date.now() : 0;
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [navigate, onHelp]);
+  }, [navigate, onHelp, go]);
 }
 
 /** Keys, joined by "then" for a sequence or "+" for a chord. */
@@ -234,9 +246,11 @@ function Keys({ keys, chord }: { keys: readonly string[]; chord?: boolean }) {
 
 /** Every keyboard shortcut, from ? or the account menu. */
 function ShortcutsSheet({
+  go,
   open,
   onOpenChange,
 }: {
+  go: GoKey[];
   open: boolean;
   onOpenChange: (o: boolean) => void;
 }) {
@@ -261,7 +275,7 @@ function ShortcutsSheet({
         <section className="px-4 pt-3 pb-2">
           <h3 className="caption mb-1">Everywhere</h3>
           <ul>
-            {GO.map((g) => (
+            {go.map((g) => (
               <li key={g.key} className={row}>
                 {`Go to ${g.label}`}
                 <Keys keys={['G', g.key.toUpperCase()]} />
@@ -304,6 +318,21 @@ function ShortcutsSheet({
     </Sheet>
   );
 }
+
+/**
+ * The Approvals count: a filled `wait` pill, the shell's one call for attention. Its number is
+ * drawn for the eye; the link's name carries it for screen readers ("Approvals, 3 waiting").
+ */
+const COUNT =
+  'min-w-4 rounded-full bg-wait px-1.5 text-center font-medium text-2xs text-background leading-4 tabular-nums';
+
+/**
+ * A page's name with what waits on it ("Approvals, 3 waiting"), as the link's `aria-label`: it
+ * starts with the visible name, so a voice command still finds it. An sr-only span would be read
+ * as a block, with a stray space before the comma.
+ */
+const waitingName = (label: string, count: number) =>
+  count ? `${label}, ${approvalsCountLabel(count)} waiting` : undefined;
 
 /** Colour changes named so they leave the focus outline alone. */
 const tint = 'transition-[color,background-color,border-color]';
@@ -430,13 +459,15 @@ const canvasAt = (path: string) => /^\/workflows\/[^/]+$/.test(path);
 function ShellFrame() {
   const slow = useSlowNavigation();
   const { auth, me, nav: showNav, sidebarOpen } = useLoaderData<typeof loader>();
-  const pages = visibleNav(useFeatures());
+  const features = useFeatures();
+  const pages = useMemo(() => visibleNav(features), [features]);
+  const go = useMemo(() => goKeys(pages), [pages]);
   const groups = showNav ? navGroups(pages) : [];
   const deployment = showNav && atLeast(me.role, 'admin') ? DEPLOYMENT : [];
   const path = useCurrentPath();
   const [shortcuts, setShortcuts] = useState(false);
   const openShortcuts = useCallback(() => setShortcuts(true), []);
-  useGoKeys(openShortcuts);
+  useGoKeys(go, openShortcuts);
   // The command palette's "Keyboard shortcuts" opens the same sheet.
   useEffect(() => {
     window.addEventListener(OPEN_SHORTCUTS_EVENT, openShortcuts);
@@ -448,6 +479,9 @@ function ShellFrame() {
   const narrow = useMedia('(max-width: 1023.98px)');
   const xl = useMedia('(min-width: 1280px)');
   const assistantOpen = useAssistant().open;
+  // What waits on a decision, once the space is known and while Approvals is on.
+  const ready = Boolean(useOptionalClient()?.ready);
+  const pending = usePendingApprovalsCount(showNav && ready && pages.some((p) => p.badge)) ?? 0;
   const overlay = narrow || canvasAt(path) || (assistantOpen && !xl);
   return (
     <SidebarProvider
@@ -470,6 +504,7 @@ function ShellFrame() {
             deployment.length ? [...groups, { title: 'Deployment', items: deployment }] : groups
           }
           path={path}
+          pending={pending}
           onShortcuts={openShortcuts}
         />
       ) : null}
@@ -540,8 +575,10 @@ function ShellFrame() {
           {showNav ? <LazyAssistantPanel /> : null}
         </div>
       </SidebarInset>
-      {showNav ? <TabBar path={path} pages={pages} deployment={deployment} /> : null}
-      {showNav ? <ShortcutsSheet open={shortcuts} onOpenChange={setShortcuts} /> : null}
+      {showNav ? (
+        <TabBar path={path} pages={pages} deployment={deployment} pending={pending} />
+      ) : null}
+      {showNav ? <ShortcutsSheet go={go} open={shortcuts} onOpenChange={setShortcuts} /> : null}
       {showNav ? <CommandPalette /> : null}
     </SidebarProvider>
   );
@@ -558,10 +595,13 @@ const ROW = 'touch:h-11';
 function AppSidebar({
   groups,
   path,
+  pending,
   onShortcuts,
 }: {
   groups: { title?: string; items: NavItem[] }[];
   path: string;
+  /** Items waiting in Approvals (0 when none, or not yet known). */
+  pending: number;
   onShortcuts: () => void;
 }) {
   const { me, auth } = useLoaderData<typeof loader>();
@@ -587,49 +627,69 @@ function AppSidebar({
           </span>
         </div>
       </SidebarHeader>
-      <SidebarContent id="sidebar-nav" role="navigation" aria-label="Main" className="py-1">
-        {groups.map(({ title, items }) => {
-          const id = title ? `sidebar-${title.toLowerCase().replace(/\W+/g, '-')}` : undefined;
-          return (
-            <SidebarGroup key={title ?? 'work'} className="py-1">
-              {title ? (
-                <SidebarGroupLabel id={id} className="caption">
-                  {title}
-                </SidebarGroupLabel>
-              ) : null}
-              <SidebarMenu aria-labelledby={id}>
-                {items.map((item) => {
-                  const here = isAt(path, item);
-                  const Icon = item.icon;
-                  return (
-                    <SidebarMenuItem key={item.to}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={here}
-                        tooltip={item.label}
-                        className={ROW}
-                      >
-                        <NavLink
-                          to={item.to}
-                          end={item.end}
-                          aria-current={here ? 'page' : undefined}
+      <SidebarContent className="py-1">
+        <nav id="sidebar-nav" aria-label="Main">
+          {groups.map(({ title, items }) => {
+            const id = title ? `sidebar-${title.toLowerCase().replace(/\W+/g, '-')}` : undefined;
+            return (
+              <SidebarGroup key={title ?? 'work'} className="py-1">
+                {title ? <SidebarGroupLabel id={id}>{title}</SidebarGroupLabel> : null}
+                <SidebarMenu aria-labelledby={id}>
+                  {items.map((item) => {
+                    const here = isAt(path, item);
+                    const Icon = item.icon;
+                    const count = item.badge ? pending : 0;
+                    return (
+                      <SidebarMenuItem key={item.to}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={here}
+                          tooltip={waitingName(item.label, count) ?? item.label}
+                          className={ROW}
                         >
-                          {Icon ? (
-                            <Icon
-                              className={here ? undefined : 'text-muted-foreground'}
+                          <NavLink
+                            to={item.to}
+                            end={item.end}
+                            aria-current={here ? 'page' : undefined}
+                            aria-label={waitingName(item.label, count)}
+                          >
+                            {Icon ? (
+                              <Icon
+                                className={here ? undefined : 'text-muted-foreground'}
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                            <span>{item.label}</span>
+                          </NavLink>
+                        </SidebarMenuButton>
+                        {count ? (
+                          <>
+                            <SidebarMenuBadge aria-hidden="true">
+                              <span data-approvals-count className={COUNT}>
+                                {approvalsCountLabel(count)}
+                              </span>
+                            </SidebarMenuBadge>
+                            {/* As a rail, a dot at the icon's corner, ringed in the row's own ground. */}
+                            <span
                               aria-hidden="true"
+                              data-approvals-dot
+                              className={cn(
+                                'pointer-events-none absolute top-[calc(50%-0.625rem)] left-[1.375rem] hidden size-2 rounded-full bg-wait ring-2 @max-[8rem]:block',
+                                here
+                                  ? 'ring-sidebar-accent'
+                                  : 'ring-sidebar group-hover/menu-item:ring-sidebar-accent',
+                              )}
                             />
-                          ) : null}
-                          <span>{item.label}</span>
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroup>
-          );
-        })}
+                          </>
+                        ) : null}
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroup>
+            );
+          })}
+        </nav>
       </SidebarContent>
       {/* Who is signed in, their account, the shortcuts, the theme, and signing in or out. */}
       <SidebarFooter className="border-sidebar-border border-t pb-safe-2">
@@ -681,10 +741,12 @@ function TabBar({
   path,
   pages,
   deployment,
+  pending,
 }: {
   path: string;
   pages: typeof PAGES;
   deployment: NavItem[];
+  pending: number;
 }) {
   const { pathname } = useLocation();
   const [more, setMore] = useState(false);
@@ -710,14 +772,30 @@ function TabBar({
           className="grid h-full"
           style={{ gridTemplateColumns: `repeat(${tabs.length + 1}, 1fr)` }}
         >
-          {tabs.map((t) => (
-            <li key={t.to} className="contents">
-              <NavLink to={t.to} className={cn(item, state(isAt(path, t)))}>
-                <t.icon className="size-5" aria-hidden="true" />
-                <span className="short:sr-only">{t.label}</span>
-              </NavLink>
-            </li>
-          ))}
+          {tabs.map((t) => {
+            const count = t.badge ? pending : 0;
+            return (
+              <li key={t.to} className="contents">
+                <NavLink
+                  to={t.to}
+                  aria-label={waitingName(t.label, count)}
+                  className={cn(item, state(isAt(path, t)))}
+                >
+                  <t.icon className="size-5" aria-hidden="true" />
+                  {count ? (
+                    <span
+                      aria-hidden="true"
+                      data-approvals-count
+                      className={cn(COUNT, 'absolute top-1 left-1/2 ml-1')}
+                    >
+                      {approvalsCountLabel(count)}
+                    </span>
+                  ) : null}
+                  <span className="short:sr-only">{t.label}</span>
+                </NavLink>
+              </li>
+            );
+          })}
           <li className="contents">
             <button
               type="button"

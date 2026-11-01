@@ -49,6 +49,7 @@ export const NAV: readonly NavItem[] = [
     shortcutKey: 'a',
     tab: true,
     badge: true,
+    feature: 'approvals',
   },
   { to: '/releases', label: 'Releases', icon: Rocket, shortcutKey: 'r', tab: true },
   { to: '/workflows', label: 'Workflows', icon: Workflow, shortcutKey: 'w', section: 'Build' },

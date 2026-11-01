@@ -227,8 +227,10 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   labelled as captions: **Build** (Workflows), **Library** (Assets, Taxonomy) and **Settings**
   (Access, Automation, Extensions, Workspace: Settings' own section groups, each opening its first
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
-  on its edge. The page you're on is `sidebar-accent` and 500 with `aria-current`, marked as soon
-  as it is chosen, not when its page arrives. On touch every row is 44px.
+  on its edge (for a mouse; on touch the mark is the toggle). The page you're on is
+  `sidebar-accent`, 500 and a short ink tick at the row's start (the tab bar marks its tab along
+  its top), with `aria-current`, marked as soon as it is chosen, not when its page arrives. Group
+  labels are captions. On touch every row is 44px.
 - **Expanded or a rail:** 16rem, or a 3.25rem rail of icons. The reader's choice is the
   `cw_sidebar_state` cookie. Below lg, and beside the assistant's column below xl, the sidebar stays a
   rail and its toggle opens it over the page (`peek`, `shadow-overlay`); Escape, a press outside it
@@ -267,9 +269,12 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   2.75rem with the labels for screen readers only. **More reads as the current page** while you're
   on one of its pages. More is a bottom sheet grouped like the sidebar (Pages, Settings), then the
   scope, the theme, the install hint and Sign out. It closes when a page is chosen.
-- **Approvals count:** a filled `wait` pill, 99+ past two digits, in the sidebar, tab bar and More
-  alike (a `wait` dot on the rail): the shell's one call for attention. Approvals is behind the
-  `approvals` feature (`VITE_CW_APPROVALS`) until its inbox ships.
+- **Approvals count:** a filled `wait` pill, 99+ past two digits, in the sidebar and on the tab
+  bar's Approvals tab (a `wait` dot on the rail): the shell's one call for attention. It counts
+  the inbox's own two lists (`cms/lib/approvals.ts`), so deciding an item updates it; it also
+  refreshes every minute while the tab is visible. The link's name carries it for screen readers
+  ("Approvals, 3 waiting"). Approvals is behind the `approvals` feature (`cms/lib/features.tsx`,
+  on): off, it leaves the sidebar, the tab bar, the palette, the shortcuts list and its G-letter.
 - **Main** pads its foot by `--tabbar-h` and lays every page in `Body` (the page width and
   gutters). Never hard-code the bar heights.
 - **Coworker (the assistant):** named Coworker everywhere a person sees it (the button, the panel's
