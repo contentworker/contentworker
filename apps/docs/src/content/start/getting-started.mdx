@@ -55,6 +55,10 @@ curl -s "$API/spaces" \
   -d '{ "spaceId": "marketing", "name": "Marketing", "defaultLocale": "en-US", "starter": "sample" }'
 ```
 
+A space id is up to 64 letters, digits, `.`, `_` or `-`, starting with a letter or digit. A few
+ids are reserved for data the workspace keeps next to your files (`versions`, `imports`, `plugins`
+and `dlq`, in any case), and creating a space with one is refused with `422`.
+
 MCP clients holding the workspace's MCP token have the same operation as the `space_create` tool,
 and `spaces_list` to see what exists.
 

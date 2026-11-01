@@ -143,4 +143,17 @@ describe('space tools over MCP', () => {
     });
     expect(res.isError).toBe(true);
   });
+
+  it('refuses an id the media bucket keeps for its own data, creating nothing', async () => {
+    const admin = await connect(deps, ADMIN);
+    for (const spaceId of ['versions', 'imports', 'plugins', 'dlq', 'DLQ']) {
+      const res = await admin.callTool({
+        name: 'space_create',
+        arguments: { spaceId, name: 'Reserved', defaultLocale: 'en-US', starter: 'sample' },
+      });
+      expect(res.isError, spaceId).toBe(true);
+    }
+    const list = text(await admin.callTool({ name: 'spaces_list', arguments: {} }));
+    expect(list.items).toEqual([{ id: 'space-1', name: 'One' }]);
+  });
 });

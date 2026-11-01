@@ -59,7 +59,9 @@ export const createSpaceBody = z.object({
   spaceId: z
     .string()
     .regex(SPACE_ID_PATTERN, 'letters, digits, ".", "_" or "-", starting with a letter or digit')
-    .describe('1–64 letters, digits, ".", "_" or "-", starting with a letter or digit'),
+    .describe(
+      '1–64 letters, digits, ".", "_" or "-", starting with a letter or digit; not versions, imports, plugins or dlq (reserved)',
+    ),
   name: zShort,
   defaultLocale: zLocale,
   locales: z.array(zLocale).max(200).optional(),

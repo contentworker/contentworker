@@ -121,7 +121,9 @@ hundreds of thousands of rows. Each step deletes at most 500 rows from each of t
 tables (`PURGE_ROWS_PER_TABLE`), and each `environment.purge_due` runs up to 20 steps
 (`PURGE_STEPS_PER_EVENT`) before handing on to the next. When nothing is left, the environment's
 asset files go from the blob store (keeping any another environment's asset records still point at,
-as a clone's do) and its id is free again. Until then, creating an environment with that id is
+as a clone's do; a space created before reserved space ids were refused, and named like one of
+the bucket's own prefixes, keeps its asset files rather than reach that data) and its id is free
+again. Until then, creating an environment with that id is
 refused (`409`). A purge whose event is lost is restarted by the engine's cron after five minutes
 without progress (`PURGE_STALE_SECONDS`). The pending purges are the `environment_purges` table
 (`0003_environment_purges.sql`).
