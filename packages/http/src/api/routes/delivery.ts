@@ -333,11 +333,22 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
     scope: Scope,
     principal: AuthVars['Variables']['principal'],
   ): DeliveryResolvers {
+    // GraphQL types each field as one value (a String, not a map of locales), so a query that
+    // names no locale reads the space's default one; REST, which can return the map, doesn't.
+    let defaultLocale: Promise<string | undefined> | undefined;
+    const localeOr = async (locale: string | undefined) =>
+      locale ??
+      (await (defaultLocale ??= ctx.store.spaces
+        .getConfig(scope)
+        .then((config) => config?.defaultLocale)));
     return {
       entry: async (contentType, id, locale) => {
         if (!canAccessContentType(principal, 'read', contentType)) return null;
         try {
-          const e = await getPublishedEntry(ctx, scope, id, { locale, include: 1 });
+          const e = await getPublishedEntry(ctx, scope, id, {
+            locale: await localeOr(locale),
+            include: 1,
+          });
           if (e.contentType !== contentType) return null;
           // Same field-level masking as the REST single-entry path.
           return {
@@ -348,8 +359,8 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
           return null;
         }
       },
-      collection: (contentType, args) => {
-        if (!canAccessContentType(principal, 'read', contentType)) return Promise.resolve([]);
+      collection: async (contentType, args) => {
+        if (!canAccessContentType(principal, 'read', contentType)) return [];
         const raw: [string, string][] = [];
         for (const [k, v] of Object.entries(args.where ?? {})) {
           raw.push([k, Array.isArray(v) ? v.join(',') : String(v)]);
@@ -358,17 +369,16 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
         if (args.search) raw.push(['query', args.search]);
         const parsed = entryQueryFrom(raw);
         assertQueryRespectsFieldRules(principal, { ...parsed, contentTypeApiId: contentType });
-        return listPublishedEntries(
+        const items = await listPublishedEntries(
           ctx,
           scope,
           { ...parsed, contentTypeApiId: contentType, limit: args.limit, skip: args.skip },
-          { locale: args.locale, include: 1 },
-        ).then((items) =>
-          items.map((e) => ({
-            ...e,
-            fields: maskDeliveredFields(principal, e.contentType, e.fields),
-          })),
-        ) as Promise<ResolvedEntry[]>;
+          { locale: await localeOr(args.locale), include: 1 },
+        );
+        return items.map((e) => ({
+          ...e,
+          fields: maskDeliveredFields(principal, e.contentType, e.fields),
+        })) as ResolvedEntry[];
       },
       asset: async (_id, _locale) => {
         if (principal.contentGrants) return null;

@@ -93,6 +93,19 @@ describe('GraphQL Delivery (generated from content types)', () => {
 
     const list = await gql(app, '{ articleCollection(locale: "en-US") { _sys { id } title } }');
     expect((list.body.data as { articleCollection: unknown[] }).articleCollection).toHaveLength(1);
+
+    // Naming no locale reads the space's default one: a String field is never a locale map.
+    const plain = await gql(
+      app,
+      `{ article(id: "${entry.id}") { title } articleCollection { title } }`,
+    );
+    expect(plain.body.errors).toBeUndefined();
+    const data = plain.body.data as {
+      article: { title: unknown };
+      articleCollection: { title: unknown }[];
+    };
+    expect(data.article.title).toBe('GraphQL works');
+    expect(data.articleCollection.map((e) => e.title)).toEqual(['GraphQL works']);
   });
 
   it('never serves one principal the resolvers of another (cache is principal-free)', async () => {
