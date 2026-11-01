@@ -168,7 +168,8 @@ type Fn = (...args: unknown[]) => Promise<unknown>;
  * "undefined is not a function" nobody sees. They close over nothing but the
  * denial record, so there is no authority behind them to reach.
  *
- * `caps.granted` lists the effective grant, for feature detection.
+ * `caps.granted` lists the effective grant, for feature detection, and
+ * `caps.settings.get()` the plugin's own settings (no capability needed).
  */
 export function gateCapabilities(
   host: PluginCapabilities,
@@ -231,6 +232,17 @@ export function gateCapabilities(
       gated[namespace] = ns;
     }
   }
+
+  // Settings are the plugin's own configuration and need no capability, so they
+  // sit outside the map above. Still re-bound rather than passed through: only
+  // `get` crosses, and a host that provides none hands over an empty object.
+  const settings = (host.settings as Record<string, unknown> | undefined)?.get;
+  gated.settings = {
+    get:
+      typeof settings === 'function'
+        ? () => (settings as Fn).call(host.settings)
+        : async () => ({}),
+  };
 
   return { ...gated, granted: [...invocation.capabilities] };
 }

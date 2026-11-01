@@ -10,7 +10,8 @@ person who installed it could not. Everything below exists to make that true.
 
 ## The three things a plugin is
 
-1. **A manifest** — id, version, requested capabilities, egress allowlist, hooks, entrypoint.
+1. **A manifest** — id, version, requested capabilities, egress allowlist, hooks, entrypoint, and
+   optionally the settings an operator fills in.
 2. **A bundle** — one ES module, stored in the blob store, addressed by SHA-256 checksum.
 3. **A grant** — the capability list a human actually approved, which may be _less_ than the
    manifest asked for and can never be more.
@@ -212,21 +213,96 @@ Capability methods. Each one calls the same application use-case the HTTP API ca
 | `search:read`     | `caps.search.query(…)`                                                                  | not yet  |
 | `ai:generate`     | `caps.ai.generate(…)`                                                                   | not yet  |
 | `network:request` | `caps.network.fetch(url)` → `{ status, contentType, body }`                             | yes      |
-| `kv:storage`      | `caps.kv.get/put/delete(…)`                                                             | not yet  |
+| `kv:storage`      | `caps.kv.get(key)`, `.put(key, value)`, `.delete(key)`, `.list({ prefix, cursor })`     | yes      |
 
 A manifest may declare a capability marked "not yet", and a human may approve it. A call to it is
 refused as `not-provided` until the platform wires an implementation. The consent screen says this,
-so approving one is never mistaken for granting something that works. `kv:storage` in particular
-waits for a per-plugin storage seam. Handing over a shared namespace and calling it isolated would
-not be isolation.
+so approving one is never mistaken for granting something that works.
 
-There is no `email:send`, settings or admin-page capability. A plugin runs inside a write and has no
-host API for any of them. Admin pages are app extensions, a separate mechanism, and outbound email
-has no port. A capability goes into the vocabulary when there is something real behind it.
+Every plugin also gets `caps.settings.get()`, with no capability (see [Settings](#settings)).
+
+There is no `email:send` or admin-page capability. A plugin runs inside a write and has no host API
+for either. Admin pages are app extensions, a separate mechanism, and outbound email has no port. A
+capability goes into the vocabulary when there is something real behind it.
+
+### `kv:storage`
+
+A key/value store of the plugin's own, **per environment**: what a plugin writes while saving in
+`staging` is not there when it runs in `main`. Values are anything JSON can encode, and come back
+in the same shape.
+
+Isolation is structural. The host binds the plugin id from the installed record before the plugin
+is called, and every statement the store runs filters on the space, the environment and that id. No
+argument a plugin passes reaches that part of the key, so there is no key one plugin can name that
+reads another's.
+
+| Limit                           | Value                                 |
+| ------------------------------- | ------------------------------------- |
+| Key length                      | 512 characters                        |
+| Value size (its JSON encoding)  | 64 KiB                                |
+| Keys per plugin per environment | 1,000 (overwriting is always allowed) |
+| Keys per `list` page            | 100                                   |
+
+A refused call throws with a stable prefix a plugin can match: `kv_invalid:` (a bad key or a value
+JSON cannot encode) or `kv_limit:` (too large, or at the key cap). The cap is checked in the same
+statement that writes, so concurrent puts cannot overshoot it. `list` returns keys in byte order;
+pass the `cursor` it returns to read the next page. `%` and `_` in a prefix are ordinary
+characters.
+
+A put is written when it is called, not with the write the hook is part of: a key a plugin stores
+during `entry:beforePublish` stays even if a later plugin vetoes the publish. Store state that is
+harmless when the write it rode on never lands: a cache, a cursor, a counter that tolerates drift.
+
+The keys live in D1 (`plugin_kv`), next to everything else a plugin touches, because a plugin only
+ever runs on a write path, where the primary is already being written. They go with their
+environment when it is deleted, and with the plugin when it is uninstalled, so reinstalling the
+same id starts clean.
+
+## Settings
+
+A manifest may declare the settings an operator fills in:
+
+```json
+{
+  "settings": [
+    { "key": "apiKey", "label": "API key", "type": "string", "secret": true, "required": true },
+    { "key": "maxLength", "label": "Max title length", "type": "number", "default": 120 },
+    { "key": "tone", "label": "Tone", "type": "select", "options": ["plain", "formal"] }
+  ]
+}
+```
+
+| Field      | Rule                                                                                    |
+| ---------- | --------------------------------------------------------------------------------------- |
+| `key`      | A letter, then letters, digits or `_` (64 at most); unique                              |
+| `type`     | `string`, `number`, `boolean` or `select` (with 1–100 `options`)                        |
+| `secret`   | `string` only, and no `default`: a default would sit in the manifest for anyone to read |
+| `required` | A save that leaves it without a value (and it has no default) is refused                |
+| `default`  | What the plugin reads until an operator sets a value; must fit the type                 |
+
+At most 50 settings; a string value holds at most 4,096 characters. An invalid declaration is
+refused at install and upgrade like the rest of the manifest.
+
+**The plugin reads its settings with `caps.settings.get()`**, which returns every declared key's
+value or default, secrets in plaintext. It needs no capability: settings are the plugin's own
+configuration, and what it can learn from them is exactly what an operator chose to tell it. The
+host binds the call to the installed plugin's record, so a plugin cannot ask for another's.
+
+**Secret values are sealed at rest** under `DATA_KEY`, each bound to its space, plugin and key, and
+included in the daily reseal sweep (see [Auth & RBAC](./auth-and-rbac.md#secrets-at-rest)). No read
+API returns one: an operator sees `secretsSet`, the secret keys that hold a value.
+
+Changing settings is a patch: each key in `values` is set, `null` clears it, and a key left out
+keeps its value, so a secret need not be retyped to change something else. Values are checked
+against the manifest's fields. Every save bumps `version`; pass the one you read as
+`expectedVersion` and a concurrent change is refused with 409 rather than overwritten. A save that
+races another without it also fails with 409, never by dropping a field. A value whose field an
+upgrade removed or retyped is ignored when read and dropped at the next save. Uninstalling removes
+the settings.
 
 ## Managing plugins
 
-Space-admin scope (`space:admin`). HTTP has every operation; MCP has three of them (below):
+Space-admin scope (`space:admin`). HTTP has every operation; MCP has five of them (below):
 
 | Operation             | HTTP                                           |
 | --------------------- | ---------------------------------------------- |
@@ -239,6 +315,8 @@ Space-admin scope (`space:admin`). HTTP has every operation; MCP has three of th
 | Upgrade from a URL    | `PUT /spaces/:space/plugins/:id/from-url`      |
 | Approve capabilities  | `POST /spaces/:space/plugins/:id/capabilities` |
 | Enable / disable      | `POST /spaces/:space/plugins/:id/enabled`      |
+| Read settings         | `GET /spaces/:space/plugins/:id/settings`      |
+| Change settings       | `PATCH /spaces/:space/plugins/:id/settings`    |
 | Uninstall             | `DELETE /spaces/:space/plugins/:id`            |
 
 A plugin summary carries `requestedCapabilities` (the manifest), `approvedCapabilities` (the human
@@ -249,7 +327,9 @@ flagged plugin, to narrow a grant, or to grant something the manifest asked for 
 earlier. The same checks as an install apply: nothing beyond the manifest, and nothing beyond the
 approver's own scopes. A grant that grows lands the plugin disabled.
 
-MCP exposes `plugins_list`, `plugin_set_enabled` and `plugin_approve_capabilities`. The approve tool
+MCP exposes `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities`,
+`plugin_get_settings` and `plugin_set_settings`. The settings tools call the same use-cases as the
+routes. The approve tool
 calls the same use-case in **narrow-only** mode. An agent may confirm a grant (which clears a legacy
 plugin's flag) or reduce it, and is refused if it tries to widen it. Granting authority to code
 stays a human decision on the consent screen. Plugins are scoped to a space: a grant approved in one

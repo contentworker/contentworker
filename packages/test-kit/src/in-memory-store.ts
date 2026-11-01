@@ -22,6 +22,7 @@ import {
   type InstalledPlugin,
   matchesTopic,
   type OAuthClient,
+  type PluginSettings,
   type Promotion,
   projectFields,
   type ReferenceEdge,
@@ -84,6 +85,8 @@ import type {
   OutboxRepo,
   PendingCount,
   PluginRepo,
+  PluginSettingsRepo,
+  PluginStorageRepo,
   PreviewTokenRecord,
   PreviewTokenRepo,
   PromotionRepo,
@@ -280,6 +283,7 @@ export class InMemoryContentStore implements ContentStore {
         this.uniqueData,
         this.bulkJobData,
         this.bulkChunkData,
+        this.pluginKvData,
       ];
       let deleted = 0;
       for (const map of scoped) {
@@ -1080,13 +1084,21 @@ export class InMemoryContentStore implements ContentStore {
   readonly storedSecrets: StoredSecretRepo = {
     scan: async (column, { excludePrefix, after, limit }) => {
       const rows: StoredSecret[] = [];
-      for (const list of this.webhookData.values()) {
-        for (const w of list) {
-          if (column === 'webhooks.secret') {
-            rows.push({ column, id: w.id, value: w.secret });
-          } else {
-            for (const [key, value] of Object.entries(w.headers ?? {})) {
-              rows.push({ column, id: w.id, key, value });
+      if (column === 'plugin_settings.secrets') {
+        for (const p of this.pluginSettingsData.values()) {
+          for (const [key, value] of Object.entries(p.secrets)) {
+            rows.push({ column, id: `${p.spaceId}/${p.pluginId}`, key, value });
+          }
+        }
+      } else {
+        for (const list of this.webhookData.values()) {
+          for (const w of list) {
+            if (column === 'webhooks.secret') {
+              rows.push({ column, id: w.id, value: w.secret });
+            } else {
+              for (const [key, value] of Object.entries(w.headers ?? {})) {
+                rows.push({ column, id: w.id, key, value });
+              }
             }
           }
         }
@@ -1102,6 +1114,16 @@ export class InMemoryContentStore implements ContentStore {
         .slice(0, limit);
     },
     replace: async (ref, was, next) => {
+      if (ref.column === 'plugin_settings.secrets') {
+        const slash = ref.id.indexOf('/');
+        const k = `${ref.id.slice(0, slash)}::${ref.id.slice(slash + 1)}`;
+        const p = this.pluginSettingsData.get(k);
+        const key = ref.key ?? '';
+        if (!p || p.secrets[key] !== was) return false;
+        // The version stays: a reseal is not an edit (see the D1 store).
+        this.pluginSettingsData.set(k, { ...p, secrets: { ...p.secrets, [key]: next } });
+        return true;
+      }
       for (const [spaceId, list] of this.webhookData) {
         const i = list.findIndex((w) => w.id === ref.id);
         const w = list[i];
@@ -1956,6 +1978,59 @@ export class InMemoryContentStore implements ContentStore {
     },
     delete: async (spaceId, id) => {
       this.pluginData.delete(`${spaceId}::${id}`);
+    },
+  };
+
+  /** `space::plugin` → settings, as stored (secrets sealed when the store is decorated). */
+  private readonly pluginSettingsData = new Map<string, PluginSettings>();
+
+  readonly pluginSettings: PluginSettingsRepo = {
+    get: async (spaceId, pluginId) =>
+      this.pluginSettingsData.get(`${spaceId}::${pluginId}`) ?? null,
+    save: async (settings, expectedVersion) => {
+      const k = `${settings.spaceId}::${settings.pluginId}`;
+      if ((this.pluginSettingsData.get(k)?.version ?? 0) !== expectedVersion) return false;
+      this.pluginSettingsData.set(k, settings);
+      return true;
+    },
+    delete: async (spaceId, pluginId) => {
+      this.pluginSettingsData.delete(`${spaceId}::${pluginId}`);
+    },
+  };
+
+  /**
+   * `space::env::plugin` → key → value. Keyed under the scope so the environment purge's
+   * scope-prefix sweep clears it with the environment, as `ENVIRONMENT_SCOPED_TABLES` does on D1.
+   */
+  private readonly pluginKvData = new Map<string, Map<string, string>>();
+
+  readonly pluginStorage: PluginStorageRepo = {
+    get: async (scope, pluginId, key) =>
+      this.pluginKvData.get(`${scopeKey(scope)}::${pluginId}`)?.get(key) ?? null,
+    put: async (scope, pluginId, key, value, { maxKeys }) => {
+      const k = `${scopeKey(scope)}::${pluginId}`;
+      const keys = this.pluginKvData.get(k) ?? new Map<string, string>();
+      if (!keys.has(key) && keys.size >= maxKeys) return false;
+      keys.set(key, value);
+      this.pluginKvData.set(k, keys);
+      return true;
+    },
+    delete: async (scope, pluginId, key) =>
+      this.pluginKvData.get(`${scopeKey(scope)}::${pluginId}`)?.delete(key) ?? false,
+    list: async (scope, pluginId, { prefix, after, limit }) => {
+      const keys = [...(this.pluginKvData.get(`${scopeKey(scope)}::${pluginId}`)?.keys() ?? [])];
+      // Code-unit order, as SQLite's BINARY collation orders the D1 store's keys.
+      return keys
+        .filter((key) => !prefix || key.startsWith(prefix))
+        .filter((key) => after === undefined || key > after)
+        .sort((a, b) => (a === b ? 0 : a < b ? -1 : 1))
+        .slice(0, limit);
+    },
+    deleteAll: async (spaceId, pluginId) => {
+      for (const k of [...this.pluginKvData.keys()]) {
+        if (k.startsWith(`${spaceId}::`) && k.endsWith(`::${pluginId}`))
+          this.pluginKvData.delete(k);
+      }
     },
   };
 

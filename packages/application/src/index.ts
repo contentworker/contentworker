@@ -45,6 +45,8 @@ export * from './moderation';
 export * from './oauth';
 export * from './plugin-hooks';
 export * from './plugin-packages';
+export * from './plugin-settings';
+export * from './plugin-storage';
 export * from './plugins';
 export * from './preview';
 export * from './preview-tokens';

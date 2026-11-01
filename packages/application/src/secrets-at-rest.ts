@@ -1,6 +1,7 @@
-import { SecretUnreadableError, type Webhook } from '@contentworker/domain';
+import { type PluginSettings, SecretUnreadableError, type Webhook } from '@contentworker/domain';
 import type {
   ContentStore,
+  PluginSettingsRepo,
   SecretSealer,
   StoredSecretColumn,
   StoredSecretRef,
@@ -13,7 +14,8 @@ import { secretContext } from './secret-sealer';
  *
  * `withSealedSecrets` decorates a `ContentStore` so every secret column is
  * sealed on write and opened on read. Use-cases, the MCP tools and the event
- * dispatcher keep seeing plaintext `Webhook`s and never learn the format; the
+ * dispatcher keep seeing plaintext `Webhook`s and plugin settings and never
+ * learn the format; the
  * store adapters keep persisting opaque strings and never learn the key. One
  * decorator serves every `ContentStore` implementation (D1, in-memory),
  * so the sealing logic exists exactly once and is testable without a database.
@@ -24,6 +26,14 @@ import { secretContext } from './secret-sealer';
 
 function contextFor(ref: StoredSecretRef): string {
   if (ref.column === 'webhooks.secret') return secretContext.webhookSecret(ref.id);
+  if (ref.column === 'plugin_settings.secrets') {
+    const slash = ref.id.indexOf('/');
+    return secretContext.pluginSetting(
+      ref.id.slice(0, slash),
+      ref.id.slice(slash + 1),
+      ref.key ?? '',
+    );
+  }
   return secretContext.webhookHeader(ref.id, ref.key ?? '');
 }
 
@@ -77,6 +87,32 @@ export function sealedWebhookRepo(inner: WebhookRepo, sealer: SecretSealer): Web
   };
 }
 
+/** Wraps a `PluginSettingsRepo` so every secret setting is sealed at rest, each on its own. */
+export function sealedPluginSettingsRepo(
+  inner: PluginSettingsRepo,
+  sealer: SecretSealer,
+): PluginSettingsRepo {
+  const each = async (
+    p: PluginSettings,
+    fn: (value: string, context: string) => Promise<string>,
+  ): Promise<PluginSettings> => {
+    const secrets: Record<string, string> = {};
+    for (const [key, value] of Object.entries(p.secrets)) {
+      secrets[key] = await fn(value, secretContext.pluginSetting(p.spaceId, p.pluginId, key));
+    }
+    return { ...p, secrets };
+  };
+  return {
+    get: async (spaceId, pluginId) => {
+      const p = await inner.get(spaceId, pluginId);
+      return p ? each(p, (v, c) => sealer.open(v, c)) : null;
+    },
+    save: async (settings, expectedVersion) =>
+      inner.save(await each(settings, (v, c) => sealer.seal(v, c)), expectedVersion),
+    delete: (spaceId, pluginId) => inner.delete(spaceId, pluginId),
+  };
+}
+
 /**
  * Decorates `store` so secrets are sealed on write and opened on read. Every
  * other member — repos, `withTransaction`, adapter extras such as `close` —
@@ -85,11 +121,13 @@ export function sealedWebhookRepo(inner: WebhookRepo, sealer: SecretSealer): Web
  */
 export function withSealedSecrets<S extends ContentStore>(store: S, sealer: SecretSealer): S {
   const webhooks = sealedWebhookRepo(store.webhooks, sealer);
+  const pluginSettings = sealedPluginSettingsRepo(store.pluginSettings, sealer);
   // A Proxy rather than a spread: the in-memory store is a class instance whose
   // members a spread would detach from their prototype.
   return new Proxy(store, {
     get(target, prop) {
       if (prop === 'webhooks') return webhooks;
+      if (prop === 'pluginSettings') return pluginSettings;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -97,7 +135,11 @@ export function withSealedSecrets<S extends ContentStore>(store: S, sealer: Secr
 }
 
 /** Every sealed column, in sweep order. */
-const SEALED_COLUMNS: readonly StoredSecretColumn[] = ['webhooks.secret', 'webhooks.headers'];
+const SEALED_COLUMNS: readonly StoredSecretColumn[] = [
+  'webhooks.secret',
+  'webhooks.headers',
+  'plugin_settings.secrets',
+];
 
 /** Values examined per sweep run by default — bounds one cron tick's work. */
 export const DEFAULT_RESEAL_BATCH = 500;

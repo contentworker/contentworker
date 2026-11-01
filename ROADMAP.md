@@ -51,15 +51,15 @@ Everything below is built and tested on v2.
   Workflows, agent schedules and reviews, per-space budgets (a Durable Object), provenance,
   related and duplicate detection, hybrid and semantic search, RAG.
 - **Integration.** Signed webhooks with a delivery log, event-triggered functions, app
-  extensions, sandboxed plugins on Worker Loader, the transactional outbox with lease-claimed
-  relay.
+  extensions, sandboxed plugins on Worker Loader (with per-plugin `kv:storage` and
+  operator settings, secrets sealed), the transactional outbox with lease-claimed relay.
 - **Access.** CMA/CDA/CPA keys, eight scopes, roles with per-type and per-field grants and
   presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
   access tokens, preview links, rate limits, the audit log, secrets sealed at rest with a daily
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
   recovery codes, with the person forwarded to the api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a Durable Object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (151 tools, plus skills and the docs
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (153 tools, plus skills and the docs
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached in KV) in front of a Workers Caching entrypoint keyed by visibility profile, with ETags,

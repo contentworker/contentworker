@@ -1,5 +1,6 @@
 import { type PermissionScope, SCOPES } from '../auth/auth';
 import { DomainError, ValidationError } from '../errors';
+import { type PluginSettingField, settingsSchemaIssues } from './settings';
 
 /**
  * Plugins: third-party code that runs inside contentworker's write path.
@@ -27,7 +28,11 @@ export const PLUGIN_CAPABILITIES = [
   'ai:generate',
   /** Outbound HTTP, restricted to the manifest's `allowedHosts`. */
   'network:request',
-  /** A per-plugin key/value scratch space, namespaced by plugin id. */
+  /**
+   * A key/value scratch space of the plugin's own, per environment. Keys are
+   * namespaced by the installed plugin's id on the host side, so no plugin can
+   * name another's.
+   */
   'kv:storage',
 ] as const;
 export type PluginCapability = (typeof PLUGIN_CAPABILITIES)[number];
@@ -88,6 +93,11 @@ export interface PluginManifest {
   readonly hooks: readonly PluginHook[];
   /** Module path within the bundle, e.g. `index.js`. */
   readonly entrypoint: string;
+  /**
+   * The settings an operator fills in, read back by the plugin through
+   * `caps.settings.get()`. Optional: most plugins need none.
+   */
+  readonly settings?: readonly PluginSettingField[];
 }
 
 /** A plugin as installed in a space. */
@@ -188,6 +198,8 @@ export function assertValidManifest(manifest: PluginManifest): void {
       issues.push({ field: 'allowedHosts', message: `"${host}" is not a bare hostname` });
     }
   }
+
+  issues.push(...settingsSchemaIssues(manifest.settings));
 
   if (issues.length > 0) throw new ValidationError(issues);
 }
@@ -322,7 +334,7 @@ export const PLUGIN_CAPABILITY_METHODS: Readonly<Record<PluginCapability, readon
   'search:read': ['search.query'],
   'ai:generate': ['ai.generate'],
   'network:request': ['network.fetch'],
-  'kv:storage': ['kv.get', 'kv.put', 'kv.delete'],
+  'kv:storage': ['kv.get', 'kv.put', 'kv.delete', 'kv.list'],
 };
 
 /** The capability that unlocks `namespace.method`, or null for a method nothing unlocks. */
