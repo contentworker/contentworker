@@ -2,7 +2,7 @@
  * The fleet: one contentworker deployment per customer, each listed in deployments/<id>.jsonc,
  * each with its own D1, KV, R2, Vectorize index, queues, Workflows, AI Gateway and Workers.
  *
- *   node scripts/fleet.ts render <id>          write apps/{web,api,engine,delivery}/wrangler.<id>.json
+ *   node scripts/fleet.ts render <id>          write apps/{web,api,engine,media,delivery}/wrangler.<id>.json
  *                                              (and apps/docs for the deployment that hosts docs)
  *   node scripts/fleet.ts matrix               the deployments of each ring, for CI
  *   node scripts/fleet.ts secrets <app> <out>  write this app's secrets from the environment
@@ -14,7 +14,8 @@
  *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and hosts put in,
  * written next to it so its relative paths still resolve. Deploy order (CI): engine first (it owns
- * the Durable Object and Workflow classes the others bind by script name), then api, delivery, web.
+ * the Durable Object and Workflow classes the others bind by script name), then api, media (whose
+ * URLs delivery hands out), delivery, web.
  */
 
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -28,7 +29,7 @@ export const RINGS = ['staging', 'internal', 'canary', 'general'] as const;
 type Ring = (typeof RINGS)[number];
 
 /** The Workers a deployment runs, in deploy order. */
-export const APPS = ['engine', 'api', 'delivery', 'web'] as const;
+export const APPS = ['engine', 'api', 'media', 'delivery', 'web'] as const;
 export type App = (typeof APPS)[number];
 
 /** Ids a customer can't have: `<id>.contentworker.app` would read as part of the product. */
@@ -93,6 +94,8 @@ export const SECRETS: Record<App, readonly string[]> = {
     'MEDIA_SIGNING_SECRET',
   ],
   delivery: ['DATA_KEY', 'DATA_KEY_PREVIOUS', 'TOKEN_PEPPER', 'MEDIA_SIGNING_SECRET'],
+  // Verifies Preview's short-lived signed draft reads; it signs nothing and reads no secret at rest.
+  media: ['MEDIA_SIGNING_SECRET'],
 };
 
 /**
@@ -152,7 +155,7 @@ export type Deployment = {
   ring: Ring;
   /** Unique per deployment: keeps each one's rate-limit namespaces apart (slot × 1000 + n). */
   slot: number;
-  /** The admin's host. Defaults to `<id>.contentworker.app`; the api is `api.<domain>`, delivery `cdn.<domain>`. */
+  /** The admin's host. Defaults to `<id>.contentworker.app`; the api is `api.<domain>`, delivery `cdn.<domain>`, media `media.<domain>`. */
   domain: string;
   /** Appended to every account-wide name. Defaults to `-<id>`; contentworker's own is `""`. */
   suffix: string;
@@ -292,6 +295,8 @@ export const names = (d: Deployment) => ({
   api: `contentworker-api${d.suffix}`,
   engine: `contentworker-engine${d.suffix}`,
   delivery: `contentworker-delivery${d.suffix}`,
+  // The media Worker shares its base name with the bucket (Workers and buckets are named apart).
+  mediaWorker: `contentworker-media${d.suffix}`,
   d1: `contentworker${d.suffix}`,
   kv: `contentworker-cache${d.suffix}`,
   media: `contentworker-media${d.suffix}`,
@@ -306,6 +311,7 @@ export const hosts = (d: Deployment) => ({
   web: d.domain,
   api: `api.${d.domain}`,
   delivery: `cdn.${d.domain}`,
+  media: `media.${d.domain}`,
 });
 
 type Config = Record<string, any>;
@@ -317,7 +323,7 @@ function common(base: Config, d: Deployment, app: App): Config {
     throw new Error(`${d.id} has no kvId: run scripts/provision.sh ${d.id}`);
   const n = names(d);
   const c = structuredClone(base);
-  c.name = n[app];
+  c.name = app === 'media' ? n.mediaWorker : n[app];
   c.workers_dev = false;
   c.preview_urls = false;
   c.d1_databases = (c.d1_databases ?? []).map((db: Config) => ({
@@ -383,6 +389,7 @@ function common(base: Config, d: Deployment, app: App): Config {
       c.vars.AI_GATEWAY_LOGS = String(d.aiGatewayLogs);
     }
     if ('MEDIA_BASE_URL' in c.vars) c.vars.MEDIA_BASE_URL = `https://${hosts(d).api}`;
+    if ('MEDIA_PUBLIC_URL' in c.vars) c.vars.MEDIA_PUBLIC_URL = `https://${hosts(d).media}`;
     if ('QUEUE_SUFFIX' in c.vars) c.vars.QUEUE_SUFFIX = d.suffix;
     // Only Workers that bind Durable Objects need the jurisdiction (web binds none).
     if (d.jurisdiction && app !== 'web') c.vars.DATA_JURISDICTION = d.jurisdiction;
@@ -415,6 +422,12 @@ export function renderApi(base: Config, d: Deployment): Config {
   return c;
 }
 
+export function renderMedia(base: Config, d: Deployment): Config {
+  const c = common(base, d, 'media');
+  c.routes = [{ pattern: hosts(d).media, custom_domain: true }];
+  return c;
+}
+
 export function renderDelivery(base: Config, d: Deployment): Config {
   const c = common(base, d, 'delivery');
   c.routes = [{ pattern: hosts(d).delivery, custom_domain: true }];
@@ -437,6 +450,7 @@ export function renderWeb(base: Config, d: Deployment): Config {
 const RENDER: Record<App, (base: Config, d: Deployment) => Config> = {
   engine: renderEngine,
   api: renderApi,
+  media: renderMedia,
   delivery: renderDelivery,
   web: renderWeb,
 };
@@ -505,12 +519,15 @@ export function shellVars(d: Deployment): Record<string, string> {
       'contentworker-agents',
       'contentworker-purge',
       'contentworker-purge-dlq',
+      'contentworker-media-purge',
+      'contentworker-media-purge-dlq',
     ]
       .map(n.queue)
       .join(' '),
     DOMAIN: h.web,
     API_DOMAIN: h.api,
     CDN_DOMAIN: h.delivery,
+    MEDIA_DOMAIN: h.media,
     ENVIRONMENT: d.environment,
     JURISDICTION: d.jurisdiction ?? '',
     AI_GATEWAY_LOGS: String(d.aiGatewayLogs),

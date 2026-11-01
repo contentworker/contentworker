@@ -53,7 +53,9 @@
       { "binding": "EVENTS_QUEUE", "queue": "contentworker-events" },
       { "binding": "BULK_QUEUE", "queue": "contentworker-bulk" },
       { "binding": "AGENTS_QUEUE", "queue": "contentworker-agents" },
-      { "binding": "PURGE_QUEUE", "queue": "contentworker-purge" }
+      { "binding": "PURGE_QUEUE", "queue": "contentworker-purge" },
+      // The media Worker's cache: a revoked asset's tag, now and once more after KV's read cache.
+      { "binding": "MEDIA_PURGE_QUEUE", "queue": "contentworker-media-purge" }
     ],
     "consumers": [
       {
@@ -142,6 +144,9 @@
     "EMBEDDINGS_MODEL": "",
     "ALLOW_FAKE_ADAPTERS": "",
     "MEDIA_BASE_URL": "",
+    // The media Worker's origin (https://media.<domain>), rendered per deployment. Empty: delivered
+    // assets keep the api's signed URLs, without renditions or a srcset.
+    "MEDIA_PUBLIC_URL": "",
     "IMAGES_ZONE_ORIGIN": "",
     "AI_MAX_REQUESTS_PER_WINDOW": "60",
     "AI_MAX_TOKENS_PER_WINDOW": "200000",

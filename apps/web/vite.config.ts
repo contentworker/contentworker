@@ -70,12 +70,14 @@ export default defineConfig({
         ? { persistState: { path: process.env.CONTENTWORKER_STATE } }
         : {}),
       // `pnpm dev` runs the whole stack in one session: this web Worker plus the api, engine
-      // (queues, cron, Durable Objects, Workflows) and delivery Workers, all on one local D1.
+      // (queues, cron, Durable Objects, Workflows), media (its purge queue; MEDIA_PUBLIC_URL is
+      // unset locally, so delivered assets keep the api's signed URLs) and delivery Workers, all on
+      // one local D1.
       // Unless a fleet config is being built, which deploys each Worker on its own.
       ...(process.env.CONTENTWORKER_WRANGLER_CONFIG
         ? {}
         : {
-            auxiliaryWorkers: ['../api', '../engine', '../delivery'].map((dir) => ({
+            auxiliaryWorkers: ['../api', '../engine', '../media', '../delivery'].map((dir) => ({
               configPath: `${dir}/wrangler.jsonc`,
               config: () => ({ vars: LOCAL_STACK_VARS }),
             })),

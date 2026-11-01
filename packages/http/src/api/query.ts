@@ -15,6 +15,7 @@
 
 import {
   ASSET_KINDS,
+  type AssetKind,
   type FilterOp,
   type QueryFilter,
   type QueryOrder,
@@ -208,5 +209,30 @@ export function parseAssetListQuery(q: Record<string, string | undefined>): Asse
     ...(field || direction
       ? { sort: { field: field ?? 'updatedAt', direction: direction ?? 'desc' } }
       : {}),
+  };
+}
+
+/**
+ * A Delivery or Preview asset listing from query parameters: `limit`, `cursor` (or `skip`),
+ * `kind`, `tag`, and `folder` (an id, or `root` for assets in no folder).
+ */
+export function parseDeliveredAssetQuery(q: Record<string, string | undefined>): {
+  limit?: number;
+  skip?: number;
+  cursor?: string;
+  filters: { kind?: AssetKind; tag?: string; folderId?: string | null };
+} {
+  const kind = oneOf('kind', q.kind, ASSET_KINDS);
+  const limit = clampCount(q.limit, MAX_PAGE_LIMIT, { min: 1 });
+  const skip = clampCount(q.skip, Number.MAX_SAFE_INTEGER, { min: 0 });
+  const folder = q.folder === undefined || q.folder === '' ? undefined : q.folder;
+  return {
+    ...(limit !== undefined ? { limit } : {}),
+    ...(q.cursor ? { cursor: q.cursor } : skip ? { skip } : {}),
+    filters: {
+      ...(kind ? { kind } : {}),
+      ...(q.tag ? { tag: q.tag.slice(0, 128) } : {}),
+      ...(folder !== undefined ? { folderId: folder === 'root' ? null : folder } : {}),
+    },
   };
 }

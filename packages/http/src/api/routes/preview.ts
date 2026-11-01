@@ -1,6 +1,8 @@
 import {
   authenticate,
+  getPreviewAsset,
   getPreviewEntry,
+  listPreviewAssets,
   listPreviewEntries,
   principalFromPreviewToken,
   SUGGEST_DEFAULT_LIMIT,
@@ -31,8 +33,8 @@ import {
   throttleAuth,
 } from '../auth';
 import { doc } from '../docs/openapi';
-import { publishedEntryList } from '../docs/schemas';
-import { clampCount, parseEntryQuery } from '../query';
+import { deliveredAsset, deliveredAssetPage, publishedEntryList } from '../docs/schemas';
+import { clampCount, parseDeliveredAssetQuery, parseEntryQuery } from '../query';
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({
   spaceId: c.req.param('space') as string,
@@ -132,6 +134,67 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
         .filter((e) => canAccessContentType(principal, 'read', e.contentType))
         .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) }));
       return c.json({ items: visible, total: visible.length });
+    },
+  );
+
+  // Assets as they are now, drafts included, in Delivery's shape. Every URL is signed and
+  // short-lived (15 minutes at least): a draft's file must not outlive the read that showed it.
+  app.get(
+    `${BASE}/assets`,
+    doc('Preview', 'List draft/current assets', {
+      ok: deliveredAssetPage,
+      description:
+        'The library as it is now (archived assets left out), in the shape Delivery serves, with ' +
+        'short-lived signed URLs. Page with the response’s nextCursor.',
+      query: {
+        limit: 'Page size',
+        cursor: 'nextCursor from the previous page',
+        kind: 'image | video | audio | document | other',
+        tag: 'A taxonomy tag id',
+        folder: 'A folder id, or root for assets in no folder',
+        locale: 'Resolve title, description and alt text for one locale',
+      },
+    }),
+    principalMiddleware(deps),
+    environmentMiddleware(deps),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      // As on Delivery: a key with content grants reads no assets.
+      if (c.get('principal').contentGrants) return c.json({ items: [], total: 0 });
+      const { skip: _skip, ...query } = parseDeliveredAssetQuery(c.req.query());
+      const locale = c.req.query('locale');
+      const page = await listPreviewAssets(
+        ctx,
+        deps.blob,
+        scopeOf(c),
+        query,
+        locale !== undefined ? { locale } : {},
+      );
+      return c.json({ ...page, total: page.items.length });
+    },
+  );
+
+  app.get(
+    `${BASE}/assets/:id`,
+    doc('Preview', 'Get a draft/current asset', {
+      ok: deliveredAsset,
+      query: { locale: 'Resolve title, description and alt text for one locale' },
+    }),
+    principalMiddleware(deps),
+    environmentMiddleware(deps),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      if (c.get('principal').contentGrants) return c.body(null, 403);
+      const locale = c.req.query('locale');
+      return c.json(
+        await getPreviewAsset(
+          ctx,
+          deps.blob,
+          scopeOf(c),
+          c.req.param('id'),
+          locale !== undefined ? { locale } : {},
+        ),
+      );
     },
   );
 

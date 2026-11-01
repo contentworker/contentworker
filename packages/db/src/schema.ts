@@ -9,6 +9,8 @@ import type {
   FieldDefinition,
   LocalizedValue,
   PluginManifest,
+  RenditionFit,
+  RenditionFormat,
   RolePreset,
   WorkflowGraph,
   WorkflowGraphDefinition,
@@ -286,8 +288,34 @@ export const assetPublished = sqliteTable(
       .notNull()
       .default({ altText: {}, tags: [] }),
     publishedAt: integer('published_at', { mode: 'timestamp_ms' }).notNull(),
+    // What Delivery and the media Worker build URLs from (0006_asset_published_delivery).
+    version: integer('version').notNull().default(1),
+    r2Key: text('r2_key'),
+    kind: text('kind').$type<AssetKind>().notNull().default('other'),
+    rights: text('rights', { mode: 'json' }).$type<AssetRights>(),
   },
-  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.assetId] })],
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.assetId] }),
+    index('asset_published_by_time').on(t.spaceId, t.environmentId, t.publishedAt, t.assetId),
+    index('asset_published_by_kind').on(t.spaceId, t.environmentId, t.kind, t.publishedAt),
+  ],
+);
+
+/** A space's named image presets (0005_asset_renditions); not environment-scoped. */
+export const assetRenditions = sqliteTable(
+  'asset_renditions',
+  {
+    spaceId: text('space_id').notNull(),
+    name: text('name').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    fit: text('fit').$type<RenditionFit>(),
+    format: text('format').$type<RenditionFormat>(),
+    quality: integer('quality'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.name] })],
 );
 
 export const references = sqliteTable(

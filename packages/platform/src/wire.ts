@@ -4,6 +4,7 @@ import {
   type WorkersAiRun,
   workersAiModelsFromEnv,
 } from '@contentworker/adapters/ai-workers';
+import { createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
 import {
   createMediaUrlSigner,
   createR2BlobStore,
@@ -41,6 +42,7 @@ import { createD1Store } from '@contentworker/db';
 import { type ApiKeyKind, type DomainEvent, scopesForKind } from '@contentworker/domain';
 import type {
   AIProvider,
+  AssetGate,
   BlobStore,
   Cache,
   ContentStore,
@@ -81,6 +83,11 @@ export interface EdgeWired {
   readonly blob: BlobStore;
   /** Signs/verifies `/media/*` URLs; present when MEDIA_BUCKET is bound. */
   readonly mediaSigner?: MediaUrlSigner;
+  /**
+   * The media origin's published-asset gate (KV_CACHE). Only the engine writes it, from asset
+   * events; the media Worker reads it.
+   */
+  readonly assetGate?: AssetGate;
   readonly ai: AIProvider;
   readonly bus: EventBus;
   readonly cache?: Cache;
@@ -194,6 +201,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
         }
       : {}),
     ...(env.STREAM ? { video: createStreamVideoHost(env.STREAM) } : {}),
+    ...(env.MEDIA_PUBLIC_URL ? { mediaPublicUrl: env.MEDIA_PUBLIC_URL.replace(/\/$/, '') } : {}),
   };
 
   const ctx: AppContext = env.PLUGIN_LOADER
@@ -238,6 +246,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     workflowNodes: { ai, webhooks: createWebhookSender(), ...(email ? { email } : {}) },
     blob,
     ...(mediaSigner ? { mediaSigner } : {}),
+    ...(env.KV_CACHE ? { assetGate: createKvAssetGate(env.KV_CACHE) } : {}),
     ai,
     bus: new InMemoryEventBus(),
     cache,

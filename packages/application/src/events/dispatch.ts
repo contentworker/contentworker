@@ -1,11 +1,13 @@
 import type { DomainEvent, EntriesPublishedBulkEvent, Webhook } from '@contentworker/domain';
 import type {
+  AssetGate,
   BlobStore,
   Cache,
   FunctionInvoker,
   SearchIndex,
   WebhookSender,
 } from '@contentworker/ports';
+import { syncAssetGate } from '../asset-gate';
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
@@ -54,6 +56,12 @@ export interface DispatchDeps {
    * import chunks claimable rather than reporting an import that did not run.
    */
   readonly blob?: BlobStore;
+  /**
+   * The media origin's published-asset gate (KV on the edge). When present, every asset event
+   * brings the asset's entry in line with what is published; without it the media Worker falls
+   * back to a D1 replica on every miss.
+   */
+  readonly assetGate?: AssetGate;
   /**
    * Tags already invalidated during this consumer invocation. A queue batch of
    * same-type publishes (a release, a burst of scheduled publishes) would
@@ -170,6 +178,29 @@ export async function dispatchEvent(
         await deps.cache.invalidateTags(fresh);
         for (const t of fresh) deps.invalidatedTags?.add(t);
       }
+    }
+  }
+
+  // 2c. The media origin's gate follows what is published now (written, or removed). It reads the
+  // current snapshot rather than trusting the event, so a redelivered one converges.
+  if (
+    deps.assetGate &&
+    (event.type === 'asset.published' ||
+      event.type === 'asset.unpublished' ||
+      event.type === 'asset.deleted')
+  ) {
+    await syncAssetGate(ctx, deps.assetGate, scope, event.assetId);
+  }
+
+  // 2d. A rendition preset changed: delivered assets list the space's renditions, embedded in
+  // cached entry renders of every environment, so each environment's scope epoch bumps.
+  if (deps.cache && event.type === 'asset_renditions.changed') {
+    const tags = (await ctx.store.spaces.listEnvironments(scope.spaceId))
+      .map((env) => epochTag({ spaceId: scope.spaceId, environmentId: env.id }))
+      .filter((t) => !deps.invalidatedTags?.has(t));
+    if (tags.length > 0) {
+      await deps.cache.invalidateTags(tags);
+      for (const t of tags) deps.invalidatedTags?.add(t);
     }
   }
 

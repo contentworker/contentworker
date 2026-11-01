@@ -1,4 +1,9 @@
-import type { ContentType, FieldDefinition } from '@contentworker/domain';
+import type {
+  ContentType,
+  DeliveredAsset,
+  FieldDefinition,
+  LocalizedValue,
+} from '@contentworker/domain';
 import {
   GraphQLBoolean,
   type GraphQLFieldConfigMap,
@@ -45,8 +50,23 @@ export interface DeliveryResolvers {
       search?: string;
     },
   ): Promise<ResolvedEntry[]>;
-  asset(id: string, locale?: string): Promise<unknown | null>;
+  asset(id: string, locale?: string): Promise<ResolvedAsset | null>;
+  /**
+   * One locale's text (with the space's fallbacks; its default locale when none is named), as
+   * the Asset type's `title`, `description` and `altText` read it.
+   */
+  localize(value: LocalizedValue, locale?: string): Promise<string | null>;
   search(query: string, topK?: number): Promise<SearchHit[]>;
+}
+
+/**
+ * A published asset for the `Asset` type: delivered with its text per locale (each field takes
+ * its own `locale` argument, falling back to the query's).
+ */
+export interface ResolvedAsset {
+  readonly asset: DeliveredAsset;
+  /** The `asset(locale:)` the query asked for. */
+  readonly locale?: string;
 }
 
 /**
@@ -172,7 +192,9 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
   // content type is going to need — the entry types are what clients query by,
   // and renaming one to make room for a nested shape would be backwards.
   const names = new TypeNames();
-  for (const reserved of ['Sys', 'SearchHit', 'Query', 'Asset', 'JSON']) names.reserve(reserved);
+  for (const reserved of ['Sys', 'SearchHit', 'Query', 'JSON', ...ASSET_TYPE_NAMES]) {
+    names.reserve(reserved);
+  }
   for (const ct of contentTypes) names.reserve(cap(ct.apiId));
 
   const sysType = new GraphQLObjectType({
@@ -246,7 +268,7 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
   }
 
   query.asset = {
-    type: JSONScalar,
+    type: assetType(),
     args: { id: { type: new GraphQLNonNull(GraphQLID) }, ...localeArg },
     resolve: (_root, args: { id: string; locale?: string }, ctx: DeliveryContext) =>
       ctx.resolvers.asset(args.id, args.locale),
@@ -259,6 +281,93 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
   };
 
   return new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: query }) });
+}
+
+/** The names the asset types take; a content type or component can't have them. */
+const ASSET_TYPE_NAMES = ['Asset', 'AssetSource', 'AssetVideo', 'AssetRights', 'FocalPoint'];
+
+/**
+ * The `Asset` type: the delivered asset, with its URLs chosen by argument. `url(rendition:)`
+ * names a rendition, `url(width:)` takes the next width step up; `srcset` is the ladder.
+ */
+function assetType(): GraphQLObjectType<ResolvedAsset, DeliveryContext> {
+  const source = new GraphQLObjectType({
+    name: 'AssetSource',
+    fields: {
+      width: { type: new GraphQLNonNull(GraphQLInt) },
+      url: { type: new GraphQLNonNull(GraphQLString) },
+    },
+  });
+  const video = new GraphQLObjectType({
+    name: 'AssetVideo',
+    fields: {
+      status: { type: new GraphQLNonNull(GraphQLString) },
+      hlsUrl: { type: GraphQLString },
+      dashUrl: { type: GraphQLString },
+      thumbnailUrl: { type: GraphQLString },
+      durationSeconds: { type: GraphQLFloat },
+    },
+  });
+  const rights = new GraphQLObjectType({
+    name: 'AssetRights',
+    fields: { credit: { type: GraphQLString }, license: { type: GraphQLString } },
+  });
+  const focal = new GraphQLObjectType({
+    name: 'FocalPoint',
+    fields: {
+      x: { type: new GraphQLNonNull(GraphQLFloat) },
+      y: { type: new GraphQLNonNull(GraphQLFloat) },
+    },
+  });
+  const text = (pick: (a: DeliveredAsset) => unknown) => ({
+    type: GraphQLString,
+    args: { locale: { type: GraphQLString } },
+    resolve: (r: ResolvedAsset, args: { locale?: string }, ctx: DeliveryContext) => {
+      const value = pick(r.asset);
+      if (typeof value === 'string' || value === null) return value;
+      return ctx.resolvers.localize(value as LocalizedValue, args.locale ?? r.locale);
+    },
+  });
+  return new GraphQLObjectType<ResolvedAsset, DeliveryContext>({
+    name: 'Asset',
+    fields: {
+      id: { type: new GraphQLNonNull(GraphQLID), resolve: (r) => r.asset.id },
+      title: text((a) => a.title),
+      description: text((a) => a.description),
+      altText: text((a) => a.altText),
+      contentType: { type: new GraphQLNonNull(GraphQLString), resolve: (r) => r.asset.contentType },
+      kind: { type: new GraphQLNonNull(GraphQLString), resolve: (r) => r.asset.kind },
+      size: { type: GraphQLInt, resolve: (r) => r.asset.size },
+      width: { type: GraphQLInt, resolve: (r) => r.asset.width },
+      height: { type: GraphQLInt, resolve: (r) => r.asset.height },
+      focalPoint: { type: focal, resolve: (r) => r.asset.focalPoint },
+      url: {
+        type: GraphQLString,
+        description:
+          'The original, a named rendition, or the width step at or above `width` (the largest ' +
+          'past it). Null for a rendition the space has none of, or a variant of a non-image.',
+        args: { rendition: { type: GraphQLString }, width: { type: GraphQLInt } },
+        resolve: (r, args: { rendition?: string | null; width?: number | null }) => {
+          const a = r.asset;
+          if (args.rendition) return a.renditions[args.rendition] ?? null;
+          if (args.width != null) {
+            if (a.srcset.length === 0) return null;
+            const width = args.width;
+            return (a.srcset.find((s) => s.width >= width) ?? a.srcset[a.srcset.length - 1])?.url;
+          }
+          return a.url;
+        },
+      },
+      srcset: {
+        type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(source))),
+        resolve: (r) => r.asset.srcset,
+      },
+      renditions: { type: JSONScalar, resolve: (r) => r.asset.renditions },
+      video: { type: video, resolve: (r) => r.asset.video ?? null },
+      rights: { type: rights, resolve: (r) => r.asset.rights ?? null },
+      file: { type: JSONScalar, resolve: (r) => r.asset.file },
+    },
+  });
 }
 
 export { JSONScalar };

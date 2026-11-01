@@ -31,11 +31,9 @@ import { SearchShardDO } from '@contentworker/platform/do/search-shard';
 import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import {
   type AgentJobMessage,
-  deliveryScopeTag,
   isAgentJob,
   isDomainEvent,
   isWebhookRetryMessage,
-  type PurgeMessage,
   type WebhookRetryMessage,
 } from '@contentworker/platform/messages';
 import { makeMetrics } from '@contentworker/platform/metrics';
@@ -48,6 +46,7 @@ import {
 import { redactCredentials } from '@contentworker/redaction';
 import { AssistantAgent } from './assistant';
 import { runInLanes } from './lanes';
+import { newPurgePlan, planPurges, sendPurges } from './purges';
 import { AgentWorkflow } from './workflows/agent-workflow';
 import { EditorialWorkflow } from './workflows/editorial-workflow';
 
@@ -65,20 +64,6 @@ export {
   RateLimiterDO,
   SearchShardDO,
 };
-
-/** Events after which a space:environment's delivery responses may be stale. */
-const PURGING_EVENTS = new Set<string>([
-  'entry.published',
-  'entry.unpublished',
-  'entries.published_bulk',
-  'asset.published',
-  'asset.unpublished',
-  'asset.deleted',
-  'content_type.published',
-  'release.published',
-  'environment_alias.changed',
-  'environment.deleted',
-]);
 
 /**
  * contentworker-events consumer body. When AGENTS_QUEUE is bound, entry.published events
@@ -139,15 +124,17 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     // Import chunks stage their records here rather than carrying entry ids;
     // without it they stay claimable instead of running.
     blob: wired.blob,
+    // The media origin's gate: written and removed here, from asset events, and nowhere else.
+    ...(wired.assetGate ? { assetGate: wired.assetGate } : {}),
     bus: env.LIVE_HUB ? createDoEventBus(env.LIVE_HUB) : undefined,
     onLiveError: (err) => console.error('live publish error', err),
     // Inline agents only when no contentworker-agents queue is bound (dev/demo parity).
     agents: forwardAgents ? undefined : makeAgents(env, wired.ctx, wired.ai),
     agentConfig: forwardAgents ? undefined : agentConfig,
   };
-  // Delivery cache tags made stale by this batch, sent as ONE purge message after it (purges are
-  // rationed, so a burst of publishes in one space costs one tag, not one call per entry).
-  const stale = new Set<string>();
+  // Delivery and media cache tags made stale by this batch, sent as one message per queue after it
+  // (purges are rationed, so a burst of publishes in one space costs one tag, not one call each).
+  const stale = newPurgePlan();
   const handle = async (msg: Message<unknown>): Promise<void> => {
     const body = payloadOf(msg);
     if (isWebhookRetryMessage(body)) {
@@ -188,9 +175,12 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
         };
         await env.AGENTS_QUEUE.send(job);
       }
-      if (PURGING_EVENTS.has(event.type)) {
-        stale.add(deliveryScopeTag(event.scope.spaceId, event.scope.environmentId));
-      }
+      // The event's effects already ran, so a failure to plan its purges is logged, not retried:
+      // only a rendition change reads anything (the space's environments), and it has added its
+      // media tag before that read; delivery responses age out on their own.
+      await planPurges(wired.ctx, stale, event).catch((err: unknown) =>
+        console.error('purge planning failed', redactCredentials(err)),
+      );
       metrics.count('contentworker_events_consumed_total', 1, {
         type: event.type,
         outcome: 'ok',
@@ -207,13 +197,12 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
   };
   // One entry's events in order; different entries (and scopes) side by side.
   await runInLanes(batch.messages, eventLane, handle, EVENT_LANES);
-  if (stale.size > 0 && env.PURGE_QUEUE) {
-    const message: PurgeMessage = { tags: [...stale] };
-    await env.PURGE_QUEUE.send(message).catch((err: unknown) => {
-      // Not fatal: delivery responses go stale for at most their max-age (60s).
-      console.error('delivery purge enqueue failed', redactCredentials(err));
-    });
-  }
+  // Not fatal: delivery responses go stale for at most their max-age (60s); media for a revoked
+  // asset stays cached until the media Worker's cache lets it go, so that one is counted.
+  await sendPurges(env, stale, (what, err) => {
+    console.error(`${what} enqueue failed`, redactCredentials(err));
+    metrics.count('contentworker_purge_enqueue_errors_total', 1, { queue: what });
+  });
 }
 
 /**

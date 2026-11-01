@@ -13,6 +13,7 @@ export type DomainEvent =
   | AssetPublishedEvent
   | AssetUnpublishedEvent
   | AssetDeletedEvent
+  | AssetRenditionsChangedEvent
   | SearchReindexRequestedEvent
   | BulkChunkDueEvent
   | EntriesPublishedBulkEvent
@@ -70,6 +71,17 @@ export interface AssetDeletedEvent extends BaseEvent {
   readonly assetId: string;
   readonly r2Key?: string;
   readonly videoId?: string;
+}
+
+/**
+ * A space's rendition preset was created, changed or deleted. `scope` is where the change was made;
+ * presets belong to the whole space, so the engine purges what every environment of the space
+ * delivers: the rendition's cached images on the media origin and the delivery responses that list
+ * the space's renditions.
+ */
+export interface AssetRenditionsChangedEvent extends BaseEvent {
+  readonly type: 'asset_renditions.changed';
+  readonly name: string;
 }
 
 /**

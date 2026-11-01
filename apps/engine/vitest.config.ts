@@ -45,6 +45,8 @@ export default defineConfig(async () => ({
           ASSISTANT_AGENT: { className: 'AssistantAgent', useSQLite: true },
         },
         d1Databases: { DB: 'contentworker-engine-test' },
+        // The media gate the events consumer writes (test/asset-delivery.test.ts).
+        kvNamespaces: ['KV_CACHE'],
         // The editorial workflow host, run by miniflare's real Workflows engine over the
         // fixture's in-memory context (test/fixtures/editorial.ts).
         workflows: {

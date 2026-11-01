@@ -19,7 +19,7 @@ j=()
 [ -n "$JURISDICTION" ] && j=(--jurisdiction "$JURISDICTION")
 
 echo "== $id: D1 $D1, KV $KV, R2 $MEDIA, index ${VECTORS:-none}, gateway $AI_GATEWAY"
-echo "   https://$DOMAIN (admin), https://$API_DOMAIN (api), https://$CDN_DOMAIN (delivery); environment $ENVIRONMENT"
+echo "   https://$DOMAIN (admin), https://$API_DOMAIN (api), https://$CDN_DOMAIN (delivery), https://$MEDIA_DOMAIN (media); environment $ENVIRONMENT"
 
 # D1, the system of record, with read replication on: delivery and admin reads go to the nearest
 # replica (the Workers open Sessions API sessions; writes always go to the primary).
@@ -34,7 +34,8 @@ else
   echo "Turn on read replication for $D1 (dashboard: D1 > $D1 > Settings), or re-run with CLOUDFLARE_API_TOKEN."
 fi
 
-# The KV namespace the api, engine and delivery share (delivery cache, cached principals).
+# The KV namespace the api, engine, delivery and media share (delivery cache, cached principals,
+# the published-asset gate).
 kv_id() { wrangler kv namespace list | jq -er --arg t "$KV" '.[] | select(.title == $t) | .id'; }
 kv=$(kv_id 2>/dev/null) || { wrangler kv namespace create "$KV" >/dev/null; kv=$(kv_id); }
 node scripts/fleet.ts set-kv "$id" "$kv"
@@ -61,7 +62,8 @@ if [ -n "$VECTORS" ]; then
   done
 fi
 
-# Queues: domain events (+ dead letters), bulk chunks, agent jobs, delivery purges (+ dead letters).
+# Queues: domain events (+ dead letters), bulk chunks, agent jobs, delivery purges and media purges
+# (each + dead letters).
 for q in $QUEUES; do
   if wrangler queues info "$q" >/dev/null 2>&1; then echo "Queue $q already exists"
   else wrangler queues create "$q"; fi

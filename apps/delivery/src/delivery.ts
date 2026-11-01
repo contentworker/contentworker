@@ -62,11 +62,17 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
 
     const m = /^\/delivery\/([^/]+)\/([^/]+)\//.exec(parsed.path.pathname);
     const headers = new Headers(res.headers);
-    if (res.status === 200 && m) {
+    // 200s, and the deprecated transform's 301 to an immutable media URL, are kept and purged
+    // like any read.
+    if ((res.status === 200 || res.status === 301) && m) {
       const body = await res.arrayBuffer();
       // A GraphQL answer carrying errors is still a 200 (GraphQL over HTTP), but it must not be
       // kept: the cause (a field rule, a bug) can change without any publish to purge it.
-      if (parsed.path.pathname.endsWith('/graphql') && hasGraphqlErrors(body)) {
+      if (
+        res.status === 200 &&
+        parsed.path.pathname.endsWith('/graphql') &&
+        hasGraphqlErrors(body)
+      ) {
         headers.set('cache-control', NO_STORE);
         return new Response(body, { status: 200, headers });
       }
@@ -95,7 +101,7 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
       );
       // Always the full body: this response is what Workers Caching stores, so a 304 here would
       // be cached as an empty answer. Conditional requests are answered by the gateway.
-      return new Response(body, { status: 200, headers });
+      return new Response(body, { status: res.status, headers });
     }
     // Errors and empty answers are not cached: a 404 for an entry about to be published must not
     // outlive the publish.

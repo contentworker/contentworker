@@ -1,5 +1,11 @@
 import { doc } from './openapi';
-import { asset, publishedEntry, publishedEntryList, searchHits } from './schemas';
+import {
+  deliveredAsset,
+  deliveredAssetPage,
+  publishedEntry,
+  publishedEntryList,
+  searchHits,
+} from './schemas';
 
 /**
  * The Delivery routes' OpenAPI descriptions, kept apart from the routes themselves so the
@@ -33,23 +39,41 @@ const DOCS = {
       ok: publishedEntry,
       query: { locale: 'Resolve fields for one locale', include: 'Reference resolution depth' },
     }),
-  listAssets: () => doc('Delivery', 'List published assets', { query: { limit: 'Max items' } }),
-  getAsset: () => doc('Delivery', 'Get a published asset', { ok: asset }),
+  listAssets: () =>
+    doc('Delivery', 'List published assets', {
+      ok: deliveredAssetPage,
+      description:
+        'In publish order. URLs are on the media origin and immutable (the file version is in ' +
+        'them). Page with the response’s nextCursor.',
+      query: {
+        limit: 'Page size',
+        cursor: 'nextCursor from the previous page',
+        skip: 'Offset (without a cursor)',
+        kind: 'image | video | audio | document | other',
+        tag: 'A taxonomy tag id',
+        folder: 'A folder id, or root for assets in no folder',
+        locale: 'Resolve title, description and alt text for one locale',
+      },
+    }),
+  getAsset: () =>
+    doc('Delivery', 'Get a published asset', {
+      ok: deliveredAsset,
+      query: { locale: 'Resolve title, description and alt text for one locale' },
+    }),
   live: () =>
     doc('Delivery', 'Live Content API (SSE)', {
       okDescription: 'text/event-stream of published-content domain events for this scope',
       query: { types: 'Comma-separated event-type filter, e.g. entry.published' },
     }),
   transform: () =>
-    doc('Delivery', 'Resolve a transformed image URL', {
-      status: 302,
-      okDescription: 'Redirects to the CDN-transformable image URL',
+    doc('Delivery', 'Resolve a transformed image URL (deprecated)', {
+      status: 301,
+      okDescription:
+        'Redirects (permanently, cacheably) to the media URL of the next width step up from w, ' +
+        'or of the named rendition. Use the asset’s srcset and renditions instead.',
       query: {
-        w: 'Width',
-        h: 'Height',
-        fit: 'Fit mode',
-        fm: 'Output format: auto (AVIF/WebP negotiated from Accept) | jpg | png | webp | avif',
-        q: 'Quality',
+        w: 'Width: the next ladder step (320, 640, 960, 1280, 1920, 2560) at or above it',
+        rendition: 'A rendition name',
       },
     }),
 } as const;

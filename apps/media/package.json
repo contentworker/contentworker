@@ -1,0 +1,34 @@
+{
+  "name": "@contentworker/media",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The media Worker: published asset files at stable, immutable URLs behind Workers Caching, gated by the engine's KV entries, with renditions and a width ladder through Cloudflare Images.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@contentworker/adapters": "workspace:*",
+    "@contentworker/application": "workspace:*",
+    "@contentworker/db": "workspace:*",
+    "@contentworker/domain": "workspace:*",
+    "@contentworker/platform": "workspace:*",
+    "@contentworker/ports": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@contentworker/test-kit": "workspace:*",
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

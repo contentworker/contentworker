@@ -23,6 +23,7 @@ import {
   createAppExtension,
   createAsset,
   createAssetFolder,
+  createAssetRendition,
   createConcept,
   createContentType,
   createEntry,
@@ -43,6 +44,7 @@ import {
   deleteAppExtension,
   deleteAsset,
   deleteAssetFolder,
+  deleteAssetRendition,
   deleteComment,
   deleteConcept,
   deleteEnvironment,
@@ -65,6 +67,7 @@ import {
   generateAltText,
   getAgentReview,
   getAsset,
+  getAssetRendition,
   getAssetUsage,
   getBulkJob,
   getBulkJobReport,
@@ -91,6 +94,7 @@ import {
   listApiKeys,
   listAppExtensions,
   listAssetFolders,
+  listAssetRenditions,
   listAssets,
   listAuditLog,
   listBulkJobs,
@@ -159,15 +163,18 @@ import {
   unpublishEntry,
   updateAgentSchedule,
   updateAssetFolder,
+  updateAssetRendition,
   updateEntry,
   updateRole,
   updateWebhook,
   upgradePlugin,
   upgradePluginFromUrl,
+  withReadUrl,
 } from '@contentworker/application';
 import { listDocs, readDoc, searchDocs } from '@contentworker/docs';
 import {
   type ApiKey,
+  type Asset,
   assertWritableFields,
   authorize,
   authorizeContent,
@@ -207,6 +214,8 @@ import {
   assetFolderBody,
   assetFolderPatchBody,
   assetMetadataBody,
+  assetRenditionBody,
+  assetRenditionPatchBody,
   auditBody,
   autofillBody,
   broaderBody,
@@ -1618,6 +1627,10 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
 
   // --- assets -------------------------------------------------------------
+  // Reads hand out a short-lived signed URL, never the stored non-expiring one.
+  const signedOne = (c: Context<AuthVars>, asset: Asset) => withReadUrl(blob, scopeOf(c), asset);
+  const signed = (c: Context<AuthVars>, assets: readonly Asset[]) =>
+    Promise.all(assets.map((a) => signedOne(c, a)));
   app.get(
     `${BASE}/assets`,
     doc('Assets', 'List the asset library (filtered, sorted, cursor-paged)', {
@@ -1638,7 +1651,10 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       },
     }),
     requireScope(SCOPES.previewRead),
-    async (c) => c.json(await listAssets(ctx, scopeOf(c), parseAssetListQuery(c.req.query()))),
+    async (c) => {
+      const page = await listAssets(ctx, scopeOf(c), parseAssetListQuery(c.req.query()));
+      return c.json({ ...page, items: await signed(c, page.items) });
+    },
   );
   app.post(
     `${BASE}/assets`,
@@ -1655,7 +1671,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         createdBy: auditActor(c.get('principal')),
         ...(folderId ? { folderId } : {}),
       });
-      return c.json(created, 201);
+      return c.json({ ...created, asset: await signedOne(c, created.asset) }, 201);
     },
   );
   app.post(
@@ -1689,7 +1705,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ),
   );
   app.get(`${BASE}/assets/:id`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json(await getAsset(ctx, scopeOf(c), c.req.param('id'))),
+    c.json(await signedOne(c, await getAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${BASE}/assets/:id/video/refresh`,
@@ -1701,11 +1717,14 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.patch(`${BASE}/assets/:id/metadata`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(
-      await setAssetMetadata(
-        ctx,
-        scopeOf(c),
-        c.req.param('id'),
-        await parseBody(c, assetMetadataBody),
+      await signedOne(
+        c,
+        await setAssetMetadata(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, assetMetadataBody),
+        ),
       ),
     ),
   );
@@ -1739,10 +1758,10 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     ),
   );
   app.post(`${BASE}/assets/:id/published`, requireScope(SCOPES.contentPublish), async (c) =>
-    c.json(await publishAsset(ctx, scopeOf(c), c.req.param('id'))),
+    c.json(await signedOne(c, await publishAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.delete(`${BASE}/assets/:id/published`, requireScope(SCOPES.contentPublish), async (c) =>
-    c.json(await unpublishAsset(ctx, scopeOf(c), c.req.param('id'))),
+    c.json(await signedOne(c, await unpublishAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${BASE}/assets/:id/archive`,
@@ -1753,7 +1772,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Idempotent. Requires content:publish, as unpublishing does.',
     }),
     requireScope(SCOPES.contentPublish),
-    async (c) => c.json(await archiveAsset(ctx, scopeOf(c), c.req.param('id'))),
+    async (c) => c.json(await signedOne(c, await archiveAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${BASE}/assets/:id/restore`,
@@ -1762,7 +1781,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       description: 'Comes back as a draft; publishing it again is a separate action. Idempotent.',
     }),
     requireScope(SCOPES.contentWrite),
-    async (c) => c.json(await restoreAsset(ctx, scopeOf(c), c.req.param('id'))),
+    async (c) => c.json(await signedOne(c, await restoreAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.delete(
     `${BASE}/assets/:id`,
@@ -1776,6 +1795,72 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentPublish),
     async (c) => {
       await deleteAsset(ctx, scopeOf(c), c.req.param('id'));
+      return c.body(null, 204);
+    },
+  );
+
+  // --- asset renditions ---------------------------------------------------
+  // Named image presets of the space, served for every published image at …/r-<name>/….
+  app.get(
+    `${BASE}/asset-renditions`,
+    doc('Assets', 'List rendition presets', {
+      ok: docs.assetRenditionList,
+      description: 'The space’s presets (the same in every environment), by name.',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listAssetRenditions(ctx, scopeOf(c)) }),
+  );
+  app.post(
+    `${BASE}/asset-renditions`,
+    doc('Assets', 'Create a rendition preset', {
+      body: assetRenditionBody,
+      ok: docs.assetRendition,
+      status: 201,
+      description:
+        'Every published image in the space is then also served at …/r-<name>/… on the media ' +
+        'origin. A taken name is a 409; a space has at most 20.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(
+        await createAssetRendition(ctx, scopeOf(c), await parseBody(c, assetRenditionBody)),
+        201,
+      ),
+  );
+  app.get(
+    `${BASE}/asset-renditions/:name`,
+    doc('Assets', 'Get a rendition preset', { ok: docs.assetRendition }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await getAssetRendition(ctx, scopeOf(c), c.req.param('name'))),
+  );
+  app.put(
+    `${BASE}/asset-renditions/:name`,
+    doc('Assets', 'Replace a rendition preset', {
+      body: assetRenditionPatchBody,
+      ok: docs.assetRendition,
+      description:
+        'Its URLs stay the same; the media cached under them is purged in the background.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(
+        await updateAssetRendition(
+          ctx,
+          scopeOf(c),
+          c.req.param('name'),
+          await parseBody(c, assetRenditionPatchBody),
+        ),
+      ),
+  );
+  app.delete(
+    `${BASE}/asset-renditions/:name`,
+    doc('Assets', 'Delete a rendition preset', {
+      status: 204,
+      description: 'Its URLs answer 404 once the media cached under them is purged.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      await deleteAssetRendition(ctx, scopeOf(c), c.req.param('name'));
       return c.body(null, 204);
     },
   );

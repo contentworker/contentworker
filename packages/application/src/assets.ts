@@ -19,6 +19,8 @@ import {
   type AssetPage,
   type BlobStore,
   type PublishedAsset,
+  type PublishedAssetPage,
+  type PublishedAssetQuery,
   TransactionConflictError,
 } from '@contentworker/ports';
 import type { AppContext } from './context';
@@ -143,14 +145,7 @@ export async function publishAsset(ctx: AppContext, scope: Scope, id: string): P
     if (!asset) throw new NotFoundError('Asset', id);
     const published = publishAssetState(asset);
     await tx.assets.save(scope, published);
-    await tx.assets.putPublished(scope, {
-      assetId: published.id,
-      file: published.file,
-      title: published.title,
-      description: published.description,
-      metadata: published.metadata,
-      publishedAt: ctx.clock.now().toISOString(),
-    });
+    await tx.assets.putPublished(scope, publishedSnapshot(scope, published, ctx.clock.now()));
     // Same transaction as the write: delivery renders embed this asset's
     // file/title/description into linking entries, so the invalidation event
     // must be enqueued iff the publish commits.
@@ -196,9 +191,57 @@ export async function getPublishedAsset(
 export async function listPublishedAssets(
   ctx: AppContext,
   scope: Scope,
-  query: { limit?: number; skip?: number } = {},
-): Promise<PublishedAsset[]> {
+  query: PublishedAssetQuery = {},
+): Promise<PublishedAssetPage> {
   return ctx.store.assets.listPublished(scope, query);
+}
+
+/**
+ * The published snapshot of `asset`: what Delivery serves, and what the media origin's URLs are
+ * built from (the file version and where its bytes are).
+ */
+export function publishedSnapshot(scope: Scope, asset: Asset, at: Date): PublishedAsset {
+  return {
+    assetId: asset.id,
+    file: asset.file,
+    title: asset.title,
+    description: asset.description,
+    metadata: asset.metadata,
+    publishedAt: at.toISOString(),
+    version: asset.version ?? 1,
+    ...(asset.file.video ? {} : { r2Key: assetFileKey(scope, asset) }),
+    ...(asset.rights ? { rights: asset.rights } : {}),
+  };
+}
+
+/** Where an asset's current bytes are: its recorded key, or its own key prefix (older rows). */
+export function assetFileKey(
+  scope: Scope,
+  asset: { readonly id: string; readonly r2Key?: string; readonly file: { fileName: string } },
+): string {
+  return asset.r2Key ?? assetObjectKey(scope, asset.id, asset.file.fileName);
+}
+
+/** How long a URL handed out by a Management or Preview read works (15 minutes, at least). */
+export const READ_URL_TTL_SECONDS = 900;
+
+/**
+ * The asset with a short-lived signed read URL in place of the stored, non-expiring one, which
+ * reads never hand out. A hosted video keeps its playback URL. `origin` points the URL at another
+ * host that verifies the signature (Preview's media origin).
+ */
+export async function withReadUrl(
+  blob: BlobStore,
+  scope: Scope,
+  asset: Asset,
+  opts: { readonly origin?: string } = {},
+): Promise<Asset> {
+  if (asset.file.video) return asset;
+  const url = await blob.getDownloadUrl(assetFileKey(scope, asset), {
+    expiresInSeconds: READ_URL_TTL_SECONDS,
+    ...(opts.origin ? { origin: opts.origin } : {}),
+  });
+  return { ...asset, file: { ...asset.file, url } };
 }
 
 /** A metadata patch — any subset of the editable "Aspects" of an asset. */
@@ -308,9 +351,7 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
         scope,
         occurredAt: now,
         assetId: id,
-        ...(videoId
-          ? { videoId }
-          : { r2Key: asset.r2Key ?? assetObjectKey(scope, id, asset.file.fileName) }),
+        ...(videoId ? { videoId } : { r2Key: assetFileKey(scope, asset) }),
       });
     });
   } catch (err) {

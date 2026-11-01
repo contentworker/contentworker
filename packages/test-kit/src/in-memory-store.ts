@@ -4,6 +4,7 @@ import {
   type ApiKey,
   type Asset,
   type AssetFolder,
+  type AssetRendition,
   assetKind,
   type Comment,
   type Concept,
@@ -50,6 +51,7 @@ import type {
   AppExtension,
   AppExtensionRepo,
   AssetFolderRepo,
+  AssetRenditionRepo,
   AssetRepo,
   AuditEntry,
   AuditRepo,
@@ -637,12 +639,73 @@ export class InMemoryContentStore implements ContentStore {
         (id) => this.publishedAssetData.get(`${scopeKey(scope)}::${id}`) ?? [],
       ),
     listPublished: async (scope, query) => {
+      // As the D1 store: filters, then (publishedAt, id) keyset order, a page plus one.
       const prefix = `${scopeKey(scope)}::`;
+      const f = query.filters ?? {};
       const rows = [...this.publishedAssetData.entries()]
         .filter(([k]) => k.startsWith(prefix))
-        .map(([, v]) => v);
-      const skip = query.skip ?? 0;
-      return rows.slice(skip, skip + (query.limit ?? 100));
+        .map(([, p]) => ({ p, t: Date.parse(p.publishedAt) }))
+        .filter(({ p }) => !f.kind || assetKind(p.file.contentType) === f.kind)
+        .filter(({ p }) => !f.tag || p.metadata.tags.includes(f.tag))
+        .filter(({ p }) =>
+          f.folderId === undefined
+            ? true
+            : (this.assetData.get(`${prefix}${p.assetId}`)?.folderId ?? null) === f.folderId,
+        )
+        .sort((x, y) => x.t - y.t || x.p.assetId.localeCompare(y.p.assetId));
+      let start = Math.max(0, query.skip ?? 0);
+      if (query.cursor) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(query.cursor);
+        } catch {
+          parsed = null;
+        }
+        if (
+          !Array.isArray(parsed) ||
+          typeof parsed[0] !== 'number' ||
+          typeof parsed[1] !== 'string'
+        ) {
+          throw new ValidationError([
+            { field: 'cursor', message: 'cursor is not one this list returned' },
+          ]);
+        }
+        const [t, id] = parsed as [number, string];
+        start = rows.findIndex((r) => r.t > t || (r.t === t && r.p.assetId.localeCompare(id) > 0));
+        if (start < 0) start = rows.length;
+      }
+      const limit = Math.min(Math.max(1, query.limit ?? 100), 1000);
+      const page = rows.slice(start, start + limit);
+      const last = page.at(-1);
+      return {
+        items: page.map((r) => r.p),
+        ...(rows.length > start + limit && last
+          ? { nextCursor: JSON.stringify([last.t, last.p.assetId]) }
+          : {}),
+      };
+    },
+  };
+
+  /** Rendition presets, keyed by space (they belong to it, not to an environment). */
+  private readonly renditionData = new Map<string, AssetRendition>();
+
+  readonly assetRenditions: AssetRenditionRepo = {
+    list: async (scope) =>
+      [...this.renditionData.entries()]
+        .filter(([k]) => k.startsWith(`${scope.spaceId}::`))
+        .map(([, r]) => r)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    get: async (scope, name) => this.renditionData.get(`${scope.spaceId}::${name}`) ?? null,
+    put: async (scope, rendition) => {
+      const key = `${scope.spaceId}::${rendition.name}`;
+      const existing = this.renditionData.get(key);
+      this.renditionData.set(
+        key,
+        existing ? { ...rendition, createdAt: existing.createdAt } : rendition,
+      );
+    },
+    delete: async (scope, name) => {
+      this.renditionData.delete(`${scope.spaceId}::${name}`);
     },
   };
 
@@ -1809,6 +1872,7 @@ export class InMemoryContentStore implements ContentStore {
       this.publishedAssetData,
       this.assetTouched,
       this.assetFolderData,
+      this.renditionData,
       this.referenceData,
       this.releaseData,
       this.releaseItemData,
@@ -1841,6 +1905,7 @@ export class InMemoryContentStore implements ContentStore {
         entries: this.entries,
         assets: this.assets,
         assetFolders: this.assetFolders,
+        assetRenditions: this.assetRenditions,
         references: this.references,
         releases: this.releases,
         taxonomy: this.taxonomy,

@@ -61,6 +61,12 @@ export interface AppContext {
    */
   readonly images?: ImageTransformer;
   /**
+   * Public origin of the media Worker (`https://media.<domain>`, MEDIA_PUBLIC_URL). Delivered
+   * assets get their URLs there, built at read time. Absent → the stored file URL, without
+   * renditions or a srcset (nothing would serve them).
+   */
+  readonly mediaPublicUrl?: string;
+  /**
    * Video host (Cloudflare Stream on edge). Absent → video-asset use-cases
    * refuse with NotConfiguredError; plain blob uploads of video files still work.
    */

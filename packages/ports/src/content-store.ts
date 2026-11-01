@@ -5,6 +5,8 @@ import type {
   Asset,
   AssetFolder,
   AssetKind,
+  AssetRendition,
+  AssetRights,
   AssetStatus,
   Comment,
   Concept,
@@ -88,6 +90,7 @@ export interface ContentStore {
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
   readonly assetFolders: AssetFolderRepo;
+  readonly assetRenditions: AssetRenditionRepo;
   readonly references: ReferenceRepo;
   readonly webhooks: WebhookRepo;
   readonly auth: AuthRepo;
@@ -424,16 +427,6 @@ export interface AuditRepo {
   list(spaceId: string, query: { environmentId?: string; limit?: number }): Promise<AuditEntry[]>;
 }
 
-/** The denormalized published snapshot of an asset, served by the Delivery API. */
-export interface PublishedAsset {
-  readonly assetId: string;
-  readonly file: Asset['file'];
-  readonly title: LocalizedValue;
-  readonly description: LocalizedValue;
-  readonly metadata: Asset['metadata'];
-  readonly publishedAt: string;
-}
-
 /**
  * What an asset listing keeps. Every filter narrows; omitted ones don't apply. `status` omitted
  * hides archived assets, as the entry trash is hidden: a picker or a library never shows them
@@ -486,6 +479,35 @@ export interface PublishedAsset {
   readonly description: LocalizedValue;
   readonly metadata: Asset['metadata'];
   readonly publishedAt: string;
+  /** The file version this snapshot delivers; its media URLs carry it. Absent reads as 1. */
+  readonly version?: number;
+  /** Where the published file's bytes are; absent for a hosted video. */
+  readonly r2Key?: string;
+  readonly rights?: AssetRights;
+}
+
+/** What a delivery asset listing keeps; every filter narrows. */
+export interface PublishedAssetFilters {
+  readonly kind?: AssetKind;
+  /** A taxonomy tag id in the published metadata. */
+  readonly tag?: string;
+  /** Assets filed directly in this folder (the library's filing, read live); `null`: the root. */
+  readonly folderId?: string | null;
+}
+
+export interface PublishedAssetQuery {
+  /** Page size; the store caps it. */
+  readonly limit?: number;
+  /** Offset paging, kept for existing callers; prefer `cursor`. Ignored with a cursor. */
+  readonly skip?: number;
+  /** `nextCursor` from the previous page (stable while assets are published meanwhile). */
+  readonly cursor?: string;
+  readonly filters?: PublishedAssetFilters;
+}
+
+export interface PublishedAssetPage {
+  readonly items: PublishedAsset[];
+  readonly nextCursor?: string;
 }
 
 export interface AssetRepo {
@@ -514,7 +536,21 @@ export interface AssetRepo {
   getPublished(scope: Scope, id: string): Promise<PublishedAsset | null>;
   /** Batch point-read of published assets; missing ids are absent, order unspecified. */
   getPublishedMany(scope: Scope, ids: readonly string[]): Promise<PublishedAsset[]>;
-  listPublished(scope: Scope, query: { limit?: number; skip?: number }): Promise<PublishedAsset[]>;
+  /** Published assets in publish order (oldest first), filtered and paged. */
+  listPublished(scope: Scope, query: PublishedAssetQuery): Promise<PublishedAssetPage>;
+}
+
+/**
+ * The space's rendition presets. Presets belong to the space (`scope.spaceId`); the environment
+ * in the scope is where the call came from and doesn't narrow anything.
+ */
+export interface AssetRenditionRepo {
+  /** Every preset, by name. */
+  list(scope: Scope): Promise<AssetRendition[]>;
+  get(scope: Scope, name: string): Promise<AssetRendition | null>;
+  /** Creates or replaces the preset with this name. */
+  put(scope: Scope, rendition: AssetRendition): Promise<void>;
+  delete(scope: Scope, name: string): Promise<void>;
 }
 
 /** The asset library's folders, environment-scoped like the assets filed in them. */
@@ -695,6 +731,7 @@ export interface ContentStoreTx {
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
   readonly assetFolders: AssetFolderRepo;
+  readonly assetRenditions: AssetRenditionRepo;
   readonly references: ReferenceRepo;
   readonly releases: ReleaseRepo;
   readonly taxonomy: TaxonomyRepo;

@@ -6,6 +6,7 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  listAssetRenditions,
   publishAsset,
   publishContentType,
   publishEntry,
@@ -205,5 +206,61 @@ describe('asset library tools (MCP), on the same use-cases as the HTTP routes', 
       (await editor.callTool({ name: 'asset_delete', arguments: { id: a.id, space: SPACE } }))
         .isError,
     ).toBe(true);
+  });
+
+  it('manages rendition presets on the same use-cases as REST, with the same scopes', async () => {
+    const { ctx, deps } = await setup();
+    const blob = new FakeBlobStore();
+    const client = await connect({ ...deps, blob }, admin);
+    const call = async (name: string, args: Record<string, unknown>) =>
+      client.callTool({ name, arguments: { space: SPACE, ...args } });
+
+    const created = payload(
+      await call('asset_renditions_create', { name: 'thumb', width: 200, fit: 'crop' }),
+    );
+    expect(created).toMatchObject({ name: 'thumb', width: 200, fit: 'crop' });
+    expect((await call('asset_renditions_create', { name: 'thumb', width: 1 })).isError).toBe(true);
+    expect(
+      payload(await call('asset_renditions_update', { name: 'thumb', width: 300 })),
+    ).toMatchObject({ name: 'thumb', width: 300 });
+    // What MCP wrote is what the REST route reads: the same store, the same use-case.
+    expect((await listAssetRenditions(ctx, scope)).map((r) => [r.name, r.width])).toEqual([
+      ['thumb', 300],
+    ]);
+    expect(payload(await call('asset_renditions_list', {}))).toMatchObject({
+      items: [{ name: 'thumb', width: 300 }],
+    });
+
+    // A Preview key reads presets but can't change them (content:manage, as on REST).
+    const reader_ = await connect(deps, reader);
+    expect(
+      payload(
+        await reader_.callTool({ name: 'asset_renditions_list', arguments: { space: SPACE } }),
+      ),
+    ).toMatchObject({ items: [{ name: 'thumb' }] });
+    const denied = await reader_.callTool({
+      name: 'asset_renditions_delete',
+      arguments: { space: SPACE, name: 'thumb' },
+    });
+    expect(denied.isError).toBe(true);
+
+    expect(payload(await call('asset_renditions_delete', { name: 'thumb' }))).toEqual({
+      deleted: 'thumb',
+    });
+    expect(payload(await call('asset_renditions_list', {}))).toEqual({ items: [] });
+  });
+
+  it('hands out short-lived signed URLs in asset reads, as REST does', async () => {
+    const { deps, add } = await setup();
+    const a = await add('a.png', 'image/png');
+    const client = await connect({ ...deps, blob: new FakeBlobStore() }, admin);
+    const listed = payload(
+      await client.callTool({ name: 'assets_list', arguments: { space: SPACE } }),
+    ) as { items: { id: string; file: { url: string } }[] };
+    expect(listed.items.find((x) => x.id === a.id)?.file.url).toMatch(/\?ttl=900$/);
+    const archived = payload(
+      await client.callTool({ name: 'asset_archive', arguments: { space: SPACE, id: a.id } }),
+    ) as { file: { url: string } };
+    expect(archived.file.url).toMatch(/\?ttl=900$/);
   });
 });

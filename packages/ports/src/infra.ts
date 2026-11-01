@@ -48,13 +48,23 @@ export interface Subscription {
   close(): Promise<void>;
 }
 
+export interface DownloadUrlOptions {
+  readonly expiresInSeconds?: number;
+  readonly origin?: string;
+}
+
 /** Object storage for assets (R2). */
 export interface BlobStore {
   getUploadUrl(
     key: string,
     contentType: string,
   ): Promise<{ url: string; headers: Record<string, string> }>;
-  getDownloadUrl(key: string): Promise<string>;
+  /**
+   * A URL that reads `key`. Without options: the stored, non-expiring download URL. With
+   * `expiresInSeconds`, one that stops working then (Management and Preview reads); `origin`
+   * points it at another host that verifies the same signature (the media origin).
+   */
+  getDownloadUrl(key: string, opts?: DownloadUrlOptions): Promise<string>;
   delete(key: string): Promise<void>;
   /**
    * Server-side write, for content the server owns rather than proxies.
@@ -104,6 +114,8 @@ export interface ImageTransformer {
     sourceUrl: string,
     transform: ImageTransformSpec,
     focalPoint?: FocalPoint,
+    /** A transform of a short-lived URL expires with it (Preview's drafts). */
+    opts?: { readonly expiresInSeconds?: number },
   ): Promise<string>;
 }
 
@@ -525,4 +537,26 @@ export interface PluginRuntime {
     invocation: PluginInvocation,
     capabilities: PluginCapabilities,
   ): Promise<HookResult<unknown>>;
+}
+
+/**
+ * What the media origin needs to serve one published asset, kept where it can read it on a cache
+ * miss without the database: the version its URLs carry, where the bytes are, and the focal point
+ * crops gravitate to. Written and removed only by the engine, from the asset's events.
+ */
+export interface AssetGateEntry {
+  readonly v: number;
+  readonly r2Key: string;
+  readonly contentType: string;
+  readonly fileName: string;
+  readonly focal?: FocalPoint;
+  /** When delivery must stop (the asset's rights); past it the media origin answers 410. */
+  readonly expiresAt?: string;
+}
+
+/** The published-asset gate the media origin checks before serving bytes (KV on the edge). */
+export interface AssetGate {
+  get(scope: Scope, assetId: string): Promise<AssetGateEntry | null>;
+  put(scope: Scope, assetId: string, entry: AssetGateEntry): Promise<void>;
+  delete(scope: Scope, assetId: string): Promise<void>;
 }

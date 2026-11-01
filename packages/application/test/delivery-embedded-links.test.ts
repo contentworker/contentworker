@@ -222,8 +222,8 @@ describe('delivery resolves links inside rich text and components', () => {
       // One level only: the embed's own link stays a stub.
       expect(embed.fields.mentor).toEqual(entryLink(mentor));
     }
-    // The same shape a Link field's asset embed has (title stays locale-keyed).
-    expect(image).toMatchObject({ id: asset.asset.id, title: { 'en-US': 'Hero' } });
+    // The delivered asset shape a Link field's asset embed has, flattened to the asked locale.
+    expect(image).toMatchObject({ id: asset.asset.id, title: 'Hero', kind: 'image' });
     expect((image as unknown as { file: { fileName: string } }).file.fileName).toBe('hero.png');
     // Plain hyperlinks are untouched.
     expect(JSON.stringify(body)).toContain('"uri":"https://example.com"');

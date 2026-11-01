@@ -100,6 +100,8 @@ export interface CfImageTransformerOptions {
    * returned untransformed (there is nothing that could transform them).
    */
   readonly zoneOrigin?: string;
+  /** Injected for tests; seconds since the epoch. */
+  readonly now?: () => number;
 }
 
 /**
@@ -109,7 +111,7 @@ export interface CfImageTransformerOptions {
  */
 export function createCfImageTransformer(opts: CfImageTransformerOptions): ImageTransformer {
   return {
-    async transformUrl(sourceUrl, transform, focalPoint) {
+    async transformUrl(sourceUrl, transform, focalPoint, urlOpts) {
       const spec: ImageTransformSpec = { ...transform, format: transform.format ?? 'auto' };
       const parsed = new URL(sourceUrl, 'http://relative.invalid');
       const at = parsed.pathname.indexOf(MEDIA_PREFIX);
@@ -120,6 +122,14 @@ export function createCfImageTransformer(opts: CfImageTransformerOptions): Image
           .map(decodeURIComponent)
           .join('/');
         const params = transformParams(spec, focalPoint);
+        // A short-lived source keeps its expiry (a transform must not outlive the URL it came
+        // from); otherwise the caller's lifetime, if any.
+        const exp =
+          parsed.searchParams.get('exp') ??
+          (urlOpts?.expiresInSeconds
+            ? String((opts.now?.() ?? Math.floor(Date.now() / 1000)) + urlOpts.expiresInSeconds)
+            : null);
+        if (exp) params.set('exp', exp);
         params.set('sig', await opts.signer.sign('GET', key, params));
         const prefix = sourceUrl.startsWith('/') ? '' : parsed.origin;
         return `${prefix}${parsed.pathname}?${params.toString()}`;

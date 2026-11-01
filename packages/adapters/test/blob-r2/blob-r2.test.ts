@@ -6,6 +6,7 @@ import {
   keyFromMediaPath,
   type R2BucketLike,
   type R2ObjectBodyLike,
+  readUrlExpiry,
 } from '../../src/blob-r2/index';
 
 /** In-memory R2 bucket: stores bytes + content type, like the binding. */
@@ -220,5 +221,70 @@ describe('deletePrefix', () => {
       's1/staging/shared/z.png',
       's1/stagingx/a4/v.png',
     ]);
+  });
+});
+
+describe('short-lived reads', () => {
+  it('expire on a window boundary, so reads within one window share a URL', () => {
+    expect(readUrlExpiry(1000, 900)).toBe(2700);
+    expect(readUrlExpiry(1799, 900)).toBe(2700);
+    expect(readUrlExpiry(1801, 900)).toBe(3600);
+  });
+
+  it('serve until exp, refuse after it, and can point at another origin', async () => {
+    const { bucket } = fakeBucket();
+    await bucket.put(KEY, 'bytes', { httpMetadata: { contentType: 'image/png' } });
+    let now = NOW;
+    const blob = createR2BlobStore(bucket, {
+      signer,
+      baseUrl: 'https://api.example',
+      now: () => now,
+    });
+    const url = await blob.getDownloadUrl(KEY, {
+      expiresInSeconds: 900,
+      origin: 'https://media.example',
+    });
+    expect(new URL(url).origin).toBe('https://media.example');
+    expect(new URL(url).searchParams.get('exp')).toBe(String(readUrlExpiry(NOW, 900)));
+    // Within the window the same URL comes back.
+    now += 60;
+    expect(
+      await blob.getDownloadUrl(KEY, { expiresInSeconds: 900, origin: 'https://media.example' }),
+    ).toBe(url);
+
+    const opts = { bucket, signer, now: () => now };
+    const ok = await handleMediaRequest(new Request(url), opts);
+    expect(ok.status).toBe(200);
+    // A draft's bytes: kept by the reader only, and not past the expiry.
+    expect(ok.headers.get('cache-control')).toMatch(/^private, max-age=\d+$/);
+
+    now = readUrlExpiry(NOW, 900) + 1;
+    expect((await handleMediaRequest(new Request(url), opts)).status).toBe(403);
+    // Stretching exp breaks the signature.
+    const stretched = url.replace(/exp=\d+/, `exp=${now + 900}`);
+    expect((await handleMediaRequest(new Request(stretched), opts)).status).toBe(403);
+  });
+
+  it('are the only reads a host that requires an expiry serves, and it takes no upload', async () => {
+    const { bucket } = fakeBucket();
+    await bucket.put(KEY, 'bytes', { httpMetadata: { contentType: 'image/png' } });
+    const blob = createR2BlobStore(bucket, { signer, now: () => NOW });
+    const strict = { bucket, signer, now: () => NOW, requireExpiry: true, readOnly: true };
+    const stored = await blob.getDownloadUrl(KEY);
+    expect((await handleMediaRequest(new Request(`https://m${stored}`), strict)).status).toBe(403);
+    // The api, which doesn't require one, still honours what assets stored at creation.
+    expect(
+      (await handleMediaRequest(new Request(`https://m${stored}`), { bucket, signer })).status,
+    ).toBe(200);
+    const { url } = await blob.getUploadUrl(KEY, 'image/png');
+    const put = await handleMediaRequest(
+      new Request(`https://m${url}`, {
+        method: 'PUT',
+        headers: { 'content-length': '1' },
+        body: 'x',
+      }),
+      strict,
+    );
+    expect(put.status).toBe(405);
   });
 });
