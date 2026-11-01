@@ -542,8 +542,9 @@ for code and data blocks only.
 
 `public/manifest.webmanifest` and the apple-touch-icon put the admin on the Home Screen as its own
 app (`standalone`). The icons are rendered from the mark by `apps/web/scripts/icons.sh`, ink on
-paper and opaque. `theme-color` follows the chosen theme (`public/theme.js`, a file so the CSP's
-`script-src 'self'` allows it). There is no service worker: actions must reach the API.
+paper and opaque. `theme-color` follows the chosen theme: the inline theme script in `root.tsx`
+(run before first paint under the CSP's nonce) keeps a `theme-color` meta of its own in step. The
+theme follows the system until the reader picks Light or Dark. There is no service worker: actions must reach the API.
 
 ## Do's and Don'ts
 

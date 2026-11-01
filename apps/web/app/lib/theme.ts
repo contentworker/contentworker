@@ -4,15 +4,16 @@ export type ThemeChoice = 'light' | 'dark' | 'system';
 
 /** Reads the resolved theme root.tsx put on <html>, and lets the shell change the choice. */
 export function useTheme() {
+  // Until the reader picks, the theme follows the system (root.tsx's script resolves it).
   const [state, setState] = useState<{ choice: ThemeChoice; resolved: 'light' | 'dark' }>({
-    choice: 'light',
+    choice: 'system',
     resolved: 'light',
   });
   useEffect(() => {
     const d = document.documentElement;
     const read = () =>
       setState({
-        choice: (d.dataset.themeChoice as ThemeChoice) || 'light',
+        choice: (d.dataset.themeChoice as ThemeChoice) || 'system',
         resolved: d.dataset.theme === 'dark' ? 'dark' : 'light',
       });
     read();
