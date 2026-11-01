@@ -115,7 +115,7 @@ pnpm --filter @contentworker/http generate:skills
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `@contentworker/domain`        | node                                                                                                                                              | Pure rules                                                                                                                                                         |
 | `@contentworker/application`   | node, `@contentworker/test-kit` fakes                                                                                                             | Every use-case                                                                                                                                                     |
-| `@contentworker/db`            | workerd (`@cloudflare/vitest-plugin`), Miniflare D1 with the migrations applied                                                                   | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest                                                                        |
+| `@contentworker/db`            | workerd (`@cloudflare/vitest-plugin`), Miniflare D1 with the migrations applied                                                                   | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest, D1 statements per request                                             |
 | `@contentworker/http`          | node, in-memory fakes                                                                                                                             | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                                                                            |
 | `@contentworker/engine`        | workerd                                                                                                                                           | Durable Objects (search shard, live hub, cost guard, rate limiter), real Workflow runs with `AI_MODE=mock`, the media gate and both purge queues                   |
 | `@contentworker/media`         | workerd, Miniflare KV, R2 and D1, a fake Images binding                                                                                           | The media Worker end to end: gate and replica fallback, 404/410, `Accept` negotiation, purge drain, signed draft reads                                             |
@@ -138,6 +138,24 @@ create what they need; the first-run spec sees a deployment with no spaces by fi
 `GET /spaces` to the space it creates, since the database is shared), so it coexists with a
 `pnpm dev` session. Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
+
+### D1 query counts
+
+`packages/db/test/query-counts.test.ts` runs representative Delivery and Management requests
+(entry by id, with a locale and with `include`, filtered and searched lists, a link list past the
+100-parameter cap, GraphQL entry, collection and asset queries, asset delivery, create, publish,
+get and list entries) through their use-cases over the real D1 store, with no delivery cache, and
+counts the statements and round trips each sends to D1 (a `batch()` is one round trip). The
+counts are compared with the committed `packages/db/test/query-counts.json`; any change fails the
+`@contentworker/db` suite with a report of what moved and, for an increase, the SQL the request now
+runs. When the change is intended, rewrite the snapshot and commit it:
+
+```bash
+pnpm --filter @contentworker/db test:query-counts:update
+```
+
+Delivery read counts may only go down. A PR that raises one says why in its description; a
+decrease is committed the same way, so the next increase is measured from it.
 
 ### MCP smoke scripts
 
