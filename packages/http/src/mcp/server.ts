@@ -42,6 +42,7 @@ import {
   draftEntry,
   draftWorkflowGraph,
   duplicateEntry,
+  type EnvironmentSnapshot,
   executeImport,
   exportSnapshot,
   findDuplicates,
@@ -162,6 +163,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { toHttpError } from '../api/http';
+import { snapshotBody } from '../api/validation';
 import type { McpDeps } from './deps';
 
 /**
@@ -1346,6 +1348,36 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
       return ok(await exportSnapshot(ctx, scopeOf(args), { limit: args.limit }));
+    },
+  );
+
+  server.registerTool(
+    'environment_import',
+    {
+      description:
+        'Import a snapshot (as environment_export returns it) into this environment, which ' +
+        'must exist and have no content types. Every entry is checked first, and nothing is ' +
+        'written if anything would fail. Set dryRun to see the report only. Otherwise the ' +
+        'content model is written and the entries and assets are written by a job: the ' +
+        'result is `{ report, job, publishJobId }`; follow `job` with bulk_job_status in this ' +
+        'environment, then `publishJobId`, which starts once `job` completes with no failures.',
+      inputSchema: toolSchema('environment_import', () =>
+        z.object({
+          snapshot: snapshotBody,
+          publish: z.boolean().optional().describe('republish what was published (default true)'),
+          dryRun: z.boolean().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      const target = scopeOf(args);
+      guard(SCOPES.contentManage, target);
+      const snapshot = args.snapshot as unknown as EnvironmentSnapshot;
+      const options = { dryRun: args.dryRun, publish: args.publish };
+      if (args.dryRun || !deps.blob)
+        return ok(await importSnapshot(ctx, target, snapshot, options));
+      return ok(await startSnapshotImport(ctx, deps.blob, target, snapshot, options));
     },
   );
 
