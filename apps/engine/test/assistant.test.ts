@@ -296,13 +296,10 @@ describe('who reaches an assistant', () => {
     }
   });
 
-  it('opens, for one release, with a principal signed with the main key (phase 1)', async () => {
-    // TODO(assistant-key phase 2): this becomes a 401 once main-key acceptance is removed.
+  it('refuses a principal signed with the main key: it is good for the REST surface only', async () => {
     const ada = await person('ada_main_key');
     const res = await open(ada.sub, ada, env.PRINCIPAL_KEY);
-    expect(res.status).toBe(101);
-    res.webSocket!.accept();
-    res.webSocket!.close();
+    expect(res.status).toBe(401);
   });
 
   it('checks the signature itself, not only the gate in front of it', async () => {

@@ -155,12 +155,10 @@ test('every app has a secrets list and the shared keys must be long', () => {
   assert.equal(keysProblem({ DATA_KEY: 'x'.repeat(32) }), null);
 });
 
-test('the engine gets the assistant’s derived principal key pair, and (phase 1) the main pair', () => {
+test('the engine gets the assistant’s derived principal key pair, never the main one', () => {
   assert.deepEqual(SECRETS.engine, [
     'ASSISTANT_PRINCIPAL_KEY',
     'ASSISTANT_PRINCIPAL_KEY_PREVIOUS',
-    'PRINCIPAL_KEY',
-    'PRINCIPAL_KEY_PREVIOUS',
     'DATA_KEY',
     'DATA_KEY_PREVIOUS',
     'TOKEN_PEPPER',

@@ -72,8 +72,8 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 
 | Secret                   | W | A | D | E | Purpose                                                                                                                                                         |
 | ------------------------ | - | - | - | - | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PRINCIPAL_KEY`          | ✓ | ✓ |   | ✓ | Signs (web) and verifies (api) `x-cw-principal`. Required. Same value on all. The engine holds it only through phase 1 of the assistant key (see below)          |
-| `PRINCIPAL_KEY_PREVIOUS` | ✓ | ✓ |   | ✓ | Rotation only: accepted by the api until the web Worker has moved                                                                                              |
+| `PRINCIPAL_KEY`          | ✓ | ✓ |   |   | Signs (web) and verifies (api) `x-cw-principal`. Required. Same value on web and api; the engine never holds it (it gets the derived key below)                  |
+| `PRINCIPAL_KEY_PREVIOUS` | ✓ | ✓ |   |   | Rotation only: accepted by the api until the web Worker has moved                                                                                              |
 | `ASSISTANT_PRINCIPAL_KEY` |   |   |   | ✓ | The assistant's principal key: HKDF-SHA256 of `PRINCIPAL_KEY` (`@contentworker/security/assistant-key`), derived by CI, never set by hand. Verifies the principal signed for `/agents/*` |
 | `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` |   |   |   | ✓ | Derived from `PRINCIPAL_KEY_PREVIOUS`, while a rotation finishes                                                                  |
 | `DATA_KEY`               | ✓ | ✓ | ✓ | ✓ | AES-256-GCM key sealing secrets in D1 (webhook secrets, header values; web: authenticator secrets). Required on persistent deployments. Never changes            |

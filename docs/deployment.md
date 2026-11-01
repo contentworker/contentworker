@@ -85,7 +85,7 @@ survives). Which Worker gets which is `SECRETS` in `scripts/fleet.ts`:
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | web      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `SETUP_TOKEN`, `PASSWORD_PEPPER`, `OIDC_CLIENT_SECRET`        |
 | api      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN` |
-| engine   | `ASSISTANT_PRINCIPAL_KEY`, `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` (derived), and through phase 1 `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`; `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET` |
+| engine   | `ASSISTANT_PRINCIPAL_KEY`, `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` (derived from the `PRINCIPAL_KEY` pair; never the pair itself), `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET` |
 | delivery | `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`                                                                   |
 
 `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER` and `MEDIA_SIGNING_SECRET` are required
@@ -114,19 +114,11 @@ else. Nothing to set by hand: CI derives the pair at each deploy (`fleet.ts secr
 `scripts/derive-assistant-key.ts`; it reads the key from stdin or `PRINCIPAL_KEY`, never an
 argument), and `provision.sh` generates nothing new for it.
 
-The change rolls out in two phases, because CI deploys engine, api, delivery and web one after
-another, ring by ring, and a web Worker still on the old release signs `/agents/*` with the main
-key:
-
-1. **Phase 1 (released).** The api gate and the engine accept the derived key or the main key
-   (`ACCEPT_MAIN_KEY_ON_ASSISTANT_PATHS` in `packages/http/src/assistant/gate.ts`), and the engine
-   holds both pairs.
-2. **Phase 2 (TODO, once every deployment has run phase 1, i.e. CI has deployed it to every ring
-   with no deployment on `hold`).** Remove `ACCEPT_MAIN_KEY_ON_ASSISTANT_PATHS` and the main keys
-   it adds, drop `PRINCIPAL_KEY` and `PRINCIPAL_KEY_PREVIOUS` from `SECRETS.engine`, update the
-   phase-1 tests (`apps/engine/test/assistant.test.ts`, `assistant-gate.test.ts`,
-   `scripts/fleet.test.ts`), then delete the two secrets from each deployment's engine Worker by
-   hand (`--secrets-file` never removes one).
+The api gate and the engine accept only the derived key on `/agents/*`; a principal signed with
+`PRINCIPAL_KEY` is refused there, and one signed with the derived key is refused on every other
+path. This shipped in one step because no deployment had run the assistant before it: there was no
+web Worker still signing `/agents/*` with the main key to stay compatible with. A future change to
+how these paths are signed has to roll out in two steps (verifiers accept both, then only the new).
 
 ## The pipeline
 

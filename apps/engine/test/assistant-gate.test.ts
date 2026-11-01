@@ -42,7 +42,11 @@ describe('the assistant’s gate', () => {
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
         headers: {
-          [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, principalTarget('GET', path)),
+          [PRINCIPAL_HEADER]: await signPrincipal(
+            await deriveAssistantPrincipalKey(KEY),
+            ada,
+            principalTarget('GET', path),
+          ),
           'x-agents-lifecycle-props': 'eyJmb3JnZWQiOnRydWV9',
           'x-partykit-room': 'usr_bob',
         },
@@ -55,9 +59,9 @@ describe('the assistant’s gate', () => {
     expect(seen[0]!.headers.get('x-partykit-room')).toBeNull();
   });
 
-  it('accepts the key derived for the assistant, and (phase 1) the main key', async () => {
+  it('accepts the key derived for the assistant, and refuses the main key', async () => {
     const path = '/agents/assistant-agent/usr_ada/get-messages';
-    for (const key of [await deriveAssistantPrincipalKey(KEY), KEY]) {
+    for (const key of [await deriveAssistantPrincipalKey(KEY)]) {
       const { env, seen } = envSeeing();
       const res = await routeAssistant(
         new Request(`https://api${path}`, {
@@ -69,6 +73,20 @@ describe('the assistant’s gate', () => {
       );
       expect(res.status).toBe(200);
       expect(seen).toHaveLength(1);
+    }
+    // The main key itself is refused on the assistant's paths.
+    {
+      const { env, seen } = envSeeing();
+      const res = await routeAssistant(
+        new Request(`https://api${path}`, {
+          headers: {
+            [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, principalTarget('GET', path)),
+          },
+        }),
+        env,
+      );
+      expect(res.status).toBe(401);
+      expect(seen).toHaveLength(0);
     }
     // A key derived from anything else is refused.
     const { env } = envSeeing();
@@ -90,7 +108,11 @@ describe('the assistant’s gate', () => {
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
         headers: {
-          [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, principalTarget('GET', path)),
+          [PRINCIPAL_HEADER]: await signPrincipal(
+            await deriveAssistantPrincipalKey(KEY),
+            ada,
+            principalTarget('GET', path),
+          ),
         },
       }),
       env,

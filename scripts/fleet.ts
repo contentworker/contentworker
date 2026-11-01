@@ -83,13 +83,10 @@ export const SECRETS: Record<App, readonly string[]> = {
     'ADMIN_TOKEN',
   ],
   // The engine's AssistantAgent verifies its socket's signed principal itself, with the key
-  // derived for it (DERIVED below). TODO(assistant-key phase 2): drop PRINCIPAL_KEY and
-  // PRINCIPAL_KEY_PREVIOUS here once every deployment has run phase 1 (docs/deployment.md).
+  // derived for it (DERIVED below); it never holds PRINCIPAL_KEY.
   engine: [
     'ASSISTANT_PRINCIPAL_KEY',
     'ASSISTANT_PRINCIPAL_KEY_PREVIOUS',
-    'PRINCIPAL_KEY',
-    'PRINCIPAL_KEY_PREVIOUS',
     'DATA_KEY',
     'DATA_KEY_PREVIOUS',
     'TOKEN_PEPPER',

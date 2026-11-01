@@ -115,8 +115,7 @@
 
   // ---- Vars (secrets: DATA_KEY, TOKEN_PEPPER, SETUP_TOKEN, ADMIN_TOKEN, MCP_TOKEN,
   // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, and ASSISTANT_PRINCIPAL_KEY(_PREVIOUS), derived
-  // from PRINCIPAL_KEY by CI, with which the assistant checks its socket's signed principal;
-  // PRINCIPAL_KEY(_PREVIOUS) too until phase 2) -----------
+  // from PRINCIPAL_KEY by CI, with which the assistant checks its socket's signed principal) ----
   "vars": {
     // Rendered per deployment (scripts/fleet.ts): queue consumers route by the suffixed queue name.
     "QUEUE_SUFFIX": "",

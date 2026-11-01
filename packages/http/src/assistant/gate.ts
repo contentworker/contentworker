@@ -21,38 +21,25 @@ import {
 } from '@contentworker/security/principal';
 import { routeAgentRequest } from 'agents';
 
-/**
- * TODO(assistant-key phase 2): set to false, delete it and the main keys below, and drop
- * PRINCIPAL_KEY / PRINCIPAL_KEY_PREVIOUS from `SECRETS.engine` in scripts/fleet.ts, once every
- * deployment has run this release (docs/deployment.md, "The assistant's principal key").
- *
- * Phase 1: CI deploys engine, api, delivery and web one after another, ring by ring, so for one
- * release a web Worker still signing the assistant's paths with PRINCIPAL_KEY meets an api and an
- * engine that expect the derived key. Both accept either until then.
- */
-export const ACCEPT_MAIN_KEY_ON_ASSISTANT_PATHS = true;
-
 const present = (keys: (string | undefined)[]) => keys.filter((k): k is string => Boolean(k));
 
 /**
  * The api's keys for the assistant's paths: derived from PRINCIPAL_KEY, then from
- * PRINCIPAL_KEY_PREVIOUS while a rotation finishes (and, in phase 1, the main keys too).
+ * PRINCIPAL_KEY_PREVIOUS while a rotation finishes. Never the main keys themselves: a principal
+ * signed with one is good for the REST surface only.
  */
 export async function gateKeys(env: EdgeEnv): Promise<string[]> {
-  const main = present([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS]);
-  const derived = await Promise.all(main.map(deriveAssistantPrincipalKey));
-  return ACCEPT_MAIN_KEY_ON_ASSISTANT_PATHS ? [...derived, ...main] : derived;
+  return Promise.all(
+    present([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS]).map(deriveAssistantPrincipalKey),
+  );
 }
 
 /**
  * The engine's keys: ASSISTANT_PRINCIPAL_KEY, then ASSISTANT_PRINCIPAL_KEY_PREVIOUS while a
- * rotation finishes (and, in phase 1, the main keys too).
+ * rotation finishes. The engine holds no other principal key.
  */
 export function engineKeys(env: EdgeEnv): string[] {
-  const derived = present([env.ASSISTANT_PRINCIPAL_KEY, env.ASSISTANT_PRINCIPAL_KEY_PREVIOUS]);
-  return ACCEPT_MAIN_KEY_ON_ASSISTANT_PATHS
-    ? [...derived, ...present([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS])]
-    : derived;
+  return present([env.ASSISTANT_PRINCIPAL_KEY, env.ASSISTANT_PRINCIPAL_KEY_PREVIOUS]);
 }
 
 /** True for a path the assistant's routing owns (`/agents/assistant-agent/…`). */
