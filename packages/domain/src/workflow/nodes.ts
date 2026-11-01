@@ -604,7 +604,7 @@ export const NODE_SPECS = [
     label: 'Agent router',
     description:
       'An LLM reads the entry and context, then chooses exactly one route. Each route is an output. Without a model answer it takes the last route.',
-    icon: 'Bot',
+    icon: 'Signpost',
     fields: [
       {
         key: 'instructions',
@@ -723,7 +723,7 @@ export const NODE_SPECS = [
     category: 'ai',
     label: 'Autofill field',
     description: 'Drafts one field’s value from the rest of the entry (an excerpt, an SEO title).',
-    icon: 'WandSparkles',
+    icon: 'TextCursorInput',
     fields: [
       { key: 'field', label: 'Field', kind: 'field', required: true },
       { key: 'locale', label: 'Locale', kind: 'text', hint: 'Empty uses the default locale' },
@@ -756,7 +756,7 @@ export const NODE_SPECS = [
     label: 'Enrich',
     description:
       'Runs the enrich agent (SEO fields, summaries, tags). With review, its proposal waits in the approvals inbox.',
-    icon: 'Sparkles',
+    icon: 'LayersPlus',
     fields: [
       {
         key: 'awaitReview',

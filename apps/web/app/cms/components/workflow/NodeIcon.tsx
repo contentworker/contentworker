@@ -6,7 +6,6 @@
 import type { NodeCategory } from '@contentworker/domain';
 import {
   Bell,
-  Bot,
   CalendarClock,
   CircleStop,
   ClipboardList,
@@ -18,6 +17,7 @@ import {
   Hourglass,
   IterationCw,
   Languages,
+  LayersPlus,
   ListChecks,
   type LucideIcon,
   MessageSquare,
@@ -34,21 +34,20 @@ import {
   Send,
   Shapes,
   ShieldAlert,
-  Sparkles,
+  Signpost,
   Split,
   Tag,
   Tags,
+  TextCursorInput,
   Timer,
   Upload,
   UserCheck,
   Variable,
-  WandSparkles,
   Webhook,
 } from 'lucide-react';
 
 const ICONS: Record<string, LucideIcon> = {
   Bell,
-  Bot,
   CalendarClock,
   CircleStop,
   ClipboardList,
@@ -74,7 +73,6 @@ const ICONS: Record<string, LucideIcon> = {
   Send,
   Shapes,
   ShieldAlert,
-  Sparkles,
   Split,
   Tag,
   Tags,
@@ -82,8 +80,10 @@ const ICONS: Record<string, LucideIcon> = {
   Upload,
   UserCheck,
   Variable,
-  WandSparkles,
   Webhook,
+  LayersPlus,
+  Signpost,
+  TextCursorInput,
 };
 
 export function NodeIcon({
