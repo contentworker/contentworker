@@ -1,4 +1,5 @@
 import {
+  ConflictError,
   type ContentType,
   type Entry,
   extractReferences,
@@ -15,6 +16,25 @@ import type { AppContext } from './context';
 import { runHook } from './hooks';
 
 /**
+ * Holds a write to the version its caller saw. A confirm card, a page's button and an API client
+ * that read the entry first pass the `currentVersion` they read; when the entry has moved on since
+ * (someone saved a new draft), the write is refused rather than acting on content they never saw.
+ */
+export interface ExpectedVersion {
+  readonly expectedVersion?: number;
+}
+
+/** Refuses with `ConflictError` (409) when `entry` is no longer at the version the caller saw. */
+export function assertExpectedVersion(entry: Entry, opts: ExpectedVersion = {}): void {
+  const expected = opts.expectedVersion;
+  if (expected === undefined || entry.currentVersion === expected) return;
+  throw new ConflictError(
+    `Entry "${entry.id}" is at version ${entry.currentVersion}, not ${expected}: it changed after it was read. Read it again.`,
+    { currentVersion: entry.currentVersion, expectedVersion: expected },
+  );
+}
+
+/**
  * Publishes one entry inside an existing transaction. Writes the denormalized
  * published snapshot (the Delivery read model), materializes reference edges,
  * and appends an `entry.published` event to the outbox. Factored out of
@@ -25,9 +45,11 @@ export async function publishEntryTx(
   tx: ContentStoreTx,
   scope: Scope,
   id: string,
+  opts: ExpectedVersion = {},
 ): Promise<Entry> {
   const found = await tx.entries.get(scope, id);
   if (!found) throw new NotFoundError('Entry', id);
+  assertExpectedVersion(found.entry, opts);
 
   // Inside the transaction on purpose: a veto here rolls back everything the
   // publish would have written, including the outbox row.
@@ -85,9 +107,11 @@ export async function unpublishEntryTx(
   tx: ContentStoreTx,
   scope: Scope,
   id: string,
+  opts: ExpectedVersion = {},
 ): Promise<Entry> {
   const found = await tx.entries.get(scope, id);
   if (!found) throw new NotFoundError('Entry', id);
+  assertExpectedVersion(found.entry, opts);
   if (found.entry.publishedVersion === null) {
     throw new InvalidStateError('Entry is not published');
   }
@@ -350,13 +374,23 @@ export async function unpublishEntriesTx(
  * `entry.published` event to the outbox, guaranteeing the event is enqueued iff
  * the publish commits.
  */
-export async function publishEntry(ctx: AppContext, scope: Scope, id: string): Promise<Entry> {
-  return ctx.store.withTransaction((tx) => publishEntryTx(ctx, tx, scope, id));
+export async function publishEntry(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  opts: ExpectedVersion = {},
+): Promise<Entry> {
+  return ctx.store.withTransaction((tx) => publishEntryTx(ctx, tx, scope, id, opts));
 }
 
 /** Withdraws an entry's published version and removes it from the read model. */
-export async function unpublishEntry(ctx: AppContext, scope: Scope, id: string): Promise<Entry> {
-  return ctx.store.withTransaction((tx) => unpublishEntryTx(ctx, tx, scope, id));
+export async function unpublishEntry(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  opts: ExpectedVersion = {},
+): Promise<Entry> {
+  return ctx.store.withTransaction((tx) => unpublishEntryTx(ctx, tx, scope, id, opts));
 }
 
 /**

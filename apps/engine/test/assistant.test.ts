@@ -7,6 +7,7 @@ import {
   createSpace,
   getPreviewEntry,
   publishContentType,
+  updateEntry,
 } from '@contentworker/application';
 import { authDbOf, sessions, users } from '@contentworker/db/auth';
 import { type AssistantContext, assistantPath, DIRECT_CALL_PREFIX } from '@contentworker/domain';
@@ -16,6 +17,7 @@ import {
   answeredOnly,
   CARD_CHANGED,
   CLOSE_SESSION_ENDED,
+  NOT_HELD,
   NOT_PROPOSED,
   RETENTION_MS,
   TOO_FAST,
@@ -528,6 +530,129 @@ describe('a page’s edits (no model)', () => {
     });
     expect(await statusOf(SPACE_A, swapped)).toBe('draft');
     expect(await statusOf(SPACE_A, shown)).toBe('draft');
+    panel.close();
+  });
+});
+
+/** Someone else saves a new draft of the entry: what a card showed is no longer what it is. */
+const saveNewDraft = (spaceId: string, id: string, title: string) =>
+  updateEntry(ctx(), { spaceId, environmentId: 'main' }, id, { title: { 'en-US': title } });
+
+describe('a confirm is held to the entry as its card showed it', () => {
+  it('refuses a page’s publish confirmed after a newer draft was saved', async () => {
+    const ada = await person('ada_held_page');
+    const id = await entryIn(SPACE_A, 'As shown');
+    const panel = await socket(ada);
+    const asked = await panel.call('act', ['entries_publish', { id }, contextIn(SPACE_A)]);
+    const { callId } = asked.result as { callId: string };
+    await saveNewDraft(SPACE_A, id, 'Saved after the card');
+
+    const answer = await panel.call('resolve', [callId, true]);
+    expect(answer).toMatchObject({
+      success: false,
+      error: expect.stringMatching(/version 2, not 1/),
+    });
+    expect(await statusOf(SPACE_A, id)).toBe('draft');
+    expect(await partOf(ada, callId)).toMatchObject({ state: 'output-error' });
+    panel.close();
+  });
+
+  it('holds a page’s own expectedVersion, and runs it when the entry is still there', async () => {
+    const ada = await person('ada_held_named');
+    const id = await entryIn(SPACE_A, 'Named version');
+    await saveNewDraft(SPACE_A, id, 'Version 2');
+    const panel = await socket(ada);
+    // The page showed version 1: its card is held to that, not to what the entry is now.
+    const stale = await panel.call('act', [
+      'entries_publish',
+      { id, expectedVersion: 1 },
+      contextIn(SPACE_A),
+    ]);
+    const staleId = (stale.result as { callId: string }).callId;
+    expect((await panel.call('resolve', [staleId, true])).success).toBe(false);
+    expect(await statusOf(SPACE_A, id)).toBe('draft');
+
+    const fresh = await panel.call('act', [
+      'entries_publish',
+      { id, expectedVersion: 2 },
+      contextIn(SPACE_A),
+    ]);
+    const freshId = (fresh.result as { callId: string }).callId;
+    expect((await panel.call('resolve', [freshId, true])).success).toBe(true);
+    expect(await statusOf(SPACE_A, id)).toBe('published');
+    panel.close();
+  });
+
+  it('refuses a card for an entry it can’t read', async () => {
+    const ada = await person('ada_held_missing');
+    const panel = await socket(ada);
+    const asked = await panel.call('act', [
+      'entries_publish',
+      { id: 'no_such_entry' },
+      contextIn(SPACE_A),
+    ]);
+    expect(asked).toMatchObject({ success: false, error: NOT_HELD });
+    panel.close();
+  });
+
+  it('refuses the model’s publish confirmed after a newer draft was saved', async () => {
+    const ada = await person('ada_held_model');
+    const id = await entryIn(SPACE_A, 'Model card');
+    const panel = await socket(ada);
+    const page = contextIn(SPACE_A, {
+      kind: 'entry',
+      entryId: id,
+      contentType: 'article',
+      label: 'Model card',
+    });
+    await panel.ask('Publish this entry', page);
+    const card = (await messagesOf(ada))
+      .flatMap((m) => m.parts)
+      .find((x) => x.type === 'tool-entries_publish') as { toolCallId: string; state: string };
+    expect(card.state).toBe('approval-requested');
+    await saveNewDraft(SPACE_A, id, 'Saved after the model proposed');
+
+    const continued = panel.nextOtherTurn();
+    panel.send({
+      type: 'cf_agent_tool_approval',
+      toolCallId: card.toolCallId,
+      approved: true,
+      autoContinue: true,
+    });
+    await continued;
+    expect(await statusOf(SPACE_A, id)).toBe('draft');
+    expect(await partOf(ada, card.toolCallId)).toMatchObject({
+      state: 'output-error',
+      errorText: expect.stringMatching(/version 2, not 1/),
+    });
+    panel.close();
+  });
+
+  it('runs the model’s publish when nothing changed since its card', async () => {
+    const ada = await person('ada_held_model_ok');
+    const id = await entryIn(SPACE_A, 'Unchanged');
+    const panel = await socket(ada);
+    await panel.ask(
+      'Publish this entry',
+      contextIn(SPACE_A, {
+        kind: 'entry',
+        entryId: id,
+        contentType: 'article',
+        label: 'Unchanged',
+      }),
+    );
+    const card = (await messagesOf(ada))
+      .flatMap((m) => m.parts)
+      .find((x) => x.type === 'tool-entries_publish') as { toolCallId: string };
+    const continued = panel.nextOtherTurn();
+    panel.send({
+      type: 'cf_agent_tool_approval',
+      toolCallId: card.toolCallId,
+      approved: true,
+      autoContinue: true,
+    });
+    await continued;
+    expect(await statusOf(SPACE_A, id)).toBe('published');
     panel.close();
   });
 });

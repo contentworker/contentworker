@@ -1,6 +1,7 @@
 import { type EntryVersion, NotFoundError, type Scope } from '@contentworker/domain';
 import type { AppContext } from './context';
 import { type EntryView, updateEntry } from './entries';
+import { assertExpectedVersion, type ExpectedVersion } from './publishing';
 
 /** Lists every saved version of an entry, newest first. */
 export async function listVersions(
@@ -76,14 +77,21 @@ export async function diffVersions(
  * Restores an older version by copying its fields into a NEW draft version
  * (history is append-only — nothing is rewritten). Validates the restored
  * fields against the current content type, so a restore can't reintroduce a
- * value the model no longer accepts.
+ * value the model no longer accepts. With `expectedVersion`, refused (409) when the entry has
+ * moved past the version the caller saw.
  */
 export async function restoreVersion(
   ctx: AppContext,
   scope: Scope,
   entryId: string,
   version: number,
+  opts: ExpectedVersion = {},
 ): Promise<EntryView> {
+  if (opts.expectedVersion !== undefined) {
+    const found = await ctx.store.entries.get(scope, entryId);
+    if (!found) throw new NotFoundError('Entry', entryId);
+    assertExpectedVersion(found.entry, opts);
+  }
   const target = await getVersion(ctx, scope, entryId, version);
   return updateEntry(ctx, scope, entryId, target.fields);
 }
