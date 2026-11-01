@@ -49,7 +49,7 @@ export default defineConfig({
     // the axe sweep. Desktop Chrome: the editors are review-only below lg.
     {
       name: 'cms',
-      testMatch: /(cms|workflows|space-access|accessibility|contrast-settle)\.spec\.ts/,
+      testMatch: /(cms|workflows|space-access|first-space|accessibility|contrast-settle)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {

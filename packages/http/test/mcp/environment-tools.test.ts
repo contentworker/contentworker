@@ -180,7 +180,7 @@ describe('the environment a tool names', () => {
 });
 
 describe('environment_clone over MCP', () => {
-  it('copies the model and starts a job for the entries when object storage is bound', async () => {
+  it('starts the clone as jobs when object storage is bound', async () => {
     const deps = { ...makeDeps(), blob: new FakeBlobStore() };
     await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
     await createEnvironment(deps.ctx, 'space-1', 'copy');
@@ -216,10 +216,8 @@ describe('environment_clone over MCP', () => {
     });
     expect(res.isError).toBeFalsy();
     const body = JSON.parse((res.content as { text: string }[])[0]?.text ?? '{}');
-    expect(body).toMatchObject({
-      report: { entries: 1 },
-      job: { action: 'import', status: 'running' },
-    });
+    expect(body).toMatchObject({ job: { action: 'import', status: 'running', totalItems: 1 } });
+    expect(body.createJobId).toBeTruthy();
   });
 });
 

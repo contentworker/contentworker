@@ -1,4 +1,9 @@
-import { type BulkChunkDueEvent, type DomainEvent, ValidationError } from '@contentworker/domain';
+import {
+  type BulkChunkDueEvent,
+  type DomainEvent,
+  NotFoundError,
+  ValidationError,
+} from '@contentworker/domain';
 import {
   FakeBlobStore,
   FixedClock,
@@ -23,6 +28,7 @@ import {
   dispatchEvent,
   exportSnapshot,
   getBulkJob,
+  getBulkJobReport,
   importChunkRunner,
   publishAsset,
   publishContentType,
@@ -206,7 +212,13 @@ describe('importing an environment as a job', () => {
 
   it('leaves everything as drafts, with no publishing job, when publishing is off', async () => {
     const ids = await seedSource();
-    const started = await startEnvironmentClone(ctx, blob, source, target, { publish: false });
+    const started = await startSnapshotImport(
+      ctx,
+      blob,
+      target,
+      await exportSnapshot(ctx, source),
+      { publish: false },
+    );
     expect(started.publishJobId).toBeNull();
     await drain();
     expect(await store.entries.list(target, { limit: 1000 })).toHaveLength(COUNT);
@@ -215,7 +227,7 @@ describe('importing an environment as a job', () => {
 
   it('never starts publishing when the create job is cancelled', async () => {
     await seedSource();
-    const started = await startEnvironmentClone(ctx, blob, source, target);
+    const started = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
     const job = started.job;
     if (!job) throw new Error('expected a job');
     await cancelBulkJob(ctx, target, job.id);
@@ -262,7 +274,7 @@ describe('a snapshot chunk run again after it committed', () => {
 describe('when the create job does not finish cleanly', () => {
   it('counts a chunk that fails for good as failures, and never starts publishing', async () => {
     await seedSource();
-    const started = await startEnvironmentClone(ctx, blob, source, target);
+    const started = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
     const job = started.job;
     if (!job) throw new Error('expected a job');
     const first = (await store.outbox.readPending(10_000)).find(
@@ -293,7 +305,7 @@ describe('when the create job does not finish cleanly', () => {
 
   it('discards everything staged when the create job is cancelled', async () => {
     await seedSource();
-    const started = await startEnvironmentClone(ctx, blob, source, target);
+    const started = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
     expect(blob.keys().filter((k) => k.startsWith('imports/')).length).toBeGreaterThan(0);
     await cancelBulkJob(ctx, target, started.job?.id as string, { blob });
     expect(blob.keys().filter((k) => k.startsWith('imports/'))).toEqual([]);
@@ -306,9 +318,73 @@ describe('when the create job does not finish cleanly', () => {
         throw new Error('R2 unavailable');
       },
     }) as FakeBlobStore;
-    await expect(startEnvironmentClone(ctx, failing, source, target)).rejects.toThrow(/R2/);
+    await expect(
+      startSnapshotImport(ctx, failing, target, await exportSnapshot(ctx, source)),
+    ).rejects.toThrow(/R2/);
     expect(await store.contentTypes.list(target)).toEqual([]);
-    const retried = await startEnvironmentClone(ctx, blob, source, target);
+    const retried = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
     expect(retried.job?.status).toBe('running');
+  });
+});
+
+describe('cloning an environment', () => {
+  it('runs the export and every check in a job, then the create and publish jobs', async () => {
+    const ids = await seedSource();
+    const started = await startEnvironmentClone(ctx, source, target);
+    expect(started.job).toMatchObject({ action: 'import', status: 'running', totalItems: 1 });
+    // Nothing is exported, checked or written in the request.
+    expect(await store.contentTypes.list(target)).toEqual([]);
+    expect(blob.keys()).toEqual([]);
+
+    await drain();
+    expect(await getBulkJob(ctx, target, started.job.id)).toMatchObject({
+      status: 'completed',
+      succeeded: 1,
+    });
+    expect(await getBulkJob(ctx, target, started.createJobId)).toMatchObject({
+      status: 'completed',
+      succeeded: COUNT + 1,
+    });
+    expect(await getBulkJob(ctx, target, started.publishJobId)).toMatchObject({
+      status: 'completed',
+      failed: 0,
+    });
+    expect(await store.entries.getPublished(target, ids[0] as string)).not.toBeNull();
+  });
+
+  it('fails its prepare job, naming the problem, when the checks refuse the source', async () => {
+    await seedSource();
+    // An entry the source's own model now refuses (its type removed from the snapshot's view).
+    const list = store.contentTypes.list.bind(store.contentTypes);
+    store.contentTypes.list = async (scope) => (scope.environmentId === 'main' ? [] : list(scope));
+    const started = await startEnvironmentClone(ctx, source, target);
+    await drain();
+    const report = await getBulkJobReport(ctx, target, started.job.id);
+    expect(report.job).toMatchObject({ status: 'completed', succeeded: 0, failed: 1 });
+    expect(report.chunks[0]?.failures[0]?.error).toMatch(/content type "category"/);
+    expect(await store.contentTypes.list(target)).toEqual([]);
+    await expect(getBulkJob(ctx, target, started.createJobId)).rejects.toThrow();
+  });
+
+  it('does nothing when its prepare chunk runs again after starting the create job', async () => {
+    await seedSource();
+    const started = await startEnvironmentClone(ctx, source, target);
+    const runner = importChunkRunner(ctx, blob);
+    const job = await getBulkJob(ctx, target, started.job.id);
+    const chunk = (await store.bulkJobs.listChunks(target, job.id))[0];
+    if (!chunk) throw new Error('fixture');
+    expect(await runner(target, job, chunk)).toEqual({ succeeded: 1, failures: [] });
+    // As a redelivered prepare chunk would, after a crash before its outcome was recorded.
+    expect(await runner(target, job, chunk)).toEqual({ succeeded: 1, failures: [] });
+  });
+
+  it('refuses at once a target that is missing or not empty', async () => {
+    await seedSource();
+    await expect(
+      startEnvironmentClone(ctx, source, { spaceId: 's1', environmentId: 'nope' }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(startEnvironmentClone(ctx, source, source)).rejects.toBeInstanceOf(
+      ValidationError,
+    );
   });
 });

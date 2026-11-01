@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
 import {
+  asFreshDeployment,
   createChanged,
   openCms,
   PROPOSAL_TARGET,
@@ -96,6 +97,18 @@ test('the content type dialog has no accessibility violations', async ({ page },
     .first()
     .click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('the first-space notice and its dialog have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await asFreshDeployment(page, () => false);
+  await openCms(page, '/dashboard');
+  await expect(page.getByRole('heading', { name: 'Create your first space' })).toBeVisible();
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Create a space' }).click();
+  await expect(page.getByRole('dialog', { name: 'New space' })).toBeVisible();
   await scan(page, testInfo);
 });
 

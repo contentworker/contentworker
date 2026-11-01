@@ -31,7 +31,6 @@ import {
   createRelease,
   createRole,
   createScheme,
-  createSpace,
   createTag,
   createTask,
   createVideoAsset,
@@ -103,7 +102,7 @@ import {
   listRoles,
   listScheduledActions,
   listSchemes,
-  listSpaces,
+  listSpacesFor,
   listTags,
   listTasks,
   listVersions,
@@ -138,7 +137,6 @@ import {
   setEntryMetadata,
   setEnvironmentAlias,
   setPluginEnabled,
-  spacesForSubject,
   startBulkJob,
   startEnvironmentClone,
   startImportJob,
@@ -179,6 +177,7 @@ import {
 } from '@contentworker/domain';
 import type { ImportSource } from '@contentworker/ports';
 import { generateTypes } from '@contentworker/sdk-codegen';
+import { createSpaceWithStarter } from '@contentworker/seed';
 import { type Context, Hono } from 'hono';
 import {
   type AuthDeps,
@@ -448,36 +447,39 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
 
   // --- provisioning (admin) ----------------------------------------------
-  // Authenticated principals see the spaces they can reach: admin → all,
-  // a scoped key → just its own. (No requireScope: there is no :space here.)
+  // Authenticated principals see the spaces they can reach: admin → all, a signed-in member →
+  // their teams, a scoped key → just its own. (No requireScope: there is no :space here.)
   app.get('/spaces', async (c) => {
-    const principal = c.get('principal');
-    if (principal.spaceId === '*') {
-      const items = await listSpaces(ctx);
-      return c.json({ items: items.map((s) => ({ id: s.spaceId, name: s.name })) });
-    }
-    // A signed-in member without a space in the path: the spaces they're on the team of.
-    const own =
-      principal.kind === 'user' && !principal.spaceId && principal.subject
-        ? new Set(await spacesForSubject(ctx, principal.subject))
-        : new Set([principal.spaceId]);
-    // Through the application layer like every other route (no direct store
-    // access, no hard-coded environment): list, then keep the principal's own.
-    const items = (await listSpaces(ctx)).filter((s) => own.has(s.spaceId));
+    const items = await listSpacesFor(ctx, c.get('principal'));
     return c.json({ items: items.map((s) => ({ id: s.spaceId, name: s.name })) });
   });
   app.post(
     '/spaces',
-    doc('Spaces & environments', 'Create a space (admin token)', {
+    doc('Spaces & environments', 'Create a space', {
+      description:
+        'Creates a space with its locales and environments (`main` by default), optionally with ' +
+        'sample content (`starter: "sample"`), installed before the response returns. Deployment ' +
+        'administrators only: the admin token, or a person signed in to the admin as a ' +
+        "deployment admin. A space's own API keys can't create spaces. Creating a space whose id " +
+        'exists updates its name and locales; repeating a `sample` create finishes an install ' +
+        'that failed part-way without duplicating anything.',
       body: createSpaceBody,
-      ok: docs.spaceRef,
+      ok: docs.createdSpace,
       status: 201,
     }),
     requireScope(SCOPES.spaceAdmin),
     async (c) => {
       const body = await parseBody(c, createSpaceBody);
-      const created = await createSpace(ctx, body);
-      return c.json({ id: created.spaceId, name: created.name }, 201);
+      const created = await createSpaceWithStarter(ctx, body, { blob });
+      return c.json(
+        {
+          id: created.space.spaceId,
+          name: created.space.name,
+          starter: created.starter,
+          ...(created.installed ? { installed: created.installed } : {}),
+        },
+        201,
+      );
     },
   );
 
@@ -744,9 +746,11 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 202,
       description:
         'Export plus import with no file in between. The target may be in another space, ' +
-        'which is the case environment merge does not cover. Runs as a job, as an import ' +
-        'does (202: `{ report, job, publishJobId }`); both jobs belong to the target ' +
-        'environment, so follow them at its `bulk/jobs/:id`.',
+        'which is the case environment merge does not cover. Runs entirely as jobs (202: ' +
+        '`{ job, createJobId, publishJobId }`): `job` exports the source, checks it (a ' +
+        'refused snapshot fails it, its report naming the problems) and starts `createJobId`, ' +
+        'whose clean completion starts `publishJobId` (when anything is published). All ' +
+        'belong to the target environment: follow them at its `bulk/jobs/:id`.',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
@@ -764,7 +768,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       };
       const options = { publish: body.publish !== false };
       if (!blob) return c.json(await cloneEnvironment(ctx, scopeOf(c), target, options), 201);
-      return c.json(await startEnvironmentClone(ctx, blob, scopeOf(c), target, options), 202);
+      return c.json(await startEnvironmentClone(ctx, scopeOf(c), target, options), 202);
     },
   );
 

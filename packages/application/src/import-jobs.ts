@@ -213,11 +213,8 @@ export async function discardImportChunk(blob: BlobStore, payloadKey: string): P
 export function importChunkRunner(ctx: AppContext, blob: BlobStore) {
   return async (scope: Scope, job: BulkJob, chunk: BulkJobChunk) => {
     if (isSnapshotJob(job.config)) {
-      if (!chunk.payloadKey) {
-        throw new Error(`Import chunk ${job.id}/${chunk.chunkId} is missing its staged work`);
-      }
       const outcome = await runSnapshotChunk(ctx, blob, scope, job.config, chunk.payloadKey);
-      await discardImportChunk(blob, chunk.payloadKey);
+      if (chunk.payloadKey) await discardImportChunk(blob, chunk.payloadKey);
       return outcome;
     }
     const config = job.config as ImportJobConfig | undefined;

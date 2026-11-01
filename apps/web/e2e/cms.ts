@@ -210,3 +210,20 @@ export async function seedAgentProposal(request: APIRequestContext) {
   await seedCms(request);
   seedAgentReview(await createDraft(request, PROPOSAL_TARGET, 'Current body'));
 }
+
+/**
+ * Shows the admin a deployment with no spaces but `keep`: the e2e database is shared by specs
+ * running side by side, so instead of a database of its own, a spec that needs the first-run
+ * screens filters `GET /spaces` down to the spaces it creates itself.
+ */
+export async function asFreshDeployment(page: Page, keep: (id: string) => boolean) {
+  await page.route(
+    (url) => url.pathname === '/spaces',
+    async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const res = await route.fetch();
+      const body = (await res.json()) as { items: { id: string }[] };
+      await route.fulfill({ response: res, json: { items: body.items.filter((s) => keep(s.id)) } });
+    },
+  );
+}

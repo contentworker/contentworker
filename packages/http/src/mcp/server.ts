@@ -80,6 +80,7 @@ import {
   listReleases,
   listRolePresets,
   listRoles,
+  listSpacesFor,
   listTags,
   listTasks,
   listTeam,
@@ -116,6 +117,7 @@ import {
   setPluginEnabled,
   setWorkflowSeparationDefault,
   startBulkJob,
+  startEnvironmentClone,
   startSnapshotImport,
   startWorkflowRun,
   suggestEntries,
@@ -155,12 +157,14 @@ import {
   ROLE_PRESETS,
   SCOPES,
   type Scope,
+  SPACE_ID_PATTERN,
   ValidationError,
   WORKFLOW_RUN_STATUSES,
   type WorkflowRunStatus,
 } from '@contentworker/domain';
 import { redactCredentials } from '@contentworker/redaction';
 import { generateTypes } from '@contentworker/sdk-codegen';
+import { createSpaceWithStarter, STARTERS } from '@contentworker/seed';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
@@ -1404,12 +1408,12 @@ export function buildServer(
     {
       description:
         'Copy this environment into another (which may be in another space). The ' +
-        'target must exist and have no content types. Set dryRun to see the plan first. ' +
-        'Otherwise everything is checked, the content model is copied, and the entries and ' +
-        'assets are copied by a job: the result is `{ report, job, publishJobId }`. Both jobs ' +
-        'belong to the TARGET: follow `job` with bulk_job_status passing `space`=targetSpace ' +
-        'and `environment`=targetEnvironment, then `publishJobId`, which starts only once `job` ' +
-        'completes with no failures.',
+        'target must exist and have no content types. Set dryRun to see the report first. ' +
+        'Otherwise it runs entirely as jobs: the result is `{ job, createJobId, publishJobId }`. ' +
+        '`job` exports the source and checks it (a refused snapshot fails it; bulk_job_report ' +
+        'names the problems), then starts `createJobId`, whose clean completion starts ' +
+        '`publishJobId` (when anything is published). All belong to the TARGET: follow them ' +
+        'with bulk_job_status passing `space`=targetSpace and `environment`=targetEnvironment.',
       inputSchema: toolSchema('environment_clone', () =>
         z.object({
           targetSpace: z.string().optional().describe('defaults to the source space'),
@@ -1430,10 +1434,11 @@ export function buildServer(
       // Authorized separately: cloning into a space the caller cannot manage
       // would be a tenancy hole.
       guard(SCOPES.contentManage, to);
-      const snapshot = await exportSnapshot(ctx, from);
       const options = { dryRun: args.dryRun, publish: args.publish };
-      if (args.dryRun || !deps.blob) return ok(await importSnapshot(ctx, to, snapshot, options));
-      return ok(await startSnapshotImport(ctx, deps.blob, to, snapshot, options));
+      if (args.dryRun || !deps.blob) {
+        return ok(await importSnapshot(ctx, to, await exportSnapshot(ctx, from), options));
+      }
+      return ok(await startEnvironmentClone(ctx, from, to, options));
     },
   );
 
@@ -3186,6 +3191,59 @@ export function buildServer(
           entries: args.entries,
         }),
       );
+    },
+  );
+
+  // --- spaces (deployment) -------------------------------------------------
+  server.registerTool(
+    'spaces_list',
+    {
+      description:
+        'List the spaces this credential can reach (every space for the deployment admin ' +
+        'token; otherwise the one space the key or token belongs to), as { id, name }.',
+      inputSchema: toolSchema('spaces_list', () => z.object({})),
+    },
+    async () => {
+      const items = await listSpacesFor(ctx, principal);
+      return ok({ items: items.map((s) => ({ id: s.spaceId, name: s.name })) });
+    },
+  );
+
+  server.registerTool(
+    'space_create',
+    {
+      description:
+        'Create a space with its locales and environments (`main` by default). Deployment ' +
+        'administrators only: a space’s own keys and tokens cannot create spaces. ' +
+        '`starter: "sample"` also installs sample content into the first environment (a content ' +
+        'model covering every field type, a few dozen entries, taxonomy, sample images and ' +
+        'documents, one open release); "empty" (the default) creates it with nothing in it. ' +
+        'An existing id is updated, not refused, and repeating a sample create finishes an ' +
+        'install that failed part-way.',
+      inputSchema: toolSchema('space_create', () =>
+        z.object({
+          spaceId: z
+            .string()
+            .regex(SPACE_ID_PATTERN)
+            .describe('1–64 letters, digits, ".", "_" or "-", starting with a letter or digit'),
+          name: z.string().max(256),
+          defaultLocale: z.string().min(2).max(35),
+          locales: z.array(z.string().min(2).max(35)).max(200).optional(),
+          environments: z.array(z.string().min(1).max(128)).max(100).optional(),
+          starter: z.enum(STARTERS).optional().describe('"empty" (default) or "sample"'),
+        }),
+      ),
+    },
+    async (args) => {
+      // The same check as POST /spaces: space:admin across the deployment, not in one space.
+      authorize(principal, SCOPES.spaceAdmin, '*');
+      const created = await createSpaceWithStarter(ctx, args, { blob: deps.blob });
+      return ok({
+        id: created.space.spaceId,
+        name: created.space.name,
+        starter: created.starter,
+        ...(created.installed ? { installed: created.installed } : {}),
+      });
     },
   );
 

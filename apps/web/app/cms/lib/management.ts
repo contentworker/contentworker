@@ -271,6 +271,9 @@ export interface SpaceRef {
   readonly name: string;
 }
 
+/** What a new space starts with: the sample content (`POST /spaces` `starter`), or nothing. */
+export type SpaceStarter = 'sample' | 'empty';
+
 /** An environment (branch) within a space. */
 export interface Environment {
   readonly id: string;
@@ -851,13 +854,14 @@ export function createManagementClient(
       const r = await req<{ items: SpaceRef[] }>('GET', `${root}/spaces`);
       return r.items;
     },
-    /** Provision a new space (requires the admin token). */
+    /** Provision a new space, optionally with sample content (deployment admins only). */
     createSpace(input: {
       spaceId: string;
       name: string;
       defaultLocale: string;
       locales?: string[];
-    }): Promise<SpaceRef> {
+      starter?: SpaceStarter;
+    }): Promise<SpaceRef & { starter: SpaceStarter }> {
       return req('POST', `${root}/spaces`, input);
     },
     /** Environments (branches) in the current space. */

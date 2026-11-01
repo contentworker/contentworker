@@ -43,7 +43,8 @@ client.clearCache(): void
 - `filters` use the same operators as the HTTP query language (`eq`, `ne`, `in`, `match`, etc.).
 - The fluent builder reads naturally:
   `client.query().contentType('article').locale('en-US').limit(10).fetch()`.
-- `include` controls reference embedding depth (linked entries are nested in `fields`).
+- `include` controls reference embedding depth (linked entries are nested in `fields`, including
+  inside components and rich-text `data.target`s).
 - `client.search()` hits `/search` with hybrid mode by default (same as the API).
 - Failed requests throw `DeliveryError`.
 
@@ -222,6 +223,7 @@ cma.releases.list() / .get(id) / .publish(id) / .delete(id)   // list: each with
 
 cma.scheduledActions.list({ status? }) / .create(input) / .cancel(id)
 
+cma.spaces.list() / .create({ spaceId, name, defaultLocale, starter? })  // deployment-wide
 cma.environments.list() / .create(id, name)           // space-level
 cma.environments.aliases.list() / .set(alias, envId) / .delete(alias)
 cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
@@ -232,6 +234,8 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
 - `assets.create` returns a presigned upload target: PUT the bytes to `upload.url` with
   `upload.headers`, then `assets.publish(id)` to make it deliverable.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
+- `spaces.create` takes the deployment's admin token (a space's own keys are refused);
+  `starter: 'sample'` installs the sample content before it returns.
 - Failed requests throw `ManagementError` with `status` and the parsed error `body`.
 
 ## `@contentworker/sdk-codegen` — typed field shapes from your content model
@@ -259,8 +263,10 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   An `in` validation becomes a literal union (`status: 'draft' | 'live'`) exactly where the
   domain enforces it (`Symbol`/`Text`/`Integer`/`Number`); `required` controls optionality.
   When rendering `RichTextDocument` values, handle the full node vocabulary (headings, lists,
-  code blocks, hyperlinks, embeds — see the domain model doc) and skip unrecognized `nodeType`s
-  defensively; the vocabulary can grow without an SDK change.
+  code blocks, tables, hyperlinks, embeds — see the domain model doc) and skip unrecognized
+  `nodeType`s defensively; writes are validated against the vocabulary, but it can grow without an
+  SDK change. With `include`, a reference node's `data.target` is the embedded entry or asset,
+  or still a `{ id, linkType }` stub when the target is unpublished or past the depth.
 - `<Name>DraftFields` — Management shape (locale-keyed: `Localized<T>`), usable with
   `@contentworker/sdk-management`.
 - `ContentTypeApiId` (union of apiIds), `FieldsByContentType`, and `DraftFieldsByContentType`.

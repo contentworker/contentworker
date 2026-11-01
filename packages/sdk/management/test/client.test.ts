@@ -54,6 +54,34 @@ describe('@contentworker/sdk-management client', () => {
     });
   });
 
+  it('lists and creates spaces at the deployment root, not under the bound space', async () => {
+    const fetchImpl = fakeFetch((url, init) => {
+      calls.push({ url, init });
+      return init?.method === 'POST'
+        ? { id: 'acme', name: 'Acme', starter: 'sample' }
+        : { items: [{ id: 's1', name: 'One' }] };
+    });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+
+    expect(await client.spaces.list()).toEqual([{ id: 's1', name: 'One' }]);
+    const created = await client.spaces.create({
+      spaceId: 'acme',
+      name: 'Acme',
+      defaultLocale: 'en-US',
+      starter: 'sample',
+    });
+    expect(created.starter).toBe('sample');
+    expect(calls[0]?.url).toBe('https://cms.test/spaces');
+    expect(calls[1]?.url).toBe('https://cms.test/spaces');
+    expect(calls[1]?.init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+      spaceId: 'acme',
+      name: 'Acme',
+      defaultLocale: 'en-US',
+      starter: 'sample',
+    });
+  });
+
   it('publishes and unpublishes via POST/DELETE on /published, returning the bare entry', async () => {
     const fetchImpl = fakeFetch((url, init) => {
       calls.push({ url, init });
