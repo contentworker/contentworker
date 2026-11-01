@@ -177,3 +177,35 @@ describe('Diagram contrast (docs/diagrams)', () => {
     });
   }
 });
+
+describe('the docs draw only with defined `--cw-*` names', () => {
+  const docs = (rel: string) => read(`../../../apps/docs/src/${rel}`);
+  const sources = [
+    docs('styles/brand.css'),
+    ...[
+      'EndpointIndex',
+      'NodeCatalog',
+      'NodeIcon',
+      'PageTitle',
+      'Scopes',
+      'SocialIcons',
+      'ThemeProvider',
+      'ThemeSelect',
+      'WorkflowTemplates',
+    ].map((c) => docs(`components/${c}.astro`)),
+  ].join('\n');
+  const defined = (css: string) =>
+    new Set([...css.matchAll(/(--cw-[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+  const theme = defined(docs('styles/theme.css'));
+  const local = defined(docs('styles/brand.css'));
+
+  it('every `var(--cw-*)` resolves to the generated theme or a brand.css local', () => {
+    const used = new Set([...sources.matchAll(/var\((--cw-[a-z0-9-]+)/g)].map((m) => m[1]));
+    const missing = [...used].filter((n) => !theme.has(n) && !local.has(n));
+    expect(missing).toEqual([]);
+  });
+
+  it('brand.css never redefines a token the theme owns', () => {
+    expect([...local].filter((n) => theme.has(n))).toEqual([]);
+  });
+});
