@@ -336,7 +336,9 @@ through the variables, never `env()` directly.
 
 - **Targets:** 44px for a finger. A small control keeps its drawn size and gets `hit-area`, an
   invisible box grown to 2.75rem on a coarse pointer. The shared buttons have it at every size;
-  raw buttons and links in the bars add it.
+  raw buttons and links in the bars add it. A tab grows instead: on a coarse pointer each trigger
+  is at least 44px and its list grows to hold it (a mouse keeps the 32px list), since a tab list
+  that scrolls sideways would clip an invisible box to its own height.
 - **Fields:** 16px on a touch screen whatever their classes say (an unlayered rule in index.css),
   so iOS never zooms into one. Search fields get `enterKeyHint="search"` and no autocorrect.
 - **No** tap highlight, double-tap delay, text inflation or rubber-band at the page's edges.
