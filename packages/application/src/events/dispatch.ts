@@ -11,6 +11,7 @@ import type { AppContext } from '../context';
 import { runEnvironmentPurge } from '../environment-purge';
 import { invokeFunctionsForEvent } from '../functions';
 import { importChunkRunner } from '../import-jobs';
+import { discardStagedJob } from '../job-staging';
 import {
   extractTextByLocale,
   indexEntryEmbeddings,
@@ -186,6 +187,19 @@ export async function dispatchEvent(
   // Terminal bulk-job fact: the unconditional scope-epoch bump — the
   // correctness backstop for any bump missed while the job ran. (Webhook
   // fan-out above already delivered the job summary to subscribers.)
+  // A finished import job: discard what it still has staged (a chunk that failed for good keeps
+  // its work), and the work of a chained job that didn't start (it only starts after a clean run).
+  if (deps.blob && event.type === 'bulk.job_completed' && event.action === 'import') {
+    const job = await ctx.store.bulkJobs.getJob(scope, event.jobId);
+    const nextId = (job?.config as { next?: { id?: string } } | undefined)?.next?.id;
+    if (job) {
+      const nextStarted = nextId
+        ? (await ctx.store.bulkJobs.getJob(scope, nextId)) !== null
+        : false;
+      await discardStagedJob(deps.blob, scope, job, { nextStarted });
+    }
+  }
+
   if (deps.cache && event.type === 'bulk.job_completed') {
     await deps.cache.invalidateTag(epochTag(scope));
   }

@@ -184,3 +184,7 @@ being purged, it would serve the leftovers again, let the same id be created on 
 treat `environment.purge_due` as an ordinary event (so a webhook subscribed to `*` would receive
 it). Check `SELECT * FROM environment_purges` is empty before rolling back past that change;
 purges normally finish within minutes.
+
+An engine from before snapshot import jobs (environment import and clone) doesn't know their job
+kind: it fails their chunks and never starts their publishing job. Re-run such an import after
+rolling forward.

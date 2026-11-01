@@ -229,6 +229,8 @@ describe("a deleted environment's files", () => {
     await blob.put('s1/staging/only-here/x.png', 'x', 'image/png');
     await blob.put('s1/staging/cloned/y.png', 'y', 'image/png');
     await blob.put('s1/main/m1/z.png', 'z', 'image/png');
+    // Staged work of an import that was running in it.
+    await blob.put('imports/s1/staging/job1/c00000.json', '{}', 'application/json');
     // main holds an asset record with the staging file's id, as a clone of staging would.
     await store.assets.create(main, {
       id: 'cloned',

@@ -18,7 +18,9 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // CI's runner has 4 vCPUs shared with the dev server and workerd: two browsers keep it busy
+  // without starving the server. Specs stamp their own data, so they run side by side.
+  workers: process.env.CI ? 2 : undefined,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
     baseURL: `http://localhost:${PORT}`,

@@ -119,4 +119,6 @@ async function deleteEnvironmentFiles(
   await blob.deletePrefix?.(`${scope.spaceId}/${scope.environmentId}/`, (key) =>
     inUse.has(key.split('/')[2] ?? ''),
   );
+  // Work staged for jobs in it (an import still running when it was deleted): never read now.
+  await blob.deletePrefix?.(`imports/${scope.spaceId}/${scope.environmentId}/`, () => false);
 }

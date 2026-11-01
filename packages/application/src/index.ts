@@ -50,6 +50,7 @@ export * from './search-index';
 export * from './secret-sealer';
 export * from './secrets-at-rest';
 export * from './semantics';
+export * from './snapshot-jobs';
 export * from './snapshots';
 export * from './spaces';
 export * from './tasks';
