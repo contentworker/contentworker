@@ -1500,7 +1500,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Entries', 'Publish an entry', {
       ok: docs.entry,
       description:
-        'Writes the delivery read model and appends entry.published to the transactional outbox atomically.',
+        'Writes the delivery read model and appends entry.published to the transactional outbox atomically. ' +
+        'Refused with 409 `publish_gated` when a workflow that gates publishing covers the entry: only a run of that workflow publishes it.',
       query: {
         expectedVersion:
           "The entry's currentVersion as the caller read it; 409 if it has changed since",

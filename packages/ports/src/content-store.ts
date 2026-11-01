@@ -21,6 +21,7 @@ import type {
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
+  PublishGate,
   QueryFilter,
   QueryOrder,
   ReferenceEdge,
@@ -303,6 +304,12 @@ export interface WorkflowGraphRepo {
    * (however many ids). Order is unspecified; a workflow never published is absent.
    */
   listLatestVersions(scope: Scope, workflowIds: readonly string[]): Promise<WorkflowVersion[]>;
+  /**
+   * Every workflow (whose definition still exists) whose latest published version gates
+   * publishing and `canPublishThroughRun`, with that version's content types. One query for the
+   * scope, whatever the number of entries a publish touches: every publish path reads it once.
+   */
+  listPublishGates(scope: Scope): Promise<PublishGate[]>;
 }
 
 export interface WorkflowRunQuery {
@@ -617,6 +624,8 @@ export interface ContentStoreTx {
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;
   readonly workflowTasks: WorkflowTaskRepo;
+  /** Read-only: a publish inside the unit checks the workflows gating it. */
+  readonly workflowGraphs: Pick<WorkflowGraphRepo, 'listPublishGates'>;
   readonly outbox: OutboxRepo;
 }
 

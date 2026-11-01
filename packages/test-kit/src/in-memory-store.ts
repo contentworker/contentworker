@@ -30,6 +30,7 @@ import {
   type Tag,
   type Task,
   type UniqueClaim,
+  versionGatesPublish,
   type Webhook,
   type WorkflowDefinition,
   type WorkflowNodeRunRecord,
@@ -1274,6 +1275,21 @@ export class InMemoryContentStore implements ContentStore {
         const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${id}`)?.at(-1);
         return latest ? [clone(latest)] : [];
       }),
+    // As the D1 store: a deleted definition no longer gates, whatever its versions say, and
+    // nor does a version no run of which could publish.
+    listPublishGates: async (scope) =>
+      this.workflowRows(scope).flatMap((row) => {
+        const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${row.id}`)?.at(-1);
+        if (!latest || !versionGatesPublish(latest)) return [];
+        return [
+          {
+            workflowId: row.id,
+            name: row.name,
+            version: latest.version,
+            contentTypes: [...latest.contentTypes],
+          },
+        ];
+      }),
   };
 
   // ---- workflow runs / tasks ------------------------------------------------
@@ -1814,6 +1830,7 @@ export class InMemoryContentStore implements ContentStore {
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,
+        workflowGraphs: this.workflowGraphs,
         outbox: this.outbox,
       });
     } catch (err) {

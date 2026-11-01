@@ -9,13 +9,10 @@ draw it as a graph in the admin's **Workflows** screen: **nodes** from the
 [node catalog](/reference/nodes/), joined by **edges** that leave a node from one of its output
 branches. Then you start runs of it on entries.
 
-:::caution[What is and isn't enforced yet]
-The graph editor, manual runs, run timelines, tasks and the **Approvals** inbox work today. Two
-parts of the model don't yet. Only `trigger.manual` starts a run: the event and schedule
-triggers can be placed in a graph and published, but nothing starts a run from them. And
-**Gate publishing** (`gatesPublish`) is stored and shown on the workflow, but publishing an entry
-does not check it: anyone with `content:publish` can still publish directly, whatever workflows
-cover the entry.
+:::caution[What isn't enforced yet]
+The graph editor, manual runs, run timelines, tasks, the **Approvals** inbox and
+[publish gating](#gate-publishing) work today. Only `trigger.manual` starts a run: the event and
+schedule triggers can be placed in a graph and published, but nothing starts a run from them.
 :::
 
 ## Before you start
@@ -107,6 +104,46 @@ Editing a workflow changes its draft. **Publishing** checks the graph (exactly o
 edges to missing nodes, every node connected, every config field valid) and appends an immutable,
 numbered version. A run pins the version it started on, so editing a workflow never changes runs
 already under way. Warnings, such as a duplicate edge, don't block publishing; errors do.
+
+## Gate publishing
+
+Turn on **Gate publishing** (`gatesPublish`) and publish the workflow, and the entries it covers
+publish only from a run of it: its **Publish** (`content.publish`) node, or its **Publish release**
+(`content.publish_release`) node for the members of a release it covers. The workflow covers the
+content types in its `contentTypes`, or every type when that list is empty. Gating comes from the
+**latest published version**, never the draft: a gate you switch on in the draft does nothing
+until you publish it.
+
+A gated workflow must be one a run can publish from: it starts from **Submit for review**
+(`trigger.manual`, the only trigger that starts runs today) and has a **Publish** or **Publish
+release** node. Saving a gated draft that isn't reports a warning, and publishing it is refused
+with `422`. A published version that isn't (one published before this rule) doesn't gate.
+
+Every other way of publishing a covered entry is refused with `409` and the code `publish_gated`,
+whoever asks, administrators and the admin token included:
+
+- **Publish** in the admin, `POST …/entries/{id}/published` and the `entries_publish` MCP tool.
+- Bulk publish and bulk jobs: the entry is reported as a failed item; the rest of the batch
+  publishes.
+- A release holding the entry: the whole release is refused, naming every gated entry. Adding the
+  entry is allowed, and the check runs when the release publishes, because gating can be switched
+  on in between.
+- A scheduled publish: refused when you schedule it, and the action fails with the same reason if
+  gating was switched on before it ran. A workflow's **Schedule** (`content.schedule`) node is
+  refused too, because the scheduled publish doesn't run inside the workflow.
+- A plugin's `content.publish`.
+
+The error body names each refused entry and the workflows whose runs may publish it:
+
+```json
+{ "error": { "code": "publish_gated", "message": "Entry \"…\" publishes only through a run of the workflow \"Legal review\". Start a run of the workflow on it, or have an admin publish a version of the workflow with publish gating off.", "entries": [{ "entryId": "…", "workflows": [{ "id": "…", "name": "Legal review" }] }] } }
+```
+
+When several gated workflows cover an entry, a run of any one of them may publish it; a run of a
+workflow that doesn't cover the entry may not. There is no override: to publish directly, switch
+**Gate publishing** off and publish the workflow, or delete the workflow. Unpublishing is never
+gated, and an environment [snapshot import](/guides/environments/#export-and-import-a-snapshot)
+republishes what was live in its source past every gate in the target.
 
 ## Stages
 

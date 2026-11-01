@@ -82,7 +82,12 @@ export interface WorkflowGraphDefinition {
   description: string;
   contentTypes: string[];
   graph: WorkflowGraph;
-  /** Single-entry publish refuses unless invoked from a run of this workflow. */
+  /**
+   * Entries this workflow covers publish only from one of its runs (its `content.publish` or
+   * `content.publish_release` node). Every other publish path refuses them with
+   * `PublishGatedError`: single and bulk publish, bulk jobs, releases, scheduled publishes and
+   * plugins. Read from the latest published version, never the draft.
+   */
   gatesPublish?: boolean;
 }
 

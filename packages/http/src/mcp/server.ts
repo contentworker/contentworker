@@ -975,7 +975,8 @@ export function buildServer(
   server.registerTool(
     'entries_bulk_action',
     {
-      description: 'Publish or unpublish many entries in one call; returns a per-item summary.',
+      description:
+        'Publish or unpublish many entries in one call; returns a per-item summary (an entry a gated workflow covers fails as its own item).',
       inputSchema: toolSchema('entries_bulk_action', () =>
         z.object({
           action: z.enum(['publish', 'unpublish']),
@@ -1877,7 +1878,8 @@ export function buildServer(
   server.registerTool(
     'entries_publish',
     {
-      description: 'Publish an entry (validates references; emits an entry.published event).',
+      description:
+        'Publish an entry (validates references; emits an entry.published event). Refused (publish_gated) when a workflow that gates publishing covers the entry: only a run of that workflow publishes it.',
       inputSchema: toolSchema('entries_publish', () =>
         z.object({
           id: z.string(),
@@ -2183,7 +2185,8 @@ export function buildServer(
   server.registerTool(
     'releases_publish',
     {
-      description: 'Ship a release: publish/unpublish every member atomically in one transaction.',
+      description:
+        'Ship a release: publish/unpublish every member atomically in one transaction. Refused whole (publish_gated) when a gated workflow covers a member it publishes.',
       inputSchema: toolSchema('releases_publish', () => z.object({ id: z.string(), ...scopeArgs })),
     },
     async (args) => {
@@ -2858,7 +2861,7 @@ export function buildServer(
     'schedule_action',
     {
       description:
-        'Schedule a publish/unpublish of an entry or release for a future ISO-8601 instant.',
+        'Schedule a publish/unpublish of an entry or release for a future ISO-8601 instant. A publish a gated workflow covers is refused (publish_gated) now, and fails if gating is on when it fires.',
       inputSchema: toolSchema('schedule_action', () =>
         z.object({
           action: z.enum(['publish', 'unpublish']),

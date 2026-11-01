@@ -252,6 +252,18 @@ newer draft since, the call returns **409** and changes nothing, rather than pub
 overwriting content the caller never saw. The MCP tools `entries_publish`, `entries_unpublish` and
 `entries_restore_version` take the same `expectedVersion` argument.
 
+**Publish gating.** When the latest published version of a workflow has `gatesPublish` on and a run
+of it can publish (a `trigger.manual` trigger and a `content.publish` or `content.publish_release`
+node; publishing a gated version that can't is refused with **422**), an entry of a content type it
+covers (its `contentTypes`, or every type when empty) publishes only from a run of that workflow
+(its `content.publish` or `content.publish_release` node). Every other publish is refused with
+**409** `publish_gated`, for every caller including the admin token: the publish route and
+`entries_publish`, bulk publish and bulk jobs (a failed item each, the rest publish), a release
+holding such an entry (refused whole), and a scheduled publish (refused when created, and failed
+when it fires if gating came on since). The body's `entries` names each refused entry and the
+workflows whose runs may publish it. To publish directly, publish a version of the workflow with
+`gatesPublish` off, or delete the workflow.
+
 **Unique fields.** Creating or updating an entry whose `unique` field collides returns **409**
 with a message naming the field, the value and the entry holding it. Trashing an entry frees its
 unique values; restoring re-claims them and can therefore fail with 409 if the value was taken in
@@ -614,6 +626,7 @@ run before routing (the last two rows).
 | `HookRejectedError`                                                  | 422        | `hook_rejected`     |                                                 |
 | `ConflictError`, `TransactionConflictError`                          | 409        | `conflict`          |                                                 |
 | `LastAdminError`                                                     | 409        | `last_admin`        |                                                 |
+| `PublishGatedError`                                                  | 409        | `publish_gated`     | `entries`: each `entryId` and its `workflows`   |
 | `DomainError` code `unauthorized`                                    | 401        | `unauthorized`      |                                                 |
 | `DomainError` code `forbidden`                                       | 403        | `forbidden`         |                                                 |
 | `RateLimitedError`                                                   | 429        | `rate_limited`      |                                                 |
@@ -629,12 +642,12 @@ MCP tools use the same mapping (`toHttpError`): a tool that fails with anything 
 with `internal` (a database or binding error) reports only `Internal server error`, and refusals
 (not found, forbidden, invalid, conflict, not configured) keep their own words.
 
-Only `issues` is carried over from a domain error's `details`; `errBody` keeps `code` and `message`
-alone. So the `409` for a permanent delete blocked by inbound links says how many published entries
-link to the target in its `message`, but the `referencedBy` ids that `purgeEntry` attaches never
-reach the client, and a `RateLimitedError`'s `retryAfterSeconds` is dropped (a `429` from the
-request-rate middleware is a separate response and does send `Retry-After`). Both are gaps in
-`toHttpError`, not intended behaviour.
+Only `issues` (and a `PublishGatedError`'s `entries`) is carried over from a domain error's
+`details`; `errBody` keeps `code` and `message` alone. So the `409` for a permanent delete blocked
+by inbound links says how many published entries link to the target in its `message`, but the
+`referencedBy` ids that `purgeEntry` attaches never reach the client, and a `RateLimitedError`'s
+`retryAfterSeconds` is dropped (a `429` from the request-rate middleware is a separate response and
+does send `Retry-After`). Both are gaps in `toHttpError`, not intended behaviour.
 
 ## Documentation (Guides)
 

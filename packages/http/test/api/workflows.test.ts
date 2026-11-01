@@ -348,6 +348,51 @@ describe('workflow routes', () => {
     ).toBe(403);
   });
 
+  it('refuses a direct publish a gated workflow covers with 409 publish_gated, even for the admin token; its run publishes', async () => {
+    const created = await call('POST', '/workflows', {
+      name: 'Gate',
+      contentTypes: ['post'],
+      gatesPublish: true,
+      graph: new WorkflowBuilder()
+        .n('start', 'trigger.manual', 'Submit')
+        .n('publish', 'content.publish', 'Publish')
+        .n('done', 'control.end', 'Done')
+        .e('start', 'publish')
+        .e('publish', 'done')
+        .graph(),
+    });
+    const workflowId = (created.body.workflow as Json).id as string;
+    await call('POST', `/workflows/${workflowId}/versions`);
+
+    const refused = await call('POST', `/entries/${entryId}/published`);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({
+      error: {
+        code: 'publish_gated',
+        message: expect.stringContaining('"Gate"'),
+        entries: [{ entryId, workflows: [{ id: workflowId, name: 'Gate' }] }],
+      },
+    });
+    // A type the workflow doesn't cover publishes as before.
+    expect((await call('POST', `/entries/${pageEntryId}/published`)).status).toBe(200);
+
+    // Bulk publish reports the gated entry as its own failed item.
+    const bulk = await call('POST', '/bulk/entries/publish', { ids: [entryId] });
+    expect(bulk.body).toMatchObject({ succeeded: 0, failed: 1 });
+    expect((bulk.body.results as Json[])[0]).toMatchObject({
+      id: entryId,
+      ok: false,
+      error: expect.stringContaining('publishes only through a run of the workflow "Gate"'),
+    });
+
+    const runId = (await call('POST', `/entries/${entryId}/workflow-runs`, { workflowId })).body
+      .id as string;
+    expect(await harness.drive(runId)).toMatchObject({ status: 'complete' });
+    expect((await call('GET', `/entries/${entryId}`)).body.entry).toMatchObject({
+      status: 'published',
+    });
+  });
+
   it('answers 501 for run actions when no workflow engine is bound', async () => {
     const wired = wire(config);
     const bare = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);

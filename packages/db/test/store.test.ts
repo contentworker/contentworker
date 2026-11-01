@@ -687,18 +687,28 @@ describe('D1 store (contract)', () => {
     ];
 
     it('round-trips a draft (JSON graph + content types) and numbers versions', async () => {
-      const t = editorialReviewWorkflow();
+      // Gated, so a graph a run can publish from (a gated template graph can't be published), on
+      // content types no other test in this shared scope publishes.
+      const t = {
+        graph: new WorkflowBuilder()
+          .n('start', 'trigger.manual', 'Submit')
+          .n('publish', 'content.publish', 'Publish')
+          .n('done', 'control.end', 'Done')
+          .e('start', 'publish')
+          .e('publish', 'done')
+          .graph(),
+      };
       const { workflow } = await createWorkflowDraft(ctx, scope, {
         name: 'Review',
         description: 'desc',
-        contentTypes: ['article', 'page'],
+        contentTypes: ['landing', 'page'],
         graph: t.graph,
         gatesPublish: true,
       });
       expect(await getWorkflow(ctx, scope, workflow.id)).toMatchObject({
         name: 'Review',
         description: 'desc',
-        contentTypes: ['article', 'page'],
+        contentTypes: ['landing', 'page'],
         graph: t.graph,
         gatesPublish: true,
         legacy: false,
@@ -760,6 +770,63 @@ describe('D1 store (contract)', () => {
 
       await publishWorkflowVersion(ctx, scope, id);
       expect(await getWorkflow(ctx, scope, id)).toMatchObject({ legacy: false, latestVersion: 1 });
+    });
+
+    it('lists publish gates from each workflow’s latest published version, in one scope', async () => {
+      // A scope of its own: gates here would refuse the other tests' publishes.
+      const gatedScope = { spaceId: `g-${uuidv7()}`, environmentId: 'main' };
+      const graph = new WorkflowBuilder()
+        .n('start', 'trigger.manual', 'Submit')
+        .n('publish', 'content.publish', 'Publish')
+        .n('done', 'control.end', 'Done')
+        .e('start', 'publish')
+        .e('publish', 'done')
+        .graph();
+      const draft = async (name: string, gatesPublish: boolean, contentTypes: string[] = []) =>
+        (await createWorkflowDraft(ctx, gatedScope, { name, graph, gatesPublish, contentTypes }))
+          .workflow.id;
+      expect(await store.workflowGraphs.listPublishGates(gatedScope)).toEqual([]);
+
+      // Gated at v1, ungated at v2: the latest version wins.
+      const flipped = await draft('Flipped', true, ['article']);
+      await publishWorkflowVersion(ctx, gatedScope, flipped);
+      expect(await store.workflowGraphs.listPublishGates(gatedScope)).toEqual([
+        { workflowId: flipped, name: 'Flipped', version: 1, contentTypes: ['article'] },
+      ]);
+      await saveWorkflowDraft(ctx, gatedScope, flipped, { gatesPublish: false });
+      await publishWorkflowVersion(ctx, gatedScope, flipped);
+
+      // Ungated at v1, gated (every type) at v2.
+      const later = await draft('Later', false);
+      await publishWorkflowVersion(ctx, gatedScope, later);
+      await saveWorkflowDraft(ctx, gatedScope, later, { gatesPublish: true, name: 'Later gate' });
+      await publishWorkflowVersion(ctx, gatedScope, later);
+
+      // Gated on a graph no run can start (the editorial template's publish_requested trigger), as
+      // a version published before that was refused: written straight to the store.
+      const locked = await draft('Locked', false);
+      await store.workflowGraphs.publishVersion(
+        gatedScope,
+        { ...editorialReviewWorkflow(), id: locked, name: 'Locked', gatesPublish: true },
+        { publishedAt: '2026-01-01T00:00:00.000Z' },
+      );
+
+      // Gated only in a draft; gated and then deleted.
+      await draft('Draft only', true);
+      const deleted = await draft('Deleted', true);
+      await publishWorkflowVersion(ctx, gatedScope, deleted);
+      await deleteWorkflow(ctx, gatedScope, deleted);
+
+      const expected = [{ workflowId: later, name: 'Later gate', version: 2, contentTypes: [] }];
+      expect(await store.workflowGraphs.listPublishGates(gatedScope)).toEqual(expected);
+      // The same read inside a unit of work, as the publish paths make it.
+      expect(
+        await store.withTransaction((tx) => tx.workflowGraphs.listPublishGates(gatedScope)),
+      ).toEqual(expected);
+      // Another environment of the same space sees none of them.
+      expect(
+        await store.workflowGraphs.listPublishGates({ ...gatedScope, environmentId: 'other' }),
+      ).toEqual([]);
     });
 
     it('create-with-steps keeps the legacy steps column in step', async () => {
