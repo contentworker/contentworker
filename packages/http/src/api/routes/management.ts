@@ -743,9 +743,11 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 202,
       description:
         'Export plus import with no file in between. The target may be in another space, ' +
-        'which is the case environment merge does not cover. Runs as a job, as an import ' +
-        'does (202: `{ report, job, publishJobId }`); both jobs belong to the target ' +
-        'environment, so follow them at its `bulk/jobs/:id`.',
+        'which is the case environment merge does not cover. Runs entirely as jobs (202: ' +
+        '`{ job, createJobId, publishJobId }`): `job` exports the source, checks it (a ' +
+        'refused snapshot fails it, its report naming the problems) and starts `createJobId`, ' +
+        'whose clean completion starts `publishJobId` (when anything is published). All ' +
+        'belong to the target environment: follow them at its `bulk/jobs/:id`.',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
@@ -763,7 +765,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       };
       const options = { publish: body.publish !== false };
       if (!blob) return c.json(await cloneEnvironment(ctx, scopeOf(c), target, options), 201);
-      return c.json(await startEnvironmentClone(ctx, blob, scopeOf(c), target, options), 202);
+      return c.json(await startEnvironmentClone(ctx, scopeOf(c), target, options), 202);
     },
   );
 

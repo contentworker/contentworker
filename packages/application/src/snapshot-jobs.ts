@@ -1,4 +1,4 @@
-import type { Asset, Scope } from '@contentworker/domain';
+import { type Asset, NotFoundError, type Scope, ValidationError } from '@contentworker/domain';
 import type { BlobStore, BulkJob, BulkJobChunk } from '@contentworker/ports';
 import { publishAsset } from './assets';
 import { type ChainedJob, persistJob } from './bulk-jobs';
@@ -44,7 +44,14 @@ export const SNAPSHOT_JOB_CHUNK_SIZE = 100;
 /** The `config` of a snapshot import job; `phase` says what its chunks do. */
 export interface SnapshotJobConfig extends Record<string, unknown> {
   readonly kind: 'snapshot';
-  readonly phase: 'create' | 'publish';
+  /** `prepare` (a clone's one chunk: export, check, stage, start the create job), `create`,
+   *  then `publish`. */
+  readonly phase: 'prepare' | 'create' | 'publish';
+  /** prepare: the environment to clone, and the ids its create and publish jobs will take. */
+  readonly source?: Scope;
+  readonly publish?: boolean;
+  readonly createJobId?: string;
+  readonly publishJobId?: string;
   /**
    * The snapshot's taxonomy ids mapped to the ones the import created (create phase). Entries are
    * staged with the snapshot's ids, before the model is written, and remapped as they are created.
@@ -77,12 +84,17 @@ export const isSnapshotJob = (config: unknown): config is SnapshotJobConfig =>
  * Starts importing a snapshot into `target` as a job. Everything that can refuse it is checked
  * first, exactly as `importSnapshot` does; then the model is written and the rest is staged.
  */
+export interface StartSnapshotOptions extends ImportOptions {
+  /** The ids the create and publish jobs take (a clone fixes them up front); otherwise new. */
+  readonly jobIds?: { readonly create: string; readonly publish: string };
+}
+
 export async function startSnapshotImport(
   ctx: AppContext,
   blob: BlobStore,
   target: Scope,
   snapshot: EnvironmentSnapshot,
-  options: ImportOptions = {},
+  options: StartSnapshotOptions = {},
 ): Promise<StartedSnapshotImport> {
   const { report, publishable } = await prepareSnapshotImport(ctx, target, snapshot, options);
   const publishing = options.publish !== false;
@@ -105,7 +117,7 @@ export async function startSnapshotImport(
     : [];
 
   const now = ctx.clock.now().toISOString();
-  const jobId = ctx.ids.newId();
+  const jobId = options.jobIds?.create ?? ctx.ids.newId();
   // Everything is staged first, before the model is written: a failure while staging leaves the
   // target untouched (still empty, so a retry works), and no chunk can ever be claimed before its
   // work is readable. After the model, the only write left is the job itself.
@@ -115,7 +127,7 @@ export async function startSnapshotImport(
   }));
   let next: ChainedJob | undefined;
   if (publishItems.length > 0) {
-    const publishJobId = ctx.ids.newId();
+    const publishJobId = options.jobIds?.publish ?? ctx.ids.newId();
     const publishChunks = await stageChunks(
       blob,
       target,
@@ -163,18 +175,124 @@ export async function startSnapshotImport(
   return { report, job, publishJobId: next?.id ?? null };
 }
 
+export interface StartedClone {
+  /** The prepare job (one chunk): exports the source, checks it, and starts the create job. */
+  readonly job: BulkJob;
+  /** The create job's id, once the prepare job has started it. */
+  readonly createJobId: string;
+  /** The publishing job's id, once the create job completes cleanly (if anything is published). */
+  readonly publishJobId: string;
+}
+
 /**
- * Clones `source` into `target` as a job: the export happens in the request (it is reads), the
- * writing in the job.
+ * Clones `source` into `target`, entirely as jobs. The request checks only what is cheap (both
+ * environments exist, the target holds no content types) and starts a one-chunk prepare job; the
+ * engine then exports the source, runs every check, stages the work and writes the model
+ * (`startSnapshotImport`), so neither the export (one read per 100 entries) nor validating every
+ * entry runs inside the request. A snapshot the checks refuse fails the prepare job, and its
+ * report names the problems; nothing is written.
  */
 export async function startEnvironmentClone(
   ctx: AppContext,
-  blob: BlobStore,
   source: Scope,
   target: Scope,
   options: ImportOptions = {},
-): Promise<StartedSnapshotImport> {
-  return startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source), options);
+): Promise<StartedClone> {
+  await requireEnvironmentExists(ctx, source);
+  await requireEnvironmentExists(ctx, target);
+  const existing = await ctx.store.contentTypes.list(target);
+  if (existing.length > 0) {
+    throw new ValidationError([
+      {
+        field: 'target',
+        message: `Target environment "${target.environmentId}" already defines ${existing.length} content type(s); import expects an empty environment`,
+      },
+    ]);
+  }
+  const now = ctx.clock.now().toISOString();
+  const jobId = ctx.ids.newId();
+  const config: SnapshotJobConfig = {
+    kind: 'snapshot',
+    phase: 'prepare',
+    source,
+    publish: options.publish !== false,
+    createJobId: ctx.ids.newId(),
+    publishJobId: ctx.ids.newId(),
+  };
+  const job = await persistJob(
+    ctx,
+    target,
+    {
+      id: jobId,
+      action: 'import',
+      status: 'running',
+      totalItems: 1,
+      totalChunks: 1,
+      completedChunks: 0,
+      succeeded: 0,
+      failed: 0,
+      createdAt: now,
+      config,
+    },
+    [
+      {
+        jobId,
+        chunkId: 'c00000',
+        entryIds: [PREPARE_ITEM],
+        status: 'pending',
+        attempts: 0,
+        failures: [],
+      },
+    ],
+    now,
+  );
+  return {
+    job,
+    createJobId: config.createJobId as string,
+    publishJobId: config.publishJobId as string,
+  };
+}
+
+/** What a prepare job's one item is reported under. */
+const PREPARE_ITEM = 'snapshot';
+
+async function requireEnvironmentExists(ctx: AppContext, scope: Scope): Promise<void> {
+  if (!(await ctx.store.spaces.getConfig(scope))) throw new NotFoundError('Space', scope.spaceId);
+  const envs = await ctx.store.spaces.listEnvironments(scope.spaceId);
+  if (!envs.some((e) => e.id === scope.environmentId)) {
+    throw new NotFoundError('Environment', `${scope.spaceId}/${scope.environmentId}`);
+  }
+}
+
+/**
+ * Runs a clone's prepare chunk: export the source, then start the import exactly as a request
+ * would, under the ids fixed when the clone started. Run again after its create job exists (a
+ * crash before the chunk was recorded), it does nothing. A snapshot the checks refuse is the
+ * prepare job's one failure, with the problems as its message; anything else throws, so the
+ * chunk is retried.
+ */
+async function runClonePrepare(
+  ctx: AppContext,
+  blob: BlobStore,
+  target: Scope,
+  config: SnapshotJobConfig,
+): Promise<SnapshotChunkOutcome> {
+  const { source, createJobId, publishJobId } = config;
+  if (!source || !createJobId || !publishJobId) {
+    throw new Error("A clone's prepare job is missing its source or job ids");
+  }
+  if (await ctx.store.bulkJobs.getJob(target, createJobId)) return { succeeded: 1, failures: [] };
+  try {
+    await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source), {
+      publish: config.publish !== false,
+      jobIds: { create: createJobId, publish: publishJobId },
+    });
+    return { succeeded: 1, failures: [] };
+  } catch (err) {
+    if (!(err instanceof ValidationError)) throw err;
+    const problems = err.issues.map((i) => i.message).join('; ');
+    return { succeeded: 0, failures: [{ id: PREPARE_ITEM, error: problems || err.message }] };
+  }
 }
 
 /** The id an item is reported under: the asset's or the entry's. */
@@ -231,8 +349,10 @@ export async function runSnapshotChunk(
   blob: BlobStore,
   scope: Scope,
   config: SnapshotJobConfig,
-  payloadKey: string,
+  payloadKey: string | undefined,
 ): Promise<SnapshotChunkOutcome> {
+  if (config.phase === 'prepare') return runClonePrepare(ctx, blob, scope, config);
+  if (!payloadKey) throw new Error('A snapshot import chunk is missing its staged work');
   const raw = await blob.get(payloadKey);
   if (raw === null) {
     // Failing the chunk is right: reporting success would claim an import that never happened.

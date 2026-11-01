@@ -114,6 +114,7 @@ import {
   setPluginEnabled,
   setWorkflowSeparationDefault,
   startBulkJob,
+  startEnvironmentClone,
   startSnapshotImport,
   startWorkflowRun,
   suggestEntries,
@@ -1386,12 +1387,12 @@ export function buildServer(
     {
       description:
         'Copy this environment into another (which may be in another space). The ' +
-        'target must exist and have no content types. Set dryRun to see the plan first. ' +
-        'Otherwise everything is checked, the content model is copied, and the entries and ' +
-        'assets are copied by a job: the result is `{ report, job, publishJobId }`. Both jobs ' +
-        'belong to the TARGET: follow `job` with bulk_job_status passing `space`=targetSpace ' +
-        'and `environment`=targetEnvironment, then `publishJobId`, which starts only once `job` ' +
-        'completes with no failures.',
+        'target must exist and have no content types. Set dryRun to see the report first. ' +
+        'Otherwise it runs entirely as jobs: the result is `{ job, createJobId, publishJobId }`. ' +
+        '`job` exports the source and checks it (a refused snapshot fails it; bulk_job_report ' +
+        'names the problems), then starts `createJobId`, whose clean completion starts ' +
+        '`publishJobId` (when anything is published). All belong to the TARGET: follow them ' +
+        'with bulk_job_status passing `space`=targetSpace and `environment`=targetEnvironment.',
       inputSchema: toolSchema('environment_clone', () =>
         z.object({
           targetSpace: z.string().optional().describe('defaults to the source space'),
@@ -1412,10 +1413,11 @@ export function buildServer(
       // Authorized separately: cloning into a space the caller cannot manage
       // would be a tenancy hole.
       guard(SCOPES.contentManage, to);
-      const snapshot = await exportSnapshot(ctx, from);
       const options = { dryRun: args.dryRun, publish: args.publish };
-      if (args.dryRun || !deps.blob) return ok(await importSnapshot(ctx, to, snapshot, options));
-      return ok(await startSnapshotImport(ctx, deps.blob, to, snapshot, options));
+      if (args.dryRun || !deps.blob) {
+        return ok(await importSnapshot(ctx, to, await exportSnapshot(ctx, from), options));
+      }
+      return ok(await startEnvironmentClone(ctx, from, to, options));
     },
   );
 
