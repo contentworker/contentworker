@@ -153,15 +153,30 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
         maxTokens: 512,
         outputSchema: schema as unknown as Record<string, unknown>,
       });
-      const obj = (result.object ?? { flagged: false, categories: [] }) as {
-        flagged?: boolean;
-        categories?: string[];
-      };
-      return { flagged: !!obj.flagged, categories: obj.categories ?? [], usage: result.usage };
+      return { ...verdictOf(result.object), usage: result.usage };
     },
 
     async record(scope, entryId, note) {
       if (deps.onRecord) await deps.onRecord(scope, entryId, note);
     },
   };
+}
+
+/** What the classifier's answer is taken to mean when it says nothing usable. */
+export const UNCLASSIFIED = 'unclassified: the classifier gave no usable answer';
+
+/**
+ * The classifier's verdict, failing closed: only an explicit `flagged: false` passes. An answer
+ * that is missing, off the schema or not a boolean holds the content for a person, as a flag does,
+ * so a model that errs into prose (or is talked out of its schema by the content it reads) never
+ * waves content through.
+ */
+export function verdictOf(object: unknown): { flagged: boolean; categories: string[] } {
+  const o = (object ?? {}) as { flagged?: unknown; categories?: unknown };
+  const categories = Array.isArray(o.categories)
+    ? o.categories.filter((c): c is string => typeof c === 'string')
+    : [];
+  if (o.flagged === false) return { flagged: false, categories: [] };
+  if (o.flagged === true) return { flagged: true, categories };
+  return { flagged: true, categories: [UNCLASSIFIED] };
 }

@@ -349,6 +349,12 @@ principal) may call it; the web app does when it ends a person's access (see
 | DELETE | `…/entries/:id/permanent`          | `content:publish` | **Irreversible** delete of a trashed entry. `?force=true` overrides the inbound-link guard |
 | POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft                                           |
 
+**Held to a version.** Publish, unpublish and version restore take an optional
+`?expectedVersion=N`: the entry's `currentVersion` as the caller read it. If someone has saved a
+newer draft since, the call returns **409** and changes nothing, rather than publishing or
+overwriting content the caller never saw. The MCP tools `entries_publish`, `entries_unpublish` and
+`entries_restore_version` take the same `expectedVersion` argument.
+
 **Unique fields.** Creating or updating an entry whose `unique` field collides returns **409**
 with a message naming the field, the value and the entry holding it. Trashing an entry frees its
 unique values; restoring re-claims them and can therefore fail with 409 if the value was taken in

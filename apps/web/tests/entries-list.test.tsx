@@ -239,7 +239,7 @@ describe('EntriesList optimistic status', () => {
 });
 
 describe('EntriesList through the assistant', () => {
-  it('publishes a row through its card, and changes nothing through the API itself', async () => {
+  it('publishes a row through its card, held to the version it shows, and changes nothing through the API itself', async () => {
     const edit = vi.fn(async () => ({ output: { id: 'e-draft', status: 'published' } }));
     assistant.edit = edit;
     setup();
@@ -247,7 +247,7 @@ describe('EntriesList through the assistant', () => {
     await screen.findByText('Entry published');
     expect(edit).toHaveBeenCalledExactlyOnceWith(
       'entries_publish',
-      { id: 'e-draft' },
+      { id: 'e-draft', expectedVersion: 1 },
       'Spring launch',
     );
     expect(client.publishEntry).not.toHaveBeenCalled();
