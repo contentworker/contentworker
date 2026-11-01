@@ -388,7 +388,8 @@ under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows
 transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. The types are
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
 `asset.unpublished`, `content_type.published`, `release.published`, `environment_alias.changed`,
-`environment.deleted`, `bulk.job_completed`, the `workflow_run.*` end states,
+`environment.deleted`, `promotion.awaiting_approval`, `environment.promoted`, `bulk.job_completed`,
+the `workflow_run.*` end states,
 `workflow.task_opened` and `workflow.webhook`, plus control messages for background work
 (`search.reindex_requested`, `bulk.chunk_due`, `environment.purge_due`). Every type and its payload
 is in [Events & webhooks](./events-and-webhooks.md#event-payloads).

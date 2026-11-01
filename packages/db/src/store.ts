@@ -15,6 +15,7 @@ import {
   type InstalledPlugin,
   matchesTopic,
   type OAuthClient,
+  type Promotion,
   projectFields,
   QueryTooBroadError,
   type ReferenceEdge,
@@ -72,6 +73,7 @@ import type {
   OutboxRepo,
   PluginRepo,
   PreviewTokenRepo,
+  PromotionRepo,
   PublishedAsset,
   PublishedEntry,
   ReferenceRepo,
@@ -2755,6 +2757,83 @@ const toRelease = (r: ReleaseRow): Release => ({
   publishedAt: r.publishedAt?.toISOString(),
 });
 
+type PromotionRow = typeof schema.environmentPromotions.$inferSelect;
+const toPromotion = (r: PromotionRow): Promotion => ({
+  id: r.id,
+  spaceId: r.spaceId,
+  source: r.sourceEnvironmentId,
+  target: r.targetEnvironmentId,
+  contentTypes: r.contentTypes,
+  entries: r.entries,
+  status: r.status,
+  risk: r.risk,
+  requestedBy: r.requestedBy,
+  ...(r.decidedBy ? { decidedBy: r.decidedBy } : {}),
+  ...(r.result ? { result: r.result } : {}),
+  ...(r.error ? { error: r.error } : {}),
+  createdAt: r.createdAt.toISOString(),
+  ...(r.decidedAt ? { decidedAt: r.decidedAt.toISOString() } : {}),
+  ...(r.completedAt ? { completedAt: r.completedAt.toISOString() } : {}),
+});
+
+function makePromotionRepo(x: Exec): PromotionRepo {
+  const db = x.db;
+  const p = schema.environmentPromotions;
+  const byId = (spaceId: string, id: string) => and(eq(p.spaceId, spaceId), eq(p.id, id));
+  return {
+    async create(promotion) {
+      await x.write(
+        db.insert(p).values({
+          spaceId: promotion.spaceId,
+          id: promotion.id,
+          sourceEnvironmentId: promotion.source,
+          targetEnvironmentId: promotion.target,
+          contentTypes: [...promotion.contentTypes],
+          entries: [...promotion.entries],
+          status: promotion.status,
+          risk: promotion.risk,
+          requestedBy: promotion.requestedBy,
+          decidedBy: promotion.decidedBy ?? null,
+          result: promotion.result ?? null,
+          error: promotion.error ?? null,
+          createdAt: new Date(promotion.createdAt),
+          decidedAt: promotion.decidedAt ? new Date(promotion.decidedAt) : null,
+          completedAt: promotion.completedAt ? new Date(promotion.completedAt) : null,
+        }),
+      );
+    },
+    async get(spaceId, id) {
+      const [row] = await db.select().from(p).where(byId(spaceId, id));
+      return row ? toPromotion(row) : null;
+    },
+    async list(spaceId, opts = {}) {
+      const rows = await db
+        .select()
+        .from(p)
+        .where(and(eq(p.spaceId, spaceId), opts.status ? eq(p.status, opts.status) : undefined))
+        .orderBy(desc(p.createdAt))
+        .limit(Math.min(opts.limit ?? 50, 200));
+      return rows.map(toPromotion);
+    },
+    async transition(spaceId, id, from, patch) {
+      directOnly(x, 'promotions.transition');
+      const [row] = await db
+        .update(p)
+        .set({
+          ...(patch.status ? { status: patch.status } : {}),
+          ...(patch.decidedBy !== undefined ? { decidedBy: patch.decidedBy } : {}),
+          ...(patch.decidedAt ? { decidedAt: new Date(patch.decidedAt) } : {}),
+          ...(patch.result ? { result: patch.result } : {}),
+          ...(patch.error !== undefined ? { error: patch.error } : {}),
+          ...(patch.completedAt ? { completedAt: new Date(patch.completedAt) } : {}),
+        })
+        .where(and(byId(spaceId, id), eq(p.status, from)))
+        .returning();
+      return row ? toPromotion(row) : null;
+    },
+  };
+}
+
 function makeReleaseRepo(x: Exec): ReleaseRepo {
   const db = x.db;
   return {
@@ -4174,6 +4253,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     assets: makeAssetRepo(x),
     references: makeReferenceRepo(x),
     releases: makeReleaseRepo(x),
+    promotions: makePromotionRepo(x),
     taxonomy: makeTaxonomyRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
@@ -4211,6 +4291,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     oauthClients: makeOAuthClientRepo(x),
     oauthGrants: makeOAuthGrantRepo(x),
     releases: makeReleaseRepo(x),
+    promotions: makePromotionRepo(x),
     scheduledActions: makeScheduledActionRepo(x),
     agentSchedules: makeAgentScheduleRepo(x),
     agentReviews: makeAgentReviewRepo(x),

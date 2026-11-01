@@ -77,6 +77,28 @@ target's content type, so include a type in the merge before the entries that us
 response lists `mergedContentTypes` and `mergedEntries`. The MCP tools are `environments_compare`
 and `environments_merge`.
 
+## Promote changes to the live environment
+
+A **promotion** is a merge that goes live and checks first. It copies what's published in the
+source and publishes it in the target, copies drafts as drafts, and pins the versions it copies
+when you ask, so later edits in the source don't sneak in.
+
+```sh
+curl -s "$API/spaces/$SPACE/promotions" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "source": "staging", "target": "main" }'
+```
+
+Without `contentTypes` or `entries`, it promotes everything that differs. A promotion applies at
+once unless something calls for a second pair of eyes: the target is `main` or has an alias
+pointing at it, a content type would lose a field or change a field's type, or the AI risk check
+suggests a review. Then it waits as `awaiting_approval`, with the reasons, until someone else
+approves (`POST …/promotions/:id/approve`) or rejects it. Deciding takes a person (in the admin, or
+with their own token), not an API key or an assistant acting for you. If a content type changes in
+the source while a promotion waits, approving it fails, so request a new one. A webhook on
+`promotion.awaiting_approval` can tell your reviewers. The MCP tools are `promotion_request`,
+`promotion_list`, `promotion_get`, `promotion_approve` and `promotion_reject`.
+
 ## Point an alias at the live environment
 
 An **alias** is a stable name for an environment. Read from `production` in your site, and switch

@@ -265,7 +265,7 @@ selects one leg), the GraphQL `search` resolver, and the `content_search` MCP to
 
 ## MCP server
 
-The api Worker serves MCP at `/mcp`, with 127 tools and published agent skills. Transport, auth,
+The api Worker serves MCP at `/mcp`, with 137 tools and published agent skills. Transport, auth,
 connecting a client, the tool catalog and skills are in [MCP server](./mcp.md). The assistant in the
 admin calls the same tools in-process (see [Coworker](#coworker-the-admins-assistant)).
 

@@ -19,6 +19,7 @@ import {
   type InstalledPlugin,
   matchesTopic,
   type OAuthClient,
+  type Promotion,
   projectFields,
   type ReferenceEdge,
   type Release,
@@ -77,6 +78,7 @@ import type {
   PluginRepo,
   PreviewTokenRecord,
   PreviewTokenRepo,
+  PromotionRepo,
   PublishedAsset,
   PublishedEntry,
   ReferenceRepo,
@@ -938,6 +940,33 @@ export class InMemoryContentStore implements ContentStore {
   private readonly releaseData = new Map<string, Release>();
   private readonly releaseItemData = new Map<string, ReleaseItem[]>();
 
+  private readonly promotionData = new Map<string, Promotion>();
+
+  readonly promotions: PromotionRepo = {
+    create: async (promotion) => {
+      this.promotionData.set(`${promotion.spaceId}::${promotion.id}`, cloneJson(promotion));
+    },
+    get: async (spaceId, id) => {
+      const found = this.promotionData.get(`${spaceId}::${id}`);
+      return found ? cloneJson(found) : null;
+    },
+    list: async (spaceId, opts = {}) =>
+      [...this.promotionData.values()]
+        .filter((p) => p.spaceId === spaceId && (!opts.status || p.status === opts.status))
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+        .slice(0, Math.min(opts.limit ?? 50, 200))
+        .map((p) => cloneJson(p)),
+    transition: async (spaceId, id, from, patch) => {
+      const key = `${spaceId}::${id}`;
+      const found = this.promotionData.get(key);
+      // As the D1 store: a compare-and-set on the status it leaves.
+      if (!found || found.status !== from) return null;
+      const updated: Promotion = { ...found, ...patch };
+      this.promotionData.set(key, updated);
+      return cloneJson(updated);
+    },
+  };
+
   readonly releases: ReleaseRepo = {
     create: async (scope, release) => {
       this.releaseData.set(`${scopeKey(scope)}::${release.id}`, release);
@@ -1771,6 +1800,7 @@ export class InMemoryContentStore implements ContentStore {
   /** The collections a transaction can mutate, for snapshot/rollback. */
   private txCollections(): Map<string, unknown>[] {
     return [
+      this.promotionData,
       this.contentTypeData,
       this.entryData,
       this.versionData,
@@ -1815,6 +1845,7 @@ export class InMemoryContentStore implements ContentStore {
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,
         outbox: this.outbox,
+        promotions: this.promotions,
       });
     } catch (err) {
       for (const [m, entries] of snapshot) {
