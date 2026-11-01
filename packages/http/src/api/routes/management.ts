@@ -1809,8 +1809,16 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   // --- releases -----------------------------------------------------------
   // Bundle entries and ship them atomically. Authoring (create/add/remove) is a
   // write; shipping the bundle requires publish.
-  app.get(`${BASE}/releases`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listReleases(ctx, scopeOf(c)) }),
+  app.get(
+    `${BASE}/releases`,
+    doc('Releases & scheduling', 'List releases', {
+      description:
+        'Every release, newest first, each with `itemCount` (its members, from one grouped ' +
+        'count), so a list never fetches each release for its size.',
+      ok: docs.releaseList,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listReleases(ctx, scopeOf(c)) }),
   );
   app.post(`${BASE}/releases`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(await createRelease(ctx, scopeOf(c), await parseBody(c, createReleaseBody)), 201),
@@ -1992,8 +2000,17 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   });
 
   // --- workflows ---------------------------------------------------------
-  app.get(`${BASE}/workflows`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listWorkflows(ctx, scopeOf(c)) }),
+  app.get(
+    `${BASE}/workflows`,
+    doc('Workflows', 'List workflows', {
+      description:
+        'Every workflow with its draft `graph`, plus how its latest PUBLISHED version starts: ' +
+        '`publishedTrigger`, and `startsAlongside`, the other published workflows that start on ' +
+        'the same trigger for an overlapping content type. Both are null until it is published.',
+      ok: docs.workflowList,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listWorkflows(ctx, scopeOf(c)) }),
   );
   // Graph workflows: create, drafts, versions, validation, copilot, runs, tasks, settings.
   app.route('/', workflowRoutes(deps));

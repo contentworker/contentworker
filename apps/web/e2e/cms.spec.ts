@@ -1,5 +1,17 @@
 import { expect, type Page, test } from '@playwright/test';
-import { api, EDITOR_READY, MGMT, openCms, SPACE, seedCms, useCmsScope } from './cms';
+import {
+  api,
+  createChanged,
+  createDraft,
+  EDITOR_READY,
+  MGMT,
+  openCms,
+  SPACE,
+  seedCms,
+  statusOf,
+  useCmsScope,
+  withoutAssistant,
+} from './cms';
 
 /*
  * The CMS screens end to end against the local stack (web + api + engine on one local D1):
@@ -364,4 +376,62 @@ test('typing right after creating an entry lands in the created entry, never a f
   await page.getByRole('button', { name: 'Save draft' }).click();
   await expect(page.getByText('Draft updated')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: `${title} v2` })).toBeVisible();
+});
+
+test.describe('publishing from a row, without the assistant', () => {
+  test.beforeEach(async ({ page }) => {
+    await withoutAssistant(page);
+  });
+
+  test('a changed entry confirms what goes live; Keep as draft publishes nothing, Publish entry publishes', async ({
+    page,
+    request,
+  }) => {
+    const title = `Revised ${Date.now()}`;
+    const id = await createChanged(request, title);
+    await openCms(page, '/content/article');
+    const row = page.getByRole('row', { name: new RegExp(title) });
+    await expect(row.getByText('Changed', { exact: true })).toBeVisible();
+
+    await row.getByRole('button', { name: `Publish “${title}”` }).click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByRole('heading', { name: `Publish “${title}”?` })).toBeVisible();
+    // Only the body differs from what's live: it is listed as changed, the title is not.
+    await expect(dialog.getByText('1 field changed')).toBeVisible();
+    const changed = dialog.getByRole('row', { name: /^body Changed/ });
+    await expect(changed.getByText('Live body')).toBeVisible();
+    await expect(changed.getByText('Edited body')).toBeVisible();
+    await expect(dialog.getByRole('row', { name: /^title/ }).getByText('Changed')).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Keep as draft' }).click();
+    await expect(dialog).toBeHidden();
+    expect(await statusOf(request, id)).toBe('changed');
+    await expect(row.getByRole('button', { name: `Publish “${title}”` })).toBeVisible();
+
+    await row.getByRole('button', { name: `Publish “${title}”` }).click();
+    await dialog.getByRole('button', { name: 'Publish entry' }).click();
+    await expect(page.getByText(`“${title}” published`)).toBeVisible();
+    await expect(row.getByRole('button', { name: `Publish “${title}”` })).toHaveCount(0);
+    expect(await statusOf(request, id)).toBe('published');
+  });
+
+  test('a draft publishes at once with an Undo that returns it to draft', async ({
+    page,
+    request,
+  }) => {
+    const title = `Fresh ${Date.now()}`;
+    const id = await createDraft(request, title);
+    await openCms(page, '/content/article');
+    const row = page.getByRole('row', { name: new RegExp(title) });
+    await row.getByRole('button', { name: `Publish “${title}”` }).click();
+
+    // No confirmation for a first publish: it is live, and the toast offers the way back.
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    const toast = page.getByText(`“${title}” published`);
+    await expect(toast).toBeVisible();
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await expect(page.getByText(`“${title}” is back to draft`)).toBeVisible();
+    expect(await statusOf(request, id)).toBe('draft');
+    await expect(row.getByText('Draft', { exact: true })).toBeVisible();
+  });
 });

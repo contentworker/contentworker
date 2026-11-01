@@ -40,19 +40,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@contentworker/ui/tooltip';
-import { useQueries } from '@tanstack/react-query';
 import { CalendarClock, PackageOpen, Plus, Rocket, Trash2, X } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
+import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
+import { type EntryRef, entryPath, entryRef } from '~/cms/components/dashboard/entry-titles';
+import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
-import { entryTitle } from '~/cms/components/layout/Breadcrumbs';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { ReleasePublishConfirm } from '~/cms/components/ReleasePublishConfirm';
 import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
 import { humanize, plural, statusLabel } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import type { PreviewEntry } from '../lib/management';
 import {
   useAllEntriesQuery,
   useContentTypesQuery,
@@ -75,7 +75,7 @@ function defaultScheduleLocal(): string {
  * row's path; publishing lives in the release, beside its members, behind the publish confirm.
  */
 export function Releases() {
-  const { client, conn, busy, run } = useClient();
+  const { client, busy, run } = useClient();
   const toast = useToast();
   const invalidate = useInvalidate();
   const [creating, setCreating] = useState(false);
@@ -98,15 +98,10 @@ export function Releases() {
   const releases = releasesQuery.data ?? [];
   const scheduled = scheduledQuery.data ?? [];
   const loading = releasesQuery.isPending || scheduledQuery.isPending;
-  // Each release's members, for its entry count: the same `['release', id]` cache the detail
-  // sheet and the publish confirm read, so opening one costs nothing more.
-  const memberQueries = useQueries({
-    queries: releases.map((r) => ({
-      queryKey: [conn.space, conn.environment, 'release', r.id],
-      queryFn: () => client.getRelease(r.id),
-      meta: { silent: true },
-    })),
-  });
+  // Scheduled entries are named by one batched lookup, never by their ids.
+  const scheduledEntries = useEntriesById(
+    scheduled.filter((a) => a.entityType === 'Entry').map((a) => a.entityId),
+  );
   /** When a pending scheduled publish will ship the release, if one does. */
   const scheduledFor = (id: string) =>
     scheduled
@@ -192,9 +187,8 @@ export function Releases() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {releases.map((r, i) => {
+                    {releases.map((r) => {
                       const at = scheduledFor(r.id);
-                      const members = memberQueries[i];
                       return (
                         <Fragment key={r.id}>
                           <TableRow>
@@ -216,13 +210,7 @@ export function Releases() {
                               ) : null}
                             </TableCell>
                             <TableCell numeric label="Entries">
-                              {members?.isPending ? (
-                                <Skeleton className="ml-auto h-4 w-8" />
-                              ) : members?.data ? (
-                                members.data.items.length
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
+                              {r.itemCount}
                             </TableCell>
                             <TableCell label="When" className="text-muted-foreground">
                               {r.publishedAt ? (
@@ -334,12 +322,10 @@ export function Releases() {
                               <span className="text-muted-foreground">A deleted release</span>
                             ))
                           ) : (
-                            <>
-                              <span className="text-muted-foreground">An entry</span>{' '}
-                              <code className="whitespace-nowrap font-mono text-muted-foreground text-xs">
-                                {a.entityId.slice(0, 8)}
-                              </code>
-                            </>
+                            <EntryLink
+                              entry={scheduledEntries.refs.get(a.entityId)}
+                              resolving={scheduledEntries.resolving(a.entityId)}
+                            />
                           )}
                         </TableCell>
                         <TableCell label="When">
@@ -497,13 +483,10 @@ function ReleaseDetailSheet(props: {
   const release = detail?.release;
   const items = detail?.items ?? [];
   const memberIds = new Set(items.map((i) => i.entityId));
-  const byId = new Map(entries.map((e) => [e.id, e]));
+  // Members are named by one batched lookup of exactly their ids, so a member past the picker's
+  // capped list is still named rather than shown as an id.
+  const members = useEntriesById(items.map((i) => i.entityId));
   const types = useContentTypesQuery().data ?? [];
-  const typeName = (apiId: string) => types.find((t) => t.apiId === apiId)?.name ?? apiId;
-  /** An entry by its title, never its id: "Untitled" when its display field is empty. */
-  const titleOf = (e: PreviewEntry) =>
-    entryTitle(e.fields, types.find((t) => t.apiId === e.contentType)?.displayField, conn.locale) ??
-    'Untitled';
   const candidates = entries.filter((e) => !memberIds.has(e.id));
   const editable = release?.status === 'open';
   const asking = !!id && askingFor === id;
@@ -579,14 +562,17 @@ function ReleaseDetailSheet(props: {
                         No more entries
                       </SelectItem>
                     ) : (
-                      candidates.map((e) => (
-                        <SelectItem key={e.id} value={e.id}>
-                          {titleOf(e)}
-                          <span className="ml-2 text-muted-foreground">
-                            {typeName(e.contentType)} · {statusLabel(e.status)}
-                          </span>
-                        </SelectItem>
-                      ))
+                      candidates.map((e) => {
+                        const ref = entryRef(e, types, conn.locale);
+                        return (
+                          <SelectItem key={e.id} value={e.id}>
+                            {ref.title}
+                            <span className="ml-2 text-muted-foreground">
+                              {ref.typeName} · {statusLabel(e.status)}
+                            </span>
+                          </SelectItem>
+                        );
+                      })
                     )}
                   </SelectContent>
                 </Select>
@@ -604,25 +590,14 @@ function ReleaseDetailSheet(props: {
             ) : (
               <ul className="divide-y rounded-md border">
                 {items.map((it) => {
-                  const member = byId.get(it.entityId);
-                  const name = member ? titleOf(member) : null;
+                  const member = members.refs.get(it.entityId);
                   return (
                     <li
                       key={it.entityId}
                       className="flex items-center justify-between gap-2 px-3 py-2"
                     >
-                      <div className="flex min-w-0 items-center gap-2">
-                        {name ? (
-                          <span className="min-w-0 truncate text-sm">{name}</span>
-                        ) : entriesQuery.isPending ? (
-                          <Skeleton className="h-4 w-32" />
-                        ) : (
-                          // Past the list's cap, or gone: named as what it is, the id as detail.
-                          <span className="min-w-0 truncate text-muted-foreground text-sm">
-                            An entry{' '}
-                            <code className="font-mono text-xs">{it.entityId.slice(0, 8)}</code>
-                          </span>
-                        )}
+                      <div className="flex min-w-0 items-center gap-2 text-sm">
+                        <EntryLink entry={member} resolving={members.resolving(it.entityId)} />
                         {it.action === 'unpublish' ? (
                           <Badge variant="outline">Unpublish</Badge>
                         ) : null}
@@ -633,7 +608,7 @@ function ReleaseDetailSheet(props: {
                           variant="ghost"
                           size="icon"
                           className="hit-area size-7"
-                          aria-label={`Remove “${name ?? 'this entry'}” from the release`}
+                          aria-label={`Remove “${member?.title ?? 'this entry'}” from the release`}
                           onClick={() => removeEntry(it.entityId)}
                           disabled={busy}
                         >
@@ -699,4 +674,23 @@ function ReleaseDetailSheet(props: {
       </SheetContent>
     </Sheet>
   );
+}
+
+/**
+ * An entry known only by id, named and linked: its title once the lookup answers, a placeholder
+ * while it may, and "Entry no longer available" when it was deleted or isn't visible. Never an id.
+ */
+function EntryLink({ entry, resolving }: { entry: EntryRef | undefined; resolving: boolean }) {
+  if (entry) {
+    return (
+      <Link
+        to={entryPath(entry)}
+        className="min-w-0 truncate font-medium text-foreground hover:underline"
+      >
+        {entry.title}
+      </Link>
+    );
+  }
+  if (resolving) return <Skeleton className="inline-block h-4 w-32 align-middle" aria-hidden />;
+  return <span className="text-muted-foreground">Entry no longer available</span>;
 }

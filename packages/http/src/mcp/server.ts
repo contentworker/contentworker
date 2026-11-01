@@ -86,6 +86,7 @@ import {
   listVersions,
   listWorkflowNodeRuns,
   listWorkflowRuns,
+  listWorkflows,
   listWorkflowTasks,
   listWorkflowVersions,
   mergeEnvironments,
@@ -1979,7 +1980,9 @@ export function buildServer(
   server.registerTool(
     'releases_list',
     {
-      description: 'List releases (entry bundles published together) in a space/environment.',
+      description:
+        'List releases (entry bundles published together) in a space/environment, newest ' +
+        'first, each with itemCount (how many members it holds).',
       inputSchema: toolSchema('releases_list', () => z.object(scopeArgs)),
     },
     async (args) => {
@@ -2188,6 +2191,24 @@ export function buildServer(
     );
   };
   const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true } as const;
+
+  server.registerTool(
+    'workflow_list',
+    {
+      description:
+        'List the editorial workflows: each with its draft graph and latestVersion, plus how its ' +
+        'latest PUBLISHED version starts (publishedTrigger: { type, label }) and startsAlongside, ' +
+        'the ids of the other published workflows that start on the same trigger for an ' +
+        'overlapping content type (each of them starts too; for trigger.manual the editor ' +
+        'chooses). Both are null for a workflow never published.',
+      inputSchema: toolSchema('workflow_list', () => z.object(scopeArgs)),
+      annotations: READ_ONLY,
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await listWorkflows(ctx, scopeOf(args)));
+    },
+  );
 
   server.registerTool(
     'workflow_save_draft',

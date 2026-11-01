@@ -448,6 +448,29 @@ export function EntryEditor() {
     return () => ro.disconnect();
   }, [hasType]);
 
+  // On a phone the actions are their own bar above the tab bar. Its drawn height (0 while the
+  // on-screen keyboard hides it, or once it's back in the flow from md) is --page-bar-h on the
+  // root: the toasts lift by it and the editor pads its foot by it, so neither assumes a height.
+  const pageBarRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const pageBar = pageBarRef.current;
+    const html = document.documentElement;
+    if (!pageBar || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const pinned = getComputedStyle(pageBar).position === 'fixed';
+      html.style.setProperty('--page-bar-h', `${pinned ? pageBar.offsetHeight : 0}px`);
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(pageBar);
+    window.addEventListener('resize', measure);
+    measure();
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      html.style.removeProperty('--page-bar-h');
+    };
+  }, [hasType]);
+
   const copyPreviewLink = () => {
     if (!entryId) return;
     void run(async () => {
@@ -495,7 +518,7 @@ export function EntryEditor() {
     // A named container: the secondary actions show by the room the editor has (beside the
     // assistant's column it is narrower than the screen), and fold into ⋯ below it. On a phone the
     // foot leaves room for the action bar above the tab bar.
-    <div ref={rootRef} className="@container/editor space-y-4 max-md:pb-16">
+    <div ref={rootRef} className="@container/editor space-y-4 max-md:pb-(--page-bar-h)">
       {/* The record-page header: the title wraps (never truncates). Under it, the action bar: the
           facts (status, version, save state) and the one primary verb for the entry's state. From
           md it stays under the shell's header on a long entry; below md its buttons sit above the
@@ -521,6 +544,7 @@ export function EntryEditor() {
           )}
         </div>
         <div
+          ref={pageBarRef}
           data-page-bar
           className="flex items-center gap-2 max-md:fixed max-md:inset-x-0 max-md:bottom-(--tabbar-h) max-md:z-20 max-md:border-t max-md:bg-background max-md:px-safe-4 max-md:py-2 max-md:in-data-keyboard:hidden"
         >

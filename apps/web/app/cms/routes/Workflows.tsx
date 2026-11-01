@@ -28,7 +28,7 @@ import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
 import { plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import type { WorkflowSummary } from '../lib/management';
+import type { WorkflowListItem } from '../lib/management';
 import { useContentTypesQuery, useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
@@ -305,37 +305,17 @@ function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<voi
   );
 }
 
-/** The workflow's trigger, in words ("Submit for review"); null when it has none yet. */
-const triggerOf = (w: WorkflowSummary) => {
+/** The draft's trigger, in words ("Submit for review"); null when it has none yet. */
+const draftTriggerOf = (w: WorkflowListItem) => {
   const t = w.graph.nodes.find(isTrigger);
   return t ? { type: t.type, label: nodeSpec(t.type)?.label ?? t.label } : null;
 };
 
-/** True when two workflows' coverage meets: an empty list covers every content type. */
-const overlaps = (a: readonly string[], b: readonly string[]) =>
-  a.length === 0 || b.length === 0 || a.some((t) => b.includes(t));
-
 /**
- * The published workflows that start on the same trigger as `w` for some of the same content
- * types. Each of them runs: an event starts every matching workflow, and Submit for review asks
- * the editor which one. There is no precedence to show, so the row names the others instead.
- */
-function startsAlongside(w: WorkflowSummary, all: readonly WorkflowSummary[]) {
-  const trigger = triggerOf(w)?.type;
-  if (!trigger || !w.latestVersion) return [];
-  return all.filter(
-    (o) =>
-      o.id !== w.id &&
-      o.latestVersion &&
-      triggerOf(o)?.type === trigger &&
-      overlaps(w.contentTypes, o.contentTypes),
-  );
-}
-
-/**
- * One workflow as a table row: its name (the link) over its description, what starts it (and which
- * published workflows start on the same thing), what it covers, whether it gates publishing, its
- * live version, and Duplicate and Delete. Delete asks in a row of its own beneath.
+ * One workflow as a table row: its name (the link) over its description, what starts its published
+ * version (and which other published workflows start on the same thing, as the API reports it),
+ * what it covers, whether it gates publishing, its live version, and Duplicate and Delete. Delete
+ * asks in a row of its own beneath.
  */
 function WorkflowRow({
   w,
@@ -343,8 +323,8 @@ function WorkflowRow({
   typeName,
   onOpen,
 }: {
-  w: WorkflowSummary;
-  all: readonly WorkflowSummary[];
+  w: WorkflowListItem;
+  all: readonly WorkflowListItem[];
   typeName: (apiId: string) => string;
   onOpen: (id: string) => void;
 }) {
@@ -385,9 +365,15 @@ function WorkflowRow({
       await invalidate(['workflows']);
     });
 
-  const trigger = triggerOf(w);
-  const alongside = startsAlongside(w, all);
-  const manual = trigger?.type === 'trigger.manual';
+  // What runs is the published version; the draft's trigger shows only where it differs.
+  const published = w.publishedTrigger;
+  const draft = draftTriggerOf(w);
+  const draftDiffers = !!draft && draft.type !== published?.type;
+  const alongside = (w.startsAlongside ?? []).flatMap((id) => {
+    const other = all.find((o) => o.id === id);
+    return other ? [other.name] : [];
+  });
+  const manual = published?.type === 'trigger.manual';
   const steps = w.graph.nodes.length;
   const approvals = w.graph.nodes.filter((n) => n.type === 'control.approval').length;
   return (
@@ -413,11 +399,20 @@ function WorkflowRow({
           </p>
         </Td>
         <Td label="Starts">
-          {trigger ? trigger.label : <span className="text-muted-foreground">No trigger yet</span>}
+          {published ? (
+            published.label
+          ) : (
+            <span className="text-muted-foreground">
+              {w.latestVersion ? 'No trigger' : 'Not published'}
+            </span>
+          )}
+          {draftDiffers ? (
+            <p className="text-muted-foreground text-xs">Draft starts on {draft.label}</p>
+          ) : null}
           {alongside.length ? (
             <p className="text-muted-foreground text-xs">
               {manual ? 'Editors choose between this and ' : 'Also starts: '}
-              {alongside.map((o) => o.name).join(', ')}
+              {alongside.join(', ')}
             </p>
           ) : null}
         </Td>

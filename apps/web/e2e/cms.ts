@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
@@ -127,4 +128,85 @@ export async function openCms(page: Page, path: string) {
       getComputedStyle(document.body).overscrollBehaviorY === 'none' &&
       Boolean((window as unknown as { __reactRouterDataRouter?: object }).__reactRouterDataRouter),
   );
+}
+
+/** A fresh draft article, through the API; returns its id. */
+export async function createDraft(request: APIRequestContext, title: string, body?: string) {
+  const res = await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: 'article',
+    fields: { title: { 'en-US': title }, ...(body ? { body: { 'en-US': body } } : {}) },
+  });
+  expect(res.ok(), await res.text()).toBe(true);
+  return ((await res.json()) as { entry: { id: string } }).entry.id;
+}
+
+/** An entry's status as the Preview API reports it. */
+export async function statusOf(request: APIRequestContext, id: string) {
+  const res = await api(request, 'GET', `/preview/${SPACE}/main/entries?sys.id=${id}&limit=1`);
+  expect(res.ok(), await res.text()).toBe(true);
+  const { items } = (await res.json()) as { items: { id: string; status: string }[] };
+  return items.find((e) => e.id === id)?.status;
+}
+
+/** A published article whose draft then changed (status `changed`): the body is edited. */
+export async function createChanged(request: APIRequestContext, title: string) {
+  const id = await createDraft(request, title, 'Live body');
+  const published = await api(request, 'POST', `${MGMT}/entries/${id}/published`);
+  expect(published.ok(), await published.text()).toBe(true);
+  const edited = await api(request, 'PUT', `${MGMT}/entries/${id}`, {
+    fields: { title: { 'en-US': title }, body: { 'en-US': 'Edited body' } },
+  });
+  expect(edited.ok(), await edited.text()).toBe(true);
+  return id;
+}
+
+/**
+ * Makes the page's edits go straight to the API, as they do whenever the assistant can't be
+ * reached: its socket is refused, so a row's Publish opens the page's own confirmation rather than
+ * a card in the assistant's panel.
+ */
+export async function withoutAssistant(page: Page) {
+  await page.routeWebSocket(/\/agents\//, (ws) => ws.close({ code: 1011 }));
+}
+
+/** The entry the seeded agent proposal targets: the Approvals sweeps look it up by this title. */
+export const PROPOSAL_TARGET = 'Proposal target';
+
+/**
+ * One pending agent proposal for `entryId`, written into the e2e database (there is no API to
+ * propose: agents do, from a workflow run). Deterministic id and time, so a rerun replaces it.
+ * Written once from the global setup, while the dev server is idle: a second writer on the same
+ * file during the run would lose the lock to the server.
+ */
+export function seedAgentReview(entryId: string) {
+  const proposed = JSON.stringify({ body: { 'en-US': 'Agent proposed body' } });
+  const notes = JSON.stringify(['Tightened the body to one concrete claim']);
+  const q = (s: string) => `'${s.replaceAll("'", "''")}'`;
+  const sql =
+    'INSERT OR REPLACE INTO agent_reviews ' +
+    '(space_id, environment_id, id, workflow, entry_id, proposed, notes, status, awaiting, created_at) ' +
+    `VALUES (${q(SPACE)}, 'main', ${q(`e2e-review-${entryId}`)}, 'enrich', ${q(entryId)}, ` +
+    `${q(proposed)}, ${q(notes)}, 'pending', 0, 1767225600000)`;
+  execFileSync(
+    'pnpm',
+    [
+      'exec',
+      'wrangler',
+      'd1',
+      'execute',
+      'contentworker',
+      '--local',
+      '--persist-to',
+      '.wrangler/e2e',
+      '--command',
+      sql,
+    ],
+    { stdio: 'pipe' },
+  );
+}
+
+/** The e2e space with a draft article and a pending agent proposal for it (see PROPOSAL_TARGET). */
+export async function seedAgentProposal(request: APIRequestContext) {
+  await seedCms(request);
+  seedAgentReview(await createDraft(request, PROPOSAL_TARGET, 'Current body'));
 }

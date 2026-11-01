@@ -63,6 +63,12 @@ edges to missing nodes, every node connected, every config field valid) and appe
 numbered version. A run pins the version it started on, so editing a workflow never changes runs
 already under way. Warnings, such as a duplicate edge, don't block publishing; errors do.
 
+What starts a workflow is its published version's trigger, whatever the draft says now. Two
+published workflows on the same trigger whose content types overlap (no content types covers every
+type) both start: an event starts every matching workflow, and **Submit for review** asks the
+editor which one. The workflow list (`GET …/workflows`, or the `workflow_list` MCP tool) reports
+each workflow's `publishedTrigger` and the others that start alongside it.
+
 A workflow can also **gate publishing**: while it is active, publishing an entry it covers has to
 go through one of its runs, so nobody can skip the review by pressing Publish.
 

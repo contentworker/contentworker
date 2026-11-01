@@ -108,7 +108,8 @@ const entries = [
   },
 ];
 
-function setup() {
+function setup(opts: { hangLookupAfterApprove?: boolean } = {}) {
+  let approved = false;
   const calls: { method: string; url: string; body?: unknown }[] = [];
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -117,16 +118,22 @@ function setup() {
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
     if (url === '/spaces') return json({ items: [{ id: 'space-1', name: 'Space 1' }] });
     if (url.startsWith(`${BASE}/workflow-tasks?`)) return json({ items: [task] });
-    if (url.startsWith(`${BASE}/agent-reviews?`)) return json({ items: [review, orphan] });
+    if (url.startsWith(`${BASE}/agent-reviews?`))
+      return json({ items: approved ? [orphan] : [review, orphan] });
     if (url === `${BASE}/content-types`) return json({ items: [post, article] });
     // Every row's entry in one request: the preview list filtered by `sys.id[in]`.
     if (url.startsWith('/preview/space-1/main/entries?')) {
+      // A lookup for a new set of ids that never answers: what's on screen meanwhile is the point.
+      if (approved && opts.hangLookupAfterApprove) return new Promise<Response>(() => {});
       const ids = new URL(url, 'http://x').searchParams.get('sys.id[in]')?.split(',') ?? [];
       return json({ items: entries.filter((e) => ids.includes(e.id)) });
     }
     if (url.endsWith('/decide'))
       return json({ taskId: 'task-1', runId: 'run-1', decision: 'approved', by: 'me' });
-    if (url.endsWith('/approve')) return json({ ...review, status: 'approved' });
+    if (url.endsWith('/approve')) {
+      approved = true;
+      return json({ ...review, status: 'approved' });
+    }
     return json({});
   }) as unknown as typeof fetch;
   render(
@@ -179,6 +186,8 @@ describe('Approvals', () => {
     expect(within(proposal).getByText(/Proposed by the Enrich agent/)).toBeTruthy();
     expect(within(proposal).getByText('Needs review')).toBeTruthy();
     expect(within(proposal).getByText('Added a summary from the body.')).toBeTruthy();
+    // Two fields, three rows (summary in two locales): the count is of fields.
+    expect(within(proposal).getByText('Changes 2 fields')).toBeTruthy();
 
     const table = within(proposal).getByRole('table', {
       name: 'Changes proposed to Winter menu',
@@ -239,6 +248,17 @@ describe('Approvals', () => {
         ),
       ).toBe(true),
     );
+  });
+
+  it('keeps the other rows named while the lookup for the new set of entries loads', async () => {
+    setup({ hangLookupAfterApprove: true });
+    const proposal = await proposalFor('Proposal for Winter menu');
+    const approve = within(proposal).getByRole('button', { name: 'Approve and apply' });
+    await waitFor(() => expect((approve as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(approve);
+    await waitFor(() => expect(screen.queryByText('Winter menu')).toBeNull());
+    // The task's entry was named before; its name stays while the new lookup is in flight.
+    expect(screen.getByRole('link', { name: 'Spring launch' })).toBeTruthy();
   });
 
   it('rejects an agent proposal', async () => {

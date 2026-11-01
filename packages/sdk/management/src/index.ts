@@ -136,6 +136,11 @@ export interface Release {
   readonly publishedAt?: string;
 }
 
+/** A release as `releases.list()` returns it: with how many members it holds. */
+export interface ReleaseSummary extends Release {
+  readonly itemCount: number;
+}
+
 export interface ReleaseItem {
   readonly entityId: string;
   readonly action: ScheduledActionType;
@@ -366,7 +371,7 @@ export function createManagementClient(opts: ManagementClientOptions) {
     },
 
     releases: {
-      list: () => items(get<{ items: Release[] }>(`${envBase}/releases`)),
+      list: () => items(get<{ items: ReleaseSummary[] }>(`${envBase}/releases`)),
       get: (id: string) => get<ReleaseWithItems>(`${envBase}/releases/${e(id)}`),
       create: (input: { title: string; description?: string }) =>
         post<Release>(`${envBase}/releases`, input),

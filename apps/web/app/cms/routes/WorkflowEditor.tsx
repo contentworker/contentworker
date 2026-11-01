@@ -35,7 +35,7 @@ import {
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useParams } from 'react-router';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
-import { Section } from '~/cms/components/page';
+import { PageHeader, Section } from '~/cms/components/page';
 import { When } from '~/cms/components/when';
 import { Connections } from '~/cms/components/workflow/Connections';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
@@ -110,12 +110,15 @@ export function WorkflowEditor() {
   }
   if (!query.data) {
     return (
-      <div className="pt-6 text-sm">
-        <p className="text-bad">This workflow could not be loaded.</p>
-        <Link to="/workflows" className="text-link hover:underline">
+      <>
+        <PageHeader
+          title="Workflow not available"
+          description="It may have been deleted, or it isn’t in this environment."
+        />
+        <Link to="/workflows" className="text-link text-sm hover:underline">
           Back to workflows
         </Link>
-      </div>
+      </>
     );
   }
   return <Editor key={query.data.id} loaded={query.data} />;

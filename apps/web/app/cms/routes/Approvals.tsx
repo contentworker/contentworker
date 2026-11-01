@@ -84,7 +84,7 @@ export function Approvals() {
                     key={t.id}
                     task={t}
                     entry={lookup.refs.get(t.entryId)}
-                    resolving={lookup.isLoading}
+                    resolving={lookup.resolving(t.entryId)}
                   />
                 ))}
               </ul>
@@ -108,7 +108,7 @@ export function Approvals() {
                       entry={entry}
                       entryRef={lookup.refs.get(r.entryId)}
                       type={types?.find((t) => t.apiId === entry?.contentType)}
-                      resolving={lookup.isLoading}
+                      resolving={lookup.resolving(r.entryId)}
                     />
                   );
                 })}
@@ -361,7 +361,10 @@ function ReviewRow({
         <Skeleton className="h-16 w-full" aria-hidden />
       ) : changes.length ? (
         <div className="grid gap-1.5">
-          <p className="text-sm">{`Changes ${plural(changes.length, 'field')}`}</p>
+          <p className="text-sm">
+            {/* Rows are field × locale; the count is of fields. */}
+            {`Changes ${plural(new Set(changes.map((c) => c.key.slice(0, c.key.indexOf(':')))).size, 'field')}`}
+          </p>
           {entry ? null : (
             <p className="text-muted-foreground text-xs">
               The entry couldn’t be loaded, so its current values aren’t shown.

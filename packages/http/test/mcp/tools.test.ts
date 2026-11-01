@@ -135,6 +135,53 @@ describe('MCP tools (end-to-end over the in-memory transport)', () => {
     );
   });
 
+  it('refuses entry counts for another space, and for a delivery-only key', async () => {
+    const { ctx } = deps;
+    const other = { spaceId: 'space-2', environmentId: 'main' };
+    await createSpace(ctx, { spaceId: 'space-2', name: 'Other', defaultLocale: 'en-US' });
+    await createContentType(ctx, other, {
+      apiId: 'secret',
+      name: 'Secret',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+      ],
+    });
+    await publishContentType(ctx, other, 'secret');
+    await createEntry(ctx, other, {
+      contentTypeApiId: 'secret',
+      fields: { title: { 'en-US': 'Hidden' } },
+    });
+
+    // preview:read in space-1 names space-2 in the arguments: refused, nothing disclosed.
+    const reader = await connect(deps, {
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.previewRead],
+    });
+    const cross = await reader.callTool({
+      name: 'model_entry_counts',
+      arguments: { space: 'space-2' },
+    });
+    expect(cross.isError).toBe(true);
+    expect(JSON.stringify(cross)).not.toContain('secret');
+    // The same key still counts its own space.
+    expect((await reader.callTool({ name: 'model_entry_counts', arguments: {} })).isError).toBe(
+      undefined,
+    );
+
+    // A delivery-only key lacks preview:read even in its own space.
+    const cda = await connect(deps, { spaceId: SPACE, kind: 'cda', scopes: [SCOPES.deliveryRead] });
+    expect((await cda.callTool({ name: 'model_entry_counts', arguments: {} })).isError).toBe(true);
+  });
+
   it('round-trips a function through create → list → delete', async () => {
     const client = await connect(deps, adminPrincipal);
     const created = payload(

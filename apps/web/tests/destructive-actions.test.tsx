@@ -36,6 +36,8 @@ const client = {
       latestVersion: 1,
       legacy: false,
       updatedAt: null,
+      publishedTrigger: null,
+      startsAlongside: [],
     },
   ]),
   deleteWorkflow: vi.fn(async () => {}),
@@ -234,9 +236,24 @@ describe('Releases destructive actions', () => {
     fields: { title: { 'en-US': title } },
   });
 
+  /** Answers the batched by-id lookup (`sys.id[in]`) with the entries that still exist. */
+  const entriesById =
+    (...existing: ReturnType<typeof entry>[]) =>
+    async (_type?: string, query?: { filters?: { field: string; value: unknown }[] }) => {
+      const ids = query?.filters?.find((f) => f.field === 'sys.id')?.value;
+      return Array.isArray(ids) ? existing.filter((e) => ids.includes(e.id)) : existing;
+    };
+
   function setup() {
-    client.listReleases.mockResolvedValue([release]);
+    client.listReleases.mockResolvedValue([{ ...release, itemCount: 3 }]);
     client.listContentTypes.mockResolvedValue([article]);
+    // e-3 is gone (deleted, or hidden from this principal).
+    client.listEntries.mockImplementation(
+      entriesById(
+        entry('e-1', 'Hello world', 'changed'),
+        entry('e-2', 'Brand new', 'draft'),
+      ) as never,
+    );
     client.getRelease.mockResolvedValue({
       release,
       items: [
@@ -254,7 +271,9 @@ describe('Releases destructive actions', () => {
     render(
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          <Releases />
+          <MemoryRouter>
+            <Releases />
+          </MemoryRouter>
         </ToastProvider>
       </QueryClientProvider>,
     );
@@ -265,6 +284,8 @@ describe('Releases destructive actions', () => {
     const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
     if (!row) throw new Error('no row');
     expect(await within(row).findByText('3')).toBeTruthy();
+    // The count rides on the list; no release is fetched just to count its members.
+    expect(client.getRelease).not.toHaveBeenCalled();
     // Looking is the row's path; nothing on it ships the release.
     expect(within(row).queryByRole('button', { name: /Publish/ })).toBeNull();
   });
@@ -289,14 +310,49 @@ describe('Releases destructive actions', () => {
     expect(within(row).getByText('Scheduled')).toBeTruthy();
   });
 
-  it('names a release’s entries by title inside it, never by id', async () => {
-    client.listEntries.mockResolvedValueOnce([entry('e-1', 'Hello world', 'changed')] as never);
+  it('names a release’s entries by title inside it, linked, never by id', async () => {
     setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Spring campaign' }));
     const sheet = await screen.findByRole('dialog');
-    expect(await within(sheet).findByText('Hello world')).toBeTruthy();
+    const hello = await within(sheet).findByRole('link', { name: 'Hello world' });
+    expect(hello.getAttribute('href')).toBe('/content/article/e-1');
+    expect(within(sheet).getByRole('link', { name: 'Brand new' })).toBeTruthy();
     expect(within(sheet).getByRole('button', { name: 'Remove “Hello world” from the release' }));
-    expect(within(sheet).queryByText('e-1')).toBeNull();
+    // A member the lookup can't return is said to be gone, not shown as its id.
+    expect(await within(sheet).findByText('Entry no longer available')).toBeTruthy();
+    expect(within(sheet).queryByText(/e-[123]/)).toBeNull();
+  });
+
+  it('names scheduled entries by title, linked, never by id', async () => {
+    client.listScheduledActions.mockResolvedValueOnce([
+      {
+        id: 'sa-1',
+        action: 'publish',
+        entityType: 'Entry',
+        entityId: 'e-1',
+        scheduledFor: '2026-11-07T14:00:00.000Z',
+        status: 'pending',
+        createdAt: '2026-10-01T00:00:00.000Z',
+      },
+      {
+        id: 'sa-2',
+        action: 'unpublish',
+        entityType: 'Entry',
+        entityId: 'e-3',
+        scheduledFor: '2026-11-08T14:00:00.000Z',
+        status: 'pending',
+        createdAt: '2026-10-01T00:00:00.000Z',
+      },
+    ] as never);
+    setup();
+    const tab = await screen.findByRole('tab', { name: /Scheduled/ });
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+    const table = await screen.findByRole('table', { name: 'Scheduled publishes' });
+    const hello = await within(table).findByRole('link', { name: 'Hello world' });
+    expect(hello.getAttribute('href')).toBe('/content/article/e-1');
+    expect(await within(table).findByText('Entry no longer available')).toBeTruthy();
+    expect(within(table).queryByText(/e-[13]/)).toBeNull();
   });
 
   it('confirms a publish from the release with the member titles and flags before shipping', async () => {
@@ -441,10 +497,14 @@ describe('Release publish confirm', () => {
   });
 
   it('offers no publish inside an empty release', async () => {
-    client.listReleases.mockResolvedValue([release]);
+    client.listReleases.mockResolvedValue([{ ...release, itemCount: 0 }]);
     client.listContentTypes.mockResolvedValue([]);
     client.getRelease.mockResolvedValue({ release, items: [] });
-    renderWithProviders(<Releases />);
+    renderWithProviders(
+      <MemoryRouter>
+        <Releases />
+      </MemoryRouter>,
+    );
     fireEvent.click(await screen.findByRole('button', { name: 'Spring campaign' }));
     const publishNow = await screen.findByRole('button', { name: 'Publish now…' });
     expect(await screen.findByText('0 entries · Open')).toBeTruthy();

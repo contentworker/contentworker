@@ -274,13 +274,6 @@
       --tabbar-h: calc(2.75rem + 1px + var(--safe-bottom));
     }
   }
-  /* A page's own bar pinned above the tab bar on a phone (the entry editor's actions, marked
-     data-page-bar): toasts lift by its height so they never cover it. */
-  :root:has([data-page-bar]:not([hidden])) {
-    @media (width < 48rem) {
-      --page-bar-h: calc(2.75rem + 1rem + 1px);
-    }
-  }
   /* Live order pages update themselves; pull-to-refresh and the rubber band only get in the way. */
   body {
     overscroll-behavior-y: none;

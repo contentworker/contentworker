@@ -905,10 +905,6 @@ function SearchButton() {
   );
 }
 
-/**
- * New entry, in the header once the space is known: an outline on Approvals and Workflows, where
- * starting an entry isn't the page's point (cms/components/layout/NewEntry).
- */
 /** The header's breadcrumbs, once a space is in scope (they name types and entries from it). */
 function ShellCrumbs() {
   if (!useOptionalClient()?.ready) return null;
@@ -919,6 +915,10 @@ function ShellCrumbs() {
   );
 }
 
+/**
+ * New entry, in the header once the space is known: an outline on Approvals and Workflows, where
+ * starting an entry isn't the page's point (cms/components/layout/NewEntry).
+ */
 function ShellNewEntry({ path, covered }: { path: string; covered: boolean }) {
   if (!useOptionalClient()?.ready) return null;
   const quiet = path.startsWith('/approvals') || path.startsWith('/workflows');

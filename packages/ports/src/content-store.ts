@@ -298,6 +298,11 @@ export interface WorkflowGraphRepo {
   getVersion(scope: Scope, workflowId: string, version: number): Promise<WorkflowVersion | null>;
   /** The highest-numbered version, or null if none has been published. */
   getLatestVersion(scope: Scope, workflowId: string): Promise<WorkflowVersion | null>;
+  /**
+   * The highest-numbered version of each of `workflowIds` that has one, in one round of queries
+   * (however many ids). Order is unspecified; a workflow never published is absent.
+   */
+  listLatestVersions(scope: Scope, workflowIds: readonly string[]): Promise<WorkflowVersion[]>;
 }
 
 export interface WorkflowRunQuery {
@@ -626,6 +631,11 @@ export interface ReleaseRepo {
   addItem(scope: Scope, releaseId: string, item: ReleaseItem): Promise<void>;
   removeItem(scope: Scope, releaseId: string, entityId: string): Promise<void>;
   listItems(scope: Scope, releaseId: string): Promise<ReleaseItem[]>;
+  /**
+   * How many members each of `releaseIds` holds, from one grouped count (however many ids). A
+   * release with no members is absent.
+   */
+  countItems(scope: Scope, releaseIds: readonly string[]): Promise<ReadonlyMap<string, number>>;
 }
 
 /** A due scheduled action paired with the scope it belongs to (the worker polls

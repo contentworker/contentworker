@@ -218,7 +218,7 @@ cma.assets.publish(id) / .unpublish(id)
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
 
 cma.releases.create({ title }) / .addEntry(id, { entityId }) / .removeEntry(id, entityId)
-cma.releases.list() / .get(id) / .publish(id) / .delete(id)
+cma.releases.list() / .get(id) / .publish(id) / .delete(id)   // list: each with itemCount
 
 cma.scheduledActions.list({ status? }) / .create(input) / .cancel(id)
 

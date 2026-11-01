@@ -27,7 +27,12 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   projects: [
-    { name: 'iphone', testMatch: 'shell.spec.ts', use: { ...devices['iPhone 15'] } },
+    {
+      name: 'iphone',
+      // The editor's action bar sits above the tab bar only on a phone: measured here too.
+      testMatch: ['shell.spec.ts', 'editor-action-bar.spec.ts'],
+      use: { ...devices['iPhone 15'] },
+    },
     {
       name: 'iphone-landscape',
       testMatch: 'shell.spec.ts',

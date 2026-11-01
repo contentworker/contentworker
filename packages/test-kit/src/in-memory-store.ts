@@ -884,6 +884,14 @@ export class InMemoryContentStore implements ContentStore {
     },
     listItems: async (scope, releaseId) =>
       this.releaseItemData.get(`${scopeKey(scope)}::${releaseId}`) ?? [],
+    countItems: async (scope, releaseIds) => {
+      const counts = new Map<string, number>();
+      for (const id of new Set(releaseIds)) {
+        const n = this.releaseItemData.get(`${scopeKey(scope)}::${id}`)?.length ?? 0;
+        if (n > 0) counts.set(id, n);
+      }
+      return counts;
+    },
   };
 
   private readonly scheduledActionData = new Map<string, ScopedScheduledAction>();
@@ -1171,6 +1179,11 @@ export class InMemoryContentStore implements ContentStore {
       const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${workflowId}`)?.at(-1);
       return latest ? clone(latest) : null;
     },
+    listLatestVersions: async (scope, workflowIds) =>
+      [...new Set(workflowIds)].flatMap((id) => {
+        const latest = this.workflowVersionData.get(`${scopeKey(scope)}::${id}`)?.at(-1);
+        return latest ? [clone(latest)] : [];
+      }),
   };
 
   // ---- workflow runs / tasks ------------------------------------------------

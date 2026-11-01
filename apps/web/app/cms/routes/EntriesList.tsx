@@ -237,6 +237,12 @@ export function EntriesList() {
       : undefined;
     return typeof value === 'string' && value ? value : 'Untitled entry';
   };
+  // Where telling entries apart matters (a delete that can't be undone, a list of failures), an
+  // untitled one also shows its id, as a detail beside the name, never as the name.
+  const idDetail = (id: string, title: string) =>
+    title === 'Untitled entry' ? (
+      <span className="ml-1.5 font-mono font-normal text-muted-foreground text-xs">{id}</span>
+    ) : null;
 
   // One bulk API call handles the whole selection server-side, reporting
   // per-item outcomes; partial failures are surfaced by entry, not as a count.
@@ -507,6 +513,7 @@ export function EntriesList() {
               {bulkFailures.map((f) => (
                 <li key={f.id}>
                   <span className="font-medium">{f.title}</span>
+                  {idDetail(f.id, f.title)}
                   {f.error ? `: ${f.error}` : ''}
                 </li>
               ))}
@@ -637,6 +644,7 @@ export function EntriesList() {
           <AlertDialogHeader>
             <AlertDialogTitle>
               Permanently delete “{confirmPurge ? titleOf(confirmPurge.id) : ''}”?
+              {confirmPurge ? idDetail(confirmPurge.id, titleOf(confirmPurge.id)) : null}
             </AlertDialogTitle>
             <AlertDialogDescription>
               This deletes the entry and its entire version history. It can&rsquo;t be undone. If

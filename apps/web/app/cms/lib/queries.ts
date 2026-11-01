@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useClient } from './client-context';
 import type { EntryListQuery } from './management';
@@ -41,7 +41,13 @@ export function useQueryKeys() {
 export function useScopedQuery<T>(
   segments: readonly unknown[],
   queryFn: () => Promise<T>,
-  opts?: { readonly enabled?: boolean; readonly silent?: boolean; readonly staleTime?: number },
+  opts?: {
+    readonly enabled?: boolean;
+    readonly silent?: boolean;
+    readonly staleTime?: number;
+    /** Keep the last key's data while a new key loads (a lookup whose id set grows or shrinks). */
+    readonly keepPrevious?: boolean;
+  },
 ) {
   const { conn } = useClient();
   return useQuery({
@@ -49,6 +55,7 @@ export function useScopedQuery<T>(
     queryFn,
     enabled: opts?.enabled,
     staleTime: opts?.staleTime,
+    placeholderData: opts?.keepPrevious ? keepPreviousData : undefined,
     meta: opts?.silent ? { silent: true } : undefined,
   });
 }

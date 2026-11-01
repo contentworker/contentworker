@@ -102,7 +102,7 @@ export function LiveActivityCard(props: { entryById?: (id: string) => EntryRef |
                   ) : (
                     it.entryId && (
                       <span className="truncate text-muted-foreground">
-                        {looked.isLoading ? '…' : 'Entry no longer available'}
+                        {looked.resolving(it.entryId) ? '…' : 'Entry no longer available'}
                       </span>
                     )
                   )}

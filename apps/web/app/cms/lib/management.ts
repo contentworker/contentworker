@@ -48,6 +48,25 @@ export interface WorkflowSummary extends WorkflowGraphDefinition {
   readonly updatedAt: string | null;
 }
 
+/** What starts a workflow: its trigger node type and the catalog's name for it. */
+export interface WorkflowTrigger {
+  readonly type: string;
+  readonly label: string;
+}
+
+/** A workflow as the list returns it: the summary plus how its PUBLISHED version starts. */
+export interface WorkflowListItem extends WorkflowSummary {
+  /** The latest published version's trigger; null when never published. */
+  readonly publishedTrigger: WorkflowTrigger | null;
+  /** Ids of the other published workflows starting on the same trigger for overlapping types. */
+  readonly startsAlongside: readonly string[] | null;
+}
+
+/** A release as the list returns it, with how many members it holds. */
+export interface ReleaseSummary extends Release {
+  readonly itemCount: number;
+}
+
 export interface WorkflowGraphValidation {
   readonly ok: boolean;
   readonly errors: readonly GraphIssue[];
@@ -1599,8 +1618,8 @@ export function createManagementClient(
     },
 
     // --- releases (bundled atomic publish) -------------------------------
-    async listReleases(): Promise<Release[]> {
-      const r = await req<{ items: Release[] }>('GET', `${mgmt}/releases`);
+    async listReleases(): Promise<ReleaseSummary[]> {
+      const r = await req<{ items: ReleaseSummary[] }>('GET', `${mgmt}/releases`);
       return r.items;
     },
     createRelease(input: { title: string; description?: string }): Promise<Release> {
@@ -1700,8 +1719,8 @@ export function createManagementClient(
       return req('DELETE', `${mgmt}/workflows/${encodeURIComponent(id)}`);
     },
     /** The same list as `listWorkflows`, typed as the graph summaries the route returns. */
-    async listWorkflowGraphs(): Promise<WorkflowSummary[]> {
-      const r = await req<{ items: WorkflowSummary[] }>('GET', `${mgmt}/workflows`);
+    async listWorkflowGraphs(): Promise<WorkflowListItem[]> {
+      const r = await req<{ items: WorkflowListItem[] }>('GET', `${mgmt}/workflows`);
       return r.items;
     },
     /** Creates an unpublished graph workflow; drafts may be incomplete (see `validation`). */
