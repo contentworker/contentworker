@@ -89,7 +89,11 @@ Delivery is **at-least-once**, which is why dispatch is idempotent (keyed on `ev
 
 ## Dispatch
 
-`consumeEvent(ctx, deps, event)` (`events/consume.ts`) is the queue consumer's body. It calls
+`consumeEvent(ctx, deps, event)` (`events/consume.ts`) is the queue consumer's body. The engine
+runs a batch's events in lanes (`apps/engine/src/lanes.ts`): one lane per entry, so an entry's
+publish and unpublish never overtake each other, and one per space:environment for every other
+event; up to six lanes run at once, since each event spends most of its time waiting on D1, KV,
+the search shard and the live hub (a batch of 25 went from ~2.2 s to ~0.35 s locally). It calls
 `dispatchEvent(ctx, deps, event)` (`events/dispatch.ts`), which fans out to:
 
 1. **Webhook fan-out** — active subscribers for `event.type`, HMAC-signed POST, delivery log.
