@@ -780,6 +780,13 @@ export const NODE_SPECS = [
         default: '',
         hint: 'Added to the moderation prompt',
       },
+      {
+        key: 'threshold',
+        label: 'Flag at',
+        kind: 'number',
+        default: 0.5,
+        hint: 'With a decision model: the probability (0–1) at which a category flags the entry',
+      },
       { key: 'into', label: 'Store as var', kind: 'text', default: 'moderation' },
     ],
     outputs: ['clean', 'flagged'],

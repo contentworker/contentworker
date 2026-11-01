@@ -11,6 +11,7 @@ import {
   RecordingEmailSender,
   RecordingWebhookSender,
   SequenceIdGenerator,
+  StubDecisionModel,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -363,6 +364,107 @@ describe('workflow node executors', () => {
       minConfidence: 0.5,
     });
     expect(assess.branches).toEqual(['unsure']);
+  });
+
+  it('choosing AI nodes ask the decision model when one is bound, and use its probabilities', async () => {
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    const decisions = new StubDecisionModel((req) => {
+      const q = Object.keys(req.questions);
+      if (q.includes('label')) {
+        return {
+          label: {
+            type: 'choice',
+            choice: 'opinion',
+            confidence: 0.83,
+            probabilities: { opinion: 0.83, news: 0.17 },
+          },
+        };
+      }
+      if (q.includes('route')) {
+        return {
+          route: {
+            type: 'choice',
+            choice: 'needs_review',
+            confidence: 0.6,
+            probabilities: { publish: 0.4, needs_review: 0.6 },
+          },
+        };
+      }
+      if (q.includes('hate')) {
+        return {
+          violence: { type: 'noul', probability: 0.72 },
+          hate: { type: 'noul', probability: 0.3 },
+        };
+      }
+      return {};
+    });
+    deps = { ...deps, decisions };
+
+    const classify = await exec('ai.classify', { labels: ['opinion', 'news'], into: 'kind' });
+    expect(classify.vars).toEqual({ kind: 'opinion' });
+    expect(classify.output).toMatchObject({
+      label: 'opinion',
+      confidence: 0.83,
+      probabilities: { opinion: 0.83, news: 0.17 },
+      source: 'model',
+    });
+
+    const router = await exec('ai.router', {
+      routes: ['publish', 'needs_review'],
+      instructions: 'Send anything about pricing to review.',
+    });
+    expect(router.branches).toEqual(['needs_review']);
+    // The author's instructions are the question; the entry is only ever the state.
+    const asked = decisions.requests.at(-1);
+    expect(asked?.questions.route).toMatchObject({
+      type: 'choice',
+      instructions: 'Send anything about pricing to review.',
+    });
+    expect(JSON.stringify(asked?.state)).toContain('Spring news');
+
+    const lenient = await exec('ai.moderate', { threshold: 0.8 });
+    expect(lenient.branches).toEqual(['clean']);
+    const strict = await exec('ai.moderate', { instructions: 'No competitor names.' });
+    expect(strict.branches).toEqual(['flagged']);
+    expect(strict.vars).toEqual({ moderation: { flagged: true, categories: ['violence'] } });
+    expect(decisions.requests.at(-1)?.questions.house_rules).toMatchObject({ type: 'noul' });
+
+    const assess = await exec('ai.assess', withDefaults('ai.assess', {}));
+    expect(assess.output).toMatchObject({ source: 'model' });
+  });
+
+  it('choosing AI nodes fail closed when the decision model is down', async () => {
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    deps = {
+      ...deps,
+      decisions: {
+        async decide() {
+          throw new Error('decisions down');
+        },
+      },
+    };
+    expect((await exec('ai.moderate')).branches).toEqual(['flagged']);
+    expect((await exec('ai.router', { routes: ['publish', 'needs_review'] })).branches).toEqual([
+      'needs_review',
+    ]);
+    const assess = await exec('ai.assess', {
+      ...withDefaults('ai.assess', {}),
+      minConfidence: 0.5,
+    });
+    expect(assess.branches).toEqual(['unsure']);
+  });
+
+  it('choosing AI nodes answer from the heuristic in mock mode, even with a decision model bound', async () => {
+    const decisions = new StubDecisionModel();
+    deps = { ...deps, decisions };
+    const classify = await exec('ai.classify', { labels: ['opinion', 'news'], into: 'kind' });
+    expect(classify.vars).toEqual({ kind: 'news' });
+    expect(classify.output).toMatchObject({ source: 'heuristic', fallback: 'mock' });
+    expect((await exec('ai.router', { routes: ['publish', 'needs_review'] })).branches).toEqual([
+      'publish',
+    ]);
+    expect((await exec('ai.moderate')).branches).toEqual(['clean']);
+    expect(decisions.requests).toEqual([]);
   });
 
   it('ai.enrich proposes a review to wait on, and resumes by the review’s decision', async () => {

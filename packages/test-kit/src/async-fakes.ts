@@ -2,6 +2,10 @@ import type { DomainEvent, Webhook } from '@contentworker/domain';
 import type {
   AIProvider,
   Cache,
+  DecisionAnswer,
+  DecisionModel,
+  DecisionRequest,
+  DecisionResult,
   EventBus,
   GenerateRequest,
   GenerateResult,
@@ -144,5 +148,43 @@ export class RecordingWebhookSender implements WebhookSender {
   async send(webhook: Webhook, payload: DomainEvent): Promise<WebhookSendResult> {
     this.sent.push({ webhook, event: payload });
     return this.result;
+  }
+}
+
+/**
+ * A DecisionModel answering from `respond` (per question id), or, by default, the first option /
+ * no / the lowest level. Records every request.
+ */
+export class StubDecisionModel implements DecisionModel {
+  readonly requests: DecisionRequest[] = [];
+  constructor(
+    private readonly respond: (req: DecisionRequest) => Record<string, DecisionAnswer> = () => ({}),
+  ) {}
+
+  async decide(req: DecisionRequest): Promise<DecisionResult> {
+    this.requests.push(req);
+    const given = this.respond(req);
+    const answers: Record<string, DecisionAnswer> = {};
+    for (const [id, q] of Object.entries(req.questions)) {
+      const answer = given[id];
+      if (answer) answers[id] = answer;
+      else if (q.type === 'noul') answers[id] = { type: 'noul', probability: 0 };
+      else if (q.type === 'choice') {
+        const first = Object.keys(q.options)[0] as string;
+        answers[id] = {
+          type: 'choice',
+          choice: first,
+          confidence: 1,
+          probabilities: { [first]: 1 },
+        };
+      } else {
+        answers[id] = {
+          type: 'score',
+          score: 0,
+          probabilities: q.levels.map((_, i) => (i ? 0 : 1)),
+        };
+      }
+    }
+    return { answers, model: 'stub', usage: { inputTokens: 10 } };
   }
 }
