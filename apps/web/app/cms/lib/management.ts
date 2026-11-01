@@ -2,13 +2,17 @@ import type {
   AgentReview,
   AgentReviewStatus,
   Asset,
+  AssetCollection,
   AssetFolder,
   AssetKind,
   AssetMetadata,
   AssetRights,
+  AssetShareLink,
+  AssetShareTargetType,
   AssetStatus,
   AssetUsage,
   AssetVersion,
+  AssetZipJob,
   Comment,
   Concept,
   ConceptScheme,
@@ -971,6 +975,72 @@ export interface AssetSearchPage {
   readonly facets: AssetFacets;
 }
 
+/** One page of collections, by name; pass `nextCursor` back as `cursor` for the next. */
+export interface AssetCollectionPage {
+  readonly items: AssetCollection[];
+  readonly nextCursor?: string;
+}
+
+/** What a collection's assets can be narrowed by: the library's filters, in its own order. */
+export type AssetCollectionAssetsQuery = Omit<AssetListQuery, 'folder' | 'sort' | 'order'>;
+
+/** A share link to make: what it opens, until when, and how. */
+export interface ShareLinkInput {
+  readonly targetType: AssetShareTargetType;
+  readonly targetId: string;
+  /** An ISO instant 5 minutes to 90 days out (the API checks it). */
+  readonly expiresAt: string;
+  readonly allowDownload?: boolean;
+  /** 8 to 256 characters; asked for before the page opens. */
+  readonly password?: string;
+}
+
+/** A multipart upload started for a new draft asset (`POST …/assets/uploads`). */
+export interface MultipartUploadStarted {
+  readonly asset: Asset;
+  readonly upload: {
+    readonly uploadId: string;
+    /** Every part but the last has exactly this many bytes. */
+    readonly partSize: number;
+    readonly partCount: number;
+  };
+}
+
+/** A signed URL for one part: PUT exactly `length` bytes to it; its ETag names the part. */
+export interface SignedUploadPart {
+  readonly partNumber: number;
+  readonly url: string;
+  readonly length: number;
+  readonly expiresAt: string;
+}
+
+/** A zip download being built, or built, with a short-lived download URL once it is. */
+export type AssetZip = AssetZipJob;
+
+/** What a zip is made of: a selection of assets or a collection, and its name (without .zip). */
+export type AssetZipInput = (
+  | { readonly assetIds: readonly string[] }
+  | { readonly collectionId: string }
+) & { readonly name?: string };
+
+/**
+ * A part's PUT to storage that failed. Always worth another attempt (signed again): an expired
+ * URL is a 403 from storage, not a refusal by the API.
+ */
+export class UploadPartError extends ApiError {}
+
+/**
+ * A signed upload URL as the admin PUTs it: a `/media/…` URL (absolute on the api's host in a
+ * deployment, `MEDIA_BASE_URL`) becomes its same-origin path, which the web Worker's gateway
+ * forwards to the api. The api sends no CORS headers, so a cross-origin PUT's ETag couldn't be
+ * read; the signature covers the path and query, not the host, so the two are the same request.
+ * Any other URL (a video host's) is left alone.
+ */
+export function sameOriginUpload(url: string): string {
+  const u = new URL(url, 'http://same-origin.invalid');
+  return u.pathname.startsWith('/media/') ? `${u.pathname}${u.search}` : url;
+}
+
 /** The query string for an {@link AssetListQuery}, without the empty parts. */
 export function assetQueryParams(query: AssetListQuery | AssetSearchQuery): URLSearchParams {
   const params = new URLSearchParams();
@@ -1017,9 +1087,14 @@ export function createManagementClient(
     }
     return (res.status === 204 ? undefined : await res.json()) as T;
   }
-  // The bytes go straight to storage on the signed URL the API handed out, not through the API.
+  // The bytes go on the signed URL the API handed out, to the api's /media/ route through the web
+  // Worker (same origin), not through the JSON API.
   async function putFile(upload: { url: string; headers: Record<string, string> }, file: File) {
-    const put = await fetchImpl(upload.url, { method: 'PUT', headers: upload.headers, body: file });
+    const put = await fetchImpl(sameOriginUpload(upload.url), {
+      method: 'PUT',
+      headers: upload.headers,
+      body: file,
+    });
     if (!put.ok) throw new ApiError(put.status, `upload failed: ${put.status}`);
   }
 
@@ -1351,6 +1426,171 @@ export function createManagementClient(
     deleteAssetFolder(id: string): Promise<void> {
       return req('DELETE', `${mgmt}/asset-folders/${encodeURIComponent(id)}`);
     },
+    // --- asset collections -------------------------------------------------
+    /** One page of the collections, by name. */
+    listAssetCollections(
+      query: { readonly limit?: number; readonly cursor?: string } = {},
+    ): Promise<AssetCollectionPage> {
+      const qs = assetQueryParams(query).toString();
+      return req('GET', `${mgmt}/asset-collections${qs ? `?${qs}` : ''}`);
+    },
+    getAssetCollection(id: string): Promise<AssetCollection> {
+      return req('GET', `${mgmt}/asset-collections/${encodeURIComponent(id)}`);
+    },
+    createAssetCollection(input: { name: string; description?: string }): Promise<AssetCollection> {
+      return req('POST', `${mgmt}/asset-collections`, input);
+    },
+    /** Renames it or changes its description; `description: ''` clears it. */
+    updateAssetCollection(
+      id: string,
+      patch: { name?: string; description?: string },
+    ): Promise<AssetCollection> {
+      return req('PATCH', `${mgmt}/asset-collections/${encodeURIComponent(id)}`, patch);
+    },
+    /** Deletes the collection; its assets stay in the library, and links to it stop opening. */
+    deleteAssetCollection(id: string): Promise<void> {
+      return req('DELETE', `${mgmt}/asset-collections/${encodeURIComponent(id)}`);
+    },
+    /** A page of the collection's assets, in its order. */
+    listAssetCollectionAssets(
+      id: string,
+      query: AssetCollectionAssetsQuery = {},
+    ): Promise<AssetPage> {
+      const qs = assetQueryParams(query).toString();
+      return req(
+        'GET',
+        `${mgmt}/asset-collections/${encodeURIComponent(id)}/assets${qs ? `?${qs}` : ''}`,
+      );
+    },
+    /**
+     * Adds assets after its last member (up to 500 ids a call). Members already in it stay put;
+     * `skipped` names the ids that aren't assets here. 409 past 1,000 members.
+     */
+    addToAssetCollection(
+      id: string,
+      assetIds: readonly string[],
+    ): Promise<{ added: number; skipped: string[] }> {
+      return req('POST', `${mgmt}/asset-collections/${encodeURIComponent(id)}/assets`, {
+        assetIds,
+      });
+    },
+    /** Takes assets out of the collection (never out of the library). */
+    removeFromAssetCollection(
+      id: string,
+      assetIds: readonly string[],
+    ): Promise<{ removed: number }> {
+      return req('POST', `${mgmt}/asset-collections/${encodeURIComponent(id)}/assets/remove`, {
+        assetIds,
+      });
+    },
+    /** The named members go first, in this order; the rest keep theirs after them. */
+    reorderAssetCollection(id: string, assetIds: readonly string[]): Promise<void> {
+      return req('PUT', `${mgmt}/asset-collections/${encodeURIComponent(id)}/order`, {
+        assetIds,
+      });
+    },
+
+    // --- share links (content:publish, listing included) ----------------------
+    /** The links to one asset or collection, newest first; active ones unless asked. */
+    async listShareLinks(target: {
+      targetType: AssetShareTargetType;
+      targetId: string;
+      includeInactive?: boolean;
+    }): Promise<AssetShareLink[]> {
+      const params = new URLSearchParams({
+        targetType: target.targetType,
+        targetId: target.targetId,
+      });
+      if (target.includeInactive) params.set('includeInactive', 'true');
+      const r = await req<{ items: AssetShareLink[] }>('GET', `${mgmt}/share-links?${params}`);
+      return r.items;
+    },
+    /** Makes a link; an asset must be published (409 otherwise). */
+    createShareLink(input: ShareLinkInput): Promise<AssetShareLink> {
+      return req('POST', `${mgmt}/share-links`, input);
+    },
+    /** Revokes a link; it stops opening within a minute. Revoking it again changes nothing. */
+    revokeShareLink(id: string): Promise<AssetShareLink> {
+      return req('DELETE', `${mgmt}/share-links/${encodeURIComponent(id)}`);
+    },
+
+    // --- multipart uploads (files past one signed PUT) -----------------------------
+    /** Creates the draft asset and its multipart upload: the part size and how many parts. */
+    startAssetUpload(input: {
+      fileName: string;
+      contentType: string;
+      size: number;
+      title?: string;
+      folderId?: string;
+    }): Promise<MultipartUploadStarted> {
+      const { title, folderId, ...rest } = input;
+      return req('POST', `${mgmt}/assets/uploads`, {
+        ...rest,
+        ...(title ? { title: { [conn.locale]: title } } : {}),
+        ...(folderId ? { folderId } : {}),
+      });
+    },
+    /** Signs part URLs (up to 100 a call); sign a part again to retry it. */
+    signAssetUploadParts(
+      assetId: string,
+      uploadId: string,
+      partNumbers: readonly number[],
+    ): Promise<{ parts: SignedUploadPart[] }> {
+      return req(
+        'POST',
+        `${mgmt}/assets/${encodeURIComponent(assetId)}/uploads/${encodeURIComponent(uploadId)}/parts`,
+        { partNumbers },
+      );
+    },
+    /**
+     * PUTs one part's bytes straight to storage on its signed URL and returns the ETag that names
+     * it. A failure is an {@link UploadPartError}.
+     */
+    async putUploadPart(url: string, bytes: Blob, signal?: AbortSignal): Promise<string> {
+      const res = await fetchImpl(sameOriginUpload(url), {
+        method: 'PUT',
+        body: bytes,
+        ...(signal ? { signal } : {}),
+      });
+      if (!res.ok) throw new UploadPartError(res.status, `part upload failed: ${res.status}`);
+      const etag = res.headers.get('etag');
+      if (!etag) throw new UploadPartError(0, 'part upload came back without an ETag');
+      return etag;
+    },
+    /** Names every part 1..n with its ETag; the asset then has its file, and ingest starts. */
+    completeAssetUpload(
+      assetId: string,
+      uploadId: string,
+      parts: readonly { partNumber: number; etag: string }[],
+    ): Promise<Asset> {
+      return req(
+        'POST',
+        `${mgmt}/assets/${encodeURIComponent(assetId)}/uploads/${encodeURIComponent(uploadId)}/complete`,
+        { parts },
+      );
+    },
+    /** Gives the upload up: its parts are discarded, and its empty draft deleted. */
+    abortAssetUpload(assetId: string, uploadId: string): Promise<void> {
+      return req(
+        'DELETE',
+        `${mgmt}/assets/${encodeURIComponent(assetId)}/uploads/${encodeURIComponent(uploadId)}`,
+      );
+    },
+
+    // --- zip downloads -----------------------------------------------------------
+    /** Starts building a zip of a selection or a collection (202); follow it with getAssetZip. */
+    startAssetZip(input: AssetZipInput): Promise<AssetZip> {
+      return req('POST', `${mgmt}/asset-zips`, input);
+    },
+    /** A zip's progress, with a 15-minute download URL once it is built. */
+    getAssetZip(id: string): Promise<AssetZip> {
+      return req('GET', `${mgmt}/asset-zips/${encodeURIComponent(id)}`);
+    },
+    async listAssetZips(): Promise<AssetZip[]> {
+      const r = await req<{ items: AssetZip[] }>('GET', `${mgmt}/asset-zips`);
+      return r.items;
+    },
+
     /** Creates a draft video asset with a one-time direct upload to the video host. */
     createVideoAsset(input: { fileName: string; contentType: string; title?: string }): Promise<{
       asset: Asset;

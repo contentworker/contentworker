@@ -9,10 +9,10 @@
 
 import { env } from 'cloudflare:workers';
 import { workspaceSettings } from '@contentworker/db/auth';
+import { normalizeEmail, secretEqual, sha256Hex } from '@contentworker/security/credentials';
 import { eq, ne } from 'drizzle-orm';
 import { audit, clientIp } from './audit.server';
 import { authEnabled, recordFailure, Throttled, waitFor } from './auth.server';
-import { normalizeEmail, secretEqual, sha256Hex } from './credentials';
 import { db } from './env.server';
 import { setSsoSettings, ssoSettings } from './settings.server';
 import { insertAdmin, type NewAdmin, TeamError } from './team.server';

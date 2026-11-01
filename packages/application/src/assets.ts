@@ -98,14 +98,29 @@ export async function createAsset(
   input: CreateAssetInput,
   opts: { readonly createdBy?: string; readonly folderId?: string } = {},
 ): Promise<CreatedAsset> {
-  // Before the upload URL exists: a refused asset must not leave a signed URL
-  // in the caller's hands, nor a key reserved in the bucket.
-  const checked = await runHook(ctx, 'asset:beforeCreate', scope, input);
+  const { asset, key, contentType } = await prepareUploadDraft(ctx, blob, scope, input, opts);
+  const upload = await blob.getUploadUrl(key, contentType);
+  await createUploadDraft(ctx, scope, asset);
+  return { asset, upload };
+}
 
+/**
+ * The draft an upload fills, before anything is written: the `asset:beforeCreate` hooks have
+ * passed it (a refused asset leaves no signed URL in the caller's hands, nor a key reserved in the
+ * bucket), its folder exists, and its key is minted from its new id. Shared by the single signed
+ * PUT and multipart uploads, so both keys follow the same rules.
+ */
+export async function prepareUploadDraft(
+  ctx: AppContext,
+  blob: BlobStore,
+  scope: Scope,
+  input: CreateAssetInput,
+  opts: { readonly createdBy?: string; readonly folderId?: string } = {},
+): Promise<{ readonly asset: Asset; readonly key: string; readonly contentType: string }> {
+  const checked = await runHook(ctx, 'asset:beforeCreate', scope, input);
   if (opts.folderId) await getAssetFolderOrThrow(ctx, scope, opts.folderId);
   const id = ctx.ids.newId();
   const key = assetObjectKey(scope, id, checked.fileName);
-  const upload = await blob.getUploadUrl(key, checked.contentType);
   const url = await blob.getDownloadUrl(key);
   const asset: Asset = {
     id,
@@ -120,16 +135,19 @@ export async function createAsset(
     ...(opts.createdBy ? { createdBy: opts.createdBy } : {}),
     ...(opts.folderId ? { folderId: opts.folderId } : {}),
   };
+  return { asset, key, contentType: checked.contentType };
+}
+
+/** Writes a prepared draft; a folder deleted since the check is reported as the check would. */
+export async function createUploadDraft(ctx: AppContext, scope: Scope, asset: Asset) {
   try {
     await ctx.store.assets.create(scope, asset);
   } catch (err) {
-    // The folder was deleted after the check: report it like the check would have.
-    if (err instanceof TransactionConflictError && opts.folderId) {
-      throw new NotFoundError('AssetFolder', opts.folderId);
+    if (err instanceof TransactionConflictError && asset.folderId) {
+      throw new NotFoundError('AssetFolder', asset.folderId);
     }
     throw err;
   }
-  return { asset, upload };
 }
 
 export async function getAsset(ctx: AppContext, scope: Scope, id: string): Promise<Asset> {
@@ -454,7 +472,8 @@ export async function restoreAsset(ctx: AppContext, scope: Scope, id: string): P
  * (archive it instead, or remove the links first); the store re-checks at commit, so a link made
  * in between refuses it too.
  *
- * The row, its published snapshot and its versions go in one unit with an `asset.deleted` event;
+ * The row, its published snapshot, its versions and its collection memberships go in one unit with
+ * an `asset.deleted` event (and an `asset_collection.changed` per collection it was in);
  * the engine removes the bytes (blob storage, and the video host for a hosted video) when it
  * handles the event, so a failed removal is retried rather than lost. A published asset also
  * emits `asset.unpublished`, as it leaves Delivery.
@@ -466,10 +485,24 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
   if (usage.length > 0) throw await assetInUse(ctx, scope, id, usage);
   const now = ctx.clock.now().toISOString();
   const videoId = asset.file.video?.videoId;
-  const twins = await duplicatesOf(ctx, scope, asset);
+  const [twins, collections] = await Promise.all([
+    duplicatesOf(ctx, scope, asset),
+    ctx.store.assetCollections.collectionsOf(scope, id, MAX_COLLECTIONS_ANNOUNCED),
+  ]);
   try {
     await ctx.store.withTransaction(async (tx) => {
+      // Its memberships go with the row (the store deletes them in the same batch); each
+      // collection it leaves is announced, so what lists the collection is purged.
       await tx.assets.delete(scope, id);
+      for (const collectionId of collections) {
+        await tx.outbox.append({
+          id: ctx.ids.newId(),
+          type: 'asset_collection.changed',
+          scope,
+          occurredAt: now,
+          collectionId,
+        });
+      }
       // Copies that named this asset as their original now name the oldest one left (which
       // becomes the original itself), never an asset that is gone.
       const [heir] = twins;
@@ -504,6 +537,12 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
     throw err;
   }
 }
+
+/**
+ * Most collections a deleted asset announces leaving. Past it, a share page of another collection
+ * that held it lists it until the page's own max-age runs out (its file already 404s).
+ */
+const MAX_COLLECTIONS_ANNOUNCED = 100;
 
 /** Most copies of one file re-pointed when their original is deleted. */
 const MAX_DUPLICATES_REPOINTED = 50;

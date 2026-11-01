@@ -3,8 +3,10 @@ import {
   type AgentSchedule,
   type ApiKey,
   type Asset,
+  type AssetCollection,
   type AssetFolder,
   type AssetRendition,
+  type AssetZipJob,
   assetKind,
   type Comment,
   type Concept,
@@ -32,6 +34,7 @@ import {
   runEntryQuery,
   type Scope,
   type SpaceMember,
+  type StoredAssetShareLink,
   type Tag,
   type Task,
   type UniqueClaim,
@@ -56,10 +59,15 @@ import type {
   AppExtension,
   AppExtensionRepo,
   ArchivableVersion,
+  AssetCollectionRepo,
   AssetFolderRepo,
   AssetRenditionRepo,
   AssetRepo,
+  AssetShareLinkRepo,
+  AssetUpload,
+  AssetUploadRepo,
   AssetVersionRecord,
+  AssetZipJobRepo,
   AuditEntry,
   AuditRepo,
   AuthRepo,
@@ -258,6 +266,11 @@ export class InMemoryContentStore implements ContentStore {
         this.assetVersionData,
         this.assetTouched,
         this.assetFolderData,
+        this.collectionData,
+        this.collectionItemData,
+        this.shareLinkData,
+        this.zipJobData,
+        this.uploadData,
         this.referenceData,
         this.agentRunData,
         this.releaseData,
@@ -854,6 +867,10 @@ export class InMemoryContentStore implements ContentStore {
       for (const k of [...this.assetVersionData.keys()]) {
         if (k.startsWith(`${key}::v`)) this.assetVersionData.delete(k);
       }
+      // As the D1 store: out of every collection, in the same unit.
+      for (const [k, m] of [...this.collectionItemData]) {
+        if (k.startsWith(prefix) && m.assetId === id) this.collectionItemData.delete(k);
+      }
     },
     replaceFile: async (scope, next, previous) => {
       // As the D1 store's guard: still on the version the caller read.
@@ -1050,6 +1067,308 @@ export class InMemoryContentStore implements ContentStore {
       if (hasChild || hasAsset) throw new TransactionConflictError();
       this.assetFolderData.delete(`${prefix}${id}`);
     },
+  };
+
+  private readonly collectionData = new Map<string, Omit<AssetCollection, 'itemCount'>>();
+  /** Memberships by `${scopeKey}::${collectionId}::${assetId}`. */
+  private readonly collectionItemData = new Map<
+    string,
+    { collectionId: string; assetId: string; position: number; addedAt: string }
+  >();
+
+  /** A collection's memberships, in order (position, then asset id). */
+  private membersOf(scope: Scope, id: string) {
+    const prefix = `${scopeKey(scope)}::${id}::`;
+    return [...this.collectionItemData.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v)
+      .sort((a, b) => a.position - b.position || a.assetId.localeCompare(b.assetId));
+  }
+
+  private withCount(scope: Scope, c: Omit<AssetCollection, 'itemCount'>): AssetCollection {
+    // As the D1 store: members whose asset exists.
+    const count = this.membersOf(scope, c.id).filter((m) =>
+      this.assetData.has(`${scopeKey(scope)}::${m.assetId}`),
+    ).length;
+    return { ...c, itemCount: count };
+  }
+
+  readonly assetCollections: AssetCollectionRepo = {
+    get: async (scope, id) => {
+      const c = this.collectionData.get(`${scopeKey(scope)}::${id}`);
+      return c ? this.withCount(scope, c) : null;
+    },
+    list: async (scope, query = {}) => {
+      const prefix = `${scopeKey(scope)}::`;
+      const all = [...this.collectionData.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([, c]) => c)
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id.localeCompare(b.id)));
+      let start = 0;
+      if (query.cursor) {
+        const [name, id] = JSON.parse(query.cursor) as [string, string];
+        start = all.findIndex((c) => c.name > name || (c.name === name && c.id > id));
+        if (start < 0) start = all.length;
+      }
+      const limit = Math.min(Math.max(1, query.limit ?? 100), 1000);
+      const page = all.slice(start, start + limit);
+      const last = page.at(-1);
+      return {
+        items: page.map((c) => this.withCount(scope, c)),
+        ...(all.length > start + limit && last
+          ? { nextCursor: JSON.stringify([last.name, last.id]) }
+          : {}),
+      };
+    },
+    create: async (scope, collection) => {
+      const { itemCount: _count, ...rest } = collection;
+      this.collectionData.set(`${scopeKey(scope)}::${collection.id}`, rest);
+    },
+    save: async (scope, collection) => {
+      const key = `${scopeKey(scope)}::${collection.id}`;
+      const current = this.collectionData.get(key);
+      // As the D1 store's compare-and-set: the collection must still exist.
+      if (!current) throw new TransactionConflictError();
+      const { description: _d, ...kept } = current;
+      this.collectionData.set(key, {
+        ...kept,
+        name: collection.name,
+        ...(collection.description ? { description: collection.description } : {}),
+        updatedAt: collection.updatedAt,
+      });
+    },
+    delete: async (scope, id) => {
+      for (const m of this.membersOf(scope, id)) {
+        this.collectionItemData.delete(`${scopeKey(scope)}::${id}::${m.assetId}`);
+      }
+      this.collectionData.delete(`${scopeKey(scope)}::${id}`);
+    },
+    addItems: async (scope, id, assetIds, at, maxItems) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const collection = this.collectionData.get(key);
+      // As the D1 store's guard: the collection must still exist.
+      if (!collection) throw new TransactionConflictError();
+      const members = this.membersOf(scope, id);
+      const present = new Set(members.map((m) => m.assetId));
+      // As D1's INSERT … SELECT: only assets of this scope, members already there skipped.
+      const adding = [...new Set(assetIds)].filter(
+        (a) => !present.has(a) && this.assetData.has(`${scopeKey(scope)}::${a}`),
+      );
+      // As the D1 store's guard: no more than the cap afterwards.
+      const counted = members.filter((m) => this.assetData.has(`${scopeKey(scope)}::${m.assetId}`));
+      if (counted.length + adding.length > maxItems) throw new TransactionConflictError();
+      const base = Math.max(-1, ...members.map((m) => m.position)) + 1;
+      const order = [...new Set(assetIds)];
+      for (const assetId of adding) {
+        this.collectionItemData.set(`${key}::${assetId}`, {
+          collectionId: id,
+          assetId,
+          position: base + order.indexOf(assetId),
+          addedAt: at.toISOString(),
+        });
+      }
+      this.collectionData.set(key, { ...collection, updatedAt: at.toISOString() });
+    },
+    removeItems: async (scope, id, assetIds) => {
+      for (const assetId of assetIds) {
+        this.collectionItemData.delete(`${scopeKey(scope)}::${id}::${assetId}`);
+      }
+    },
+    reorder: async (scope, id, assetIds) => {
+      // As the D1 store's guard: the collection must still exist.
+      if (!this.collectionData.has(`${scopeKey(scope)}::${id}`)) {
+        throw new TransactionConflictError();
+      }
+      const order = [...new Set(assetIds)];
+      const named = new Set(order);
+      for (const m of this.membersOf(scope, id)) {
+        const k = `${scopeKey(scope)}::${id}::${m.assetId}`;
+        this.collectionItemData.set(k, {
+          ...m,
+          position: named.has(m.assetId) ? order.indexOf(m.assetId) : m.position + order.length,
+        });
+      }
+    },
+    listItems: async (scope, id, query) => {
+      // The library's filters, applied as its listing applies them.
+      const allowed = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const page = await this.assets.list(scope, {
+          limit: 1000,
+          filters: query.filters ?? {},
+          ...(cursor ? { cursor } : {}),
+        });
+        for (const a of page.items) allowed.add(a.id);
+        cursor = page.nextCursor;
+      } while (cursor);
+      let rows = this.membersOf(scope, id).filter((m) => allowed.has(m.assetId));
+      if (query.cursor) {
+        const [position, assetId] = JSON.parse(query.cursor) as [number, string];
+        rows = rows.filter(
+          (m) => m.position > position || (m.position === position && m.assetId > assetId),
+        );
+      }
+      const limit = Math.min(Math.max(1, query.limit ?? 100), 1000);
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.flatMap((m) => {
+          const a = this.assetData.get(`${scopeKey(scope)}::${m.assetId}`);
+          return a ? [a] : [];
+        }),
+        ...(rows.length > limit && last
+          ? { nextCursor: JSON.stringify([last.position, last.assetId]) }
+          : {}),
+      };
+    },
+    listItemIds: async (scope, id) => this.membersOf(scope, id).map((m) => m.assetId),
+    listPublishedItems: async (scope, id, query) => {
+      let rows = this.membersOf(scope, id).filter((m) =>
+        this.publishedAssetData.has(`${scopeKey(scope)}::${m.assetId}`),
+      );
+      if (query.cursor) {
+        const [position, assetId] = JSON.parse(query.cursor) as [number, string];
+        rows = rows.filter(
+          (m) => m.position > position || (m.position === position && m.assetId > assetId),
+        );
+      }
+      const limit = Math.min(Math.max(1, query.limit ?? 100), 1000);
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.flatMap((m) => {
+          const p = this.publishedAssetData.get(`${scopeKey(scope)}::${m.assetId}`);
+          return p ? [p] : [];
+        }),
+        ...(rows.length > limit && last
+          ? { nextCursor: JSON.stringify([last.position, last.assetId]) }
+          : {}),
+      };
+    },
+    restore: async (scope, collection, assetIds) => {
+      const key = `${scopeKey(scope)}::${collection.id}`;
+      if (!this.collectionData.has(key)) {
+        const { itemCount: _count, ...rest } = collection;
+        this.collectionData.set(key, rest);
+      }
+      [...new Set(assetIds)].forEach((assetId, position) => {
+        const k = `${key}::${assetId}`;
+        if (this.collectionItemData.has(k)) return;
+        this.collectionItemData.set(k, {
+          collectionId: collection.id,
+          assetId,
+          position,
+          addedAt: collection.updatedAt,
+        });
+      });
+    },
+    hasItem: async (scope, id, assetId) =>
+      this.collectionItemData.has(`${scopeKey(scope)}::${id}::${assetId}`),
+    collectionsOf: async (scope, assetId, limit) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return [...this.collectionItemData.entries()]
+        .filter(([k, m]) => k.startsWith(prefix) && m.assetId === assetId)
+        .map(([, m]) => m.collectionId)
+        .slice(0, Math.max(1, limit));
+    },
+  };
+
+  private readonly shareLinkData = new Map<string, StoredAssetShareLink>();
+
+  readonly assetShareLinks: AssetShareLinkRepo = {
+    get: async (scope, id) => this.shareLinkData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    list: async (scope, query) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return [...this.shareLinkData.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([, l]) => l)
+        .filter(
+          (l) =>
+            (!query.targetType || l.targetType === query.targetType) &&
+            (!query.targetId || l.targetId === query.targetId) &&
+            (query.includeInactive ||
+              (!l.revokedAt && Date.parse(l.expiresAt) > query.now.getTime())),
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+        .slice(0, Math.min(Math.max(1, query.limit ?? 100), 1000));
+    },
+    create: async (scope, link) => {
+      // As the D1 store's guard: the target must still exist.
+      const target =
+        link.targetType === 'asset'
+          ? this.assetData.has(`${scopeKey(scope)}::${link.targetId}`)
+          : this.collectionData.has(`${scopeKey(scope)}::${link.targetId}`);
+      if (!target) throw new TransactionConflictError();
+      this.shareLinkData.set(`${scopeKey(scope)}::${link.id}`, link);
+    },
+    revoke: async (scope, id, at) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const link = this.shareLinkData.get(key);
+      // As the D1 store's compare-and-set: only a link not revoked yet.
+      if (!link || link.revokedAt) throw new TransactionConflictError();
+      this.shareLinkData.set(key, { ...link, revokedAt: at.toISOString() });
+    },
+  };
+
+  private readonly zipJobData = new Map<string, AssetZipJob>();
+
+  readonly assetZips: AssetZipJobRepo = {
+    get: async (scope, id) => this.zipJobData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    list: async (scope, limit) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return [...this.zipJobData.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([, j]) => j)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+        .slice(0, Math.max(1, limit));
+    },
+    create: async (scope, job) => {
+      this.zipJobData.set(`${scopeKey(scope)}::${job.id}`, job);
+    },
+    update: async (scope, id, patch) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const job = this.zipJobData.get(key);
+      if (!job) return;
+      const defined = Object.fromEntries(
+        Object.entries(patch).filter(([, v]) => v !== undefined),
+      ) as Partial<AssetZipJob>;
+      this.zipJobData.set(key, { ...job, ...defined });
+    },
+    listExpired: async (at, limit) =>
+      [...this.zipJobData.entries()]
+        .filter(([, j]) => Date.parse(j.expiresAt) <= at.getTime())
+        .sort(([, a], [, b]) => a.expiresAt.localeCompare(b.expiresAt))
+        .slice(0, Math.max(1, limit))
+        .map(([k, j]) => {
+          const [spaceId = '', environmentId = ''] = k.split('::');
+          return { scope: { spaceId, environmentId }, id: j.id };
+        }),
+    delete: async (scope, id) => {
+      this.zipJobData.delete(`${scopeKey(scope)}::${id}`);
+    },
+  };
+
+  private readonly uploadData = new Map<string, AssetUpload>();
+
+  readonly assetUploads: AssetUploadRepo = {
+    get: async (scope, assetId, uploadId) =>
+      this.uploadData.get(`${scopeKey(scope)}::${assetId}::${uploadId}`) ?? null,
+    create: async (scope, upload) => {
+      this.uploadData.set(`${scopeKey(scope)}::${upload.assetId}::${upload.uploadId}`, upload);
+    },
+    delete: async (scope, assetId, uploadId) => {
+      this.uploadData.delete(`${scopeKey(scope)}::${assetId}::${uploadId}`);
+    },
+    listStartedBefore: async (before, limit) =>
+      [...this.uploadData.entries()]
+        .filter(([, u]) => Date.parse(u.createdAt) < before.getTime())
+        .sort(([, a], [, b]) => a.createdAt.localeCompare(b.createdAt))
+        .slice(0, Math.max(1, limit))
+        .map(([k, upload]) => {
+          const [spaceId = '', environmentId = ''] = k.split('::');
+          return { scope: { spaceId, environmentId }, upload };
+        }),
   };
 
   private referenceData = new Map<string, ReferenceEdge[]>();
@@ -2341,6 +2660,11 @@ export class InMemoryContentStore implements ContentStore {
       this.assetVersionData,
       this.assetTouched,
       this.assetFolderData,
+      this.collectionData,
+      this.collectionItemData,
+      this.shareLinkData,
+      this.zipJobData,
+      this.uploadData,
       this.renditionData,
       this.referenceData,
       this.releaseData,
@@ -2377,6 +2701,10 @@ export class InMemoryContentStore implements ContentStore {
         entries: this.entries,
         assets: this.assets,
         assetFolders: this.assetFolders,
+        assetCollections: this.assetCollections,
+        assetShareLinks: this.assetShareLinks,
+        assetZips: this.assetZips,
+        assetUploads: this.assetUploads,
         assetRenditions: this.assetRenditions,
         references: this.references,
         releases: this.releases,

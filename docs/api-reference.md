@@ -29,7 +29,7 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 | ------------------------- | --------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `api.<domain>`            | `apps/api`      | `management,preview,delivery` | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads                                                                                             |
 | `cdn.<domain>`            | `apps/delivery` | `delivery`                    | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request                                                                                              |
-| `media.<domain>`          | `apps/media`    | `media`                       | Published asset files (`/<space>/<env>/<id>/v<n>/<token>/<variant>/<file>`), cached (immutable unless rights expire); Preview's signed `/media/*` reads (GET only, `exp` required) |
+| `media.<domain>`          | `apps/media`    | `media`                       | Published asset files (`/<space>/<env>/<id>/v<n>/<token>/<variant>/<file>`), cached (immutable unless rights expire); Preview's signed `/media/*` reads (GET only, `exp` required); share links (`/s/<space>/<env>/<link>/<token>`, [below](#asset-collections-share-links-uploads-and-zips)) |
 | `<domain>` (admin origin) | `apps/web`      | —                             | Forwards the api's surfaces to it ([the list](./architecture.md#appsweb-the-admin-and-the-gateway)); OAuth's issuer on a fleet deployment                                          |
 
 Public delivery clients should use `cdn.<domain>`; it answers only `GET`/`HEAD` (cached) and
@@ -110,7 +110,7 @@ names no job and no error, and each isolate reuses the answer for 30 s
 (`HEALTH_SCHEDULER_TTL_MS`). `GET /deployment/scheduler` (deployment administrators: the admin
 or MCP token; anyone else `403`) and the `scheduler_status` MCP tool return the detail:
 `{ scheduler, lastTickAt?, staleAfterSeconds, jobs: [{ job, lastRunAt, lastSuccessAt?, lastErrorAt?, lastError? }] }`,
-one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `event-history-prune`, `secrets-reseal`,
+one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `abandoned-multipart-uploads`, `abandoned-uploads`, `expired-zips`, `event-history-prune`, `secrets-reseal`,
 `bulk-resume`, `environment-purge-resume`, `version-archive`, `agent-schedules`), the error
 redacted and at most 500 characters.
 
@@ -159,7 +159,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion                                                                |
 
 A space id is 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit, and is
-never one of the media bucket's own prefixes: `versions`, `imports`, `plugins` or `dlq`, in any case
+never one of the media bucket's own prefixes: `versions`, `imports`, `plugins`, `dlq` or `zips`, in any case
 (`RESERVED_SPACE_IDS`). `POST /spaces` and the `space_create` MCP tool refuse one with a validation
 error (`422` over HTTP).
 
@@ -207,8 +207,8 @@ check first.
 | POST   | `…/import` | `content:manage` | Replay a snapshot into this environment, as a job (`202`; `?dryRun=true` reports, `200`; `?publish=false`)       |
 | POST   | `…/clone`  | `content:manage` | Copy this environment into another, entirely as jobs (`202`) `{ targetSpaceId?, targetEnvironmentId, publish? }` |
 
-A snapshot carries the content model, entries, taxonomy, workflows, asset metadata and asset
-folders, never
+A snapshot carries the content model, entries, taxonomy, workflows, asset metadata, asset
+folders and asset collections (with their member order), never
 credentials or asset bytes. Import and clone answer `202` and run as bulk jobs in the engine,
 followed at `…/bulk/jobs/:id` in the target environment; `?dryRun=true` reports with `200`. What an
 import checks, preserves and writes, how clone differs, and how
@@ -435,6 +435,53 @@ Every asset these routes return carries a short-lived signed `file.url` (at leas
 `?exp=…&sig=…`), never the non-expiring URL the asset stores; a hosted video keeps its playback
 URL. The MCP asset tools do the same.
 
+### Asset collections, share links, uploads and zips
+
+Every route is under `/spaces/:space/environments/:env`.
+
+| Method | Path                                      | Scope             | Notes |
+| ------ | ----------------------------------------- | ----------------- | ----- |
+| GET    | `…/asset-collections`                     | `preview:read`    | By name; `nextCursor` |
+| POST   | `…/asset-collections`                     | `content:write`   | `{ name (1–128), description? (≤ 1,000) }` (201) |
+| GET    | `…/asset-collections/:id`                 | `preview:read`    | One collection with its `itemCount` |
+| PATCH  | `…/asset-collections/:id`                 | `content:write`   | `{ name?, description? }` (`""` clears the description) |
+| DELETE | `…/asset-collections/:id`                 | `content:write`   | 204; the assets stay, links shared to it stop opening |
+| GET    | `…/asset-collections/:id/assets`          | `preview:read`    | Members in order, filtered as the library list is (archived left out unless `status` asks); `nextCursor` |
+| POST   | `…/asset-collections/:id/assets`          | `content:write`   | `{ assetIds }` (1–500) appended in the order given; `409` past 1,000 members, the whole add refused |
+| POST   | `…/asset-collections/:id/assets/remove`   | `content:write`   | `{ assetIds }` (1–500); ids that are not members are ignored |
+| PUT    | `…/asset-collections/:id/order`           | `content:write`   | `{ assetIds }` (1–500) go first in that order, the rest follow as they were |
+| GET    | `…/share-links`                           | `content:publish` | Newest first, with each link's `url`; active links only unless `includeInactive=true` |
+| POST   | `…/share-links`                           | `content:publish` | `{ targetType: asset \| collection, targetId, expiresAt (5 minutes to 90 days out), allowDownload?, password? (8–256) }` (201); `409` for an unpublished asset, `404` for an unknown target |
+| GET    | `…/share-links/:id`                       | `content:publish` | One link: `hasPassword`, `revokedAt?`, `url` |
+| DELETE | `…/share-links/:id`                       | `content:publish` | Revoke; idempotent |
+| POST   | `…/assets/uploads`                        | `content:write`   | Start a multipart upload `{ fileName, contentType, size, title?, description?, folderId? }` (201 `{ asset, upload: { uploadId, partSize, partCount } }`); `422` past `ASSET_UPLOAD_MAX_BYTES` |
+| POST   | `…/assets/:id/uploads/:uploadId/parts`    | `content:write`   | `{ partNumbers }` (≤ 100) → a signed `PUT` URL per part; sign again to retry |
+| POST   | `…/assets/:id/uploads/:uploadId/complete` | `content:write`   | `{ parts: [{ partNumber, etag }] }`, parts `1..n` once each; ingest starts |
+| DELETE | `…/assets/:id/uploads/:uploadId`          | `content:write`   | Abort (204); the empty draft is deleted |
+| POST   | `…/asset-zips`                            | `preview:read`    | `{ assetIds (1–1,000) \| collectionId, name? }` (202, the job; 409 while three are pending or running in the environment; refused for a key with content grants) |
+| GET    | `…/asset-zips`                            | `preview:read`    | The latest 50 jobs |
+| GET    | `…/asset-zips/:id`                        | `preview:read`    | Status, `partsDone` / `partCount`, `error?`, and once `completed` a `downloadUrl` valid for 15 minutes |
+
+A collection is a named, ordered, many-to-many set of assets of one environment (up to 1,000
+members; a change names at most 500 ids). Deleting an asset removes it from its collections and
+announces each. **Share links** are published-only: an unpublished asset cannot be shared, and a
+collection's page lists only its published members. The media origin serves a link at
+`https://media.<domain>/s/<space>/<env>/<linkId>/<token>`: the token is a 128-bit HMAC checked before
+any lookup; the page is HTML, or JSON with `?format=json` or `Accept: application/json`; a file is
+at `…/f/<assetId>/<fileName>`, and `?download` is honoured only when the link has `allowDownload`.
+The link is checked on every request: an expired one answers `410` at once, a revoked one as
+soon as the media Worker's D1 replica has the revoke. A password is asked for through a form (`POST …/unlock`, limited
+to 10 a minute per link and address, and 10 a minute per link from all addresses together, by
+`RATE_LIMIT_SHARE_UNLOCK`) and remembered in a cookie scoped
+to the link's path for at most 12 hours and never past the expiry. The MCP tools are
+`asset_collections_list`, `asset_collections_get`, `asset_collections_create`,
+`asset_collections_update`, `asset_collections_delete`, `asset_collection_assets_list`,
+`asset_collection_assets_add`, `asset_collection_assets_remove`, `asset_collection_reorder`,
+`share_links_list`, `share_link_create`, `share_link_get`, `share_link_revoke`, `asset_upload_start`,
+`asset_upload_parts`, `asset_upload_complete`, `asset_upload_abort`, `asset_zip_create`,
+`asset_zip_get` and `asset_zips_list`, with the same scopes. See
+[Architecture](./architecture.md#collections-share-links-multipart-uploads-and-zips).
+
 ### Releases
 
 | Method | Path                             | Scope             | Description                                                                              |
@@ -596,6 +643,7 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 | GET      | `/delivery/:space/:env/entries/:id`          | `delivery:read` | Get one published entry                                                                                                                                                                                                                                                                                                       |
 | GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets: `limit`, `cursor` (or `skip`), `kind`, `tag`, `folder` (id or `root`), `locale` → `{ items, total, nextCursor? }`. With `q`, a hybrid search of published assets only (needs `search:read` too, else 403) → `{ items, total, facets }`; a content-granted key gets an empty result with empty `facets` |
 | GET      | `/delivery/:space/:env/assets/:id`           | `delivery:read` | Get one published asset (`locale`)                                                                                                                                                                                                                                                                                            |
+| GET      | `/delivery/:space/:env/collections/:id`      | `delivery:read` | A collection's name and its **published** members in the collection's order, in the delivered asset shape (`limit`, `cursor`, `locale`; `nextCursor?`); 403 for a key with content grants. Cached under the scope's tag, purged by `asset_collection.changed` |
 | GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default**                                                                                                                                                                                                                                                                                                 |
 | GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream                                                                                                                                                                                                                                                                                                   |
 | GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Deprecated: `301` to the media URL of the next width step at or above `w`, or `rendition` (cached); `302` to a signed transform when no media origin is set                                                                                                                                                                   |

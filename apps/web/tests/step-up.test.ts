@@ -1,7 +1,7 @@
 import { authFailures, sessions, users } from '@contentworker/db/auth';
+import { hashPassword, verifyPassword } from '@contentworker/security/credentials';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Principal } from '~/lib/roles';
-import { hashPassword, verifyPassword } from '../app/lib/credentials';
 import { fromBase32, newTotpSecret, totpCode, totpStep } from '../app/lib/totp';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));

@@ -80,11 +80,12 @@ Workflows it hosts, and the cached `Delivery` and `Media` entrypoints.
     `KV_CACHE` from the current published snapshot.
 11. **Readers fetch published files** at `media.<domain>`. The media gateway checks the URL's
     token and forwards a canonical URL to the cached `Media` entrypoint. On a miss, `Media` reads
-    the gate, then the bytes from R2, and gets resized variants from Images.
+    the gate, then the bytes from R2, and gets resized variants from Images. Share links (`/s/<space>/<env>/<link>/<token>`) take the same
+    gateway: it checks the token, then the link on every request, and renders the page in `Media`.
 12. **Uploads land in R2 and start ingest.** The api's signed `PUT` stores the bytes. R2's
     object-create notification feeds `contentworker-asset-events`, and the engine starts one
     `AssetIngestWorkflow` per file version. The workflow calls Workers AI through AI Gateway and
-    writes embeddings to Vectorize. The api also creates Stream direct uploads for video.
+    writes embeddings to Vectorize. Files past 100 MiB upload in parts through R2 multipart and start ingest the same way on completion. The api also creates Stream direct uploads for video. A zip download is a fourth Workflow, `AssetZipWorkflow` (`ASSET_ZIP_WF`), started from `asset_zip.requested` and writing the archive to R2 one 8 MiB part per step.
 13. **api and delivery reach the engine's classes through `script_name` bindings.** The api binds
     `LiveHubDO`, `RateLimiterDO`, `CostGuardDO`, `SearchShardDO` and `AssistantAgent`, plus the
     `AgentWorkflow` and `EditorialWorkflow` workflows. The delivery Worker binds `LiveHubDO` and
@@ -116,7 +117,7 @@ and they are listed here instead:
 | Worker Loader `PLUGIN_LOADER`                    |                   |                     yes                     |                                       |                        |                          yes                           |
 | Service bindings                                 | `API`, `DELIVERY` |                                             |                                       |                        |                                                        |
 | Durable Objects                                  |                   |             5, by `script_name`             | `LIVE_HUB`, `SEARCH` by `script_name` |                        |                       owns all 5                       |
-| Workflows                                        |                   | `AGENT_WF`, `EDITORIAL_WF` by `script_name` |                                       |                        |           owns all 3, adds `ASSET_INGEST_WF`           |
+| Workflows                                        |                   | `AGENT_WF`, `EDITORIAL_WF` by `script_name` |                                       |                        |           owns all 4, adds `ASSET_INGEST_WF`, `ASSET_ZIP_WF`    |
 | Queue producer                                   |                   |     events, bulk, agents, asset-events      |                                       |                        | events, bulk, agents, purge, media-purge, asset-events |
 | Queue consumer                                   |                   |                                             |             purge (+ DLQ)             |  media-purge (+ DLQ)   |      events, bulk, agents, asset-events (+ DLQs)       |
 
@@ -228,7 +229,7 @@ services, and serving branches on the gate. A sequence diagram would have to pic
 
 1. **Bytes land in R2.** `createAsset` returns a signed `PUT /media/<key>` URL. It is signed with
    HMAC under `MEDIA_SIGNING_SECRET`, expires in 15 minutes and is bound to the content type.
-   Uploads are capped at 100 MiB, and the api stores the bytes in `MEDIA_BUCKET`.
+   A single `PUT` takes at most 100 MiB (larger files go in parts), and the api stores the bytes in `MEDIA_BUCKET`.
 2. **Two triggers, one run.** R2's object-create notification, created by `scripts/provision.sh`,
    sends a message to `contentworker-asset-events`. The api's signed `PUT` also enqueues an
    R2-shaped message there when it succeeds. The engine starts the run under

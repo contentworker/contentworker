@@ -1,6 +1,11 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Scope } from '@contentworker/domain';
-import type { BlobStore, DownloadUrlOptions, MediaPathSigner } from '@contentworker/ports';
+import type {
+  BlobStore,
+  DownloadUrlOptions,
+  MediaPathSigner,
+  MultipartBlobStore,
+} from '@contentworker/ports';
 
 /**
  * The subset of an R2 object (with body) this adapter reads. Structural, so the
@@ -27,8 +32,24 @@ export interface R2RangeLike {
   readonly length: number;
 }
 
+/** An R2 multipart upload in progress (the subset of `R2MultipartUpload` this adapter uses). */
+export interface R2MultipartUploadLike {
+  uploadPart(
+    partNumber: number,
+    value: ReadableStream | ArrayBuffer | ArrayBufferView | string,
+  ): Promise<{ partNumber: number; etag: string }>;
+  complete(parts: { partNumber: number; etag: string }[]): Promise<R2ObjectLike>;
+  abort(): Promise<void>;
+}
+
 /** The subset of an R2 bucket binding this adapter uses. */
 export interface R2BucketLike {
+  /** Optional, so a test stub may leave multipart out. */
+  createMultipartUpload?(
+    key: string,
+    options?: { httpMetadata?: { contentType?: string } },
+  ): Promise<{ readonly uploadId: string }>;
+  resumeMultipartUpload?(key: string, uploadId: string): R2MultipartUploadLike;
   get(key: string, options?: { range?: R2RangeLike }): Promise<R2ObjectBodyLike | null>;
   /** An object's metadata without its body. Optional: a fake may leave it out. */
   head?(key: string): Promise<R2ObjectLike | null>;
@@ -75,16 +96,27 @@ export function createMediaPathSigner(secret: string): MediaPathSigner {
       .digest()
       .subarray(0, MEDIA_PATH_TOKEN_BYTES);
   };
+  // A share link's: another label, so no asset path's token is ever a link's (or the reverse).
+  const linkMac = (scope: Scope, linkId: string): Buffer => {
+    const e = encodeURIComponent;
+    return createHmac('sha256', secret)
+      .update(`share-link\n${e(scope.spaceId)}\n${e(scope.environmentId)}\n${e(linkId)}`)
+      .digest()
+      .subarray(0, MEDIA_PATH_TOKEN_BYTES);
+  };
+  const matches = (token: string, expected: Buffer): boolean => {
+    const given = Buffer.from(token, 'base64url');
+    // Canonical form only: a token with padding or stray characters decodes to the same bytes.
+    if (given.length !== MEDIA_PATH_TOKEN_BYTES || given.toString('base64url') !== token) {
+      return false;
+    }
+    return timingSafeEqual(given, expected);
+  };
   return {
     token: (scope, assetId, version) => mac(scope, assetId, version).toString('base64url'),
-    verify(scope, assetId, version, token) {
-      const given = Buffer.from(token, 'base64url');
-      // Canonical form only: a token with padding or stray characters decodes to the same bytes.
-      if (given.length !== MEDIA_PATH_TOKEN_BYTES || given.toString('base64url') !== token) {
-        return false;
-      }
-      return timingSafeEqual(given, mac(scope, assetId, version));
-    },
+    verify: (scope, assetId, version, token) => matches(token, mac(scope, assetId, version)),
+    linkToken: (scope, linkId) => linkMac(scope, linkId).toString('base64url'),
+    verifyLink: (scope, linkId, token) => matches(token, linkMac(scope, linkId)),
   };
 }
 
@@ -272,6 +304,18 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
         ...(obj.httpMetadata?.contentType ? { contentType: obj.httpMetadata.contentType } : {}),
       };
     },
+    async openRange(key, offset, length) {
+      const obj = await bucket.get(key, { range: { offset, length } });
+      if (!obj) return null;
+      return {
+        body: obj.body as ReadableStream<Uint8Array>,
+        size: obj.size,
+        ...(obj.httpMetadata?.contentType ? { contentType: obj.httpMetadata.contentType } : {}),
+      };
+    },
+    ...(bucket.createMultipartUpload && bucket.resumeMultipartUpload
+      ? { multipart: r2Multipart(bucket, opts, base, ttl, now) }
+      : {}),
     async head(key) {
       // Without `head`, a read whose body is let go unread says the same.
       const obj = bucket.head ? await bucket.head(key) : await bucket.get(key);
@@ -296,6 +340,69 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
       // R2 deletes up to 1,000 keys per call.
       for (let at = 0; at < keys.length; at += 1000) await bucket.delete(keys.slice(at, at + 1000));
       return keys.length;
+    },
+  };
+}
+
+/**
+ * Multipart uploads on R2. A part URL is a signed PUT to `/media/<key>` that also names the upload
+ * (`upload`), the part (`part`) and the part's exact length (`len`): the signature covers them all,
+ * so a client can't send a part of another length (R2 needs every part but the last equal), write
+ * into another upload, or reuse a URL for another part.
+ */
+function r2Multipart(
+  bucket: R2BucketLike,
+  opts: R2BlobOptions,
+  base: string,
+  ttl: number,
+  now: () => number,
+): MultipartBlobStore {
+  const resume = (key: string, uploadId: string) => {
+    if (!bucket.resumeMultipartUpload) throw new Error('R2 multipart is not available');
+    return bucket.resumeMultipartUpload(key, uploadId);
+  };
+  return {
+    async create(key, contentType) {
+      if (!bucket.createMultipartUpload) throw new Error('R2 multipart is not available');
+      const upload = await bucket.createMultipartUpload(key, { httpMetadata: { contentType } });
+      return { uploadId: upload.uploadId };
+    },
+    async partUrl(key, uploadId, partNumber, length) {
+      const exp = now() + ttl;
+      const params = new URLSearchParams({
+        upload: uploadId,
+        part: String(partNumber),
+        len: String(length),
+        exp: String(exp),
+      });
+      const url = await signedMediaUrl(opts.signer, base, 'PUT', key, params);
+      return { url, expiresAt: new Date(exp * 1000).toISOString() };
+    },
+    async uploadPart(key, uploadId, partNumber, body) {
+      const part = await resume(key, uploadId).uploadPart(partNumber, body);
+      return { partNumber: part.partNumber, etag: part.etag };
+    },
+    async complete(key, uploadId, parts) {
+      const object = await resume(key, uploadId).complete(
+        [...parts]
+          .sort((a, b) => a.partNumber - b.partNumber)
+          .map((p) => ({ partNumber: p.partNumber, etag: p.etag })),
+      );
+      return {
+        size: object.size,
+        etag: object.httpEtag,
+        ...(object.httpMetadata?.contentType
+          ? { contentType: object.httpMetadata.contentType }
+          : {}),
+      };
+    },
+    async abort(key, uploadId) {
+      try {
+        await resume(key, uploadId).abort();
+      } catch (err) {
+        // Already completed or aborted (R2's NoSuchUpload): nothing left to discard.
+        if (!/NoSuchUpload|10024|does not exist/i.test(String(err))) throw err;
+      }
     },
   };
 }
@@ -385,6 +492,28 @@ export async function handleMediaRequest(
     if (!Number.isFinite(length) || length <= 0) return text(411, 'content-length required');
     if (length > max) return text(413, `upload exceeds ${max} bytes`);
     if (!request.body) return text(400, 'empty body');
+    const uploadId = url.searchParams.get('upload');
+    if (uploadId !== null) {
+      // One part of a multipart upload: its number and exact length are signed, so a part of
+      // another length (R2 refuses uneven parts at completion) is turned away before it is read.
+      const part = Number(url.searchParams.get('part'));
+      const len = Number(url.searchParams.get('len'));
+      if (!Number.isInteger(part) || part < 1 || part > 10_000) return text(400, 'bad part');
+      if (length !== len) return text(400, `part must be exactly ${len} bytes`);
+      if (!opts.bucket.resumeMultipartUpload) return text(501, 'multipart not available');
+      try {
+        const uploaded = await opts.bucket
+          .resumeMultipartUpload(key, uploadId)
+          .uploadPart(part, request.body);
+        return new Response(null, { status: 200, headers: { etag: uploaded.etag } });
+      } catch (err) {
+        // Completed or aborted meanwhile: nothing to write into.
+        if (/NoSuchUpload|10024|does not exist/i.test(String(err))) {
+          return text(404, 'upload not found');
+        }
+        throw err;
+      }
+    }
     // The stored type is the one the URL was signed for, not whatever the
     // client sends — the signer decided what this key may hold.
     const stored = (await opts.bucket.put(key, request.body, {

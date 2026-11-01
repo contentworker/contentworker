@@ -7,6 +7,7 @@
  */
 
 import { passkeyChallenges, passkeys, users } from '@contentworker/db/auth';
+import { randomToken, sha256Hex } from '@contentworker/security/credentials';
 import {
   type AuthenticationResponseJSON,
   generateAuthenticationOptions,
@@ -19,7 +20,6 @@ import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { and, desc, eq, lt } from 'drizzle-orm';
 import { audit, clientIp } from './audit.server';
 import { recordFailure, startSession, Throttled, waitFor } from './auth.server';
-import { randomToken, sha256Hex } from './credentials';
 import { db } from './env.server';
 import type { Principal } from './roles';
 import { ssoOnlyInEffect } from './settings.server';

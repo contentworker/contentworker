@@ -23,9 +23,6 @@ import {
   signInChallenges,
   users,
 } from '@contentworker/db/auth';
-import { and, count, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
-import { data, redirect } from 'react-router';
-import { audit, clientIp } from './audit.server';
 import {
   hashPassword,
   needsRehash,
@@ -34,7 +31,10 @@ import {
   randomToken,
   sha256Hex,
   verifyPassword,
-} from './credentials';
+} from '@contentworker/security/credentials';
+import { and, count, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { data, redirect } from 'react-router';
+import { audit, clientIp } from './audit.server';
 import { openSecret } from './data-key.server';
 import { secretContext } from './encryption';
 import { afterResponse, db, passwordPepper } from './env.server';

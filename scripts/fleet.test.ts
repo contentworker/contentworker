@@ -59,7 +59,12 @@ test('every account-wide name in every app carries the deployment', () => {
   assert.equal(engine.name, 'contentworker-engine-acme');
   assert.deepEqual(
     engine.workflows.map((w: { name: string }) => w.name),
-    ['contentworker-agent-acme', 'contentworker-editorial-acme', 'contentworker-asset-ingest-acme'],
+    [
+      'contentworker-agent-acme',
+      'contentworker-editorial-acme',
+      'contentworker-asset-ingest-acme',
+      'contentworker-asset-zip-acme',
+    ],
   );
   assert.equal(engine.d1_databases[0].database_name, n.d1);
   assert.equal(engine.d1_databases[0].database_id, acme.d1Id);

@@ -165,6 +165,23 @@ describe('assets', () => {
     );
   });
 
+  it('reads a collection’s published assets, in its order, a page at a time', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        return { id: 'c1', name: 'Kit', items: [image], nextCursor: 'n2' };
+      }),
+    });
+    const page = await client.getCollection('c 1', { limit: 5, cursor: 'n1', locale: 'en-US' });
+    expect(page.items[0]?.id).toBe(image.id);
+    expect(page.nextCursor).toBe('n2');
+    expect(calls[0]).toBe(
+      'https://cms.test/delivery/s1/main/collections/c%201?limit=5&cursor=n1&locale=en-US',
+    );
+  });
+
   it('reads drafts from the preview surface', async () => {
     const calls: string[] = [];
     const client = createDeliveryClient({

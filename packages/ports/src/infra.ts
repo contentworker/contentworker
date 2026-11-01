@@ -1,5 +1,6 @@
 import type {
   AssetPlaceholder,
+  AssetShareTargetType,
   AssetVideoStatus,
   DomainEvent,
   FieldIssue,
@@ -94,6 +95,48 @@ export interface BlobStore {
    * abandoned-upload sweep doesn't run without it.
    */
   head?(key: string): Promise<BlobHead | null>;
+  /**
+   * `length` bytes of `key` from `offset`, streamed: what a zip reads of each file, a part at a
+   * time. `null` when the object does not exist. Optional, like {@link open}.
+   */
+  openRange?(key: string, offset: number, length: number): Promise<BlobObject | null>;
+  /**
+   * Multipart uploads, for files too large for one request. Optional: a store without them takes
+   * single uploads only. Every part but the last must have the same length (R2's rule).
+   */
+  readonly multipart?: MultipartBlobStore;
+}
+
+/** One uploaded part, as completing a multipart upload names it. */
+export interface UploadedPart {
+  readonly partNumber: number;
+  readonly etag: string;
+}
+
+/** Multipart uploads of one object key (R2's `createMultipartUpload` and its parts). */
+export interface MultipartBlobStore {
+  create(key: string, contentType: string): Promise<{ readonly uploadId: string }>;
+  /**
+   * A signed URL a client PUTs one part to: bound to the key, the upload, the part number and the
+   * part's exact length, and short-lived like an upload URL.
+   */
+  partUrl(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    length: number,
+  ): Promise<{ readonly url: string; readonly expiresAt: string }>;
+  /** Server-side: writes one part (a zip the engine builds). */
+  uploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    body: Uint8Array,
+  ): Promise<UploadedPart>;
+  /** Assembles the parts into the object; what is now stored there. */
+  complete(key: string, uploadId: string, parts: readonly UploadedPart[]): Promise<BlobHead>;
+  /** Discards the upload and its parts. An upload already gone is not an error. */
+  abort(key: string, uploadId: string): Promise<void>;
 }
 
 /** An object's description, as {@link BlobStore.head} reads it. */
@@ -746,6 +789,41 @@ export interface MediaPathSigner {
   token(scope: Scope, assetId: string, version: number): string;
   /** Whether `token` is the one {@link token} gives; constant-time. */
   verify(scope: Scope, assetId: string, version: number, token: string): boolean;
+  /**
+   * The token in a share link's URL (`/s/<space>/<env>/<linkId>/<token>`): a MAC over the scope
+   * and the link id under another label, so a link's URL can't be guessed from its id, and no
+   * asset path's token is ever a link's.
+   */
+  linkToken(scope: Scope, linkId: string): string;
+  verifyLink(scope: Scope, linkId: string, token: string): boolean;
+}
+
+/** What the media origin uses of an active share link (read from a D1 replica per request). */
+export interface ShareLinkGateEntry {
+  readonly targetType: AssetShareTargetType;
+  readonly targetId: string;
+  readonly expiresAt: string;
+  readonly allowDownload: boolean;
+  /** PBKDF2 hash of the link's password, when it has one. */
+  readonly passwordHash?: string;
+}
+
+/** Hashes and checks passwords (PBKDF2-SHA256, the admin's scheme), for share links. */
+export interface PasswordHasher {
+  hash(password: string): Promise<string>;
+  verify(password: string, stored: string): Promise<boolean>;
+}
+
+/** What one zip build is about. Plain JSON: a Workflow instance's payload. */
+export interface AssetZipParams {
+  readonly scope: Scope;
+  readonly jobId: string;
+}
+
+/** Starts the durable build of a zip (one Workflow instance per job id). */
+export interface AssetZipStarter {
+  /** `true` when this call started the build; `false` when one under that id already existed. */
+  start(params: AssetZipParams): Promise<boolean>;
 }
 
 /** Ingest of one asset's file, as the queue carries it (see {@link AssetIngestQueue}). */

@@ -69,7 +69,8 @@ exits `1` on any error.
    - creates the D1 database, records its id, and turns on read replication (`mode: auto`;
      with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, else it says how);
    - creates the shared KV namespace and records its id;
-   - creates the R2 bucket with lifecycle rules (`imports/` 7 days, `dlq/` 30 days);
+   - creates the R2 bucket with lifecycle rules (`imports/` 7 days, `dlq/` 30 days, `zips/` 2 days, and `abort-multipart`, which
+     aborts multipart uploads left unfinished for 2 days anywhere in the bucket);
    - creates the Vectorize index (768 dimensions, cosine; metadata indexes on `spaceId` and
      `environmentId`), except for a demo;
    - creates the queues (events, events DLQ, bulk, agents, purge, purge DLQ, media purge, media
@@ -96,6 +97,14 @@ it (`contentworker-media-purge<suffix>` and `…-dlq<suffix>`; the engine binds 
 producer and the media Worker consumes both, so a deploy without them fails). Re-run
 `./scripts/provision.sh <id>` for each such deployment first: it creates only what is missing. To receive Stream's
 webhook, point it at `https://api.<domain>/webhooks/stream` and set `STREAM_WEBHOOK_SECRET`.
+
+**A deployment that predates zip downloads and multipart uploads** needs the two R2 lifecycle rules
+(`zips/` and `abort-multipart`) and, in the fleet render, the `ASSET_ZIP_WF` workflow binding and the
+media Worker's `RATE_LIMIT_SHARE_UNLOCK` rate limit (`scripts/fleet.ts` renders both; the namespace is
+`slot × 1000 + 6`). Re-run `./scripts/provision.sh <id>` for the rules; they are backstops for the
+engine's hourly sweeps, so nothing fails without them, but an abandoned part or an archive then
+stays until the sweep removes it. The workflow (`contentworker-asset-zip<suffix>`) is created by the
+engine's deploy.
 
 **A deployment that predates asset ingest** needs `contentworker-asset-events<suffix>`, its
 `…-dlq<suffix>` and the R2 notification rule before the merge that ships it: the engine consumes

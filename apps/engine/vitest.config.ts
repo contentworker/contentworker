@@ -17,6 +17,13 @@ export default defineConfig(async () => ({
     name: 'workers',
     include: ['test/**/*.test.ts'],
     setupFiles: ['./test/setup.ts'],
+    // The Workers pool answers a file's whole warm-module snapshot as ONE WebSocket message, with
+    // every cached transform inlined (twice: a module is keyed by url and by id). This suite's
+    // graph (the assistant pulls in `ai`, the MCP SDK, `agents`, the embedded docs) is already
+    // ~33.4 MB of that, and the runtime closes the socket at 32 MiB (33,554,432 bytes): the first
+    // file of a run passes on a cold cache, every later one dies with "Worker exited unexpectedly".
+    // Without the filesystem cache there is no snapshot; modules are fetched one at a time.
+    fsModuleCache: false,
   },
   plugins: [
     // TC39 decorators (`@callable()` on the assistant), which Vite's Oxc transform doesn't lower.
@@ -47,6 +54,8 @@ export default defineConfig(async () => ({
         d1Databases: { DB: 'contentworker-engine-test' },
         // The media gate the events consumer writes (test/asset-delivery.test.ts).
         kvNamespaces: ['KV_CACHE'],
+        // The zip Workflow's files and archive (a real multipart upload).
+        r2Buckets: ['MEDIA_BUCKET'],
         // The editorial workflow host, run by miniflare's real Workflows engine over the
         // fixture's in-memory context (test/fixtures/editorial.ts).
         workflows: {
@@ -59,6 +68,11 @@ export default defineConfig(async () => ({
           ASSET_INGEST_WF: {
             name: 'contentworker-asset-ingest-test',
             className: 'AssetIngestTestWorkflow',
+          },
+          // Zip downloads over the test's store and the real R2 binding (test/fixtures/asset-zip.ts).
+          ASSET_ZIP_WF: {
+            name: 'contentworker-asset-zip-test',
+            className: 'AssetZipTestWorkflow',
           },
         },
         bindings: {

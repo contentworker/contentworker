@@ -1,4 +1,9 @@
-import type { Asset, AssetFolder } from '@contentworker/domain';
+import {
+  type Asset,
+  type AssetCollection,
+  type AssetFolder,
+  MAX_COLLECTION_CHANGE,
+} from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Card } from '@contentworker/ui/card';
@@ -13,6 +18,8 @@ import { AssetDetailSheet } from '~/cms/components/AssetDetailSheet';
 import { AssetPreview } from '~/cms/components/AssetPreview';
 import { AssetBulkBar } from '~/cms/components/assets/AssetBulkBar';
 import { AssetBulkJobProgress } from '~/cms/components/assets/AssetBulkJobProgress';
+import { AssetCollectionList } from '~/cms/components/assets/AssetCollectionList';
+import { AssetCollectionView } from '~/cms/components/assets/AssetCollectionView';
 import { AssetFilterBar, type AssetView } from '~/cms/components/assets/AssetFilterBar';
 import { AssetFolderTree } from '~/cms/components/assets/AssetFolderTree';
 import { AssetIngestBadges } from '~/cms/components/assets/AssetIngestBadges';
@@ -23,6 +30,7 @@ import {
   type UploadItem,
   uploadSummary,
 } from '~/cms/components/assets/AssetUploadList';
+import { AssetZipProgress, useAssetZip } from '~/cms/components/assets/AssetZipProgress';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import {
   LoadingStatus,
@@ -37,11 +45,14 @@ import {
   type AssetBulkAction,
   type AssetFilterState,
   activeFilterCount,
+  addedSummary,
+  allPages,
   assetLibraryQuery,
   assetName,
   assetSearchQuery,
   BULK_VERBS,
   bulkSummary,
+  chunked,
   type FacetChip,
   type FolderSelection,
   facetChips,
@@ -52,6 +63,8 @@ import {
   rightsState,
   runBulk,
   runsAsJob,
+  uploadInParts,
+  uploadsInParts,
 } from '~/cms/lib/assets';
 import { humanize, plural } from '~/cms/lib/format';
 import { useNow } from '~/cms/lib/use-now';
@@ -155,6 +168,18 @@ export function AssetLibrary(props: { locale: string }) {
     readonly action: AssetBulkAction;
     readonly job: BulkJobSummary;
   } | null>(null);
+  // The open collection, shown in place of the library; null while the library shows.
+  const [collectionId, setCollectionId] = useState<string | null>(null);
+  // A collection just made: its heading takes focus when it opens.
+  const [createdCollection, setCreatedCollection] = useState<string | null>(null);
+  // Zips, followed until they are built: the selection's, and a collection's (held here, not in
+  // the collection's view, so a zip started there can still be downloaded after leaving it).
+  const zip = useAssetZip();
+  const collectionZip = useAssetZip();
+  // Where the last batch of uploads went, when that wasn't the open folder: a collection.
+  const [uploadInto, setUploadInto] = useState<string | null>(null);
+  // Each upload's cancel: a file still waiting is skipped, a multipart upload aborted.
+  const uploadControls = useRef(new Map<string, AbortController>());
   const fileRef = useRef<HTMLInputElement>(null);
   // Rights expire on a clock: "Expires soon" turns to "Expired" without a reload.
   const now = useNow(60_000);
@@ -228,6 +253,20 @@ export function AssetLibrary(props: { locale: string }) {
   }, [searching, countKey, pages.data, pages.isPlaceholderData, assets.length]);
   const folders = useScopedQuery(['asset-folders'], () => client.listAssetFolders()).data ?? [];
   const tags = useScopedQuery(['tags'], () => client.listTags(), { silent: true }).data ?? [];
+  const collectionsQuery = useScopedQuery(
+    ['asset-collections'],
+    () =>
+      allPages<AssetCollection>((cursor) =>
+        client.listAssetCollections({ limit: 100, ...(cursor ? { cursor } : {}) }),
+      ),
+    { silent: true },
+  );
+  const collections = collectionsQuery.data ?? [];
+  const openCollection = collectionId ? collections.find((c) => c.id === collectionId) : undefined;
+  // A collection deleted elsewhere (or in another tab) closes once the list no longer has it.
+  useEffect(() => {
+    if (collectionId && collectionsQuery.data && !openCollection) setCollectionId(null);
+  }, [collectionId, collectionsQuery.data, openCollection]);
   const chips = useMemo(
     () => (search.data ? facetChips(search.data.facets, tags, folders) : null),
     [search.data, tags, folders],
@@ -235,10 +274,12 @@ export function AssetLibrary(props: { locale: string }) {
 
   const reload = () => invalidate(['assets']);
   const reloadFolders = () => invalidate(['asset-folders']);
+  const reloadCollections = () => invalidate(['asset-collections']);
   const fail = (e: unknown) => toast.error(message(e));
   const openFolder = folder.kind === 'folder' ? folders.find((f) => f.id === folder.id) : undefined;
 
   const changeFolder = (next: FolderSelection) => {
+    setCollectionId(null);
     setFolder(next);
     setSelected(new Set());
     setBulkFailures(null);
@@ -303,47 +344,99 @@ export function AssetLibrary(props: { locale: string }) {
   const patchUpload = (id: string, patch: Partial<UploadItem>) =>
     setUploads((list) => list.map((u) => (u.id === id ? { ...u, ...patch } : u)));
 
-  const uploadOne = async (file: File, folderId: string | undefined) => {
+  const uploadOne = async (
+    file: File,
+    folderId: string | undefined,
+    itemId: string,
+    signal: AbortSignal,
+  ): Promise<string> => {
+    // Only a multipart upload can be stopped part way; any other is offered Cancel while it waits.
+    if (!uploadsInParts(file.size) || file.type.startsWith('video/')) {
+      patchUpload(itemId, { cancellable: false });
+    }
     if (file.type.startsWith('video/')) {
       try {
         // Hosted video (Cloudflare Stream): adaptive playback and a poster. Filed afterwards: the
         // video upload starts on the host, not with a folder.
         const asset = await client.uploadVideo(file);
         if (folderId) await client.moveAssets([asset.id], folderId);
-        return;
+        return asset.id;
       } catch (e) {
         // 501: no video host bound on this deployment; store it as a plain file.
         if (!(e instanceof ApiError && e.status === 501)) throw e;
       }
     }
-    await client.uploadAsset(file, folderId ? { folderId } : {});
+    if (uploadsInParts(file.size)) {
+      // Past one signed PUT: in parts, each retried on its own, with the bytes stored as progress.
+      // Cancellable again (a video the host refused comes here as a plain file).
+      patchUpload(itemId, { cancellable: true });
+      const asset = await uploadInParts(client, file, {
+        ...(folderId ? { folderId } : {}),
+        signal,
+        onProgress: (progress) =>
+          patchUpload(itemId, {
+            progress,
+            state: progress.retryingPart !== null ? 'retrying' : 'uploading',
+          }),
+      });
+      await client.publishAsset(asset.id);
+      return asset.id;
+    }
+    return (await client.uploadAsset(file, folderId ? { folderId } : {})).id;
+  };
+
+  const cancelUpload = (id: string) => {
+    uploadControls.current.get(id)?.abort();
+    // One still waiting ends here; one under way ends when its upload has been aborted.
+    setUploads((list) =>
+      list.map((u) => (u.id === id && u.state === 'queued' ? { ...u, state: 'cancelled' } : u)),
+    );
   };
 
   const upload = async (files: readonly File[]) => {
     if (files.length === 0) return;
-    const folderId = openFolder?.id;
+    // With a collection open, the files land at the library root (the folder tree isn't in view)
+    // and go into the collection once uploaded.
+    const into = collectionId !== null ? openCollection : undefined;
+    const folderId = into ? undefined : openFolder?.id;
+    setUploadInto(into ? into.name : null);
+    const uploaded: string[] = [];
     const batch = files.map((file, i) => ({
       file,
       item: {
         id: `${Date.now()}-${i}-${file.name}`,
         name: file.name,
         state: 'queued',
+        cancellable: true,
       } as UploadItem,
     }));
+    for (const { item } of batch) uploadControls.current.set(item.id, new AbortController());
     setUploads((list) => [...list.filter((u) => u.state !== 'done'), ...batch.map((b) => b.item)]);
     const outcome = new Map<string, UploadItem>();
     let next = 0;
     const lane = async () => {
       while (next < batch.length) {
         const { file, item } = batch[next++] as (typeof batch)[number];
+        const signal = (uploadControls.current.get(item.id) ?? new AbortController()).signal;
+        if (signal.aborted) {
+          outcome.set(item.id, { ...item, state: 'cancelled' });
+          continue;
+        }
         patchUpload(item.id, { state: 'uploading' });
         try {
-          await uploadOne(file, folderId);
+          uploaded.push(await uploadOne(file, folderId, item.id, signal));
           patchUpload(item.id, { state: 'done' });
           outcome.set(item.id, { ...item, state: 'done' });
         } catch (e) {
-          patchUpload(item.id, { state: 'failed', error: message(e) });
-          outcome.set(item.id, { ...item, state: 'failed', error: message(e) });
+          if (signal.aborted) {
+            patchUpload(item.id, { state: 'cancelled' });
+            outcome.set(item.id, { ...item, state: 'cancelled' });
+          } else {
+            patchUpload(item.id, { state: 'failed', error: message(e) });
+            outcome.set(item.id, { ...item, state: 'failed', error: message(e) });
+          }
+        } finally {
+          uploadControls.current.delete(item.id);
         }
       }
     };
@@ -354,7 +447,28 @@ export function AssetLibrary(props: { locale: string }) {
     const summary = uploadSummary(finished);
     if (finished.some((u) => u.state === 'failed')) toast.error(summary);
     else toast.success(summary);
+    if (into && uploaded.length > 0) await addUploadsTo(into, uploaded);
     await reload();
+  };
+
+  /** Puts what a batch uploaded into the collection that was open, in turns the API takes. */
+  const addUploadsTo = async (into: AssetCollection, ids: readonly string[]) => {
+    try {
+      let added = 0;
+      let skipped = 0;
+      for (const part of chunked(ids, MAX_COLLECTION_CHANGE)) {
+        const r = await client.addToAssetCollection(into.id, part);
+        added += r.added;
+        skipped += r.skipped.length;
+      }
+      toast.success(addedSummary(into.name, { requested: ids.length, added, skipped }));
+    } catch (e) {
+      toast.error(
+        `Uploaded, but not added to “${into.name}”: ${message(e)}. They are at the library root.`,
+      );
+    } finally {
+      void invalidate(['asset-collections'], ['assets', 'collection', into.id]);
+    }
   };
 
   const onDrop = (e: DragEvent) => {
@@ -603,6 +717,52 @@ export function AssetLibrary(props: { locale: string }) {
           ? `“${f.name}” isn’t empty: move or delete what is in it first`
           : e,
       );
+    }
+  };
+
+  // --- collections ----------------------------------------------------------
+  const showCollection = (id: string | null) => {
+    setCollectionId(id);
+    setSelected(new Set());
+    setBulkFailures(null);
+  };
+  const createCollection = async (values: { name: string; description: string }) => {
+    try {
+      const created = await client.createAssetCollection({
+        name: values.name,
+        ...(values.description ? { description: values.description } : {}),
+      });
+      await reloadCollections();
+      setCreatedCollection(created.id);
+      showCollection(created.id);
+      toast.success(`Created collection “${created.name}”`);
+      return created;
+    } catch (e) {
+      fail(e);
+      return undefined;
+    }
+  };
+  // Up to MAX_COLLECTION_CHANGE ids a request: a bigger selection goes in turns.
+  const addSelectedTo = async (id: string) => {
+    const target = collections.find((c) => c.id === id);
+    setBulkBusy(true);
+    try {
+      let added = 0;
+      let skipped = 0;
+      for (const part of chunked(ids, MAX_COLLECTION_CHANGE)) {
+        const r = await client.addToAssetCollection(id, part);
+        added += r.added;
+        skipped += r.skipped.length;
+      }
+      toast.success(
+        addedSummary(target?.name ?? 'the collection', { requested: ids.length, added, skipped }),
+      );
+      setSelected(new Set());
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBulkBusy(false);
+      void invalidate(['asset-collections'], ['assets', 'collection', id]);
     }
   };
 
@@ -872,198 +1032,263 @@ export function AssetLibrary(props: { locale: string }) {
         />
         <Button type="button" size="sm" onClick={pick}>
           <Upload aria-hidden="true" />
-          {openFolder ? `Upload to “${openFolder.name}”` : 'Upload'}
+          {openCollection && collectionId !== null
+            ? `Upload to “${openCollection.name}”`
+            : openFolder
+              ? `Upload to “${openFolder.name}”`
+              : 'Upload'}
         </Button>
       </PageHeader>
 
       <div className="grid gap-6 md:grid-cols-[13rem_minmax(0,1fr)]">
-        <AssetFolderTree
-          folders={folders}
-          value={folder}
-          onChange={changeFolder}
-          onCreate={createFolder}
-          onRename={renameFolder}
-          onDelete={deleteFolder}
-        />
-
-        {/* The drop target. Picking files with Upload is the keyboard's way to the same place. */}
-        <section
-          aria-label="Asset library"
-          onDragOver={onDragOver}
-          onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
-          }}
-          onDrop={onDrop}
-          className={cn(
-            'min-w-0 space-y-4 rounded-2xl transition-[box-shadow]',
-            dragging && 'ring-2 ring-ring/50 ring-offset-4 ring-offset-background',
-          )}
-        >
-          <AssetSearchBox value={searchText} onChange={changeSearch} />
-          <AssetFilterBar
-            value={filters}
-            onChange={changeFilters}
-            tags={tags}
-            view={view}
-            onViewChange={setView}
-          />
-          {searching && chips && (
-            <AssetFacetChips groups={chips} isActive={chipActive} onToggle={toggleChip} />
-          )}
-          {/* Always mounted, so the first result is announced too; empty (and hidden) at rest. */}
-          <p
-            className={cn('text-ui text-muted-foreground', !searchSummary && 'sr-only')}
-            aria-live="polite"
-            aria-busy={searchBusy || undefined}
-          >
-            {searchSummary}
-          </p>
-          {dragging && (
-            <p className="caption" aria-live="polite">
-              Drop files to upload {openFolder ? `to “${openFolder.name}”` : 'here'}
-            </p>
-          )}
-          <AssetUploadList items={uploads} onDismiss={() => setUploads([])} />
-          {bulkFailures && (
-            <Alert variant="destructive">
-              <AlertTitle>
-                {plural(bulkFailures.unnamed ?? bulkFailures.items.length, 'asset')} not{' '}
-                {bulkFailures.verb.toLowerCase()}
-              </AlertTitle>
-              <AlertDescription>
-                <p>
-                  {bulkFailures.unnamed !== undefined
-                    ? 'Your role can’t read the job’s report, so they can’t be named here.'
-                    : 'They are still selected, to try again.'}
-                </p>
-                <ul className="space-y-0.5">
-                  {bulkFailures.items.map((f, i) => (
-                    <li key={i}>
-                      <span className="font-medium">{f.name}</span>
-                      {f.error ? `: ${f.error}` : ''}
-                    </li>
-                  ))}
-                </ul>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-2"
-                  onClick={() => setBulkFailures(null)}
-                >
-                  Dismiss
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
-          {inUse && (
-            <AssetInUseNotice
-              name={assetName(inUse.asset, locale)}
-              usage={inUse.usage}
-              total={inUse.total}
-              onArchive={
-                inUse.asset.status === 'archived'
-                  ? undefined
-                  : () => {
-                      archive(inUse.asset);
-                      setInUse(null);
-                    }
-              }
-              onDismiss={() => setInUse(null)}
-            />
-          )}
-          {bulkJob && (
-            <AssetBulkJobProgress
-              action={bulkJob.action}
-              job={bulkJob.job}
-              onDismiss={() => setBulkJob(null)}
-            />
-          )}
-          <AssetBulkBar
-            count={selected.size}
+        <div className="min-w-0 space-y-4 md:space-y-6">
+          <AssetFolderTree
             folders={folders}
-            tags={tags}
-            busy={bulkBusy}
-            onMove={(f) => void moveSelected(f)}
-            onTag={tagSelected}
-            onPublish={() => act('publish')}
-            onUnpublish={() => act('unpublish')}
-            onArchive={() => act('archive')}
-            onClear={() => {
-              setSelected(new Set());
-              setBulkFailures(null);
-            }}
+            value={folder}
+            inactive={collectionId !== null}
+            onChange={changeFolder}
+            onCreate={createFolder}
+            onRename={renameFolder}
+            onDelete={deleteFolder}
           />
-          {loading ? (
-            <>
-              {/* A search says so in its summary line, above. */}
-              {searching ? null : <LoadingStatus>Loading assets…</LoadingStatus>}
-              {view === 'grid' ? grid : list}
-            </>
-          ) : loadError && assets.length === 0 ? (
-            // A failed load is said as one, never as an empty library.
-            <Alert variant="destructive">
-              <AlertTitle>
-                {searching ? 'The search didn’t finish' : 'The assets didn’t load'}
-              </AlertTitle>
-              <AlertDescription>
-                <p>{message(loadError)}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-2"
-                  onClick={() => void (searching ? search.refetch() : pages.refetch())}
-                >
-                  Retry
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : assets.length === 0 ? (
-            searching ? (
-              <EmptyState
-                icon={ImageIcon}
-                title="No matches"
-                description="Nothing in the library matches this search here. Try other words, or clear the filters."
-              />
-            ) : filtered ? (
-              <EmptyState
-                icon={ImageIcon}
-                title="Nothing here"
-                description="No assets match this folder and these filters. Drop files here to add some."
+          <AssetCollectionList
+            collections={collections}
+            value={collectionId}
+            onOpen={showCollection}
+            onCreate={createCollection}
+          />
+        </div>
+
+        {collectionId !== null ? (
+          <div className="min-w-0 space-y-4">
+            <AssetUploadList
+              items={uploads}
+              onDismiss={() => setUploads([])}
+              onCancel={cancelUpload}
+              {...(uploadInto ? { into: uploadInto } : {})}
+            />
+            {openCollection ? (
+              <AssetCollectionView
+                key={openCollection.id}
+                collection={openCollection}
+                locale={locale}
+                focusOnOpen={createdCollection === openCollection.id}
+                onOpenAsset={setOpen}
+                onChanged={() => void reloadCollections()}
+                onDeleted={() => {
+                  showCollection(null);
+                  void reloadCollections();
+                }}
+                zip={collectionZip}
               />
             ) : (
-              <EmptyState
-                icon={ImageIcon}
-                title="No assets yet"
-                description="Upload or drop images, video and files to start your library."
-              >
-                <Button type="button" onClick={pick}>
-                  Upload
+              <LoadingStatus>Loading the collection…</LoadingStatus>
+            )}
+          </div>
+        ) : (
+          // The drop target. Picking files with Upload is the keyboard's way to the same place.
+          <section
+            aria-label="Asset library"
+            onDragOver={onDragOver}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+            }}
+            onDrop={onDrop}
+            className={cn(
+              'min-w-0 space-y-4 rounded-2xl transition-[box-shadow]',
+              dragging && 'ring-2 ring-ring/50 ring-offset-4 ring-offset-background',
+            )}
+          >
+            <AssetSearchBox value={searchText} onChange={changeSearch} />
+            <AssetFilterBar
+              value={filters}
+              onChange={changeFilters}
+              tags={tags}
+              view={view}
+              onViewChange={setView}
+            />
+            {searching && chips && (
+              <AssetFacetChips groups={chips} isActive={chipActive} onToggle={toggleChip} />
+            )}
+            {/* Always mounted, so the first result is announced too; empty (and hidden) at rest. */}
+            <p
+              className={cn('text-ui text-muted-foreground', !searchSummary && 'sr-only')}
+              aria-live="polite"
+              aria-busy={searchBusy || undefined}
+            >
+              {searchSummary}
+            </p>
+            {dragging && (
+              <p className="caption" aria-live="polite">
+                Drop files to upload {openFolder ? `to “${openFolder.name}”` : 'here'}
+              </p>
+            )}
+            <AssetUploadList
+              items={uploads}
+              onDismiss={() => setUploads([])}
+              onCancel={cancelUpload}
+              {...(uploadInto ? { into: uploadInto } : {})}
+            />
+            {bulkFailures && (
+              <Alert variant="destructive">
+                <AlertTitle>
+                  {plural(bulkFailures.unnamed ?? bulkFailures.items.length, 'asset')} not{' '}
+                  {bulkFailures.verb.toLowerCase()}
+                </AlertTitle>
+                <AlertDescription>
+                  <p>
+                    {bulkFailures.unnamed !== undefined
+                      ? 'Your role can’t read the job’s report, so they can’t be named here.'
+                      : 'They are still selected, to try again.'}
+                  </p>
+                  <ul className="space-y-0.5">
+                    {bulkFailures.items.map((f, i) => (
+                      <li key={i}>
+                        <span className="font-medium">{f.name}</span>
+                        {f.error ? `: ${f.error}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setBulkFailures(null)}
+                  >
+                    Dismiss
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+            {inUse && (
+              <AssetInUseNotice
+                name={assetName(inUse.asset, locale)}
+                usage={inUse.usage}
+                total={inUse.total}
+                onArchive={
+                  inUse.asset.status === 'archived'
+                    ? undefined
+                    : () => {
+                        archive(inUse.asset);
+                        setInUse(null);
+                      }
+                }
+                onDismiss={() => setInUse(null)}
+              />
+            )}
+            {bulkJob && (
+              <AssetBulkJobProgress
+                action={bulkJob.action}
+                job={bulkJob.job}
+                onDismiss={() => setBulkJob(null)}
+              />
+            )}
+            {zip.zip && (
+              <AssetZipProgress
+                zip={zip.zip}
+                onRefresh={() => void zip.refresh()}
+                onDismiss={zip.dismiss}
+              />
+            )}
+            {/* A collection's zip, still followed (and downloadable) back in the library. */}
+            {collectionZip.zip && (
+              <AssetZipProgress
+                zip={collectionZip.zip}
+                onRefresh={() => void collectionZip.refresh()}
+                onDismiss={collectionZip.dismiss}
+              />
+            )}
+            <AssetBulkBar
+              count={selected.size}
+              folders={folders}
+              tags={tags}
+              busy={bulkBusy}
+              onMove={(f) => void moveSelected(f)}
+              onTag={tagSelected}
+              onPublish={() => act('publish')}
+              onUnpublish={() => act('unpublish')}
+              onArchive={() => act('archive')}
+              collections={collections}
+              onAddToCollection={(id) => void addSelectedTo(id)}
+              onZip={() => void zip.start({ assetIds: ids })}
+              zipStarting={zip.starting}
+              onClear={() => {
+                setSelected(new Set());
+                setBulkFailures(null);
+              }}
+            />
+            {loading ? (
+              <>
+                {/* A search says so in its summary line, above. */}
+                {searching ? null : <LoadingStatus>Loading assets…</LoadingStatus>}
+                {view === 'grid' ? grid : list}
+              </>
+            ) : loadError && assets.length === 0 ? (
+              // A failed load is said as one, never as an empty library.
+              <Alert variant="destructive">
+                <AlertTitle>
+                  {searching ? 'The search didn’t finish' : 'The assets didn’t load'}
+                </AlertTitle>
+                <AlertDescription>
+                  <p>{message(loadError)}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => void (searching ? search.refetch() : pages.refetch())}
+                  >
+                    Retry
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : assets.length === 0 ? (
+              searching ? (
+                <EmptyState
+                  icon={ImageIcon}
+                  title="No matches"
+                  description="Nothing in the library matches this search here. Try other words, or clear the filters."
+                />
+              ) : filtered ? (
+                <EmptyState
+                  icon={ImageIcon}
+                  title="Nothing here"
+                  description="No assets match this folder and these filters. Drop files here to add some."
+                />
+              ) : (
+                <EmptyState
+                  icon={ImageIcon}
+                  title="No assets yet"
+                  description="Upload or drop images, video and files to start your library."
+                >
+                  <Button type="button" onClick={pick}>
+                    Upload
+                  </Button>
+                </EmptyState>
+              )
+            ) : (
+              <Refreshing busy={refreshing}>{view === 'grid' ? grid : list}</Refreshing>
+            )}
+            {!searching && pages.hasNextPage && (
+              <div className="flex justify-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pages.isFetchingNextPage}
+                  aria-busy={pages.isFetchingNextPage || undefined}
+                  onClick={() => void pages.fetchNextPage()}
+                >
+                  Load more
                 </Button>
-              </EmptyState>
-            )
-          ) : (
-            <Refreshing busy={refreshing}>{view === 'grid' ? grid : list}</Refreshing>
-          )}
-          {!searching && pages.hasNextPage && (
-            <div className="flex justify-center">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={pages.isFetchingNextPage}
-                aria-busy={pages.isFetchingNextPage || undefined}
-                onClick={() => void pages.fetchNextPage()}
-              >
-                Load more
-              </Button>
-              {pages.isFetchingNextPage ? (
-                <LoadingStatus>Loading more assets…</LoadingStatus>
-              ) : null}
-            </div>
-          )}
-        </section>
+                {pages.isFetchingNextPage ? (
+                  <LoadingStatus>Loading more assets…</LoadingStatus>
+                ) : null}
+              </div>
+            )}
+          </section>
+        )}
       </div>
 
       <AssetDetailSheet

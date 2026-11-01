@@ -132,6 +132,13 @@
       "binding": "ASSET_INGEST_WF",
       "name": "contentworker-asset-ingest",
       "class_name": "AssetIngestWorkflow"
+    },
+    // One run per zip download, started from `asset_zip.requested`: plan, then one step per 8 MiB
+    // part of the archive (at most 2,560 for the 20 GiB cap, under the 10,000-step default).
+    {
+      "binding": "ASSET_ZIP_WF",
+      "name": "contentworker-asset-zip",
+      "class_name": "AssetZipWorkflow"
     }
   ],
   // `send_email` (EMAIL) is added per deployment by scripts/fleet.ts when the deployment sets an

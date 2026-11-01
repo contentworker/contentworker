@@ -9,7 +9,7 @@ import {
   pepperId,
   pepperMismatch,
   verifyPassword,
-} from '../app/lib/credentials';
+} from '../src/credentials';
 
 describe('credentials', () => {
   it('hashes passwords with PBKDF2 and verifies only the right one', async () => {

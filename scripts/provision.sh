@@ -42,13 +42,20 @@ kv_id() { wrangler kv namespace list | jq -er --arg t "$KV" '.[] | select(.title
 kv=$(kv_id 2>/dev/null) || { wrangler kv namespace create "$KV" >/dev/null; kv=$(kv_id); }
 node scripts/fleet.ts set-kv "$id" "$kv"
 
-# Media, import staging, plugin bundles and dead letters. Staged imports and dead letters expire.
+# Media, import staging, plugin bundles, dead letters and zip downloads. Staged imports, dead
+# letters and zips expire (a zip is kept a day; the engine's sweep removes it, this is the
+# backstop).
 wrangler r2 bucket create "$MEDIA" ${j[@]+"${j[@]}"} || echo "R2 bucket $MEDIA already exists"
-for rule in "imports imports/ 7" "dlq dlq/ 30"; do
+for rule in "imports imports/ 7" "dlq dlq/ 30" "zips zips/ 2"; do
   set -- $rule
   wrangler r2 bucket lifecycle remove "$MEDIA" --name "$1" ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
   wrangler r2 bucket lifecycle add "$MEDIA" "$1" "$2" --expire-days "$3" --force ${j[@]+"${j[@]}"}
 done
+# Multipart uploads nobody finished (an abandoned large upload, a zip whose build died): aborted
+# after 2 days anywhere in the bucket, so R2 stops keeping their parts. The engine's hourly sweep
+# aborts an abandoned upload after one day; this is the backstop.
+wrangler r2 bucket lifecycle remove "$MEDIA" --name abort-multipart ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+wrangler r2 bucket lifecycle add "$MEDIA" abort-multipart "" --abort-multipart-days 2 --force ${j[@]+"${j[@]}"}
 
 # Embeddings for semantic and hybrid search (Workers AI bge-base-en-v1.5: 768 dims). A demo
 # mocks every model and has no index.

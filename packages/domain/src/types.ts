@@ -20,12 +20,12 @@ export function isSpaceId(value: string): boolean {
 
 /**
  * The media bucket's top-level prefixes that aren't a space: archived entry version bodies
- * (`versions/`), staged import and snapshot chunks (`imports/`), plugin bundles (`plugins/`) and
- * dead letters (`dlq/`, with its own lifecycle rule). A space's asset files sit at
- * `<space>/<environment>/…` in the same bucket, so a space named like one of these would reach
+ * (`versions/`), staged import and snapshot chunks (`imports/`), plugin bundles (`plugins/`), dead
+ * letters (`dlq/`, with its own lifecycle rule) and zip downloads (`zips/`, with one too). A
+ * space's asset files sit at `<space>/<environment>/…` in the same bucket, so a space named like one of these would reach
  * that data when its files are deleted. No space may take one of these ids, in any case.
  */
-export const RESERVED_SPACE_IDS = ['versions', 'imports', 'plugins', 'dlq'] as const;
+export const RESERVED_SPACE_IDS = ['versions', 'imports', 'plugins', 'dlq', 'zips'] as const;
 
 const RESERVED = new Set<string>(RESERVED_SPACE_IDS);
 

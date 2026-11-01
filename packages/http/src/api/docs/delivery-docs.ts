@@ -4,6 +4,7 @@ import {
   deliveredAsset,
   deliveredAssetPage,
   deliveredAssetSearchPage,
+  deliveredCollection,
   publishedEntry,
   publishedEntryList,
   searchHits,
@@ -65,6 +66,18 @@ const DOCS = {
     doc('Delivery', 'Get a published asset', {
       ok: deliveredAsset,
       query: { locale: 'Resolve title, description and alt text for one locale' },
+    }),
+  getCollection: () =>
+    doc('Delivery', 'Get a collection’s published assets', {
+      ok: deliveredCollection,
+      description:
+        'Its name and its published members in the collection’s order, in the delivered asset ' +
+        'shape (drafts and archived members are left out). Page with nextCursor.',
+      query: {
+        limit: 'Page size',
+        cursor: 'nextCursor from the previous page',
+        locale: 'Resolve title, description and alt text for one locale',
+      },
     }),
   live: () =>
     doc('Delivery', 'Live Content API (SSE)', {

@@ -5,13 +5,18 @@ import {
   type AssetRights,
   rightsExpireSoon,
 } from '@contentworker/domain';
+import { plural } from './format';
 import {
+  ApiError,
   type AssetFacets,
   type AssetListQuery,
   type AssetSearchQuery,
+  type AssetZip,
   apiErrorMessage,
   type BulkJobReport,
   type BulkJobSummary,
+  type ManagementClient,
+  UploadPartError,
 } from './management';
 
 /** Where the library is looking: everything, the assets in no folder, or one folder. */
@@ -399,4 +404,279 @@ export function isoToLocalInput(iso: string | undefined): string {
   const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// --- collections ------------------------------------------------------------------
+
+/** Most ids one add to (or remove from) a collection names; a bigger selection goes in turns. */
+export const COLLECTION_CHANGE_MAX = 500;
+
+/** `ids` in runs of at most `size`, in order. */
+export function chunked<T>(ids: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Every page a cursor-paged list has, followed to its end (`max` pages at most, so a runaway
+ * cursor can't keep the tab busy).
+ */
+export async function allPages<T>(
+  page: (
+    cursor?: string,
+  ) => Promise<{ readonly items: readonly T[]; readonly nextCursor?: string }>,
+  max = 20,
+): Promise<T[]> {
+  const out: T[] = [];
+  let cursor: string | undefined;
+  for (let i = 0; i < max; i++) {
+    const p = await page(cursor);
+    out.push(...p.items);
+    if (!p.nextCursor) break;
+    cursor = p.nextCursor;
+  }
+  return out;
+}
+
+/**
+ * "Added 3 assets to “Launch”", with what didn't go in: those already in it, and those the API
+ * didn't find (deleted since the page loaded).
+ */
+export function addedSummary(
+  collection: string,
+  outcome: { readonly requested: number; readonly added: number; readonly skipped: number },
+): string {
+  const already = outcome.requested - outcome.added - outcome.skipped;
+  const head = `Added ${outcome.added} ${outcome.added === 1 ? 'asset' : 'assets'} to “${collection}”`;
+  const notes = [
+    already > 0 ? `${already} already in it` : '',
+    outcome.skipped > 0 ? `${outcome.skipped} no longer in the library` : '',
+  ].filter(Boolean);
+  return notes.length > 0 ? `${head}; ${notes.join(', ')}` : head;
+}
+
+/** `list` with the item at `from` moved to `to` (both clamped to the list). */
+export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
+  const out = [...list];
+  if (from < 0 || from >= out.length) return out;
+  const [item] = out.splice(from, 1) as [T];
+  out.splice(Math.max(0, Math.min(to, out.length)), 0, item);
+  return out;
+}
+
+/** What a move says to a screen reader: "“Logo” moved to position 2 of 5". */
+export const movedAnnouncement = (name: string, to: number, total: number): string =>
+  `“${name}” moved to position ${to + 1} of ${total}`;
+
+// --- share links ------------------------------------------------------------------
+
+export type ShareExpiryChoice = '1d' | '7d' | '30d' | 'custom';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The expiry presets the share dialog offers, then a date of your own. */
+export const SHARE_EXPIRY_CHOICES: readonly { value: ShareExpiryChoice; label: string }[] = [
+  { value: '1d', label: '1 day' },
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: 'custom', label: 'Custom' },
+];
+
+const PRESET_MS: Record<Exclude<ShareExpiryChoice, 'custom'>, number> = {
+  '1d': DAY_MS,
+  '7d': 7 * DAY_MS,
+  '30d': 30 * DAY_MS,
+};
+
+/**
+ * The instant a link expires: a preset counted from `now`, or the custom `datetime-local` value
+ * on the reader's clock. Null when the custom date is empty or unreadable. Whether it is in range
+ * (5 minutes to 90 days out) is the API's to say.
+ */
+export function shareExpiresAt(
+  choice: ShareExpiryChoice,
+  custom: string,
+  now: number,
+): string | null {
+  if (choice === 'custom') return localInputToIso(custom);
+  return new Date(now + PRESET_MS[choice]).toISOString();
+}
+
+// --- zip downloads ----------------------------------------------------------------
+
+/** Whether a zip is still being built (and so worth asking about again). */
+export const zipRunning = (zip: Pick<AssetZip, 'status'>): boolean =>
+  zip.status === 'pending' || zip.status === 'running';
+
+/** How far a zip has got, 0..100: parts written of the parts planned (0 until it is planned). */
+export function zipPercent(zip: Pick<AssetZip, 'status' | 'partsDone' | 'partCount'>): number {
+  if (zip.status === 'completed') return 100;
+  if (!zip.partCount) return 0;
+  return Math.min(100, Math.round((zip.partsDone / zip.partCount) * 100));
+}
+
+/** The zip's status line: "Preparing “x.zip”…", "Zipping 12 files…", "“x.zip” is ready (3 MB)". */
+export function zipSummary(zip: AssetZip): string {
+  const files = zip.fileCount !== undefined ? plural(zip.fileCount, 'file') : 'the files';
+  switch (zip.status) {
+    case 'pending':
+      return `Preparing “${zip.fileName}”…`;
+    case 'running':
+      return `Zipping ${files} into “${zip.fileName}”…`;
+    case 'completed':
+      return `“${zip.fileName}” is ready: ${files}${zip.totalBytes !== undefined ? `, ${fileSize(zip.totalBytes)}` : ''}`;
+    case 'failed':
+      return `“${zip.fileName}” wasn’t built`;
+  }
+}
+
+// --- multipart uploads -------------------------------------------------------------
+
+/**
+ * The most one signed PUT takes (the api's request cap, 100 MiB); a bigger file goes up in parts.
+ * The api's own constant, mirrored: the admin doesn't import the application layer.
+ */
+export const SINGLE_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+
+/** Whether a file of `size` bytes goes up in parts. */
+export const uploadsInParts = (size: number): boolean => size > SINGLE_UPLOAD_MAX_BYTES;
+
+/** Where a multipart upload stands: bytes stored so far, parts done, and any part retrying. */
+export interface PartsProgress {
+  readonly loaded: number;
+  readonly total: number;
+  readonly partsDone: number;
+  readonly partCount: number;
+  /** A part waiting to try again (its last attempt failed); null when none is. */
+  readonly retryingPart: number | null;
+}
+
+/** The steps of a multipart upload, as the management client takes them. */
+export type MultipartClient = Pick<
+  ManagementClient,
+  | 'startAssetUpload'
+  | 'signAssetUploadParts'
+  | 'putUploadPart'
+  | 'completeAssetUpload'
+  | 'abortAssetUpload'
+>;
+
+export interface PartsUploadOptions {
+  readonly folderId?: string;
+  readonly onProgress?: (progress: PartsProgress) => void;
+  /** Cancels the upload; the upload is aborted on the server too. */
+  readonly signal?: AbortSignal;
+  /** Parts in flight at once. */
+  readonly concurrency?: number;
+  /** Attempts per part before the upload is given up. */
+  readonly attempts?: number;
+  /** Waits between attempts; injectable for tests. */
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Whether a failed step is worth another attempt: a part's PUT always is (its URL is signed
+ * again), as is a server error or a dropped connection; a refusal by the API (a 4xx other than a
+ * timeout or a rate limit) won't change on its own.
+ */
+export function retryable(err: unknown): boolean {
+  if (err instanceof UploadPartError) return true;
+  if (err instanceof ApiError) return err.status >= 500 || err.status === 408 || err.status === 429;
+  return !(err instanceof DOMException && err.name === 'AbortError');
+}
+
+const backoff = (attempt: number) => 500 * 2 ** attempt;
+
+/**
+ * Uploads a file past {@link SINGLE_UPLOAD_MAX_BYTES} as a new draft asset, in the parts the API
+ * plans: each part signed and PUT `concurrency` at a time, a failed part signed again and retried
+ * with backoff (500 ms, 1 s, 2 s…), then completed with every part's ETag. Progress counts bytes
+ * storage has confirmed. A cancel, or a part out of attempts, aborts the upload on the server
+ * (which deletes the empty draft) and rejects.
+ */
+export async function uploadInParts(
+  client: MultipartClient,
+  file: File,
+  opts: PartsUploadOptions = {},
+): Promise<Asset> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const attempts = opts.attempts ?? 4;
+  const { signal } = opts;
+  signal?.throwIfAborted();
+  const started = await client.startAssetUpload({
+    fileName: file.name,
+    contentType: file.type || 'application/octet-stream',
+    size: file.size,
+    title: file.name,
+    ...(opts.folderId ? { folderId: opts.folderId } : {}),
+  });
+  const assetId = started.asset.id;
+  const { uploadId, partSize, partCount } = started.upload;
+  const total = file.size;
+  let loaded = 0;
+  let partsDone = 0;
+  const retrying = new Set<number>();
+  const report = () =>
+    opts.onProgress?.({
+      loaded,
+      total,
+      partsDone,
+      partCount,
+      retryingPart: retrying.size > 0 ? Math.min(...retrying) : null,
+    });
+  report();
+
+  const sendPart = async (n: number): Promise<{ partNumber: number; etag: string }> => {
+    for (let attempt = 0; ; attempt++) {
+      signal?.throwIfAborted();
+      try {
+        // Signed again on each attempt: a URL lives 15 minutes, and a retry may outlast it.
+        const [signed] = (await client.signAssetUploadParts(assetId, uploadId, [n])).parts;
+        if (!signed) throw new UploadPartError(0, `part ${n} was not signed`);
+        const from = (n - 1) * partSize;
+        const etag = await client.putUploadPart(
+          signed.url,
+          file.slice(from, from + signed.length),
+          signal,
+        );
+        retrying.delete(n);
+        partsDone += 1;
+        loaded += signed.length;
+        report();
+        return { partNumber: n, etag };
+      } catch (err) {
+        if (signal?.aborted || !retryable(err) || attempt >= attempts - 1) throw err;
+        retrying.add(n);
+        report();
+        await sleep(backoff(attempt));
+      }
+    }
+  };
+
+  try {
+    const parts: { partNumber: number; etag: string }[] = new Array(partCount);
+    let next = 0;
+    let failure: unknown;
+    const lane = async () => {
+      while (failure === undefined && next < partCount) {
+        const i = next++;
+        try {
+          parts[i] = await sendPart(i + 1);
+        } catch (err) {
+          failure ??= err;
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.max(1, Math.min(opts.concurrency ?? 4, partCount)) }, lane),
+    );
+    if (failure !== undefined) throw failure;
+    signal?.throwIfAborted();
+    return await client.completeAssetUpload(assetId, uploadId, parts);
+  } catch (err) {
+    // Nothing is left behind: the parts are discarded and the empty draft deleted.
+    await client.abortAssetUpload(assetId, uploadId).catch(() => undefined);
+    throw err;
+  }
 }

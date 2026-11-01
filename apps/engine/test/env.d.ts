@@ -19,6 +19,8 @@ declare global {
       readonly SEARCH: DurableObjectNamespace<SearchShardDO>;
       readonly EDITORIAL_WF: Workflow;
       readonly ASSET_INGEST_WF: Workflow;
+      readonly ASSET_ZIP_WF: Workflow;
+      readonly MEDIA_BUCKET: R2Bucket;
       readonly ASSISTANT_AGENT: DurableObjectNamespace<AssistantAgent>;
       readonly DB: D1Database;
       readonly KV_CACHE: KVNamespace;

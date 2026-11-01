@@ -28,6 +28,7 @@ which cache tags to purge.
              │    ├─ functions — invoke user-defined HTTP hooks (FunctionInvoker)
              │    ├─ cache     — invalidate the entry's tag + reverse-reference tags (KV)
              │    ├─ gate      — asset.*: write or remove asset-gate:<space>:<env>:<id> (KV)
+             │    ├─ zip       — asset_zip.requested: start AssetZipWorkflow
              │    ├─ rag       — re-index (published) or delete (unpublished) embeddings
              │    └─ search    — SearchShardDO index / remove
              ├─ bus.publish(event)  →  LiveHubDO  →  Live Content SSE subscribers
@@ -35,7 +36,7 @@ which cache tags to purge.
              │  when that queue is bound, else run inline (runPublishAgents)
              └─ after the batch (apps/engine/src/purges.ts): ONE purge message with a tag per
                 space:environment touched by a PURGING_EVENTS event  →  contentworker-purge;
-                ONE with the media tags (cwa:/cwr:/cwe:)  →  contentworker-media-purge, and
+                ONE with the media tags (cwa:/cwr:/cwe:/cws:/cwc:)  →  contentworker-media-purge, and
                 what was revoked again 90 s later
                                    │
         delivery queue(): consumer on contentworker-purge (concurrency 1)
@@ -44,7 +45,8 @@ which cache tags to purge.
                                    │
         scheduled() (every minute): runDueScheduledActions, the outbox sweep,
         stalled-bulk-job recovery, runDueAgentSchedules (AGENTS_SCHEDULES=true);
-        pruneEventHistory and sweepAbandonedUploads on the top-of-hour tick
+        pruneEventHistory, sweepAbandonedUploads, sweepAbandonedMultipartUploads and
+        sweepExpiredZips on the top-of-hour tick
 ```
 
 `EVENTS_TOPIC` is `contentworker.events` and `BULK_TOPIC` is `contentworker.bulk`. The
@@ -143,7 +145,8 @@ loudly and acks it.
 After each `contentworker-events` batch, the engine collects one `deliveryScopeTag` per
 space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/purges.ts`):
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-`asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `content_type.published`, `release.published`,
+`asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed` (Delivery lists a
+collection's published members), `content_type.published`, `release.published`,
 `environment_alias.changed`, `environment.deleted`. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
@@ -169,7 +172,10 @@ republish can move the focal point, and so a crop, under the same URL), and revo
 carries `replacedVersion` (the republish put a new file in place of the old one, whose URLs must
 stop working); `asset.unpublished`, `asset.deleted` and `asset.rights_changed` (an expiry caps how
 long a file may be cached) revoke that tag, `asset_renditions.changed` revokes `cwr:<space>:<name>`, and
-`environment.deleted` revokes `cwe:<space>:<env>`. Everything goes in one message on
+`environment.deleted` revokes `cwe:<space>:<env>`. Share pages have tags too: `asset_collection.changed` purges
+`cwc:<space>:<env>:<collection>`; `asset.published`, `asset.unpublished` and `asset.rights_changed` purge the
+`cwc:` tag of each collection holding the asset (at most 100, `MAX_COLLECTIONS_PURGED`); and
+`asset_share.revoked` revokes `cws:<space>:<env>:<link>`. Everything goes in one message on
 `contentworker-media-purge`; what was revoked goes again with `delaySeconds: 90`
 (`REVOCATION_REPURGE_SECONDS`), once KV's 60 s read cache and replica lag have passed, so a colo
 that re-cached a file from a stale gate read loses it too. The media Worker drains it with the same
@@ -198,6 +204,9 @@ compare-and-swap on the schedule's `nextRunAt`, so overlapping ticks never doubl
 
 On the top-of-hour tick, `pruneEventHistory` trims relayed outbox rows and webhook delivery records
 older than `EVENT_RETENTION_HOURS` (default 168).
+The same tick runs `sweepAbandonedMultipartUploads` (multipart uploads unfinished after a day are
+aborted) and `sweepExpiredZips` (archives past their day are deleted with their jobs), each recorded
+in the heartbeat (`abandoned-multipart-uploads`, `expired-zips`).
 
 ## Webhooks
 
@@ -305,6 +314,9 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset.expired`                                                                    | `assetId`, `expiresAt` (the expiry sweep unpublished it; sent with `asset.unpublished`)                                                                                                                              |
 | `asset.ingested`                                                                   | `assetId`, `version`, `published`, `contentHash` (absent over 512 MiB), `duplicateOf` (ingest finished a file version: hashed, measured, enriched where empty, indexed)                                              |
 | `asset_renditions.changed`                                                         | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged; `scope` is the environment it was changed through, so other environments' scoped hooks don't hear it) |
+| `asset_collection.changed`                                                         | `collectionId` (a collection was created, renamed or deleted, or its members were added, removed or reordered; also sent for each collection a deleted asset leaves; Delivery's collection read and every share page that shows it are purged) |
+| `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the media origin reads the link's row itself; a revoke purges its cached page, now and after 90 s) |
+| `asset_zip.requested`                                                              | `jobId` (a control event: the engine starts `AssetZipWorkflow`, or fails the job when `ASSET_ZIP_WF` is unbound; no webhooks apply) |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                                                                        |
 | `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                                                              |
 | `environment_alias.changed`                                                        | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias                                                                                                                                        |

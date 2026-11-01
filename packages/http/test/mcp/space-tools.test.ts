@@ -146,7 +146,7 @@ describe('space tools over MCP', () => {
 
   it('refuses an id the media bucket keeps for its own data, creating nothing', async () => {
     const admin = await connect(deps, ADMIN);
-    for (const spaceId of ['versions', 'imports', 'plugins', 'dlq', 'DLQ']) {
+    for (const spaceId of ['versions', 'imports', 'plugins', 'dlq', 'zips', 'DLQ']) {
       const res = await admin.callTool({
         name: 'space_create',
         arguments: { spaceId, name: 'Reserved', defaultLocale: 'en-US', starter: 'sample' },

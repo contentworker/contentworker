@@ -51,6 +51,7 @@ import type {
   AssetGate,
   AssetIngestQueue,
   AssetIngestStarter,
+  AssetZipStarter,
   BlobStore,
   Cache,
   ContentStore,
@@ -61,12 +62,14 @@ import type {
   GenerateRequest,
   IdGenerator,
   MediaPathSigner,
+  PasswordHasher,
   Queue as QueuePort,
   SecretSealer,
   TextExtractor,
   VectorStore,
   WorkflowEngine,
 } from '@contentworker/ports';
+import { pbkdf2PasswordHasher } from '@contentworker/security/credentials';
 import {
   FakeBlobStore,
   InMemoryContentStore,
@@ -77,6 +80,7 @@ import {
   StubDecisionModel,
 } from '@contentworker/test-kit';
 import { CloudflareAssetIngestStarter } from './asset-ingest';
+import { CloudflareAssetZipStarter } from './asset-zip';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
 import { doCostGuardFromEnv } from './do/cost-guard';
@@ -112,6 +116,8 @@ export interface EdgeWired {
   readonly assetIngest?: AssetIngestQueue;
   /** Starts ingest runs (the engine's ASSET_INGEST_WF); absent elsewhere. */
   readonly assetIngestStarter?: AssetIngestStarter;
+  /** Starts zip builds (the engine's ASSET_ZIP_WF); absent elsewhere. */
+  readonly assetZipStarter?: AssetZipStarter;
   readonly ai: AIProvider;
   /** Decision model (Clef on Workers AI): typed questions in, probabilities out. */
   readonly decisions: DecisionModel;
@@ -229,6 +235,10 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
         }
       : {}),
     ...(env.STREAM ? { video: createStreamVideoHost(env.STREAM) } : {}),
+    passwords,
+    ...(posNum(env.ASSET_UPLOAD_MAX_BYTES) !== undefined
+      ? { maxUploadBytes: posNum(env.ASSET_UPLOAD_MAX_BYTES) as number }
+      : {}),
     ...(env.MEDIA_PUBLIC_URL
       ? {
           mediaPublicUrl: env.MEDIA_PUBLIC_URL.replace(/\/$/, ''),
@@ -293,6 +303,9 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     ...(env.ASSET_INGEST_WF
       ? { assetIngestStarter: new CloudflareAssetIngestStarter(env.ASSET_INGEST_WF) }
       : {}),
+    ...(env.ASSET_ZIP_WF
+      ? { assetZipStarter: new CloudflareAssetZipStarter(env.ASSET_ZIP_WF) }
+      : {}),
     ai,
     decisions,
     bus: new InMemoryEventBus(),
@@ -306,12 +319,23 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
   };
 }
 
+/** Share-link passwords: PBKDF2-SHA256, the admin's own scheme (no pepper: the api has none). */
+export const passwords: PasswordHasher = pbkdf2PasswordHasher;
+
 /** What the media Worker reads with, all of it read-only. */
 export interface MediaWired {
-  /** Through a read-replica session: the gate's fallback and the rendition presets. */
-  readonly store?: Pick<ContentStore, 'assets' | 'assetRenditions'>;
+  /**
+   * Through a read-replica session: the gate's fallback, the rendition presets, and the share
+   * links and collections a share page reads.
+   */
+  readonly store?: Pick<
+    ContentStore,
+    'assets' | 'assetRenditions' | 'assetShareLinks' | 'assetCollections'
+  >;
   /** The engine's published-asset gate (KV_CACHE). */
   readonly assetGate?: AssetGate;
+  /** Checks a share link's password. */
+  readonly passwords: PasswordHasher;
   /** Checks the token in a published asset's path. */
   readonly mediaPaths: MediaPathSigner;
   /** Checks Preview's short-lived signed `/media/*` reads. */
@@ -330,6 +354,7 @@ export function wireMedia(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): Media
   return {
     ...(session ? { store: createD1Store(session) } : {}),
     ...(env.KV_CACHE ? { assetGate: createKvAssetGate(env.KV_CACHE) } : {}),
+    passwords,
     mediaPaths: createMediaPathSigner(secret),
     mediaSigner: createMediaUrlSigner(secret),
   };

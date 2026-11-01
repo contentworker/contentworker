@@ -62,7 +62,10 @@ export function mediaRoutes(deps: MediaRouteDeps): Hono {
             }
           : {}),
       });
-      if (c.req.method === 'PUT' && res.ok && deps.onUploaded) {
+      // A multipart part (`upload=` in the signed URL) is not a file yet: completing the upload
+      // starts its ingest.
+      const part = new URL(c.req.url).searchParams.has('upload');
+      if (c.req.method === 'PUT' && res.ok && deps.onUploaded && !part) {
         const key = keyFromMediaPath(new URL(c.req.url).pathname);
         if (key) {
           const etag = res.headers.get('etag') ?? undefined;

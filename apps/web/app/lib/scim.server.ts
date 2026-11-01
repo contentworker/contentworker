@@ -16,11 +16,11 @@
  */
 
 import { scimGroupMembers, scimGroups, users, workspaceSettings } from '@contentworker/db/auth';
+import { randomToken, secretEqual, sha256Hex } from '@contentworker/security/credentials';
 import { and, count, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { endAccess } from './access.server';
 import { audit, clientIp } from './audit.server';
 import type { AuditActor } from './audit-chain';
-import { randomToken, secretEqual, sha256Hex } from './credentials';
 import { db } from './env.server';
 import { newId } from './ids';
 import { overBudget } from './rate-limit';

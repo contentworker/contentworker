@@ -9,7 +9,7 @@ and infrastructure is bound only at the edges.
 ```
    apps/web ─────(API service binding, signed x-cw-principal)────▶ apps/api
    apps/delivery (public CDA, cached)                             apps/engine (queues, cron, DOs, Workflows)
-   apps/media (published asset files, cached; KV gate written by the engine)
+   apps/media (published asset files and share links, cached; KV gate written by the engine)
         │                                                              │
         └──────────────┬───────────────────────────────────────────────┘
                        │ thin composition entries over
@@ -144,7 +144,8 @@ bind them by `script_name`) and handles:
   It forwards `entry.published` to the agents queue when it is bound, and sends one coalesced purge message
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-  `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `content_type.published`, `release.published`,
+  `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed`,
+  `content_type.published`, `release.published`,
   `environment_alias.changed`, `environment.deleted`; `asset.ingested` only when `published`;
   `asset_renditions.changed` purges every environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
   and send the media Worker's tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`):
@@ -152,8 +153,9 @@ bind them by `script_name`) and handles:
 - **Cron** (`* * * * *`): due scheduled actions, the asset expiry sweep (`runDueAssetExpiries`;
   see [Assets](#assets-r2-images-stream-and-the-media-worker)), the outbox relay sweep, bulk-job stall recovery,
   the restart of deleted-environment purges that stopped progressing, agent schedules
-  (`AGENTS_SCHEDULES=true`), retention and the abandoned-upload sweep (see
-  [Asset ingest](#asset-ingest-and-search)) at the top of each hour, and the daily
+  (`AGENTS_SCHEDULES=true`), retention, the abandoned-upload sweep (see
+  [Asset ingest](#asset-ingest-and-search)), the abandoned multipart-upload sweep and the expired-zip
+  sweep (see [Collections, share links, multipart uploads and zips](#collections-share-links-multipart-uploads-and-zips)) at the top of each hour, and the daily
   secret reseal at 03:30 UTC. Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
   failure is logged and recorded, and never skips the rest of the tick. At the end of the tick one
   D1 batch writes the heartbeat (`scheduler_jobs`: each sweep's last run, success and redacted
@@ -179,8 +181,8 @@ each model step is a request against `CostGuardDO` and the turn's tokens are set
 ends.
 
 Workflows: `AgentWorkflow` (`contentworker-agent`), `EditorialWorkflow`
-(`contentworker-editorial`) and `AssetIngestWorkflow` (`contentworker-asset-ingest`), in
-`apps/engine/src/workflows/`.
+(`contentworker-editorial`), `AssetIngestWorkflow` (`contentworker-asset-ingest`) and
+`AssetZipWorkflow` (`contentworker-asset-zip`), in `apps/engine/src/workflows/`.
 
 DO migration tags only ever append (`apps/engine/wrangler.jsonc`, checked by
 `scripts/do-migrations.test.ts`).
@@ -218,7 +220,8 @@ configured".
   non-expiring signed `GET` URL in `file.url` on `MEDIA_BASE_URL`, which the api keeps honouring,
   but no read hands it out: Management and MCP reads replace it with a short-lived one
   (`withReadUrl`, `READ_URL_TTL_SECONDS` = 900; `exp` is covered by the signature and rounded up
-  to a 15-minute window so a browser's cache keeps working). Uploads are capped at 100 MiB; user
+  to a 15-minute window so a browser's cache keeps working). A single signed `PUT` takes at most 100 MiB (the Workers request-body cap); larger files upload in
+  parts ([below](#collections-share-links-multipart-uploads-and-zips)). User
   bytes are served with `nosniff` and `CSP: sandbox`. Rotating `MEDIA_SIGNING_SECRET` invalidates
   every signed URL.
 - **Images (`IMAGES`)**: transform params (`w,h,fit,fm,q,g`, and `exp`) are covered by the
@@ -342,6 +345,70 @@ assets), each asset's versions and rights, and each asset's ingest state
 (processing, or an error with a retry), duplicate marker and AI-suggested alt text and tags. The
 api's `/media/*` byte route keeps its name.
 
+### Collections, share links, multipart uploads and zips
+
+Migration `0016_asset_collections` adds five environment-scoped tables (mirrored in
+`packages/db/src/schema.ts`; the environment purge clears them): `asset_collections`,
+`asset_collection_items` (one row per membership, ordered by `position`), `asset_share_links`
+(`password_hash` is PBKDF2, `revoked_at` set once), `asset_zip_jobs` and `asset_uploads`.
+
+- **Collections** (`packages/application/src/asset-collections.ts`, domain
+  `packages/domain/src/asset/collection.ts`) are named, ordered, many-to-many sets of assets: at most
+  `MAX_COLLECTION_ITEMS` (1,000) members, a change of at most `MAX_COLLECTION_CHANGE` (500) ids per
+  call, passed to the store as one JSON parameter. An add past the cap is refused whole (`409`).
+  `content:write` changes them, `preview:read` reads them. Every change emits
+  `asset_collection.changed`. Deleting an asset removes its memberships in the same unit and emits
+  one `asset_collection.changed` per collection it leaves (at most 100). Export, import and clone
+  carry collections (`snapshots.ts`), keeping the members whose asset the snapshot carries or the
+  target already has. Delivery serves `GET …/collections/:id` (published members only), cached under
+  the scope's tag and purged by `asset_collection.changed`.
+- **Share links** (`asset-shares.ts`; `apps/media/src/share.ts`) are expiring, revocable links to a
+  published asset or a collection, served read-only by the media Worker at
+  `/s/<space>/<env>/<linkId>/<token>`. Only published assets are shared: an unpublished asset is
+  `409`, and a collection's page lists only its published members, so a draft is never exposed. The
+  `token` is a 128-bit HMAC (`MediaPathSigner`) checked before any lookup. The link is then read on
+  every request, from a D1 replica (`openShareLink`): no cache or engine step stands between a
+  revoke and the link closing. Expired is `410` at once; revoked is `410` as soon as the replica has
+  the row (replication lag, usually well under a second). The page is HTML, or JSON with `?format=json` or `Accept:
+  application/json`; files are at `…/f/<assetId>/<fileName>` through the published file's own cached
+  URL, and `?download` is honoured only when the link has `allowDownload`. The page renders in the
+  cached `Media` entrypoint, tagged `cws:<space>:<env>:<link>`, `cwa:<space>:<env>:<asset>` for an asset link or
+  `cwc:<space>:<env>:<collection>` for a collection, and `cwe:<space>:<env>`, and cached at the edge for at most an hour and never past the expiry; the
+  gateway hands the browser `private, no-store` for a page and `private, max-age=300` for a file.
+  A wrong password re-renders the form (`200`), a locked page's file is `401`, the limit is `429`.
+  `asset_share.revoked` revokes the link's tag now and again after 90 s; `asset_collection.changed`
+  purges the collection's tag; `asset.published`, `asset.unpublished` and `asset.rights_changed`
+  purge the tag of each collection holding the asset (at most 100, `MAX_COLLECTIONS_PURGED`). An
+  optional password (8 to 256 characters) is hashed with PBKDF2 (`@contentworker/security`
+  `credentials`, moved from `apps/web`) and never returned. The unlock form (`POST …/unlock`) is
+  limited to 10 a minute per link and client address by the media Worker's `RATE_LIMIT_SHARE_UNLOCK`
+  binding (namespace `1006`), and sets a cookie scoped to the link's path for at most 12 hours
+  (`UNLOCK_SECONDS`) and never past the expiry. Expiry is 5 minutes to 90 days out. Create, list
+  and revoke need `content:publish` (a listing carries the URLs).
+- **Multipart uploads** (`asset-uploads.ts`, `@contentworker/adapters/blob-r2`) serve files past
+  what one signed `PUT` takes (100 MiB), up to `ASSET_UPLOAD_MAX_BYTES` (default 5 GiB). Starting
+  one creates the draft (same hooks and key rules as a single `PUT`) and an R2 multipart upload, and
+  records it in `asset_uploads`. Parts are 8 MiB, grown in whole MiB to stay within 10,000 parts.
+  Each part's URL is signed with the upload id, part number and exact length. Completing needs
+  parts `1..n` once each with their etags and sends the same ingest notice a finished `PUT` does.
+  Aborting discards the parts and deletes the draft while it has no bytes. The top-of-hour sweep
+  `sweepAbandonedMultipartUploads` (`abandoned-multipart-uploads`) aborts uploads unfinished after a
+  day (at most 100 a sweep), before the draft sweep above removes their drafts; an R2 lifecycle rule
+  (`abort-multipart`, bucket-wide, 2 days) is the backstop.
+- **Zip downloads** (`asset-zip.ts`, `zip.ts`, `apps/engine/src/workflows/asset-zip-workflow.ts`)
+  put up to `MAX_ZIP_ASSETS` (1,000) assets, 20 GiB at most, in one archive. `requestAssetZip`
+  writes the job (`pending`) and `asset_zip.requested` in one unit; the engine starts
+  `AssetZipWorkflow` (`ASSET_ZIP_WF`, instance per job) from that event, or fails the job when the
+  binding is absent. The workflow plans the archive from each asset's current file (a hosted video
+  and a file whose bytes never landed are skipped), then runs one step per 8 MiB R2 multipart
+  part from ranged reads, so one part is in memory and never the archive. Entries are stored
+  (no compression) with data descriptors, and Zip64 where a size or offset passes 4 GiB. The
+  archive lives at `zips/<space>/<env>/<job>/<name>.zip` (`zips` is a `RESERVED_SPACE_IDS`
+  entry) and is kept a day. `GET …/asset-zips/:id` adds a `downloadUrl`, a 15-minute signed URL
+  (`READ_URL_TTL_SECONDS`), once the job has `completed`. The sweep `expired-zips` (at most 100 a
+  sweep), the `zips/` lifecycle rule (2 days) and an environment purge remove archives.
+  `preview:read` requests and reads them.
+
 ### Asset ingest and search
 
 Every file that lands in the media bucket is ingested once per version
@@ -434,7 +501,7 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
 | Store                             | Holds                                                                                                                                                                                                                                                                              |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **D1** (`DB`, primary + replicas) | Everything authoritative: spaces, environments, aliases, content types, entries and versions, published read models, assets, releases, schedules, taxonomy, workflows, roles, team, API keys, OAuth, webhooks, the outbox, audit; plus the web app's auth tables (`0002_auth.sql`) |
-| **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle)                                                                                                                                                                 |
+| **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle), zip downloads (`zips/`, 2-day lifecycle) and in-progress multipart uploads (aborted by a bucket-wide 2-day rule)                                                                                                                                                                 |
 | **KV** (`KV_CACHE`)               | Tag-versioned delivery cache, the authenticated-principal cache, and the media gate (shared by api, engine, delivery and media)                                                                                                                                                    |
 | **DO SQLite**                     | Search shards, live hubs, AI budgets, auth-failure counters                                                                                                                                                                                                                        |
 | **Vectorize**                     | Embeddings (768 dims, cosine), metadata-indexed on `spaceId` and `environmentId`                                                                                                                                                                                                   |

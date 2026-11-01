@@ -2,6 +2,7 @@ import type { DomainEvent, EntriesPublishedBulkEvent, Webhook } from '@contentwo
 import type {
   AssetGate,
   AssetIngestQueue,
+  AssetZipStarter,
   BlobStore,
   Cache,
   FunctionInvoker,
@@ -74,6 +75,8 @@ export interface DispatchDeps {
   readonly assetSearch?: AssetSearchDeps;
   /** The ingest queue, which `asset_reindex` bulk chunks feed; absent, those chunks wait. */
   readonly assetIngest?: AssetIngestQueue;
+  /** Starts the Workflow that builds a requested zip; absent, a request fails at once. */
+  readonly assetZip?: AssetZipStarter;
   /**
    * Tags already invalidated during this consumer invocation. A queue batch of
    * same-type publishes (a release, a burst of scheduled publishes) would
@@ -121,6 +124,20 @@ export async function dispatchEvent(
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),
     });
+    return;
+  }
+
+  // A zip was asked for: start the Workflow that builds it (one instance per job, so a
+  // redelivered event starts nothing more). A control event: no webhooks apply.
+  if (event.type === 'asset_zip.requested') {
+    if (deps.assetZip) {
+      await deps.assetZip.start({ scope, jobId: event.jobId });
+    } else {
+      await ctx.store.assetZips.update(scope, event.jobId, {
+        status: 'failed',
+        error: 'Zip downloads are not available on this deployment',
+      });
+    }
     return;
   }
 

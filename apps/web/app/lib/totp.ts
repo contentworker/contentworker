@@ -7,7 +7,7 @@
  * `auth.server.ts` remembers the last step used so a code can't be replayed.
  */
 
-import { sha256Hex } from './credentials';
+import { sha256Hex } from '@contentworker/security/credentials';
 
 export const TOTP_PERIOD_S = 30;
 export const TOTP_DIGITS = 6;

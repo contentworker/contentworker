@@ -56,6 +56,14 @@ export const mediaAssetTag = (spaceId: string, environmentId: string, assetId: s
 /** Cache tag on every media response made by one rendition preset of a space (any environment). */
 export const mediaRenditionTag = (spaceId: string, name: string) => `cwr:${spaceId}:${name}`;
 
+/** Cache tag on a share page of one link (purged when the link is revoked). */
+export const mediaShareLinkTag = (spaceId: string, environmentId: string, linkId: string) =>
+  `cws:${spaceId}:${environmentId}:${linkId}`;
+
+/** Cache tag on every share page that lists one collection (purged when what it lists changes). */
+export const mediaCollectionTag = (spaceId: string, environmentId: string, collectionId: string) =>
+  `cwc:${spaceId}:${environmentId}:${collectionId}`;
+
 /** Cache tag on every media response of one space:environment (purged when it is deleted). */
 export const mediaEnvironmentTag = (spaceId: string, environmentId: string) =>
   `cwe:${spaceId}:${environmentId}`;

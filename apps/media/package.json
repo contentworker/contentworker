@@ -23,6 +23,7 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",
     "@cloudflare/workers-types": "catalog:",
+    "@contentworker/security": "workspace:*",
     "@contentworker/test-kit": "workspace:*",
     "@contentworker/typescript-config": "workspace:*",
     "@types/node": "catalog:",

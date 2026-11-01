@@ -25,7 +25,9 @@ import {
   runPublishAgents,
   startAssetIngestForObject,
   startRequestedAssetIngest,
+  sweepAbandonedMultipartUploads,
   sweepAbandonedUploads,
+  sweepExpiredZips,
 } from '@contentworker/application';
 import type { Scope } from '@contentworker/domain';
 import { isResealTick } from '@contentworker/platform/data-key';
@@ -57,6 +59,7 @@ import { runInLanes } from './lanes';
 import { newPurgePlan, planPurges, sendPurges } from './purges';
 import { AgentWorkflow } from './workflows/agent-workflow';
 import { AssetIngestWorkflow } from './workflows/asset-ingest-workflow';
+import { AssetZipWorkflow } from './workflows/asset-zip-workflow';
 import { EditorialWorkflow } from './workflows/editorial-workflow';
 
 /** A queue message's payload (kept as one accessor so every consumer reads it the same way). */
@@ -67,6 +70,7 @@ const payloadOf = (m: { body: unknown }): unknown => m.body;
 export {
   AgentWorkflow,
   AssetIngestWorkflow,
+  AssetZipWorkflow,
   AssistantAgent,
   CostGuardDO,
   EditorialWorkflow,
@@ -140,6 +144,8 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     assetSearch: wired.assetSearch,
     // `asset_reindex` bulk chunks hand their assets to ingest through this queue.
     ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
+    // Zip downloads: `asset_zip.requested` starts the job's Workflow.
+    ...(wired.assetZipStarter ? { assetZip: wired.assetZipStarter } : {}),
     bus: env.LIVE_HUB ? createDoEventBus(env.LIVE_HUB) : undefined,
     onLiveError: (err) => console.error('live publish error', err),
     // Inline agents only when no contentworker-agents queue is bound (dev/demo parity).
@@ -480,6 +486,46 @@ export default {
             }
           },
           (err) => console.error('event history prune failed', err),
+        );
+        // Multipart uploads left unfinished a day on: aborted, so R2 drops their parts. Before
+        // the drafts below, whose sweep then finds no bytes and removes them.
+        await sweep(
+          tick,
+          CRON_JOBS.abandonedMultipart,
+          async () => {
+            const swept = await sweepAbandonedMultipartUploads(wired.ctx, wired.blob);
+            if (swept.aborted + swept.failed > 0) {
+              console.log(JSON.stringify({ msg: 'abandoned multipart uploads swept', ...swept }));
+              for (const outcome of ['aborted', 'failed'] as const) {
+                if (swept[outcome] > 0) {
+                  metrics.count('contentworker_abandoned_multipart_total', swept[outcome], {
+                    outcome,
+                  });
+                }
+              }
+            }
+          },
+          (err) => console.error('abandoned multipart sweep failed', redactCredentials(err)),
+        );
+        // Zip downloads past their day: the archive and its job go.
+        await sweep(
+          tick,
+          CRON_JOBS.expiredZips,
+          async () => {
+            const swept = await sweepExpiredZips(wired.ctx, wired.blob);
+            if (swept.removed + swept.failed > 0) {
+              console.log(JSON.stringify({ msg: 'expired zips swept', ...swept }));
+              metrics.count('contentworker_zips_swept_total', swept.removed, {
+                outcome: 'removed',
+              });
+              if (swept.failed > 0) {
+                metrics.count('contentworker_zips_swept_total', swept.failed, {
+                  outcome: 'failed',
+                });
+              }
+            }
+          },
+          (err) => console.error('expired zip sweep failed', redactCredentials(err)),
         );
         // Drafts whose presigned upload never landed, a day on (bounded per tick).
         await sweep(

@@ -1,7 +1,9 @@
 import {
   type AssetBulkAction,
+  abortMultipartAssetUpload,
   addComment,
   addEntryToRelease,
+  addToAssetCollection,
   agentUsage,
   analyzeImport,
   applyEntryTags,
@@ -22,14 +24,17 @@ import {
   cloneEnvironment,
   commitAssetFile,
   compareEnvironments,
+  completeMultipartAssetUpload,
   countEntriesByContentType,
   createAgentSchedule,
   createAIAction,
   createApiKey,
   createAppExtension,
   createAsset,
+  createAssetCollection,
   createAssetFolder,
   createAssetRendition,
+  createAssetShareLink,
   createConcept,
   createContentType,
   createEntry,
@@ -49,6 +54,7 @@ import {
   deleteAIAction,
   deleteAppExtension,
   deleteAsset,
+  deleteAssetCollection,
   deleteAssetFolder,
   deleteAssetRendition,
   deleteComment,
@@ -73,8 +79,11 @@ import {
   generateAltText,
   getAgentReview,
   getAsset,
+  getAssetCollection,
   getAssetRendition,
+  getAssetShareLink,
   getAssetUsage,
+  getAssetZip,
   getBulkJob,
   getBulkJobReport,
   getContentType,
@@ -102,10 +111,14 @@ import {
   listAIActions,
   listApiKeys,
   listAppExtensions,
+  listAssetCollectionItems,
+  listAssetCollections,
   listAssetFolders,
   listAssetRenditions,
+  listAssetShareLinks,
   listAssets,
   listAssetVersions,
+  listAssetZips,
   listAuditLog,
   listBulkJobs,
   listComments,
@@ -144,8 +157,11 @@ import {
   rejectPromotion,
   relatedEntries,
   removeEntryFromRelease,
+  removeFromAssetCollection,
   reopenTask,
+  reorderAssetCollection,
   replaceAssetFile,
+  requestAssetZip,
   requestPromotion,
   requestReindex,
   resolveTask,
@@ -154,6 +170,7 @@ import {
   restoreEntry,
   restoreVersion,
   revokeApiKey,
+  revokeAssetShareLink,
   revokeConnectedApp,
   revokeEverythingFor,
   runAIAction,
@@ -167,11 +184,13 @@ import {
   setEnvironmentAlias,
   setPluginEnabled,
   setPluginSettings,
+  signAssetUploadParts,
   startAssetBulkJob,
   startAssetReindex,
   startBulkJob,
   startEnvironmentClone,
   startImportJob,
+  startMultipartAssetUpload,
   startSnapshotImport,
   suggestEntryTags,
   summarizeEntry,
@@ -183,6 +202,7 @@ import {
   unpublishAsset,
   unpublishEntry,
   updateAgentSchedule,
+  updateAssetCollection,
   updateAssetFolder,
   updateAssetRendition,
   updateEntry,
@@ -204,6 +224,9 @@ import {
   effectivePluginGrant,
   ForbiddenError,
   type InstalledPlugin,
+  MAX_COLLECTION_CHANGE,
+  MAX_COLLECTION_ITEMS,
+  MAX_ZIP_ASSETS,
   maskDeniedFields,
   NotConfiguredError,
   NotFoundError,
@@ -236,6 +259,8 @@ import {
   appExtensionBody,
   applyTagsBody,
   assetBulkBody,
+  assetCollectionBody,
+  assetCollectionPatchBody,
   assetFolderBody,
   assetFolderPatchBody,
   assetMetadataBody,
@@ -243,6 +268,7 @@ import {
   assetRenditionBody,
   assetRenditionPatchBody,
   assetRightsBody,
+  assetZipBody,
   auditBody,
   autofillBody,
   broaderBody,
@@ -250,8 +276,11 @@ import {
   bulkJobBody,
   canvasBody,
   cloneBody,
+  collectionAssetIdsBody,
+  collectionOrderBody,
   commentBody,
   commitAssetFileBody,
+  completeUploadBody,
   conceptBody,
   contentTypeBody,
   createAiActionBody,
@@ -274,6 +303,7 @@ import {
   installPluginFromUrlBody,
   mergeBody,
   moveAssetsBody,
+  multipartUploadBody,
   parseBody,
   pluginCapabilitiesBody,
   pluginEnabledBody,
@@ -289,6 +319,7 @@ import {
   scheduleBody,
   schemeBody,
   setAliasBody,
+  shareLinkBody,
   snapshotBody,
   summarizeBody,
   tagBody,
@@ -299,6 +330,7 @@ import {
   updateTaskBody,
   updateWebhookBody,
   upgradePluginFromUrlBody,
+  uploadPartsBody,
   webhookBody,
 } from '../validation';
 import { workflowRoutes } from './workflows';
@@ -1959,6 +1991,362 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         201,
       ),
   );
+  // --- asset collections ---------------------------------------------------
+  // A key with content grants reads no assets (as the preview asset reads refuse it): not a
+  // collection's members, and not a zip of anyone's files.
+  const refuseGrantedAssetReads = (c: Context<AuthVars>) => {
+    if (c.get('principal').contentGrants) {
+      throw new ForbiddenError('assets (a key with content grants reads no assets)');
+    }
+  };
+  app.get(
+    `${BASE}/asset-collections`,
+    doc('Assets', 'List asset collections', {
+      ok: docs.assetCollectionPage,
+      description: 'By name. Page with the response’s nextCursor.',
+      query: {
+        limit: `Page size, 1..${MAX_PAGE_LIMIT}`,
+        cursor: 'nextCursor from the previous page',
+      },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const limit = clampCount(c.req.query('limit'), MAX_PAGE_LIMIT, { min: 1 });
+      const cursor = c.req.query('cursor');
+      return c.json(
+        await listAssetCollections(ctx, scopeOf(c), {
+          ...(limit !== undefined ? { limit } : {}),
+          ...(cursor ? { cursor } : {}),
+        }),
+      );
+    },
+  );
+  app.post(
+    `${BASE}/asset-collections`,
+    doc('Assets', 'Create an asset collection', {
+      body: assetCollectionBody,
+      ok: docs.assetCollection,
+      status: 201,
+      description: 'A named, ordered set of assets; an asset may be in any number of them.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, assetCollectionBody);
+      return c.json(
+        await createAssetCollection(ctx, scopeOf(c), body, {
+          createdBy: auditActor(c.get('principal')),
+        }),
+        201,
+      );
+    },
+  );
+  app.get(
+    `${BASE}/asset-collections/:id`,
+    doc('Assets', 'Get an asset collection', { ok: docs.assetCollection }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await getAssetCollection(ctx, scopeOf(c), c.req.param('id'))),
+  );
+  app.patch(
+    `${BASE}/asset-collections/:id`,
+    doc('Assets', 'Rename an asset collection or change its description', {
+      body: assetCollectionPatchBody,
+      ok: docs.assetCollection,
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) =>
+      c.json(
+        await updateAssetCollection(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, assetCollectionPatchBody),
+        ),
+      ),
+  );
+  app.delete(
+    `${BASE}/asset-collections/:id`,
+    doc('Assets', 'Delete an asset collection', {
+      status: 204,
+      description: 'Its assets stay in the library; links shared to it stop opening.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      await deleteAssetCollection(ctx, scopeOf(c), c.req.param('id'));
+      return c.body(null, 204);
+    },
+  );
+  app.get(
+    `${BASE}/asset-collections/:id/assets`,
+    doc('Assets', 'List a collection’s assets, in its order', {
+      ok: docs.assetPage,
+      description:
+        'Filtered as the library is (archived members left out unless status asks). Page with ' +
+        'nextCursor.',
+      query: {
+        kind: 'image | video | audio | document | other',
+        mime: 'An exact content type (image/png) or a family (image/*)',
+        tag: 'A taxonomy tag id',
+        status: 'draft | published | archived | all',
+        limit: `Page size, 1..${MAX_PAGE_LIMIT}`,
+        cursor: 'nextCursor from the previous page',
+      },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      refuseGrantedAssetReads(c);
+      const page = await listAssetCollectionItems(
+        ctx,
+        scopeOf(c),
+        c.req.param('id'),
+        parseAssetListQuery(c.req.query()),
+      );
+      return c.json({ ...page, items: await signed(c, page.items) });
+    },
+  );
+  app.post(
+    `${BASE}/asset-collections/:id/assets`,
+    doc('Assets', 'Add assets to a collection', {
+      body: collectionAssetIdsBody,
+      ok: docs.collectionAdded,
+      description:
+        `After its last member, in the order given (up to ${MAX_COLLECTION_CHANGE} ids). A ` +
+        `collection holds at most ${MAX_COLLECTION_ITEMS} assets: past that is a 409.`,
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const { assetIds } = await parseBody(c, collectionAssetIdsBody);
+      return c.json(await addToAssetCollection(ctx, scopeOf(c), c.req.param('id'), assetIds));
+    },
+  );
+  app.post(
+    `${BASE}/asset-collections/:id/assets/remove`,
+    doc('Assets', 'Remove assets from a collection', {
+      body: collectionAssetIdsBody,
+      ok: docs.collectionRemoved,
+      description: 'They stay in the library. Ids that are not members are ignored.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const { assetIds } = await parseBody(c, collectionAssetIdsBody);
+      return c.json(await removeFromAssetCollection(ctx, scopeOf(c), c.req.param('id'), assetIds));
+    },
+  );
+  app.put(
+    `${BASE}/asset-collections/:id/order`,
+    doc('Assets', 'Reorder a collection', {
+      body: collectionOrderBody,
+      status: 204,
+      description:
+        'The named members go first, in that order; the rest follow in the order they had. ' +
+        'Name every member to set the whole order.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const { assetIds } = await parseBody(c, collectionOrderBody);
+      await reorderAssetCollection(ctx, scopeOf(c), c.req.param('id'), assetIds);
+      return c.body(null, 204);
+    },
+  );
+
+  // --- share links ----------------------------------------------------------
+  // A link opens published files to anyone holding it, so making, listing (the list carries the
+  // URLs) and revoking one all need content:publish, as publishing does.
+  app.get(
+    `${BASE}/share-links`,
+    doc('Assets', 'List share links', {
+      ok: docs.shareLinkList,
+      description: 'Newest first; active links only unless includeInactive=true.',
+      query: {
+        targetType: 'asset | collection',
+        targetId: 'An asset or collection id',
+        includeInactive: 'true to list expired and revoked links too',
+      },
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) => {
+      const targetType = c.req.query('targetType');
+      if (targetType !== undefined && targetType !== 'asset' && targetType !== 'collection') {
+        throw new ValidationError([{ field: 'targetType', message: 'asset or collection' }]);
+      }
+      const targetId = c.req.query('targetId');
+      return c.json({
+        items: await listAssetShareLinks(ctx, scopeOf(c), {
+          ...(targetType ? { targetType } : {}),
+          ...(targetId ? { targetId } : {}),
+          includeInactive: c.req.query('includeInactive') === 'true',
+        }),
+      });
+    },
+  );
+  app.post(
+    `${BASE}/share-links`,
+    doc('Assets', 'Create a share link to an asset or a collection', {
+      body: shareLinkBody,
+      ok: docs.shareLink,
+      status: 201,
+      description:
+        'A read-only page on the media origin listing what the target publishes now (never a ' +
+        'draft), for anyone with the URL until it expires or is revoked. An asset must be ' +
+        'published. With a password, the page asks for it first.',
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) => {
+      const body = await parseBody(c, shareLinkBody);
+      return c.json(
+        await createAssetShareLink(ctx, scopeOf(c), body, {
+          createdBy: auditActor(c.get('principal')),
+        }),
+        201,
+      );
+    },
+  );
+  app.get(
+    `${BASE}/share-links/:id`,
+    doc('Assets', 'Get a share link', { ok: docs.shareLink }),
+    requireScope(SCOPES.contentPublish),
+    async (c) => c.json(await getAssetShareLink(ctx, scopeOf(c), c.req.param('id'))),
+  );
+  app.delete(
+    `${BASE}/share-links/:id`,
+    doc('Assets', 'Revoke a share link', {
+      ok: docs.shareLink,
+      description:
+        'It stops opening within a minute, and its cached page is purged. Revoking it again ' +
+        'changes nothing.',
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) => c.json(await revokeAssetShareLink(ctx, scopeOf(c), c.req.param('id'))),
+  );
+
+  // --- multipart uploads ----------------------------------------------------
+  app.post(
+    `${BASE}/assets/uploads`,
+    doc('Assets', 'Create an asset with a multipart upload (large files)', {
+      body: multipartUploadBody,
+      ok: docs.multipartUpload,
+      status: 201,
+      description:
+        'For a file past what one signed PUT takes (100 MiB). Sign part URLs at ' +
+        '…/uploads/{uploadId}/parts, PUT each part (exactly its length), then complete with ' +
+        'every part’s ETag. Abort to give up. 422 past the deployment’s cap ' +
+        '(ASSET_UPLOAD_MAX_BYTES, 5 GiB by default).',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const { folderId, ...input } = await parseBody(c, multipartUploadBody);
+      const started = await startMultipartAssetUpload(ctx, blob, scopeOf(c), input, {
+        createdBy: auditActor(c.get('principal')),
+        ...(folderId ? { folderId } : {}),
+      });
+      return c.json({ ...started, asset: await signedOne(c, started.asset) }, 201);
+    },
+  );
+  app.post(
+    `${BASE}/assets/:id/uploads/:uploadId/parts`,
+    doc('Assets', 'Sign part URLs for a multipart upload', {
+      body: uploadPartsBody,
+      ok: docs.signedParts,
+      description: 'Up to 100 parts per call; sign a part again to retry it.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const { partNumbers } = await parseBody(c, uploadPartsBody);
+      return c.json(
+        await signAssetUploadParts(
+          ctx,
+          blob,
+          scopeOf(c),
+          c.req.param('id'),
+          c.req.param('uploadId'),
+          partNumbers,
+        ),
+      );
+    },
+  );
+  app.post(
+    `${BASE}/assets/:id/uploads/:uploadId/complete`,
+    doc('Assets', 'Complete a multipart upload', {
+      body: completeUploadBody,
+      ok: docs.asset,
+      description: 'Name parts 1..n, each once, with its ETag. Ingest then starts.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const { parts } = await parseBody(c, completeUploadBody);
+      return c.json(
+        await completeMultipartAssetUpload(
+          ctx,
+          { blob, ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
+          scopeOf(c),
+          c.req.param('id'),
+          c.req.param('uploadId'),
+          parts,
+        ),
+      );
+    },
+  );
+  app.delete(
+    `${BASE}/assets/:id/uploads/:uploadId`,
+    doc('Assets', 'Abort a multipart upload', {
+      status: 204,
+      description: 'Its parts are discarded, and its draft deleted while it has no bytes.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      await abortMultipartAssetUpload(
+        ctx,
+        blob,
+        scopeOf(c),
+        c.req.param('id'),
+        c.req.param('uploadId'),
+      );
+      return c.body(null, 204);
+    },
+  );
+
+  // --- zip downloads --------------------------------------------------------
+  app.post(
+    `${BASE}/asset-zips`,
+    doc('Assets', 'Zip a selection of assets or a collection', {
+      body: assetZipBody,
+      ok: docs.assetZip,
+      status: 202,
+      description:
+        `A job (follow it at /asset-zips/{id}) that puts the assets’ current files in one zip ` +
+        `(up to ${MAX_ZIP_ASSETS} assets, 20 GiB); once completed, its downloadUrl works for 15 ` +
+        'minutes, and the archive is kept for a day.',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      refuseGrantedAssetReads(c);
+      const body = await parseBody(c, assetZipBody);
+      return c.json(
+        await requestAssetZip(ctx, scopeOf(c), body, {
+          createdBy: auditActor(c.get('principal')),
+        }),
+        202,
+      );
+    },
+  );
+  app.get(
+    `${BASE}/asset-zips`,
+    doc('Assets', 'List recent zip downloads', { ok: docs.assetZipList }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      refuseGrantedAssetReads(c);
+      return c.json({ items: await listAssetZips(ctx, scopeOf(c)) });
+    },
+  );
+  app.get(
+    `${BASE}/asset-zips/:id`,
+    doc('Assets', 'Get a zip download (with its download URL once built)', { ok: docs.assetZip }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      refuseGrantedAssetReads(c);
+      return c.json(await getAssetZip(ctx, blob, scopeOf(c), c.req.param('id')));
+    },
+  );
+
   app.get(`${BASE}/assets/:id`, requireScope(SCOPES.previewRead), async (c) =>
     c.json(await signedOne(c, await getAsset(ctx, scopeOf(c), c.req.param('id')))),
   );

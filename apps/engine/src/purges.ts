@@ -8,8 +8,10 @@ import type { DomainEvent } from '@contentworker/domain';
 import {
   deliveryScopeTag,
   mediaAssetTag,
+  mediaCollectionTag,
   mediaEnvironmentTag,
   mediaRenditionTag,
+  mediaShareLinkTag,
   type PurgeMessage,
 } from '@contentworker/platform/messages';
 
@@ -22,6 +24,9 @@ export const PURGING_EVENTS = new Set<string>([
   'asset.unpublished',
   'asset.deleted',
   'asset.rights_changed',
+  // Delivery lists a collection's published members (`GET …/collections/:id`), cached under the
+  // scope's tag like every other delivery read: one tag, coalesced per batch.
+  'asset_collection.changed',
   'content_type.published',
   'release.published',
   'environment_alias.changed',
@@ -49,6 +54,12 @@ export const newPurgePlan = (): PurgePlan => ({
   revoked: new Set(),
 });
 
+/**
+ * Most collections an asset event purges the share pages of. Past it, a share page of a collection
+ * holding the asset shows it (or not) until the page's own max-age (at most an hour) runs out.
+ */
+export const MAX_COLLECTIONS_PURGED = 100;
+
 /** Adds what `event` makes stale to `plan`. */
 export async function planPurges(
   ctx: Pick<AppContext, 'store'>,
@@ -64,7 +75,34 @@ export async function planPurges(
   if (event.type === 'asset.ingested' && event.published) {
     plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
   }
+  // A share page of a collection lists its members' published files: a member published or
+  // unpublished makes every such page stale. (A deleted asset has left its collections by now;
+  // its delete announced each one with `asset_collection.changed`.)
+  if (
+    event.type === 'asset.published' ||
+    event.type === 'asset.unpublished' ||
+    event.type === 'asset.rights_changed'
+  ) {
+    const collections = await ctx.store.assetCollections.collectionsOf(
+      event.scope,
+      event.assetId,
+      MAX_COLLECTIONS_PURGED,
+    );
+    // An asset leaving Delivery leaves its collections' pages too: purged as a revocation is (now,
+    // and again once a lagging replica can no longer render it back in). A publish only adds.
+    const into = event.type === 'asset.published' ? plan.media : plan.revoked;
+    for (const id of collections) into.add(mediaCollectionTag(spaceId, environmentId, id));
+  }
   switch (event.type) {
+    case 'asset_collection.changed':
+      // A member removed must not come back from a lagging replica: purged twice.
+      plan.revoked.add(mediaCollectionTag(spaceId, environmentId, event.collectionId));
+      break;
+    case 'asset_share.revoked':
+      // Its page and the files under it stop at the gateway at once (it checks the link on every
+      // request); the cached page goes too, now and once every colo's KV read has expired.
+      plan.revoked.add(mediaShareLinkTag(spaceId, environmentId, event.linkId));
+      break;
     case 'asset.published':
       // A republish with a new file takes the old version out of Delivery: its URLs must stop
       // working, so they are purged as a revocation is (now, and again once every colo sees the
@@ -104,6 +142,17 @@ export async function planPurges(
   }
 }
 
+/** Most tags one media purge message carries (well under a queue message's 128 KB). */
+export const MEDIA_TAGS_PER_MESSAGE = 100;
+
+const chunks = (tags: readonly string[]): string[][] => {
+  const out: string[][] = [];
+  for (let at = 0; at < tags.length; at += MEDIA_TAGS_PER_MESSAGE) {
+    out.push(tags.slice(at, at + MEDIA_TAGS_PER_MESSAGE));
+  }
+  return out;
+};
+
 /** The producers the plan goes to; either may be unbound (that cache then ages out alone). */
 export interface PurgeQueues {
   readonly PURGE_QUEUE?: Pick<Queue, 'send'>;
@@ -127,18 +176,21 @@ export async function sendPurges(
       queues.PURGE_QUEUE.send(message).catch((err: unknown) => onError('delivery purge', err)),
     );
   }
-  const media = [...new Set([...plan.media, ...plan.revoked])];
-  if (media.length > 0 && queues.MEDIA_PURGE_QUEUE) {
-    const now: PurgeMessage = { tags: media };
-    sends.push(
-      queues.MEDIA_PURGE_QUEUE.send(now).catch((err: unknown) => onError('media purge', err)),
-    );
-    if (plan.revoked.size > 0) {
-      const again: PurgeMessage = { tags: [...plan.revoked] };
+  // Revoked tags first, in messages of MEDIA_TAGS_PER_MESSAGE: a batch that touched many
+  // collections can't make one message too large to send and lose the revocations with it.
+  const media = [...new Set([...plan.revoked, ...plan.media])];
+  const queue = queues.MEDIA_PURGE_QUEUE;
+  if (media.length > 0 && queue) {
+    for (const tags of chunks(media)) {
+      const now: PurgeMessage = { tags };
+      sends.push(queue.send(now).catch((err: unknown) => onError('media purge', err)));
+    }
+    for (const tags of chunks([...plan.revoked])) {
+      const again: PurgeMessage = { tags };
       sends.push(
-        queues.MEDIA_PURGE_QUEUE.send(again, { delaySeconds: REVOCATION_REPURGE_SECONDS }).catch(
-          (err: unknown) => onError('media re-purge', err),
-        ),
+        queue
+          .send(again, { delaySeconds: REVOCATION_REPURGE_SECONDS })
+          .catch((err: unknown) => onError('media re-purge', err)),
       );
     }
   }

@@ -33,9 +33,11 @@ test.beforeEach(async ({ page }) => {
   await useCmsScope(page);
 });
 
-async function scan(page: Page, testInfo: TestInfo) {
+async function scan(page: Page, testInfo: TestInfo, include: readonly string[] = []) {
   await settle(page);
-  const results = await new AxeBuilder({ page }).withTags(WCAG).analyze();
+  let builder = new AxeBuilder({ page }).withTags(WCAG);
+  for (const selector of include) builder = builder.include(selector);
+  const results = await builder.analyze();
   if (results.violations.length > 0) {
     await testInfo.attach('axe-violations.json', {
       body: JSON.stringify(results.violations, null, 2),
@@ -142,6 +144,120 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
   await scan(page, testInfo);
 });
 
+// A collection open in place of the library, with members to reorder, its zip card, and its
+// share dialog with a link listed: the sidebar's two lists, the ordered list's move buttons, the
+// segmented expiry, the switch and the in-place revoke, in both themes.
+test('an asset collection, its zip and its share dialog have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  const stamp = Date.now();
+  const name = `A11y set ${stamp}`;
+  const ids: string[] = [];
+  for (const n of [1, 2]) {
+    const id = await uploadAssetBytes(request, `a11y-${stamp}-${n}.txt`, Buffer.from(`${n}`));
+    const pub = await api(request, 'POST', `${MGMT}/assets/${id}/published`);
+    expect(pub.ok(), await pub.text()).toBe(true);
+    ids.push(id);
+  }
+  const made = await api(request, 'POST', `${MGMT}/asset-collections`, {
+    name,
+    description: 'For the sweep',
+  });
+  expect(made.ok(), await made.text()).toBe(true);
+  const { id } = (await made.json()) as { id: string };
+  const added = await api(request, 'POST', `${MGMT}/asset-collections/${id}/assets`, {
+    assetIds: ids,
+  });
+  expect(added.ok(), await added.text()).toBe(true);
+
+  await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Collections' })
+    .getByRole('button', { name: `${name}, 2 assets` })
+    .click();
+  const list = page.getByRole('list', { name: `Assets in “${name}”, in order` });
+  await expect(list.getByRole('listitem')).toHaveCount(2);
+  await scan(page, testInfo);
+
+  await page.getByRole('button', { name: 'Download as zip' }).click();
+  await expect(page.getByRole('region', { name: 'Zip download' })).toBeVisible();
+  await scan(page, testInfo);
+
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: `Share “${name}”` });
+  const form = dialog.getByRole('form', { name: 'New share link' });
+  await form.getByRole('radio', { name: 'Custom' }).click();
+  await expect(form.getByLabel('Expires at')).toBeVisible();
+  await form.getByRole('radio', { name: '7 days' }).click();
+  await form.getByRole('button', { name: 'Create link' }).click();
+  await expect(
+    dialog.getByRole('list', { name: 'Active links' }).getByRole('listitem'),
+  ).toHaveCount(1);
+  await scan(page, testInfo);
+  await dialog.getByRole('button', { name: /Revoke the link/ }).click();
+  await expect(dialog.getByRole('alertdialog', { name: /Revoke this link\?/ })).toBeVisible();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await scan(page, testInfo);
+  await page.emulateMedia({ colorScheme: 'light' });
+});
+
+// The collection view at phone width: the collections select, rows whose actions wrap under
+// the name, and the header's actions.
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
+
+  test('an asset collection has no accessibility violations', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const stamp = Date.now();
+    const id = await uploadAssetBytes(request, `a11y-phone-${stamp}.txt`, Buffer.from('x'));
+    const name = `A11y phone ${stamp}`;
+    const made = await api(request, 'POST', `${MGMT}/asset-collections`, { name });
+    expect(made.ok(), await made.text()).toBe(true);
+    const collection = (await made.json()) as { id: string };
+    const added = await api(request, 'POST', `${MGMT}/asset-collections/${collection.id}/assets`, {
+      assetIds: [id],
+    });
+    expect(added.ok(), await added.text()).toBe(true);
+    await openCms(page, '/assets');
+    await page
+      .getByRole('navigation', { name: 'Collections' })
+      .getByRole('combobox', { name: 'Collection' })
+      .selectOption({ label: name });
+    await expect(
+      page.getByRole('list', { name: `Assets in “${name}”, in order` }).getByRole('listitem'),
+    ).toHaveCount(1);
+    // The collection's own surfaces: the shell's tab bar has a finding of its own (its Approvals
+    // link's name, "Approvals, 1 waiting"), outside this change, reported rather than hidden here.
+    await scan(page, testInfo, ['nav[aria-label="Collections"]', 'section[aria-labelledby]']);
+  });
+});
+
+// An unpublished asset's share dialog: the warning in place of the form, over the sheet.
+test('the share dialog for an unpublished asset has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const name = `a11y-draft-${Date.now()}.txt`;
+  await uploadAssetBytes(request, name, Buffer.from(name));
+  await openCms(page, '/assets');
+  await page
+    .getByRole('region', { name: 'Asset library' })
+    .getByRole('button', { name: `Open “${name}”` })
+    .click();
+  await page
+    .getByRole('dialog', { name })
+    .getByRole('button', { name: 'Share', exact: true })
+    .click();
+  const dialog = page.getByRole('dialog', { name: `Share “${name}”` });
+  await expect(dialog.getByText('Publish it to share it')).toBeVisible();
+  await scan(page, testInfo);
+});
+
 // What ingest found, in sight: a possible duplicate, a failed ingest with its reason and Retry,
 // and the copy's sheet asking before an edit is discarded.
 test('the asset library with ingest badges has no accessibility violations', async ({
@@ -150,8 +266,12 @@ test('the asset library with ingest badges has no accessibility violations', asy
 }, testInfo) => {
   test.setTimeout(240_000);
   const stamp = Date.now();
-  const { copy, broken } = await seedIngestFindings(request, stamp);
+  const { copy, broken, folder } = await seedIngestFindings(request, stamp);
   await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: folder, exact: true })
+    .click();
   const library = page.getByRole('region', { name: 'Asset library' });
   const duplicateBadge = `Possible duplicate: open the asset “${copy}” duplicates`;
   await expect(library.getByRole('button', { name: duplicateBadge })).toBeVisible();

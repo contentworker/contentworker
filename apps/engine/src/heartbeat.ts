@@ -13,6 +13,8 @@ export const CRON_JOBS = {
   versionArchive: 'version-archive',
   agentSchedules: 'agent-schedules',
   abandonedUploads: 'abandoned-uploads',
+  abandonedMultipart: 'abandoned-multipart-uploads',
+  expiredZips: 'expired-zips',
 } as const;
 
 /** A tick's heartbeat, started when the tick starts. */

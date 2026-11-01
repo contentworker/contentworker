@@ -18,6 +18,9 @@ export type DomainEvent =
   | AssetRightsChangedEvent
   | AssetExpiredEvent
   | AssetRenditionsChangedEvent
+  | AssetCollectionChangedEvent
+  | AssetShareLinkChangedEvent
+  | AssetZipRequestedEvent
   | SearchReindexRequestedEvent
   | BulkChunkDueEvent
   | EntriesPublishedBulkEvent
@@ -143,6 +146,30 @@ export interface AssetIngestedEvent extends BaseEvent {
 export interface AssetRenditionsChangedEvent extends BaseEvent {
   readonly type: 'asset_renditions.changed';
   readonly name: string;
+}
+
+/**
+ * A collection changed: created, renamed, deleted, or its members added, removed or reordered.
+ * What Delivery lists for it, and every share page that shows it, is stale.
+ */
+export interface AssetCollectionChangedEvent extends BaseEvent {
+  readonly type: 'asset_collection.changed';
+  readonly collectionId: string;
+}
+
+/**
+ * A share link was created or revoked. The engine writes (or removes) the media origin's entry for
+ * it, and for a revocation purges its cached page.
+ */
+export interface AssetShareLinkChangedEvent extends BaseEvent {
+  readonly type: 'asset_share.created' | 'asset_share.revoked';
+  readonly linkId: string;
+}
+
+/** A zip download was asked for: the engine starts the Workflow that builds it (`jobId`). */
+export interface AssetZipRequestedEvent extends BaseEvent {
+  readonly type: 'asset_zip.requested';
+  readonly jobId: string;
 }
 
 /**

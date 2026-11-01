@@ -11,7 +11,7 @@ and `POST …/clone` does both, including across spaces (`packages/application/s
 and `snapshot-jobs.ts`).
 
 A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows,
-asset **metadata** and the asset folders. It deliberately never carries **credentials** (API keys, OAuth clients and
+asset **metadata**, the asset folders and the asset collections. It deliberately never carries **credentials** (API keys, OAuth clients and
 grants, preview tokens, webhook signing secrets), because a snapshot is a file people move around.
 Asset **binaries** stay in the blob store: a restore into the same space, on a deployment
 pointing at the same bucket, works, and one pointing elsewhere has dangling files, which is
@@ -48,6 +48,11 @@ What an import preserves:
   an asset's earlier versions stay in the source's history.
 - **Asset folders**, with their ids and paths, so each asset lands in the same folder. A snapshot
   from before folders carries none, and its assets land at the library root.
+- **Asset collections**, with their ids, descriptions and member order, written with the model. A
+  member is kept when its asset is in the snapshot or the target already holds it; the rest are
+  dropped. A collection already there (a retried import) is kept as it is. A snapshot from before
+  collections carries none. Share links, zip downloads and multipart uploads are not carried: a link
+  belongs to the environment it was made in.
 
 What ingest found is not carried: an imported asset arrives without `ingestStatus`,
 `ingestError`, `duplicateOf` or `aiSuggestions` (`createSnapshotAsset`), because the target's
