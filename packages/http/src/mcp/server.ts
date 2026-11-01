@@ -178,6 +178,7 @@ import {
   startAssetReindex,
   startBulkJob,
   startEnvironmentClone,
+  startMultipartAssetFileReplacement,
   startMultipartAssetUpload,
   startSnapshotImport,
   startWorkflowRun,
@@ -4033,7 +4034,8 @@ export function buildServer(
     'asset_upload_complete',
     {
       description:
-        'Complete a multipart upload with parts 1..n, each once, with its ETag. Ingest starts.',
+        'Complete a multipart upload with parts 1..n, each once, with its ETag. Ingest starts; ' +
+        'a replacement’s (asset_replace_file_upload) commits its new version.',
       inputSchema: toolSchema('asset_upload_complete', () =>
         z.object({
           id: z.string().describe('The asset id'),
@@ -4056,6 +4058,7 @@ export function buildServer(
           args.id,
           args.uploadId,
           args.parts,
+          { by: auditActor(principal) },
         ),
       );
     },
@@ -4289,6 +4292,38 @@ export function buildServer(
         contentType: args.contentType,
       });
       return ok({ ...replacement, asset: await signedOne(scopeOf(args), replacement.asset) });
+    },
+  );
+
+  server.registerTool(
+    'asset_replace_file_upload',
+    {
+      description:
+        'Start replacing an asset’s file with a multipart upload, for a file past 100 MiB (up ' +
+        'to the deployment’s cap). Then asset_upload_parts for part URLs, PUT each part ' +
+        '(exactly its length), and asset_upload_complete with every part’s ETag: completing ' +
+        'commits the new version. asset_upload_abort gives up and keeps the file. Starting any ' +
+        'replace supersedes one still uploading.',
+      inputSchema: toolSchema('asset_replace_file_upload', () =>
+        z.object({
+          id: z.string(),
+          fileName: z.string().min(1).max(1024),
+          contentType: z.string().min(1).max(256),
+          size: z.number().int().min(1),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const started = await startMultipartAssetFileReplacement(
+        ctx,
+        fileBlob(),
+        scopeOf(args),
+        args.id,
+        { fileName: args.fileName, contentType: args.contentType, size: args.size },
+      );
+      return ok({ ...started, asset: await signedOne(scopeOf(args), started.asset) });
     },
   );
 

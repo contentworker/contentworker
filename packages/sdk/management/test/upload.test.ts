@@ -5,7 +5,16 @@ const base = { baseUrl: 'https://cms.test', space: 's1', environment: 'main', to
 const M = 'https://cms.test/spaces/s1/environments/main';
 
 /** A fake api: multipart for big files, a part that fails `failures` times first. */
-function api(opts: { failures?: Record<number, number>; partSize?: number } = {}) {
+function api(
+  opts: {
+    failures?: Record<number, number>;
+    partSize?: number;
+    /** The single PUT's answers, in order (then 200). */
+    singlePut?: number[];
+    /** The complete call's status (default 200). */
+    complete?: number;
+  } = {},
+) {
   const calls: { method: string; url: string; body?: unknown }[] = [];
   const failures = { ...(opts.failures ?? {}) };
   const partSize = opts.partSize ?? 8;
@@ -16,7 +25,30 @@ function api(opts: { failures?: Record<number, number>; partSize?: number } = {}
     calls.push({ method, url, body });
     const json = (v: unknown, status = 200) =>
       new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json' } });
-    if (method === 'POST' && url === `${M}/assets/uploads`) {
+    if (method === 'POST' && url === `${M}/assets/a9/file/uploads`) {
+      return json(
+        {
+          asset: { id: 'a9' },
+          version: 3,
+          upload: { uploadId: 'u9', partSize, partCount: Math.ceil(body.size / partSize) },
+        },
+        201,
+      );
+    }
+    if (method === 'POST' && url === `${M}/assets/a9/file`) {
+      return json(
+        {
+          asset: { id: 'a9' },
+          upload: { url: '/media/v3?sig=r', headers: { 'content-type': 'image/png' } },
+          commit: { version: 3, fileName: 'b.png', contentType: 'image/png' },
+        },
+        201,
+      );
+    }
+    if (method === 'POST' && url === `${M}/assets/a9/file/commit`) {
+      return json({ id: 'a9', version: body.version });
+    }
+    if (method === 'POST' && (url === `${M}/assets/uploads` || url.endsWith('/file/uploads'))) {
       return json(
         {
           asset: { id: 'a1' },
@@ -36,13 +68,16 @@ function api(opts: { failures?: Record<number, number>; partSize?: number } = {}
     }
     if (url.endsWith('/parts')) {
       const [n] = body.partNumbers as number[];
-      const started = calls.find((c) => c.url === `${M}/assets/uploads`);
+      const started = calls.find((c) => c.url.endsWith('/uploads') && c.method === 'POST');
       const total = (started?.body as { size: number } | undefined)?.size ?? 0;
       const count = Math.ceil(total / partSize);
       const length = n === count ? total - partSize * (count - 1) : partSize;
       return json({
         parts: [{ partNumber: n, url: `/media/k?part=${n}`, length, expiresAt: 'x' }],
       });
+    }
+    if (method === 'PUT' && !url.includes('part=') && opts.singlePut?.length) {
+      return new Response(null, { status: opts.singlePut.shift() });
     }
     if (method === 'PUT') {
       const n = Number(new URL(url).searchParams.get('part') ?? '1');
@@ -58,7 +93,10 @@ function api(opts: { failures?: Record<number, number>; partSize?: number } = {}
             : 0;
       return new Response(null, { status: 200, headers: { etag: `"p${n}-${size}"` } });
     }
-    if (url.endsWith('/complete')) return json({ id: 'a1', status: 'draft' });
+    if (url.endsWith('/complete')) {
+      if (opts.complete && opts.complete !== 200) return json({ error: {} }, opts.complete);
+      return json(url.includes('/a9/') ? { id: 'a9', version: 3 } : { id: 'a1', status: 'draft' });
+    }
     if (method === 'DELETE') return new Response(null, { status: 204 });
     return json({}, 404);
   }) as unknown as typeof fetch;
@@ -124,6 +162,97 @@ describe('assets.upload', () => {
       true,
     );
     expect(calls.some((c) => c.url.endsWith('/complete'))).toBe(false);
+  });
+});
+
+describe('assets.upload and replaceFile: a single PUT stores once', () => {
+  it('counts a retry answered 412 as stored (its first attempt landed, its answer was lost)', async () => {
+    const { fetchImpl, calls } = api({ singlePut: [503, 412] });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    const asset = await client.assets.upload(
+      { fileName: 'a.png', contentType: 'image/png', body: new Uint8Array(10) },
+      { sleep: async () => {} },
+    );
+    expect(asset.id).toBe('a0');
+    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2);
+  });
+
+  it('never takes a 412 on the first attempt for success: the key held bytes already', async () => {
+    const { fetchImpl } = api({ singlePut: [412] });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    await expect(
+      client.assets.replaceFile(
+        'a9',
+        { fileName: 'b.png', contentType: 'image/png', body: new Uint8Array(10) },
+        { sleep: async () => {} },
+      ),
+    ).rejects.toMatchObject({ status: 412 });
+  });
+});
+
+describe('assets.replaceFile', () => {
+  it('PUTs a small file and commits what the start returned', async () => {
+    const { fetchImpl, calls } = api();
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    const progress: number[] = [];
+    const next = await client.assets.replaceFile(
+      'a9',
+      { fileName: 'b.png', contentType: 'image/png', body: new Uint8Array(10) },
+      { onProgress: (p) => progress.push(p.loaded) },
+    );
+    expect(next).toMatchObject({ id: 'a9', version: 3 });
+    expect(calls.map((c) => `${c.method} ${c.url.replace(M, '')}`)).toEqual([
+      'POST /assets/a9/file',
+      'PUT https://cms.test/media/v3?sig=r',
+      'POST /assets/a9/file/commit',
+    ]);
+    expect(progress).toEqual([0, 10]);
+  });
+
+  it('replaces past 100 MiB in parts, completing (which commits) on the asset’s upload', async () => {
+    const partSize = 40 * 1024 * 1024;
+    const { fetchImpl, calls } = api({ partSize, failures: { 3: 1 } });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    const total = SINGLE_UPLOAD_MAX_BYTES + 5;
+    const progress: number[] = [];
+    const next = await client.assets.replaceFile(
+      'a9',
+      {
+        fileName: 'b.mov',
+        contentType: 'video/quicktime',
+        body: new Blob([new Uint8Array(total)]),
+      },
+      { onProgress: (p) => progress.push(p.loaded), sleep: async () => {} },
+    );
+    expect(next).toMatchObject({ id: 'a9', version: 3 });
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      url: `${M}/assets/a9/file/uploads`,
+      body: { fileName: 'b.mov', contentType: 'video/quicktime', size: total },
+    });
+    expect(calls.some((c) => c.url === `${M}/assets/a9/uploads/u9/complete`)).toBe(true);
+    expect(calls.some((c) => c.url.endsWith('/file/commit'))).toBe(false);
+    expect(progress.at(-1)).toBe(total);
+  });
+
+  it('does not retry a refused completion (a 409 lost race), and aborts the upload', async () => {
+    const { fetchImpl, calls } = api({ partSize: 40 * 1024 * 1024, complete: 409 });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    await expect(
+      client.assets.replaceFile(
+        'a9',
+        {
+          fileName: 'b.mov',
+          contentType: 'video/quicktime',
+          body: new Uint8Array(SINGLE_UPLOAD_MAX_BYTES + 1),
+        },
+        { sleep: async () => {} },
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(calls.filter((c) => c.url.endsWith('/complete'))).toHaveLength(1);
+    expect(calls.some((c) => c.method === 'DELETE' && c.url === `${M}/assets/a9/uploads/u9`)).toBe(
+      true,
+    );
   });
 });
 

@@ -279,6 +279,11 @@ export interface MultipartUploadStarted {
   };
 }
 
+/** A multipart upload started to replace an asset's file; completing it commits `version`. */
+export interface MultipartReplacementStarted extends MultipartUploadStarted {
+  readonly version: number;
+}
+
 /** A signed URL for one part: PUT exactly `length` bytes; the response's ETag names the part. */
 export interface SignedPart {
   readonly partNumber: number;
@@ -617,6 +622,113 @@ export function createManagementClient(opts: ManagementClientOptions) {
   /** A signed URL may be root-relative (a deployment without MEDIA_BASE_URL): resolve it here. */
   const absolute = (url: string) => (/^https?:\/\//.test(url) ? url : `${root}${url}`);
 
+  /**
+   * Sends a file to storage the way its size needs: up to {@link SINGLE_UPLOAD_MAX_BYTES} through
+   * `single`'s signed PUT (then `done`), above it in the parts `parts` starts, each retried on its
+   * own and signed again on each attempt, then completed. A failed or aborted multipart upload is
+   * aborted on the server too. A single PUT stores once: a retry answered 412 found the bytes of
+   * an earlier attempt whose answer was lost, so it counts as stored.
+   */
+  const transfer = async <T>(
+    body: UploadBody,
+    uploadOpts: UploadOptions,
+    steps: {
+      single: () => Promise<{
+        url: string;
+        headers: Readonly<Record<string, string>>;
+        done: () => Promise<T>;
+      }>;
+      parts: (
+        size: number,
+      ) => Promise<{ assetId: string; uploadId: string; partSize: number; partCount: number }>;
+    },
+  ): Promise<T> => {
+    const total = sizeOf(body);
+    const sleep = uploadOpts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    // A PUT to storage is always worth another try (a part's URL is signed again); the api's own
+    // refusal (a 4xx but a timeout or a rate limit: a 409 lost race, a 422) won't change on its own.
+    const transfers = new WeakSet<object>();
+    const retry = <R>(fn: () => Promise<R>) =>
+      withRetry(fn, {
+        attempts: uploadOpts.attempts ?? 4,
+        sleep,
+        ...(uploadOpts.signal ? { signal: uploadOpts.signal } : {}),
+        retryable: (err) =>
+          !(err instanceof ManagementError) ||
+          transfers.has(err) ||
+          err.status >= 500 ||
+          err.status === 408 ||
+          err.status === 429,
+      });
+    const putBytes = async (
+      url: string,
+      bytes: Blob | Uint8Array,
+      headers: Readonly<Record<string, string>> = {},
+    ) =>
+      doFetch(absolute(url), {
+        method: 'PUT',
+        headers,
+        body: bytes as BodyInit,
+        ...(uploadOpts.signal ? { signal: uploadOpts.signal } : {}),
+      });
+    const failed = (res: Response, url: string) => {
+      const err = new ManagementError(res.status, `Upload failed: ${res.status} PUT ${url}`);
+      transfers.add(err);
+      return err;
+    };
+    if (total <= SINGLE_UPLOAD_MAX_BYTES) {
+      const target = await steps.single();
+      uploadOpts.onProgress?.({ loaded: 0, total, partsDone: 0, partCount: 1 });
+      let attempt = 0;
+      await retry(async () => {
+        const res = await putBytes(target.url, sliceOf(body, 0, total), target.headers);
+        const retried = attempt++ > 0;
+        if (res.ok || (retried && res.status === 412)) return;
+        // On the first attempt, 412 means the key held bytes before this upload: no retry helps.
+        if (res.status === 412) throw new ManagementError(412, `Upload refused: ${target.url}`);
+        throw failed(res, target.url);
+      });
+      uploadOpts.onProgress?.({ loaded: total, total, partsDone: 1, partCount: 1 });
+      return target.done();
+    }
+    const { assetId, uploadId, partSize, partCount } = await steps.parts(total);
+    const base = `${envBase}/assets/${e(assetId)}/uploads/${e(uploadId)}`;
+    let loaded = 0;
+    let partsDone = 0;
+    uploadOpts.onProgress?.({ loaded, total, partsDone, partCount });
+    try {
+      const numbers = Array.from({ length: partCount }, (_, i) => i + 1);
+      const parts = await inPool(
+        numbers.map((n) => async () => {
+          const etag = await retry(async () => {
+            // Signed again on each attempt: a URL lives 15 minutes, a retry may outlast it.
+            const [signed] = (
+              await post<{ parts: SignedPart[] }>(`${base}/parts`, { partNumbers: [n] })
+            ).parts;
+            if (!signed) throw new Error(`part ${n} was not signed`);
+            const res = await putBytes(
+              signed.url,
+              sliceOf(body, (n - 1) * partSize, signed.length),
+            );
+            if (!res.ok) throw failed(res, signed.url);
+            const tag = res.headers.get('etag');
+            if (!tag) throw new Error(`part ${n} came back without an ETag`);
+            return tag;
+          });
+          partsDone += 1;
+          loaded += Math.min(partSize, total - (n - 1) * partSize);
+          uploadOpts.onProgress?.({ loaded, total, partsDone, partCount });
+          return { partNumber: n, etag };
+        }),
+        uploadOpts.concurrency ?? 4,
+      );
+      return await retry(() => post<T>(`${base}/complete`, { parts }));
+    } catch (err) {
+      await del<void>(base).catch(() => undefined);
+      throw err;
+    }
+  };
+
   return {
     /**
      * The newest `x-cw-bookmark` this client has seen (or was given), sent with its next request.
@@ -743,10 +855,41 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       bulk: (input: AssetBulkInput) => post<BulkJob>(`${envBase}/assets/bulk`, input),
       /**
-       * Starts replacing the file: PUT the bytes to `upload.url` with `upload.headers`, then
-       * `commitFile(id, commit)`. A published asset keeps its published file until republished.
+       * Replaces the asset's file with `body`, whatever its size: one signed PUT and the commit
+       * up to 100 MiB, a multipart upload above it whose completion commits (parts retried on
+       * their own, progress after each, as `upload`). Returns the asset at its new version. A
+       * published asset keeps its published file until republished; a replace or restore that
+       * committed first is a 409 `ManagementError`.
        */
-      replaceFile: (id: string, input: { fileName: string; contentType: string }) =>
+      replaceFile: (
+        id: string,
+        input: { fileName: string; contentType: string; body: UploadBody },
+        uploadOpts: UploadOptions = {},
+      ): Promise<Asset> => {
+        const { body, ...rest } = input;
+        return transfer(body, uploadOpts, {
+          single: async () => {
+            const r = await post<AssetFileReplacement>(`${envBase}/assets/${e(id)}/file`, rest);
+            return {
+              ...r.upload,
+              done: () => post<Asset>(`${envBase}/assets/${e(id)}/file/commit`, r.commit),
+            };
+          },
+          parts: async (size) => {
+            const r = await post<MultipartReplacementStarted>(
+              `${envBase}/assets/${e(id)}/file/uploads`,
+              { ...rest, size },
+            );
+            return { assetId: id, ...r.upload };
+          },
+        });
+      },
+      /**
+       * The single-PUT replace, one step at a time (`replaceFile` runs it for you): PUT the bytes
+       * to `upload.url` with `upload.headers`, then `commitFile(id, commit)`. The URL stores once:
+       * a second PUT through it is 412.
+       */
+      startReplace: (id: string, input: { fileName: string; contentType: string }) =>
         post<AssetFileReplacement>(`${envBase}/assets/${e(id)}/file`, input),
       /** Makes an uploaded replacement current as a new version. */
       commitFile: (id: string, commit: AssetFileReplacement['commit']) =>
@@ -769,83 +912,31 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * after each). A failed or aborted multipart upload is aborted on the server too. Returns
        * the asset once its bytes are stored.
        */
-      upload: async (input: UploadAssetInput, uploadOpts: UploadOptions = {}): Promise<Asset> => {
+      upload: (input: UploadAssetInput, uploadOpts: UploadOptions = {}): Promise<Asset> => {
         const { body, ...rest } = input;
-        const total = sizeOf(body);
-        const sleep =
-          uploadOpts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-        const attempts = uploadOpts.attempts ?? 4;
-        const retry = <T>(fn: () => Promise<T>) =>
-          withRetry(fn, {
-            attempts,
-            sleep,
-            ...(uploadOpts.signal ? { signal: uploadOpts.signal } : {}),
-          });
-        const putBytes = async (url: string, bytes: Blob | Uint8Array, headers = {}) => {
-          const res = await doFetch(absolute(url), {
-            method: 'PUT',
-            headers,
-            body: bytes as BodyInit,
-            ...(uploadOpts.signal ? { signal: uploadOpts.signal } : {}),
-          });
-          if (!res.ok) {
-            throw new ManagementError(res.status, `Upload failed: ${res.status} PUT ${url}`);
-          }
-          return res;
-        };
-        if (total <= SINGLE_UPLOAD_MAX_BYTES) {
-          const created = await post<CreatedAsset>(`${envBase}/assets`, rest);
-          uploadOpts.onProgress?.({ loaded: 0, total, partsDone: 0, partCount: 1 });
-          await retry(() =>
-            putBytes(created.upload.url, sliceOf(body, 0, total), created.upload.headers),
-          );
-          uploadOpts.onProgress?.({ loaded: total, total, partsDone: 1, partCount: 1 });
-          return created.asset;
-        }
-        const started = await post<MultipartUploadStarted>(`${envBase}/assets/uploads`, {
-          ...rest,
-          size: total,
+        return transfer(body, uploadOpts, {
+          single: async () => {
+            const created = await post<CreatedAsset>(`${envBase}/assets`, rest);
+            return { ...created.upload, done: async () => created.asset };
+          },
+          parts: async (size) => {
+            const started = await post<MultipartUploadStarted>(`${envBase}/assets/uploads`, {
+              ...rest,
+              size,
+            });
+            return { assetId: started.asset.id, ...started.upload };
+          },
         });
-        const { uploadId, partSize, partCount } = started.upload;
-        const base = `${envBase}/assets/${e(started.asset.id)}/uploads/${e(uploadId)}`;
-        let loaded = 0;
-        let partsDone = 0;
-        uploadOpts.onProgress?.({ loaded, total, partsDone, partCount });
-        try {
-          const numbers = Array.from({ length: partCount }, (_, i) => i + 1);
-          const parts = await inPool(
-            numbers.map((n) => async () => {
-              const etag = await retry(async () => {
-                // Signed again on each attempt: a URL lives 15 minutes, a retry may outlast it.
-                const [signed] = (
-                  await post<{ parts: SignedPart[] }>(`${base}/parts`, { partNumbers: [n] })
-                ).parts;
-                if (!signed) throw new Error(`part ${n} was not signed`);
-                const res = await putBytes(
-                  signed.url,
-                  sliceOf(body, (n - 1) * partSize, signed.length),
-                );
-                const tag = res.headers.get('etag');
-                if (!tag) throw new Error(`part ${n} came back without an ETag`);
-                return tag;
-              });
-              partsDone += 1;
-              loaded += Math.min(partSize, total - (n - 1) * partSize);
-              uploadOpts.onProgress?.({ loaded, total, partsDone, partCount });
-              return { partNumber: n, etag };
-            }),
-            uploadOpts.concurrency ?? 4,
-          );
-          return await retry(() => post<Asset>(`${base}/complete`, { parts }));
-        } catch (err) {
-          await del<void>(base).catch(() => undefined);
-          throw err;
-        }
       },
       /** The multipart steps one at a time (`upload` runs them for you). */
       uploads: {
         start: (input: CreateAssetInput & { size: number }) =>
           post<MultipartUploadStarted>(`${envBase}/assets/uploads`, input),
+        /** Starts replacing an asset's file in parts; completing the upload commits it. */
+        startReplace: (
+          id: string,
+          input: { fileName: string; contentType: string; size: number },
+        ) => post<MultipartReplacementStarted>(`${envBase}/assets/${e(id)}/file/uploads`, input),
         signParts: (assetId: string, uploadId: string, partNumbers: readonly number[]) =>
           post<{ parts: SignedPart[] }>(
             `${envBase}/assets/${e(assetId)}/uploads/${e(uploadId)}/parts`,

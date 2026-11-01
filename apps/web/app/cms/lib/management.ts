@@ -1569,7 +1569,20 @@ export function createManagementClient(
         { parts },
       );
     },
-    /** Gives the upload up: its parts are discarded, and its empty draft deleted. */
+    /**
+     * Starts replacing an asset's file in parts (past one signed PUT): the next version's
+     * multipart upload. Sign, PUT and complete it as a new asset's; completing commits it.
+     */
+    startAssetFileUpload(
+      id: string,
+      input: { fileName: string; contentType: string; size: number },
+    ): Promise<MultipartUploadStarted & { version: number }> {
+      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/file/uploads`, input);
+    },
+    /**
+     * Gives the upload up: its parts are discarded, and a new asset's empty draft deleted (a
+     * replacement's asset keeps its file).
+     */
     abortAssetUpload(assetId: string, uploadId: string): Promise<void> {
       return req(
         'DELETE',

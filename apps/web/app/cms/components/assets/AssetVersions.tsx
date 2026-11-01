@@ -2,26 +2,36 @@ import type { Asset, AssetVersion } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
+import { Progress } from '@contentworker/ui/progress';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { FileUp, History, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
+import { partsLine } from '~/cms/components/assets/AssetUploadList';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { StatusBadge } from '~/cms/components/status';
-import { fileSize, versionAuthor } from '~/cms/lib/assets';
+import {
+  fileSize,
+  type PartsProgress,
+  replaceInParts,
+  uploadsInParts,
+  versionAuthor,
+} from '~/cms/lib/assets';
 import { useClient } from '~/cms/lib/client-context';
 import { ApiError, apiErrorMessage, type TeamPerson } from '~/cms/lib/management';
 import { useToast } from '~/cms/lib/toast';
 
 type Replacing =
-  | { readonly state: 'uploading'; readonly name: string }
+  | { readonly state: 'uploading'; readonly name: string; readonly progress?: PartsProgress }
   | { readonly state: 'failed'; readonly name: string; readonly error: string };
 
 /**
  * Every file an asset has had, newest first: which is current, which Delivery serves, and which
  * came back by a restore. Replace file uploads the next version the way Upload creates an asset
- * (a signed PUT, then a commit); Restore makes an earlier file current again, as a new version.
+ * (a signed PUT, then a commit; past 100 MiB in parts, with the bytes stored shown as they go and
+ * a Cancel that keeps the current file); Restore makes an earlier file current again, as a new
+ * version.
  * Neither changes what Delivery serves on a published asset until it is published again, so
  * when the two differ the panel says so and offers the publish.
  */
@@ -38,6 +48,9 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
   // leaves the authors described by kind.
   const [people, setPeople] = useState<readonly TeamPerson[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<AbortController | null>(null);
+  // Leaving the sheet mid-upload gives the upload up (the server discards its parts).
+  useEffect(() => () => cancelRef.current?.abort(), []);
   useEffect(() => {
     let live = true;
     client
@@ -82,12 +95,25 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
 
   const replaceWith = async (file: File) => {
     setReplacing({ state: 'uploading', name: file.name });
+    const controller = new AbortController();
+    cancelRef.current = controller;
     try {
-      const next = await client.replaceAssetFile(asset.id, file);
+      const next = uploadsInParts(file.size)
+        ? await replaceInParts(client, asset.id, file, {
+            signal: controller.signal,
+            onProgress: (progress) =>
+              setReplacing({ state: 'uploading', name: file.name, progress }),
+          })
+        : await client.replaceAssetFile(asset.id, file);
       setReplacing(null);
       toast.success(`Replaced the file with “${file.name}” (version ${next.version ?? 1})`);
       await changed(next);
     } catch (e) {
+      if (controller.signal.aborted) {
+        // Cancelled: the upload was given up and the asset keeps its file; nothing to report.
+        setReplacing(null);
+        return;
+      }
       // 409: another replace or restore committed first. Show what is current now.
       const lost = e instanceof ApiError && e.status === 409;
       setReplacing({
@@ -99,6 +125,7 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
       });
       if (lost) await caughtUp();
     } finally {
+      if (cancelRef.current === controller) cancelRef.current = null;
       if (fileRef.current) fileRef.current.value = '';
     }
   };
@@ -173,7 +200,32 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
               Uploading “{replacing.name}”…
             </p>
           )}
+          {replacing?.state === 'uploading' && replacing.progress && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => cancelRef.current?.abort()}
+            >
+              Cancel upload
+            </Button>
+          )}
         </div>
+        {replacing?.state === 'uploading' && replacing.progress && (
+          <div className="space-y-1">
+            <Progress
+              value={Math.round(
+                (replacing.progress.loaded / Math.max(1, replacing.progress.total)) * 100,
+              )}
+              aria-label={`Uploading “${replacing.name}”`}
+              getValueLabel={() => partsLine(replacing.progress as PartsProgress)}
+              className="h-1"
+            />
+            <p className="text-muted-foreground text-xs tabular-nums">
+              {partsLine(replacing.progress)}
+            </p>
+          </div>
+        )}
         {video ? (
           <p id="asset-replace-video" className="max-w-measure text-muted-foreground text-xs">
             A hosted video can’t be replaced: its host holds one file per video. Upload the new cut

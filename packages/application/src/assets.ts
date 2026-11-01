@@ -28,6 +28,7 @@ import {
   type AssetPage,
   type AssetVersionRecord,
   type BlobStore,
+  type ContentStoreTx,
   type PublishedAsset,
   type PublishedAssetPage,
   type PublishedAssetQuery,
@@ -789,20 +790,24 @@ export interface AssetFileReplacement {
   readonly commit: CommitAssetFileInput;
 }
 
+/** A replacement's target, before anything is written: checked as a new upload is. */
+export interface PreparedReplacement {
+  readonly asset: Asset;
+  readonly key: string;
+  readonly commit: CommitAssetFileInput;
+}
+
 /**
- * Starts replacing an asset's file: returns a presigned upload for the next version's key
- * (`…/v<n+1>/file/<name>`). Nothing changes until the upload is committed
- * ({@link commitAssetFile}); an upload never committed is never served (the media origin and the
- * signed reads serve only a committed version's key) and goes with the asset. A hosted video is
- * replaced through its video host, not here.
+ * Checks a replacement and names the next version's key (`…/v<n+1>/file/<name>`): the asset is no
+ * hosted video, and the `asset:beforeCreate` hooks pass the file (a replacement is a new upload).
+ * Shared by the single signed PUT ({@link replaceAssetFile}) and a multipart replacement.
  */
-export async function replaceAssetFile(
+export async function prepareReplacement(
   ctx: AppContext,
-  blob: BlobStore,
   scope: Scope,
   id: string,
   input: { readonly fileName: string; readonly contentType: string },
-): Promise<AssetFileReplacement> {
+): Promise<PreparedReplacement> {
   const asset = await getAsset(ctx, scope, id);
   assertNotHostedVideo(asset);
   // The same policy as a new upload's (allowed types, names): a replacement is one too.
@@ -811,13 +816,56 @@ export async function replaceAssetFile(
     contentType: input.contentType,
   });
   const version = (asset.version ?? 1) + 1;
-  const key = assetObjectKey(scope, id, checked.fileName, version);
-  const upload = await blob.getUploadUrl(key, checked.contentType);
   return {
     asset,
-    upload,
+    key: assetObjectKey(scope, id, checked.fileName, version),
     commit: { version, fileName: checked.fileName, contentType: checked.contentType },
   };
+}
+
+/**
+ * Clears the way for a new replacement of an asset's file: the latest start wins. Every
+ * replacement still uploading in parts is aborted in storage (its parts discarded; its row stays,
+ * so its completion is told it was superseded rather than not found, until it is aborted or swept),
+ * and bytes an earlier replacement left uncommitted at the next version's key go too: an upload
+ * URL never writes over a stored object, so they would refuse this one. Nothing removed here was
+ * ever served, since only a committed version's key is. A new asset's own first upload (version 1)
+ * is left alone.
+ */
+export async function clearPendingReplacements(
+  ctx: AppContext,
+  blob: BlobStore,
+  scope: Scope,
+  id: string,
+  nextKey: string,
+): Promise<void> {
+  for (const upload of await ctx.store.assetUploads.listForAsset(scope, id)) {
+    if ((assetKeyVersion(upload.r2Key, id) ?? 1) <= 1) continue;
+    await blob.multipart?.abort(upload.r2Key, upload.uploadId);
+  }
+  if (blob.head && (await blob.head(nextKey))) await blob.delete(nextKey);
+}
+
+/**
+ * Starts replacing an asset's file: returns a presigned upload for the next version's key
+ * (`…/v<n+1>/file/<name>`). Nothing changes until the upload is committed
+ * ({@link commitAssetFile}); an upload never committed is never served (the media origin and the
+ * signed reads serve only a committed version's key) and goes with the asset. A hosted video is
+ * replaced through its video host, not here. A replacement started earlier and not committed is
+ * superseded ({@link clearPendingReplacements}). Past one signed PUT (100 MiB), replace in parts
+ * ({@link startMultipartAssetFileReplacement}).
+ */
+export async function replaceAssetFile(
+  ctx: AppContext,
+  blob: BlobStore,
+  scope: Scope,
+  id: string,
+  input: { readonly fileName: string; readonly contentType: string },
+): Promise<AssetFileReplacement> {
+  const { asset, key, commit } = await prepareReplacement(ctx, scope, id, input);
+  await clearPendingReplacements(ctx, blob, scope, id, key);
+  const upload = await blob.getUploadUrl(key, commit.contentType);
+  return { asset, upload, commit };
 }
 
 /**
@@ -849,7 +897,27 @@ export async function commitAssetFile(
   const key = assetObjectKey(scope, id, input.fileName, input.version);
   // A retried commit (the response was lost) finds its own work done.
   if (input.version === current && assetFileKey(scope, asset) === key) return asset;
-  if (input.version !== current + 1) throw replacedMeanwhile(id, current);
+  return commitStoredReplacement(ctx, blob, scope, asset, input, opts);
+}
+
+/**
+ * Commits the bytes stored at the key `input` names as the asset's next version (the unit
+ * {@link commitAssetFile} and a completed multipart replacement share). `inUnit` adds writes to
+ * the same unit (the multipart upload's row, forgotten as its file becomes current).
+ */
+export async function commitStoredReplacement(
+  ctx: AppContext,
+  blob: BlobStore,
+  scope: Scope,
+  asset: Asset,
+  input: CommitAssetFileInput,
+  opts: {
+    readonly by?: string;
+    readonly inUnit?: (tx: ContentStoreTx) => Promise<void>;
+  } = {},
+): Promise<Asset> {
+  const current = asset.version ?? 1;
+  if (input.version !== current + 1) throw replacedMeanwhile(asset.id, current);
   if (!blob.head) {
     throw new ValidationError([
       {
@@ -858,6 +926,7 @@ export async function commitAssetFile(
       },
     ]);
   }
+  const key = assetObjectKey(scope, asset.id, input.fileName, input.version);
   const stored = await blob.head(key);
   if (!stored) {
     throw new ValidationError([
@@ -881,6 +950,7 @@ export async function commitAssetFile(
   return commitReplacement(ctx, scope, asset, next, {
     ...(stored.etag ? { etag: stored.etag } : {}),
     ...(opts.by ? { by: opts.by } : {}),
+    ...(opts.inUnit ? { inUnit: opts.inUnit } : {}),
   });
 }
 
@@ -935,7 +1005,12 @@ async function commitReplacement(
   scope: Scope,
   asset: Asset,
   next: Asset,
-  opts: { readonly etag?: string; readonly restoredFrom?: number; readonly by?: string },
+  opts: {
+    readonly etag?: string;
+    readonly restoredFrom?: number;
+    readonly by?: string;
+    readonly inUnit?: (tx: ContentStoreTx) => Promise<void>;
+  },
 ): Promise<Asset> {
   const now = ctx.clock.now().toISOString();
   const previous: AssetVersionRecord = {
@@ -961,6 +1036,7 @@ async function commitReplacement(
         ...(opts.etag ? { etag: opts.etag } : {}),
         ...(opts.restoredFrom !== undefined ? { restoredFrom: opts.restoredFrom } : {}),
       });
+      await opts.inUnit?.(tx);
     });
   } catch (err) {
     if (err instanceof TransactionConflictError) {

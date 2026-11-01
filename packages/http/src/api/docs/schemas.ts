@@ -552,6 +552,10 @@ export const multipartUpload = z.object({
   }),
 });
 
+export const multipartReplacement = multipartUpload.extend({
+  version: z.int().describe('The version completing the upload makes current'),
+});
+
 export const signedParts = z.object({
   parts: z.array(
     z.object({

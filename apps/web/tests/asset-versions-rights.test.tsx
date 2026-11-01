@@ -71,6 +71,23 @@ const client = {
     settings: { ssoOnly: false },
   })),
   replaceAssetFile: vi.fn(async (id: string, _file: File) => asset({ id, version: 3 })),
+  // A replacement in parts: two parts of 150 MiB.
+  startAssetFileUpload: vi.fn(async (id: string, _input: unknown) => ({
+    asset: asset({ id }),
+    version: 3,
+    upload: { uploadId: 'r1', partSize: 150 * 1024 * 1024, partCount: 2 },
+  })),
+  signAssetUploadParts: vi.fn(async (_id: string, _u: string, numbers: readonly number[]) => ({
+    parts: numbers.map((n) => ({
+      partNumber: n,
+      url: `https://r2.example/p${n}`,
+      length: n === 1 ? 150 * 1024 * 1024 : 50 * 1024 * 1024,
+      expiresAt: 'x',
+    })),
+  })),
+  putUploadPart: vi.fn(async (url: string, _bytes: Blob, _signal?: AbortSignal) => `"${url}"`),
+  completeAssetUpload: vi.fn(async (id: string) => asset({ id, version: 3 })),
+  abortAssetUpload: vi.fn(async () => undefined),
   restoreAssetVersion: vi.fn(async (id: string, _v: number) => asset({ id, version: 4 })),
   setAssetRights: vi.fn(async (id: string, rights: Record<string, string | null>) =>
     asset({
@@ -207,6 +224,71 @@ describe('the Versions tab', () => {
     );
     expect(within(sheet).queryByText(/Uploading/)).toBeNull();
     expect(client.listAssetVersions).toHaveBeenCalledTimes(2);
+  });
+
+  /** A file past one signed PUT, without holding its bytes: jsdom's File reports what it's told. */
+  const bigFile = (name: string) => {
+    const file = new File(['x'], name, { type: 'video/mp4' });
+    Object.defineProperty(file, 'size', { value: 200 * 1024 * 1024 });
+    return file;
+  };
+
+  it('replaces a file past 100 MiB in parts, showing the bytes stored, then the new version', async () => {
+    assets = [asset({ version: 2 })];
+    versions = [version(2, { current: true }), version(1)];
+    let release: () => void = () => {};
+    client.putUploadPart.mockImplementation(async (url: string) => {
+      if (url.endsWith('p2')) await new Promise<void>((r) => (release = r));
+      return `"${url}"`;
+    });
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Versions');
+    await within(sheet).findByRole('list', { name: 'File versions' });
+    fireEvent.change(within(sheet).getByLabelText('Replacement file'), {
+      target: { files: [bigFile('cut.mp4')] },
+    });
+    expect(
+      await within(sheet).findByText('150 MB of 200 MB · 1 of 2 parts', { exact: false }),
+    ).toBeTruthy();
+    expect(within(sheet).getByRole('progressbar', { name: 'Uploading “cut.mp4”' })).toBeTruthy();
+    expect(client.replaceAssetFile).not.toHaveBeenCalled();
+    expect(client.startAssetFileUpload).toHaveBeenCalledWith('a1', {
+      fileName: 'cut.mp4',
+      contentType: 'video/mp4',
+      size: 200 * 1024 * 1024,
+    });
+    versions = [version(3, { current: true }), version(2), version(1)];
+    release();
+    expect(await screen.findByText('Replaced the file with “cut.mp4” (version 3)')).toBeTruthy();
+    expect(client.completeAssetUpload).toHaveBeenCalledWith('a1', 'r1', [
+      { partNumber: 1, etag: '"https://r2.example/p1"' },
+      { partNumber: 2, etag: '"https://r2.example/p2"' },
+    ]);
+    expect(within(sheet).queryByRole('progressbar', { name: /Uploading/ })).toBeNull();
+  });
+
+  it('cancels a replacement in parts: the upload is aborted and the current file stays', async () => {
+    assets = [asset({ version: 2 })];
+    versions = [version(2, { current: true }), version(1)];
+    client.putUploadPart.mockImplementation(
+      (_url: string, _bytes: Blob, signal?: AbortSignal) =>
+        new Promise<string>((_, reject) =>
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')),
+          ),
+        ),
+    );
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Versions');
+    await within(sheet).findByRole('list', { name: 'File versions' });
+    fireEvent.change(within(sheet).getByLabelText('Replacement file'), {
+      target: { files: [bigFile('cut.mp4')] },
+    });
+    fireEvent.click(await within(sheet).findByRole('button', { name: 'Cancel upload' }));
+    await waitFor(() => expect(client.abortAssetUpload).toHaveBeenCalledWith('a1', 'r1'));
+    await waitFor(() => expect(within(sheet).queryByText(/Uploading/)).toBeNull());
+    expect(within(sheet).queryByRole('alert')).toBeNull();
+    expect(client.completeAssetUpload).not.toHaveBeenCalled();
   });
 
   it('says another change won the race, and shows the version that did', async () => {

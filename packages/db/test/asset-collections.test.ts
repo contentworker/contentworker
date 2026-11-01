@@ -1,6 +1,7 @@
 import {
   type AppContext,
   addToAssetCollection,
+  completeMultipartAssetUpload,
   createAsset,
   createAssetCollection,
   createAssetShareLink,
@@ -12,6 +13,7 @@ import {
   requestAssetZip,
   revokeAssetShareLink,
   sharedAssetFile,
+  startMultipartAssetFileReplacement,
   startMultipartAssetUpload,
 } from '@contentworker/application';
 import { TransactionConflictError } from '@contentworker/ports';
@@ -297,5 +299,44 @@ describe('share links, zip jobs and uploads on D1', () => {
     ]) {
       expect(await count(table)).toBe(0);
     }
+  });
+});
+
+describe('replacing a file in parts on D1', () => {
+  it('lists an asset’s uploads in its own scope, and forgets one in the commit unit', async () => {
+    const { ctx, spaceId, scope, blob, upload } = await harness();
+    const a = await upload('hero.png');
+    await blob.put(`${spaceId}/main/${a.id}/hero.png`, 'v1', 'image/png');
+    const staging = { spaceId, environmentId: `stg-${uid().slice(0, 8)}` };
+    await createEnvironment(ctx, spaceId, staging.environmentId);
+    const started = await startMultipartAssetFileReplacement(ctx, blob, scope, a.id, {
+      fileName: 'big.png',
+      contentType: 'image/png',
+      size: 12,
+    });
+    expect((await store.assetUploads.listForAsset(scope, a.id)).map((u) => u.uploadId)).toEqual([
+      started.upload.uploadId,
+    ]);
+    expect(await store.assetUploads.listForAsset(staging, a.id)).toEqual([]);
+    const key = `${spaceId}/main/${a.id}/v2/file/big.png`;
+    const part = await blob.multipart.uploadPart(
+      key,
+      started.upload.uploadId,
+      1,
+      new Uint8Array(12),
+    );
+    const done = await completeMultipartAssetUpload(
+      ctx,
+      { blob },
+      scope,
+      a.id,
+      started.upload.uploadId,
+      [part],
+      { by: 'ann' },
+    );
+    expect(done).toMatchObject({ version: 2, r2Key: key });
+    expect(await store.assets.get(scope, a.id)).toMatchObject({ version: 2, r2Key: key });
+    expect(await store.assetUploads.listForAsset(scope, a.id)).toEqual([]);
+    expect((await store.assets.listVersions(scope, a.id)).map((v) => v.version)).toContain(1);
   });
 });
