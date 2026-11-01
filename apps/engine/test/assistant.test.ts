@@ -769,7 +769,9 @@ describe('failures, rate and retention', () => {
     panel.close();
   });
 
-  it('holds each person to a rate of page edits and turns', async () => {
+  // Reaching the limit takes ASSISTANT_RATE.max + 1 round trips into the agent: about 160 ms
+  // locally, but past vitest's default 5 s on a loaded CI runner (PR #38), so it gets twenty.
+  it('holds each person to a rate of page edits and turns', { timeout: 20_000 }, async () => {
     const ada = await person('ada_rate');
     const panel = await socket(ada);
     for (let i = 0; i < ASSISTANT_RATE.max; i++)
