@@ -7,6 +7,7 @@
 # behind each rule is in invariants.md. .claude/scripts/toolkit-check.sh fails when a regex
 # matches no file.
 ^packages/domain/src/	The domain depends on nothing: no @contentworker/* package, no framework, no I/O, no Cloudflare type. Pure functions over domain types; tests in packages/domain/test.
+^packages/domain/src/rich-text/	Content is structured, not serialized HTML: rich text is a RichTextDocument tree end to end. HTML comes in only through richTextFromHtml and goes out only in the consumer's renderer; never store, return or emit content as markup.
 ^packages/ports/src/	Ports are interfaces only, in domain types: no SQL, Drizzle, D1 or HTTP type crosses a port. A new ContentStore method needs the in-memory store in packages/test-kit and the D1 store in packages/db, with a contract test in packages/db/test.
 ^packages/application/src/	Use-cases take AppContext and a Scope, get ids from ctx.ids.newId() and time from ctx.clock.now(), and never import an adapter. A new capability is exposed through BOTH packages/http/src/api/routes and packages/http/src/mcp/server.ts (new-use-case skill), with a test in packages/application/test on @contentworker/test-kit fakes.
 ^packages/application/src/(publishing|releases|scheduling|bulk|bulk-jobs|entries)\.ts$	withTransaction is a unit of work, not an interactive transaction: read everything first, then write; a read inside the unit doesn't see its own writes; a compare-and-set loses as TransactionConflictError at commit (retry or treat as a no-op). The outbox event rides in the same unit.
