@@ -35,14 +35,14 @@ served and how it is configured. Routes are rendered per deployment by `scripts/
 (`hosts()`): the admin at `<domain>`, the api at `api.<domain>`, delivery at `cdn.<domain>`,
 media at `media.<domain>`.
 
-| Worker          | Route          | Config highlights (`apps/*/wrangler.jsonc`)                                                              |
-| --------------- | -------------- | -------------------------------------------------------------------------------------------------------- |
-| `apps/web`      | `<domain>`     | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery) |
-| `apps/api`      | `api.<domain>` | Smart Placement, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine DOs/Workflows by script |
-| `apps/delivery` | `cdn.<domain>` | No Smart Placement, `cpu_ms` 2000, head sampling 0.05, Workers Caching on the `Delivery` entrypoint      |
+| Worker          | Route            | Config highlights (`apps/*/wrangler.jsonc`)                                                              |
+| --------------- | ---------------- | -------------------------------------------------------------------------------------------------------- |
+| `apps/web`      | `<domain>`       | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery) |
+| `apps/api`      | `api.<domain>`   | Smart Placement, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine DOs/Workflows by script |
+| `apps/delivery` | `cdn.<domain>`   | No Smart Placement, `cpu_ms` 2000, head sampling 0.05, Workers Caching on the `Delivery` entrypoint      |
 | `apps/media`    | `media.<domain>` | No Smart Placement, `cpu_ms` 1000, head sampling 0.01, Workers Caching on the `Media` entrypoint         |
-| `apps/engine`   | none           | Smart Placement, `cpu_ms` 30000; owns DO migrations                                                      |
-| `apps/docs`     | docs host      | Deployed only by the deployment with `docs: true`                                                        |
+| `apps/engine`   | none             | Smart Placement, `cpu_ms` 30000; owns DO migrations                                                      |
+| `apps/docs`     | docs host        | Deployed only by the deployment with `docs: true`                                                        |
 
 ### apps/web: the admin and the gateway
 
@@ -113,10 +113,12 @@ the body comes from cache. The live SSE stream and `/graphiql/*` are answered by
 itself, and GraphQL `POST` is served uncached (`private, no-store`).
 
 On a miss, `Delivery` (`apps/delivery/src/delivery.ts`) runs the same delivery routes the api
-mounts against a D1 read-replica session (`first-unconstrained`), sets a strong ETag, answers
-`304` on `If-None-Match`, and caches 200s with
+mounts against a D1 read-replica session (`first-unconstrained`), sets a strong ETag, and caches
+200s with
 `public, max-age=60, stale-while-revalidate=86400, stale-if-error=604800` and a `cache-tag` for
-the path's environment and the environment it resolves to (so alias repoints purge too).
+the path's environment and the environment it resolves to (so alias repoints purge too). It
+always returns the full body, because a `304` stored in the cache would be an empty answer; the
+gateway compares `If-None-Match` with the ETag and answers `304` itself.
 
 Its queue consumer drains `contentworker-purge` with `drain` (`@contentworker/platform/purge`):
 up to 100 tags per purge call, one call every 12 s (Cloudflare allows 5 a minute), at most 40
@@ -312,9 +314,10 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
 ```
 
 - **Triggers.** `scripts/provision.sh` creates an R2 event notification rule (`object-create`, no
-  prefix: asset keys `space/env/asset/file` share none) to `contentworker-asset-events`. Local
-  development has no notifications, so the api's signed `PUT /media/<key>` also sends an
-  R2-shaped message there when the upload succeeds (`mediaRoutes`' `onUploaded`; a failed send is
+  prefix: asset keys `space/env/asset/file` share none) to `contentworker-asset-events`. Wherever
+  `ASSET_EVENTS_QUEUE` is bound, the api's signed `PUT /media/<key>` also sends an R2-shaped
+  message there when the upload succeeds, so production has two triggers and local development,
+  which has no R2 notifications, still has one (`mediaRoutes`' `onUploaded`; a failed send is
   logged, never the upload's). The engine's consumer (`startAssetIngestForObject`) ignores any key
   that isn't an asset's current file (`parseAssetObjectKey` and `assetFileKey`: extracted text,
   version bodies, staged jobs, an older version) and starts the run under
