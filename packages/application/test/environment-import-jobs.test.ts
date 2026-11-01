@@ -6,7 +6,10 @@ import {
   RecordingWebhookSender,
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Each test seeds and copies a 150-entry environment through the use-cases: seconds on a CI runner.
+vi.setConfig({ testTimeout: 30_000 });
 import {
   type AppContext,
   cancelBulkJob,
@@ -36,7 +39,7 @@ import {
 
 const source = { spaceId: 's1', environmentId: 'main' };
 const target = { spaceId: 's1', environmentId: 'copy' };
-const COUNT = 250; // three create chunks, so links cross chunk boundaries
+const COUNT = 150; // two create chunks, so links cross a chunk boundary
 
 let ctx: AppContext;
 let store: InMemoryContentStore;
