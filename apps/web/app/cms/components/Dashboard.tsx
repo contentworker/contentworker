@@ -1,5 +1,6 @@
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
+import { Skeleton } from '@contentworker/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -12,11 +13,12 @@ import { Bot, SearchX } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
-import { entryRef } from '~/cms/components/dashboard/entry-titles';
+import { entryPath, entryRef } from '~/cms/components/dashboard/entry-titles';
 import { LiveActivityCard } from '~/cms/components/dashboard/LiveActivityCard';
 import { ThroughputCard } from '~/cms/components/dashboard/ThroughputCard';
 import { UsageByWorkflowCard } from '~/cms/components/dashboard/UsageByWorkflowCard';
 import { UsageTrendCard } from '~/cms/components/dashboard/UsageTrendCard';
+import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
 import {
   AgentReviewCard,
   UnpublishedWorkCard,
@@ -25,6 +27,7 @@ import {
 import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
+import { humanize } from '../lib/format';
 import type { SearchHit } from '../lib/management';
 import {
   useAgentRunsQuery,
@@ -71,7 +74,7 @@ export function Dashboard() {
   const releasesQuery = useScopedQuery(['releases'], () => client.listReleases(), {
     silent: true,
   });
-  // Titles for entries named by scheduled actions / agent runs (best-effort).
+  // Titles for the live activity feed (best-effort: the list is capped).
   const allEntries = useAllEntriesQuery().data;
 
   const unpublished = useMemo(
@@ -89,8 +92,6 @@ export function Dashboard() {
     for (const e of unpublished) map.set(e.id, e);
     return map;
   }, [allEntries, unpublished, types, conn.locale]);
-  const entryById = (id: string) => refs.get(id);
-
   const scheduled = useMemo(
     () =>
       scheduledQuery.data
@@ -104,10 +105,24 @@ export function Dashboard() {
   );
   const awaitingReview = useMemo(() => runs.filter((r) => REVIEW_STATES.has(r.status)), [runs]);
 
+  // Every entry a card names by id is resolved by id, in one batched lookup: the capped list
+  // above can't be trusted to hold them, and an id is never a name.
+  const namedIds = useMemo(
+    () => [
+      ...runs.map((r) => r.entryId),
+      ...(scheduled ?? []).filter((a) => a.entityType === 'Entry').map((a) => a.entityId),
+    ],
+    [runs, scheduled],
+  );
+  const named = useEntriesById(namedIds);
+  const entryById = (id: string) => named.refs.get(id) ?? refs.get(id);
+
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searched, setSearched] = useState(false);
   const [searching, setSearching] = useState(false);
+  const hitIds = useMemo(() => hits.map((h) => h.entryId), [hits]);
+  const hitEntries = useEntriesById(hitIds);
 
   const runSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,7 +157,7 @@ export function Dashboard() {
         <UpcomingCard
           scheduled={{
             data: scheduled,
-            isLoading: scheduledQuery.isLoading,
+            isLoading: scheduledQuery.isLoading || named.isLoading,
             isError: scheduledQuery.isError,
           }}
           releases={{
@@ -155,7 +170,7 @@ export function Dashboard() {
         <AgentReviewCard
           runs={{
             data: runsQuery.data ? awaitingReview : undefined,
-            isLoading: runsQuery.isLoading,
+            isLoading: runsQuery.isLoading || named.isLoading,
             isError: runsQuery.isError,
           }}
           entryById={entryById}
@@ -184,20 +199,23 @@ export function Dashboard() {
         {hits.length > 0 && (
           <ul className="divide-y divide-border">
             {hits.map((h) => {
-              const ref = refs.get(h.entryId);
+              const ref = hitEntries.refs.get(h.entryId) ?? refs.get(h.entryId);
               return (
                 <li key={h.entryId} className="flex min-w-0 items-start gap-3 py-2">
                   <div className="min-w-0 flex-1">
                     {ref ? (
                       <Link
-                        to={`/content/${ref.contentType}/${ref.id}`}
+                        to={entryPath(ref)}
                         className="block truncate font-medium text-sm underline-offset-2 hover:underline"
                       >
                         {ref.title}
                       </Link>
+                    ) : hitEntries.isLoading ? (
+                      <Skeleton className="h-5 w-1/2" aria-hidden />
                     ) : (
-                      <span className="block truncate font-medium text-sm">
-                        Entry {h.entryId.slice(0, 8)}
+                      // Published, but its draft is gone or hidden from this principal.
+                      <span className="block truncate font-medium text-muted-foreground text-sm">
+                        Entry no longer available
                       </span>
                     )}
                     <p className="line-clamp-2 text-muted-foreground text-xs">{h.snippet}</p>
@@ -250,12 +268,25 @@ export function Dashboard() {
               </TableHeader>
               <TableBody>
                 {runs.map((r) => {
-                  const ref = r.entryId ? refs.get(r.entryId) : undefined;
+                  const ref = r.entryId ? entryById(r.entryId) : undefined;
                   return (
                     <TableRow key={r.id}>
-                      <TableCell className="font-medium">{r.workflow}</TableCell>
+                      <TableCell className="font-medium">{humanize(r.workflow)}</TableCell>
                       <TableCell label="Entry" className="max-w-56 truncate text-muted-foreground">
-                        {ref ? ref.title : r.entryId || '—'}
+                        {ref ? (
+                          <Link to={entryPath(ref)} className="underline-offset-2 hover:underline">
+                            {ref.title}
+                          </Link>
+                        ) : r.entryId ? (
+                          named.isLoading ? (
+                            <Skeleton className="h-4 w-24" aria-hidden />
+                          ) : (
+                            'Entry no longer available'
+                          )
+                        ) : (
+                          // A space-level run (curate, a digest) acts on no one entry.
+                          '—'
+                        )}
                       </TableCell>
                       <TableCell label="Status">
                         <StatusBadge status={r.status} />

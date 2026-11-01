@@ -14,13 +14,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs
 import { Textarea } from '@contentworker/ui/textarea';
 import { CheckSquare, GitBranch, MessageSquare, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Ago } from '~/cms/components/ago';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { useClient, useLocalRun } from '../lib/client-context';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
-
-const fmt = (iso: string) => new Date(iso).toLocaleString();
 
 /** Comments + tasks + workflow status for one entry — the P13 editorial sidebar. */
 export function CollaborationPanel(props: { entryId: string }) {
@@ -135,7 +134,9 @@ function CommentRow(props: { comment: Comment; onDelete: () => void; busy: boole
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm">{comment.author}</span>
-          <span className="text-muted-foreground text-xs">{fmt(comment.createdAt)}</span>
+          <span className="text-muted-foreground text-xs">
+            <Ago at={comment.createdAt} />
+          </span>
         </div>
         <p className="whitespace-pre-wrap text-sm">{comment.body}</p>
       </div>

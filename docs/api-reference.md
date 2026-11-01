@@ -206,6 +206,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/space-config`                   | `preview:read`    | Space settings for the environment |
 | GET    | `…/content-types`                  | `preview:read`    | List content types                 |
 | POST   | `…/content-types`                  | `content:manage`  | Create/update content type         |
+| GET    | `…/content-types/entry-counts`     | `preview:read`    | Entries per type, by status        |
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 
@@ -335,15 +336,15 @@ content grants gets `403`, because the report exposes entry ids across content t
 
 ### Releases
 
-| Method | Path                             | Scope             | Description            |
-| ------ | -------------------------------- | ----------------- | ---------------------- |
-| GET    | `…/releases`                     | `preview:read`    | List releases          |
-| POST   | `…/releases`                     | `content:write`   | Create release         |
-| GET    | `…/releases/:id`                 | `preview:read`    | Get release            |
-| DELETE | `…/releases/:id`                 | `content:write`   | Delete draft release   |
-| POST   | `…/releases/:id/items`           | `content:write`   | Add entity to release  |
-| DELETE | `…/releases/:id/items/:entityId` | `content:write`   | Remove item            |
-| POST   | `…/releases/:id/published`       | `content:publish` | Publish release bundle |
+| Method | Path                             | Scope             | Description                                                                              |
+| ------ | -------------------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
+| GET    | `…/releases`                     | `preview:read`    | List releases, newest first, each with `itemCount` (its members, from one grouped count) |
+| POST   | `…/releases`                     | `content:write`   | Create release                                                                           |
+| GET    | `…/releases/:id`                 | `preview:read`    | Get release                                                                              |
+| DELETE | `…/releases/:id`                 | `content:write`   | Delete draft release                                                                     |
+| POST   | `…/releases/:id/items`           | `content:write`   | Add entity to release                                                                    |
+| DELETE | `…/releases/:id/items/:entityId` | `content:write`   | Remove item                                                                              |
+| POST   | `…/releases/:id/published`       | `content:publish` | Publish release bundle                                                                   |
 
 ### Scheduled actions
 
@@ -390,20 +391,20 @@ Human-in-the-loop decisions on agent proposals; see
 
 ### Workflows
 
-| Method | Path                                | Scope            | Description                                                                                                                                                                                                                |
-| ------ | ----------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `…/workflows`                       | `preview:read`   | List workflows (legacy `steps` plus the draft `graph`, `latestVersion`)                                                                                                                                                    |
-| POST   | `…/workflows`                       | `content:manage` | Create: legacy `{ name, steps }` is converted and published as v1 (answers the workflow); `{ name, description?, contentTypes?, graph?, gatesPublish? }` creates an unpublished draft (answers `{ workflow, validation }`) |
-| GET    | `…/workflows/:id`                   | `preview:read`   | Get workflow                                                                                                                                                                                                               |
-| DELETE | `…/workflows/:id`                   | `content:manage` | Delete workflow (published versions are kept for pinned runs)                                                                                                                                                              |
-| PUT    | `…/workflows/:id/draft`             | `content:manage` | Save the draft `{ name?, description?, contentTypes?, graph?, gatesPublish? }`; omitted fields are kept. Answers `{ workflow, validation }`                                                                                |
-| POST   | `…/workflows/:id/versions`          | `content:manage` | Publish the draft as the next immutable version (422 while validation has errors); `publishedBy` is the caller                                                                                                             |
-| GET    | `…/workflows/:id/versions`          | `preview:read`   | Published versions, newest first                                                                                                                                                                                           |
-| GET    | `…/workflows/:id/versions/:version` | `preview:read`   | One published version with its graph                                                                                                                                                                                       |
-| POST   | `…/workflows/validate`              | `preview:read`   | Validate `{ graph }` without saving → `{ ok, errors, warnings }`                                                                                                                                                           |
-| POST   | `…/workflows/copilot`               | `content:manage` | Propose a graph from `{ prompt, graph?, contentTypes? }`. Read-only (never saves); answers `{ graph, explanation, errors, warnings, changes, summary, provenance }`                                                        |
-| GET    | `…/entries/:id/workflow`            | `preview:read`   | Entry workflow state (legacy steps)                                                                                                                                                                                        |
-| POST   | `…/entries/:id/workflow/transition` | `preview:read`   | Transition step (legacy; step scope enforced in use-case)                                                                                                                                                                  |
+| Method | Path                                | Scope            | Description                                                                                                                                                                                                                                                                                                                                                              |
+| ------ | ----------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `…/workflows`                       | `preview:read`   | List workflows (legacy `steps` plus the draft `graph`, `latestVersion`), each with how its latest published version starts: `publishedTrigger` (`{ type, label }`) and `startsAlongside`, the ids of the other published workflows that start on the same trigger for an overlapping content type (none listed covers every type). Both are `null` until it is published |
+| POST   | `…/workflows`                       | `content:manage` | Create: legacy `{ name, steps }` is converted and published as v1 (answers the workflow); `{ name, description?, contentTypes?, graph?, gatesPublish? }` creates an unpublished draft (answers `{ workflow, validation }`)                                                                                                                                               |
+| GET    | `…/workflows/:id`                   | `preview:read`   | Get workflow                                                                                                                                                                                                                                                                                                                                                             |
+| DELETE | `…/workflows/:id`                   | `content:manage` | Delete workflow (published versions are kept for pinned runs)                                                                                                                                                                                                                                                                                                            |
+| PUT    | `…/workflows/:id/draft`             | `content:manage` | Save the draft `{ name?, description?, contentTypes?, graph?, gatesPublish? }`; omitted fields are kept. Answers `{ workflow, validation }`                                                                                                                                                                                                                              |
+| POST   | `…/workflows/:id/versions`          | `content:manage` | Publish the draft as the next immutable version (422 while validation has errors); `publishedBy` is the caller                                                                                                                                                                                                                                                           |
+| GET    | `…/workflows/:id/versions`          | `preview:read`   | Published versions, newest first                                                                                                                                                                                                                                                                                                                                         |
+| GET    | `…/workflows/:id/versions/:version` | `preview:read`   | One published version with its graph                                                                                                                                                                                                                                                                                                                                     |
+| POST   | `…/workflows/validate`              | `preview:read`   | Validate `{ graph }` without saving → `{ ok, errors, warnings }`                                                                                                                                                                                                                                                                                                         |
+| POST   | `…/workflows/copilot`               | `content:manage` | Propose a graph from `{ prompt, graph?, contentTypes? }`. Read-only (never saves); answers `{ graph, explanation, errors, warnings, changes, summary, provenance }`                                                                                                                                                                                                      |
+| GET    | `…/entries/:id/workflow`            | `preview:read`   | Entry workflow state (legacy steps)                                                                                                                                                                                                                                                                                                                                      |
+| POST   | `…/entries/:id/workflow/transition` | `preview:read`   | Transition step (legacy; step scope enforced in use-case)                                                                                                                                                                                                                                                                                                                |
 
 #### Workflow runs and tasks
 

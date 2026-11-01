@@ -1,7 +1,7 @@
 /**
  * Pure graph helpers for the workflow editor, kept apart from the canvas so the palette, the
- * Connections panel and tests use them without loading React Flow: `edgeId`, `wouldCycle`, `makeNode`, `holdPoints`,
- * `frameFocus`, `fitViewport`, `clearRightEdge`, `spreadColumns` and `graphChanges`.
+ * Connections panel and tests use them without loading React Flow: `edgeId`, `wouldCycle`, `makeNode`, `stepName`,
+ * `holdPoints`, `frameFocus`, `fitViewport`, `clearRightEdge`, `spreadColumns` and `graphChanges`.
  */
 
 import {
@@ -50,6 +50,19 @@ export function wouldCycle(graph: WorkflowGraph, source: string, target: string)
   return false;
 }
 
+/**
+ * A step's name for people: its label, or the name of its kind ("Approval") when the label is
+ * empty or is only its id (`approve_2`), as a drafted or imported graph can leave it. The id is
+ * for expressions, shown in mono beside the name at most, never as the name.
+ */
+export function stepName(
+  n: Pick<WorkflowNode, 'id' | 'label' | 'type'>,
+  registry: Pick<NodeRegistry, 'spec'>,
+): string {
+  const label = n.label?.trim();
+  return label && label !== n.id ? label : (registry.spec(n.type)?.label ?? n.type);
+}
+
 /** A new node of `type` with defaults and a unique id. */
 export function makeNode(
   nodes: NodeRegistry,
@@ -96,7 +109,15 @@ export function holdPoints(
       // A timed wait isn't `waits` in the catalog (no one acts on it), but runs still sit there.
       const holds = spec?.loop || spec?.waits || n.type === 'control.wait';
       return holds
-        ? [{ id: n.id, label: n.label, type: n.type, kind: spec?.label ?? n.type, at: n.position }]
+        ? [
+            {
+              id: n.id,
+              label: stepName(n, registry),
+              type: n.type,
+              kind: spec?.label ?? n.type,
+              at: n.position,
+            },
+          ]
         : [];
     })
     .sort((a, b) => a.at.x - b.at.x || a.at.y - b.at.y)

@@ -48,6 +48,8 @@ leaves the site half-updated, and a release cannot.
 A workflow is a published graph (approvals, waits for events, AI checks, publish). Runs act as
 whoever started them, so a run can do only what that caller could.
 
+- Find the workflow: `workflow_list` gives each one's id, what starts its published version and
+  which others start alongside it.
 - Submit: `workflow_run_start` with the entry and workflow. One active run per workflow and entry.
 - Follow it: `workflow_run_get` (`include: ["timeline"]` for what happened) or `workflow_run_list`.
 - Approvals waiting: `workflow_task_list` with `status: "pending"`, then `workflow_task_decide`.

@@ -32,8 +32,19 @@ export async function createRelease(
   return release;
 }
 
-export async function listReleases(ctx: AppContext, scope: Scope): Promise<Release[]> {
-  return ctx.store.releases.list(scope);
+/** A release in the list, with how many members it holds (so a list never reads each one). */
+export interface ReleaseSummary extends Release {
+  readonly itemCount: number;
+}
+
+/** Every release, newest first, each with its member count from one grouped query. */
+export async function listReleases(ctx: AppContext, scope: Scope): Promise<ReleaseSummary[]> {
+  const releases = await ctx.store.releases.list(scope);
+  const counts = await ctx.store.releases.countItems(
+    scope,
+    releases.map((r) => r.id),
+  );
+  return releases.map((r) => ({ ...r, itemCount: counts.get(r.id) ?? 0 }));
 }
 
 /** Returns a release with its members. */

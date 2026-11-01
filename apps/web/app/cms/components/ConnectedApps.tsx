@@ -25,7 +25,9 @@ import {
 } from '@contentworker/ui/table';
 import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
+import { Ago } from '~/cms/components/ago';
 import { StatusBadge } from '~/cms/components/status';
+import { When } from '~/cms/components/when';
 import {
   type ConnectedApp,
   type CreatedPat,
@@ -35,8 +37,6 @@ import {
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
-
-const fmt = (iso?: string) => (iso ? new Date(iso).toLocaleString() : '—');
 
 /** Plain-language scope names; falls back to the raw scope for anything new. */
 const SCOPE_LABEL = new Map<string, string>(
@@ -120,7 +120,7 @@ function Connections(props: { client: ManagementClient }) {
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground text-xs">
-                  {fmt(app.lastUsedAt)}
+                  <Ago at={app.lastUsedAt} />
                 </TableCell>
                 <TableCell className="text-right">
                   <DisconnectButton name={app.clientName} onConfirm={() => disconnect(app)} />
@@ -318,7 +318,7 @@ function PersonalAccessTokens(props: { client: ManagementClient }) {
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground text-xs">
-                  {t.expiresAt ? fmt(t.expiresAt) : 'Never'}
+                  {t.expiresAt ? <When at={t.expiresAt} /> : 'Never'}
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={tokenStatus(t)} />

@@ -36,6 +36,8 @@ const client = {
       latestVersion: 1,
       legacy: false,
       updatedAt: null,
+      publishedTrigger: null,
+      startsAlongside: [],
     },
   ]),
   deleteWorkflow: vi.fn(async () => {}),
@@ -81,6 +83,7 @@ vi.mock('~/cms/lib/client-context', () => ({
 const { ConfirmButton, InlineConfirm } = await import('~/cms/components/InlineConfirm');
 const { ToastProvider, useToast } = await import('~/cms/lib/toast');
 const { Releases } = await import('~/cms/routes/Releases');
+const { ReleasePublishConfirm } = await import('~/cms/components/ReleasePublishConfirm');
 const { Workflows } = await import('~/cms/routes/Workflows');
 const { Taxonomy } = await import('~/cms/routes/Taxonomy');
 const { AiActions } = await import('~/cms/components/AiActions');
@@ -233,9 +236,24 @@ describe('Releases destructive actions', () => {
     fields: { title: { 'en-US': title } },
   });
 
+  /** Answers the batched by-id lookup (`sys.id[in]`) with the entries that still exist. */
+  const entriesById =
+    (...existing: ReturnType<typeof entry>[]) =>
+    async (_type?: string, query?: { filters?: { field: string; value: unknown }[] }) => {
+      const ids = query?.filters?.find((f) => f.field === 'sys.id')?.value;
+      return Array.isArray(ids) ? existing.filter((e) => ids.includes(e.id)) : existing;
+    };
+
   function setup() {
-    client.listReleases.mockResolvedValue([release]);
+    client.listReleases.mockResolvedValue([{ ...release, itemCount: 3 }]);
     client.listContentTypes.mockResolvedValue([article]);
+    // e-3 is gone (deleted, or hidden from this principal).
+    client.listEntries.mockImplementation(
+      entriesById(
+        entry('e-1', 'Hello world', 'changed'),
+        entry('e-2', 'Brand new', 'draft'),
+      ) as never,
+    );
     client.getRelease.mockResolvedValue({
       release,
       items: [
@@ -253,15 +271,96 @@ describe('Releases destructive actions', () => {
     render(
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          <Releases />
+          <MemoryRouter>
+            <Releases />
+          </MemoryRouter>
         </ToastProvider>
       </QueryClientProvider>,
     );
   }
 
-  it('confirms a card publish with the member titles and flags before shipping', async () => {
+  it('lists each release with its entry count, and publishes only from inside it', async () => {
     setup();
-    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
+    if (!row) throw new Error('no row');
+    expect(await within(row).findByText('3')).toBeTruthy();
+    // The count rides on the list; no release is fetched just to count its members.
+    expect(client.getRelease).not.toHaveBeenCalled();
+    // Looking is the row's path; nothing on it ships the release.
+    expect(within(row).queryByRole('button', { name: /Publish/ })).toBeNull();
+  });
+
+  it('shows when a scheduled release goes out, and reads as scheduled', async () => {
+    client.listScheduledActions.mockResolvedValueOnce([
+      {
+        id: 'sa-1',
+        action: 'publish',
+        entityType: 'Release',
+        entityId: 'rel-1',
+        scheduledFor: '2026-11-07T14:00:00.000Z',
+        status: 'pending',
+        createdAt: '2026-10-01T00:00:00.000Z',
+      },
+    ] as never);
+    setup();
+    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
+    if (!row) throw new Error('no row');
+    const when = within(row).getByText(/Nov 7, 2026/);
+    expect(when.closest('time')?.getAttribute('dateTime')).toBe('2026-11-07T14:00:00.000Z');
+    expect(within(row).getByText('Scheduled')).toBeTruthy();
+  });
+
+  it('names a release’s entries by title inside it, linked, never by id', async () => {
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Spring campaign' }));
+    const sheet = await screen.findByRole('dialog');
+    const hello = await within(sheet).findByRole('link', { name: 'Hello world' });
+    expect(hello.getAttribute('href')).toBe('/content/article/e-1');
+    expect(within(sheet).getByRole('link', { name: 'Brand new' })).toBeTruthy();
+    expect(within(sheet).getByRole('button', { name: 'Remove “Hello world” from the release' }));
+    // A member the lookup can't return is said to be gone, not shown as its id.
+    expect(await within(sheet).findByText('Entry no longer available')).toBeTruthy();
+    expect(within(sheet).queryByText(/e-[123]/)).toBeNull();
+  });
+
+  it('names scheduled entries by title, linked, never by id', async () => {
+    client.listScheduledActions.mockResolvedValueOnce([
+      {
+        id: 'sa-1',
+        action: 'publish',
+        entityType: 'Entry',
+        entityId: 'e-1',
+        scheduledFor: '2026-11-07T14:00:00.000Z',
+        status: 'pending',
+        createdAt: '2026-10-01T00:00:00.000Z',
+      },
+      {
+        id: 'sa-2',
+        action: 'unpublish',
+        entityType: 'Entry',
+        entityId: 'e-3',
+        scheduledFor: '2026-11-08T14:00:00.000Z',
+        status: 'pending',
+        createdAt: '2026-10-01T00:00:00.000Z',
+      },
+    ] as never);
+    setup();
+    const tab = await screen.findByRole('tab', { name: /Scheduled/ });
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+    const table = await screen.findByRole('table', { name: 'Scheduled publishes' });
+    const hello = await within(table).findByRole('link', { name: 'Hello world' });
+    expect(hello.getAttribute('href')).toBe('/content/article/e-1');
+    expect(await within(table).findByText('Entry no longer available')).toBeTruthy();
+    expect(within(table).queryByText(/e-[13]/)).toBeNull();
+  });
+
+  it('confirms a publish from the release with the member titles and flags before shipping', async () => {
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Spring campaign' }));
+    const publishNow = await screen.findByRole('button', { name: 'Publish now…' });
+    await waitFor(() => expect((publishNow as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(publishNow);
 
     const dialog = screen.getByRole('alertdialog', { name: 'Publish “Spring campaign”?' });
     expect(client.publishRelease).not.toHaveBeenCalled();
@@ -365,7 +464,6 @@ describe('Release publish confirm', () => {
   };
 
   it('keeps the publish button disabled while members load and for an empty release', async () => {
-    client.listReleases.mockResolvedValue([release]);
     client.listContentTypes.mockResolvedValue([]);
     let resolveDetail: (v: unknown) => void = () => {};
     client.getRelease.mockImplementation(
@@ -374,8 +472,15 @@ describe('Release publish confirm', () => {
           resolveDetail = r;
         }),
     );
-    renderWithProviders(<Releases />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    renderWithProviders(
+      <ReleasePublishConfirm
+        releaseId="rel-1"
+        releaseTitle="Spring campaign"
+        busy={false}
+        onCancel={() => {}}
+        onConfirm={() => void client.publishRelease()}
+      />,
+    );
 
     const dialog = screen.getByRole('alertdialog', { name: 'Publish “Spring campaign”?' });
     expect(within(dialog).getByText('Checking its entries…')).toBeTruthy();
@@ -389,5 +494,20 @@ describe('Release publish confirm', () => {
     expect((publish() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(publish());
     expect(client.publishRelease).not.toHaveBeenCalled();
+  });
+
+  it('offers no publish inside an empty release', async () => {
+    client.listReleases.mockResolvedValue([{ ...release, itemCount: 0 }]);
+    client.listContentTypes.mockResolvedValue([]);
+    client.getRelease.mockResolvedValue({ release, items: [] });
+    renderWithProviders(
+      <MemoryRouter>
+        <Releases />
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Spring campaign' }));
+    const publishNow = await screen.findByRole('button', { name: 'Publish now…' });
+    expect(await screen.findByText('0 entries · Open')).toBeTruthy();
+    expect((publishNow as HTMLButtonElement).disabled).toBe(true);
   });
 });

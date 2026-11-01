@@ -19,6 +19,7 @@ import { Input } from '@contentworker/ui/input';
 import { Item, ItemContent, ItemMedia, ItemTitle } from '@contentworker/ui/item';
 import { cn } from '@contentworker/ui/lib/utils';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
+import { Skeleton } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { Textarea } from '@contentworker/ui/textarea';
 import {
@@ -28,14 +29,14 @@ import {
   Redo2,
   Rocket,
   Save,
-  Sparkles,
   Trash2,
   Undo2,
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useParams } from 'react-router';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
-import { Section } from '~/cms/components/page';
+import { PageHeader, Section } from '~/cms/components/page';
+import { When } from '~/cms/components/when';
 import { Connections } from '~/cms/components/workflow/Connections';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
 import { FlowCanvas } from '~/cms/components/workflow/FlowCanvas';
@@ -105,19 +106,46 @@ export function WorkflowEditor() {
   const { client } = useClient();
   const query = useScopedQuery(['workflow', id], () => client.getWorkflow(id));
   if (query.isPending) {
-    return <p className="pt-6 text-muted-foreground text-sm">Loading workflow…</p>;
+    return <EditorSkeleton />;
   }
   if (!query.data) {
     return (
-      <div className="pt-6 text-sm">
-        <p className="text-bad">This workflow could not be loaded.</p>
-        <Link to="/workflows" className="text-link hover:underline">
+      <>
+        <PageHeader
+          title="Workflow not available"
+          description="It may have been deleted, or it isn’t in this environment."
+        />
+        <Link to="/workflows" className="text-link text-sm hover:underline">
           Back to workflows
         </Link>
-      </div>
+      </>
     );
   }
   return <Editor key={query.data.id} loaded={query.data} />;
+}
+
+/** The editor's frame while the workflow loads: its header, then palette, canvas and inspector. */
+function EditorSkeleton() {
+  return (
+    <div
+      className="-mx-4 flex flex-col sm:-mx-6 lg:h-[calc(100dvh-var(--shell-h))]"
+      aria-busy="true"
+    >
+      <span className="sr-only" role="status">
+        Loading the workflow
+      </span>
+      <div className="flex items-center gap-3 border-b px-4 py-2.5 sm:px-5">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="ml-auto hidden h-8 w-48 lg:block" />
+      </div>
+      <div className="flex min-h-0 flex-1 gap-4 p-4">
+        <Skeleton className="hidden h-96 w-56 lg:block" />
+        <Skeleton className="h-96 flex-1" />
+        <Skeleton className="hidden h-96 w-72 lg:block" />
+      </div>
+    </div>
+  );
 }
 
 function Editor({ loaded }: { loaded: WorkflowSummary }) {
@@ -371,7 +399,8 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
     <div className="-mx-4 flex flex-col sm:-mx-6 lg:h-[calc(100dvh-var(--shell-h))]">
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2.5 sm:px-5">
         <div className="min-w-0">
-          <div className="caption">
+          {/* From md the shell's breadcrumbs hold the way back; below it this does. */}
+          <div className="caption md:hidden">
             <Link to="/workflows" className="hover:text-foreground hover:underline">
               Workflows
             </Link>
@@ -478,7 +507,7 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
               onClick={() => setCopilotOpen(true)}
               disabled={!!proposal}
             >
-              <Sparkles aria-hidden="true" /> Change with AI
+              Change with AI
             </Button>
             <div className="flex">
               <Button
@@ -504,16 +533,18 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
                 <Redo2 aria-hidden="true" />
               </Button>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={!dirty}
-              onClick={() => setFlow(JSON.parse(baseline) as Draft)}
-              title="Back to the last saved draft (undoable)"
-            >
-              Discard changes
-            </Button>
+            {/* Only while there is something to discard: a dead button beside Save reads as noise. */}
+            {dirty ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setFlow(JSON.parse(baseline) as Draft)}
+                title="Back to the last saved draft (undoable)"
+              >
+                Discard changes
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -607,9 +638,12 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
         <div className="flex flex-wrap items-center gap-3 border-b bg-muted/50 px-5 py-2 text-sm">
           <span>
             Viewing <b className="font-semibold">v{viewing}</b>, read-only
-            {viewed?.publishedAt
-              ? ` · published ${new Date(viewed.publishedAt).toLocaleString()}`
-              : ''}
+            {viewed?.publishedAt ? (
+              <>
+                {' '}
+                · published <When at={viewed.publishedAt} />
+              </>
+            ) : null}
             . Runs that started on it keep it.
           </span>
           <Button
