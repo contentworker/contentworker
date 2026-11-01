@@ -140,4 +140,45 @@ describe('the Workers AI decision model', () => {
       reason: 'upstream',
     });
   });
+
+  it('keeps the model’s choice when its probabilities are missing, and refuses a contradiction', async () => {
+    const sparse = fakeRun({
+      answers: {
+        urgent: { noul: 0.5 },
+        team: { choice: 'technical', confidence: 0.95 },
+        severity: { score: 2 },
+      },
+      usage: { prompt_tokens: 42 },
+    });
+    const r = await createWorkersAIDecisionModel({ run: sparse.run }).decide(request);
+    expect(r.answers.team).toEqual({
+      type: 'choice',
+      choice: 'technical',
+      confidence: 0.95,
+      probabilities: { billing: 0, technical: 0.95 },
+    });
+    expect(r.answers.severity).toEqual({ type: 'score', score: 2, probabilities: [0, 0, 1] });
+    // Usage reported the Workers AI way still meters.
+    expect(r.usage.inputTokens).toBe(42);
+
+    const contradiction = fakeRun({
+      answers: {
+        urgent: { noul: 0.5 },
+        team: { choice: 'billing', probabilities: { billing: 0.2, technical: 0.8 } },
+        severity: { score: 1 },
+      },
+    });
+    await expect(
+      createWorkersAIDecisionModel({ run: contradiction.run }).decide(request),
+    ).rejects.toMatchObject({ reason: 'bad_response' });
+  });
+
+  it('refuses an inherited property name as a choice', async () => {
+    const { run } = fakeRun({
+      answers: { urgent: { noul: 0.5 }, team: { choice: 'toString' }, severity: { score: 1 } },
+    });
+    await expect(createWorkersAIDecisionModel({ run }).decide(request)).rejects.toMatchObject({
+      reason: 'bad_response',
+    });
+  });
 });

@@ -78,11 +78,13 @@ and fall back to a generative model's JSON otherwise:
 | ------------- | --------------------------------------------------------------------------------------------- |
 | `ai.classify` | one `choice` over the node's labels; `output.probabilities` carries each label's               |
 | `ai.router`   | one `choice` over the routes whose guards hold; the author's instructions are the question     |
-| `ai.moderate` | a `noul` per category (hate, violence, sexual, harassment, self-harm, plus house rules when set); a category at or above the node's `threshold` (default 0.5) flags |
+| `ai.moderate` | a `noul` per category (hate, violence, sexual, harassment, self-harm, anything else unsafe or illegal, plus house rules when set); a category at or above the node's `threshold` (between 0 and 1, default 0.5) flags |
 | `ai.assess`   | the node's own questions, which already use this shape                                        |
 
-The entry is always the state and never the question, so the author's instructions and the house
-rules stay out of reach of the content being judged. Gating nodes fail closed exactly as before: an
+The entry is always the state and never the question, capped at 20,000 characters as the
+generative prompts are, so the author's instructions and the house rules stay out of reach of the
+content being judged. A router with one allowed route, or a classifier with one label, answers
+without asking. Gating nodes fail closed exactly as before: an
 answer the model couldn't give flags (moderation), takes the careful route (router) or goes to
 `unsure` (assess).
 

@@ -1,5 +1,6 @@
 import {
   NODE_SPECS,
+  nodeSpec,
   type Principal,
   type RunContext,
   SCOPES,
@@ -465,6 +466,99 @@ describe('workflow node executors', () => {
     ]);
     expect((await exec('ai.moderate')).branches).toEqual(['clean']);
     expect(decisions.requests).toEqual([]);
+  });
+
+  it('moderation treats a threshold outside (0, 1) as the default, and asks about anything unsafe', async () => {
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    const decisions = new StubDecisionModel(() => ({
+      other_unsafe: { type: 'noul', probability: 0.72 },
+    }));
+    deps = { ...deps, decisions };
+    // 80 (a percentage), 1 ("only when certain"), negative and non-numeric: never "off".
+    for (const threshold of [80, 1, -1, 'high']) {
+      expect((await exec('ai.moderate', { threshold })).branches, String(threshold)).toEqual([
+        'flagged',
+      ]);
+    }
+    const asked = decisions.requests.at(-1)?.questions;
+    expect(Object.keys(asked ?? {})).toContain('other_unsafe');
+    for (const q of Object.values(asked ?? {})) {
+      expect(q.instructions).toMatch(/grounds for suspicion/);
+    }
+    const spec = nodeSpec('ai.moderate')?.fields.find((f) => f.key === 'threshold');
+    expect(spec?.check?.(80)).not.toEqual([]);
+    expect(spec?.check?.(1)).not.toEqual([]);
+    expect(spec?.check?.(0.7)).toEqual([]);
+  });
+
+  it('a router with one allowed route takes it without asking; a classifier with one label too', async () => {
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    const decisions = new StubDecisionModel();
+    deps = { ...deps, decisions };
+    const r = await exec('ai.router', {
+      routes: ['publish', 'needs_review'],
+      guards: { needs_review: { '==': [1, 2] } },
+    });
+    expect(r.branches).toEqual(['publish']);
+    const c = await exec('ai.classify', { labels: ['news'], into: 'kind' });
+    expect(c.vars).toEqual({ kind: 'news' });
+    expect(decisions.requests).toEqual([]);
+  });
+
+  it('a router never falls back to a route whose guard failed', async () => {
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    deps = {
+      ...deps,
+      decisions: {
+        async decide() {
+          throw new Error('decisions down');
+        },
+      },
+    };
+    const r = await exec('ai.router', {
+      routes: ['publish', 'review', 'escalate'],
+      guards: { escalate: { '==': [1, 2] } },
+    });
+    expect(r.branches).toEqual(['review']);
+  });
+
+  it('assess branches on the decision model’s own choice', async () => {
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    deps = {
+      ...deps,
+      decisions: new StubDecisionModel(() => ({
+        verdict: {
+          type: 'choice',
+          choice: 'reject',
+          confidence: 0.9,
+          probabilities: { approve: 0.1, reject: 0.9 },
+        },
+      })),
+    };
+    const r = await exec('ai.assess', {
+      questions: {
+        verdict: {
+          type: 'choice',
+          instructions: 'Approve or reject?',
+          criteria: { approve: 'Fine', reject: 'Not fine' },
+        },
+      },
+      branchOn: 'verdict',
+      minConfidence: 0.8,
+    });
+    expect(r.branches).toEqual(['reject']);
+  });
+
+  it('files offline moderation hits under their own category', async () => {
+    entryId = (
+      await createEntry(ctx, scope, {
+        contentTypeApiId: 'post',
+        fields: { title: { 'en-US': 'How to build a bomb' } },
+      })
+    ).entry.id;
+    deps = { ...deps, decisions: new StubDecisionModel() };
+    const r = await exec('ai.moderate');
+    expect(r.vars).toEqual({ moderation: { flagged: true, categories: ['violence'] } });
   });
 
   it('ai.enrich proposes a review to wait on, and resumes by the review’s decision', async () => {

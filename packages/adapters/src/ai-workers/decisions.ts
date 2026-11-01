@@ -70,13 +70,22 @@ function fromWire(id: string, q: DecisionQuestion, raw: unknown): DecisionAnswer
   }
   if (q.type === 'choice') {
     const choice = a.choice;
-    if (typeof choice !== 'string' || !(choice in q.options)) throw bad('not one of the options');
+    if (typeof choice !== 'string' || !Object.hasOwn(q.options, choice)) {
+      throw bad('not one of the options');
+    }
     const probs = (a.probabilities ?? {}) as Record<string, unknown>;
     const probabilities: Record<string, number> = {};
     for (const option of Object.keys(q.options)) {
       probabilities[option] = clamp01(isNum(probs[option]) ? probs[option] : 0);
     }
-    const confidence = isNum(a.confidence) ? clamp01(a.confidence) : (probabilities[choice] ?? 0);
+    // Probabilities missing (or keyed some other way): the model's choice carries its confidence,
+    // so nothing downstream can re-derive a different option from an empty spread.
+    const sum = Object.values(probabilities).reduce((n, p) => n + p, 0);
+    const stated = isNum(a.confidence) ? clamp01(a.confidence) : undefined;
+    if (sum === 0) probabilities[choice] = stated ?? 1;
+    const top = Math.max(...Object.values(probabilities));
+    if ((probabilities[choice] ?? 0) < top) throw bad('the choice is not the most probable option');
+    const confidence = stated ?? probabilities[choice] ?? 0;
     return { type: 'choice', choice, confidence, probabilities };
   }
   const score = a.score;
@@ -89,7 +98,10 @@ function fromWire(id: string, q: DecisionQuestion, raw: unknown): DecisionAnswer
     const v = byKey[String(i)] ?? byKey[label];
     return clamp01(isNum(v) ? v : 0);
   });
-  return { type: 'score', score: Math.min(q.levels.length - 1, Math.max(0, score)), probabilities };
+  const clamped = Math.min(q.levels.length - 1, Math.max(0, score));
+  // No per-level probabilities: all of it at the level the score is nearest.
+  if (!probabilities.some((p) => p > 0)) probabilities[Math.round(clamped)] = 1;
+  return { type: 'score', score: clamped, probabilities };
 }
 
 /**
@@ -112,7 +124,10 @@ export function createWorkersAIDecisionModel(opts: WorkersAIDecisionOptions): De
       const model = WORKERS_AI_DECISION_MODEL_BY_TIER[req.tier ?? 'fast'];
       const questions: Record<string, unknown> = {};
       for (const id of ids) questions[id] = toWire(req.questions[id] as DecisionQuestion);
-      let res: { answers?: Record<string, unknown>; usage?: { input_tokens?: number } };
+      let res: {
+        answers?: Record<string, unknown>;
+        usage?: { input_tokens?: number; prompt_tokens?: number };
+      };
       try {
         res = ((await withTimeout(
           opts.run(model.id, { model: model.selector, state: req.state, questions }, runOpts),
@@ -125,7 +140,9 @@ export function createWorkersAIDecisionModel(opts: WorkersAIDecisionOptions): De
       for (const id of ids) {
         answers[id] = fromWire(id, req.questions[id] as DecisionQuestion, res.answers?.[id]);
       }
-      return { answers, model: model.id, usage: { inputTokens: res.usage?.input_tokens ?? 0 } };
+      // System One reports input_tokens; Workers AI's own models prompt_tokens.
+      const inputTokens = res.usage?.input_tokens ?? res.usage?.prompt_tokens ?? 0;
+      return { answers, model: model.id, usage: { inputTokens } };
     },
   };
 }
