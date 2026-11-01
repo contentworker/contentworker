@@ -39,7 +39,7 @@ function schemaForContentType(ct: ContentType): { schema: JsonSchema; fields: Fi
 }
 
 function jsonTypeFor(field: FieldDefinition): Record<string, unknown> {
-  const base: Record<string, unknown> = { description: field.name };
+  const base: Record<string, unknown> = { description: field.name, ...constraintsFor(field) };
   switch (field.type) {
     case 'Integer':
       return { ...base, type: 'integer' };
@@ -52,6 +52,25 @@ function jsonTypeFor(field: FieldDefinition): Record<string, unknown> {
     default:
       return { ...base, type: 'string' };
   }
+}
+
+/**
+ * The field's validations as JSON Schema, so the model is told the rules the draft is then held
+ * to (a range, allowed values, a length, a pattern) instead of learning them from a refusal.
+ */
+function constraintsFor(field: FieldDefinition): Record<string, unknown> {
+  const v = field.validations;
+  if (!v) return {};
+  const numeric = field.type === 'Integer' || field.type === 'Number';
+  const text = field.type === 'Symbol' || field.type === 'Text';
+  return {
+    ...(v.in?.length ? { enum: [...v.in] } : {}),
+    ...(numeric && v.range?.min !== undefined ? { minimum: v.range.min } : {}),
+    ...(numeric && v.range?.max !== undefined ? { maximum: v.range.max } : {}),
+    ...(text && v.size?.min !== undefined ? { minLength: v.size.min } : {}),
+    ...(text && v.size?.max !== undefined ? { maxLength: v.size.max } : {}),
+    ...(text && v.regexp ? { pattern: v.regexp.pattern } : {}),
+  };
 }
 
 export interface DraftEntryInput {
