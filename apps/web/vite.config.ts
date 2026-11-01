@@ -43,7 +43,9 @@ const LOCAL_STACK_VARS = {
   // request. The device tests keep their fresh, empty database: they create what they need.
   // Config validation refuses SEED_DEV wherever secure secrets are required.
   SEED_DEV: e2e ? 'false' : 'true',
-  SEED_SCALE: '1',
+  // SEED_SCALE=10 pnpm dev seeds ~10× the demo corpus (with CONTENTWORKER_STATE so it doesn't
+  // land in the everyday database).
+  SEED_SCALE: process.env.SEED_SCALE ?? '1',
   // OAuth for MCP clients, served on the admin origin like a deployment's (OAUTH_ISSUER).
   OAUTH_ISSUER: `http://localhost:${port}`,
 };
@@ -56,6 +58,10 @@ export default defineConfig({
       // A fleet deploy builds against its rendered config.
       configPath: process.env.CONTENTWORKER_WRANGLER_CONFIG,
       ...(e2e ? { remoteBindings: false, persistState: { path: '.wrangler/e2e' } } : {}),
+      // A separate local database (e.g. CONTENTWORKER_STATE=.wrangler/scale for a large seed).
+      ...(!e2e && process.env.CONTENTWORKER_STATE
+        ? { persistState: { path: process.env.CONTENTWORKER_STATE } }
+        : {}),
       // `pnpm dev` runs the whole stack in one session: this web Worker plus the api, engine
       // (queues, cron, Durable Objects, Workflows) and delivery Workers, all on one local D1.
       // Unless a fleet config is being built, which deploys each Worker on its own.

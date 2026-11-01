@@ -157,7 +157,11 @@ export default {
     const wired = wireEdge(env, { bookmark });
     try {
       validateApiSecrets(wired.config, env as unknown as NodeJS.ProcessEnv);
+      // The seed appends hundreds of events (thousands at a larger SEED_SCALE) in whatever
+      // request runs first, often a GET; relay them now, since local dev has no cron sweep.
+      let seededNow = false;
       if (wired.config.seedDev && wired.persistent && !devSeeded) {
+        seededNow = true;
         await seedDev(wired.ctx, seedConfigFrom(wired.config), { blob: wired.blob });
         devSeeded = true;
       }
@@ -185,7 +189,7 @@ export default {
           const metrics = makeMetrics(env.METRICS);
           try {
             await bodyDone;
-            if (wired.queue && MUTATING.has(req.method)) {
+            if (wired.queue && (MUTATING.has(req.method) || seededNow)) {
               // Loop-until-drained: a bulk mutation can append far more rows
               // than one relay batch; its own nudge should clear them rather
               // than leaving the overflow to the cron sweeper.
