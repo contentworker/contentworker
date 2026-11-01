@@ -58,9 +58,9 @@ export function SettingsNav(props: { section: string; onSection: (section: strin
                           to={`/settings/${s.id}`}
                           aria-current={current ? 'page' : undefined}
                           className={cn(
-                            'block rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color]',
+                            'relative block rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color]',
                             current
-                              ? 'bg-accent font-medium text-accent-foreground'
+                              ? 'bg-accent font-medium text-accent-foreground before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-brand'
                               : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                           )}
                         >
