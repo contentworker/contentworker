@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Each test seeds and copies a 150-entry environment through the use-cases: seconds on a CI runner.
 vi.setConfig({ testTimeout: 30_000 });
+
 import {
   type AppContext,
   cancelBulkJob,

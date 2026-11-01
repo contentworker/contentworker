@@ -364,7 +364,7 @@ exact event type. Delivery attempts are recorded as `WebhookDelivery` rows for o
 | `bulk.job_completed`        | `jobId`, `action`, `total`, `succeeded`, `failed`                          |
 | `workflow_run.*`            | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason`  |
 | `workflow.task_opened`, `workflow.webhook` | Editorial workflow tasks and inbound webhook nodes          |
-| `search.reindex_requested`, `bulk.chunk_due` | Control messages for background jobs                      |
+| `search.reindex_requested`, `bulk.chunk_due`, `environment.purge_due` | Control messages for background jobs |
 
 The full list and payloads are in [Events & webhooks](./events-and-webhooks.md#event-payloads).
 

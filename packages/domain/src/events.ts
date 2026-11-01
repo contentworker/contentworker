@@ -20,7 +20,8 @@ export type DomainEvent =
   | WorkflowTaskOpenedEvent
   | WorkflowWebhookEvent
   | EnvironmentAliasChangedEvent
-  | EnvironmentDeletedEvent;
+  | EnvironmentDeletedEvent
+  | EnvironmentPurgeDueEvent;
 
 export interface BaseEvent {
   readonly id: string;
@@ -70,13 +71,23 @@ export interface EnvironmentAliasChangedEvent extends BaseEvent {
 }
 
 /**
- * An environment was deleted (`scope` is the deleted environment). Its rows are gone; the engine
- * removes what was derived from them elsewhere: each entry's search documents and vectors, and the
- * environment's delivery cache. Large environments emit several, `entryIds` split across them.
+ * An environment was deleted (`scope` is the deleted environment). It no longer resolves; the
+ * engine removes what was derived from its rows elsewhere: each published entry's search documents
+ * and vectors, and the environment's delivery cache. Large environments emit several, `entryIds`
+ * split across them. The rows themselves go in bounded steps (`environment.purge_due`).
  */
 export interface EnvironmentDeletedEvent extends BaseEvent {
   readonly type: 'environment.deleted';
   readonly entryIds: readonly string[];
+}
+
+/**
+ * A deleted environment still has rows to remove (`scope` is that environment). A control event,
+ * like `bulk.chunk_due`: the engine deletes the next bounded step and appends another until none
+ * are left, then removes its files. Redelivery is harmless; each step deletes whatever remains.
+ */
+export interface EnvironmentPurgeDueEvent extends BaseEvent {
+  readonly type: 'environment.purge_due';
 }
 
 export interface ContentTypePublishedEvent extends BaseEvent {

@@ -339,10 +339,10 @@ export function buildServer(
             const spaceId = typeof a.space === 'string' ? a.space : DEFAULT_SPACE;
             // Checked only for a caller who may act in the space, so nobody else learns which
             // environments exist there: the tool's own guard refuses them first.
-            const resolve = inScope(principal, spaceId)
-              ? resolveWritableEnvironment
-              : resolveEnvironment;
-            args = { ...a, environment: await resolve(ctx, spaceId, a.environment) };
+            const environment = inScope(principal, spaceId)
+              ? await resolveWritableEnvironment(ctx, spaceId, a.environment)
+              : await resolveEnvironment(ctx, spaceId, a.environment, { refusePurging: false });
+            args = { ...a, environment };
           }
           return await handler(args, ...rest);
         } catch (err) {

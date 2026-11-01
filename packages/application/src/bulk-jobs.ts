@@ -168,6 +168,10 @@ export async function runBulkChunk(
   deps: BulkChunkDeps = {},
 ): Promise<RunBulkChunkResult> {
   const { scope, jobId, chunkId } = event;
+  // A job in a deleted environment: its rows linger until purged, and must not be acted on.
+  if ((await ctx.store.spaces.resolveName(scope.spaceId, scope.environmentId)).purging) {
+    return { outcome: 'skipped' };
+  }
   const job = await ctx.store.bulkJobs.getJob(scope, jobId);
   if (!job) return { outcome: 'skipped' };
   if (job.status !== 'running') return { outcome: 'skipped' };
