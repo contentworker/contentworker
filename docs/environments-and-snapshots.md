@@ -93,7 +93,8 @@ published. A dry run (`dryRun: true` on the MCP tool) still exports and checks i
 
 `DELETE …/environments/:env?confirm=:env` (MCP `environment_delete`) removes the environment and
 everything in it: content model, entries and versions, assets, references, releases, schedules,
-workflows and runs, taxonomy, comments, tasks and jobs. Its audit history stays. `confirm` must
+workflows and runs, taxonomy, comments, tasks and jobs, and the webhooks scoped to it (space-wide
+ones stay). Its audit history stays. `confirm` must
 repeat the environment id. It takes a person holding `space:admin` in that space (signed in, or
 through their OAuth or personal access token) or the deployment admin token; a plain API key gets
 `403`, even one with `space:admin`. It refuses `main` (`422`) and any environment an alias points

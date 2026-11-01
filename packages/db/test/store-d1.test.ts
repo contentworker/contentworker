@@ -378,6 +378,7 @@ describe('stored secrets', () => {
       topics: ['*'],
       secret: 's',
       active: true,
+      environmentId: null,
       headers: { 'X-"Odd"': 'v1', Keep: 'k' },
     });
     const ref = { column: 'webhooks.headers' as const, id, key: 'X-"Odd"' };
@@ -502,6 +503,19 @@ describe('deleting an environment', () => {
       fields: { title: { 'en-US': 'Also going' } },
     });
     await store.taxonomy.createTag(doomed, { id: `tag-${uid()}`, name: 'Doomed' });
+    // Its own webhook goes with it; a space-wide one (NULL environment) stays.
+    const hook = (id: string, environmentId: string | null) => ({
+      id,
+      url: 'https://hook.example/cw',
+      topics: ['*' as const],
+      secret: 's',
+      active: true,
+      environmentId,
+    });
+    const doomedHook = `wh-${uid()}`;
+    const wideHook = `wh-${uid()}`;
+    await store.webhooks.create(doomed, hook(doomedHook, doomed.environmentId));
+    await store.webhooks.create(doomed, hook(wideHook, null));
     await store.audit.append({
       id: uid(),
       spaceId,
@@ -585,5 +599,73 @@ describe('deleting an environment', () => {
     ).toBe(true);
     // The rest of the space is untouched.
     expect(await store.contentTypes.list(scope)).not.toEqual([]);
+    expect((await store.webhooks.list(scope)).map((w) => w.id)).toContain(wideHook);
+    expect((await store.webhooks.list(scope)).map((w) => w.id)).not.toContain(doomedHook);
+  });
+});
+
+describe('webhook environments', () => {
+  const space = `wh-${uid()}`;
+  const main = { spaceId: space, environmentId: 'main' };
+  const staging = { spaceId: space, environmentId: 'staging' };
+  const hook = (id: string, environmentId: string | null, topics: string[] = ['*']) => ({
+    id,
+    url: 'https://hook.example/cw',
+    topics: topics as ['*'],
+    secret: 's',
+    active: true,
+    environmentId,
+  });
+  const ids = (ws: { id: string }[]) => ws.map((w) => w.id).sort();
+
+  it('matches an event to the hooks of its environment and the space-wide ones', async () => {
+    const [m, st, wide, other] = [uid(), uid(), uid(), uid()];
+    await store.webhooks.create(main, hook(m, 'main'));
+    await store.webhooks.create(staging, hook(st, 'staging'));
+    await store.webhooks.create(main, hook(wide, null, ['entry.published']));
+    // Another space's space-wide hook never matches.
+    await store.webhooks.create(
+      { spaceId: `other-${uid()}`, environmentId: 'staging' },
+      hook(other, null),
+    );
+
+    expect(ids(await store.webhooks.listByTopic(staging, 'entry.published'))).toEqual(
+      [st, wide].sort(),
+    );
+    expect(ids(await store.webhooks.listByTopic(staging, 'entry.unpublished'))).toEqual([st]);
+    expect(ids(await store.webhooks.listByTopic(main, 'entry.published'))).toEqual(
+      [m, wide].sort(),
+    );
+    expect(ids(await store.webhooks.list(staging))).toEqual([st, wide].sort());
+    expect(await store.webhooks.get(staging, st)).toMatchObject({ environmentId: 'staging' });
+    expect(await store.webhooks.get(staging, wide)).toMatchObject({ environmentId: null });
+  });
+
+  it("neither reads, changes nor deletes another environment's hook", async () => {
+    const id = uid();
+    await store.webhooks.create(main, hook(id, 'main'));
+    expect(await store.webhooks.get(staging, id)).toBeNull();
+    await store.webhooks.update(staging, { ...hook(id, null), active: false });
+    await store.webhooks.delete(staging, id);
+    expect(await store.webhooks.get(main, id)).toMatchObject({
+      active: true,
+      environmentId: 'main',
+    });
+    // Rescoped from its own environment, it moves.
+    await store.webhooks.update(main, hook(id, 'staging'));
+    expect(await store.webhooks.get(main, id)).toBeNull();
+    expect(await store.webhooks.get(staging, id)).toMatchObject({ environmentId: 'staging' });
+  });
+
+  it('treats a hook written before the column existed (NULL) as space-wide', async () => {
+    const id = uid();
+    await testDb
+      .prepare(
+        "INSERT INTO webhooks (id, space_id, url, topics, secret) VALUES (?, ?, 'https://hook.example/cw', '[\"*\"]', 's')",
+      )
+      .bind(id, space)
+      .run();
+    expect(ids(await store.webhooks.listByTopic(staging, 'entry.published'))).toContain(id);
+    expect(ids(await store.webhooks.listByTopic(main, 'entry.published'))).toContain(id);
   });
 });

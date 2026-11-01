@@ -163,6 +163,7 @@ describe('webhook secrets sealed at rest (store decorator)', () => {
       topics: ['*'],
       secret: 'whsec_unsealed',
       active: true,
+      environmentId: null,
     });
     await expect(ctx.store.webhooks.get(scope, 'raw')).rejects.toBeInstanceOf(
       SecretUnreadableError,
@@ -178,6 +179,7 @@ describe('webhook secrets sealed at rest (store decorator)', () => {
       topics: ['*'],
       secret: await foreign.seal('x', secretContext.webhookSecret('w9')),
       active: true,
+      environmentId: null,
     });
     const store = withSealedSecrets(raw, createSecretSealer({ current: KEY }));
     await expect(store.webhooks.get(scope, 'w9')).rejects.toBeInstanceOf(SecretUnreadableError);
@@ -209,6 +211,7 @@ describe('resealSecrets (daily sweep)', () => {
         topics: ['*'],
         secret,
         active: true,
+        environmentId: null,
         headers: { Authorization: `Bearer ${id}` },
       });
     return { raw, sealer, ctx, oldRow };
@@ -289,6 +292,7 @@ describe('resealSecrets (daily sweep)', () => {
       topics: ['*'],
       secret: sealedLost,
       active: true,
+      environmentId: null,
     });
     const r = await resealSecrets({ store: raw, sealer });
     expect(r.unreadable).toBe(1);

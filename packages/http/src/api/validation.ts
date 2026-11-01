@@ -293,6 +293,14 @@ export const webhookBody = z.object({
   secret: z.string().min(1).max(512),
   active: z.boolean().optional(),
   headers: z.record(z.string().max(128), z.string().max(2048)).optional(),
+  allEnvironments: z
+    .boolean()
+    .optional()
+    .describe(
+      "true: receive every environment's events. Otherwise only the events of the environment " +
+        'in the path; under an alias the hook is space-wide and false is refused. On update, ' +
+        "false scopes the hook to the path's environment and omitting it keeps the current scope.",
+    ),
 });
 export const updateWebhookBody = webhookBody.partial();
 export const createReleaseBody = z.object({ title: zShort, description: zShort.optional() });

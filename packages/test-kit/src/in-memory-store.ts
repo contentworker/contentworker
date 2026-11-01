@@ -9,6 +9,7 @@ import {
   ConflictError,
   type ContentType,
   cloneJson,
+  coversEnvironment,
   type DomainEvent,
   type Entry,
   type EntryFields,
@@ -271,6 +272,16 @@ export class InMemoryContentStore implements ContentStore {
           }
         }
         deleted += fromThis;
+      }
+      // The hooks scoped to it (kept per space here, not by scope key); space-wide ones stay.
+      const hooks = this.webhookData.get(spaceId) ?? [];
+      const doomed = hooks.filter((w) => w.environmentId === environmentId).slice(0, rowsPerTable);
+      if (doomed.length > 0) {
+        this.webhookData.set(
+          spaceId,
+          hooks.filter((w) => !doomed.includes(w)),
+        );
+        deleted += doomed.length;
       }
       const purge = this.purgeData.get(`${spaceId}::${environmentId}`);
       if (purge) purge.nudgedAt = at;
@@ -699,6 +710,12 @@ export class InMemoryContentStore implements ContentStore {
   };
 
   private readonly webhookData = new Map<string, Webhook[]>();
+  /** As the D1 store: the hooks scoped to the scope's environment, and the space-wide ones. */
+  private visibleWebhooks(scope: Scope): Webhook[] {
+    return (this.webhookData.get(scope.spaceId) ?? []).filter((w) =>
+      coversEnvironment(w, scope.environmentId),
+    );
+  }
   readonly webhookDeliveries: WebhookDeliveryRecord[] = [];
   private deliverySeq = 0;
 
@@ -709,23 +726,24 @@ export class InMemoryContentStore implements ContentStore {
       list.push(webhook);
       this.webhookData.set(key, list);
     },
-    get: async (scope, id) =>
-      (this.webhookData.get(scope.spaceId) ?? []).find((w) => w.id === id) ?? null,
-    list: async (scope) => this.webhookData.get(scope.spaceId) ?? [],
+    get: async (scope, id) => this.visibleWebhooks(scope).find((w) => w.id === id) ?? null,
+    list: async (scope) => this.visibleWebhooks(scope),
     listByTopic: async (scope, type) =>
-      (this.webhookData.get(scope.spaceId) ?? []).filter((w) => matchesTopic(w, type)),
+      this.visibleWebhooks(scope).filter((w) => matchesTopic(w, type)),
     update: async (scope, webhook) => {
       const list = this.webhookData.get(scope.spaceId) ?? [];
       this.webhookData.set(
         scope.spaceId,
-        list.map((w) => (w.id === webhook.id ? webhook : w)),
+        list.map((w) =>
+          w.id === webhook.id && coversEnvironment(w, scope.environmentId) ? webhook : w,
+        ),
       );
     },
     delete: async (scope, id) => {
       const list = this.webhookData.get(scope.spaceId) ?? [];
       this.webhookData.set(
         scope.spaceId,
-        list.filter((w) => w.id !== id),
+        list.filter((w) => !(w.id === id && coversEnvironment(w, scope.environmentId))),
       );
     },
     recordDelivery: async (_scope, delivery) => {
