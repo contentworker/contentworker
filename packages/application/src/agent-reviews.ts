@@ -1,5 +1,10 @@
-import type { AgentReview, EntryFields, Scope } from '@contentworker/domain';
-import { ConflictError, NotFoundError } from '@contentworker/domain';
+import type { AgentReview, EntryFields, Principal, Scope } from '@contentworker/domain';
+import {
+  ConflictError,
+  canAccessContentType,
+  maskDeniedFields,
+  NotFoundError,
+} from '@contentworker/domain';
 import { recordAgentRun } from './agent-audit';
 import type { AppContext } from './context';
 import { updateEntry } from './entries';
@@ -66,12 +71,30 @@ export async function getAgentReview(
   return review;
 }
 
+/**
+ * Agent proposals, newest first. For a role-bound principal (one with content grants), a review is
+ * listed only when its entry still exists and the principal may read its content type, and its
+ * proposed values are masked to the fields that principal may read. The entries are read in one
+ * batch, not one lookup per review. Without a principal (agents, tests) nothing is filtered.
+ */
 export async function listAgentReviews(
   ctx: AppContext,
   scope: Scope,
   query: { status?: AgentReview['status']; entryId?: string; limit?: number } = {},
+  principal?: Principal,
 ): Promise<AgentReview[]> {
-  return ctx.store.agentReviews.list(scope, query);
+  const reviews = await ctx.store.agentReviews.list(scope, query);
+  if (!principal?.contentGrants || reviews.length === 0) return reviews;
+  const entries = await ctx.store.entries.getMany(
+    scope,
+    reviews.map((r) => r.entryId),
+  );
+  const typeOf = new Map(entries.map((e) => [e.entry.id, e.entry.contentTypeApiId]));
+  return reviews.flatMap((review) => {
+    const type = typeOf.get(review.entryId);
+    if (!type || !canAccessContentType(principal, 'read', type)) return [];
+    return [{ ...review, proposed: maskDeniedFields(principal, type, review.proposed) }];
+  });
 }
 
 /**

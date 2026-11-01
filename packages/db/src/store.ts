@@ -3384,6 +3384,21 @@ function makeAgentReviewRepo(x: Exec): AgentReviewRepo {
         .limit(Math.min(query?.limit ?? 100, 1000));
       return rows.map(toReview);
     },
+    async countPending(scope) {
+      // One grouped read on agent_reviews_pending, joined to each review's entry for its type
+      // (null when the entry is gone), so the count needs no per-review lookup.
+      const r = schema.agentReviews;
+      const e = schema.entries;
+      return db
+        .select({ contentTypeApiId: e.contentTypeApiId, count: count() })
+        .from(r)
+        .leftJoin(
+          e,
+          and(eq(e.spaceId, r.spaceId), eq(e.environmentId, r.environmentId), eq(e.id, r.entryId)),
+        )
+        .where(and(scopeFilter(r, scope), eq(r.status, 'pending')))
+        .groupBy(e.contentTypeApiId);
+    },
     async decide(scope, id, decision) {
       directOnly(x, 'agentReviews.decide');
       const updated = await db
@@ -4435,6 +4450,14 @@ function makeWorkflowTaskRepo(x: Exec): WorkflowTaskRepo {
         )
         .limit(Math.min(Math.max(query.limit ?? 50, 1), 200));
       return rows.map(toTask);
+    },
+    async countPending(scope) {
+      // Grouped on workflow_tasks_by_status_deadline: uncapped, one read.
+      return db
+        .select({ contentTypeApiId: t.contentTypeApiId, count: count() })
+        .from(t)
+        .where(and(scopeFilter(t, scope), eq(t.status, 'pending')))
+        .groupBy(t.contentTypeApiId);
     },
     async settle(scope, id, outcome) {
       const update = db

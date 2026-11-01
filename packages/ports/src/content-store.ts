@@ -373,6 +373,15 @@ export interface WorkflowTaskQuery {
 }
 
 /** Approvals, event waits and agent reviews a run holds open. */
+/**
+ * How many pending items one content type holds, for the Approvals count. `contentTypeApiId` is
+ * null for an agent review whose entry no longer exists.
+ */
+export interface PendingCount {
+  readonly contentTypeApiId: string | null;
+  readonly count: number;
+}
+
 export interface WorkflowTaskRepo {
   /** False (and nothing written) when the run already has a task for `eventType`. */
   create(scope: Scope, task: WorkflowTask): Promise<boolean>;
@@ -380,6 +389,8 @@ export interface WorkflowTaskRepo {
   getByEvent(scope: Scope, runId: string, eventType: string): Promise<WorkflowTask | null>;
   /** Pending tasks soonest deadline first; anything else newest first. */
   list(scope: Scope, query?: WorkflowTaskQuery): Promise<WorkflowTask[]>;
+  /** Pending tasks, counted per content type (uncapped, unlike `list`). */
+  countPending(scope: Scope): Promise<PendingCount[]>;
   /** Settles a pending task. False when it was no longer pending (someone settled it first). */
   settle(
     scope: Scope,
@@ -841,6 +852,11 @@ export interface AgentReviewRepo {
     scope: Scope,
     query?: { status?: AgentReview['status']; entryId?: string; limit?: number },
   ): Promise<AgentReview[]>;
+  /**
+   * Pending reviews, counted per content type of the entry each proposes changes to (uncapped,
+   * unlike `list`); a review whose entry is gone counts under null.
+   */
+  countPending(scope: Scope): Promise<PendingCount[]>;
   /**
    * CAS pending → decided. Returns false when the review was already decided
    * (a concurrent reviewer won) — the caller must not act on a lost race.

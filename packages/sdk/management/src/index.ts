@@ -42,6 +42,15 @@ export interface ContentType {
 }
 
 /** How many entries a content type holds, by status; `total` is the live ones (not the trash). */
+/** What waits on a human decision in the environment (`GET …/approvals/count`). */
+export interface PendingApprovalsCount {
+  /** Workflow steps paused for a person (approvals, reviews, event waits). */
+  readonly workflowTasks: number;
+  /** Agent proposals awaiting review. */
+  readonly agentReviews: number;
+  readonly total: number;
+}
+
 export interface ContentTypeEntryCounts {
   readonly contentType: string;
   readonly total: number;
@@ -379,6 +388,14 @@ export function createManagementClient(opts: ManagementClientOptions) {
   return {
     /** Who am I: the principal resolved from this client's token. */
     me: () => get<Principal>(`${root}/auth/me`),
+
+    approvals: {
+      /**
+       * How many items wait on a decision, uncapped, counting only content types this token may
+       * read.
+       */
+      count: () => get<PendingApprovalsCount>(`${envBase}/approvals/count`),
+    },
 
     contentTypes: {
       list: () => items(get<{ items: ContentType[] }>(`${envBase}/content-types`)),

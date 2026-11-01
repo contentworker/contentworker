@@ -1962,6 +1962,14 @@ export function createManagementClient(
     ): Promise<{ taskId: string; runId: string; decision: 'approved' | 'rejected'; by: string }> {
       return req('POST', `${mgmt}/workflow-tasks/${encodeURIComponent(id)}/decide`, input);
     },
+    /** What waits in Approvals, uncapped and limited to what this caller may read. */
+    countPendingApprovals(): Promise<{
+      workflowTasks: number;
+      agentReviews: number;
+      total: number;
+    }> {
+      return req('GET', `${mgmt}/approvals/count`);
+    },
     // --- agent reviews (human-in-the-loop decisions on agent proposals) ----
     /** Agent proposals, oldest first as the API returns them; `status` narrows. */
     async listAgentReviews(

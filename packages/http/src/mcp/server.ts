@@ -18,6 +18,7 @@ import {
   canvasToEntry,
   compareEnvironments,
   countEntriesByContentType,
+  countPendingApprovals,
   createAgentSchedule,
   createAIAction,
   createAppExtension,
@@ -3002,25 +3003,31 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
-      const items = await listAgentReviews(ctx, scopeOf(args), {
-        status: args.status,
-        entryId: args.entryId,
-      });
-      if (!principal.contentGrants) return ok({ items });
-      const visible = [];
-      for (const review of items) {
-        try {
-          const entry = await getPreviewEntry(ctx, scopeOf(args), review.entryId);
-          if (!canAccessContentType(principal, 'read', entry.contentType)) continue;
-          visible.push({
-            ...review,
-            proposed: maskDeniedFields(principal, entry.contentType, review.proposed),
-          });
-        } catch {
-          // entry gone — skip rather than leak an unmaskable proposal
-        }
-      }
-      return ok({ items: visible });
+      // Role-bound principals see only reviews of types they read, with denied fields masked
+      // (a review whose entry is gone is skipped rather than leak an unmaskable proposal).
+      const items = await listAgentReviews(
+        ctx,
+        scopeOf(args),
+        { status: args.status, entryId: args.entryId },
+        principal,
+      );
+      return ok({ items });
+    },
+  );
+
+  server.registerTool(
+    'approvals_count',
+    {
+      description:
+        'Count what waits on a human decision (pending workflow tasks and agent proposals), ' +
+        'without listing it. Items on content types you can’t read are left out.',
+      inputSchema: toolSchema('approvals_count', () => z.object({ ...scopeArgs })),
+      annotations: READ_ONLY,
+    },
+    async (args) => {
+      const s = scopeOf(args);
+      guard(SCOPES.previewRead, s);
+      return ok(await countPendingApprovals(ctx, s, principal));
     },
   );
 

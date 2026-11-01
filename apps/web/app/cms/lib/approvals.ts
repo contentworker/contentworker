@@ -4,16 +4,14 @@ import { useScopedQuery } from './queries';
 type PendingOpts = {
   readonly silent?: boolean;
   readonly enabled?: boolean;
-  readonly refetchInterval?: number;
 };
 
-/** The most a list asks for (the API's cap); the shell writes anything past 99 as 99+. */
+/** The most a list asks for (the API's cap). */
 const PENDING_LIMIT = 200;
 
 /**
- * What waits on a person in this space: workflow steps paused for a decision, and agent
- * proposals awaiting review. The Approvals inbox and the shell's count read the same two queries,
- * so deciding an item in the inbox (which invalidates them) updates the count too.
+ * What waits on a person in this space, as the Approvals inbox lists it: workflow steps paused
+ * for a decision, and agent proposals awaiting review.
  */
 export function usePendingWorkflowTasks(opts?: PendingOpts) {
   const { client } = useClient();
@@ -33,22 +31,27 @@ export function usePendingAgentReviews(opts?: PendingOpts) {
   );
 }
 
+/** The shell's count's query key: the inbox invalidates it when it decides an item. */
+export const APPROVALS_COUNT_KEY = ['approvals-count'] as const;
+
 /** How often the shell asks again while the tab is visible: work arrives from agents and runs. */
 const COUNT_REFRESH_MS = 60_000;
 
 /**
- * How many items wait on a decision, once both lists have loaded; undefined until then or when
- * either can't be read (a role without the scope), so the shell shows no number rather than a
- * wrong one. Past 99 it is written 99+, so the lists' cap of 200 never shows. It refreshes every
- * minute while the tab is visible, on focus, and whenever the inbox decides an item.
- * `enabled` waits for the scope (the shell mounts before the space is known).
+ * How many items wait on a decision (`GET …/approvals/count`): uncapped, counted on the server,
+ * and limited to the content types this person may read, as the inbox's lists are. Undefined
+ * until it answers, or when it can't (a role without the scope), so the shell shows no number
+ * rather than a wrong one. It refreshes every minute while the tab is visible, on focus, and when
+ * the inbox decides an item. `enabled` waits for the scope (the shell mounts before the space is
+ * known).
  */
 export function usePendingApprovalsCount(enabled = true): number | undefined {
-  const opts = { silent: true, enabled, refetchInterval: COUNT_REFRESH_MS };
-  const tasks = usePendingWorkflowTasks(opts);
-  const reviews = usePendingAgentReviews(opts);
-  if (!tasks.data || !reviews.data) return undefined;
-  return tasks.data.length + reviews.data.length;
+  const { client } = useClient();
+  return useScopedQuery(APPROVALS_COUNT_KEY, () => client.countPendingApprovals(), {
+    silent: true,
+    enabled,
+    refetchInterval: COUNT_REFRESH_MS,
+  }).data?.total;
 }
 
 /** The count as the shell writes it: 99+ past two digits. */

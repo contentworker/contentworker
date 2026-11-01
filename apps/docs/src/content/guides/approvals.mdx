@@ -27,10 +27,12 @@ review, and both come down to a person with the right permission saying yes or n
 Open **Approvals**. It lists, oldest first, the **Workflow steps** paused for a decision and the
 **Agent proposals** waiting for review; an event wait is listed too, but only the event moves it
 on. Open an entry from a row to see what you are deciding, add an optional note, and approve or
-reject.
+reject. A count beside **Approvals** in the sidebar and on the phone's tab bar says how many items
+wait, refreshed every minute; like the lists, it leaves out content types you can't read.
 
 | Do this        | API                                                     | MCP                  |
 | -------------- | ------------------------------------------------------- | -------------------- |
+| Count what waits | `GET …/approvals/count` (`workflowTasks`, `agentReviews`, `total`) | `approvals_count` |
 | List tasks     | `GET …/workflow-tasks?status=pending`                   | `workflow_task_list` |
 | Decide a task  | `POST …/workflow-tasks/{id}/decide` (`decision`: `approved` or `rejected`, `note`) | `workflow_task_decide` |
 

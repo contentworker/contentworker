@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  createAgentReview,
   createContentType,
   createEntry,
   createSpace,
@@ -148,6 +149,50 @@ describe('MCP workflow tools', () => {
     }
     expect(byName.get('workflow_run_list')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('workflow_run_cancel')?.annotations?.destructiveHint).toBe(true);
+  });
+
+  it('counts what waits in Approvals, read-only, as the caller’s lists show it', async () => {
+    const admin = await connect(ADMIN);
+    const wf = (await admin.call('workflow_save_draft', { name: 'Review', graph: reviewGraph() }))
+      .workflow as Json;
+    await admin.call('workflow_publish', { workflowId: wf.id });
+    const run = await (await connect(WRITER)).call('workflow_run_start', {
+      entryId,
+      workflowId: wf.id,
+    });
+    await harness.drive(run.id as string);
+    await createAgentReview(deps.ctx, scope, {
+      workflow: 'enrich',
+      entryId,
+      proposed: { title: { 'en-US': 'Better' } },
+      notes: [],
+    });
+
+    const { client, call } = await connect(READER);
+    const { tools } = await client.listTools();
+    expect(tools.find((t) => t.name === 'approvals_count')?.annotations?.readOnlyHint).toBe(true);
+    expect(await call('approvals_count')).toEqual({
+      workflowTasks: 1,
+      agentReviews: 1,
+      total: 2,
+    });
+
+    // A role that can't read articles counts none of it, and its list agrees.
+    const elsewhere = await connect({
+      ...READER,
+      contentGrants: [{ contentTypeApiId: 'page', actions: ['read'] }],
+    });
+    expect(await elsewhere.call('approvals_count')).toEqual({
+      workflowTasks: 0,
+      agentReviews: 0,
+      total: 0,
+    });
+    expect(await elsewhere.call('agent_review_list', { status: 'pending' })).toEqual({
+      items: [],
+    });
+
+    const noScope = await connect({ spaceId: SPACE, kind: 'cda', scopes: ['content:read'] });
+    expect((await noScope.call('approvals_count')).error).toMatch(/preview:read/);
   });
 
   it('creates, publishes and versions a workflow; copilot and validate save nothing', async () => {
