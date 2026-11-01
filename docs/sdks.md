@@ -247,6 +247,7 @@ cma.releases.list() / .get(id) / .publish(id) / .delete(id)
 
 cma.scheduledActions.list({ status? }) / .create(input) / .cancel(id)
 
+cma.spaces.list() / .create({ spaceId, name, defaultLocale, starter? })  // deployment-wide
 cma.environments.list() / .create(id, name)           // space-level
 cma.environments.aliases.list() / .set(alias, envId) / .delete(alias)
 cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
@@ -260,6 +261,8 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
 - `publish`, `unpublish` and `versions.restore` take `{ expectedVersion }`, the `currentVersion` you
   read; if a draft was saved since, the server answers 409 and changes nothing (`?expectedVersion=`
   on the route; see [Consistency](./consistency.md#invariants)).
+- `spaces.create` takes the deployment's admin token (a space's own keys are refused);
+  `starter: 'sample'` installs the sample content before it returns.
 - Failed requests throw `ManagementError` with `status` and the parsed error `body`.
 
 ## `@contentworker/sdk-codegen` — typed field shapes from your content model

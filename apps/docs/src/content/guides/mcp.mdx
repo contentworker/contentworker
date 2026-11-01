@@ -48,7 +48,7 @@ environments its token can reach.
 
 ## Tools
 
-There are 123 in all; your client lists every tool with its description and input schema when it
+There are 125 in all; your client lists every tool with its description and input schema when it
 connects. Each tool checks the token's scopes and role grants before it runs, and writes go
 through the same validation, versioning and events as a person's.
 
@@ -58,6 +58,7 @@ through the same validation, versioning and events as a person's.
 | AI | `generate_draft`, `entry_from_canvas`, `entry_translate`, `entry_summarize`, `entry_autofill_field`, `entry_suggest_tags`, `entry_moderate`, `entry_audit`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `agent_schedule_list`, `agent_schedule_create`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject` |
 | Model and taxonomy | `model_list_content_types`, `model_get_content_type`, `model_create_content_type`, `model_publish_content_type`, `model_typescript`, `taxonomy_list_tags`, `taxonomy_create_tag`, `taxonomy_create_scheme`, `taxonomy_list_concepts`, `taxonomy_create_concept` |
 | Assets | `assets_list`, `asset_set_metadata`, `asset_usage`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`, `asset_video_create`, `asset_video_refresh` |
+| Spaces | `spaces_list`, `space_create` (workspace admins; `starter: "sample"` adds the sample content) |
 | Environments | `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environments_compare`, `environments_merge`, `environment_delete` |
 | Import, export and clone | `import_sources`, `import_analyze`, `import_execute`, `environment_export`, `environment_import`, `environment_clone` |
 | Bulk jobs | `bulk_job_start`, `bulk_job_status`, `bulk_job_report`, `bulk_job_cancel` |

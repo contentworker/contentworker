@@ -20,6 +20,15 @@ import { seedTaxonomy } from './taxonomy';
 import type { SeedConfig, SeedDeps, SeedRun } from './types';
 
 export { volumes } from './corpus';
+export {
+  type CreatedSpace,
+  createSpaceWithStarter,
+  installStarter,
+  STARTER_VOLUMES,
+  STARTERS,
+  type Starter,
+  type StarterSummary,
+} from './starter';
 export type { SeedConfig, SeedDeps } from './types';
 export { seedConfigFrom } from './types';
 

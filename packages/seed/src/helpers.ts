@@ -271,6 +271,9 @@ export function richTextKitchenSink(embeddedEntryId: string, embeddedAssetId: st
 
 export async function ensureContentType(run: SeedRun, draft: ContentTypeDraft): Promise<void> {
   const existed = await contentTypeExists(run, draft.apiId);
+  // The starter never touches a type that's already there: on a retry it's its own, and otherwise
+  // it's someone's model, which sample content has no business rewriting.
+  if (existed && run.keepExistingTypes) return;
   await createContentType(run.ctx, run.scope, draft);
   await publishContentType(run.ctx, run.scope, draft.apiId);
   if (!existed) {
