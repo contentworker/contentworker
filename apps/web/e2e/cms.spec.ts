@@ -333,3 +333,27 @@ test('the editor’s side pane sits beside the form, resizes, and previews the d
   await pane.getByRole('radio', { name: 'Details' }).click();
   await expect(preview).toHaveCount(0);
 });
+
+test('typing right after creating an entry lands in the created entry, never a form being replaced', async ({
+  page,
+}) => {
+  await newArticle(page);
+  // Hold the swap from /new to the created entry's URL open, as a slow runner does: the new route's
+  // module arrives late.
+  await page.route('**/*content-entry*', async (route) => {
+    await new Promise((r) => setTimeout(r, 2000));
+    await route.continue();
+  });
+  const title = `Swap ${Date.now()}`;
+  const box = page.getByRole('textbox', { name: /Title/ });
+  await box.fill(title);
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  // The new form is gone while it is replaced, so this waits for the created entry's editor.
+  await box.fill(`${title} v2`, { timeout: 15_000 });
+  await expect(page).toHaveURL(/\/content\/article\/(?!new)[^/]+$/);
+  await expect(box).toHaveValue(`${title} v2`);
+  await expect(page.getByText('Unsaved changes')).toBeVisible();
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Draft updated')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: `${title} v2` })).toBeVisible();
+});
