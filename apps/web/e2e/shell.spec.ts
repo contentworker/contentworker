@@ -193,6 +193,27 @@ test('Account offers the Home Screen on an iPhone or iPad, until dismissed', asy
   await expect(hint).toHaveCount(0);
 });
 
+test('the theme follows the system until the reader picks one', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop', 'the account menu is the sidebar’s, lg and up');
+  const theme = () => page.evaluate(() => document.documentElement.dataset.theme);
+  // Nothing chosen yet: dark before first paint on a dark system, and it follows a change.
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await open(page, '/dashboard');
+  expect(await theme()).toBe('dark');
+  await page.getByRole('button', { name: /account menu/ }).click();
+  await expect(page.getByRole('menuitemradio', { name: 'Match system' })).toBeChecked();
+  await page.keyboard.press('Escape');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect.poll(theme).toBe('light');
+
+  // Choosing Light holds it, whatever the system does, across a reload.
+  await page.getByRole('button', { name: /account menu/ }).click();
+  await page.getByRole('menuitemradio', { name: 'Light' }).click();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await open(page, '/dashboard');
+  expect(await theme()).toBe('light');
+});
+
 test('G then a letter goes to a page, and ? lists the shortcuts', async ({ page }, info) => {
   test.skip(info.project.name !== 'desktop', 'a hardware keyboard');
   await open(page, '/dashboard');

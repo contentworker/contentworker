@@ -45,12 +45,13 @@ export const meta: Route.MetaFunction = () => [
 const THEME_COLOR = { light: '#ffffff', dark: '#0a0a0a' } as const;
 
 /**
- * Resolves the stored theme choice ("light" by default, "dark", or "system") to `data-theme` before
- * first paint, and follows the OS while "system" is chosen. It also keeps a `theme-color` meta of
+ * Resolves the stored theme choice ("light", "dark", or "system", the default until the reader
+ * picks one: PRODUCT.md) to `data-theme` before first paint, and follows the OS while "system" is
+ * chosen. It also keeps a `theme-color` meta of
  * its own first in <head>, so the browser chrome matches the chosen theme rather than the OS (the
  * per-scheme metas below are only the fallback without script). Kept tiny and inline on purpose.
  */
-const THEME_SCRIPT = `(function(){var d=document.documentElement,m=window.matchMedia('(prefers-color-scheme: dark)'),t=document.createElement('meta');t.name='theme-color';document.head.prepend(t);function a(){var c='light';try{c=localStorage.getItem('cw-theme')||'light'}catch(e){c=d.dataset.themeChoice||'light'}d.dataset.themeChoice=c;d.dataset.theme=c==='system'?(m.matches?'dark':'light'):c;t.content=d.dataset.theme==='dark'?'${THEME_COLOR.dark}':'${THEME_COLOR.light}'}a();m.addEventListener('change',a);window.addEventListener('cw-theme',a)})()`;
+const THEME_SCRIPT = `(function(){var d=document.documentElement,m=window.matchMedia('(prefers-color-scheme: dark)'),t=document.createElement('meta');t.name='theme-color';document.head.prepend(t);function a(){var c='system';try{c=localStorage.getItem('cw-theme')||'system'}catch(e){c=d.dataset.themeChoice||'system'}d.dataset.themeChoice=c;d.dataset.theme=c==='system'?(m.matches?'dark':'light'):c;t.content=d.dataset.theme==='dark'?'${THEME_COLOR.dark}':'${THEME_COLOR.light}'}a();m.addEventListener('change',a);window.addEventListener('cw-theme',a)})()`;
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const nonce = useContext(NonceContext);
