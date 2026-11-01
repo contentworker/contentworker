@@ -407,7 +407,13 @@ content grants gets `403`, because the report exposes entry ids across content t
 | POST   | `…/assets/:id/video/refresh` | `content:write`   | Refresh a video asset's status, playback URLs and poster                          |
 | POST   | `…/assets/:id/alt-text`      | `content:write`   | AI alt-text generation                                                            |
 | POST   | `…/assets/:id/auto-tag`      | `content:write`   | AI auto-tagging                                                                   |
-| POST   | `…/assets/:id/published`     | `content:publish` | Publish asset                                                                     |
+| POST   | `…/assets/:id/published`     | `content:publish` | Publish asset; `409 asset_embargoed` (with `embargoUntil`) before the embargo lifts, `409 asset_expired` (with `expiresAt`) once its rights expired |
+| POST   | `…/assets/bulk`              | `content:write`   | A resumable bulk job over a selection (202, the job): `{ action, ids, folderId? (move), addTags?, removeTags? (tag) }`; `move` and `tag` need `content:write`, `publish`, `unpublish` and `archive` need `content:publish`. Follow it at `…/bulk/jobs/:id`; the report names each failed asset |
+| POST   | `…/assets/:id/file`          | `content:write`   | Start replacing the file `{ fileName, contentType }` (201): `{ asset, upload, commit }`, a signed PUT for the next version |
+| POST   | `…/assets/:id/file/commit`   | `content:write`   | Commit the uploaded replacement (`commit` from the call above) → the asset at its new version; 422 when nothing was uploaded, 409 when another replace or restore committed first; Delivery keeps the published file until a republish |
+| GET    | `…/assets/:id/versions`      | `preview:read`    | Every file version, newest first `{ items }`: `version`, `file` (short-lived URL), `createdAt`, `createdBy`, `current`, `published`, `restoredFrom?` |
+| POST   | `…/assets/:id/versions/:version/restore` | `content:write` | Make an earlier file current again as a new version (422 for the current one, 404 for one it never had) |
+| PUT    | `…/assets/:id/rights`        | `content:publish` | Replace the rights `{ license?, credit?, expiresAt?, embargoUntil? }` (`{}` clears; dates ISO-8601 with a zone; 422 on a bad value or an expiry before the embargo); on a published asset they apply at once, and an embargo is refused |
 | DELETE | `…/assets/:id/published`     | `content:publish` | Unpublish asset                                                                   |
 
 Every asset these routes return carries a short-lived signed `file.url` (at least 15 minutes,

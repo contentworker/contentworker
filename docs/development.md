@@ -220,6 +220,10 @@ the indexes `asset_published_by_time` (publish order, keyset paging) and
 for snapshots still holding the column defaults (`kind` `'other'` or no `r2_key`) whose asset row
 knows better, which the pre-0009 api wrote while a deployment rolled out.
 
+`0012_asset_expiry.sql` adds `asset_published.expires_at` (epoch ms, the snapshot's
+`rights.expiresAt`, written on every snapshot write), backfills it from existing snapshots' rights,
+and indexes it (`asset_published_by_expiry`, only where set) for the engine's expiry sweep.
+
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
 `archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)

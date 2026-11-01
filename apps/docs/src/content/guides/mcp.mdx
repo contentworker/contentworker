@@ -48,7 +48,7 @@ environments its token can reach.
 
 ## Tools
 
-There are 154 in all; your client lists every tool with its description and input schema when it
+There are 161 in all; your client lists every tool with its description and input schema when it
 connects. Each tool checks the token's scopes and role grants before it runs, and writes go
 through the same validation, versioning and events as a person's.
 
@@ -57,7 +57,7 @@ through the same validation, versioning and events as a person's.
 | Content | `entries_query`, `entries_get`, `entries_create`, `entries_update`, `entries_set_metadata`, `entries_publish`, `entries_unpublish`, `entries_trash`, `entries_list_trashed`, `entries_restore`, `entries_purge`, `entries_duplicate`, `entries_list_versions`, `entries_diff_versions`, `entries_restore_version`, `entries_bulk_action`, `entries_suggest`, `entry_apply_tags`, `comments_add`, `comments_list`, `tasks_create`, `tasks_list`, `tasks_resolve`, `workflow_transition` |
 | AI | `generate_draft`, `entry_from_canvas`, `entry_translate`, `entry_summarize`, `entry_autofill_field`, `entry_suggest_tags`, `entry_moderate`, `entry_audit`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `agent_schedule_list`, `agent_schedule_create`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject` |
 | Model and taxonomy | `model_list_content_types`, `model_get_content_type`, `model_create_content_type`, `model_publish_content_type`, `model_typescript`, `model_entry_counts`, `taxonomy_list_tags`, `taxonomy_create_tag`, `taxonomy_create_scheme`, `taxonomy_list_concepts`, `taxonomy_create_concept` |
-| Assets | `assets_list`, `assets_search`, `asset_reingest`, `assets_reindex`, `assets_move`, `asset_archive`, `asset_restore`, `asset_delete`, `asset_folders_list`, `asset_folders_create`, `asset_folders_update`, `asset_folders_delete`, `asset_renditions_list`, `asset_renditions_create`, `asset_renditions_update`, `asset_renditions_delete`, `asset_set_metadata`, `asset_usage`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`, `asset_video_create`, `asset_video_refresh`, `asset_preview_list`, `asset_preview_get` |
+| Assets | `assets_list`, `assets_search`, `asset_reingest`, `assets_reindex`, `assets_move`, `assets_bulk`, `asset_archive`, `asset_restore`, `asset_delete`, `asset_folders_list`, `asset_folders_create`, `asset_folders_update`, `asset_folders_delete`, `asset_renditions_list`, `asset_renditions_create`, `asset_renditions_update`, `asset_renditions_delete`, `asset_set_metadata`, `asset_set_rights`, `asset_replace_file`, `asset_commit_file`, `asset_versions_list`, `asset_restore_version`, `asset_usage`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`, `asset_video_create`, `asset_video_refresh`, `asset_preview_list`, `asset_preview_get` |
 | Spaces | `spaces_list`, `space_create` (workspace admins; `starter: "sample"` adds the sample content) |
 | Environments | `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environments_compare`, `environments_merge`, `promotion_request`, `promotion_list`, `promotion_get`, `promotion_approve`, `promotion_reject`, `environment_delete` |
 | Import, export and clone | `import_sources`, `import_analyze`, `import_execute`, `environment_export`, `environment_import`, `environment_clone` |

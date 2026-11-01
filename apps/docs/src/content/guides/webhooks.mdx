@@ -89,15 +89,18 @@ Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
 | ------------------------ | ----------------------------------------------------- | --------------------------------------- |
 | `entry.published`        | `entryId`, `contentTypeApiId`, `version`, `fields`    | An entry is published                   |
 | `entry.unpublished`      | `entryId`, `contentTypeApiId`                         | An entry is unpublished, or trashed while live |
-| `asset.published`        | `assetId`                                             | An asset is published                   |
-| `asset.unpublished`      | `assetId`                                             | An asset is unpublished, or archived or deleted while live |
+| `asset.published`        | `assetId`, `replacedVersion` (when it delivered a new file in that version's place) | An asset is published                   |
+| `asset.unpublished`      | `assetId`                                             | An asset is unpublished, or archived, deleted or expired while live |
 | `asset.deleted`          | `assetId`, `r2Key` or `videoId`                       | An asset is deleted permanently         |
+| `asset.file_replaced`    | `assetId`, `version`, `previousVersion`, `r2Key`, `etag`, `restoredFrom` | An asset's file was replaced or an older version restored (delivery changes only on republish) |
+| `asset.rights_changed`   | `assetId`                                             | A published asset's rights changed      |
+| `asset.expired`          | `assetId`, `expiresAt`                                | A published asset's rights expired and it was unpublished |
 | `asset.ingested`         | `assetId`, `version`, `published`, `contentHash`, `duplicateOf` | An uploaded file was processed (hashed, measured, indexed) |
 | `content_type.published` | `contentTypeApiId`, `version`                         | A content type's definition is published |
 | `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
 | `environment_alias.changed` | `targetEnvironmentId` (`null` when removed)        | An alias is created, repointed or removed; `scope.environmentId` is the alias name |
 | `environment.deleted`    | `entryIds`                                            | An environment is deleted; `scope` is the deleted environment, and a large one sends several events splitting `entryIds`. Reliably delivered only to space-wide webhooks (the deleted environment's own are being removed) |
-| `bulk.job_completed`     | `jobId`, `action` (`publish`, `unpublish`, `import`), `total`, `succeeded`, `failed` | A bulk job finishes |
+| `bulk.job_completed`     | `jobId`, `action` (`publish`, `unpublish`, `import`, `asset_reindex`, `asset_move`, `asset_tag`, `asset_publish`, `asset_unpublish`, `asset_archive`), `total`, `succeeded`, `failed` | A bulk job finishes |
 | `workflow_run.completed`, `workflow_run.declined`, `workflow_run.cancelled`, `workflow_run.failed`, `workflow_run.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason` | A workflow run ends, one topic per outcome |
 | `workflow.task_opened`   | `taskId`, `runId`, `nodeId`, `kind` (`approval`, `event`, `review`), `entryId`, `contentTypeApiId`, `title`, `assignee`, `requiredScope`, `deadline` | A run opens an approval, event wait or agent review |
 

@@ -41,8 +41,8 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/published
 Send every header in `upload.headers` with the `PUT`. A new asset is a draft until you publish
 it, and `DELETE …/assets/{id}/published` unpublishes it. Title and description are localized maps
 set at creation, and an optional `folderId` files the asset in a folder. MCP has no tool to create
-an image asset; it can list, file, archive and delete assets, edit metadata and create videos
-(below).
+an image asset; it can list, file, archive and delete assets, replace their files, edit metadata
+and rights, and create videos (below).
 
 ## Upload a video
 
@@ -156,6 +156,62 @@ as a draft. Select several to archive them together. The routes are `POST …/as
 **Delete** removes an asset and its files for good (`DELETE …/assets/{id}`, `content:publish`; MCP
 `asset_delete`). It is refused with `409 asset_in_use` while any entry links to it, and the answer
 names those entries, so archive the asset or remove the links first.
+
+**Act on many at once.** Select assets and use the bulk bar. Past about 50 assets the admin runs
+the action as a background job and shows its progress, then lists any asset it couldn't act on by
+name. Over the API, `POST …/assets/bulk` starts the same job (`202`):
+`{ "action": "move", "ids": [...], "folderId": "..." }`, `"tag"` with `addTags` and
+`removeTags`, or `"publish"`, `"unpublish"` and `"archive"`. Each asset gets the same checks as on
+its own. Follow it at `GET …/bulk/jobs/{id}`; `…/bulk/jobs/{id}/report` names each asset that
+failed and why. `move` and `tag` need `content:write`; the others `content:publish`. The MCP tool
+is `assets_bulk`.
+
+## Replace a file and restore a version
+
+An asset keeps every file it has had. In its details sheet, **Versions** lists them, newest
+first, with who uploaded each and which one delivery serves. **Replace file** uploads a new one as
+the next version; **Restore** makes an older file current again, as a new version.
+
+Over the API, replacing is two calls around the upload:
+
+```sh
+# 1. Start the replacement: a signed upload for the next version, and a commit object.
+curl -s "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/file" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "fileName": "hero-v2.jpg", "contentType": "image/jpeg" }'
+
+# 2. PUT the file to upload.url, sending upload.headers.
+curl -s -X PUT "$UPLOAD_URL" -H "content-type: image/jpeg" --data-binary @hero-v2.jpg
+
+# 3. Commit it: send back the commit object from step 1.
+curl -s "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/file/commit" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "version": 2, "fileName": "hero-v2.jpg", "contentType": "image/jpeg" }'
+```
+
+The commit is refused with `422` if nothing was uploaded, and `409` if someone else replaced the
+file first. A published asset keeps delivering the file it was published with until you publish
+it again; then the new file goes out under new URLs and the old ones stop. `GET
+…/assets/{id}/versions` lists the versions, and `POST …/assets/{id}/versions/{n}/restore` restores
+one (`content:write`). The MCP tools are `asset_replace_file`, `asset_commit_file`,
+`asset_versions_list` and `asset_restore_version`.
+
+## Rights, expiry and embargo
+
+An asset's **Rights** carry a license and a credit, which delivery returns with it, and two dates:
+an **expiry**, when it stops being delivered, and an **embargo**, before which it can't be
+published. The library marks assets that expire within a week, and those that have expired.
+
+Set them in the details sheet's **Rights** tab, or with
+`PUT …/assets/{id}/rights` and `{ "license": "CC-BY-4.0", "credit": "Ada", "expiresAt":
+"2027-01-31T00:00:00Z" }` (send `{}` to clear them; MCP `asset_set_rights`). Dates need a time
+zone, and an expiry must fall after the embargo. Rights decide what is delivered, so setting them
+needs `content:publish`, and on a published asset they apply at once, without republishing; an
+embargo can't be set on one that is already published.
+
+At its expiry the asset's files answer `410 Gone`, and within a minute it is unpublished. Publishing
+it before its embargo lifts, or after it expired, is refused with `409` (`asset_embargoed` or
+`asset_expired`) and a message naming the date.
 
 ## See where an asset is used
 

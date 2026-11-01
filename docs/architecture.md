@@ -142,12 +142,13 @@ bind them by `script_name`) and handles:
   It forwards `entry.published` to the agents queue when it is bound, and sends one coalesced purge message
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-  `asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
+  `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `content_type.published`, `release.published`,
   `environment_alias.changed`, `environment.deleted`; `asset.ingested` only when `published`;
   `asset_renditions.changed` purges every environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
   and send the media Worker's tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`):
   see [Assets](#assets-r2-images-stream-and-the-media-worker).
-- **Cron** (`* * * * *`): due scheduled actions, the outbox relay sweep, bulk-job stall recovery,
+- **Cron** (`* * * * *`): due scheduled actions, the asset expiry sweep (`runDueAssetExpiries`;
+  see [Assets](#assets-r2-images-stream-and-the-media-worker)), the outbox relay sweep, bulk-job stall recovery,
   the restart of deleted-environment purges that stopped progressing, agent schedules
   (`AGENTS_SCHEDULES=true`), retention at the top of each hour, and the daily
   secret reseal at 03:30 UTC.
@@ -251,15 +252,17 @@ embeds, Preview and GraphQL's `Asset` type.
   holds it past the expiry. A `200` is tagged `cwa:<space>:<env>:<id>`, `cwe:<space>:<env>` and,
   for a rendition, `cwr:<space>:<name>`. Its ports (the gate, a replica store, the path signer)
   come from `wireMedia`, the media Worker's composition root. It writes nothing.
-- The **engine** owns the gate: `syncAssetGate` runs for `asset.published`, `asset.unpublished`
-  and `asset.deleted` and writes or removes the entry from the current published snapshot (so a
+- The **engine** owns the gate: `syncAssetGate` runs for `asset.published`, `asset.unpublished`,
+  `asset.deleted` and `asset.rights_changed` and writes or removes the entry from the current published snapshot (so a
   redelivered event converges; a hosted video gets none, nor does an asset of an environment
   being deleted). Deleting an environment removes all of its gate entries (`AssetGate.deleteScope`,
   a paged KV prefix delete) on `environment.deleted` and again when its purge finishes, before the
   environment's id is free, so a re-created environment never inherits them. It sends the asset's
   tag on
-  `contentworker-media-purge`; a revocation (unpublish, archive, delete, a rendition change,
-  environment deletion and each purge step, whose last one follows the final gate removal) is
+  `contentworker-media-purge`; a revocation (unpublish, archive, delete, expiry, a rights change,
+  a republish that replaced the file (`asset.published` with `replacedVersion`), a rendition
+  change, environment deletion and each purge step, whose last one follows the final gate
+  removal) is
   sent again after `REVOCATION_REPURGE_SECONDS` (90 s), past KV's 60 s
   read cache and replica lag, so a colo that re-cached from a stale gate is purged too.
 - The media Worker drains `contentworker-media-purge` with the same rationed `drain` as delivery.
@@ -271,13 +274,50 @@ embeds, Preview and GraphQL's `Asset` type.
   demand. When the asset is published, the refresh also updates the published snapshot in the
   same unit and emits `asset.published`, so caches purge. Playback is public; Stream videos are
   never gated by the media Worker.
+- **Versions.** Replacing a file is two calls: `POST …/assets/:id/file` (`replaceAssetFile`)
+  returns a signed `PUT` for the next version's key, and `POST …/assets/:id/file/commit`
+  (`commitAssetFile`) checks the bytes are there (`BlobStore.head`) and, in one unit, bumps
+  `assets.version`, writes the previous file to `asset_versions` and appends
+  `asset.file_replaced` (`AssetRepo.replaceFile` compares the version at commit, so a second
+  commit for the same version is a `409`). A version's key is `space/env/asset/fileName` for the
+  first file and `space/env/asset/v<n>/file/fileName` after (`assetObjectKey`): never five
+  segments, which is where a version's extracted text lives (`…/v<n>/text.md`), so derived files
+  are never an asset file. `assetFileKey` ignores a recorded key that isn't this asset's file key
+  or names a version past the asset's own (an uncommitted upload). `POST
+  …/assets/:id/versions/:n/restore` (`restoreAssetVersion`) makes an old file current as a new
+  version pointing at the same bytes; `GET …/assets/:id/versions` lists them, each with a
+  short-lived read URL. The published snapshot keeps its version until a republish, so the old
+  URLs keep working until then; the republish's `asset.published` carries `replacedVersion` and
+  the engine purges the asset's media as a revocation. The engine sends `asset.file_replaced` to
+  ingest as an upload message (`AssetIngestQueue.objectCreated` with the commit's `etag`), so R2's
+  own notification of the upload starts no second run.
+- **Rights and expiry.** `PUT …/assets/:id/rights` (`setAssetRights`, `content:publish`) validates
+  them (`validateAssetRights`: text at most 500 characters, dates ISO-8601 with a zone, expiry
+  after embargo). On a published asset they apply at once: the snapshot's rights change in the
+  same unit with `asset.rights_changed`, which re-syncs the gate and purges both caches. Publishing
+  refuses before `embargoUntil` and after `expiresAt` (`AssetRightsError`, `409 asset_embargoed` /
+  `asset_expired`), and an embargo can't be set on a published asset. The cron's expiry sweep
+  reads `asset_published.expires_at` (migration `0012`, indexed, copied from `rights.expiresAt` on
+  every snapshot write) across all scopes and unpublishes each expired asset (`expireAsset`) with
+  `asset.unpublished` and `asset.expired` in one unit; `removeExpiredPublished` re-checks the
+  expiry at commit, so an asset republished or extended meanwhile stays delivered. Between the
+  expiry and the sweep, the media Worker already answers `410`.
+- **Bulk jobs.** `POST …/assets/bulk` (`startAssetBulkJob`) runs move, tag, publish, unpublish or
+  archive over a selection as a resumable bulk job (`asset_move`, `asset_tag`, …) on the entry
+  bulk-job machinery: chunks of 200, CAS-claimed, swept when stalled. Each asset goes through its
+  single-asset use-case (`assetBulkChunkRunner`), and a failure carries the asset's `name` (title or
+  file name) in the job report.
 - **Deleting** an asset (`DELETE …/assets/:id`, refused with `409 asset_in_use` while entries link
-  to it) removes the row in one unit with an `asset.deleted` event; the engine then deletes the
-  bytes under the asset's key prefix and its Stream video, unless another environment of the space
-  still holds an asset with that id (an environment import shares files).
+  to it) removes the row and its version history in one unit with an `asset.deleted` event; the
+  engine then deletes every version's bytes under the asset's key prefix (and, for an imported
+  asset replaced here, under this environment's prefix too) and its Stream video, unless another
+  environment of the space still holds an asset with that id (an environment import shares
+  files). An environment purge keeps the files (of every version) another environment's assets
+  may share, and removes the rest.
 
 The admin's **Assets** screen (`/assets`; `/media` redirects there) is the library over these
-routes: folders, filters, search with facets, archive and delete, and each asset's ingest state
+routes: folders, filters, search with facets, archive and delete, bulk actions (a job past 50
+assets), each asset's versions and rights, and each asset's ingest state
 (processing, or an error with a retry), duplicate marker and AI-suggested alt text and tags. The
 api's `/media/*` byte route keeps its name.
 

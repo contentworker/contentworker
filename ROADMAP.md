@@ -42,7 +42,10 @@ Everything below is built and tested on v2.
   GraphQL and Preview; short-lived signed URLs for Management and Preview reads. Ingest on upload
   (R2 notification → Workflow): content hash and duplicate marker, dimensions, AI alt text and
   tags where empty, text from documents and audio; hybrid asset search with facets in
-  Management, MCP and Delivery, and a reindex job for older assets.
+  Management, MCP and Delivery, and a reindex job for older assets. File versions with replace
+  and restore (the old version's URLs retired on republish), usage rights with an expiry the
+  engine enforces and an embargo that blocks publishing, and move, tag, publish, unpublish and
+  archive as resumable bulk jobs.
 - **Taxonomy and collaboration.** Concept schemes, concepts and tags; comments, tasks, legacy
   workflow steps, and editorial workflow graphs on Cloudflare Workflows (runs, timeline,
   approvals with separation of duties, the copilot).

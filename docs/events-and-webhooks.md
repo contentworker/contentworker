@@ -143,7 +143,7 @@ loudly and acks it.
 After each `contentworker-events` batch, the engine collects one `deliveryScopeTag` per
 space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/purges.ts`):
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-`asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
+`asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `content_type.published`, `release.published`,
 `environment_alias.changed`, `environment.deleted`. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
@@ -165,8 +165,10 @@ counts `contentworker_purge_dead_letters_total` and drops it. Those responses ag
 
 Workers Caching is per Worker, so the media Worker's published files have their own queue. The
 same batch plans them (`planPurges`): `asset.published` purges `cwa:<space>:<env>:<id>` (a
-republish can move the focal point, and so a crop, under the same URL); `asset.unpublished` and
-`asset.deleted` revoke that tag, `asset_renditions.changed` revokes `cwr:<space>:<name>`, and
+republish can move the focal point, and so a crop, under the same URL), and revokes it when it
+carries `replacedVersion` (the republish put a new file in place of the old one, whose URLs must
+stop working); `asset.unpublished`, `asset.deleted` and `asset.rights_changed` (an expiry caps how
+long a file may be cached) revoke that tag, `asset_renditions.changed` revokes `cwr:<space>:<name>`, and
 `environment.deleted` revokes `cwe:<space>:<env>`. Everything goes in one message on
 `contentworker-media-purge`; what was revoked goes again with `delaySeconds: 90`
 (`REVOCATION_REPURGE_SECONDS`), once KV's 60 s read cache and replica lag have passed, so a colo
@@ -174,15 +176,19 @@ that re-cached a file from a stale gate read loses it too. The media Worker drai
 `drain`; dead letters land in `contentworker-media-purge-dlq` and are logged
 (`contentworker_media_purge_dead_letters_total`).
 
-Before that, `dispatchEvent` runs `syncAssetGate` for `asset.published`, `asset.unpublished` and
-`asset.deleted` when `assetGate` is bound: it reads the current published snapshot and writes
+Before that, `dispatchEvent` runs `syncAssetGate` for `asset.published`, `asset.unpublished`,
+`asset.deleted` and `asset.rights_changed` when `assetGate` is bound: it reads the current published snapshot and writes
 `asset-gate:<space>:<env>:<id>` (`{v, r2Key, contentType, fileName, focal, expiresAt}`) or removes
 it, so a redelivered or out-of-order event converges. Nothing on a request path writes the gate.
+For `asset.file_replaced` it hands the new file to ingest (`AssetIngestQueue.objectCreated`, with
+the commit's `etag`), the same message an upload sends.
 
 ## Scheduled work
 
 The engine's cron tick runs `runDueScheduledActions` (deferred publish/unpublish), so scheduled
-publishing has **one-minute granularity**. Its outbox events are then picked up by the sweep in the
+publishing has **one-minute granularity**, and `runDueAssetExpiries`, which unpublishes every
+published asset whose `rights.expiresAt` has passed (at most 100 a tick, across scopes;
+`asset.unpublished` and `asset.expired` in one unit each). Its outbox events are then picked up by the sweep in the
 same tick.
 
 When `AGENTS_SCHEDULES=true`, the tick also calls `runDueAgentSchedules` to execute recurring
@@ -291,9 +297,12 @@ Domain events (`packages/domain/src/events.ts`):
 | `entry.published`                                                                  | `entryId`, `contentTypeApiId`, `version`, `fields`                                                                                                                         |
 | `entry.unpublished`                                                                | `entryId`, `contentTypeApiId`                                                                                                                                              |
 | `entries.published_bulk`                                                           | `jobId`, `chunkId`, `action` (`publish` / `unpublish`), `entryIds`                                                                                                         |
-| `asset.published`                                                                  | `assetId`                                                                                                                                                                  |
+| `asset.published`                                                                  | `assetId`, `replacedVersion` (only when the publish delivered a new file in place of that version)                                                                          |
 | `asset.unpublished`                                                                | `assetId` (also when a published asset is archived or deleted)                                                                                                             |
 | `asset.deleted`                                                                    | `assetId`, `r2Key` or `videoId` (the engine removes those bytes)                                                                                                           |
+| `asset.file_replaced`                                                              | `assetId`, `version`, `previousVersion`, `r2Key`, `etag`, `restoredFrom` (a restore) (the draft's file changed; Delivery keeps the published one until a republish)          |
+| `asset.rights_changed`                                                             | `assetId` (a published asset's rights changed, and with them the delivered credit, license and expiry)                                                                    |
+| `asset.expired`                                                                    | `assetId`, `expiresAt` (the expiry sweep unpublished it; sent with `asset.unpublished`)                                                                                    |
 | `asset.ingested`                                                                   | `assetId`, `version`, `published`, `contentHash` (absent over 512 MiB), `duplicateOf` (ingest finished a file version: hashed, measured, enriched where empty, indexed)     |
 | `asset_renditions.changed`                                                         | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged; `scope` is the environment it was changed through, so other environments' scoped hooks don't hear it)                                                             |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                              |
@@ -302,7 +311,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `environment.deleted`                                                              | `entryIds` (published entries whose search documents and vectors go; chunks of 500)                                                                                        |
 | `promotion.awaiting_approval`                                                      | `promotionId`, `source`, `requestedBy`, `reasons` (`scope` is the target environment)                                                                                      |
 | `environment.promoted`                                                             | `promotionId`, `source`, `contentTypes`, `entries` (counts; `scope` is the target environment)                                                                             |
-| `bulk.job_completed`                                                               | `jobId`, `action` (`publish` / `unpublish` / `import`), `total`, `succeeded`, `failed`                                                                                     |
+| `bulk.job_completed`                                                               | `jobId`, `action` (`publish` / `unpublish` / `import` / `asset_reindex` / `asset_move` / `asset_tag` / `asset_publish` / `asset_unpublish` / `asset_archive`), `total`, `succeeded`, `failed` |
 | `workflow_run.completed` / `.declined` / `.cancelled` / `.failed` / `.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason`                                                                                                  |
 | `workflow.task_opened`                                                             | `taskId`, `runId`, `nodeId`, `kind` (`approval` / `event` / `review`), `entryId`, `contentTypeApiId`, `title`, `assignee` (or null), `requiredScope` (or null), `deadline` |
 | `workflow.webhook`                                                                 | `runId`, `nodeId`, `entryId`, `payload`                                                                                                                                    |

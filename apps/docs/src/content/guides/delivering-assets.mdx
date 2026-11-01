@@ -131,8 +131,19 @@ processed while published. In `@contentworker/sdk-core`:
 ## Unpublishing and expiry
 
 Unpublishing, archiving or deleting an asset stops its URLs: they answer `404` once the edge
-copies are purged, which takes a couple of minutes. An asset whose rights carry an expiry answers
-`410 Gone` after it. Republishing the same file serves the same URLs again.
+copies are purged, which takes a couple of minutes. Republishing the same file serves the same
+URLs again.
+
+An asset whose rights carry an expiry (`rights.expiresAt`, set in Management) answers
+`410 Gone` from that moment: its files are cached only until then, never immutably. Within a
+minute contentworker unpublishes it (webhooks get `asset.unpublished` and `asset.expired`), and its
+URLs answer `404` once purged. An asset under embargo can't be published before
+`rights.embargoUntil`.
+
+Replacing an asset's file doesn't change what delivery serves until the asset is published again.
+The republish delivers the new file under new URLs (the version, `v<n>`, is in the path), and the
+old version's URLs answer `404` once purged; keep the URLs you store fresh by reading them from
+delivery rather than saving them once.
 
 ## Preview
 
