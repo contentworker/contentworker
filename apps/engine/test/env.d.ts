@@ -20,6 +20,7 @@ declare global {
       readonly EDITORIAL_WF: Workflow;
       readonly ASSISTANT_AGENT: DurableObjectNamespace<AssistantAgent>;
       readonly DB: D1Database;
+      readonly KV_CACHE: KVNamespace;
       readonly PRINCIPAL_KEY: string;
       readonly PRINCIPAL_KEY_PREVIOUS: string;
       readonly ASSISTANT_PRINCIPAL_KEY: string;

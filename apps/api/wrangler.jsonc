@@ -130,6 +130,9 @@
     "EMBEDDINGS_MODEL": "",
     "ALLOW_FAKE_ADAPTERS": "",
     "MEDIA_BASE_URL": "",
+    // The media Worker's origin (https://media.<domain>), rendered per deployment. Empty: delivered
+    // assets keep the api's signed URLs, without renditions or a srcset.
+    "MEDIA_PUBLIC_URL": "",
     "IMAGES_ZONE_ORIGIN": "",
     "AI_MAX_REQUESTS_PER_WINDOW": "60",
     "AI_MAX_TOKENS_PER_WINDOW": "200000",

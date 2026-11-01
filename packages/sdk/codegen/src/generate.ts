@@ -52,6 +52,34 @@ export interface AssetLink {
   linkType: 'Asset';
 }
 
+/** A published asset as Delivery embeds it in place of an \`AssetLink\` (within \`include\`). URLs
+ *  are on the media origin: \`renditions\` by name, \`srcset\` the width ladder. Title,
+ *  description and alt text are one locale's value with \`?locale=\`, else keyed by locale. */
+export interface DeliveredAsset {
+  id: string;
+  title: string | Record<string, unknown> | null;
+  description: string | Record<string, unknown> | null;
+  altText: string | Record<string, unknown> | null;
+  focalPoint: { x: number; y: number } | null;
+  contentType: string;
+  size: number | null;
+  width: number | null;
+  height: number | null;
+  kind: 'image' | 'video' | 'audio' | 'document' | 'other';
+  url: string;
+  renditions: Record<string, string>;
+  srcset: { width: number; url: string }[];
+  video?: {
+    status: string;
+    hlsUrl?: string;
+    dashUrl?: string;
+    thumbnailUrl?: string;
+    durationSeconds?: number;
+  };
+  rights?: { credit?: string; license?: string };
+  file: Record<string, unknown>;
+}
+
 export interface RichTextMark {
   type: string;
 }
@@ -119,12 +147,11 @@ function renderContentType(ct: ContentTypeInput, typeName: string): string {
   const draft: string[] = [];
 
   for (const field of ct.fields) {
-    const valueType = fieldValueType(field);
     const key = propertyKey(field.apiId);
     const opt = field.required ? '' : '?';
     const comment = fieldComment(field);
-    delivery.push(`${comment}  ${key}${opt}: ${valueType};`);
-    draft.push(`${comment}  ${key}${opt}: Localized<${valueType}>;`);
+    delivery.push(`${comment}  ${key}${opt}: ${fieldValueType(field, { delivered: true })};`);
+    draft.push(`${comment}  ${key}${opt}: Localized<${fieldValueType(field)}>;`);
   }
 
   // Type aliases, not interfaces: aliases get an implicit index signature, so
@@ -135,8 +162,13 @@ function renderContentType(ct: ContentTypeInput, typeName: string): string {
   ].join('\n');
 }
 
-/** Maps a field definition to the TypeScript type of a single (locale-resolved) value. */
-export function fieldValueType(field: FieldInput): string {
+/**
+ * Maps a field definition to the TypeScript type of a single (locale-resolved) value. With
+ * `delivered`, an asset link may arrive embedded (Delivery resolves it within `include`); a draft
+ * value is always the bare link.
+ */
+export function fieldValueType(field: FieldInput, opts: { delivered?: boolean } = {}): string {
+  const asset = opts.delivered ? 'AssetLink | DeliveredAsset' : 'AssetLink';
   // `in` validations narrow to a literal union only where the domain actually
   // enforces them (Symbol/Text/Integer/Number) — elsewhere stored values may
   // legally fall outside the list, so the wider type is the truthful one.
@@ -162,18 +194,22 @@ export function fieldValueType(field: FieldInput): string {
     case 'RichText':
       return 'RichTextDocument';
     case 'Link':
-      return field.linkType === 'Asset' ? 'AssetLink' : 'EntryLink';
+      return field.linkType === 'Asset' ? asset : 'EntryLink';
     // Emitted inline rather than as a named interface: a component's shape has
     // no identity outside the field that holds it, and naming it would mean
     // inventing collision-prone names for something nobody imports by name.
     case 'Component':
-      return componentType(field.fields);
+      return componentType(field.fields, opts);
     case 'Array': {
       const items = field.items;
       if (items?.type === 'Link') {
-        return items.linkType === 'Asset' ? 'AssetLink[]' : 'EntryLink[]';
+        return items.linkType === 'Asset'
+          ? opts.delivered
+            ? '(AssetLink | DeliveredAsset)[]'
+            : 'AssetLink[]'
+          : 'EntryLink[]';
       }
-      if (items?.type === 'Component') return `${componentType(items.fields)}[]`;
+      if (items?.type === 'Component') return `${componentType(items.fields, opts)}[]`;
       return 'string[]';
     }
     default:
@@ -182,10 +218,13 @@ export function fieldValueType(field: FieldInput): string {
 }
 
 /** A component's nested fields as an inline object type. */
-function componentType(fields: readonly FieldInput[] | undefined): string {
+function componentType(
+  fields: readonly FieldInput[] | undefined,
+  opts: { delivered?: boolean } = {},
+): string {
   if (!fields || fields.length === 0) return 'Record<string, unknown>';
   const rows = fields
-    .map((f) => `${propertyKey(f.apiId)}${f.required ? '' : '?'}: ${fieldValueType(f)}`)
+    .map((f) => `${propertyKey(f.apiId)}${f.required ? '' : '?'}: ${fieldValueType(f, opts)}`)
     .join('; ');
   // No `Localized<>` on nested values: a component is localized as a whole, so
   // the locale is resolved one level up and every leaf here is a bare value.

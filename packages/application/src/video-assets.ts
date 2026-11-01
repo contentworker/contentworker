@@ -123,6 +123,10 @@ function toAssetVideo(provider: string, v: HostedVideo): AssetVideo {
  * playback (HLS/DASH), poster, duration, dimensions. The host is the source of
  * truth — webhooks only say *when* to call this, never *what* to store, so a
  * forged or replayed notification can at worst cause a redundant read.
+ *
+ * A published asset's snapshot gets the same video in the same unit, with an
+ * `asset.published` event so caches purge: a video published before Stream
+ * finished encoding becomes playable in Delivery without being republished.
  */
 export async function refreshVideoAsset(ctx: AppContext, scope: Scope, id: string): Promise<Asset> {
   const host = requireVideoHost(ctx);
@@ -139,17 +143,38 @@ export async function refreshVideoAsset(ctx: AppContext, scope: Scope, id: strin
   const video: AssetVideo = hosted
     ? toAssetVideo(host.provider, hosted)
     : { ...current, status: 'error', errorReason: 'Video no longer exists on the host' };
-  const updated: Asset = {
-    ...asset,
+  const refreshed = (a: Asset): Asset => ({
+    ...a,
     file: {
-      ...asset.file,
+      ...a.file,
       // The HLS manifest is the closest thing a stream has to "the file URL".
-      url: video.hlsUrl ?? asset.file.url,
+      url: video.hlsUrl ?? a.file.url,
       ...(hosted?.width && hosted.width > 0 ? { width: hosted.width } : {}),
       ...(hosted?.height && hosted.height > 0 ? { height: hosted.height } : {}),
       video,
     },
-  };
-  await ctx.store.assets.save(scope, updated);
-  return updated;
+  });
+  return ctx.store.withTransaction(async (tx) => {
+    // Re-read inside the unit: the host call took time, and an edit or publish in between must
+    // not be overwritten with the copy read before it, nor a delete undone by saving it again.
+    const current = await tx.assets.get(scope, id);
+    if (!current) throw new NotFoundError('Asset', id);
+    const published =
+      current.status === 'published' ? await tx.assets.getPublished(scope, id) : null;
+    const updated = refreshed(current);
+    await tx.assets.save(scope, updated);
+    if (published && published.file.video?.videoId === current.file.video?.videoId) {
+      // The snapshot keeps what was published (title, metadata, when); only the video moves on.
+      const file = refreshed({ ...current, file: published.file }).file;
+      await tx.assets.putPublished(scope, { ...published, file });
+      await tx.outbox.append({
+        id: ctx.ids.newId(),
+        type: 'asset.published',
+        scope,
+        occurredAt: ctx.clock.now().toISOString(),
+        assetId: id,
+      });
+    }
+    return updated;
+  });
 }

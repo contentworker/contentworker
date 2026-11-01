@@ -1,10 +1,11 @@
 # contentworker roadmap
 
 **v2: Cloudflare-only on D1 (2026-10-31).** contentworker was rebuilt on Cloudflare end to end.
-D1 replaced Postgres as the system of record, and the single platform Worker became four Workers
+D1 replaced Postgres as the system of record, and the single platform Worker became five Workers
 split by traffic profile: `apps/web` (admin + human auth), `apps/api` (Management and Preview
-REST, MCP, OAuth, media, live), `apps/delivery` (the cached public Delivery API) and
-`apps/engine` (queues, cron, Durable Objects, Workflows). Tenancy is one isolated deployment per
+REST, MCP, OAuth, uploads and signed reads, live), `apps/delivery` (the cached public Delivery
+API), `apps/media` (published asset files at the edge) and `apps/engine` (queues, cron, Durable
+Objects, Workflows). Tenancy is one isolated deployment per
 customer (`deployments/*.jsonc`, rendered by `scripts/fleet.ts`). The domain and application
 layers, and their tests, carried over.
 
@@ -33,10 +34,12 @@ Everything below is built and tested on v2.
   resumable jobs, branch compare and merge, environment promotion with a risk check and approval,
   environment snapshots (export, plus import and clone as resumable jobs; a clone's export and
   checks run in the engine too), CSV, JSON and WordPress import.
-- **Assets.** Signed R2 uploads and downloads, Images transforms, Stream video, localized alt text
-  and focal point, AI alt text and auto-tagging, asset usage; a library with folders, filters and
-  keyset paging, bulk moves, archive and restore, and delete refused while entries link to an
-  asset.
+- **Assets.** Signed R2 uploads, Images transforms, Stream video, localized alt text and focal
+  point, AI alt text and auto-tagging, asset usage; a library with folders, filters and keyset
+  paging, bulk moves, archive and restore, and delete refused while entries link to an asset.
+  Published files on the media Worker at stable, immutable URLs with per-space renditions and a
+  width ladder for `srcset`, revoked on unpublish; one delivered-asset shape for REST, embeds,
+  GraphQL and Preview; short-lived signed URLs for Management and Preview reads.
 - **Taxonomy and collaboration.** Concept schemes, concepts and tags; comments, tasks, legacy
   workflow steps, and editorial workflow graphs on Cloudflare Workflows (runs, timeline,
   approvals with separation of duties, the copilot).
@@ -53,7 +56,7 @@ Everything below is built and tested on v2.
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
   recovery codes, with the person forwarded to the api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a Durable Object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (145 tools, plus skills and the docs
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (151 tools, plus skills and the docs
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached in KV) in front of a Workers Caching entrypoint keyed by visibility profile, with ETags,
@@ -64,7 +67,7 @@ Everything below is built and tested on v2.
 - **SDKs.** `@contentworker/sdk-core`, `sdk-web`, `sdk-vue`, `sdk-edge`, `sdk-react-native`,
   `sdk-management` and `sdk-codegen`.
 - **Operations.** The fleet registry and renderer, idempotent provisioning, CI ring deploys
-  (engine → api → delivery → web) with a D1 Time Travel bookmark before each migration, smoke and
+  (engine → media → api → delivery → web) with a D1 Time Travel bookmark before each migration, smoke and
   latency checks, and ordered rollback.
 
 ## Planned
@@ -72,8 +75,9 @@ Everything below is built and tested on v2.
 - [ ] **R2 publish projection.** Render per-locale delivery documents to R2 (and list cards to KV)
   on publish, so a cache miss is served without D1. Deferred: Workers Caching, the KV tag cache
   and D1 replicas already keep delivery reads off the D1 primary.
-- [ ] **Separate media Worker.** Move signed transfers, Images transforms and Stream off the api
-  Worker onto their own edge-placed Worker at `media.<domain>`.
+- [x] **Separate media Worker.** Published asset files, renditions and the width ladder are served
+  by their own edge-cached Worker at `media.<domain>`, gated by KV entries the engine writes.
+  Signed uploads and Stream stay on the api.
 - [ ] **Load testing, rewritten.** A delivery and management load profile against a seeded
   deployment (`SEED_SCALE`), confirming cache hits never reach D1.
 - [ ] **Version history without the bodies.** Store a content hash and a change summary on each

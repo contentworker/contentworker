@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { DomainEvent, LocaleConfig } from '@contentworker/domain';
+import type { DeliveredAsset, DomainEvent, LocaleConfig } from '@contentworker/domain';
 import {
   canAccessContentType,
   deniedFieldsFor,
@@ -12,6 +12,7 @@ import {
   type Scope,
 } from '@contentworker/domain';
 import type { EntryQuery, PublishedAsset, PublishedEntry, SpaceConfig } from '@contentworker/ports';
+import { assetProjectionContext, projectPublishedAsset } from './asset-delivery';
 import {
   type AppContext,
   DEFAULT_DELIVERY_CACHE_TTL_SECONDS,
@@ -76,6 +77,8 @@ const MAX_VALUE_DEPTH = 2 * MAX_RICH_TEXT_DEPTH + 16;
 interface Prefetched {
   readonly entries: Map<string, PublishedEntry>;
   readonly assets: Map<string, PublishedAsset>;
+  /** Projects an embedded asset the way Delivery serves one on its own. */
+  readonly projectAsset: (snapshot: PublishedAsset) => DeliveredAsset;
 }
 
 /**
@@ -112,6 +115,7 @@ async function prefetchLinked(
   scope: Scope,
   roots: readonly PublishedEntry[],
   depth: number,
+  locale: string | undefined,
 ): Promise<Prefetched> {
   const entries = new Map<string, PublishedEntry>(roots.map((r) => [r.entryId, r]));
   const assets = new Map<string, PublishedAsset>();
@@ -134,7 +138,17 @@ async function prefetchLinked(
     for (const a of fetchedAssets) assets.set(a.assetId, a);
     frontier = fetchedEntries;
   }
-  return { entries, assets };
+  // The renditions (and locale settings) embedded assets are projected with: read only when an
+  // asset is embedded, once for the whole render.
+  const pc =
+    assets.size > 0
+      ? await assetProjectionContext(ctx, scope, locale !== undefined ? { locale } : {})
+      : { renditions: [] };
+  return {
+    entries,
+    assets,
+    projectAsset: (snapshot) => projectPublishedAsset(ctx, scope, snapshot, pc),
+  };
 }
 
 /**
@@ -182,12 +196,7 @@ function render(
     if (isAssetLink(value)) {
       const asset = fetched.assets.get(value.id);
       if (!asset) return value; // unpublished asset — leave the stub
-      return {
-        id: asset.assetId,
-        file: asset.file,
-        title: asset.title,
-        description: asset.description,
-      };
+      return fetched.projectAsset(asset);
     }
     if (isPlainObject(value)) {
       return Object.fromEntries(
@@ -235,7 +244,8 @@ export async function getPublishedEntry(
   opts: RenderOptions = {},
 ): Promise<DeliveredEntry> {
   const depth = clampDepth(opts.include);
-  const key = `contentworker:del:${scope.spaceId}:${scope.environmentId}:${id}:l=${opts.locale ?? ''}:i=${depth}`;
+  // `del2`: renders embed the delivered asset shape, so ones cached before it are never read.
+  const key = `contentworker:del2:${scope.spaceId}:${scope.environmentId}:${id}:l=${opts.locale ?? ''}:i=${depth}`;
 
   if (ctx.cache) {
     const hit = await ctx.cache.get(key);
@@ -246,7 +256,7 @@ export async function getPublishedEntry(
   if (!snapshot) throw new NotFoundError('PublishedEntry', id);
   const config = await spaceConfig(ctx, scope);
   const collected = new Set<string>();
-  const fetched = await prefetchLinked(ctx, scope, [snapshot], depth);
+  const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts.locale);
   const result = render(scope, snapshot, config, opts, depth, new Set([id]), collected, fetched);
 
   if (ctx.cache) {
@@ -319,7 +329,7 @@ function listCacheKey(
     .update(JSON.stringify(canonical({ ...query, locale })))
     .digest('hex')
     .slice(0, 32);
-  return `contentworker:dlist:${scope.spaceId}:${scope.environmentId}:${digest}:l=${renderLocale ?? ''}:i=${depth}`;
+  return `contentworker:dlist2:${scope.spaceId}:${scope.environmentId}:${digest}:l=${renderLocale ?? ''}:i=${depth}`;
 }
 
 /**
@@ -369,7 +379,7 @@ export async function listPublishedEntries(
   });
   // One shared prefetch across all rows: N rows × M links costs one batched
   // read per depth level, not N×M point reads.
-  const fetched = await prefetchLinked(ctx, scope, rows, depth);
+  const fetched = await prefetchLinked(ctx, scope, rows, depth, opts.locale);
   const result = rows.map((s) =>
     render(scope, s, config, opts, depth, new Set([s.entryId]), new Set(), fetched),
   );
@@ -426,16 +436,18 @@ function isEmbeddedEntry(value: unknown): value is DeliveredEntry {
 }
 
 /**
- * Shape test for an asset `render` embedded in place of an asset link
- * (`{ id, file, title?, description? }` — no contentType/publishedAt).
+ * Shape test for an asset `render` embedded in place of an asset link: a delivered asset (`id`,
+ * `file`, no `fields` or `publishedAt`, which an embedded entry has). Older cached renders
+ * embedded `{ id, file, title, description }`, which this matches too.
  */
 function isEmbeddedAsset(value: unknown): value is { id: string } {
-  const a = value as { id?: unknown; file?: unknown; contentType?: unknown };
+  const a = value as { id?: unknown; file?: unknown; fields?: unknown; publishedAt?: unknown };
   return (
     typeof a?.id === 'string' &&
     typeof a.file === 'object' &&
     a.file !== null &&
-    a.contentType === undefined
+    a.fields === undefined &&
+    a.publishedAt === undefined
   );
 }
 

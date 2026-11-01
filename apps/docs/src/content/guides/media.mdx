@@ -132,26 +132,17 @@ checks that the asset exists. See [Content modeling](/guides/content-modeling/#r
 
 ## Serve resized images
 
-Ask for a transformed copy of a published image from the Delivery API:
+A published asset arrives from the Delivery API with its URLs on the media origin: `url` (the
+original), `renditions` (your space's named sizes, such as `thumbnail` or `og`) and `srcset` (a
+ladder of widths for responsive images). Use them as given; they are immutable, and unpublishing
+the asset stops them. Renditions, the ladder, and the deprecated
+`GET /delivery/{space}/{env}/assets/{id}/transform` redirect are in
+[Delivering assets](/guides/delivering-assets/).
 
-```
-GET /delivery/{space}/{env}/assets/{id}/transform?w=800&fm=webp
-```
-
-It redirects (`302`) to the resized image, so it works as an `<img src>`. The parameters are:
-
-| Param | Values                                              |
-| ----- | --------------------------------------------------- |
-| `w`, `h` | Width and height in pixels, 1 to 10000           |
-| `fit` | `clip`, `crop`, `fill`, `max` or `scale`            |
-| `fm`  | `auto`, `jpg`, `png`, `webp` or `avif`              |
-| `q`   | Quality, 1 to 100                                   |
-
-With `fit=crop`, the crop is anchored to the asset's focal point. Only images can be transformed.
-The Management API has the same route at `GET …/assets/{id}/transform` and answers with the URL as
-JSON instead of redirecting (`asset_transform_url` over MCP); the details sheet has a **Transform
-preview**. For listing and fetching published assets, see
-[Reading content](/guides/reading-content/#assets).
+With `fit=crop`, crops are anchored to the asset's focal point. Only images are transformed. The
+Management API's `GET …/assets/{id}/transform` answers with a URL as JSON
+(`asset_transform_url` over MCP); the details sheet has a **Transform preview**. For listing and
+fetching published assets, see [Reading content](/guides/reading-content/#assets).
 
 ## Locales
 
@@ -163,6 +154,7 @@ tool or admin screen to change a space's locales afterwards.
 
 ## Next steps
 
+- [Delivering assets](/guides/delivering-assets/): media URLs, renditions and `srcset`.
 - [Reading content](/guides/reading-content/#assets): list and fetch published assets.
 - [Content modeling](/guides/content-modeling/#references): link assets from entries.
 - [Editing and publishing](/guides/editing-and-publishing/): publish entries that use them.

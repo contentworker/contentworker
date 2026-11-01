@@ -1,8 +1,9 @@
 /**
- * The purge queue's consumer body: cache-tag purges, rationed to Cloudflare's limit (5 purge calls
- * a minute, up to 100 tags each).
+ * A purge queue's consumer body: cache-tag purges, rationed to Cloudflare's limit (5 purge calls
+ * a minute, up to 100 tags each). Workers Caching is per Worker, so each Worker that caches drains
+ * its own queue with this: delivery `contentworker-purge`, media `contentworker-media-purge`.
  */
-import type { PurgeMessage } from '@contentworker/platform/messages';
+import type { PurgeMessage } from './messages';
 
 /** Tags per purge call, and the pause after each call: Cloudflare allows 5 calls a minute. */
 export const PURGE_TAGS = 100;

@@ -4,10 +4,11 @@ Every setting is a Cloudflare binding, a `vars` entry in an app's `wrangler.json
 Vars and bindings are typed in `packages/platform/src/env.ts` (`EdgeEnv`, used by the api,
 delivery and engine Workers) and parsed in `packages/platform/src/config.ts` (`loadConfig`).
 The web Worker's own settings are read in `apps/web/app/lib/*.server.ts`. Per-deployment values
-(names, ids, routes, `OAUTH_ISSUER`, `MEDIA_BASE_URL`, `AI_GATEWAY_ID`, SSO, email) are filled in
+(names, ids, routes, `OAUTH_ISSUER`, `MEDIA_BASE_URL`, `MEDIA_PUBLIC_URL`, `AI_GATEWAY_ID`, SSO, email) are filled in
 by `scripts/fleet.ts render`; see [Deployment](./deployment.md).
 
-**Worker** columns below: **W** web, **A** api, **D** delivery, **E** engine. "Template" means
+**Worker** columns below: **W** web, **A** api, **D** delivery, **E** engine; the media Worker
+has its own section, [Media Worker](#media-worker). "Template" means
 the var is set in that Worker's committed `wrangler.jsonc`; a var not listed there falls back to
 its code default.
 
@@ -38,7 +39,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `DB` (D1)                                         | ✓   | ✓   | ✓   | ✓   | One database per deployment; web uses the auth tables, delivery reads only                                                                                                    |
 | `API` (service)                                   | ✓   |     |     |     | The api Worker, for the gateway                                                                                                                                               |
 | `DELIVERY` (service)                              | ✓   |     |     |     | The delivery Worker, for bearer-key `/delivery/*` calls on the admin origin                                                                                                   |
-| `KV_CACHE` (KV)                                   |     | ✓   | ✓   | ✓   | Delivery cache and cached principals                                                                                                                                          |
+| `KV_CACHE` (KV)                                   |     | ✓   | ✓   | ✓   | Delivery cache, cached principals, and the media gate (`asset-gate:*`, written by the engine)                                                                                 |
 | `MEDIA_BUCKET` (R2)                               |     | ✓   | ✓   | ✓   | Asset bytes, import staging, plugin bundles, dead letters                                                                                                                     |
 | `VECTORIZE`                                       |     | ✓   | ✓   | ✓   | 768-dim cosine index; dropped from a demo's rendered config                                                                                                                   |
 | `AI` (Workers AI)                                 |     | ✓   | ✓   | ✓   |                                                                                                                                                                               |
@@ -47,6 +48,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `PLUGIN_LOADER` (Worker Loader)                   |     | ✓   |     | ✓   |                                                                                                                                                                               |
 | `EVENTS_QUEUE`, `BULK_QUEUE`, `AGENTS_QUEUE`      |     | ✓   |     | ✓   | Producers; the engine consumes all three                                                                                                                                      |
 | `PURGE_QUEUE`                                     |     |     |     | ✓   | Producer; delivery consumes `contentworker-purge`                                                                                                                             |
+| `MEDIA_PURGE_QUEUE`                               |     |     |     | ✓   | Producer; the media Worker consumes `contentworker-media-purge`. Absent → a revoked asset's cached files stay until the cache lets them go                                    |
 | `LIVE_HUB`, `SEARCH` (DOs)                        |     | ✓   | ✓   | ✓   | Classes owned by the engine; api and delivery bind by `script_name`                                                                                                           |
 | `AI_BUDGET` (DO)                                  |     | ✓   |     | ✓   | `CostGuardDO`: per-space AI budget windows                                                                                                                                    |
 | `AUTH_LIMITER` (DO)                               |     | ✓   |     |     | `RateLimiterDO`, owned by the engine (which has no binding of its own): failed-authentication limiter                                                                         |
@@ -82,7 +84,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `DATA_KEY_PREVIOUS`                | ✓   | ✓   | ✓   | ✓   | Rotation only: opens values sealed under the old key until the daily 03:30 UTC reseal has moved them                                                                                                                               |
 | `TOKEN_PEPPER`                     |     | ✓   | ✓   | ✓   | Mixed into every API key hash. Required. Never changes                                                                                                                                                                             |
 | `PASSWORD_PEPPER`                  | ✓   |     |     |     | Mixed into every password hash (`pbkdf2p:`). Never change or remove once set                                                                                                                                                       |
-| `MEDIA_SIGNING_SECRET`             |     | ✓   | ✓   | ✓   | HMAC key for `/media/*` URLs. Required when `MEDIA_BUCKET` is bound                                                                                                                                                                |
+| `MEDIA_SIGNING_SECRET`             |     | ✓   | ✓   | ✓   | HMAC key for `/media/*` URLs and for the token in published media URLs (made wherever `MEDIA_PUBLIC_URL` is set). Required when `MEDIA_BUCKET` is bound. The media Worker holds it too, to verify both                             |
 | `SETUP_TOKEN`                      | ✓   |     |     |     | One-time setup code redeemed at `/setup` for the first (or a recovery) administrator; its hash is recorded on use                                                                                                                  |
 | `OIDC_CLIENT_SECRET`               | ✓   |     |     |     | The identity provider's client secret for admin SSO                                                                                                                                                                                |
 | `ADMIN_TOKEN`                      |     | ✓   |     |     | Root bearer token: all scopes, all spaces. Unset with `DB` bound means off; the dev default `dev-admin-token` applies only without `DB`, and is refused when secure secrets are required                                           |
@@ -147,12 +149,31 @@ need no session and SCIM.
 Consent forms are signed with a key derived from `PRINCIPAL_KEY`. See
 [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 
-## Media (api)
+## Media (api, delivery, engine)
 
 | Var                  | Default                                | Purpose                                                                    |
 | -------------------- | -------------------------------------- | -------------------------------------------------------------------------- |
 | `MEDIA_BASE_URL`     | empty; rendered `https://api.<domain>` | Origin for signed `/media/*` URLs; empty gives root-relative URLs          |
 | `IMAGES_ZONE_ORIGIN` | empty                                  | Zone with Image Transformations, for images not served from `MEDIA_BUCKET` |
+| `MEDIA_PUBLIC_URL`   | empty; rendered `https://media.<domain>` | The media Worker's origin (`ctx.mediaPublicUrl`). Delivered assets get their URLs there, built at read time, and Preview's signed draft URLs point there. Empty (local dev): delivered assets keep the api's signed URL, with no renditions or srcset, and the deprecated transform stays a `302` |
+
+## Media Worker
+
+`apps/media` (`contentworker-media`, route `media.<domain>`) reads `EdgeEnv` but binds only what
+it serves from, all read-only:
+
+| Binding / var / secret        | Notes                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `DB` (D1)                     | Read-replica sessions (`first-unconstrained`): the gate's fallback and rendition presets      |
+| `KV_CACHE` (KV)               | The gate the engine writes (`asset-gate:<space>:<env>:<id>`), read with a 60 s `cacheTtl`  |
+| `MEDIA_BUCKET` (R2)           | Asset bytes                                                                                 |
+| `IMAGES`                      | Width steps and renditions; absent → only originals are served                              |
+| `METRICS` (Analytics Engine)  | `contentworker_media_purge_dead_letters_total`                                              |
+| `QUEUE_SUFFIX`, `ROLE=media`  | Template vars; consumers `contentworker-media-purge` (+ `-dlq`, logged and acked)           |
+| `MEDIA_SIGNING_SECRET`        | Its only secret: verifies published paths' tokens and signed `/media/*` GETs (with `exp`). Required with `DB` bound; dev uses the dev key, as the api does |
+
+Its `exports` put Workers Caching on the `Media` entrypoint only; the default (gateway) entrypoint
+is uncached.
 
 ## AI, embeddings and search
 
@@ -208,6 +229,8 @@ stale-if-error=604800`) are fixed in `apps/delivery/src/delivery.ts`, not config
 
 ## Local development values
 
-`pnpm dev` overrides the api, engine and delivery vars with `LOCAL_STACK_VARS`
-(`apps/web/vite.config.ts`). The values, the seed settings and how to reset them are in
-[Development](./development.md#running-locally).
+`pnpm dev` runs the api, engine, media and delivery as auxiliary Workers of the web app's Vite
+session and overrides their vars with `LOCAL_STACK_VARS` (`apps/web/vite.config.ts`).
+`MEDIA_PUBLIC_URL` is left empty: the media Worker runs (it consumes its purge queue) but isn't
+routable from the browser, so delivered assets keep the api's signed URLs locally. The values,
+the seed settings and how to reset them are in [Development](./development.md#running-locally).

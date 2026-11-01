@@ -131,10 +131,13 @@ export function useSemanticSearch(
 }
 
 export type {
+  AssetPage,
+  AssetQuery,
   ContentRef,
+  DeliveredAsset,
   DeliveredEntry,
   DeliveryClient,
   EntryQuery,
   SearchHit,
 } from '@contentworker/sdk-core';
-export { createDeliveryClient } from '@contentworker/sdk-core';
+export { assetUrl, createDeliveryClient, srcset } from '@contentworker/sdk-core';

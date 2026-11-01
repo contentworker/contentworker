@@ -2,15 +2,15 @@
 
 These are the maintainer docs: how contentworker is built and how to run, extend and integrate
 with it. They are not published; the public site is `apps/docs`. contentworker runs entirely on
-Cloudflare, one isolated stack per customer: four Workers (`apps/web`, `apps/api`,
-`apps/delivery`, `apps/engine`) on D1, with R2, KV, Queues, Durable Objects, Workflows,
+Cloudflare, one isolated stack per customer: five Workers (`apps/web`, `apps/api`,
+`apps/delivery`, `apps/media`, `apps/engine`) on D1, with R2, KV, Queues, Durable Objects, Workflows,
 Vectorize, Workers AI through AI Gateway, Images, Stream, Email Sending and Worker Loader.
 
 ## Contents
 
 1. **[Architecture](./architecture.md)**: the Workers and why they are split, data placement,
-   the hexagonal layers and package map, request and event flow, editorial workflow runs, media,
-   and the hook seam.
+   the hexagonal layers and package map, request and event flow, editorial workflow runs, assets
+   and the media Worker, and the hook seam.
 2. **[Domain model](./domain-model.md)**: field types, the validation engine, the entry publish
    state machine, localization and fallback, references, assets, platform aggregates and domain
    events.
@@ -32,7 +32,7 @@ Vectorize, Workers AI through AI Gateway, Images, Stream, Email Sending and Work
 9. **[Configuration](./configuration.md)**: every binding, var and secret, and which Worker uses
    it.
 10. **[Deployment](./deployment.md)**: the fleet registry, provisioning, secrets, the CI pipeline
-    (migrate, deploy engine → api → delivery → web, smoke, rollback) and admin recovery.
+    (migrate, deploy engine → media → api → delivery → web, smoke, rollback) and admin recovery.
 11. **[Environments & snapshots](./environments-and-snapshots.md)**: export, import and clone,
     their background jobs, environment delete and purge, and importing from other formats.
 12. **[Backup & restore](./backup-and-restore.md)**: what holds state, D1 Time Travel, environment

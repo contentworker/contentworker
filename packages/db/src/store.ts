@@ -4,6 +4,7 @@ import {
   type ApiKey,
   type Asset,
   type AssetFolder,
+  type AssetRendition,
   assetKind,
   type Comment,
   type Concept,
@@ -55,6 +56,7 @@ import type {
   ArchivableVersion,
   AssetFilters,
   AssetFolderRepo,
+  AssetRenditionRepo,
   AssetRepo,
   AssetSortField,
   AuditRepo,
@@ -1219,6 +1221,10 @@ function makeAssetRepo(x: Exec): AssetRepo {
         description: s.description,
         metadata: s.metadata,
         publishedAt: new Date(s.publishedAt),
+        version: s.version ?? 1,
+        r2Key: s.r2Key ?? null,
+        kind: assetKind(s.file.contentType),
+        rights: s.rights ?? null,
       };
       await x.write(
         db
@@ -1236,6 +1242,10 @@ function makeAssetRepo(x: Exec): AssetRepo {
               description: values.description,
               metadata: values.metadata,
               publishedAt: values.publishedAt,
+              version: values.version,
+              r2Key: values.r2Key,
+              kind: values.kind,
+              rights: values.rights,
             },
           }),
       );
@@ -1277,14 +1287,90 @@ function makeAssetRepo(x: Exec): AssetRepo {
       return rows.map(toPublishedAsset);
     },
     async listPublished(scope, query) {
+      const p = schema.assetPublished;
+      const a = schema.assets;
+      const filters = query.filters ?? {};
+      const limit = Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE);
+      const conds: (SQL | undefined)[] = [scopeFilter(p, scope)];
+      if (filters.kind) conds.push(eq(p.kind, filters.kind));
+      if (filters.tag) {
+        conds.push(
+          sql`EXISTS (SELECT 1 FROM json_each(${p.metadata}, '$.tags') WHERE value = ${filters.tag})`,
+        );
+      }
+      // Filing is the library's, not part of what was published: read it live off the asset row,
+      // so moving a published asset moves it in Delivery's listing too.
+      if (filters.folderId !== undefined) {
+        conds.push(
+          filters.folderId === null
+            ? sql`EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${p.spaceId} AND ${a.environmentId} = ${p.environmentId} AND ${a.id} = ${p.assetId} AND ${a.folderId} IS NULL)`
+            : sql`EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${p.spaceId} AND ${a.environmentId} = ${p.environmentId} AND ${a.id} = ${p.assetId} AND ${a.folderId} = ${filters.folderId})`,
+        );
+      }
+      if (query.cursor) {
+        const [value, id] = decodeAssetCursor(query.cursor);
+        conds.push(sql`(${p.publishedAt}, ${p.assetId}) > (${value}, ${id})`);
+      }
       const rows = await db
         .select()
-        .from(schema.assetPublished)
-        .where(scopeFilter(schema.assetPublished, scope))
-        .orderBy(asc(schema.assetPublished.publishedAt))
-        .limit(query.limit ?? 100)
-        .offset(query.skip ?? 0);
-      return rows.map(toPublishedAsset);
+        .from(p)
+        .where(and(...conds))
+        .orderBy(asc(p.publishedAt), asc(p.assetId))
+        .limit(limit + 1)
+        .offset(query.cursor ? 0 : Math.max(0, query.skip ?? 0));
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.map(toPublishedAsset),
+        ...(rows.length > limit && last
+          ? { nextCursor: encodeAssetCursor(last.publishedAt.getTime(), last.assetId) }
+          : {}),
+      };
+    },
+  };
+}
+
+function makeAssetRenditionRepo(x: Exec): AssetRenditionRepo {
+  const db = x.db;
+  const t = schema.assetRenditions;
+  const byName = (scope: Scope, name: string) =>
+    and(eq(t.spaceId, scope.spaceId), eq(t.name, name));
+  return {
+    async list(scope) {
+      const rows = await db
+        .select()
+        .from(t)
+        .where(eq(t.spaceId, scope.spaceId))
+        .orderBy(asc(t.name));
+      return rows.map(toAssetRendition);
+    },
+    async get(scope, name) {
+      const [row] = await db.select().from(t).where(byName(scope, name));
+      return row ? toAssetRendition(row) : null;
+    },
+    async put(scope, r) {
+      const columns = {
+        width: r.width ?? null,
+        height: r.height ?? null,
+        fit: r.fit ?? null,
+        format: r.format ?? null,
+        quality: r.quality ?? null,
+        updatedAt: new Date(r.updatedAt),
+      };
+      await x.write(
+        db
+          .insert(t)
+          .values({
+            spaceId: scope.spaceId,
+            name: r.name,
+            createdAt: new Date(r.createdAt),
+            ...columns,
+          })
+          .onConflictDoUpdate({ target: [t.spaceId, t.name], set: columns }),
+      );
+    },
+    async delete(scope, name) {
+      await x.write(db.delete(t).where(byName(scope, name)));
     },
   };
 }
@@ -4560,6 +4646,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     entries: makeEntryRepo(x, scanLimit, versionBodies),
     assets: makeAssetRepo(x),
     assetFolders: makeAssetFolderRepo(x),
+    assetRenditions: makeAssetRenditionRepo(x),
     references: makeReferenceRepo(x),
     releases: makeReleaseRepo(x),
     promotions: makePromotionRepo(x),
@@ -4586,6 +4673,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     entries: makeEntryRepo(x, scanLimit, options.versionBodies),
     assets: makeAssetRepo(x),
     assetFolders: makeAssetFolderRepo(x),
+    assetRenditions: makeAssetRenditionRepo(x),
     references: makeReferenceRepo(x),
     webhooks: makeWebhookRepo(x),
     auth: makeAuthRepo(x),
@@ -4762,6 +4850,21 @@ const toPublishedAsset = (r: PubAssetRow): PublishedAsset => ({
   description: r.description,
   metadata: r.metadata,
   publishedAt: r.publishedAt.toISOString(),
+  version: r.version,
+  ...(r.r2Key ? { r2Key: r.r2Key } : {}),
+  ...(r.rights ? { rights: r.rights } : {}),
+});
+
+type RenditionRow = typeof schema.assetRenditions.$inferSelect;
+const toAssetRendition = (r: RenditionRow): AssetRendition => ({
+  name: r.name,
+  ...(r.width !== null ? { width: r.width } : {}),
+  ...(r.height !== null ? { height: r.height } : {}),
+  ...(r.fit ? { fit: r.fit } : {}),
+  ...(r.format ? { format: r.format } : {}),
+  ...(r.quality !== null ? { quality: r.quality } : {}),
+  createdAt: r.createdAt.toISOString(),
+  updatedAt: r.updatedAt.toISOString(),
 });
 
 type RefRow = typeof schema.references.$inferSelect;

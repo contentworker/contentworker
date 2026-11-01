@@ -280,6 +280,21 @@ export const assetFolderPatchBody = z.object({
   name: z.string().min(1).max(128).optional(),
   parentId: zId.nullable().optional().describe('Move it here; null moves it to the root'),
 });
+const renditionSpec = {
+  width: z.int().min(1).max(4096).optional(),
+  height: z.int().min(1).max(4096).optional(),
+  fit: z.enum(['clip', 'crop', 'fill', 'max', 'scale']).optional(),
+  format: z.enum(['auto', 'jpg', 'png', 'webp', 'avif']).optional(),
+  quality: z.int().min(1).max(100).optional(),
+};
+export const assetRenditionBody = z.object({
+  name: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{0,39}$/)
+    .describe('Lowercase letters, digits and dashes; its URL segment is r-<name>'),
+  ...renditionSpec,
+});
+export const assetRenditionPatchBody = z.object(renditionSpec);
 export const createVideoAssetBody = z.object({
   fileName: z.string().min(1).max(1024),
   contentType: z.string().min(1).max(256),

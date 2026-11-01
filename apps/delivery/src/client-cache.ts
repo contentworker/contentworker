@@ -10,7 +10,8 @@ export function clientCacheControl(status: number, upstream?: string | null): st
   // The cached entrypoint marks what must not be kept even when it succeeded (a GraphQL answer
   // with errors): never upgrade that to a cacheable policy.
   if (upstream?.includes('no-store')) return 'no-store';
-  return status === 200 || status === 304 ? CLIENT_CACHE : 'no-store';
+  // A 301 is the deprecated transform's redirect to an immutable media URL: kept like a read.
+  return status === 200 || status === 304 || status === 301 ? CLIENT_CACHE : 'no-store';
 }
 
 /** Whether a GraphQL response body reports errors. */

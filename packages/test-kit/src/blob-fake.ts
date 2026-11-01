@@ -1,4 +1,4 @@
-import type { BlobStore } from '@contentworker/ports';
+import type { BlobStore, DownloadUrlOptions } from '@contentworker/ports';
 
 /**
  * An in-memory BlobStore for dev/tests. It hands out deterministic fake
@@ -14,8 +14,10 @@ export class FakeBlobStore implements BlobStore {
     this.uploads.push({ key, contentType });
     return { url: `${this.base}/${key}?upload=1`, headers: { 'content-type': contentType } };
   }
-  async getDownloadUrl(key: string) {
-    return `${this.base}/${key}`;
+  /** A short-lived URL says so (`?ttl=`), so a test can tell it from the stored one. */
+  async getDownloadUrl(key: string, opts?: DownloadUrlOptions) {
+    const url = `${opts?.origin ?? this.base}/${key}`;
+    return opts?.expiresInSeconds ? `${url}?ttl=${opts.expiresInSeconds}` : url;
   }
   async delete(key: string) {
     this.deletes.push(key);

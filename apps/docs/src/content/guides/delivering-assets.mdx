@@ -1,0 +1,168 @@
+---
+title: Delivering assets
+description: Published images and files at stable, cacheable URLs - renditions, the width ladder for srcset, format negotiation, revocation, Preview's signed URLs, GraphQL and the SDK helpers.
+---
+
+A published asset is served from the workspace's `media.` address at a URL that never changes
+meaning, so browsers and CDNs can keep it for a year. You never build these URLs yourself: every
+asset Delivery returns (on its own, in a list, or embedded in an entry) carries them.
+
+## The delivered asset
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/assets/$ASSET_ID?locale=en-US" \
+  -H "Authorization: Bearer $CDA"
+```
+
+```json
+{
+  "id": "0193…",
+  "title": "Trail runner",
+  "description": null,
+  "altText": "A runner on a mountain trail at dawn",
+  "focalPoint": { "x": 0.4, "y": 0.35 },
+  "contentType": "image/jpeg",
+  "size": 482113,
+  "width": 2400,
+  "height": 1600,
+  "kind": "image",
+  "url": "https://media.acme.contentworker.app/acme/main/0193…/v1/kJ3x…Qw/o/trail.jpg",
+  "renditions": {
+    "card": "https://media.acme.contentworker.app/acme/main/0193…/v1/kJ3x…Qw/r-card/trail.jpg"
+  },
+  "srcset": [
+    { "width": 320, "url": "https://media.acme.contentworker.app/acme/main/0193…/v1/kJ3x…Qw/w320/trail.jpg?fm=auto" },
+    { "width": 640, "url": "…/w640/trail.jpg?fm=auto" }
+  ],
+  "rights": { "credit": "Ada Lovelace", "license": "CC-BY-4.0" },
+  "file": { "url": "…/v1/kJ3x…Qw/o/trail.jpg", "fileName": "trail.jpg", "contentType": "image/jpeg" }
+}
+```
+
+| Field                                | What it is                                                                                     |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `title`, `description`, `altText`    | One locale's text with `?locale=` (falling back like entry fields), else a value per locale    |
+| `kind`                               | `image`, `video`, `audio`, `document` or `other`                                               |
+| `url`                                | The original file; for a video, its HLS manifest                                               |
+| `renditions`                         | Your space's named presets, by name, for images that can be resized                            |
+| `srcset`                             | Widths 320, 640, 960, 1280, 1920 and 2560, up to the image's own width                         |
+| `video`                              | For a video: `status`, `hlsUrl`, `dashUrl`, `thumbnailUrl`, `durationSeconds`                  |
+| `rights`                             | `credit` and `license`, when the asset has them                                               |
+| `file`                               | The stored file description, kept for existing integrations; `file.url` is `url`               |
+
+`GET /delivery/{space}/{env}/assets` lists published assets in publish order: pass `limit`, then
+the response's `nextCursor` back as `cursor` for the next page, and filter with `kind`, `tag` (a
+taxonomy tag id) and `folder` (a folder id, or `root`). Embedded assets in entries have the same
+shape, flattened to the entry request's `locale`.
+
+## URLs
+
+```
+https://media.{workspace}/{space}/{env}/{assetId}/v{version}/{token}/{variant}/{fileName}
+```
+
+Use the URLs Delivery gives you; don't build them. The `token` is a signature over the space,
+environment, asset and version, so a URL can't be had by editing another one: swapping the
+environment, or the version, gives a `404`. That also means an asset taken down in one
+environment can't be reached through another environment's copy of it.
+
+| Variant     | Serves                                                                          |
+| ----------- | ------------------------------------------------------------------------------- |
+| `o`         | The original bytes                                                              |
+| `w{width}`  | The image scaled down (never up) to one ladder width: 320 to 2560               |
+| `r-{name}`  | One of your space's renditions                                                  |
+
+- **Immutable.** The version is in the URL, so a URL's bytes never change; responses are
+  `Cache-Control: public, max-age=31536000, immutable` and carry an `ETag`. An asset whose rights
+  expire is cached only until they do (`max-age` is the time left, without `immutable`), and is
+  `410` after.
+- **Formats.** `srcset` URLs end in `?fm=auto`: the image comes back as AVIF or WebP when the
+  browser's `Accept` header allows, else in its own format, with `Vary: Accept`. Other query
+  parameters are ignored.
+- **Crops follow the focal point.** A rendition that crops (`fit: crop`) keeps the asset's focal
+  point in frame.
+- **Nothing else exists.** Widths off the ladder, unknown renditions, an older version, a wrong
+  token and a wrong file name are `404`. Only JPEG, PNG, WebP, AVIF and GIF images have variants; SVGs, documents
+  and other files have only `o`. Videos play from their own stream URLs.
+
+```html
+<img
+  src="https://media.…/v1/kJ3x…Qw/w960/trail.jpg?fm=auto"
+  srcset="https://media.…/v1/kJ3x…Qw/w320/trail.jpg?fm=auto 320w, https://media.…/v1/kJ3x…Qw/w640/trail.jpg?fm=auto 640w, https://media.…/v1/kJ3x…Qw/w960/trail.jpg?fm=auto 960w"
+  sizes="(min-width: 960px) 960px, 100vw"
+  alt="A runner on a mountain trail at dawn"
+/>
+```
+
+## Renditions
+
+A rendition is a named size your front ends share (`thumbnail`, `card`, `og`): a width, a height,
+a fit (`clip`, `crop`, `fill`, `max`, `scale`), a format (`auto`, `jpg`, `png`, `webp`, `avif`) and
+a quality. They belong to the space, so every environment offers the same ones; a space has up to
+20. Manage them in the Management API (`/spaces/{space}/environments/{env}/asset-renditions`, which
+needs `content:manage` to change) or with the `asset_renditions_*` [MCP tools](/guides/mcp/).
+
+Changing or deleting a rendition keeps its URLs; the copies cached at the edge are purged within a
+couple of minutes. Browsers that already hold a copy keep it until their own cache lets go, so
+give a changed preset a new name when that matters.
+
+## Unpublishing and expiry
+
+Unpublishing, archiving or deleting an asset stops its URLs: they answer `404` once the edge
+copies are purged, which takes a couple of minutes. An asset whose rights carry an expiry answers
+`410 Gone` after it. Republishing the same file serves the same URLs again.
+
+## Preview
+
+`GET /preview/{space}/{env}/assets` and `…/assets/{id}`, with a Preview key, return assets as they
+are now (drafts included, archived ones left out) in the same shape. Every URL in them is signed
+and short-lived (at least 15 minutes, and the same URL for a while, so browsers can cache it):
+fetch the asset again rather than storing its URLs. Management reads (`/spaces/…/assets`) hand
+out the same kind of short-lived URL.
+
+## GraphQL
+
+`asset(id:, locale:)` returns a typed `Asset`:
+
+```graphql
+{
+  asset(id: "0193…", locale: "de-DE") {
+    title
+    altText
+    altTextEn: altText(locale: "en-US")
+    url
+    card: url(rendition: "card")
+    medium: url(width: 800)
+    srcset { width url }
+    focalPoint { x y }
+    video { status hlsUrl thumbnailUrl }
+    rights { credit license }
+  }
+}
+```
+
+`url(width:)` picks the ladder width at or above the one asked for (the largest past it);
+`url(rendition:)` is `null` for a rendition the space doesn't have.
+
+## SDKs
+
+```ts
+import { assetUrl, createDeliveryClient, srcset } from '@contentworker/sdk-core';
+
+const asset = await client.getAsset(id, { locale: 'en-US' });
+const page = await client.listAssets({ kind: 'image', limit: 50 });
+
+assetUrl(asset, { width: 800 });       // the w960 step
+assetUrl(asset, { rendition: 'card' }); // undefined if the space has no "card"
+srcset(asset);                          // "…/w320/… 320w, …/w640/… 640w, …"
+```
+
+In React Native, `imageUrl(asset, { width, dpr, rendition })` from
+`@contentworker/sdk-react-native` picks the rendition, else the ladder step for `width × dpr`. Types
+generated by `@contentworker/sdk-codegen` include `DeliveredAsset`.
+
+## The transform endpoint
+
+`GET /delivery/{space}/{env}/assets/{id}/transform?w=800` is deprecated. It answers a permanent,
+cacheable `301` to the matching media URL: the ladder width at or above `w`, or the rendition
+named by `?rendition=`. Use `srcset` and `renditions` instead.

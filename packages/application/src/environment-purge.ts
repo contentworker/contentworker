@@ -1,5 +1,5 @@
 import type { EnvironmentPurgeDueEvent, Scope } from '@contentworker/domain';
-import type { BlobStore } from '@contentworker/ports';
+import type { AssetGate, BlobStore } from '@contentworker/ports';
 import { allAssets } from './assets';
 import type { AppContext } from './context';
 
@@ -24,6 +24,8 @@ export const PURGE_STALE_SECONDS = 300;
 export interface PurgeDeps {
   /** Where asset files live; absent, a purge removes rows only. */
   readonly blob?: BlobStore;
+  /** The media origin's gate; its entries for the environment go when the rows are gone. */
+  readonly assetGate?: AssetGate;
 }
 
 export type PurgeOutcome = 'finished' | 'continued';
@@ -53,6 +55,10 @@ export async function runEnvironmentPurge(
       // Checked again first, since a concurrent run of the same purge may have just finished it.
       if (!(await isPurging(ctx, event.scope))) return 'finished';
       if (deps.blob?.deletePrefix) await deleteEnvironmentFiles(ctx, deps.blob, event.scope);
+      // Again, after the rows: an asset event handled while they were still there (one queued
+      // before the delete) may have written an entry back. Before the marker, so a re-created
+      // environment of this id never finds one.
+      await deps.assetGate?.deleteScope(event.scope);
       await ctx.store.spaces.finishEnvironmentPurge(spaceId, environmentId);
       return 'finished';
     }

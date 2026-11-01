@@ -18,6 +18,7 @@
     "./ids": "./src/ids.ts",
     "./messages": "./src/messages.ts",
     "./metrics": "./src/metrics.ts",
+    "./purge": "./src/purge.ts",
     "./wire": "./src/wire.ts",
     "./workflows": "./src/workflows.ts"
   },

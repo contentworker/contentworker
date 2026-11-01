@@ -21,6 +21,8 @@ import {
   type AssetPage,
   type BlobStore,
   type PublishedAsset,
+  type PublishedAssetPage,
+  type PublishedAssetQuery,
   TransactionConflictError,
 } from '@contentworker/ports';
 import type { AppContext } from './context';
@@ -153,14 +155,7 @@ export async function publishAsset(ctx: AppContext, scope: Scope, id: string): P
     if (!asset) throw new NotFoundError('Asset', id);
     const published = publishAssetState(asset);
     await tx.assets.save(scope, published);
-    await tx.assets.putPublished(scope, {
-      assetId: published.id,
-      file: published.file,
-      title: published.title,
-      description: published.description,
-      metadata: published.metadata,
-      publishedAt: ctx.clock.now().toISOString(),
-    });
+    await tx.assets.putPublished(scope, publishedSnapshot(scope, published, ctx.clock.now()));
     // Same transaction as the write: delivery renders embed this asset's
     // file/title/description into linking entries, so the invalidation event
     // must be enqueued iff the publish commits.
@@ -206,9 +201,82 @@ export async function getPublishedAsset(
 export async function listPublishedAssets(
   ctx: AppContext,
   scope: Scope,
-  query: { limit?: number; skip?: number } = {},
-): Promise<PublishedAsset[]> {
+  query: PublishedAssetQuery = {},
+): Promise<PublishedAssetPage> {
   return ctx.store.assets.listPublished(scope, query);
+}
+
+/**
+ * The published snapshot of `asset`: what Delivery serves, and what the media origin's URLs are
+ * built from (the file version and where its bytes are).
+ */
+export function publishedSnapshot(scope: Scope, asset: Asset, at: Date): PublishedAsset {
+  return {
+    assetId: asset.id,
+    file: asset.file,
+    title: asset.title,
+    description: asset.description,
+    metadata: asset.metadata,
+    publishedAt: at.toISOString(),
+    version: asset.version ?? 1,
+    ...(asset.file.video ? {} : { r2Key: assetFileKey(scope, asset) }),
+    ...(asset.rights ? { rights: asset.rights } : {}),
+  };
+}
+
+/**
+ * Where an asset's current bytes are: its recorded key, or its own key prefix (older rows). A
+ * recorded key can come from an imported snapshot, and every read (signed URLs, the media gate)
+ * serves whatever this names, so one that isn't an asset key for this asset is ignored.
+ */
+export function assetFileKey(
+  scope: Scope,
+  asset: { readonly id: string; readonly r2Key?: string; readonly file: { fileName: string } },
+): string {
+  return asset.r2Key && isAssetObjectKey(asset.r2Key, asset.id)
+    ? asset.r2Key
+    : assetObjectKey(scope, asset.id, asset.file.fileName);
+}
+
+/**
+ * The bucket's top-level prefixes that aren't a space's asset files: archived version bodies
+ * (`version-archive.ts`), staged job chunks (`job-staging.ts`), plugin bundles (`plugins.ts`) and
+ * dead letters. A space can be named like one, so its asset keys are refused rather than trusted.
+ */
+const SHARED_BLOB_NAMESPACES = new Set(['versions', 'imports', 'plugins', 'dlq']);
+
+/** Whether `key` has the shape {@link assetObjectKey} gives asset `assetId`, in any environment
+ *  (an imported asset keeps its source's), outside the bucket's shared namespaces. */
+function isAssetObjectKey(key: string, assetId: string): boolean {
+  const parts = key.split('/');
+  return (
+    parts.length === 4 &&
+    parts[2] === assetId &&
+    parts.every((p) => p !== '' && p !== '.' && p !== '..') &&
+    !SHARED_BLOB_NAMESPACES.has(parts[0] ?? '')
+  );
+}
+
+/** How long a URL handed out by a Management or Preview read works (15 minutes, at least). */
+export const READ_URL_TTL_SECONDS = 900;
+
+/**
+ * The asset with a short-lived signed read URL in place of the stored, non-expiring one, which
+ * reads never hand out. A hosted video keeps its playback URL. `origin` points the URL at another
+ * host that verifies the signature (Preview's media origin).
+ */
+export async function withReadUrl(
+  blob: BlobStore,
+  scope: Scope,
+  asset: Asset,
+  opts: { readonly origin?: string } = {},
+): Promise<Asset> {
+  if (asset.file.video) return asset;
+  const url = await blob.getDownloadUrl(assetFileKey(scope, asset), {
+    expiresInSeconds: READ_URL_TTL_SECONDS,
+    ...(opts.origin ? { origin: opts.origin } : {}),
+  });
+  return { ...asset, file: { ...asset.file, url } };
 }
 
 /** A metadata patch — any subset of the editable "Aspects" of an asset. */
@@ -320,9 +388,7 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
         scope,
         occurredAt: now,
         assetId: id,
-        ...(videoId
-          ? { videoId }
-          : { r2Key: asset.r2Key ?? assetObjectKey(scope, id, asset.file.fileName) }),
+        ...(videoId ? { videoId } : { r2Key: assetFileKey(scope, asset) }),
       });
     });
   } catch (err) {
@@ -397,9 +463,9 @@ export async function deleteAssetFiles(
     // shares with other data. A space named `versions` would otherwise reach other spaces'
     // archived version bodies (`versions/space/environment/entryId/…`); its own asset files are
     // left behind instead, which loses nothing.
-    const [space, environment, keyAssetId] = event.r2Key.split('/');
-    if (space !== scope.spaceId || keyAssetId !== assetId || !environment) return;
-    if (SHARED_BLOB_NAMESPACES.has(space)) return;
+    if (!isAssetObjectKey(event.r2Key, assetId)) return;
+    const [space, environment] = event.r2Key.split('/');
+    if (space !== scope.spaceId) return;
     if (deps.blob.deletePrefix) {
       await deps.blob.deletePrefix(`${space}/${environment}/${assetId}/`, () => false);
     } else {
@@ -407,10 +473,6 @@ export async function deleteAssetFiles(
     }
   }
 }
-
-/** The bucket's top-level prefixes that aren't a space's asset files: archived version bodies
- *  (`version-archive.ts`) and staged job chunks (`job-staging.ts`). */
-const SHARED_BLOB_NAMESPACES = new Set(['versions', 'imports']);
 
 /** Most assets one move takes. The ids ride as one JSON parameter, so this bounds the request,
  *  not D1's parameter cap. */

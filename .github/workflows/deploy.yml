@@ -73,7 +73,7 @@ jobs:
         run: |
           node scripts/fleet.ts render "$ID"
           eval "$(node scripts/fleet.ts names "$ID")"
-          { echo "API_DOMAIN=$API_DOMAIN"; echo "CDN_DOMAIN=$CDN_DOMAIN"; } >> "$GITHUB_ENV"
+          { echo "API_DOMAIN=$API_DOMAIN"; echo "CDN_DOMAIN=$CDN_DOMAIN"; echo "MEDIA_DOMAIN=$MEDIA_DOMAIN"; } >> "$GITHUB_ENV"
       # Only the secrets set in the environment; `--secrets-file` adds to a Worker's secrets and
       # never removes one, so a secret set by hand survives. The engine's ASSISTANT_PRINCIPAL_KEY
       # and ASSISTANT_PRINCIPAL_KEY_PREVIOUS aren't in the environment: `fleet.ts secrets` derives
@@ -94,7 +94,7 @@ jobs:
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
         run: |
-          for app in engine api delivery web; do
+          for app in engine media api delivery web; do
             node scripts/fleet.ts secrets "$app" "$RUNNER_TEMP/$app-secrets.json"
           done
       # The restore point for this deploy: a migration can't be rolled back, but D1 Time Travel
@@ -111,13 +111,20 @@ jobs:
       - name: Migrate D1
         run: retry pnpm --filter @contentworker/engine exec wrangler d1 migrations apply DB --remote --config "$CONFIG"
       # The engine owns every Durable Object and Workflow class the others bind by script name, so
-      # it goes first; then the api, delivery, and the web app that fronts the api.
+      # it goes first; then media, so it already verifies the URLs the api and delivery hand out;
+      # then the api, delivery, and the web app that fronts the api.
       - name: Deploy engine
         id: engine
         run: |
           secrets=()
           [ "$(cat "$RUNNER_TEMP/engine-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/engine-secrets.json")
           retry pnpm --filter @contentworker/engine exec wrangler deploy --config "$CONFIG" "${secrets[@]}"
+      - name: Deploy media
+        id: media
+        run: |
+          secrets=()
+          [ "$(cat "$RUNNER_TEMP/media-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/media-secrets.json")
+          retry pnpm --filter @contentworker/media exec wrangler deploy --config "$CONFIG" "${secrets[@]}"
       - name: Deploy api
         id: api
         run: |
@@ -154,6 +161,10 @@ jobs:
           get "https://$API_DOMAIN/health"
           get -o /dev/null "https://$API_DOMAIN/openapi.json"
           get "https://$CDN_DOMAIN/health"
+          get "https://$MEDIA_DOMAIN/health"
+          # The media origin serves nothing it wasn't told to: an unknown asset is a 404.
+          status=$(curl -s -o /dev/null -w '%{http_code}' "https://$MEDIA_DOMAIN/smoke/main/none/v1/o/none")
+          [ "$status" = 404 ] || { echo "::error::an unknown media URL answered $status, not 404"; exit 1; }
           # Delivery refuses an anonymous read (auth runs before its cache).
           status=$(curl -s -o /dev/null -w '%{http_code}' "https://$CDN_DOMAIN/delivery/smoke/main/entries")
           [ "$status" = 401 ] || { echo "::error::anonymous delivery read answered $status, not 401"; exit 1; }
@@ -184,6 +195,7 @@ jobs:
       - name: Roll back on a failed deploy
         if: failure() && steps.engine.outcome == 'success'
         env:
+          MEDIA: ${{ steps.media.outcome }}
           API: ${{ steps.api.outcome }}
           DELIVERY: ${{ steps.delivery.outcome }}
           WEB: ${{ steps.web.outcome }}
@@ -216,6 +228,7 @@ jobs:
             exit 1
           fi
           failed=0
+          [ "$MEDIA" = success ] && { rollback media @contentworker/media || [ $? = 2 ] || failed=1; }
           [ "$API" = success ] && { rollback api @contentworker/api || [ $? = 2 ] || failed=1; }
           [ "$DELIVERY" = success ] && { rollback delivery @contentworker/delivery || [ $? = 2 ] || failed=1; }
           [ "$WEB" = success ] && { rollback web @contentworker/web || [ $? = 2 ] || failed=1; }

@@ -22,6 +22,7 @@ import {
   createAIAction,
   createAppExtension,
   createAssetFolder,
+  createAssetRendition,
   createConcept,
   createContentType,
   createEntry,
@@ -40,6 +41,7 @@ import {
   deleteAppExtension,
   deleteAsset,
   deleteAssetFolder,
+  deleteAssetRendition,
   deleteEnvironment,
   deleteEnvironmentAlias,
   deleteFunction,
@@ -60,6 +62,7 @@ import {
   getBulkJob,
   getBulkJobReport,
   getContentType,
+  getPreviewAsset,
   getPreviewEntry,
   getPromotion,
   getRelease,
@@ -75,6 +78,7 @@ import {
   listAIActions,
   listAppExtensions,
   listAssetFolders,
+  listAssetRenditions,
   listAssets,
   listAuditLog,
   listBulkJobs,
@@ -85,6 +89,7 @@ import {
   listEnvironmentAliases,
   listFunctions,
   listPlugins,
+  listPreviewAssets,
   listPreviewEntries,
   listPromotions,
   listReleases,
@@ -147,16 +152,19 @@ import {
   unpublishEntry,
   updateAgentSchedule,
   updateAssetFolder,
+  updateAssetRendition,
   updateEntry,
   updateRole,
   updateWebhook,
   validateWorkflowGraph,
   visibleSearchHits,
+  withReadUrl,
   workflowRunView,
 } from '@contentworker/application';
 import { listDocs, readDoc, searchDocs } from '@contentworker/docs';
 import {
   ASSET_KINDS,
+  type Asset,
   AssetInUseError,
   assertQueryRespectsFieldRules,
   assertWritableFields,
@@ -178,6 +186,8 @@ import {
   PROMOTION_STATUSES,
   type Principal,
   principalActorId,
+  type RenditionFit,
+  type RenditionFormat,
   ROLE_PRESETS,
   SCOPES,
   type Scope,
@@ -3114,6 +3124,14 @@ export function buildServer(
   );
 
   // --- assets / media intelligence ---------------------------------------
+  // Reads hand out a short-lived signed URL, never the stored non-expiring one (as the REST
+  // routes do). Without a blob store (local fakes) there is nothing to sign with.
+  const signedOne = (s: Scope, asset: Asset) =>
+    deps.blob ? withReadUrl(deps.blob, s, asset) : Promise.resolve(asset);
+  const signedPage = async <P extends { items: Asset[] }>(s: Scope, page: P): Promise<P> => ({
+    ...page,
+    items: await Promise.all(page.items.map((a) => signedOne(s, a))),
+  });
   server.registerTool(
     'assets_list',
     {
@@ -3143,20 +3161,114 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
       return ok(
-        await listAssets(ctx, scopeOf(args), {
+        await signedPage(
+          scopeOf(args),
+          await listAssets(ctx, scopeOf(args), {
+            ...(args.limit ? { limit: args.limit } : {}),
+            ...(args.cursor ? { cursor: args.cursor } : {}),
+            filters: {
+              ...(args.kind ? { kind: args.kind as (typeof ASSET_KINDS)[number] } : {}),
+              ...(args.mime ? { mime: args.mime } : {}),
+              ...(args.tag ? { tag: args.tag } : {}),
+              ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
+              ...(args.status ? { status: args.status } : {}),
+            },
+            ...(args.sort || args.order
+              ? { sort: { field: args.sort ?? 'updatedAt', direction: args.order ?? 'desc' } }
+              : {}),
+          }),
+        ),
+      );
+    },
+  );
+
+  // Preview's asset reads (`GET /preview/…/assets[/:id]`): drafts included, archived left out, in
+  // the shape Delivery serves, every URL signed and short-lived. Same scope and the same refusal
+  // of a content-granted key as the REST routes.
+  const previewBlob = () => {
+    if (!deps.blob) throw new NotConfiguredError('blob', 'Preview asset reads need a blob store');
+    return deps.blob;
+  };
+  server.registerTool(
+    'asset_preview_list',
+    {
+      description:
+        'List the asset library as Preview serves it: drafts and published (archived left out), ' +
+        'in the delivered shape (url, renditions, srcset) with short-lived signed URLs. Filter ' +
+        'by kind, tag or folder; pass nextCursor back as cursor for the next page. A key with ' +
+        'content grants reads none.',
+      inputSchema: toolSchema('asset_preview_list', () =>
+        z.object({
+          limit: z.number().int().positive().max(100).optional(),
+          cursor: z.string().optional().describe('nextCursor from the previous page'),
+          kind: z.enum(ASSET_KINDS as unknown as [string, ...string[]]).optional(),
+          tag: z.string().max(128).optional().describe('taxonomy tag id'),
+          folderId: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('assets filed in this folder; null for those in no folder'),
+          locale: z
+            .string()
+            .optional()
+            .describe('resolve title, description and alt text for one locale'),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      // As the REST route: a key with content grants reads no assets.
+      if (principal.contentGrants) return ok({ items: [], total: 0 });
+      const page = await listPreviewAssets(
+        ctx,
+        previewBlob(),
+        scopeOf(args),
+        {
           ...(args.limit ? { limit: args.limit } : {}),
           ...(args.cursor ? { cursor: args.cursor } : {}),
           filters: {
             ...(args.kind ? { kind: args.kind as (typeof ASSET_KINDS)[number] } : {}),
-            ...(args.mime ? { mime: args.mime } : {}),
             ...(args.tag ? { tag: args.tag } : {}),
             ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
-            ...(args.status ? { status: args.status } : {}),
           },
-          ...(args.sort || args.order
-            ? { sort: { field: args.sort ?? 'updatedAt', direction: args.order ?? 'desc' } }
-            : {}),
+        },
+        args.locale !== undefined ? { locale: args.locale } : {},
+      );
+      return ok({ ...page, total: page.items.length });
+    },
+  );
+
+  server.registerTool(
+    'asset_preview_get',
+    {
+      description:
+        'Get one asset as Preview serves it, draft or published (not archived), in the ' +
+        'delivered shape with short-lived signed URLs. Refused for a key with content grants.',
+      inputSchema: toolSchema('asset_preview_get', () =>
+        z.object({
+          id: z.string(),
+          locale: z
+            .string()
+            .optional()
+            .describe('resolve title, description and alt text for one locale'),
+          ...scopeArgs,
         }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      if (principal.contentGrants) {
+        throw new ForbiddenError('assets (a key with content grants reads no assets)');
+      }
+      return ok(
+        await getPreviewAsset(
+          ctx,
+          previewBlob(),
+          scopeOf(args),
+          args.id,
+          args.locale !== undefined ? { locale: args.locale } : {},
+        ),
       );
     },
   );
@@ -3189,7 +3301,7 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      return ok(await archiveAsset(ctx, scopeOf(args), args.id));
+      return ok(await signedOne(scopeOf(args), await archiveAsset(ctx, scopeOf(args), args.id)));
     },
   );
 
@@ -3201,7 +3313,7 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(await restoreAsset(ctx, scopeOf(args), args.id));
+      return ok(await signedOne(scopeOf(args), await restoreAsset(ctx, scopeOf(args), args.id)));
     },
   );
 
@@ -3301,6 +3413,95 @@ export function buildServer(
       guard(SCOPES.contentWrite, scopeOf(args));
       await deleteAssetFolder(ctx, scopeOf(args), args.id);
       return ok({ deleted: args.id });
+    },
+  );
+
+  const renditionSpec = {
+    width: z.number().int().min(1).max(4096).optional(),
+    height: z.number().int().min(1).max(4096).optional(),
+    fit: z.enum(['clip', 'crop', 'fill', 'max', 'scale']).optional(),
+    format: z.enum(['auto', 'jpg', 'png', 'webp', 'avif']).optional(),
+    quality: z.number().int().min(1).max(100).optional(),
+  };
+  const specOf = (args: {
+    width?: number;
+    height?: number;
+    fit?: RenditionFit;
+    format?: RenditionFormat;
+    quality?: number;
+  }) => ({
+    ...(args.width !== undefined ? { width: args.width } : {}),
+    ...(args.height !== undefined ? { height: args.height } : {}),
+    ...(args.fit !== undefined ? { fit: args.fit } : {}),
+    ...(args.format !== undefined ? { format: args.format } : {}),
+    ...(args.quality !== undefined ? { quality: args.quality } : {}),
+  });
+
+  server.registerTool(
+    'asset_renditions_list',
+    {
+      description:
+        'List the space’s rendition presets (named image sizes, the same in every environment). ' +
+        'Delivered images carry a URL for each, at …/r-<name>/… on the media origin.',
+      inputSchema: toolSchema('asset_renditions_list', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok({ items: await listAssetRenditions(ctx, scopeOf(args)) });
+    },
+  );
+
+  server.registerTool(
+    'asset_renditions_create',
+    {
+      description:
+        'Create a rendition preset: a name (lowercase letters, digits, dashes) and what it does ' +
+        '(width, height, fit, format, quality; at least a width, height or format). A space has ' +
+        'at most 20.',
+      inputSchema: toolSchema('asset_renditions_create', () =>
+        z.object({
+          name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/),
+          ...renditionSpec,
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(
+        await createAssetRendition(ctx, scopeOf(args), { name: args.name, ...specOf(args) }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'asset_renditions_update',
+    {
+      description:
+        'Replace what a rendition preset does. Its URLs stay the same; the media cached under ' +
+        'them is purged in the background.',
+      inputSchema: toolSchema('asset_renditions_update', () =>
+        z.object({ name: z.string(), ...renditionSpec, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(await updateAssetRendition(ctx, scopeOf(args), args.name, specOf(args)));
+    },
+  );
+
+  server.registerTool(
+    'asset_renditions_delete',
+    {
+      description: 'Delete a rendition preset; its URLs answer 404 once their media is purged.',
+      inputSchema: toolSchema('asset_renditions_delete', () =>
+        z.object({ name: z.string(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      await deleteAssetRendition(ctx, scopeOf(args), args.name);
+      return ok({ deleted: args.name });
     },
   );
 

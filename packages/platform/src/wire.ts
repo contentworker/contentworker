@@ -5,7 +5,9 @@ import {
   type WorkersAiRun,
   workersAiModelsFromEnv,
 } from '@contentworker/adapters/ai-workers';
+import { createKvAssetGate } from '@contentworker/adapters/asset-gate-kv';
 import {
+  createMediaPathSigner,
   createMediaUrlSigner,
   createR2BlobStore,
   type MediaUrlSigner,
@@ -42,6 +44,7 @@ import { createD1Store } from '@contentworker/db';
 import { type ApiKeyKind, type DomainEvent, scopesForKind } from '@contentworker/domain';
 import type {
   AIProvider,
+  AssetGate,
   BlobStore,
   Cache,
   ContentStore,
@@ -51,6 +54,7 @@ import type {
   EventBus,
   GenerateRequest,
   IdGenerator,
+  MediaPathSigner,
   Queue as QueuePort,
   SecretSealer,
   VectorStore,
@@ -84,6 +88,11 @@ export interface EdgeWired {
   readonly blob: BlobStore;
   /** Signs/verifies `/media/*` URLs; present when MEDIA_BUCKET is bound. */
   readonly mediaSigner?: MediaUrlSigner;
+  /**
+   * The media origin's published-asset gate (KV_CACHE). Only the engine writes it, from asset
+   * events; the media Worker reads it.
+   */
+  readonly assetGate?: AssetGate;
   readonly ai: AIProvider;
   /** Decision model (Clef on Workers AI): typed questions in, probabilities out. */
   readonly decisions: DecisionModel;
@@ -201,6 +210,13 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
         }
       : {}),
     ...(env.STREAM ? { video: createStreamVideoHost(env.STREAM) } : {}),
+    ...(env.MEDIA_PUBLIC_URL
+      ? {
+          mediaPublicUrl: env.MEDIA_PUBLIC_URL.replace(/\/$/, ''),
+          // The same key the media Worker checks published paths with.
+          mediaPaths: createMediaPathSigner(mediaSigningSecret(env, persistent)),
+        }
+      : {}),
   };
 
   const ctx: AppContext = env.PLUGIN_LOADER
@@ -250,6 +266,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     },
     blob,
     ...(mediaSigner ? { mediaSigner } : {}),
+    ...(env.KV_CACHE ? { assetGate: createKvAssetGate(env.KV_CACHE) } : {}),
     ai,
     decisions,
     bus: new InMemoryEventBus(),
@@ -260,6 +277,35 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     sealer,
     bookmark: () => session?.getBookmark() ?? undefined,
     close: async () => {},
+  };
+}
+
+/** What the media Worker reads with, all of it read-only. */
+export interface MediaWired {
+  /** Through a read-replica session: the gate's fallback and the rendition presets. */
+  readonly store?: Pick<ContentStore, 'assets' | 'assetRenditions'>;
+  /** The engine's published-asset gate (KV_CACHE). */
+  readonly assetGate?: AssetGate;
+  /** Checks the token in a published asset's path. */
+  readonly mediaPaths: MediaPathSigner;
+  /** Checks Preview's short-lived signed `/media/*` reads. */
+  readonly mediaSigner: MediaUrlSigner;
+}
+
+/**
+ * The media Worker's composition root. Not {@link wireEdge}: the media Worker holds one secret
+ * (MEDIA_SIGNING_SECRET) and no AI, queue producer or DATA_KEY, and it never writes, so it binds
+ * only the ports it reads. Like wireEdge, a persistent deployment (DB bound) refuses the dev key.
+ */
+export function wireMedia(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): MediaWired {
+  const env = withJurisdiction(rawEnv);
+  const secret = mediaSigningSecret(env, Boolean(env.DB));
+  const session = env.DB?.withSession(options.bookmark ?? 'first-unconstrained');
+  return {
+    ...(session ? { store: createD1Store(session) } : {}),
+    ...(env.KV_CACHE ? { assetGate: createKvAssetGate(env.KV_CACHE) } : {}),
+    mediaPaths: createMediaPathSigner(secret),
+    mediaSigner: createMediaUrlSigner(secret),
   };
 }
 

@@ -29,6 +29,7 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 | ------------------------- | --------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `api.<domain>`            | `apps/api`      | `management,preview,delivery` | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads                                                    |
 | `cdn.<domain>`            | `apps/delivery` | `delivery`                    | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request                                                     |
+| `media.<domain>`          | `apps/media`    | `media`                       | Published asset files (`/<space>/<env>/<id>/v<n>/<token>/<variant>/<file>`), cached (immutable unless rights expire); Preview's signed `/media/*` reads (GET only, `exp` required) |
 | `<domain>` (admin origin) | `apps/web`      | —                             | Forwards the api's surfaces to it ([the list](./architecture.md#appsweb-the-admin-and-the-gateway)); OAuth's issuer on a fleet deployment |
 
 Public delivery clients should use `cdn.<domain>`; it answers only `GET`/`HEAD` (cached) and
@@ -379,6 +380,11 @@ content grants gets `403`, because the report exposes entry ids across content t
 | POST   | `…/assets`                   | `content:write`   | Create draft + presigned upload URL (optional `folderId`)                         |
 | POST   | `…/assets/move`              | `content:write`   | `{ ids (≤ 500), folderId \| null }` → `{ moved }`; 404 for an unknown folder      |
 | GET    | `…/assets/:id`               | `preview:read`    | Get asset                                                                         |
+| GET    | `…/asset-renditions`         | `preview:read`    | The space's rendition presets `{ items }` (the same in every environment)         |
+| POST   | `…/asset-renditions`         | `content:manage`  | Create `{ name, width?, height?, fit?, format?, quality? }` (201); 409 for a taken name; at most 20 |
+| GET    | `…/asset-renditions/:name`   | `preview:read`    | Get a preset                                                                      |
+| PUT    | `…/asset-renditions/:name`   | `content:manage`  | Replace what it does (its URLs stay; their cached files are purged)               |
+| DELETE | `…/asset-renditions/:name`   | `content:manage`  | Delete (204); its URLs answer 404 once purged                                     |
 | POST   | `…/assets/:id/archive`       | `content:publish` | Archive (leaves Delivery when published); idempotent                              |
 | POST   | `…/assets/:id/restore`       | `content:write`   | Restore an archived asset as a draft; idempotent                                  |
 | DELETE | `…/assets/:id`               | `content:publish` | Delete permanently (204); `409 asset_in_use` with `error.usage` (first 50, titled) and `error.total` while linked |
@@ -395,6 +401,10 @@ content grants gets `403`, because the report exposes entry ids across content t
 | POST   | `…/assets/:id/auto-tag`      | `content:write`   | AI auto-tagging                                                                   |
 | POST   | `…/assets/:id/published`     | `content:publish` | Publish asset                                                                     |
 | DELETE | `…/assets/:id/published`     | `content:publish` | Unpublish asset                                                                   |
+
+Every asset these routes return carries a short-lived signed `file.url` (at least 15 minutes,
+`?exp=…&sig=…`), never the non-expiring URL the asset stores; a hosted video keeps its playback
+URL. The MCP asset tools do the same.
 
 ### Releases
 
@@ -550,16 +560,16 @@ the same ([Events & webhooks](./events-and-webhooks.md#webhooks)).
 Base path: `/delivery/:space/:env`. Reads the denormalized **published** read model (through the Workers KV
 delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness after a publish). List/get responses apply granular RBAC when the key is role-bound.
 
-| Method   | Path                                         | Scope           | Description                   |
-| -------- | -------------------------------------------- | --------------- | ----------------------------- |
-| GET      | `/delivery/:space/:env/entries`              | `delivery:read` | List published entries        |
-| GET      | `/delivery/:space/:env/entries/:id`          | `delivery:read` | Get one published entry       |
-| GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets         |
-| GET      | `/delivery/:space/:env/assets/:id`           | `delivery:read` | Get one published asset       |
+| Method   | Path                                         | Scope           | Description                    |
+| -------- | -------------------------------------------- | --------------- | ------------------------------ |
+| GET      | `/delivery/:space/:env/entries`              | `delivery:read` | List published entries         |
+| GET      | `/delivery/:space/:env/entries/:id`          | `delivery:read` | Get one published entry        |
+| GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets: `limit`, `cursor` (or `skip`), `kind`, `tag`, `folder` (id or `root`), `locale` → `{ items, total, nextCursor? }` |
+| GET      | `/delivery/:space/:env/assets/:id`           | `delivery:read` | Get one published asset (`locale`) |
 | GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default** |
-| GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream   |
-| GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Image transform redirect      |
-| GET/POST | `/delivery/:space/:env/graphql`              | `delivery:read` | GraphQL Delivery endpoint     |
+| GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream    |
+| GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Deprecated: `301` to the media URL of the next width step at or above `w`, or `rendition` (cached); `302` to a signed transform when no media origin is set |
+| GET/POST | `/delivery/:space/:env/graphql`              | `delivery:read` | GraphQL Delivery endpoint      |
 
 **Common query parameters:** shared [query language](#shared-query-language) plus `locale`,
 `include` (reference depth 0–5), `limit`, `skip`, `since` (delta sync).
@@ -573,6 +583,15 @@ resolved wherever they sit: `Link` and array fields, `Component` values, and ric
 nodes, whose `data.target` is replaced by the embedded entry or asset. An unpublished, missing or
 cyclic target stays a `{ id, linkType }` stub.
 
+A delivered asset, on its own or embedded, is one shape (`deliveredAsset`,
+`packages/domain/src/asset/delivered.ts`): `{ id, title, description, altText, focalPoint,
+contentType, size, width, height, kind, url, renditions, srcset, video?, rights?, file }`.
+`title`, `description` and `altText` flatten to `?locale` (with the space's fallbacks), else stay
+per locale. `url`, `renditions` (`{ name: url }`) and `srcset` (`[{ width, url }]`, the ladder
+320–2560 up to the image's own width) are built at read time on `MEDIA_PUBLIC_URL`; `file` is kept
+for existing readers with `file.url` = `url`. `rights` carries only `credit` and `license`. A key
+with content grants reads no assets (lists are empty, gets are 403, embeds stay stubs).
+
 ### GraphQL Delivery
 
 `ALL /delivery/:space/:env/graphql` serves a schema **generated from published content types** by
@@ -580,6 +599,11 @@ cyclic target stays a `{ id, linkType }` stub.
 
 - Query via `?query=` (GET) or JSON body `{ query, variables?, operationName? }` (POST).
 - Resolvers call the same use-cases as REST with locale flattening and link resolution.
+- `asset(id, locale)` is a typed `Asset`: `title`, `description` and `altText` each take
+  `locale` (falling back to the query's, then the space default); `url(rendition, width)` picks a
+  rendition or the width step at or above `width`; `srcset { width url }`, `renditions`,
+  `focalPoint { x y }`, `video { status hlsUrl dashUrl thumbnailUrl durationSeconds }`,
+  `rights { credit license }`, `file`.
 
 ### Live Content (SSE)
 
@@ -617,6 +641,13 @@ Base path: `/preview/:space/:env`. Reads **draft/current** versions. Supports th
 | GET    | `/preview/:space/:env/entries`     | `preview:read` | List current entries                 |
 | GET    | `/preview/:space/:env/entries/:id` | `preview:read` | Get one current entry                |
 | GET    | `/preview/:space/:env/suggest`     | `preview:read` | Entries matching what is being typed |
+| GET    | `/preview/:space/:env/assets`      | `preview:read` | Current assets (drafts included, archived left out) in Delivery's shape: `limit`, `cursor`, `kind`, `tag`, `folder`, `locale` |
+| GET    | `/preview/:space/:env/assets/:id`  | `preview:read` | One current asset in Delivery's shape |
+
+Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
+least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and
+`asset_preview_get` are the same reads, with the same scope; a key with content grants gets an
+empty list and a refused get on both surfaces.
 
 ### Finding an entry by name
 

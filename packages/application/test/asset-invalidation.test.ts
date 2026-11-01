@@ -101,8 +101,9 @@ async function seedEntryWithAsset(h: ReturnType<typeof setup>) {
   return { assetId: asset.asset.id, entryId: entry.entry.id };
 }
 
+// The renders ask for en-US, so the embedded asset's title is flattened to that locale.
 const heroTitle = (e: { fields: Record<string, unknown> }) =>
-  (e.fields.hero as { title?: Record<string, string> })?.title?.['en-US'];
+  (e.fields.hero as { title?: string } | undefined)?.title;
 
 describe('asset cache invalidation', () => {
   let h: ReturnType<typeof setup>;

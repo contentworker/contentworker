@@ -1,5 +1,6 @@
 export * from './agents/agent-review';
 export * from './asset/asset';
+export * from './asset/delivered';
 export * from './assistant/assistant';
 export * from './auth/auth';
 export * from './auth/oauth';

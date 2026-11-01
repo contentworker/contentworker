@@ -126,6 +126,65 @@ export const assetPage = z.object({
     .describe('Pass as ?cursor= for the next page; absent on the last page'),
 });
 
+const localizedText = z
+  .union([z.string(), z.record(z.string(), z.unknown()), z.null()])
+  .describe('One locale’s value with ?locale=, else the value per locale');
+
+export const deliveredAsset = z.object({
+  id: z.string(),
+  title: localizedText,
+  description: localizedText,
+  altText: localizedText,
+  focalPoint: z.object({ x: z.number(), y: z.number() }).nullable(),
+  contentType: z.string().describe('MIME type'),
+  size: z.int().nullable(),
+  width: z.int().nullable(),
+  height: z.int().nullable(),
+  kind: z.enum(['image', 'video', 'audio', 'document', 'other']),
+  url: z.string().describe('The original file on the media origin (a video’s HLS manifest)'),
+  renditions: z
+    .record(z.string(), z.string())
+    .describe('The space’s renditions of this image, by name'),
+  srcset: z
+    .array(z.object({ width: z.int(), url: z.string() }))
+    .describe('The width ladder (320–2560), up to the image’s own width'),
+  video: z
+    .object({
+      status: z.string(),
+      hlsUrl: z.string().optional(),
+      dashUrl: z.string().optional(),
+      thumbnailUrl: z.string().optional(),
+      durationSeconds: z.number().optional(),
+    })
+    .optional(),
+  rights: z.object({ credit: z.string().optional(), license: z.string().optional() }).optional(),
+  file: z
+    .record(z.string(), z.unknown())
+    .describe('The stored file description, kept for existing readers; file.url is url'),
+});
+
+export const deliveredAssetPage = z.object({
+  items: z.array(deliveredAsset),
+  total: z.int().describe('Items on this page'),
+  nextCursor: z
+    .string()
+    .optional()
+    .describe('Pass as ?cursor= for the next page; absent on the last page'),
+});
+
+export const assetRendition = z.object({
+  name: z.string().describe('Its URL segment: …/r-<name>/…'),
+  width: z.int().optional(),
+  height: z.int().optional(),
+  fit: z.enum(['clip', 'crop', 'fill', 'max', 'scale']).optional(),
+  format: z.enum(['auto', 'jpg', 'png', 'webp', 'avif']).optional(),
+  quality: z.int().optional(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const assetRenditionList = z.object({ items: z.array(assetRendition) });
+
 export const assetFolder = z.object({
   id: z.uuid(),
   name: z.string(),

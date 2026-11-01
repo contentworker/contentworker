@@ -16,6 +16,7 @@ import {
   renderApi,
   renderDelivery,
   renderEngine,
+  renderMedia,
   renderWeb,
   SECRETS,
   shellVars,
@@ -42,6 +43,7 @@ test('a customer gets its own domain, names and environment by default', () => {
     web: 'acme.contentworker.app',
     api: 'api.acme.contentworker.app',
     delivery: 'cdn.acme.contentworker.app',
+    media: 'media.acme.contentworker.app',
   });
 });
 
@@ -97,6 +99,53 @@ test('the api, delivery and web Workers bind the deployment’s own engine and a
     names(acme).delivery,
   );
   assert.deepEqual(web.routes, [{ pattern: 'acme.contentworker.app', custom_domain: true }]);
+});
+
+test('the media Worker gets its own route, purge queue and the deployment’s media origin', () => {
+  const media = renderMedia(base('media'), acme);
+  assert.equal(media.name, 'contentworker-media-acme');
+  assert.deepEqual(media.routes, [
+    { pattern: 'media.acme.contentworker.app', custom_domain: true },
+  ]);
+  assert.equal(media.r2_buckets[0].bucket_name, names(acme).media);
+  assert.equal(media.r2_buckets[0].jurisdiction, 'eu');
+  assert.equal(media.kv_namespaces[0].id, acme.kvId);
+  assert.equal(media.d1_databases[0].database_id, acme.d1Id);
+  assert.deepEqual(
+    media.queues.consumers.map((q: { queue: string }) => q.queue),
+    ['contentworker-media-purge-acme', 'contentworker-media-purge-dlq-acme'],
+  );
+  assert.equal(media.queues.consumers[0].dead_letter_queue, 'contentworker-media-purge-dlq-acme');
+  // Its cached entrypoint is never routable: only the gateway is the default export.
+  assert.equal(media.exports.default.cache.enabled, false);
+  assert.equal(media.exports.Media.cache.enabled, true);
+  assert.deepEqual(SECRETS.media, ['MEDIA_SIGNING_SECRET']);
+
+  // Every Worker that builds asset URLs builds them on it; the engine sends its purges.
+  for (const [app, render] of [
+    ['api', renderApi],
+    ['delivery', renderDelivery],
+    ['engine', renderEngine],
+  ] as const) {
+    assert.equal(
+      render(base(app), acme).vars.MEDIA_PUBLIC_URL,
+      'https://media.acme.contentworker.app',
+    );
+  }
+  const producers = renderEngine(base('engine'), acme).queues.producers;
+  assert.equal(
+    producers.find((p: { binding: string }) => p.binding === 'MEDIA_PURGE_QUEUE').queue,
+    'contentworker-media-purge-acme',
+  );
+  assert.match(
+    shellVars(acme).QUEUES,
+    /contentworker-media-purge-acme contentworker-media-purge-dlq-acme/,
+  );
+  assert.equal(shellVars(acme).MEDIA_DOMAIN, 'media.acme.contentworker.app');
+});
+
+test('Workers deploy engine first, then media, api, delivery and web', () => {
+  assert.deepEqual([...APPS], ['engine', 'media', 'api', 'delivery', 'web']);
 });
 
 test('rate-limit namespaces move with the slot and never collide across Workers', () => {
@@ -165,7 +214,7 @@ test('the engine gets the assistant’s derived principal key pair, never the ma
     'MEDIA_SIGNING_SECRET',
   ]);
   // Nobody else holds the assistant's key.
-  for (const app of ['web', 'api', 'delivery'] as const)
+  for (const app of ['web', 'api', 'media', 'delivery'] as const)
     assert.ok(!SECRETS[app].some((k) => k.startsWith('ASSISTANT_')), app);
 });
 

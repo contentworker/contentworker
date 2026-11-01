@@ -1,4 +1,6 @@
-import type { BlobStore } from '@contentworker/ports';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { Scope } from '@contentworker/domain';
+import type { BlobStore, DownloadUrlOptions, MediaPathSigner } from '@contentworker/ports';
 
 /**
  * The subset of an R2 object (with body) this adapter reads. Structural, so the
@@ -30,6 +32,40 @@ export interface R2BucketLike {
 
 /** Path prefix the Worker serves blobs under (see {@link handleMediaRequest}). */
 export const MEDIA_PATH_PREFIX = '/media/';
+
+/** Bytes of MAC a published media path carries: 128 bits, 22 base64url characters. */
+export const MEDIA_PATH_TOKEN_BYTES = 16;
+
+/**
+ * The token in a published asset's media URL: HMAC-SHA256 under the media signing secret over
+ * the scope, the asset and the version, truncated to {@link MEDIA_PATH_TOKEN_BYTES}. The message
+ * starts `asset-path`, so it can never equal a signed `/media/*` URL's (which starts with the
+ * method), and each part is URI-encoded, so no two addresses share one. Synchronous (node:crypto),
+ * so projecting an asset needs no await.
+ */
+export function createMediaPathSigner(secret: string): MediaPathSigner {
+  if (!secret) throw new Error('media URL signing secret must not be empty');
+  const mac = (scope: Scope, assetId: string, version: number): Buffer => {
+    const e = encodeURIComponent;
+    return createHmac('sha256', secret)
+      .update(
+        `asset-path\n${e(scope.spaceId)}\n${e(scope.environmentId)}\n${e(assetId)}\n${version}`,
+      )
+      .digest()
+      .subarray(0, MEDIA_PATH_TOKEN_BYTES);
+  };
+  return {
+    token: (scope, assetId, version) => mac(scope, assetId, version).toString('base64url'),
+    verify(scope, assetId, version, token) {
+      const given = Buffer.from(token, 'base64url');
+      // Canonical form only: a token with padding or stray characters decodes to the same bytes.
+      if (given.length !== MEDIA_PATH_TOKEN_BYTES || given.toString('base64url') !== token) {
+        return false;
+      }
+      return timingSafeEqual(given, mac(scope, assetId, version));
+    },
+  };
+}
 
 /**
  * Signs and verifies media URLs.
@@ -162,12 +198,22 @@ export interface R2BlobOptions {
 }
 
 /**
+ * The expiry of a short-lived read URL: at least `ttl` seconds away, rounded up to a multiple of
+ * `ttl`, so every URL minted for a key within one window is the same URL and a browser's cache
+ * keeps working across reads (a URL then lives between `ttl` and twice that).
+ */
+export function readUrlExpiry(nowSeconds: number, ttl: number): number {
+  return Math.ceil((nowSeconds + ttl) / ttl) * ttl;
+}
+
+/**
  * BlobStore over the native R2 binding. Server-side `put`/`get` talk to the
  * bucket directly; client transfers use Worker-signed URLs served by
  * {@link handleMediaRequest}: an upload URL is a short-lived signed PUT bound
- * to one key and content type, a download URL is a non-expiring signed GET
- * bound to one key (the key embeds the asset's UUIDv7, and the signature makes
- * it unforgeable, so it is a stable capability URL rather than a public bucket).
+ * to one key and content type. A download URL is a signed GET bound to one
+ * key: without options a non-expiring one (what an asset stores at creation),
+ * with `expiresInSeconds` one that carries an `exp` the signature covers
+ * (what Management and Preview hand out at read time).
  */
 export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): BlobStore {
   const base = opts.baseUrl ?? '';
@@ -179,8 +225,12 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
       const url = await signedMediaUrl(opts.signer, base, 'PUT', key, params);
       return { url, headers: { 'content-type': contentType } };
     },
-    getDownloadUrl(key) {
-      return signedMediaUrl(opts.signer, base, 'GET', key);
+    getDownloadUrl(key, read?: DownloadUrlOptions) {
+      if (!read?.expiresInSeconds)
+        return signedMediaUrl(opts.signer, read?.origin ?? base, 'GET', key);
+      const exp = readUrlExpiry(now(), read.expiresInSeconds);
+      const params = new URLSearchParams({ exp: String(exp) });
+      return signedMediaUrl(opts.signer, read.origin ?? base, 'GET', key, params);
     },
     async delete(key) {
       await bucket.delete(key);
@@ -228,6 +278,13 @@ export interface MediaRequestOptions {
   readonly transform?: MediaTransform;
   /** Injected for tests; seconds since the epoch. */
   readonly now?: () => number;
+  /**
+   * Refuse a signed GET without an `exp` (the media origin serves only short-lived reads; the
+   * api still honours the non-expiring URLs assets stored at creation).
+   */
+  readonly requireExpiry?: boolean;
+  /** Only GET and HEAD: a host that must never accept an upload (the media origin). */
+  readonly readOnly?: boolean;
 }
 
 const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -239,9 +296,10 @@ const INLINE_TYPES = /^(image\/(?!svg)|video\/|audio\/|application\/pdf$|text\/p
  * Response headers for user-supplied bytes served from the API's own origin.
  * `sandbox` stops an uploaded HTML/SVG from running script against the admin
  * SPA (same origin on the single-worker deployment); nosniff stops the browser
- * from second-guessing the stored type.
+ * from second-guessing the stored type. The media origin serves bytes with the
+ * same headers.
  */
-function safeHeaders(contentType: string): Headers {
+export function safeHeaders(contentType: string): Headers {
   const h = new Headers({
     'content-type': contentType,
     'x-content-type-options': 'nosniff',
@@ -273,7 +331,7 @@ export async function handleMediaRequest(
   if (!sig) return text(403, 'missing signature');
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
 
-  if (request.method === 'PUT') {
+  if (request.method === 'PUT' && !opts.readOnly) {
     if (!(await opts.signer.verify('PUT', key, url.searchParams, sig))) {
       return text(403, 'invalid signature');
     }
@@ -295,19 +353,31 @@ export async function handleMediaRequest(
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response('method not allowed', {
       status: 405,
-      headers: { allow: 'GET, HEAD, PUT' },
+      headers: { allow: opts.readOnly ? 'GET, HEAD' : 'GET, HEAD, PUT' },
     });
   }
   if (!(await opts.signer.verify('GET', key, url.searchParams, sig))) {
     return text(403, 'invalid signature');
   }
+  // The signature covers `exp`, so it can't be stripped or moved; a URL without one is a stored,
+  // non-expiring download URL, which only a host that still honours them accepts.
+  const expParam = url.searchParams.get('exp');
+  if (expParam === null ? opts.requireExpiry : !(Number(expParam) >= now())) {
+    return text(403, 'URL expired');
+  }
   const object = await opts.bucket.get(key);
   if (!object) return text(404, 'not found');
 
-  const hasTransform = [...url.searchParams.keys()].some((k) => k !== 'sig');
+  const hasTransform = [...url.searchParams.keys()].some((k) => k !== 'sig' && k !== 'exp');
   if (hasTransform && opts.transform && request.method === 'GET') {
     const transformed = await opts.transform(object, url.searchParams, request);
-    if (transformed) return transformed;
+    if (transformed) {
+      if (expParam !== null) {
+        const ttl = Math.max(0, Math.min(3600, Number(expParam) - now()));
+        transformed.headers.set('cache-control', `private, max-age=${ttl}`);
+      }
+      return transformed;
+    }
   }
 
   const contentType = object.httpMetadata?.contentType ?? 'application/octet-stream';
@@ -316,7 +386,13 @@ export async function handleMediaRequest(
   headers.set('content-length', String(object.size));
   // Keys are unique per asset and the URL is signed, so the bytes behind a
   // given URL change only on an (unusual) re-upload within the upload window.
-  headers.set('cache-control', 'public, max-age=3600');
+  // A short-lived URL is a draft's: kept by the reader only, and not past its expiry.
+  headers.set(
+    'cache-control',
+    expParam === null
+      ? 'public, max-age=3600'
+      : `private, max-age=${Math.max(0, Math.min(3600, Number(expParam) - now()))}`,
+  );
   if (request.headers.get('if-none-match') === object.httpEtag) {
     return new Response(null, { status: 304, headers });
   }

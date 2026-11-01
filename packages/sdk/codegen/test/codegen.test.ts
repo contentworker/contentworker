@@ -130,7 +130,7 @@ describe('@contentworker/sdk-codegen generator', () => {
     expect(source).toContain('publishedOn?: string;');
     expect(source).toContain('venue?: Location;');
     expect(source).toContain('meta?: Record<string, unknown>;');
-    expect(source).toContain('hero?: AssetLink;');
+    expect(source).toContain('hero?: AssetLink | DeliveredAsset;');
     expect(source).toContain('author?: EntryLink;');
     expect(source).toContain('tags?: string[];');
     expect(source).toContain("status: 'draft' | 'live';");
@@ -138,7 +138,7 @@ describe('@contentworker/sdk-codegen generator', () => {
   });
 
   it('types a component as its nested shape, not as unknown', () => {
-    expect(edge).toContain('callout?: { heading: string; icon?: AssetLink };');
+    expect(edge).toContain('callout?: { heading: string; icon?: AssetLink | DeliveredAsset };');
   });
 
   it('types a repeater as an array of that shape', () => {
@@ -195,9 +195,17 @@ describe('@contentworker/sdk-codegen generator', () => {
   });
 
   it('handles asset-link arrays, item-less arrays, and untyped links', () => {
-    expect(edge).toContain('gallery?: AssetLink[];');
+    expect(edge).toContain('gallery?: (AssetLink | DeliveredAsset)[];');
+    expect(edge).toContain('gallery?: Localized<AssetLink[]>;');
     expect(edge).toContain('bare?: string[];');
     expect(edge).toContain("'untyped-link'?: EntryLink;");
+  });
+
+  it('types a delivered asset link as the link or the embedded asset, a draft one as the link', () => {
+    expect(source).toContain('export interface DeliveredAsset {');
+    expect(source).toContain('srcset: { width: number; url: string }[];');
+    expect(source).toContain('renditions: Record<string, string>;');
+    expect(source).toContain('hero?: Localized<AssetLink>;');
   });
 
   it('maps unrecognized field types to unknown', () => {

@@ -52,6 +52,8 @@ API:
 client.getEntry<F>(id, { locale?, include? }): Promise<DeliveredEntry<F>>
 client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: number }>
 client.search(query, { topK? }): Promise<SearchHit[]>
+client.getAsset(id, { locale? }): Promise<DeliveredAsset>
+client.listAssets({ limit?, cursor?, skip?, kind?, tag?, folder?, locale? }): Promise<AssetPage>
 client.query(): EntryQueryBuilder<F>     // fluent builder
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
@@ -65,6 +67,14 @@ client.clearCache(): void
   inside components and rich-text `data.target`s).
 - `client.search()` hits `/search` with hybrid mode by default (same as the API).
 - Failed requests throw `DeliveryError`.
+- `getAsset` / `listAssets` read `/assets` (or `/preview/…/assets` with `preview: true`) and return
+  the delivered asset shape (see [API reference](./api-reference.md#delivery-api-cda));
+  `AssetPage` is `{ items, total, nextCursor? }`, and a `cursor` wins over `skip`.
+- Pure helpers, also on the client: `assetUrl(asset, { rendition?, width? })` returns the
+  rendition's URL (`undefined` if the space has none by that name), the ladder step at or above
+  `width` (the largest past it, the original without a ladder), or the original; `srcset(asset)`
+  returns `"url 320w, url 640w, …"` (empty without a ladder). Neither adds a query parameter, so
+  signed and immutable URLs stay intact.
 
 Shapes:
 
@@ -181,6 +191,9 @@ client locale (no locale nesting).
 
 Hooks and helpers for React Native: an offline entry cache, delta sync via `since`, and image URL
 helpers. Builds on `@contentworker/sdk-core`.
+`imageUrl(asset, { width?, dpr?, rendition? })` takes a delivered asset and returns the rendition
+when it exists, else the ladder step for `ceil(width × dpr)` (through `assetUrl`), else `url`; it
+never appends parameters to a URL.
 
 ```ts
 import {
@@ -288,7 +301,8 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   `?locale=`; without one, Delivery returns locale-keyed values, i.e. the draft shape):
   `Symbol`/`Text`/`Date` → `string`, `Integer`/`Number` → `number`, `Boolean` → `boolean`,
   `Location` → `{ lat, lon }`, `JSON` → `Record<string, unknown>`, `RichText` →
-  `RichTextDocument`, `Link` → `EntryLink`/`AssetLink`, `Array` → element type `[]`.
+  `RichTextDocument`, `Link` → `EntryLink` / `AssetLink | DeliveredAsset` (an asset link can be
+  embedded), `Array` → element type `[]`. The generated prelude declares `DeliveredAsset`.
   An `in` validation becomes a literal union (`status: 'draft' | 'live'`) exactly where the
   domain enforces it (`Symbol`/`Text`/`Integer`/`Number`); `required` controls optionality.
   When rendering `RichTextDocument` values, handle the full node vocabulary (headings, lists,
@@ -368,5 +382,6 @@ navigating.
 
 If you prefer GraphQL over the REST client, the Delivery API also exposes a per-space GraphQL
 schema generated from your content types at `POST /delivery/:space/:env/graphql` (scope
-`delivery:read`). It needs no SDK — use any GraphQL client with a CDA token. See
+`delivery:read`). It needs no SDK — use any GraphQL client with a CDA token. `asset(id)` is a
+typed `Asset` with `url(rendition, width)`, `srcset`, per-field `locale` arguments and `video`. See
 [API reference → GraphQL Delivery](./api-reference.md#graphql-delivery).

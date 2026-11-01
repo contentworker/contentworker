@@ -15,13 +15,14 @@ sections your change touches. Path-specific reminders live in
 ## The shape of the system
 
 One isolated stack per customer (`deployments/*.jsonc`, rendered by `scripts/fleet.ts`), D1 as
-the system of record, four Workers split by traffic profile:
+the system of record, five Workers split by traffic profile:
 
 | Worker          | Entry                    | Job                                                                                                      |
 | --------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `apps/web`      | `workers/app.ts`, `app/` | Admin UI (React Router 8 SSR) and human auth; fronts the api over the `API` binding, signs `x-cw-principal` |
 | `apps/api`      | `src/index.ts`           | Management + Preview REST, MCP, OAuth, media, live. HTTP only, Smart Placement                            |
 | `apps/delivery` | `src/index.ts`           | Public Delivery API: uncached gateway (auth every request) → cached `Delivery` entrypoint on D1 replicas  |
+| `apps/media`    | `src/index.ts`           | Published asset files: uncached gateway (canonical URL) → cached `Media` entrypoint; reads the engine's KV gate |
 | `apps/engine`   | `src/index.ts`           | Queue consumers, cron, every Durable Object and Workflow class; no route                                 |
 
 Shared code lives in packages, never in another app:

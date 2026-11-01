@@ -19,6 +19,7 @@ secrets, bindings) are the references; read the relevant section first.
 | `apps/engine`   | Queue consumers, the cron sweeper, every Durable Object and Workflow class; no route    |
 | `apps/api`      | HTTP only; binds the engine's DOs and Workflows by `script_name`; Smart Placement       |
 | `apps/delivery` | Public delivery gateway + cached `Delivery` entrypoint; reads D1 replicas; purge queue  |
+| `apps/media`    | Published asset files at `media.<domain>`; cached `Media` entrypoint; media purge queue  |
 | `apps/web`      | The admin and human auth; `API` service binding to the api                             |
 | `apps/docs`     | Static docs site (deployed only by the deployment with `"docs": true`)                  |
 
@@ -53,7 +54,7 @@ secrets, bindings) are the references; read the relevant section first.
 ## Rollout order
 
 CI deploys every deployment from `main` in ring order (`staging` → `internal` → `canary` →
-`general`), and within one deployment engine → api → delivery → web. Nothing provisions during CI.
+`general`), and within one deployment engine → media → api → delivery → web. Nothing provisions during CI.
 
 - **A new resource a deploy needs** (a queue the engine consumes, a KV id a render needs) must
   exist in every deployment **before** the merge that binds it. The user runs

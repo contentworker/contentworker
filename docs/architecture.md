@@ -9,6 +9,7 @@ and infrastructure is bound only at the edges.
 ```
    apps/web ─────(API service binding, signed x-cw-principal)────▶ apps/api
    apps/delivery (public CDA, cached)                             apps/engine (queues, cron, DOs, Workflows)
+   apps/media (published asset files, cached; KV gate written by the engine)
         │                                                              │
         └──────────────┬───────────────────────────────────────────────┘
                        │ thin composition entries over
@@ -27,17 +28,19 @@ and infrastructure is bound only at the edges.
 
 ## Workers, split by traffic profile
 
-Each deployment runs four Workers (plus the docs site on contentworker's own deployment). They
+Each deployment runs five Workers (plus the docs site on contentworker's own deployment). They
 are split by how their traffic behaves, so each has its own CPU limit, placement, sampling rate
 and failure blast radius. `AGENTS.md` lists each Worker's role; this table adds where it is
 served and how it is configured. Routes are rendered per deployment by `scripts/fleet.ts`
-(`hosts()`): the admin at `<domain>`, the api at `api.<domain>`, delivery at `cdn.<domain>`.
+(`hosts()`): the admin at `<domain>`, the api at `api.<domain>`, delivery at `cdn.<domain>`,
+media at `media.<domain>`.
 
 | Worker          | Route          | Config highlights (`apps/*/wrangler.jsonc`)                                                              |
 | --------------- | -------------- | -------------------------------------------------------------------------------------------------------- |
 | `apps/web`      | `<domain>`     | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery) |
 | `apps/api`      | `api.<domain>` | Smart Placement, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine DOs/Workflows by script |
 | `apps/delivery` | `cdn.<domain>` | No Smart Placement, `cpu_ms` 2000, head sampling 0.05, Workers Caching on the `Delivery` entrypoint      |
+| `apps/media`    | `media.<domain>` | No Smart Placement, `cpu_ms` 1000, head sampling 0.01, Workers Caching on the `Media` entrypoint         |
 | `apps/engine`   | none           | Smart Placement, `cpu_ms` 30000; owns DO migrations                                                      |
 | `apps/docs`     | docs host      | Deployed only by the deployment with `docs: true`                                                        |
 
@@ -115,9 +118,13 @@ mounts against a D1 read-replica session (`first-unconstrained`), sets a strong 
 `public, max-age=60, stale-while-revalidate=86400, stale-if-error=604800` and a `cache-tag` for
 the path's environment and the environment it resolves to (so alias repoints purge too).
 
-Its queue consumer drains `contentworker-purge` (`apps/delivery/src/purge.ts`): up to 100 tags
-per purge call, one call every 12 s (Cloudflare allows 5 a minute), at most 40 calls per batch,
-handing the rest back with exponential backoff.
+Its queue consumer drains `contentworker-purge` with `drain` (`@contentworker/platform/purge`):
+up to 100 tags per purge call, one call every 12 s (Cloudflare allows 5 a minute), at most 40
+calls per batch, handing the rest back with exponential backoff. Workers Caching is per Worker,
+so the media Worker drains its own queue with the same function.
+
+A `301` from the deprecated `…/assets/:id/transform` (a redirect to an immutable media URL) is
+cached and tagged like a `200`.
 
 ### apps/engine: async and stateful work
 
@@ -135,7 +142,10 @@ bind them by `script_name`) and handles:
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
   `asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
-  `environment_alias.changed`, `environment.deleted`).
+  `environment_alias.changed`, `environment.deleted`; `asset_renditions.changed` purges every
+  environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
+  and send the media Worker's tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`):
+  see [Assets](#assets-r2-images-stream-and-the-media-worker).
 - **Cron** (`* * * * *`): due scheduled actions, the outbox relay sweep, bulk-job stall recovery,
   the restart of deleted-environment purges that stopped progressing, agent schedules
   (`AGENTS_SCHEDULES=true`), retention at the top of each hour, and the daily
@@ -187,23 +197,78 @@ actions answer 501 while definitions and reads keep working. An instance has a s
 `EMAIL_FROM` (rendered from the registry's `email`); unbound, they fail with "email sending is not
 configured".
 
-### Media: R2, Images, Stream
+### Assets: R2, Images, Stream and the media Worker
 
-Served by the api (`packages/http/src/routes/media.ts`, `@contentworker/adapters/blob-r2`):
+**Uploads and draft reads** go through signed `/media/*` URLs (`packages/http/src/routes/media.ts`,
+`@contentworker/adapters/blob-r2`):
 
 - **R2 (`MEDIA_BUCKET`)**: the binding has no presigned URLs, so the api issues its own.
   `createAsset` returns a signed `PUT /media/<key>?…&sig=…` URL (HMAC with
-  `MEDIA_SIGNING_SECRET`, short expiry, bound to the content type), and the stored `file.url` is a
-  signed `GET /media/<key>` capability URL on `MEDIA_BASE_URL` (`https://api.<domain>`). Uploads
-  are capped at 100 MiB; user bytes are served with `nosniff` and `CSP: sandbox`. Rotating
-  `MEDIA_SIGNING_SECRET` invalidates every stored asset URL.
-- **Images (`IMAGES`)**: transform params (`w,h,fit,fm,q,g`) are covered by the signature, so
-  clients cannot mint arbitrary transforms; `fm=auto` picks AVIF/WebP from `Accept`; the focal
-  point becomes gravity when `fit=crop`.
+  `MEDIA_SIGNING_SECRET`, short expiry, bound to the content type). The asset still stores a
+  non-expiring signed `GET` URL in `file.url` on `MEDIA_BASE_URL`, which the api keeps honouring,
+  but no read hands it out: Management and MCP reads replace it with a short-lived one
+  (`withReadUrl`, `READ_URL_TTL_SECONDS` = 900; `exp` is covered by the signature and rounded up
+  to a 15-minute window so a browser's cache keeps working). Uploads are capped at 100 MiB; user
+  bytes are served with `nosniff` and `CSP: sandbox`. Rotating `MEDIA_SIGNING_SECRET` invalidates
+  every signed URL.
+- **Images (`IMAGES`)**: transform params (`w,h,fit,fm,q,g`, and `exp`) are covered by the
+  signature, so clients cannot mint arbitrary transforms; `fm=auto` picks AVIF/WebP from
+  `Accept`; the focal point becomes gravity when `fit=crop`.
+- **Preview** (`GET /preview/:space/:env/assets[/:id]`) projects drafts in the delivered shape,
+  with every URL signed and expiring together, on `MEDIA_PUBLIC_URL` when it is set.
+
+**Published files** are served by the media Worker (`apps/media`) at
+`https://media.<domain>/<space>/<env>/<assetId>/v<n>/<token>/<variant>/<fileName>`. The `token`
+makes the URL unguessable: HMAC-SHA256 under `MEDIA_SIGNING_SECRET` over the space, environment,
+asset id and version, truncated to 16 bytes as base64url (`createMediaPathSigner`, through the
+`MediaPathSigner` port), so editing a URL (another environment's copy of the same asset id, which
+an import keeps, or another version) reaches nothing, and a takedown in one environment can't be
+read around through another. `variant` is `o` (the original), `w<width>` from the fixed ladder 320/640/960/1280/1920/2560 (`fm=auto`
+negotiates the format), or `r-<name>`, a space's rendition preset (`asset_renditions`, migration
+`0008`; at most 20 per space). Delivery builds these URLs at read time from `MEDIA_PUBLIC_URL`,
+the published snapshot's `version` (migration `0009`) and that version's token, through one
+projector,
+`deliveredAsset` (`packages/domain/src/asset/delivered.ts`), used by REST get and list, entry
+embeds, Preview and GraphQL's `Asset` type.
+
+- The **gateway** (default entrypoint, uncached) trusts no header. It checks the path's token
+  first, so a guessed or edited URL is a `404` (`no-store`) that costs a MAC and no cache, KV or
+  D1 read. It then maps the URL to a canonical
+  one on `https://media.internal` (the path, plus `?f=avif|webp|src` for a variant, negotiated
+  from `Accept`; every other parameter dropped), adds `Vary: Accept` when it negotiated, answers
+  `304` on `If-None-Match`, and serves signed `/media/*` GETs (never a PUT, never one without
+  `exp`) uncached.
+- The cached **`Media`** entrypoint, on a miss, checks the token again and then reads the **gate**
+  (`asset-gate:<space>:<env>:<id>` in `KV_CACHE`: `{v, r2Key, contentType, fileName, focal,
+  expiresAt}`, `@contentworker/adapters/asset-gate-kv`), falling back to a D1 replica
+  (`first-unconstrained`), and applies one rule, `mediaServability`
+  (`packages/application/src/asset-gate.ts`): no entry, another version or file name is `404`
+  (as are an unknown variant and a variant of something Images can't resize); past `expiresAt` is
+  `410`; both `no-store`. A `200` is `public, max-age=31536000, immutable`, except for an asset
+  whose rights expire: then `public, max-age=<seconds left>`, without `immutable`, so no cache
+  holds it past the expiry. A `200` is tagged `cwa:<space>:<env>:<id>`, `cwe:<space>:<env>` and,
+  for a rendition, `cwr:<space>:<name>`. Its ports (the gate, a replica store, the path signer)
+  come from `wireMedia`, the media Worker's composition root. It writes nothing.
+- The **engine** owns the gate: `syncAssetGate` runs for `asset.published`, `asset.unpublished`
+  and `asset.deleted` and writes or removes the entry from the current published snapshot (so a
+  redelivered event converges; a hosted video gets none, nor does an asset of an environment
+  being deleted). Deleting an environment removes all of its gate entries (`AssetGate.deleteScope`,
+  a paged KV prefix delete) on `environment.deleted` and again when its purge finishes, before the
+  environment's id is free, so a re-created environment never inherits them. It sends the asset's
+  tag on
+  `contentworker-media-purge`; a revocation (unpublish, archive, delete, a rendition change,
+  environment deletion and each purge step, whose last one follows the final gate removal) is
+  sent again after `REVOCATION_REPURGE_SECONDS` (90 s), past KV's 60 s
+  read cache and replica lag, so a colo that re-cached from a stale gate is purged too.
+- The media Worker drains `contentworker-media-purge` with the same rationed `drain` as delivery.
+  `/assets/:id/transform` on Delivery is deprecated: a cacheable `301` to the matching ladder step
+  or rendition when `MEDIA_PUBLIC_URL` is set, else the earlier signed `302`.
 - **Stream (`STREAM`)**: `POST …/assets/videos` creates a draft asset and a one-time direct
   upload; `POST /webhooks/stream` (mounted only with both `STREAM` and `STREAM_WEBHOOK_SECRET`)
   verifies `Webhook-Signature` and then re-reads the video from the Stream API; `POST …/assets/:id/video/refresh` does the same on
-  demand.
+  demand. When the asset is published, the refresh also updates the published snapshot in the
+  same unit and emits `asset.published`, so caches purge. Playback is public; Stream videos are
+  never gated by the media Worker.
 - **Deleting** an asset (`DELETE …/assets/:id`, refused with `409 asset_in_use` while entries link
   to it) removes the row in one unit with an `asset.deleted` event; the engine then deletes the
   bytes under the asset's key prefix and its Stream video, unless another environment of the space
@@ -218,11 +283,11 @@ routes: folders, filters, archive and delete. The api's `/media/*` byte route ke
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **D1** (`DB`, primary + replicas) | Everything authoritative: spaces, environments, aliases, content types, entries and versions, published read models, assets, releases, schedules, taxonomy, workflows, roles, team, API keys, OAuth, webhooks, the outbox, audit; plus the web app's auth tables (`0002_auth.sql`) |
 | **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle)                                                                                                                                                                 |
-| **KV** (`KV_CACHE`)               | Tag-versioned delivery cache and the authenticated-principal cache (shared by api, engine and delivery)                                                                                                                                                                            |
+| **KV** (`KV_CACHE`)               | Tag-versioned delivery cache, the authenticated-principal cache, and the media gate (shared by api, engine, delivery and media)                                                                                                                                                    |
 | **DO SQLite**                     | Search shards, live hubs, AI budgets, auth-failure counters                                                                                                                                                                                                                        |
 | **Vectorize**                     | Embeddings (768 dims, cosine), metadata-indexed on `spaceId` and `environmentId`                                                                                                                                                                                                   |
 | **Analytics Engine** (`METRICS`)  | Operational counters (`contentworker_*`)                                                                                                                                                                                                                                           |
-| **Workers Caching**               | Delivery responses, keyed by visibility profile and canonical URL                                                                                                                                                                                                                  |
+| **Workers Caching**               | Delivery responses, keyed by visibility profile and canonical URL; published media files, keyed by canonical media URL                                                                                                                                                             |
 
 ## The layers
 
@@ -265,8 +330,11 @@ way state changes: the HTTP API, MCP, and the queue consumers all call them.
   passkeys, SCIM groups, admin audit), `0003_environment_purges.sql` (deleted environments
   still being purged), `0004_version_bodies.sql` (`entry_versions.body_key`, for superseded
   version bodies moved to R2), `0005_webhook_environments.sql` (`webhooks.environment_id`),
-  `0006_environment_promotions.sql` (promotions between environments) and `0007_dam.sql` (the
-  asset library's columns, `asset_folders` and `asset_versions`). Timestamps are epoch milliseconds; JSON is `TEXT`.
+  `0006_environment_promotions.sql` (promotions between environments) `0007_dam.sql` (the
+  asset library's columns, `asset_folders` and `asset_versions`), `0008_asset_renditions.sql` (a
+  space's rendition presets), `0009_asset_published_delivery.sql` (the published asset's version,
+  key, kind and rights) and `0010_asset_published_backfill_again.sql` (0009's backfill again, for
+  snapshots the old api wrote mid-deploy). Timestamps are epoch milliseconds; JSON is `TEXT`.
 - `exec.ts`: `directExec` and the `UnitOfWork` behind `withTransaction`: writes are buffered and
   sent as one `db.batch()`; `expectChanged()` adds a guard statement
   (`INSERT INTO _guard SELECT changes() = n`, with `CHECK (ok = 1)`) so a lost compare-and-set
@@ -284,6 +352,7 @@ One subpath per adapter, each implementing a port against one binding:
 | Subpath             | Port(s)                                  | Technology                                                                                                                           |
 | ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `ai-workers`        | `AIProvider`, `EmbeddingsProvider`       | Workers AI, through AI Gateway when configured                                                                                       |
+| `asset-gate-kv`     | `AssetGate`                              | Workers KV (the media Worker's gate)                                                                                                 |
 | `blob-r2`           | `BlobStore`, media URL signer            | R2 binding + signed `/media/*` route                                                                                                 |
 | `cache-kv`          | `Cache`                                  | Workers KV, tag-versioned                                                                                                            |
 | `queue-cf`          | `Queue`                                  | Cloudflare Queues producer                                                                                                           |
@@ -300,7 +369,8 @@ One subpath per adapter, each implementing a port against one binding:
 
 `env.ts` (the `EdgeEnv` bindings and vars), `config.ts` (`loadConfig`), `wire.ts` (`wireEdge`,
 the only place adapters are bound to ports, run per request / batch / tick), ids, metrics, queue
-message shapes (`messages.ts`, including `deliveryScopeTag`), the Durable Object classes and
+message shapes (`messages.ts`, including `deliveryScopeTag` and the media tags), the rationed
+purge-queue `drain` (`purge.ts`), the Durable Object classes and
 their clients (`do/`), and the Workflow clients. Every binding is optional; an absent binding
 selects a dev fallback (in-memory store, fake blob, stub AI, in-memory vectors), and
 `assertNoFakeAdapters` refuses those on a persistent deployment (one with `DB`) unless
@@ -357,7 +427,8 @@ key or a unique index on every content table.
 5. The engine consumes the event: webhooks, functions, cache tags, search shards and vectors,
    live fan-out, agents; and enqueues one purge tag for the space:environment.
 6. The delivery Worker purges the tag (rationed). The next CDA read misses, reads a D1 replica,
-   and is cached again.
+   and is cached again. For an asset, the engine also updates the media gate and the media
+   Worker purges the asset's files.
 
 See [Events & webhooks](./events-and-webhooks.md) for the async half.
 

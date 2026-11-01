@@ -93,6 +93,7 @@ export default defineConfig({
             { label: 'API keys and access', slug: 'guides/api-keys' },
             { label: 'Team and roles', slug: 'guides/team-and-roles' },
             { label: 'Reading content', slug: 'guides/reading-content' },
+            { label: 'Delivering assets', slug: 'guides/delivering-assets' },
             { label: 'Webhooks', slug: 'guides/webhooks' },
             { label: 'SDKs', slug: 'guides/sdks' },
             { label: 'MCP server', slug: 'guides/mcp' },

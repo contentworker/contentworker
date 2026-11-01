@@ -33,7 +33,7 @@ jobs:
       # One turbo run, so the three checks share the runner's cores instead of taking turns.
       # `--continue` keeps going past a failure, so a red build reports all of its problems in one
       # go; turbo groups each task's log and lists the failed ones at the end. `build` bundles every
-      # Worker (api, delivery and engine build with `wrangler deploy --dry-run`; nothing is
+      # Worker (api, delivery, engine and media build with `wrangler deploy --dry-run`; nothing is
       # uploaded).
       - name: Lint, type-check and build
         if: ${{ !cancelled() }}

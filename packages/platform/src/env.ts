@@ -1,4 +1,5 @@
 import type { WorkersAiRun } from '@contentworker/adapters/ai-workers';
+import type { KvGateBinding } from '@contentworker/adapters/asset-gate-kv';
 import type { R2BucketLike } from '@contentworker/adapters/blob-r2';
 import type { ImagesBindingLike } from '@contentworker/adapters/images-cf';
 import type { WorkerLoaderBinding } from '@contentworker/adapters/plugins-cf-loader';
@@ -54,6 +55,12 @@ export interface EdgeEnv {
    * the delivery Worker). Absent → delivery responses age out on their max-age alone.
    */
   readonly PURGE_QUEUE?: Queue;
+  /**
+   * Producer side of `contentworker-media-purge`: media cache tags to purge (consumed, rationed,
+   * by the media Worker, whose Workers Caching only it can purge). Absent → a revoked asset's
+   * cached media stays until the media Worker's own cache lets it go.
+   */
+  readonly MEDIA_PURGE_QUEUE?: Queue;
   /**
    * R2 bucket holding asset bytes (native binding — no access keys). When
    * bound it is THE BlobStore: uploads and downloads go through this Worker's
@@ -203,6 +210,12 @@ export interface EdgeEnv {
    * same-origin admin; set it so delivery clients get absolute URLs).
    */
   readonly MEDIA_BASE_URL?: string;
+  /**
+   * Public origin of the media Worker (`https://media.<domain>`; scripts/fleet.ts renders it).
+   * Delivered assets' URLs are built on it at read time, and Preview's signed draft URLs point
+   * there. Empty → the api's signed `/media/*` URLs, without renditions or a srcset.
+   */
+  readonly MEDIA_PUBLIC_URL?: string;
   /** HMAC key signing `/media/*` URLs. Required on persistent deployments. */
   readonly MEDIA_SIGNING_SECRET?: string;
   /**
@@ -265,6 +278,7 @@ export type BindingShapeChecks = [
   Satisfies<R2Bucket extends R2BucketLike ? true : false>,
   Satisfies<ImagesBinding extends ImagesBindingLike ? true : false>,
   Satisfies<StreamBinding extends StreamBindingLike ? true : false>,
+  Satisfies<KVNamespace extends KvGateBinding ? true : false>,
 ];
 
 /** Durable Object namespaces an EdgeEnv may carry. */

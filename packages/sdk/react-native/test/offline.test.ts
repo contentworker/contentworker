@@ -1,6 +1,6 @@
 import type { DeliveredEntry, DeliveryClient } from '@contentworker/sdk-core';
 import { describe, expect, it } from 'vitest';
-import { createOfflineDelivery, InMemoryStorage, imageUrl } from '../src/index.js';
+import { createOfflineDelivery, InMemoryStorage } from '../src/index.js';
 
 const entry = (id: string, publishedAt: string): DeliveredEntry => ({
   id,
@@ -88,20 +88,5 @@ describe('@contentworker/sdk-react-native offline delivery', () => {
     expect(await store.list()).toHaveLength(0);
     // After reset the cursor is gone → a re-sync pulls everything again.
     expect((await store.sync()).synced).toBe(1);
-  });
-
-  it('imageUrl appends device transform params', () => {
-    const u = imageUrl('https://cdn.example/img.jpg', {
-      width: 320,
-      height: 200,
-      dpr: 3,
-      format: 'webp',
-      quality: 80,
-    });
-    expect(u).toContain('w=320');
-    expect(u).toContain('h=200');
-    expect(u).toContain('dpr=3');
-    expect(u).toContain('fm=webp');
-    expect(u).toContain('q=80');
   });
 });

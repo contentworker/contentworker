@@ -1,8 +1,8 @@
 import type { Principal } from '@contentworker/domain';
+import { backoff, drain, PURGE_CALLS, PURGE_TAGS } from '@contentworker/platform/purge';
 import { describe, expect, it } from 'vitest';
 import { CLIENT_CACHE, clientCacheControl, hasGraphqlErrors } from '../src/client-cache';
 import { canonicalUrl, fromCanonical, visibilityProfile } from '../src/profile';
-import { backoff, drain, PURGE_CALLS, PURGE_TAGS } from '../src/purge';
 
 const cda = (over: Partial<Principal> = {}): Principal =>
   ({ spaceId: 's1', kind: 'cda', scopes: ['delivery:read', 'search:read'], ...over }) as Principal;
@@ -126,7 +126,9 @@ describe('client cache policy', () => {
   it('keeps a success privately for a minute and never keeps an error', () => {
     expect(clientCacheControl(200)).toBe(CLIENT_CACHE);
     expect(clientCacheControl(304)).toBe(CLIENT_CACHE);
-    for (const status of [400, 401, 403, 404, 429, 500]) {
+    // The deprecated transform's permanent redirect to an immutable media URL.
+    expect(clientCacheControl(301)).toBe(CLIENT_CACHE);
+    for (const status of [302, 400, 401, 403, 404, 429, 500]) {
       expect(clientCacheControl(status), String(status)).toBe('no-store');
     }
     // A success the entrypoint marked no-store (a GraphQL answer with errors) stays no-store.

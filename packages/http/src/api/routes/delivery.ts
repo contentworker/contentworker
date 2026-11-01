@@ -1,9 +1,10 @@
 import {
-  getPublishedAsset,
+  assetTransformTarget,
+  getDeliveredAsset,
   getPublishedEntry,
   hybridSearch,
   listContentTypes,
-  listPublishedAssets,
+  listDeliveredAssets,
   listPublishedEntries,
   liveEventFor,
   maskDeliveredFields,
@@ -16,6 +17,7 @@ import {
   assertQueryRespectsFieldRules,
   authorizeContent,
   canAccessContentType,
+  resolveLocalizedValue,
   SCOPES,
   type Scope,
 } from '@contentworker/domain';
@@ -50,7 +52,13 @@ import {
 } from '../auth';
 import type { DeliveryDocKey } from '../docs/delivery-docs';
 import { onError } from '../http';
-import { clampCount, entryQueryFrom, MAX_PAGE_LIMIT, parseEntryQuery } from '../query';
+import {
+  clampCount,
+  entryQueryFrom,
+  MAX_PAGE_LIMIT,
+  parseDeliveredAssetQuery,
+  parseEntryQuery,
+} from '../query';
 
 /** Max reference-resolution depth a delivery client may request. */
 const MAX_INCLUDE_DEPTH = 10;
@@ -197,10 +205,14 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       if (c.get('principal').contentGrants) {
         return c.json({ items: [], total: 0 });
       }
-      const items = await listPublishedAssets(ctx, scopeOf(c), {
-        limit: clampCount(c.req.query('limit'), MAX_PAGE_LIMIT, { min: 1 }),
-      });
-      return c.json({ items, total: items.length });
+      const locale = c.req.query('locale');
+      const page = await listDeliveredAssets(
+        ctx,
+        scopeOf(c),
+        parseDeliveredAssetQuery(c.req.query()),
+        locale !== undefined ? { locale } : {},
+      );
+      return c.json({ ...page, total: page.items.length });
     },
   );
 
@@ -212,7 +224,15 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       if (c.get('principal').contentGrants) {
         return c.body(null, 403);
       }
-      return c.json(await getPublishedAsset(ctx, scopeOf(c), c.req.param('id')));
+      const locale = c.req.query('locale');
+      return c.json(
+        await getDeliveredAsset(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          locale !== undefined ? { locale } : {},
+        ),
+      );
     },
   );
 
@@ -251,13 +271,24 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
     });
   });
 
-  // Resolves a transformed-image URL for a published asset (resize/crop/format/
-  // quality, focal-point-aware) and redirects to it, so it can back an <img src>.
+  // Deprecated: a delivered asset carries its srcset and renditions. With a media origin this is
+  // a permanent, cacheable redirect to the media URL of the next width step up (or the named
+  // rendition); without one, the earlier signed transform URL, redirected for this request only.
   app.get(
     `${BASE}/assets/:id/transform`,
     describe('transform'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
+      if (c.get('principal').contentGrants) return c.body(null, 403);
+      if (ctx.mediaPublicUrl && ctx.mediaPaths) {
+        const w = c.req.query('w');
+        const rendition = c.req.query('rendition');
+        const url = await assetTransformTarget(ctx, scopeOf(c), c.req.param('id'), {
+          ...(w ? { width: Number(w) } : {}),
+          ...(rendition ? { rendition } : {}),
+        });
+        return c.redirect(url, 301);
+      }
       const { url } = await transformPublishedAssetUrl(
         ctx,
         scopeOf(c),
@@ -310,14 +341,13 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
   ): DeliveryResolvers {
     // GraphQL types each field as one value (a String, not a map of locales), so a query that
     // names no locale reads the space's default one; REST, which can return the map, doesn't.
-    let defaultLocale: Promise<string | undefined> | undefined;
-    const localeOr = async (locale: string | undefined) => {
-      if (locale) return locale;
-      if (!defaultLocale) {
-        defaultLocale = ctx.store.spaces.getConfig(scope).then((config) => config?.defaultLocale);
-      }
-      return defaultLocale;
+    let config: ReturnType<typeof ctx.store.spaces.getConfig> | undefined;
+    const spaceConfig = () => {
+      config ??= ctx.store.spaces.getConfig(scope);
+      return config;
     };
+    const localeOr = async (locale: string | undefined) =>
+      locale || (await spaceConfig())?.defaultLocale;
     return {
       entry: async (contentType, id, locale) => {
         if (!canAccessContentType(principal, 'read', contentType)) return null;
@@ -357,14 +387,29 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
           fields: maskDeliveredFields(principal, e.contentType, e.fields),
         })) as ResolvedEntry[];
       },
-      asset: async (_id, _locale) => {
+      asset: async (id, locale) => {
         if (principal.contentGrants) return null;
         try {
-          const a = await getPublishedAsset(ctx, scope, _id);
-          return { id: a.assetId, file: a.file, title: a.title, description: a.description };
+          // Text per locale: each Asset field resolves its own `locale`, then the query's.
+          const asset = await getDeliveredAsset(ctx, scope, id);
+          return { asset, ...(locale ? { locale } : {}) };
         } catch {
           return null;
         }
+      },
+      localize: async (value, locale) => {
+        const config = await spaceConfig();
+        if (!config) return null;
+        const v = resolveLocalizedValue(
+          value,
+          {
+            defaultLocale: config.defaultLocale,
+            locales: config.locales,
+            fallbacks: config.fallbacks,
+          },
+          locale ?? config.defaultLocale,
+        );
+        return typeof v === 'string' ? v : null;
       },
       search: async (query, topK) => {
         const raw = await hybridSearch(rag, ctx, scope, query, { topK });

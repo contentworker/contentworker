@@ -1,11 +1,13 @@
 import type { DomainEvent, EntriesPublishedBulkEvent, Webhook } from '@contentworker/domain';
 import type {
+  AssetGate,
   BlobStore,
   Cache,
   FunctionInvoker,
   SearchIndex,
   WebhookSender,
 } from '@contentworker/ports';
+import { syncAssetGate } from '../asset-gate';
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
@@ -55,6 +57,12 @@ export interface DispatchDeps {
    */
   readonly blob?: BlobStore;
   /**
+   * The media origin's published-asset gate (KV on the edge). When present, every asset event
+   * brings the asset's entry in line with what is published; without it the media Worker falls
+   * back to a D1 replica on every miss.
+   */
+  readonly assetGate?: AssetGate;
+  /**
    * Tags already invalidated during this consumer invocation. A queue batch of
    * same-type publishes (a release, a burst of scheduled publishes) would
    * otherwise write the SAME `ct:` tag once per event — and a cache backend
@@ -103,7 +111,14 @@ export async function dispatchEvent(
   // A deleted environment's next purge steps. A control event: no webhooks/cache/RAG apply.
   // (Normally routed to the bulk topic, so a long purge never delays entry events.)
   if (event.type === 'environment.purge_due') {
-    await runEnvironmentPurge(ctx, { ...(deps.blob ? { blob: deps.blob } : {}) }, event);
+    await runEnvironmentPurge(
+      ctx,
+      {
+        ...(deps.blob ? { blob: deps.blob } : {}),
+        ...(deps.assetGate ? { assetGate: deps.assetGate } : {}),
+      },
+      event,
+    );
     return;
   }
 
@@ -173,6 +188,29 @@ export async function dispatchEvent(
     }
   }
 
+  // 2c. The media origin's gate follows what is published now (written, or removed). It reads the
+  // current snapshot rather than trusting the event, so a redelivered one converges.
+  if (
+    deps.assetGate &&
+    (event.type === 'asset.published' ||
+      event.type === 'asset.unpublished' ||
+      event.type === 'asset.deleted')
+  ) {
+    await syncAssetGate(ctx, deps.assetGate, scope, event.assetId);
+  }
+
+  // 2d. A rendition preset changed: delivered assets list the space's renditions, embedded in
+  // cached entry renders of every environment, so each environment's scope epoch bumps.
+  if (deps.cache && event.type === 'asset_renditions.changed') {
+    const tags = (await ctx.store.spaces.listEnvironments(scope.spaceId))
+      .map((env) => epochTag({ spaceId: scope.spaceId, environmentId: env.id }))
+      .filter((t) => !deps.invalidatedTags?.has(t));
+    if (tags.length > 0) {
+      await deps.cache.invalidateTags(tags);
+      for (const t of tags) deps.invalidatedTags?.add(t);
+    }
+  }
+
   // A deleted asset's bytes: the row went with the request, the files go here, so a failed
   // removal comes back with the event. Idempotent, like every removal below.
   if (event.type === 'asset.deleted') {
@@ -188,6 +226,9 @@ export async function dispatchEvent(
       await searchIndex?.remove(scope, entryId);
     }
     if (deps.cache) await deps.cache.invalidateTag(epochTag(scope));
+    // Its media stops at once: every gate entry goes (the engine then purges the environment's
+    // cached media, now and once more later). The purge clears the gate again when it finishes.
+    await deps.assetGate?.deleteScope(scope);
     // Its rows and files go with the purge (`environment.purge_due`), once, not per event.
   }
 
