@@ -8,9 +8,11 @@ import {
   createEntry,
   createRelease,
   getPublishedEntry,
+  listReleases,
   publishContentType,
   publishEntry,
   publishRelease,
+  removeEntryFromRelease,
 } from '../src/index';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
@@ -101,6 +103,23 @@ describe('releases', () => {
 
     await publishRelease(ctx, scope, release.id);
     await expect(getPublishedEntry(ctx, scope, a.entry.id)).rejects.toThrow(/not.*found/i);
+  });
+
+  it('lists each release with its member count, per scope', async () => {
+    const a = await draft(ctx, 'A');
+    const b = await draft(ctx, 'B');
+    const two = await createRelease(ctx, scope, { title: 'Two' });
+    await createRelease(ctx, scope, { title: 'Empty' });
+    await addEntryToRelease(ctx, scope, two.id, { entityId: a.entry.id });
+    await addEntryToRelease(ctx, scope, two.id, { entityId: b.entry.id });
+    // Re-adding a member replaces it rather than counting it twice.
+    await addEntryToRelease(ctx, scope, two.id, { entityId: b.entry.id, action: 'unpublish' });
+    const counts = async (at = scope) =>
+      Object.fromEntries((await listReleases(ctx, at)).map((r) => [r.title, r.itemCount]));
+    expect(await counts()).toEqual({ Two: 2, Empty: 0 });
+    await removeEntryFromRelease(ctx, scope, two.id, a.entry.id);
+    expect(await counts()).toEqual({ Two: 1, Empty: 0 });
+    expect(await counts({ spaceId: 'space-1', environmentId: 'staging' })).toEqual({});
   });
 
   it('rejects publishing an empty release', async () => {

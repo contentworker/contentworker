@@ -152,3 +152,47 @@ describe('deleting an environment stays within the caller’s space and role', (
     expect(s2.items.map((e) => e.id)).toContain('staging');
   });
 });
+
+describe('entry counts stay within the caller’s space and scope', () => {
+  let app: ReturnType<typeof createApp>;
+  const counts = (space: string, auth: string) =>
+    app.request(`/spaces/${space}/environments/main/content-types/entry-counts`, {
+      headers: { Authorization: `Bearer ${auth}` },
+    });
+  const mint = async (space: string, body: Record<string, unknown>) =>
+    (
+      (await (
+        await app.request(`/spaces/${space}/api-keys`, {
+          method: 'POST',
+          headers: admin,
+          body: JSON.stringify(body),
+        })
+      ).json()) as { token: string }
+    ).token;
+
+  beforeEach(async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    app = createApp(ctx, config, rag, blob, ai);
+    await app.request('/spaces', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ spaceId: 's2', name: 'Second', defaultLocale: 'en-US' }),
+    });
+  });
+
+  it('refuses a preview key for another space, and counts for its own', async () => {
+    const spaceB = await mint('s2', { kind: 'cpa' });
+    expect((await counts('s1', spaceB)).status).toBe(403);
+    expect((await counts('s2', spaceB)).status).toBe(200);
+  });
+
+  it('refuses a delivery key: it has no preview:read', async () => {
+    expect((await counts('s1', 'cda')).status).toBe(403);
+    const minted = await mint('s1', { kind: 'cda' });
+    expect((await counts('s1', minted)).status).toBe(403);
+  });
+
+  it('answers a preview key for its own space', async () => {
+    expect((await counts('s1', 'cpa')).status).toBe(200);
+  });
+});

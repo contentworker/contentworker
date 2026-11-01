@@ -214,9 +214,123 @@ describe('reading HTML as rich text', () => {
     ]);
   });
 
+  it('maps a table to rows of header and body cells, wrapping cell text in paragraphs', () => {
+    expect(
+      read(
+        '<table><thead><tr><th>Plan</th><th>Price</th></tr></thead>' +
+          '<tbody><tr><td>Starter</td><td><strong>$0</strong></td></tr></tbody>' +
+          '<tfoot><tr><td>Total</td><td>$0</td></tr></tfoot></table>',
+      ),
+    ).toEqual([
+      {
+        table: [
+          {
+            'table-row': [
+              { 'table-header-cell': [{ paragraph: ['Plan'] }] },
+              { 'table-header-cell': [{ paragraph: ['Price'] }] },
+            ],
+          },
+          {
+            'table-row': [
+              { 'table-cell': [{ paragraph: ['Starter'] }] },
+              { 'table-cell': [{ paragraph: [{ text: '$0', marks: ['bold'] }] }] },
+            ],
+          },
+          {
+            'table-row': [
+              { 'table-cell': [{ paragraph: ['Total'] }] },
+              { 'table-cell': [{ paragraph: ['$0'] }] },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('reads a table whose rows, cells and sections are never closed', () => {
+    // Legal HTML, and what older exports write: each part closes its open sibling.
+    expect(read('<table><tbody><tr><td>a<td>b<tr><th>c<td><p>d</table><p>after')).toEqual([
+      {
+        table: [
+          {
+            'table-row': [
+              { 'table-cell': [{ paragraph: ['a'] }] },
+              { 'table-cell': [{ paragraph: ['b'] }] },
+            ],
+          },
+          {
+            'table-row': [
+              { 'table-header-cell': [{ paragraph: ['c'] }] },
+              { 'table-cell': [{ paragraph: ['d'] }] },
+            ],
+          },
+        ],
+      },
+      { paragraph: ['after'] },
+    ]);
+  });
+
+  it('keeps a table nested in a cell inside that cell', () => {
+    expect(
+      read(
+        '<table><tr><td>outer<table><tr><td>inner</td></tr></table></td><td>next</td></tr></table>',
+      ),
+    ).toEqual([
+      {
+        table: [
+          {
+            'table-row': [
+              {
+                'table-cell': [
+                  { paragraph: ['outer'] },
+                  { table: [{ 'table-row': [{ 'table-cell': [{ paragraph: ['inner'] }] }] }] },
+                ],
+              },
+              { 'table-cell': [{ paragraph: ['next'] }] },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('keeps a caption and stray text before the table, and gives an empty cell a paragraph', () => {
+    const doc = richTextFromHtml(
+      '<table><caption>Prices</caption>loose<colgroup><col></colgroup><tr><td></td><td colspan="2" rowspan=1>x</td></tr></table>',
+    );
+    expect(doc.content.map(shape)).toEqual([
+      { paragraph: ['Prices'] },
+      { paragraph: ['loose'] },
+      {
+        table: [
+          {
+            'table-row': [
+              { 'table-cell': [{ paragraph: [''] }] },
+              { 'table-cell': [{ paragraph: ['x'] }] },
+            ],
+          },
+        ],
+      },
+    ]);
+    // Only a real span is kept, as the editor's merged-cell attributes.
+    const cells = doc.content[2]?.content?.[0]?.content;
+    expect(cells?.map((c) => c.data)).toEqual([{}, { colspan: 2 }]);
+  });
+
+  it('reads a table with no cells, or past the bounds, as its text', () => {
+    expect(read('<table><caption>Only a caption</caption></table>')).toEqual([
+      { paragraph: ['Only a caption'] },
+    ]);
+    const wide = `<table><tr>${'<td>c</td>'.repeat(51)}</tr></table>`;
+    const content = richTextFromHtml(wide).content;
+    expect(content.some((n) => n.nodeType === 'table')).toBe(false);
+    expect(richTextToPlainText(richTextFromHtml(wide))).toContain('c');
+  });
+
   it('produces documents the field validator accepts', () => {
     const messy =
-      '<h1>T</h1><p>a<p>b<ul><li>c</ul></p><table><tr><td>d</td></tr></table><img src=x.png>\n\ne';
+      '<h1>T</h1><p>a<p>b<ul><li>c</ul></p><table><tr><td>d</td></tr></table><img src=x.png>\n\ne' +
+      '<table><caption>c</caption><tr><th>h<td><td colspan=99>x<tr></table>';
     expect(validateRichText(richTextFromHtml(messy))).toEqual([]);
   });
 

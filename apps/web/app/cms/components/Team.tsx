@@ -32,6 +32,7 @@ import { Ago } from '~/cms/components/ago';
 import { ConfirmButton, InlineConfirm } from '~/cms/components/InlineConfirm';
 import { Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
+import { keyKindApi, keyKindLabel } from '../lib/key-kinds';
 import {
   apiErrorMessage,
   type ManagementClient,
@@ -49,7 +50,6 @@ import { useToast } from '../lib/toast';
 export const LAST_ADMIN_MESSAGE =
   'The last administrator can’t be demoted, disabled, removed or revoked. Make someone else an administrator first.';
 
-const KEY_KIND: Record<string, string> = { cma: 'CMA', cda: 'CDA', cpa: 'CPA' };
 const ISSUANCE: Record<TeamKey['issuance'], string> = {
   key: 'API key',
   pat: 'Personal token',
@@ -339,13 +339,15 @@ function Keys(props: {
         </TableHeader>
         <TableBody>
           {keys.map((k) => {
-            const label = k.name ?? `${KEY_KIND[k.kind] ?? k.kind} key`;
+            const label = k.name ?? `${keyKindLabel(k.kind)} key`;
             return (
               <TableRow key={k.id}>
                 <TableCell>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{label}</span>
-                    <Badge variant="outline">{KEY_KIND[k.kind] ?? k.kind}</Badge>
+                    <Badge variant="outline" title={keyKindApi(k.kind)}>
+                      {keyKindLabel(k.kind)}
+                    </Badge>
                   </div>
                   <div className="text-muted-foreground text-xs">
                     {ISSUANCE[k.issuance]}

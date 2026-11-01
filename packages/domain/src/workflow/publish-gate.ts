@@ -25,6 +25,17 @@ export function canPublishThroughRun(graph: {
   );
 }
 
+/**
+ * Whether a published version gates publishing: its flag is on and a run of it can publish. The
+ * one rule every reader applies (the stores' `listPublishGates`, the workflow summary).
+ */
+export function versionGatesPublish(version: {
+  readonly gatesPublish?: boolean;
+  readonly graph: { readonly nodes: readonly Pick<WorkflowNode, 'type'>[] };
+}): boolean {
+  return version.gatesPublish === true && canPublishThroughRun(version.graph);
+}
+
 /** Why a gated graph can't be published, or null when it can. */
 export function publishGateIssue(graph: {
   readonly nodes: readonly Pick<WorkflowNode, 'type'>[];

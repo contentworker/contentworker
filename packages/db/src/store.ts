@@ -7,7 +7,6 @@ import {
   type Concept,
   ConflictError,
   type ContentType,
-  canPublishThroughRun,
   type DomainEvent,
   type Entry,
   type EntryFields,
@@ -27,6 +26,7 @@ import {
   type SpaceMember,
   type Task,
   type UniqueClaim,
+  versionGatesPublish,
   type Webhook,
   type WorkflowDefinition,
   type WorkflowGraphDefinition,
@@ -449,6 +449,22 @@ function makeEntryRepo(
       return filtered.map((r) => ({
         ...r,
         fields: projectFields(r.fields, query.select as string[]),
+      }));
+    },
+    async countByStatus(scope) {
+      const rows = await db
+        .select({
+          contentType: schema.entries.contentTypeApiId,
+          status: schema.entries.status,
+          n: count(),
+        })
+        .from(schema.entries)
+        .where(scopeFilter(schema.entries, scope))
+        .groupBy(schema.entries.contentTypeApiId, schema.entries.status);
+      return rows.map((r) => ({
+        contentType: r.contentType,
+        status: r.status,
+        count: Number(r.n),
       }));
     },
     async create(scope, entry, version) {
@@ -2844,6 +2860,21 @@ function makeReleaseRepo(x: Exec): ReleaseRepo {
         action: r.action,
       }));
     },
+    async countItems(scope, releaseIds) {
+      const ri = schema.releaseItems;
+      const rows = await selectChunked(
+        [...new Set(releaseIds)],
+        (chunk) =>
+          db
+            .select({ releaseId: ri.releaseId, n: count() })
+            .from(ri)
+            .where(and(scopeFilter(ri, scope), inArray(ri.releaseId, chunk)))
+            .groupBy(ri.releaseId),
+        1,
+        RESERVED,
+      );
+      return new Map(rows.map((r) => [r.releaseId, r.n]));
+    },
   };
 }
 
@@ -3584,12 +3615,11 @@ function makeWorkflowGraphRepo(x: Exec): WorkflowGraphRepo {
         .where(scopeFilter(v, scope))
         .groupBy(v.workflowId);
       return rows
-        .filter(
-          (r) =>
-            Number(r.gatesPublish) === 1 &&
-            canPublishThroughRun({
-              nodes: r.nodes ? (JSON.parse(r.nodes) as { type: string }[]) : [],
-            }),
+        .filter((r) =>
+          versionGatesPublish({
+            gatesPublish: Number(r.gatesPublish) === 1,
+            graph: { nodes: r.nodes ? (JSON.parse(r.nodes) as { type: string }[]) : [] },
+          }),
         )
         .map((r) => ({
           workflowId: r.workflowId,
@@ -3606,6 +3636,40 @@ function makeWorkflowGraphRepo(x: Exec): WorkflowGraphRepo {
         .orderBy(desc(v.version))
         .limit(1);
       return row ? toVersion(row) : null;
+    },
+    async listLatestVersions(scope, workflowIds) {
+      // Each workflow's highest version, picked inside the query: only the latest definitions
+      // (graphs can be large) cross the wire, not every workflow's whole history.
+      const lv = alias(v, 'lv');
+      const rows = await selectChunked(
+        [...new Set(workflowIds)],
+        (chunk) =>
+          db
+            .select()
+            .from(v)
+            .where(
+              and(
+                scopeFilter(v, scope),
+                inArray(v.workflowId, chunk),
+                eq(
+                  v.version,
+                  db
+                    .select({ latest: sql`max(${lv.version})` })
+                    .from(lv)
+                    .where(
+                      and(
+                        eq(lv.spaceId, v.spaceId),
+                        eq(lv.environmentId, v.environmentId),
+                        eq(lv.workflowId, v.workflowId),
+                      ),
+                    ),
+                ),
+              ),
+            ),
+        1,
+        RESERVED,
+      );
+      return rows.map(toVersion);
     },
   };
 }

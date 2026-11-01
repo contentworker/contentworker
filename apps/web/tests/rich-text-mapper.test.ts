@@ -23,6 +23,38 @@ const embeddedEntry = (id: string): RichTextNode => ({
   content: [],
 });
 
+const cell = (
+  nodeType: 'table-header-cell' | 'table-cell',
+  content: RichTextNode[],
+  data: Record<string, unknown> = {},
+): RichTextNode => ({ nodeType, data, content });
+const row = (...cells: RichTextNode[]): RichTextNode => ({
+  nodeType: 'table-row',
+  data: {},
+  content: cells,
+});
+const table = (...rows: RichTextNode[]): RichTextNode => ({
+  nodeType: 'table',
+  data: {},
+  content: rows,
+});
+const pricing = table(
+  row(
+    cell('table-header-cell', [paragraph(text('Plan'))]),
+    cell('table-header-cell', [paragraph(text('Price'))]),
+  ),
+  row(
+    cell('table-cell', [paragraph(text('Starter', [{ type: 'bold' }]))]),
+    cell('table-cell', [
+      paragraph(text('$0')),
+      {
+        nodeType: 'unordered-list',
+        content: [{ nodeType: 'list-item', content: [paragraph(text('forever'))] }],
+      },
+    ]),
+  ),
+);
+
 /** Documents in the exact shape the previous block editor emitted. */
 const oldEditorCorpus: RichTextDocument = doc([
   { nodeType: 'heading-1', content: [text('Title')] },
@@ -117,17 +149,17 @@ describe('rich-text mapper round-trips', () => {
   });
 
   it('round-trips unknown block and inline nodes byte-identically', () => {
-    const table: RichTextNode = {
-      nodeType: 'table',
-      content: [{ nodeType: 'table-row', content: [text('cell')] }],
-      data: { rows: 1 },
+    const callout: RichTextNode = {
+      nodeType: 'callout',
+      content: [{ nodeType: 'callout-title', content: [text('note')] }],
+      data: { tone: 'info' },
     };
     const footnote: RichTextNode = {
       nodeType: 'footnote-ref',
       data: { note: 'n1' },
       content: [],
     };
-    const value = doc([table, paragraph(text('before '), footnote, text(' after'))]);
+    const value = doc([callout, paragraph(text('before '), footnote, text(' after'))]);
     expect(toDocument(toTiptap(value))).toEqual(value);
   });
 
@@ -290,6 +322,113 @@ describe('rich-text mapper round-trips', () => {
   });
 });
 
+describe('rich-text mapper tables', () => {
+  it('round-trips a table with header cells and block content in its cells', () => {
+    const value = doc([paragraph(text('Before')), pricing, paragraph(text('After'))]);
+    expect(toDocument(toTiptap(value))).toEqual(value);
+  });
+
+  it("maps table nodes to the editor's table nodes", () => {
+    expect(toTiptap(doc([table(row(cell('table-header-cell', [paragraph(text('h'))])))]))).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'table',
+          content: [
+            {
+              type: 'tableRow',
+              content: [
+                {
+                  type: 'tableHeader',
+                  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'h' }] }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('round-trips merged cells as colspan/rowspan, and drops column widths', () => {
+    const value = doc([
+      table(
+        row(
+          cell('table-cell', [paragraph(text('wide'))], { colspan: 2 }),
+          cell('table-cell', [paragraph(text('tall'))], { rowspan: 2 }),
+        ),
+        row(cell('table-cell', [paragraph(text('a'))]), cell('table-cell', [paragraph(text('b'))])),
+      ),
+    ]);
+    const pm = toTiptap(value);
+    expect(pm.content?.[0]?.content?.[0]?.content?.[0]?.attrs).toEqual({ colspan: 2 });
+    expect(toDocument(pm)).toEqual(value);
+    // The editor always carries every attr; a width (or a span of 1) is not stored.
+    const edited: PmNode = {
+      type: 'doc',
+      content: [
+        {
+          type: 'table',
+          content: [
+            {
+              type: 'tableRow',
+              content: [
+                {
+                  type: 'tableCell',
+                  attrs: { colspan: 1, rowspan: 1, colwidth: [120] },
+                  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'x' }] }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    expect(toDocument(edited)).toEqual(
+      doc([table(row(cell('table-cell', [paragraph(text('x'))])))]),
+    );
+  });
+
+  it('keeps an empty cell as an empty paragraph, and drops rows the editor emptied', () => {
+    const edited: PmNode = {
+      type: 'doc',
+      content: [
+        {
+          type: 'table',
+          content: [
+            { type: 'tableRow', content: [] },
+            {
+              type: 'tableRow',
+              content: [{ type: 'tableCell', content: [{ type: 'paragraph' }] }],
+            },
+          ],
+        },
+        { type: 'table', content: [{ type: 'tableRow', content: [] }] },
+      ],
+    };
+    expect(toDocument(edited)).toEqual(
+      doc([table(row(cell('table-cell', [{ nodeType: 'paragraph', content: [] }])))]),
+    );
+  });
+
+  it('carries a malformed table through raw rather than letting the editor rebuild it', () => {
+    const ragged: RichTextNode = {
+      nodeType: 'table',
+      data: {},
+      content: [row(cell('table-cell', [text('inline in a cell')])), paragraph(text('not a row'))],
+    };
+    const stray = row(cell('table-cell', [paragraph(text('row outside a table'))]));
+    const value = doc([ragged, stray, table()]);
+    const pm = toTiptap(value);
+    expect(pm.content?.map((n) => n.type)).toEqual([
+      'unknownBlock',
+      'unknownBlock',
+      'unknownBlock',
+    ]);
+    expect(toDocument(pm)).toEqual(value);
+  });
+});
+
 describe('mapper output is schema-legal', () => {
   const schema = getSchema(buildExtensions());
   const fixtures: Record<string, unknown> = {
@@ -310,7 +449,7 @@ describe('mapper output is schema-legal', () => {
       { nodeType: 'hr', content: [] },
     ]),
     'unknown nodes': doc([
-      { nodeType: 'table', content: [], data: { x: 1 } },
+      { nodeType: 'callout', content: [], data: { x: 1 } },
       paragraph(text('a'), { nodeType: 'footnote-ref', data: { note: 'n1' }, content: [] }),
     ]),
     'reference links and inline embeds': doc([
@@ -358,6 +497,11 @@ describe('mapper output is schema-legal', () => {
         content: [text('a'), { nodeType: 'hard-break' }, text('b')],
       }),
     ]),
+    table: doc([pricing]),
+    'table nested in a cell': doc([
+      table(row(cell('table-cell', [paragraph(text('outer')), pricing]))),
+    ]),
+    'malformed table': doc([{ nodeType: 'table', content: [text('loose')] }]),
     empty: undefined,
   };
 

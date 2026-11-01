@@ -1,6 +1,6 @@
 // The CMS's navigation pieces the web shell mounts: the nav source (G-letters, Settings
-// sections), the ⌘K command palette, the Settings section nav, the New entry control and the
-// single-key shortcut guard. The shell itself (routes/shell.tsx) is covered by e2e/shell.spec.ts.
+// sections), the header's breadcrumbs, the ⌘K command palette, the Settings section nav, the New
+// entry control and the single-key shortcut guard. The shell itself (routes/shell.tsx) is covered by e2e/shell.spec.ts.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
@@ -29,6 +29,7 @@ const { NAV, SETTINGS_GROUPS, SETTINGS_SECTIONS, visibleNav } = await import(
   '~/cms/components/layout/nav'
 );
 const { SettingsNav } = await import('~/cms/components/layout/SettingsNav');
+const { Breadcrumbs } = await import('~/cms/components/layout/Breadcrumbs');
 const { NewEntry } = await import('~/cms/components/layout/NewEntry');
 const { DEFAULT_FEATURES } = await import('~/cms/lib/features');
 const { plainKeyAllowed } = await import('~/cms/lib/shortcuts');
@@ -54,7 +55,27 @@ beforeEach(() => {
   signOut.mockReset();
 });
 
+describe('breadcrumbs', () => {
+  it('name a content type by its name, under the nav’s name for Content', async () => {
+    renderAt('/content/article', <Breadcrumbs />);
+    expect(screen.getByRole('link', { name: 'Content' }).getAttribute('href')).toBe('/content');
+    expect(await screen.findByText('Article')).toBeTruthy();
+  });
+
+  it('name a page outside the nav as the shell names it, not by its URL', () => {
+    renderAt('/team', <Breadcrumbs pages={[{ to: '/team', label: 'People and sign-in' }]} />);
+    expect(screen.getByText('People and sign-in')).toBeTruthy();
+    expect(screen.queryByText('Team')).toBeNull();
+  });
+});
+
 describe('nav source', () => {
+  it('lists the audit log once, as a Settings section', () => {
+    const audit = SETTINGS_SECTIONS.filter((s) => s.label === 'Audit log');
+    expect(audit).toHaveLength(1);
+    expect(NAV.some((n) => n.label === 'Audit log')).toBe(false);
+  });
+
   it('gives every destination a unique G-letter', () => {
     const keys = NAV.map((n) => n.shortcutKey);
     expect(new Set(keys).size).toBe(keys.length);
