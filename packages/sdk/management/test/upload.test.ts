@@ -106,7 +106,9 @@ describe('assets.upload', () => {
   });
 
   it('aborts the upload on the server when a part keeps failing', async () => {
-    const { fetchImpl, calls } = api({ failures: { 1: 99 } });
+    // Real-sized parts: the fake's 8-byte default would cut 100 MiB into 13 million parts, and
+    // building that many tasks alone outlasted the 5 s timeout on CI.
+    const { fetchImpl, calls } = api({ failures: { 1: 99 }, partSize: 40 * 1024 * 1024 });
     const client = createManagementClient({ ...base, fetch: fetchImpl });
     await expect(
       client.assets.upload(
