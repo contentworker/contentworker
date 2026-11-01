@@ -465,26 +465,62 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 }
 
 /** Minimal GraphiQL explorer page (CDN-hosted assets) wired to `endpoint`. */
-function graphiqlHtml(endpoint: string): string {
+/**
+ * The GraphiQL page's scripts, pinned to exact versions with Subresource Integrity, so a changed
+ * or compromised CDN file is refused rather than run on a page where people paste their keys.
+ * GraphiQL 4 is the last major that ships a browser (UMD) build, and React 18 the last React
+ * with one; an unpinned `graphiql` URL now resolves to 5.x, which has none, and broke the page.
+ */
+const GRAPHIQL_ASSETS = {
+  css: {
+    href: 'https://unpkg.com/graphiql@4.1.2/graphiql.min.css',
+    integrity: 'sha384-1el1QShFBnnXTx9x/Cprg82hZWKt0ry29OAYIXt05swbi0KcZDFoj0CWguMpopJr',
+  },
+  scripts: [
+    {
+      src: 'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
+      integrity: 'sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z',
+    },
+    {
+      src: 'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
+      integrity: 'sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1',
+    },
+    {
+      src: 'https://unpkg.com/graphiql@4.1.2/graphiql.min.js',
+      integrity: 'sha384-9XdHu7ajgGJziD4J1zNBKQ842Q/+zZfDv+ib1eMhZWBH6hPAs806x+Jbcf0yNO6B',
+    },
+  ],
+} as const;
+
+/**
+ * A value as a JavaScript literal safe inside an inline <script>: JSON with `<` escaped, so a
+ * `</script>` in it (the space and environment come from the URL) can't end the element.
+ */
+const inlineJson = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
+
+export function graphiqlHtml(endpoint: string): string {
+  const scripts = GRAPHIQL_ASSETS.scripts
+    .map(
+      (s) => `<script src="${s.src}" integrity="${s.integrity}" crossorigin="anonymous"></script>`,
+    )
+    .join('\n    ');
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <title>contentworker GraphiQL</title>
     <style>body,#graphiql{height:100vh;margin:0}</style>
-    <link rel="stylesheet" href="https://unpkg.com/graphiql/graphiql.min.css" />
+    <link rel="stylesheet" href="${GRAPHIQL_ASSETS.css.href}" integrity="${GRAPHIQL_ASSETS.css.integrity}" crossorigin="anonymous" />
   </head>
   <body>
     <div id="graphiql">Loading…</div>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/graphiql/graphiql.min.js"></script>
+    ${scripts}
     <script>
-      const fetcher = GraphiQL.createFetcher({ url: ${JSON.stringify(endpoint)} });
+      const fetcher = GraphiQL.createFetcher({ url: ${inlineJson(endpoint)} });
       ReactDOM.createRoot(document.getElementById('graphiql')).render(
         React.createElement(GraphiQL, {
           fetcher,
-          defaultHeaders: JSON.stringify({ Authorization: 'Bearer dev-cda-key' }, null, 2),
+          defaultHeaders: JSON.stringify({ Authorization: 'Bearer <your CDA or CPA key>' }, null, 2),
         }),
       );
     </script>

@@ -234,6 +234,27 @@ describe('GraphQL Delivery (generated from content types)', () => {
     ).toBe(true);
   });
 
+  it('serves GraphiQL from pinned, integrity-checked assets', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app = createApp(ctx, config, rag, blob, ai);
+    const html = await (await app.request('/graphiql/s1/main')).text();
+    const assets = [...html.matchAll(/(?:src|href)="(https:[^"]+)"/g)].map((m) => m[1] as string);
+    expect(assets.length).toBe(4);
+    // Exact versions only (a bare package name or a major tag can change under the page).
+    for (const url of assets) expect(url, url).toMatch(/@\d+\.\d+\.\d+\//);
+    expect(html.match(/integrity="sha384-/g)?.length).toBe(4);
+  });
+
+  it('keeps a hostile space or environment name inside the GraphiQL script', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app = createApp(ctx, config, rag, blob, ai);
+    const html = await (
+      await app.request('/graphiql/s1/%3C%2Fscript%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E')
+    ).text();
+    expect(html).not.toContain('<script>alert(1)');
+    expect(html).toContain('\\u003c/script>');
+  });
+
   it('sets baseline security headers', async () => {
     const { ctx, rag, blob, ai } = wire(config);
     const app = createApp(ctx, config, rag, blob, ai);
