@@ -124,12 +124,13 @@ how these paths are signed has to roll out in two steps (verifiers accept both, 
 
 `.github/workflows/ci.yml`:
 
-- **verify** (every push and pull request): lint, type-check, build, test (including the
-  engine's Workflow runs in workerd with `AI_MODE=mock`), `wrangler deploy --dry-run` for
-  engine, api and delivery, `pnpm test:fleet`, `pnpm test:toolkit`, and
-  `pnpm audit --prod --audit-level high`.
+- **verify** (every push and pull request): lint, type-check, build and test in one parallel
+  turbo run (the build is `wrangler deploy --dry-run` for engine, api and delivery; the tests
+  include the engine's Workflow runs in workerd with `AI_MODE=mock`), then `pnpm test:fleet`,
+  `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`.
 - **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
-  against an offline dev server (`apps/web/e2e`).
+  against an offline dev server (`apps/web/e2e`). The `changes` job skips it for a pull request
+  that only touches `docs/`, `apps/docs/`, `deployments/`, `.claude/` or top-level Markdown.
 - **plan → staging → internal → canary → general** (push to `main` only): `fleet.ts matrix`
   groups deployments by ring; each ring waits for the previous one to finish cleanly and calls
   `deploy.yml` once per deployment (`general` four at a time).

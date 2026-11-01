@@ -42,7 +42,7 @@ secrets, bindings) are the references; read the relevant section first.
    bad registry values are refused.
 7. **Validate deployability** (read-only):
    - `pnpm --filter @contentworker/<engine|api|delivery> exec wrangler deploy --dry-run --outdir /tmp/bundle-<app>`
-     for each touched Worker (CI's "Bundle Workers" step), and `pnpm --filter @contentworker/web build`.
+     for each touched Worker (what those Workers' `build` runs in CI's verify job), and `pnpm --filter @contentworker/web build`.
    - `node scripts/fleet.ts render <id>` for an affected deployment and read the rendered file.
    - Parity: every binding `EdgeEnv` declares and a Worker's code path uses exists in that
      Worker's config; DO and Workflow bindings in api and delivery carry
