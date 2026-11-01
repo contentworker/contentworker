@@ -1,6 +1,6 @@
 import type { Principal } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
-import { maskDeliveredFields } from '../src/index.js';
+import { maskDeliveredFields } from '../src/index';
 
 const granular: Principal = {
   kind: 'cda',

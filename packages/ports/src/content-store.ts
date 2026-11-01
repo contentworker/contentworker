@@ -750,7 +750,10 @@ export interface SpaceRepo {
   create(config: SpaceConfig): Promise<void>;
   /** Sets the space's default separation of duties for workflow approvals. */
   setWorkflowSeparateDuties(spaceId: string, value: boolean): Promise<void>;
-  /** Registers an environment (branch) within a space. */
+  /**
+   * Registers an environment (branch) within a space. Refused with `TransactionConflictError`
+   * while a deleted environment of that id is still being purged, so it can't inherit leftovers.
+   */
   createEnvironment(spaceId: string, environmentId: string, name: string): Promise<void>;
   /** Lists a space's environments (branches). */
   listEnvironments(spaceId: string): Promise<Environment[]>;
@@ -758,16 +761,23 @@ export interface SpaceRepo {
   setAlias(spaceId: string, alias: string, targetEnvironmentId: string, at: string): Promise<void>;
   /** Resolves one alias, or null if the name isn't an alias. */
   getAlias(spaceId: string, alias: string): Promise<EnvironmentAlias | null>;
+  /**
+   * What an `:env` name means, in one read: the alias target if it is an alias, and whether it
+   * names a deleted environment whose rows are still being purged (which must not be read).
+   */
+  resolveName(
+    spaceId: string,
+    name: string,
+  ): Promise<{ readonly targetEnvironmentId: string | null; readonly purging: boolean }>;
   /** Lists a space's environment aliases. */
   listAliases(spaceId: string): Promise<EnvironmentAlias[]>;
   /** Removes an alias (the target environment is untouched). */
   deleteAlias(spaceId: string, alias: string): Promise<void>;
   /**
-   * Removes an environment: its registry row and every row scoped to it (the content model,
-   * entries and their versions, assets, references, releases, schedules, workflows and runs,
-   * taxonomy, comments, tasks, jobs), keeping its audit history, and appends `events` to the
-   * outbox and `audit` to the audit log in the same atomic write: a deletion never commits
-   * unrecorded.
+   * Deletes an environment: removes its registry row and records it as purging, appending
+   * `events` to the outbox and `audit` to the audit log, in one atomic write (a deletion never
+   * commits unrecorded). Refused with `TransactionConflictError` if an alias points at it when
+   * the write runs. Its rows are removed afterwards by {@link purgeEnvironmentStep}.
    */
   deleteEnvironment(
     spaceId: string,
@@ -775,6 +785,25 @@ export interface SpaceRepo {
     events: readonly DomainEvent[],
     audit: AuditEntry,
   ): Promise<void>;
+  /**
+   * Deletes up to `rowsPerTable` rows from each table scoped to a purging environment (the
+   * content model, entries and their versions, assets, references, releases, schedules,
+   * workflows and runs, taxonomy, comments, tasks, jobs; never its audit history), and marks the
+   * purge as progressing at `at`. Returns how many rows it deleted: 0 means none are left.
+   */
+  purgeEnvironmentStep(
+    spaceId: string,
+    environmentId: string,
+    rowsPerTable: number,
+    at: Date,
+  ): Promise<number>;
+  /** Clears a finished purge, so the environment's id can be used again. */
+  finishEnvironmentPurge(spaceId: string, environmentId: string): Promise<void>;
+  /**
+   * Purges that haven't progressed since `staleBefore` (their step event was lost), marked as
+   * progressing at `at` so a concurrent sweep doesn't take them too. At most `limit`.
+   */
+  claimStalledPurges(staleBefore: Date, at: Date, limit: number): Promise<Scope[]>;
 }
 
 export interface ContentTypeRepo {

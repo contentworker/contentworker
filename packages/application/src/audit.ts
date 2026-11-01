@@ -1,6 +1,6 @@
 import type { Principal } from '@contentworker/domain';
 import type { AuditEntry } from '@contentworker/ports';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 /** Who an audit row names for a principal: the person, else the key kind (the admin token by name). */
 export function auditActor(principal: Principal): string {

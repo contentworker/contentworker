@@ -284,9 +284,13 @@ export function environmentMiddleware(deps: AuthDeps): MiddlewareHandler<AuthVar
       // Only checked for a caller who may act in the space, so nobody else learns which
       // environments exist there (the route's scope check refuses them with 403 instead).
       const principal = c.get('principal');
-      const check = MUTATING.has(c.req.method) && principal && inScope(principal, space);
-      const resolve = check ? resolveWritableEnvironment : resolveEnvironment;
-      c.set('environmentId', await resolve(deps.ctx, space, env));
+      const member = Boolean(principal && inScope(principal, space));
+      c.set(
+        'environmentId',
+        MUTATING.has(c.req.method) && member
+          ? await resolveWritableEnvironment(deps.ctx, space, env)
+          : await resolveEnvironment(deps.ctx, space, env, { refusePurging: member }),
+      );
     }
     await next();
   };

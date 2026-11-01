@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { testConfig } from './config.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { testConfig } from './config';
+import { wire } from './wire';
 
 const BUNDLE = 'export class Plugin {}';
 const CHECKSUM = createHash('sha256').update(BUNDLE).digest('hex');

@@ -55,6 +55,7 @@ import {
   diffVersions,
   draftEntry,
   duplicateEntry,
+  type EnvironmentSnapshot,
   executeImport,
   exportSnapshot,
   findDuplicates,
@@ -139,7 +140,9 @@ import {
   setPluginEnabled,
   spacesForSubject,
   startBulkJob,
+  startEnvironmentClone,
   startImportJob,
+  startSnapshotImport,
   suggestEntryTags,
   summarizeEntry,
   transformAssetUrl,
@@ -184,10 +187,10 @@ import {
   environmentMiddleware,
   principalMiddleware,
   requireScope,
-} from '../auth.js';
-import { doc } from '../docs/openapi.js';
-import * as docs from '../docs/schemas.js';
-import { clampCount, MAX_PAGE_LIMIT } from '../query.js';
+} from '../auth';
+import { doc } from '../docs/openapi';
+import * as docs from '../docs/schemas';
+import { clampCount, MAX_PAGE_LIMIT } from '../query';
 import {
   agentScheduleBody,
   agentSchedulePatchBody,
@@ -247,8 +250,8 @@ import {
   updateWebhookBody,
   upgradePluginFromUrlBody,
   webhookBody,
-} from '../validation.js';
-import { workflowRoutes } from './workflows.js';
+} from '../validation';
+import { workflowRoutes } from './workflows';
 
 // Reads the route's scope, preferring the alias-resolved environment id stamped
 // by environmentMiddleware over the raw `:env` param.
@@ -293,6 +296,22 @@ const webhookSummary = (h: Webhook) => ({
 });
 
 const BASE = '/spaces/:space/environments/:env';
+
+/**
+ * `?expectedVersion=N`: hold a publish, unpublish or restore to the version the caller read (a
+ * 409 when the entry has moved on). Absent, the write acts on the entry as it is.
+ */
+function expectedVersionOf(c: Context<AuthVars>): { expectedVersion?: number } {
+  const raw = c.req.query('expectedVersion');
+  if (raw === undefined || raw === '') return {};
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new ValidationError([
+      { field: 'expectedVersion', message: 'expectedVersion must be a positive integer' },
+    ]);
+  }
+  return { expectedVersion: n };
+}
 
 /** Management API (CMA): authoring + publishing, gated by RBAC scopes. */
 /**
@@ -698,31 +717,36 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'Replays the snapshot through the normal use-cases, so validation, the reference ' +
         'graph and the delivery read model all end up consistent. Requires an environment ' +
-        'with no content types. `?dryRun=true` reports without writing.',
+        'with no content types. Everything is checked before anything is written; then the ' +
+        'content model, taxonomy and workflows are written and the assets and entries run as ' +
+        "a job (202: `{ report, job, publishJobId }`; follow it at this environment's " +
+        '`bulk/jobs/:id`, then the publishing job, which starts once it completes with no ' +
+        'failures). `?dryRun=true` reports without writing (200).',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
-      const snapshot = await parseBody(c, snapshotBody);
-      const report = await importSnapshot(
-        ctx,
-        scopeOf(c),
-        snapshot as unknown as Parameters<typeof importSnapshot>[2],
-        {
-          dryRun: c.req.query('dryRun') === 'true',
-          publish: c.req.query('publish') !== 'false',
-        },
-      );
-      return c.json(report, report.dryRun ? 200 : 201);
+      const snapshot = (await parseBody(c, snapshotBody)) as unknown as EnvironmentSnapshot;
+      const options = {
+        dryRun: c.req.query('dryRun') === 'true',
+        publish: c.req.query('publish') !== 'false',
+      };
+      if (options.dryRun || !blob) {
+        const report = await importSnapshot(ctx, scopeOf(c), snapshot, options);
+        return c.json(report, report.dryRun ? 200 : 201);
+      }
+      return c.json(await startSnapshotImport(ctx, blob, scopeOf(c), snapshot, options), 202);
     },
   );
   app.post(
     `${BASE}/clone`,
     doc('Spaces & environments', 'Clone this environment into another', {
       body: cloneBody,
-      status: 201,
+      status: 202,
       description:
         'Export plus import with no file in between. The target may be in another space, ' +
-        'which is the case environment merge does not cover.',
+        'which is the case environment merge does not cover. Runs as a job, as an import ' +
+        'does (202: `{ report, job, publishJobId }`); both jobs belong to the target ' +
+        'environment, so follow them at its `bulk/jobs/:id`.',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
@@ -734,16 +758,13 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         SCOPES.contentManage,
         body.targetSpaceId ?? c.req.param('space'),
       );
-      const report = await cloneEnvironment(
-        ctx,
-        scopeOf(c),
-        {
-          spaceId: body.targetSpaceId ?? (c.req.param('space') as string),
-          environmentId: body.targetEnvironmentId,
-        },
-        { publish: body.publish !== false },
-      );
-      return c.json(report, 201);
+      const target = {
+        spaceId: body.targetSpaceId ?? (c.req.param('space') as string),
+        environmentId: body.targetEnvironmentId,
+      };
+      const options = { publish: body.publish !== false };
+      if (!blob) return c.json(await cloneEnvironment(ctx, scopeOf(c), target, options), 201);
+      return c.json(await startEnvironmentClone(ctx, blob, scopeOf(c), target, options), 202);
     },
   );
 
@@ -1384,7 +1405,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   });
   app.post(`${BASE}/bulk/jobs/:id/cancel`, requireScope(SCOPES.contentPublish), async (c) => {
     guardBulkJobs(c);
-    return c.json(await cancelBulkJob(ctx, scopeOf(c), c.req.param('id')));
+    return c.json(await cancelBulkJob(ctx, scopeOf(c), c.req.param('id'), blob ? { blob } : {}));
   });
 
   // --- agent actions (audit → work packages) -----------------------------
@@ -1474,6 +1495,10 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: docs.entry,
       description:
         'Writes the delivery read model and appends entry.published to the transactional outbox atomically.',
+      query: {
+        expectedVersion:
+          "The entry's currentVersion as the caller read it; 409 if it has changed since",
+      },
     }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
@@ -1498,16 +1523,22 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
           ]);
         }
       }
-      return c.json(await publishEntry(ctx, scopeOf(c), id));
+      return c.json(await publishEntry(ctx, scopeOf(c), id, expectedVersionOf(c)));
     },
   );
   app.delete(
     `${BASE}/entries/:id/published`,
-    doc('Entries', 'Unpublish an entry', { ok: docs.entry }),
+    doc('Entries', 'Unpublish an entry', {
+      ok: docs.entry,
+      query: {
+        expectedVersion:
+          "The entry's currentVersion as the caller read it; 409 if it has changed since",
+      },
+    }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
       await guardEntry(c, c.req.param('id'), 'publish');
-      return c.json(await unpublishEntry(ctx, scopeOf(c), c.req.param('id')));
+      return c.json(await unpublishEntry(ctx, scopeOf(c), c.req.param('id'), expectedVersionOf(c)));
     },
   );
 
@@ -1560,6 +1591,13 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   // read-only fields can't resurrect them by restoring, or write an ungranted type.
   app.post(
     `${BASE}/entries/:id/versions/:version/restore`,
+    doc('Entries', 'Restore a version', {
+      description: "Copies the version's fields into a new draft version.",
+      query: {
+        expectedVersion:
+          "The entry's currentVersion as the caller read it; 409 if it has changed since",
+      },
+    }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
       const principal = c.get('principal');
@@ -1573,7 +1611,13 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       );
       assertWritableFields(principal, entry.contentTypeApiId, target.fields);
       return c.json(
-        await restoreVersion(ctx, scopeOf(c), c.req.param('id'), Number(c.req.param('version'))),
+        await restoreVersion(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          Number(c.req.param('version')),
+          expectedVersionOf(c),
+        ),
       );
     },
   );

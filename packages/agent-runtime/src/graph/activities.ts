@@ -5,6 +5,7 @@ import {
   compensateWorkflowNode,
   type ExecuteWorkflowNodeInput,
   executeWorkflowNode,
+  isPurging,
   loadRunEntry,
   type NodeResult,
   openWorkflowTask,
@@ -14,6 +15,7 @@ import {
   type WorkflowNodeDeps,
 } from '@contentworker/application';
 import {
+  NotFoundError,
   type PendingWait,
   type RunEntry,
   type RunReport,
@@ -72,14 +74,33 @@ export interface GraphActivitiesDeps {
 export function makeGraphActivities(deps: GraphActivitiesDeps): GraphActivities {
   const { ctx, engine } = deps;
   const nodeDeps = deps.nodes ?? {};
+  // A run in a deleted environment acts on nothing: its rows linger only until purged, so it
+  // fails as it would once they are gone (its entry not found) instead of publishing into them.
+  const live = async (scope: Scope) => {
+    if (await isPurging(ctx, scope)) {
+      throw new NotFoundError('Environment', `${scope.spaceId}/${scope.environmentId}`);
+    }
+  };
   return {
     now: () => ctx.clock.now().getTime(),
     loadVersion: (scope, workflowId, version) =>
       ctx.store.workflowGraphs.getVersion(scope, workflowId, version),
-    loadEntry: (scope, entryId) => loadRunEntry(ctx, scope, entryId),
-    executeNode: (input) => executeWorkflowNode(ctx, nodeDeps, input),
-    resumeNode: (input) => resumeWorkflowNode(ctx, nodeDeps, input),
-    compensateNode: (input) => compensateWorkflowNode(ctx, nodeDeps, input),
+    loadEntry: async (scope, entryId) => {
+      await live(scope);
+      return loadRunEntry(ctx, scope, entryId);
+    },
+    executeNode: async (input) => {
+      await live(input.scope);
+      return executeWorkflowNode(ctx, nodeDeps, input);
+    },
+    resumeNode: async (input) => {
+      await live(input.scope);
+      return resumeWorkflowNode(ctx, nodeDeps, input);
+    },
+    compensateNode: async (input) => {
+      await live(input.scope);
+      return compensateWorkflowNode(ctx, nodeDeps, input);
+    },
     report: (scope, runId, report) => reportRun(ctx, scope, runId, report),
     openWait: async (scope, runId, wait) => (await openWorkflowTask(ctx, scope, runId, wait)).early,
     closeWait: (scope, runId, eventType, outcome, payload, label) =>

@@ -43,6 +43,7 @@ import {
   draftEntry,
   draftWorkflowGraph,
   duplicateEntry,
+  type EnvironmentSnapshot,
   executeImport,
   exportSnapshot,
   findDuplicates,
@@ -114,6 +115,7 @@ import {
   setPluginEnabled,
   setWorkflowSeparationDefault,
   startBulkJob,
+  startSnapshotImport,
   startWorkflowRun,
   suggestEntries,
   suggestEntryTags,
@@ -161,8 +163,9 @@ import { generateTypes } from '@contentworker/sdk-codegen';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
-import { toHttpError } from '../api/http.js';
-import type { McpDeps } from './deps.js';
+import { toHttpError } from '../api/http';
+import { snapshotBody } from '../api/validation';
+import type { McpDeps } from './deps';
 
 /**
  * What a tool call that failed inside the server says, in place of the failure, as REST does: a
@@ -339,10 +342,10 @@ export function buildServer(
             const spaceId = typeof a.space === 'string' ? a.space : DEFAULT_SPACE;
             // Checked only for a caller who may act in the space, so nobody else learns which
             // environments exist there: the tool's own guard refuses them first.
-            const resolve = inScope(principal, spaceId)
-              ? resolveWritableEnvironment
-              : resolveEnvironment;
-            args = { ...a, environment: await resolve(ctx, spaceId, a.environment) };
+            const environment = inScope(principal, spaceId)
+              ? await resolveWritableEnvironment(ctx, spaceId, a.environment)
+              : await resolveEnvironment(ctx, spaceId, a.environment, { refusePurging: false });
+            args = { ...a, environment };
           }
           return await handler(args, ...rest);
         } catch (err) {
@@ -1051,7 +1054,9 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
       guardBulkJobs();
-      return ok(await cancelBulkJob(ctx, scopeOf(args), args.id));
+      return ok(
+        await cancelBulkJob(ctx, scopeOf(args), args.id, deps.blob ? { blob: deps.blob } : {}),
+      );
     },
   );
 
@@ -1364,11 +1369,46 @@ export function buildServer(
   );
 
   server.registerTool(
+    'environment_import',
+    {
+      description:
+        'Import a snapshot (as environment_export returns it) into this environment, which ' +
+        'must exist and have no content types. Every entry is checked first, and nothing is ' +
+        'written if anything would fail. Set dryRun to see the report only. Otherwise the ' +
+        'content model is written and the entries and assets are written by a job: the ' +
+        'result is `{ report, job, publishJobId }`; follow `job` with bulk_job_status in this ' +
+        'environment, then `publishJobId`, which starts once `job` completes with no failures.',
+      inputSchema: toolSchema('environment_import', () =>
+        z.object({
+          snapshot: snapshotBody,
+          publish: z.boolean().optional().describe('republish what was published (default true)'),
+          dryRun: z.boolean().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      const target = scopeOf(args);
+      guard(SCOPES.contentManage, target);
+      const snapshot = args.snapshot as unknown as EnvironmentSnapshot;
+      const options = { dryRun: args.dryRun, publish: args.publish };
+      if (args.dryRun || !deps.blob)
+        return ok(await importSnapshot(ctx, target, snapshot, options));
+      return ok(await startSnapshotImport(ctx, deps.blob, target, snapshot, options));
+    },
+  );
+
+  server.registerTool(
     'environment_clone',
     {
       description:
         'Copy this environment into another (which may be in another space). The ' +
-        'target must have no content types. Set dryRun to see the plan first.',
+        'target must exist and have no content types. Set dryRun to see the plan first. ' +
+        'Otherwise everything is checked, the content model is copied, and the entries and ' +
+        'assets are copied by a job: the result is `{ report, job, publishJobId }`. Both jobs ' +
+        'belong to the TARGET: follow `job` with bulk_job_status passing `space`=targetSpace ' +
+        'and `environment`=targetEnvironment, then `publishJobId`, which starts only once `job` ' +
+        'completes with no failures.',
       inputSchema: toolSchema('environment_clone', () =>
         z.object({
           targetSpace: z.string().optional().describe('defaults to the source space'),
@@ -1390,12 +1430,9 @@ export function buildServer(
       // would be a tenancy hole.
       guard(SCOPES.contentManage, to);
       const snapshot = await exportSnapshot(ctx, from);
-      return ok(
-        await importSnapshot(ctx, to, snapshot, {
-          dryRun: args.dryRun,
-          publish: args.publish,
-        }),
-      );
+      const options = { dryRun: args.dryRun, publish: args.publish };
+      if (args.dryRun || !deps.blob) return ok(await importSnapshot(ctx, to, snapshot, options));
+      return ok(await startSnapshotImport(ctx, deps.blob, to, snapshot, options));
     },
   );
 
@@ -1713,7 +1750,18 @@ export function buildServer(
     'entries_publish',
     {
       description: 'Publish an entry (validates references; emits an entry.published event).',
-      inputSchema: toolSchema('entries_publish', () => z.object({ id: z.string(), ...scopeArgs })),
+      inputSchema: toolSchema('entries_publish', () =>
+        z.object({
+          id: z.string(),
+          expectedVersion: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("The entry's currentVersion as you read it; refused if it has changed since"),
+          ...scopeArgs,
+        }),
+      ),
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
@@ -1729,7 +1777,9 @@ export function buildServer(
           ]);
         }
       }
-      return ok(await publishEntry(ctx, scopeOf(args), args.id));
+      return ok(
+        await publishEntry(ctx, scopeOf(args), args.id, { expectedVersion: args.expectedVersion }),
+      );
     },
   );
 
@@ -1738,13 +1788,26 @@ export function buildServer(
     {
       description: 'Withdraw an entry from the Delivery API.',
       inputSchema: toolSchema('entries_unpublish', () =>
-        z.object({ id: z.string(), ...scopeArgs }),
+        z.object({
+          id: z.string(),
+          expectedVersion: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("The entry's currentVersion as you read it; refused if it has changed since"),
+          ...scopeArgs,
+        }),
       ),
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
       await guardEntry(scopeOf(args), args.id, 'publish');
-      return ok(await unpublishEntry(ctx, scopeOf(args), args.id));
+      return ok(
+        await unpublishEntry(ctx, scopeOf(args), args.id, {
+          expectedVersion: args.expectedVersion,
+        }),
+      );
     },
   );
 
@@ -1885,7 +1948,17 @@ export function buildServer(
     {
       description: 'Restore an older version by copying its fields into a new draft version.',
       inputSchema: toolSchema('entries_restore_version', () =>
-        z.object({ id: z.string(), version: z.number(), ...scopeArgs }),
+        z.object({
+          id: z.string(),
+          version: z.number(),
+          expectedVersion: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("The entry's currentVersion as you read it; refused if it has changed since"),
+          ...scopeArgs,
+        }),
       ),
     },
     async (args) => {
@@ -1894,7 +1967,11 @@ export function buildServer(
       authorizeContent(principal, 'write', entry.contentType);
       const target = await getVersion(ctx, scopeOf(args), args.id, args.version);
       assertWritableFields(principal, entry.contentType, target.fields);
-      return ok(await restoreVersion(ctx, scopeOf(args), args.id, args.version));
+      return ok(
+        await restoreVersion(ctx, scopeOf(args), args.id, args.version, {
+          expectedVersion: args.expectedVersion,
+        }),
+      );
     },
   );
 

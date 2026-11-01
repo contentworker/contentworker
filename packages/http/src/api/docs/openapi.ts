@@ -3,7 +3,7 @@ import { Scalar } from '@scalar/hono-api-reference';
 import type { Hono } from 'hono';
 import { type DescribeRouteOptions, describeRoute, generateSpecs, resolver } from 'hono-openapi';
 import { z } from 'zod';
-import { errorResponse } from './schemas.js';
+import { errorResponse } from './schemas';
 
 /** Standard-schema (zod) type accepted by hono-openapi's resolver. */
 type AnySchema = Parameters<typeof resolver>[0];

@@ -8,7 +8,7 @@ import {
   type Scope,
   type Tag,
 } from '@contentworker/domain';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 // --- concept schemes ------------------------------------------------------
 

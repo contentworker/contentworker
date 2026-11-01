@@ -355,7 +355,13 @@ export function EntryEditor() {
   // `run` here: callers wrap it, and `run` doesn't nest.
   const publish = async (agg: EntryAggregate | null) => {
     if (!entryId) return;
-    const r = await edit<EntryAggregate>('entries_publish', { id: entryId }, about);
+    // Held to the version on screen: confirmed after someone saved a newer draft, it is refused.
+    const version = agg?.currentVersion ?? meta?.version;
+    const r = await edit<EntryAggregate>(
+      'entries_publish',
+      { id: entryId, ...(version ? { expectedVersion: version } : {}) },
+      about,
+    );
     if (r === null) return computePublishConfirm(agg);
     if ('output' in r) published(r.output, neverPublished(agg));
   };

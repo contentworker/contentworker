@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertValidCron, nextCronOccurrence, ValidationError } from '../src/index.js';
+import { assertValidCron, nextCronOccurrence, ValidationError } from '../src/index';
 
 const at = (iso: string) => new Date(iso);
 const next = (expr: string, from: string) => nextCronOccurrence(expr, at(from)).toISOString();

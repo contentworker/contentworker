@@ -8,7 +8,7 @@ import {
   listEnvironmentAliases,
   resolveEnvironment,
   setEnvironmentAlias,
-} from '../src/index.js';
+} from '../src/index';
 
 function makeContext(): AppContext {
   return {

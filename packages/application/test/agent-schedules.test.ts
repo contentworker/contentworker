@@ -13,7 +13,7 @@ import {
   publishEntry,
   runDueAgentSchedules,
   updateAgentSchedule,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'sched', environmentId: 'main' };
 const HOUR = 60 * 60 * 1000;

@@ -5,9 +5,9 @@ import {
   type PublishAgentRunSummary,
   type PublishAgentsConfig,
   runPublishAgents,
-} from '../agent-actions.js';
-import type { AppContext } from '../context.js';
-import { type DispatchDeps, dispatchEvent } from './dispatch.js';
+} from '../agent-actions';
+import type { AppContext } from '../context';
+import { type DispatchDeps, dispatchEvent } from './dispatch';
 
 export interface ConsumeDeps extends DispatchDeps {
   /** Optional — live-content fan-out (SSE). Publish failures never block dispatch. */

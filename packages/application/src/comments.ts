@@ -1,5 +1,5 @@
 import { type Comment, NotFoundError, type Scope } from '@contentworker/domain';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 export interface AddCommentInput {
   readonly entryId: string;

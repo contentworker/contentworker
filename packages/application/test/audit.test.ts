@@ -1,6 +1,6 @@
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { type AppContext, listAuditLog, recordAudit } from '../src/index.js';
+import { type AppContext, listAuditLog, recordAudit } from '../src/index';
 
 function makeContext(): { ctx: AppContext; clock: FixedClock } {
   const store = new InMemoryContentStore();

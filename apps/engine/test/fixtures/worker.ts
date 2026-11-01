@@ -10,8 +10,8 @@ export { CostGuardDO } from '@contentworker/platform/do/cost-guard';
 export { LiveHubDO } from '@contentworker/platform/do/live-hub';
 export { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 export { SearchShardDO } from '@contentworker/platform/do/search-shard';
-export { AssistantAgent } from '../../src/assistant.js';
-export { EditorialTestWorkflow } from './editorial.js';
+export { AssistantAgent } from '../../src/assistant';
+export { EditorialTestWorkflow } from './editorial';
 
 export default {
   fetch(request: Request, env: EdgeEnv): Promise<Response> | Response {

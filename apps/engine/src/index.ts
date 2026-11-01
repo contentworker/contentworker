@@ -17,6 +17,7 @@ import {
   redeliverWebhook,
   resealSecrets,
   resumeStalledBulkJobs,
+  resumeStalledEnvironmentPurges,
   runDueAgentSchedules,
   runDueScheduledActions,
   runPublishAgents,
@@ -45,10 +46,10 @@ import {
   wireEdge,
 } from '@contentworker/platform/wire';
 import { redactCredentials } from '@contentworker/redaction';
-import { AssistantAgent } from './assistant.js';
-import { runInLanes } from './lanes.js';
-import { AgentWorkflow } from './workflows/agent-workflow.js';
-import { EditorialWorkflow } from './workflows/editorial-workflow.js';
+import { AssistantAgent } from './assistant';
+import { runInLanes } from './lanes';
+import { AgentWorkflow } from './workflows/agent-workflow';
+import { EditorialWorkflow } from './workflows/editorial-workflow';
 
 /** A queue message's payload (kept as one accessor so every consumer reads it the same way). */
 const payloadOf = (m: { body: unknown }): unknown => m.body;
@@ -478,6 +479,16 @@ export default {
           }
         } catch (err) {
           console.error('bulk stall sweep failed', err);
+        }
+        // Deleted environments whose purge lost its step event (normally none).
+        try {
+          const restarted = await resumeStalledEnvironmentPurges(wired.ctx);
+          if (restarted > 0) {
+            console.log(JSON.stringify({ msg: 'stalled environment purges restarted', restarted }));
+            metrics.count('contentworker_environment_purges_resumed_total', restarted);
+          }
+        } catch (err) {
+          console.error('environment purge sweep failed', err);
         }
       }
       // Recurring agent jobs: due schedules run here on the cron tick, metered

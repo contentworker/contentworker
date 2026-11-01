@@ -17,9 +17,9 @@ import {
 import { SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { type AuthDeps, type AuthVars, requireScope } from '../auth.js';
-import { doc } from '../docs/openapi.js';
-import { parseBody, zId, zShort } from '../validation.js';
+import { type AuthDeps, type AuthVars, requireScope } from '../auth';
+import { doc } from '../docs/openapi';
+import { parseBody, zId, zShort } from '../validation';
 
 /** A role id, or a preset name (`viewer`, `approver`, `editor`, `manager`, `admin`). */
 const zRoleRef = zId;

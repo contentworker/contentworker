@@ -30,8 +30,8 @@ Everything below is built and tested on v2.
   trash, purge, duplicate); versions with diff and restore; references and `include`; rich text
   with HTML import; slugs.
 - **Publishing.** Releases (atomic multi-entry publish), scheduled actions, bulk actions as
-  resumable jobs, branch compare and merge, environment snapshots (export, import, clone), CSV,
-  JSON and WordPress import.
+  resumable jobs, branch compare and merge, environment snapshots (export, plus import and clone
+  as resumable jobs), CSV, JSON and WordPress import.
 - **Media.** Signed R2 uploads and downloads, Images transforms, Stream video, localized alt text
   and focal point, AI alt text and auto-tagging, asset usage.
 - **Taxonomy and collaboration.** Concept schemes, concepts and tags; comments, tasks, legacy
@@ -50,7 +50,7 @@ Everything below is built and tested on v2.
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
   recovery codes, with the person forwarded to the api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a Durable Object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (122 tools, plus skills and the docs
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (123 tools, plus skills and the docs
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached in KV) in front of a Workers Caching entrypoint keyed by visibility profile, with ETags,
@@ -76,7 +76,7 @@ Everything below is built and tested on v2.
 - [ ] **Version bodies in R2.** Keep immutable version bodies in R2 with only the index in D1, so
   an append-heavy space stays well inside D1's per-database size limit.
 - [ ] **Per-environment content promotion tooling** (diff and promote `main` → `staging`).
-- [ ] **Environment import and clone as a job.** Snapshot import replays every entry inside one
-  request: locally a 4,490-entry clone (`SEED_SCALE=10`) takes ~22 s, which on D1 and the api's
-  5 s CPU limit will not hold for environments of that size. Run it like bulk publish: the
-  preflight in the request, then chunks through the bulk queue with progress and a report.
+- [ ] **Clone's export as part of the job.** Import and clone now write entries in bulk jobs, but
+  a clone still exports its source inside the request (reads only, one page per 100 entries), and
+  the checks still validate the whole snapshot there. For the largest environments, move the export
+  and the checks into the engine too.

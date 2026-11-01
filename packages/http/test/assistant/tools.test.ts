@@ -27,8 +27,8 @@ import {
   NOT_THROUGH,
   scopedArguments,
   ToolRefused,
-} from '../../src/assistant/tools.js';
-import type { McpDeps } from '../../src/mcp/deps.js';
+} from '../../src/assistant/tools';
+import type { McpDeps } from '../../src/mcp/deps';
 
 function makeDeps(): McpDeps {
   const ctx: AppContext = {

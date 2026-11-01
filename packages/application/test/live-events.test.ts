@@ -1,6 +1,6 @@
 import type { DomainEvent, Principal } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
-import { LIVE_EVENT_TYPES, liveEventFor } from '../src/delivery.js';
+import { LIVE_EVENT_TYPES, liveEventFor } from '../src/delivery';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 const base = { occurredAt: '2026-01-01T00:00:00.000Z', scope };

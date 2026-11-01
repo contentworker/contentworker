@@ -4,10 +4,10 @@
  * be added without touching the validator.
  */
 
-import { type NodeSpec, specDefaults, specOutputs, validateFields } from './catalog.js';
-import type { WorkflowGraph, WorkflowNode } from './graph-types.js';
-import { NODE_SPECS } from './nodes.js';
-import { edgeHandle, isBackEdge, isTrigger, loopRegion } from './planner.js';
+import { type NodeSpec, specDefaults, specOutputs, validateFields } from './catalog';
+import type { WorkflowGraph, WorkflowNode } from './graph-types';
+import { NODE_SPECS } from './nodes';
+import { edgeHandle, isBackEdge, isTrigger, loopRegion } from './planner';
 
 export interface NodeRegistry {
   spec(type: string): NodeSpec | undefined;

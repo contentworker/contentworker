@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCfEmailSender, type SendEmailBinding } from '../../src/email-cf/index.js';
+import { createCfEmailSender, type SendEmailBinding } from '../../src/email-cf/index';
 
 type Sent = Parameters<SendEmailBinding['send']>[0];
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampCount, MAX_PAGE_LIMIT, parseEntryQuery } from '../../src/api/query.js';
+import { clampCount, MAX_PAGE_LIMIT, parseEntryQuery } from '../../src/api/query';
 
 describe('clampCount (pagination DoS guard)', () => {
   it('caps limit at the maximum', () => {

@@ -1,6 +1,6 @@
 import type { Scope } from '@contentworker/domain';
 import type { AgentRunRecord, AgentUsageSummary } from '@contentworker/ports';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 export interface RecordAgentRunInput {
   readonly workflow: string;

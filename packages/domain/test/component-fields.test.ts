@@ -9,7 +9,7 @@ import {
   MAX_COMPONENT_DEPTH,
   ValidationError,
   validateEntryFields,
-} from '../src/index.js';
+} from '../src/index';
 
 const vctx = { defaultLocale: 'en-US', locales: ['en-US', 'de-DE'] };
 

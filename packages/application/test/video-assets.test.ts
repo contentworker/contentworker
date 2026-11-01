@@ -23,7 +23,7 @@ import {
   publishAsset,
   refreshVideoAsset,
   transformAssetUrl,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
 

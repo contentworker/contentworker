@@ -81,7 +81,8 @@ export function VersionHistory(props: {
         : '';
       const r = await edit(
         'entries_restore_version',
-        { id: props.entryId, version },
+        // Held to the draft on screen: one saved since makes the card refuse.
+        { id: props.entryId, version, expectedVersion: props.currentVersion },
         what + unsaved,
       );
       if (r === null) setConfirmRestore(version);

@@ -133,8 +133,8 @@ Base paths: `/spaces` and `…` = `/spaces/:space/environments/:env`.
 | Method | Path       | Scope            | Description                                                                            |
 | ------ | ---------- | ---------------- | -------------------------------------------------------------------------------------- |
 | GET    | `…/export` | `content:manage` | Export the environment as portable JSON                                                |
-| POST   | `…/import` | `content:manage` | Replay a snapshot into this environment (`?dryRun=true`, `?publish=false`)             |
-| POST   | `…/clone`  | `content:manage` | Copy this environment into another `{ targetSpaceId?, targetEnvironmentId, publish? }` |
+| POST   | `…/import` | `content:manage` | Replay a snapshot into this environment, as a job (`202`; `?dryRun=true` reports, `200`; `?publish=false`) |
+| POST   | `…/clone`  | `content:manage` | Copy this environment into another, as a job (`202`) `{ targetSpaceId?, targetEnvironmentId, publish? }` |
 
 A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows, and
 asset **metadata**. It deliberately never carries **credentials** — API keys, OAuth clients and
@@ -162,25 +162,61 @@ What an import preserves:
 - **Assets** as records, published as they were; their files stay where they are.
 
 **Deleting an environment** (`DELETE …/environments/:env?confirm=:env`, MCP `environment_delete`)
-removes its rows (content model, entries and versions, assets, references, releases, schedules,
-workflows and runs, taxonomy, comments, tasks, jobs) in one atomic write; its audit history stays.
+removes it and everything in it (content model, entries and versions, assets, references,
+releases, schedules, workflows and runs, taxonomy, comments, tasks, jobs); its audit history stays.
 `confirm` must repeat the environment id. It takes a person holding `space:admin` in that space
 (signed in, or through their OAuth or personal access token) or the deployment admin token; a
 plain API key gets `403`, even one with `space:admin`. It refuses `main` (`422`) and any environment an alias
-points at (`409`: repoint or remove the alias first). The same write records an
-`environment.deleted` audit row naming the caller (on both surfaces, so a deletion never commits
-unrecorded) and appends `environment.deleted` events (published entry ids in chunks of 500). From
-those the engine removes the entries' search documents and vectors, deletes the environment's asset
-files from the blob store (keeping any another environment's asset records still point at, as a
-clone's do), and purges its delivery cache. Search results only ever include entries published now,
-so an index document that outlives its entry is never served.
+points at (`409`: repoint or remove the alias first).
+
+One atomic write takes the environment out of the registry, so from that moment it answers `404`
+to reads and writes on every surface. The same write records an `environment.deleted` audit row
+naming the caller (on both surfaces, so a deletion never commits unrecorded), appends
+`environment.deleted` events (published entry ids in chunks of 500) and the first
+`environment.purge_due`. From the first, the engine removes the entries' search documents and
+vectors and purges the delivery cache. Search results only ever include entries published now, so
+an index document that outlives its entry is never served.
+
+The rows themselves go afterwards, in bounded steps: D1 refuses one statement that modifies
+hundreds of thousands of rows. Each step deletes at most 500 rows from each of the environment's
+tables, and each `environment.purge_due` runs up to 20 steps before handing on to the next. When
+nothing is left, the environment's asset files go from the blob store (keeping any another
+environment's asset records still point at, as a clone's do) and its id is free again. Until then,
+creating an environment with that id is refused (`409`). A purge whose event is lost is restarted by
+the engine's cron after five minutes without progress.
 
 **An import checks before it writes.** Every entry is validated against the snapshot's content
 model and the target space's locales, and every link in what will be published must point at an
 entry or asset the snapshot carries. Any problem refuses the import with a `422` that lists them
 (up to 50, each naming its entry) and writes nothing, so the target stays empty and a corrected
 retry works. `?dryRun=true` runs the same checks. A failure the checks can't foresee (a plugin
-hook refusing an entry, an infrastructure error) can still stop an import part-way.
+hook refusing an entry, an infrastructure error) is reported per entry in the job's report.
+
+**Import and clone run as jobs.** Replaying every entry through the use-cases is far more than one
+request can hold for an environment of any size. After the checks, the request writes the content
+model, taxonomy and workflows (small, and everything else depends on them) and answers `202` with
+`{ report, job, publishJobId }`. The assets and entries are staged in the blob store in chunks of
+100 before the model is written (so a staging failure leaves the target empty and a retry works),
+and written by bulk jobs, with progress at `…/bulk/jobs/:id` and per-item failures at
+`…/bulk/jobs/:id/report` in the **target** environment:
+
+1. `job` creates the asset records and entries, as drafts, under their own ids.
+2. `publishJobId` starts when `job` completes, in the same write that finalizes it: it publishes
+   what the snapshot had published (assets, then entries), then lays each changed entry's draft on
+   top. It waits because publishing an entry needs every entry and asset it links to to exist, and
+   chunks run concurrently. It starts only if `job` completes with no failures (otherwise `job`'s
+   report names what failed, and nothing is published); it never starts if `job` is cancelled, and
+   it is `null` when nothing is published (`?publish=false`, or a snapshot of drafts).
+
+Staged work is removed as each chunk finishes, and whatever is left (a chunk that failed for good, a
+publishing job that never started, a cancelled job) when the job completes or is cancelled. Each
+imported entry is created and published through the use-cases, so it emits its own events (webhooks,
+search and vector indexing) as an entry written by hand would.
+
+Every chunk step is safe to run again after a crash: an entry already created isn't created twice,
+and one already published (or already carrying its draft) isn't published again. A snapshot with no
+entries or assets answers `job: null`. Without a blob store (local fakes), import and clone run
+synchronously and answer `201` with the report. The clone's export still runs inside the request.
 
 ### Importing from elsewhere
 
@@ -349,6 +385,12 @@ principal) may call it; the web app does when it ends a person's access (see
 | POST   | `…/entries/:id/restore`            | `content:write`   | Restore from the trash, as a draft                                                         |
 | DELETE | `…/entries/:id/permanent`          | `content:publish` | **Irreversible** delete of a trashed entry. `?force=true` overrides the inbound-link guard |
 | POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft                                           |
+
+**Held to a version.** Publish, unpublish and version restore take an optional
+`?expectedVersion=N`: the entry's `currentVersion` as the caller read it. If someone has saved a
+newer draft since, the call returns **409** and changes nothing, rather than publishing or
+overwriting content the caller never saw. The MCP tools `entries_publish`, `entries_unpublish` and
+`entries_restore_version` take the same `expectedVersion` argument.
 
 **Unique fields.** Creating or updating an entry whose `unique` field collides returns **409**
 with a message naming the field, the value and the entry holding it. Trashing an entry frees its

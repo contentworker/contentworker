@@ -3,8 +3,8 @@ import {
   createWxrImportSource,
   MAX_PAYLOAD_BYTES,
   structuredImportSources,
-} from '../../src/import-structured/index.js';
-import { parseXml } from '../../src/import-structured/xml.js';
+} from '../../src/import-structured/index';
+import { parseXml } from '../../src/import-structured/xml';
 
 const wxr = createWxrImportSource();
 

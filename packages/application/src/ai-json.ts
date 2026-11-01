@@ -1,9 +1,9 @@
 import { RateLimitedError, type Scope } from '@contentworker/domain';
 import type { AIProvider, GenerateRequest, ModelTier } from '@contentworker/ports';
-import type { FakeAdapterBinding } from './adapter-guard.js';
-import { generateWithBudget } from './ai-budget.js';
-import type { AiCallRecord, AiProvenance } from './ai-provenance.js';
-import type { AiMode, AppContext } from './context.js';
+import type { FakeAdapterBinding } from './adapter-guard';
+import { generateWithBudget } from './ai-budget';
+import type { AiCallRecord, AiProvenance } from './ai-provenance';
+import type { AiMode, AppContext } from './context';
 
 /** Default per-call cap: a slow model must not hold a step (or a person) hostage. */
 export const DEFAULT_AI_TIMEOUT_MS = 20_000;

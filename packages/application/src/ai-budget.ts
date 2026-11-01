@@ -1,7 +1,7 @@
 import { RateLimitedError, type Scope } from '@contentworker/domain';
 import type { AIProvider, GenerateRequest, GenerateResult } from '@contentworker/ports';
-import { mockGenerate } from './ai-mock.js';
-import type { AppContext } from './context.js';
+import { mockGenerate } from './ai-mock';
+import type { AppContext } from './context';
 
 export interface AiBudgetLimits {
   readonly maxRequests: number;

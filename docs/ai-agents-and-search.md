@@ -235,7 +235,7 @@ calls `authorize` before delegating to the same use-case as the HTTP route.
 | Workflows     | `workflow_save_draft`, `workflow_publish`, `workflow_versions`, `workflow_validate`, `workflow_copilot`, `workflow_run_start`, `workflow_run_list`, `workflow_run_get`, `workflow_run_cancel`, `workflow_event_deliver`, `workflow_task_list`, `workflow_task_decide`, `workflow_settings_set`                                                                                                   |
 | Taxonomy      | `taxonomy_list_tags`, `taxonomy_create_tag`, `taxonomy_list_concepts`, `taxonomy_create_concept`, `taxonomy_create_scheme`                                                                                                                                                                                                                                                                       |
 | Assets        | `assets_list`, `asset_set_metadata`, `asset_usage`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`, `asset_video_create`, `asset_video_refresh`                                                                                                                                                                                                                              |
-| Branching     | `environments_compare`, `environments_merge`, `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`                                                                                                                                                                                                                                                                    |
+| Branching     | `environments_compare`, `environments_merge`, `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environment_export`, `environment_import`, `environment_clone`, `environment_delete` |
 | Platform      | `functions_list`, `function_create`, `function_delete`, `app_extensions_list`, `app_extension_create`, `app_extension_delete`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `schedule_action`, `agent_schedule_create`, `agent_schedule_list`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject`, `audit_log_list` |
 
 Canonical list: `packages/http/src/mcp/server.ts`. The workflow tools declare MCP tool annotations
@@ -317,7 +317,10 @@ Fills empty text/symbol fields (excluding the display field) on a freshly-publis
 
 1. Load the entry; if missing → `skipped`.
 2. `classify` the concatenated text (tier `fast`, strict `{ flagged, categories }` schema).
-3. If flagged → `record` a hold → `held`; else → `completed`.
+3. If flagged → `record` a hold → `held`; else → `completed`. Only an explicit
+   `flagged: false` passes: an answer that is missing, off the schema or not a boolean holds the
+   entry as `unclassified`, so a model that errs (or is talked out of its schema by the content)
+   never waves content through.
 
 ### curate
 

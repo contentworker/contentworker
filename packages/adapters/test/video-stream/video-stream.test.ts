@@ -5,7 +5,7 @@ import {
   type StreamBindingLike,
   type StreamVideoLike,
   verifyStreamWebhook,
-} from '../../src/video-stream/index.js';
+} from '../../src/video-stream/index';
 
 function fakeStream(details: Record<string, StreamVideoLike>) {
   const created: unknown[] = [];

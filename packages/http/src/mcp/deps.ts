@@ -6,7 +6,13 @@ import type {
   WorkflowNodeDeps,
 } from '@contentworker/application';
 import type { AgentReview } from '@contentworker/domain';
-import type { AIProvider, Hasher, ImportSource, WorkflowEngine } from '@contentworker/ports';
+import type {
+  AIProvider,
+  BlobStore,
+  Hasher,
+  ImportSource,
+  WorkflowEngine,
+} from '@contentworker/ports';
 
 /**
  * Everything the MCP tool server needs. Built per request by the composition
@@ -35,6 +41,9 @@ export interface McpDeps {
   readonly workflowEngine?: WorkflowEngine;
   /** AI, email and webhook ports for workflow node compensations (cancel). */
   readonly workflowNodes?: WorkflowNodeDeps;
+  /** Object storage, where environment import and clone jobs stage their work. Absent: those
+   *  tools run synchronously (local fakes, tests). */
+  readonly blob?: BlobStore;
   /** Whether people sign in through SSO (for the last-administrator rule). Absent: no SSO. */
   readonly accessPolicy?: AccessPolicy;
 }

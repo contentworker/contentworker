@@ -4,7 +4,7 @@ import {
   redactBearerTokens,
   redactCredentials,
   redactUrlCredentials,
-} from '../src/index.js';
+} from '../src/index';
 
 describe('redactUrlCredentials', () => {
   it('masks the password but keeps user and host, which make a log diagnosable', () => {

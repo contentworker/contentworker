@@ -63,10 +63,10 @@ import {
   type WorkflowRunQuery,
   type WorkflowTaskQuery,
 } from '@contentworker/ports';
-import { decideAgentReview } from './agent-reviews.js';
-import { recordAudit } from './audit.js';
-import type { AppContext } from './context.js';
-import { compensateWorkflowNode, type WorkflowNodeDeps } from './workflow-nodes/index.js';
+import { decideAgentReview } from './agent-reviews';
+import { recordAudit } from './audit';
+import type { AppContext } from './context';
+import { compensateWorkflowNode, type WorkflowNodeDeps } from './workflow-nodes/index';
 
 const MAX_NOTE = 2000;
 const MAX_EVENT_NAME = 100;

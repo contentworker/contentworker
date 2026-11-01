@@ -11,7 +11,7 @@ import {
   purgeEntry,
   trashEntry,
   updateEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 
@@ -236,7 +236,7 @@ describe('asset:beforeCreate', () => {
     const ctx = ctxWith(
       recorder(() => ({ veto: { hook: 'av-scan', reason: 'type not allowed' } })),
     );
-    const { createAsset } = await import('../src/assets.js');
+    const { createAsset } = await import('../src/assets');
 
     await expect(
       createAsset(ctx, blob as never, scope, {

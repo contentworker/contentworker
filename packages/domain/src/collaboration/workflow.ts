@@ -7,8 +7,8 @@
  * Transitions are unrestricted in order (any step → any step); the gate is the
  * target step's `requiredScope`, enforced by {@link assertCanEnterStep}.
  */
-import { ForbiddenError, type PermissionScope } from '../auth/auth.js';
-import { InvalidStateError, NotFoundError } from '../errors.js';
+import { ForbiddenError, type PermissionScope } from '../auth/auth';
+import { InvalidStateError, NotFoundError } from '../errors';
 
 export interface WorkflowStep {
   /** Stable identifier, unique within the workflow. */

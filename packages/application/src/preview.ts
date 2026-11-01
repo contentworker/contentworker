@@ -1,8 +1,8 @@
 import { NotFoundError, type Scope } from '@contentworker/domain';
 import type { EntryQuery } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { localeFallbackChain, type RenderOptions } from './delivery.js';
-import { renderFields } from './render.js';
+import type { AppContext } from './context';
+import { localeFallbackChain, type RenderOptions } from './delivery';
+import { renderFields } from './render';
 
 /** A previewed entry: the current (draft) version, including its status. */
 export interface PreviewedEntry {

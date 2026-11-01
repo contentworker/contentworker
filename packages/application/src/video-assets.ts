@@ -10,8 +10,8 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { HostedVideo, VideoHost, VideoUpload } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { runHook } from './hooks.js';
+import type { AppContext } from './context';
+import { runHook } from './hooks';
 
 /** Default ceiling on an upload's duration — the host reserves storage for it. */
 export const DEFAULT_VIDEO_MAX_DURATION_SECONDS = 3600;

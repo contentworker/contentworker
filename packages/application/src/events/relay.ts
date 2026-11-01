@@ -1,6 +1,6 @@
 import type { DomainEvent } from '@contentworker/domain';
 import type { Queue } from '@contentworker/ports';
-import type { AppContext } from '../context.js';
+import type { AppContext } from '../context';
 
 /** Queue topic that carries relayed domain events to the worker dispatcher. */
 export const EVENTS_TOPIC = 'contentworker.events';
@@ -16,7 +16,9 @@ export const BULK_TOPIC = 'contentworker.bulk';
  *  events. Hosts without a bulk queue binding pass `routeTopic: () =>
  *  EVENTS_TOPIC` to keep single-topic operation. */
 export function defaultRouteTopic(event: DomainEvent): string {
-  return event.type === 'bulk.chunk_due' ? BULK_TOPIC : EVENTS_TOPIC;
+  return event.type === 'bulk.chunk_due' || event.type === 'environment.purge_due'
+    ? BULK_TOPIC
+    : EVENTS_TOPIC;
 }
 
 export interface RelayOptions {

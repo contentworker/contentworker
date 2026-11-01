@@ -9,7 +9,7 @@ import {
   getEntry,
   listContentTypes,
   mergeEnvironments,
-} from '../src/index.js';
+} from '../src/index';
 
 const ARTICLE = {
   apiId: 'article',

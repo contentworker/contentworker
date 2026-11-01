@@ -13,7 +13,7 @@ import {
   listPreviewEntries,
   publishContentType,
   trashEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const SPACE = 's1';
 const scope = { spaceId: SPACE, environmentId: 'main' };

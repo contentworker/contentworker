@@ -17,7 +17,7 @@ tells the delivery Worker which cache tags to purge.
         engine scheduled(): every minute, a cron sweep drains what a nudge missed
         ├─ outbox.readPending(N)               (60 s lease claim)
         ├─ queue.enqueueMany(topic, events)    → contentworker-events
-        │                                        (bulk.chunk_due → contentworker-bulk)
+        │                                        (bulk.chunk_due, environment.purge_due → contentworker-bulk)
         └─ outbox.markRelayed(ids)
                                    │
         engine queue(): consumer on contentworker-events / contentworker-bulk
@@ -107,9 +107,10 @@ the search shard and the live hub (a batch of 25 went from ~2.2 s to ~0.35 s loc
 5. **Lexical search index** (when `SEARCH` is bound) — the published entry's text is indexed into
    its `SearchShardDO` shard on publish and removed on unpublish.
 
-Three event types are control messages rather than facts: `search.reindex_requested` runs one
-bounded reindex slice, `bulk.chunk_due` runs one bulk-job chunk, and `entries.published_bulk`
-replaces N per-entry fan-outs with one bulk-shaped fan-out.
+Four event types are control messages rather than facts: `search.reindex_requested` runs one
+bounded reindex slice, `bulk.chunk_due` runs one bulk-job chunk, `environment.purge_due` runs a
+deleted environment's next purge steps, and `entries.published_bulk` replaces N per-entry fan-outs
+with one bulk-shaped fan-out.
 
 `DispatchDeps` is `{ sender, cache?, rag?, invoker?, searchIndex?, blob?, invalidatedTags? }` —
 optional deps degrade gracefully.
@@ -215,6 +216,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `workflow.webhook`           | `runId`, `nodeId`, `entryId`, `payload`                                    |
 | `search.reindex_requested`   | `contentTypeApiId?` (control message)                                      |
 | `bulk.chunk_due`             | `jobId`, `chunkId` (control message, routed to `contentworker-bulk`)       |
+| `environment.purge_due`      | none: `scope` is the deleted environment (control message, routed to `contentworker-bulk`; runs its next purge steps) |
 
 ## Delivery cache
 

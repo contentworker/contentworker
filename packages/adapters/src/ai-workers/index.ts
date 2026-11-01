@@ -7,7 +7,7 @@ import type {
   ModelTier,
   ToolCall,
 } from '@contentworker/ports';
-import { extractJson } from './json.js';
+import { extractJson } from './json';
 import {
   asWorkersAIError,
   DEFAULT_TIMEOUT_MS,
@@ -16,9 +16,9 @@ import {
   type WorkersAiRun,
   type WorkersAiRunOptions,
   withTimeout,
-} from './transport.js';
+} from './transport';
 
-export { extractJson } from './json.js';
+export { extractJson } from './json';
 export {
   DEFAULT_TIMEOUT_MS,
   NO_LOG_PAYLOAD,
@@ -26,7 +26,7 @@ export {
   type WorkersAIErrorReason,
   type WorkersAiRun,
   type WorkersAiRunOptions,
-} from './transport.js';
+} from './transport';
 
 /**
  * Provider-neutral tier → Workers AI text model: Kimi K2.6 for the hardest

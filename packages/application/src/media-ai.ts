@@ -1,10 +1,10 @@
 import { NotFoundError, type Scope, ValidationError } from '@contentworker/domain';
 import type { AIProvider, ModelTier } from '@contentworker/ports';
-import { recordAgentRun } from './agent-audit.js';
-import { generateWithBudget } from './ai-budget.js';
-import { getAsset, setAssetMetadata } from './assets.js';
-import type { AppContext } from './context.js';
-import { createTag, listTags } from './taxonomy.js';
+import { recordAgentRun } from './agent-audit';
+import { generateWithBudget } from './ai-budget';
+import { getAsset, setAssetMetadata } from './assets';
+import type { AppContext } from './context';
+import { createTag, listTags } from './taxonomy';
 
 function assertImage(contentType: string): void {
   if (!contentType.startsWith('image/')) {

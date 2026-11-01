@@ -6,7 +6,7 @@ import {
   type PolicyRule,
   type PolicySubject,
   parsePolicyRules,
-} from '../src/index.js';
+} from '../src/index';
 
 const doc = (text: string) => ({
   nodeType: 'document',

@@ -123,11 +123,15 @@ import {
   mapD1Error,
   selectChunked,
   UnitOfWork,
-} from './exec.js';
-import { buildFilterPrefilter, buildSearchPrefilter } from './query-pushdown.js';
-import * as schema from './schema.js';
+} from './exec';
+import { buildFilterPrefilter, buildSearchPrefilter } from './query-pushdown';
+import * as schema from './schema';
 
 type Query = BatchItem<'sqlite'>;
+
+/** The row's environment is registered (not deleted, nor being purged). */
+const registered = (t: { spaceId: unknown; environmentId: unknown }) =>
+  sql`EXISTS (SELECT 1 FROM ${schema.environments} WHERE ${schema.environments.spaceId} = ${t.spaceId} AND ${schema.environments.id} = ${t.environmentId})`;
 
 const scopeFilter = (t: { spaceId: unknown; environmentId: unknown }, scope: Scope) =>
   and(eq(t.spaceId as never, scope.spaceId), eq(t.environmentId as never, scope.environmentId));
@@ -2299,12 +2303,21 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
       );
     },
     async createEnvironment(spaceId, environmentId, name) {
-      await x.write(
+      const p = schema.environmentPurges;
+      await writeAll(x, [
+        // Not while a deleted environment of this id is still being purged: it would inherit
+        // whatever rows are left (TransactionConflictError).
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT NOT EXISTS (SELECT 1 FROM ${p} WHERE ${p.spaceId} = ${spaceId} AND ${p.environmentId} = ${environmentId}) AS ok`,
+          ),
         db
           .insert(schema.environments)
           .values({ id: environmentId, spaceId, name })
           .onConflictDoNothing(),
-      );
+        db.delete(schema.guard),
+      ]);
     },
     async listEnvironments(spaceId) {
       const rows = await db
@@ -2333,6 +2346,17 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           }),
         db.delete(schema.guard),
       ]);
+    },
+    async resolveName(spaceId, name) {
+      const a = schema.environmentAliases;
+      const p = schema.environmentPurges;
+      // One round trip: this runs on every request that names an environment.
+      const [row] = await db.all<{ target: string | null; purging: number }>(sql`
+        SELECT
+          (SELECT ${a.targetEnvironmentId} FROM ${a} WHERE ${a.spaceId} = ${spaceId} AND ${a.alias} = ${name}) AS target,
+          EXISTS (SELECT 1 FROM ${p} WHERE ${p.spaceId} = ${spaceId} AND ${p.environmentId} = ${name}) AS purging
+      `);
+      return { targetEnvironmentId: row?.target ?? null, purging: row?.purging === 1 };
     },
     async getAlias(spaceId, alias) {
       const [row] = await db
@@ -2377,10 +2401,12 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
       );
     },
     async deleteEnvironment(spaceId, environmentId, events, audit) {
-      const scope = { spaceId, environmentId };
-      // One atomic batch: every environment-scoped table, the registry row, and the events that
-      // tell the engine to clean up what was derived from those rows.
+      // One atomic batch: the registry row goes (the environment stops resolving), a purge marker
+      // takes its place, and the events and audit row ride along. The rows themselves go in
+      // bounded steps afterwards (purgeEnvironmentStep): D1 refuses one statement that modifies
+      // hundreds of thousands of rows.
       const a = schema.environmentAliases;
+      const at = new Date(audit.at);
       await writeAll(x, [
         // No alias points at it when the batch runs: one set since the use-case checked aborts
         // the whole deletion (TransactionConflictError) rather than leaving the alias dangling.
@@ -2390,9 +2416,10 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
             sql`SELECT NOT EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${spaceId} AND ${a.targetEnvironmentId} = ${environmentId}) AS ok`,
           ),
         db.delete(schema.guard),
-        ...ENVIRONMENT_SCOPED_TABLES.map((table) =>
-          db.delete(table).where(scopeFilter(table, scope)),
-        ),
+        db
+          .insert(schema.environmentPurges)
+          .values({ spaceId, environmentId, requestedAt: at, nudgedAt: at })
+          .onConflictDoNothing(),
         db
           .delete(schema.environments)
           .where(
@@ -2423,6 +2450,60 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           at: new Date(audit.at),
         }),
       ]);
+    },
+    async purgeEnvironmentStep(spaceId, environmentId, rowsPerTable, at) {
+      directOnly(x, 'spaces.purgeEnvironmentStep');
+      const scope = { spaceId, environmentId };
+      const p = schema.environmentPurges;
+      // One bounded DELETE per table (by rowid, so each statement touches at most rowsPerTable
+      // rows), plus the progress mark the stall sweep reads. One round trip. Every DELETE needs the
+      // purge marker: a late or duplicate step, run after the purge finished and the id was used
+      // again, must find nothing to do rather than empty the new environment.
+      const marked = sql`EXISTS (SELECT 1 FROM ${p} WHERE ${p.spaceId} = ${spaceId} AND ${p.environmentId} = ${environmentId})`;
+      const statements = [
+        ...ENVIRONMENT_SCOPED_TABLES.map((table) =>
+          db
+            .delete(table)
+            .where(
+              sql`${marked} AND rowid IN (SELECT rowid FROM ${table} WHERE ${scopeFilter(table, scope)} LIMIT ${rowsPerTable})`,
+            ),
+        ),
+        db
+          .update(p)
+          .set({ nudgedAt: at })
+          .where(and(eq(p.spaceId, spaceId), eq(p.environmentId, environmentId))),
+      ];
+      let results: unknown[];
+      try {
+        results = await db.batch(statements as unknown as [Query, ...Query[]]);
+      } catch (err) {
+        throw mapD1Error(err);
+      }
+      // Every result but the last (the progress mark) is a table's delete.
+      return results
+        .slice(0, -1)
+        .reduce<number>(
+          (n, r) => n + ((r as { meta?: { changes?: number } }).meta?.changes ?? 0),
+          0,
+        );
+    },
+    async finishEnvironmentPurge(spaceId, environmentId) {
+      const p = schema.environmentPurges;
+      await x.write(
+        db.delete(p).where(and(eq(p.spaceId, spaceId), eq(p.environmentId, environmentId))),
+      );
+    },
+    async claimStalledPurges(staleBefore, at, limit) {
+      directOnly(x, 'spaces.claimStalledPurges');
+      const p = schema.environmentPurges;
+      const rows = await db
+        .update(p)
+        .set({ nudgedAt: at })
+        .where(
+          sql`rowid IN (SELECT rowid FROM ${p} WHERE ${p.nudgedAt} < ${staleBefore.getTime()} LIMIT ${limit})`,
+        )
+        .returning({ spaceId: p.spaceId, environmentId: p.environmentId });
+      return rows;
     },
   };
 }
@@ -2840,6 +2921,8 @@ function makeAgentScheduleRepo(x: Exec): AgentScheduleRepo {
           and(
             eq(schema.agentSchedules.enabled, true),
             lte(schema.agentSchedules.nextRunAt, new Date(now)),
+            // Only in an environment that still exists: a deleted one's rows linger until purged.
+            registered(schema.agentSchedules),
           ),
         )
         .orderBy(asc(schema.agentSchedules.nextRunAt))
@@ -2916,6 +2999,8 @@ function makeScheduledActionRepo(x: Exec): ScheduledActionRepo {
           and(
             eq(schema.scheduledActions.status, 'pending'),
             lte(schema.scheduledActions.scheduledFor, new Date(now)),
+            // Only in an environment that still exists: a deleted one's rows linger until purged.
+            registered(schema.scheduledActions),
           ),
         )
         .orderBy(asc(schema.scheduledActions.scheduledFor))

@@ -1,6 +1,6 @@
 import type { Scope } from '@contentworker/domain';
 import type { SearchIndex } from '@contentworker/ports';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 /**
  * What an operator can learn about the lexical index without querying it.

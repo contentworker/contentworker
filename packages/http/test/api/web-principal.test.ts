@@ -3,8 +3,8 @@ import { loadConfig } from '@contentworker/platform/config';
 import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import { principalTarget, signPrincipal } from '@contentworker/security/principal';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { wire } from './wire';
 
 const KEY = 'test-principal-key-0123456789abcdef';
 const config = loadConfig({

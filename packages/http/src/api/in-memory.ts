@@ -20,7 +20,7 @@ import {
   LocalEmbeddingsProvider,
   StubAIProvider,
 } from '@contentworker/test-kit';
-import { createApiHasher } from './auth.js';
+import { createApiHasher } from './auth';
 
 const clock: Clock = { now: () => new Date() };
 const ids: IdGenerator = { newId: () => uuidv7() };

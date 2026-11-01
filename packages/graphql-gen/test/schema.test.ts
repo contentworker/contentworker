@@ -6,7 +6,7 @@ import {
   type DeliveryContext,
   type DeliveryResolvers,
   type ResolvedEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const article = defineContentType({
   apiId: 'article',

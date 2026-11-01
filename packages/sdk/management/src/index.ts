@@ -67,6 +67,14 @@ export interface Entry {
 }
 
 /** An entry plus its current draft field values. */
+/** Holds a publish, unpublish or version restore to the `currentVersion` the caller read. */
+export interface Held {
+  readonly expectedVersion?: number;
+}
+
+const held = (opts?: Held) =>
+  opts?.expectedVersion === undefined ? '' : `?expectedVersion=${opts.expectedVersion}`;
+
 export interface EntryView {
   readonly entry: Entry;
   readonly fields: EntryFields;
@@ -293,8 +301,15 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Saves a new draft version with these field values. */
       update: (id: string, fields: EntryFields) =>
         put<EntryView>(`${envBase}/entries/${e(id)}`, { fields }),
-      publish: (id: string) => post<Entry>(`${envBase}/entries/${e(id)}/published`),
-      unpublish: (id: string) => del<Entry>(`${envBase}/entries/${e(id)}/published`),
+      /**
+       * Publishes the current draft. With `expectedVersion` (the `currentVersion` you read), a
+       * draft saved since makes it a 409 that changes nothing.
+       */
+      publish: (id: string, opts?: Held) =>
+        post<Entry>(`${envBase}/entries/${e(id)}/published${held(opts)}`),
+      /** Withdraws it from Delivery; `expectedVersion` holds it as for `publish`. */
+      unpublish: (id: string, opts?: Held) =>
+        del<Entry>(`${envBase}/entries/${e(id)}/published${held(opts)}`),
       /** Entries/assets that link to this entry ("what links here"). */
       reverseReferences: (id: string) =>
         items(get<{ items: unknown[] }>(`${envBase}/entries/${e(id)}/reverse-references`)),
@@ -312,9 +327,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
         /** Field-by-field diff between two versions. */
         diff: (id: string, from: number, to: number) =>
           get<unknown>(`${envBase}/entries/${e(id)}/versions/diff`, { from, to }),
-        /** Copies an old version's fields into a NEW draft version. */
-        restore: (id: string, version: number) =>
-          post<EntryView>(`${envBase}/entries/${e(id)}/versions/${version}/restore`),
+        /**
+         * Copies an old version's fields into a NEW draft version; `expectedVersion` (the draft
+         * you read) makes a draft saved since a 409.
+         */
+        restore: (id: string, version: number, opts?: Held) =>
+          post<EntryView>(`${envBase}/entries/${e(id)}/versions/${version}/restore${held(opts)}`),
       },
     },
 

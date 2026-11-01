@@ -15,7 +15,7 @@ import {
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { editorialTestState } from './fixtures/editorial.js';
+import { editorialTestState } from './fixtures/editorial';
 
 // The real Workflows engine (miniflare) running EditorialWorkflowBase: step names, the durable
 // wait, the decision delivered through CloudflareWorkflowEngine.sendEvent, and the outcome.

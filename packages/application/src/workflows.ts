@@ -16,7 +16,7 @@ import {
   type WorkflowVersion,
 } from '@contentworker/domain';
 import type { WorkflowGraphRecord } from '@contentworker/ports';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 /*
  * Editorial workflows are versioned graphs (packages/domain/src/workflow). A workflow row holds

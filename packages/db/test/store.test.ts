@@ -60,8 +60,8 @@ import {
 import type { Clock, IdGenerator } from '@contentworker/ports';
 import { RecordingWorkflowEngine } from '@contentworker/test-kit';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createD1Store } from '../src/store.js';
-import { testDb } from './env.js';
+import { createD1Store } from '../src/store';
+import { testDb } from './env';
 
 // D1 contract tests (Miniflare D1 in workerd). They drive the adapter through the same
 // application use-cases the API/MCP use, so they prove the SQL mappings, the JSON query path,

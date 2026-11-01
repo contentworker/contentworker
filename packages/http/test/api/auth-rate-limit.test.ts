@@ -1,9 +1,9 @@
 import { type AuthRateLimit, clientIp } from '@contentworker/platform/auth-rate-limit';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { testConfig } from './config.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { testConfig } from './config';
+import { wire } from './wire';
 
 const config: ApiConfig = testConfig({
   role: 'all',

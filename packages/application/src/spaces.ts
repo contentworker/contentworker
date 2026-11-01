@@ -14,9 +14,10 @@ import {
   type SpaceConfig,
   TransactionConflictError,
 } from '@contentworker/ports';
-import { auditActor } from './audit.js';
-import type { AppContext } from './context.js';
-import { ensureRolePresets } from './team.js';
+import { auditActor } from './audit';
+import type { AppContext } from './context';
+import { purgeDue } from './environment-purge';
+import { ensureRolePresets } from './team';
 
 export interface CreateSpaceInput {
   readonly spaceId: string;
@@ -75,7 +76,17 @@ export async function createEnvironment(
   environmentId: string,
   name?: string,
 ): Promise<void> {
-  await ctx.store.spaces.createEnvironment(spaceId, environmentId, name ?? environmentId);
+  try {
+    await ctx.store.spaces.createEnvironment(spaceId, environmentId, name ?? environmentId);
+  } catch (err) {
+    // A deleted environment of this id still has rows being removed; the new one would get them.
+    if (err instanceof TransactionConflictError) {
+      throw new ConflictError(
+        `Environment "${environmentId}" was deleted and is still being removed; try again shortly`,
+      );
+    }
+    throw err;
+  }
 }
 
 /** Lists a space's environments (branches). */
@@ -95,10 +106,12 @@ export interface DeletedEnvironment {
 /**
  * Deletes an environment and everything in it (its audit history stays). Refuses `main`, an
  * unknown environment, and one an alias points at (repoint or remove the alias first, so delivery
- * under the alias never breaks). The rows go in one atomic write with `environment.deleted`
- * events, from which the engine removes the published entries' search documents and vectors and
- * purges the environment's delivery cache. `confirm` must repeat the environment's id: deleting
- * one is irreversible, and an agent (or a script) shouldn't do it by a slip of an argument.
+ * under the alias never breaks). One atomic write takes it out of the registry, so it stops
+ * resolving at once, with `environment.deleted` events (from which the engine removes the
+ * published entries' search documents and vectors and purges the delivery cache) and the first
+ * `environment.purge_due`, which removes its rows and files in bounded steps
+ * (`runEnvironmentPurge`). `confirm` must repeat the environment's id: deleting one is
+ * irreversible, and an agent (or a script) shouldn't do it by a slip of an argument.
  */
 export async function deleteEnvironment(
   ctx: AppContext,
@@ -159,13 +172,16 @@ export async function deleteEnvironment(
     chunks.push(ids.slice(at, at + ENVIRONMENT_DELETED_CHUNK));
   }
   // At least one event, even for an empty environment: its delivery cache is purged either way.
-  const events: DomainEvent[] = (chunks.length > 0 ? chunks : [[]]).map((entryIds) => ({
-    id: ctx.ids.newId(),
-    type: 'environment.deleted',
-    scope,
-    occurredAt,
-    entryIds,
-  }));
+  const events: DomainEvent[] = [
+    ...(chunks.length > 0 ? chunks : [[]]).map((entryIds) => ({
+      id: ctx.ids.newId(),
+      type: 'environment.deleted' as const,
+      scope,
+      occurredAt,
+      entryIds,
+    })),
+    purgeDue(ctx, scope),
+  ];
   // Recorded in the same write as the deletion, whichever surface asked: it can't commit unrecorded.
   const audit = {
     id: ctx.ids.newId(),
@@ -284,9 +300,22 @@ export async function resolveEnvironment(
   ctx: AppContext,
   spaceId: string,
   envOrAlias: string,
+  opts: {
+    /**
+     * Refuse a deleted environment still being purged (default). The HTTP and MCP surfaces turn
+     * this off for a caller who can't act in the space, whose request is refused 403 anyway, so
+     * a 404 doesn't tell them an environment of that name was recently deleted.
+     */
+    readonly refusePurging?: boolean;
+  } = {},
 ): Promise<string> {
-  const alias = await ctx.store.spaces.getAlias(spaceId, envOrAlias);
-  return alias?.targetEnvironmentId ?? envOrAlias;
+  const { targetEnvironmentId, purging } = await ctx.store.spaces.resolveName(spaceId, envOrAlias);
+  if (targetEnvironmentId) return targetEnvironmentId;
+  // A deleted environment whose rows are still being removed: what is left must not be served.
+  if (purging && opts.refusePurging !== false) {
+    throw new NotFoundError('Environment', `${spaceId}/${envOrAlias}`);
+  }
+  return envOrAlias;
 }
 
 /**
@@ -299,8 +328,8 @@ export async function resolveWritableEnvironment(
   spaceId: string,
   envOrAlias: string,
 ): Promise<string> {
-  const alias = await ctx.store.spaces.getAlias(spaceId, envOrAlias);
-  if (alias) return alias.targetEnvironmentId;
+  const resolved = await resolveEnvironment(ctx, spaceId, envOrAlias);
+  if (resolved !== envOrAlias) return resolved;
   await requireEnvironment(ctx, spaceId, envOrAlias);
   return envOrAlias;
 }

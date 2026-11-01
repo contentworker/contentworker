@@ -1,9 +1,9 @@
 import type { Principal } from '@contentworker/domain';
 import { type AuthInfo, createMcpHandler, type McpHttpHandler } from '@modelcontextprotocol/server';
 import type { SkillCatalog } from '@modelcontextprotocol/server/ext/skills';
-import type { McpDeps } from './deps.js';
-import { buildServer } from './server.js';
-import { loadSkillCatalog } from './skills.js';
+import type { McpDeps } from './deps';
+import { buildServer } from './server';
+import { loadSkillCatalog } from './skills';
 
 /**
  * Upper bound on an MCP request body. The importers cap a payload at 20 MB;

@@ -15,7 +15,7 @@ import {
   restoreEntry,
   trashEntry,
   updateEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 let ctx: AppContext;

@@ -8,8 +8,8 @@ import {
   type RunEntry,
   type Scope,
 } from '@contentworker/domain';
-import type { AppContext } from '../context.js';
-import type { ExecInput } from './types.js';
+import type { AppContext } from '../context';
+import type { ExecInput } from './types';
 
 /**
  * The entry as run expressions see it (`entry.*`): status and versions, fields, tag names (the

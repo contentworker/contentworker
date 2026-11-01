@@ -1,6 +1,6 @@
 import { ForbiddenError, type Principal, scopesForKind } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { findMemberForSignIn } from './team.js';
+import type { AppContext } from './context';
+import { findMemberForSignIn } from './team';
 
 /** A person signed in to the admin web app, as the web Worker vouches for them. */
 export interface WebUser {

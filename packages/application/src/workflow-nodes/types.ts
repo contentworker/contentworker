@@ -7,7 +7,7 @@ import type {
   WorkflowRunActor,
 } from '@contentworker/domain';
 import type { AIProvider, EmailSender, WebhookSender } from '@contentworker/ports';
-import type { AppContext } from '../context.js';
+import type { AppContext } from '../context';
 
 /**
  * What a node executor returns: the branches it took plus patches the interpreter applies to the

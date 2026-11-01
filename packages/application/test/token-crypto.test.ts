@@ -5,7 +5,7 @@ import {
   DEV_TOKEN_DEFAULTS,
   requireSecureSecretsFromEnv,
   secureTokenEqual,
-} from '../src/token-crypto.js';
+} from '../src/token-crypto';
 
 describe('token-crypto', () => {
   it('secureTokenEqual rejects length mismatch', () => {

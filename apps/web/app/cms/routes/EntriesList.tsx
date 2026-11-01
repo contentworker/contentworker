@@ -344,7 +344,10 @@ export function EntriesList() {
     toastOptions?: ToastOptions,
   ) =>
     mutateEntries(async () => {
-      const r = await orDirect(await edit(tool, { id }, titleOf(id)), () =>
+      // Held to the version the row shows: confirmed after a newer draft was saved, it is refused.
+      const version = entries.find((e) => e.id === id)?.version;
+      const input = { id, ...(version ? { expectedVersion: version } : {}) };
+      const r = await orDirect(await edit(tool, input, titleOf(id)), () =>
         applyStatus(id, status, act),
       );
       if (!('output' in r)) return;
@@ -368,7 +371,9 @@ export function EntriesList() {
       );
     }
     return mutateEntries(async () => {
-      const r = await edit('entries_publish', { id: e.id }, title);
+      // Held to the version the row shows, like setStatus: a newer draft saved meanwhile is refused.
+      const input = { id: e.id, ...(e.version ? { expectedVersion: e.version } : {}) };
+      const r = await edit('entries_publish', input, title);
       if (r === null) {
         publishAsked.current = e.id;
         setConfirmPublish(e);

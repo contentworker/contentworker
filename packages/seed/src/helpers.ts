@@ -10,7 +10,7 @@ import {
 } from '@contentworker/application';
 import type { ContentTypeDraft, EntryFields } from '@contentworker/domain';
 import { logger } from '@contentworker/telemetry';
-import type { SeedRun } from './types.js';
+import type { SeedRun } from './types';
 
 /** Deterministic pick — the seed never uses Math.random so demos reproduce. */
 export function pick<T>(arr: readonly T[], i: number): T {

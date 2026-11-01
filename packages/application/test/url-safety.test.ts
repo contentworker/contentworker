@@ -1,6 +1,6 @@
 import { ValidationError } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
-import { assertSafeExternalUrl } from '../src/url-safety.js';
+import { assertSafeExternalUrl } from '../src/url-safety';
 
 describe('assertSafeExternalUrl (SSRF guard)', () => {
   const blocked = [

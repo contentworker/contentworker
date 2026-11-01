@@ -11,7 +11,7 @@ import {
   publishContentType,
   publishEntry,
   publishRelease,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
 

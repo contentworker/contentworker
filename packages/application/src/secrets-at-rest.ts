@@ -6,7 +6,7 @@ import type {
   StoredSecretRef,
   WebhookRepo,
 } from '@contentworker/ports';
-import { secretContext } from './secret-sealer.js';
+import { secretContext } from './secret-sealer';
 
 /**
  * Secrets at rest, applied at the store seam.
