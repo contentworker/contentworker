@@ -6,6 +6,8 @@ import {
   isRichTextDocument,
   MAX_RICH_TEXT_BYTES,
   MAX_RICH_TEXT_DEPTH,
+  MAX_TABLE_COLUMNS,
+  MAX_TABLE_ROWS,
   RICH_TEXT_BLOCK_NODE_TYPES,
   RICH_TEXT_INLINE_NODE_TYPES,
   type RichTextDocument,
@@ -62,8 +64,20 @@ describe('rich text document', () => {
       if (nodeType.includes('entry')) return { nodeType, data: target('Entry'), content: [] };
       return { nodeType, content: [text] };
     };
+    // Table nodes only validate in their structure, so they appear as one well-formed table.
+    const tableParts = new Set(['table', 'table-row', 'table-header-cell', 'table-cell']);
+    const cell = (nodeType: string): RichTextNode => ({
+      nodeType,
+      content: [{ nodeType: 'paragraph', content: [text] }],
+    });
     const value = doc([
-      ...RICH_TEXT_BLOCK_NODE_TYPES.map(node),
+      ...RICH_TEXT_BLOCK_NODE_TYPES.filter((t) => !tableParts.has(t)).map(node),
+      {
+        nodeType: 'table',
+        content: [
+          { nodeType: 'table-row', content: [cell('table-header-cell'), cell('table-cell')] },
+        ],
+      },
       { nodeType: 'paragraph', content: RICH_TEXT_INLINE_NODE_TYPES.map(node) },
     ]);
     expect(validateRichText(value)).toEqual([]);
@@ -182,6 +196,150 @@ describe('rich text document', () => {
       { id: 'e2', linkType: 'Entry' },
       { id: 'a1', linkType: 'Asset' },
     ]);
+  });
+});
+
+const cell = (
+  text: string,
+  nodeType = 'table-cell',
+  data: Record<string, unknown> = {},
+): RichTextNode => ({
+  nodeType,
+  data,
+  content: [{ nodeType: 'paragraph', content: [{ nodeType: 'text', value: text }] }],
+});
+const row = (...cells: RichTextNode[]): RichTextNode => ({
+  nodeType: 'table-row',
+  data: {},
+  content: cells,
+});
+const table = (...rows: RichTextNode[]): RichTextNode => ({
+  nodeType: 'table',
+  data: {},
+  content: rows,
+});
+
+describe('rich text tables', () => {
+  const pricing = table(
+    row(cell('Plan', 'table-header-cell'), cell('Price', 'table-header-cell')),
+    row(cell('Starter'), cell('$0')),
+    row(cell('Team'), cell('$20')),
+  );
+
+  it('accepts a well-formed table, header cells and spans included', () => {
+    expect(validateRichText(doc([pricing]))).toEqual([]);
+    const merged = table(row(cell('Both', 'table-cell', { colspan: 2, rowspan: 1 })));
+    expect(validateRichText(doc([merged]))).toEqual([]);
+  });
+
+  it('accepts a table nested in a cell, and a reference inside a cell', () => {
+    const outer = table(
+      row({ nodeType: 'table-cell', data: {}, content: [table(row(cell('inner')))] }),
+      row({ nodeType: 'table-cell', data: {}, content: [embeddedEntry('e9')] }),
+    );
+    expect(validateRichText(doc([outer]))).toEqual([]);
+    expect(extractRichTextTargets(doc([outer]))).toEqual([{ id: 'e9', linkType: 'Entry' }]);
+  });
+
+  it('rejects a table without rows, or with something other than rows', () => {
+    expect(validateRichText(doc([table()]))).toEqual([
+      'content[0]: table must have at least one table-row',
+    ]);
+    expect(validateRichText(doc([table(cell('loose') as RichTextNode)]))).toEqual([
+      'content[0].content[0]: a table holds only table-row nodes',
+    ]);
+  });
+
+  it('rejects an empty row, and a row holding something other than cells', () => {
+    expect(validateRichText(doc([table(row())]))).toEqual([
+      'content[0].content[0]: table-row must have at least one cell',
+    ]);
+    expect(validateRichText(doc([table(row(paragraph('not a cell')))]))).toEqual([
+      'content[0].content[0].content[0]: a table-row holds only table-header-cell or table-cell nodes',
+    ]);
+  });
+
+  it('rejects a cell holding inline content or nothing at all', () => {
+    const inline = {
+      nodeType: 'table-cell',
+      data: {},
+      content: [{ nodeType: 'text', value: 'bare' }],
+    };
+    expect(validateRichText(doc([table(row(inline))]))).toEqual([
+      'content[0].content[0].content[0].content[0]: a table cell holds blocks, not text; wrap it in a paragraph',
+    ]);
+    const empty = { nodeType: 'table-header-cell', data: {}, content: [] };
+    expect(validateRichText(doc([table(row(empty))]))).toEqual([
+      'content[0].content[0].content[0]: table-header-cell must hold at least one block',
+    ]);
+  });
+
+  it('rejects rows and cells outside a table', () => {
+    expect(validateRichText(doc([row(cell('a'))]))).toEqual([
+      'content[0]: table-row must be inside a table',
+    ]);
+    expect(validateRichText(doc([cell('a')]))).toEqual([
+      'content[0]: table-cell must be inside a table-row',
+    ]);
+    // A row smuggled into a cell is a stray too, reported once.
+    const smuggled = table(row({ nodeType: 'table-cell', data: {}, content: [row(cell('x'))] }));
+    expect(validateRichText(doc([smuggled]))).toEqual([
+      'content[0].content[0].content[0].content[0]: table-row must be inside a table',
+    ]);
+  });
+
+  it('rejects spans that are not positive integers within bounds', () => {
+    for (const data of [{ colspan: 0 }, { rowspan: 1.5 }, { colspan: '2' }, { colspan: 51 }]) {
+      expect(validateRichText(doc([table(row(cell('x', 'table-cell', data)))]))).toHaveLength(1);
+    }
+  });
+
+  it('bounds the rows and the cells in a row', () => {
+    const tall = table(...Array.from({ length: MAX_TABLE_ROWS + 1 }, () => row(cell('r'))));
+    expect(validateRichText(doc([tall]))).toEqual([
+      `content[0]: table has ${MAX_TABLE_ROWS + 1} rows (at most ${MAX_TABLE_ROWS})`,
+    ]);
+    const wide = table(row(...Array.from({ length: MAX_TABLE_COLUMNS + 1 }, () => cell('c'))));
+    expect(validateRichText(doc([wide]))).toEqual([
+      `content[0].content[0]: table-row has ${MAX_TABLE_COLUMNS + 1} cells (at most ${MAX_TABLE_COLUMNS})`,
+    ]);
+    const atLimit = table(
+      ...Array.from({ length: MAX_TABLE_ROWS }, () =>
+        row(...Array.from({ length: 2 }, () => cell('c'))),
+      ),
+    );
+    expect(validateRichText(doc([atLimit]))).toEqual([]);
+  });
+
+  it('reads a table as one block: a line per row, cells separated', () => {
+    const value = doc([paragraph('Pricing'), pricing, paragraph('Billed monthly.')]);
+    expect(richTextToPlainText(value)).toBe(
+      'Pricing\n\nPlan | Price\nStarter | $0\nTeam | $20\n\nBilled monthly.',
+    );
+  });
+
+  it('keeps a cell on its row however many blocks and breaks it holds', () => {
+    const busy: RichTextNode = {
+      nodeType: 'table-cell',
+      data: {},
+      content: [
+        {
+          nodeType: 'paragraph',
+          content: [
+            { nodeType: 'text', value: 'one' },
+            { nodeType: 'hard-break' },
+            { nodeType: 'text', value: 'two' },
+          ],
+        },
+        {
+          nodeType: 'unordered-list',
+          content: [{ nodeType: 'list-item', content: [paragraph('three')] }],
+        },
+      ],
+    };
+    const value = doc([table(row(cell('Notes'), busy), row(cell(''), cell('')))]);
+    // The empty row says nothing, so it is not a line.
+    expect(richTextToPlainText(value)).toBe('Notes | one two three');
   });
 });
 

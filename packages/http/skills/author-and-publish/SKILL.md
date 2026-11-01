@@ -24,6 +24,9 @@ publishing does.
 - `entries_create` makes a draft. `entries_update` saves a **new draft version** whose fields are
   exactly what you pass — an omitted field is dropped. To change one field, `entries_get` the entry
   and send all of its fields back with that one changed.
+- A `RichText` value is a node tree under `{ "nodeType": "document", "content": [...] }`. A table
+  is `table` → `table-row`s → `table-header-cell` or `table-cell` → blocks, each with
+  `"data": {}`; put a cell's text in a `paragraph`, never directly in the cell.
 - Validation errors come back with the field that failed. Fix the value; do not retry unchanged.
 
 ## Publish

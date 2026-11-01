@@ -195,9 +195,10 @@ export function richTextGuide(title: string, steps: readonly string[], i: number
 
 /**
  * One document exercising every node the admin's rich-text mapper supports:
- * headings 1–6, both list kinds, blockquote, code block, hr, all five marks,
- * plain/entry/asset hyperlinks, and embedded entry/asset blocks — so the
- * editor's full round-trip renders against seeded content.
+ * headings 1–6, both list kinds, blockquote, code block, hr, a table with a
+ * header row, all five marks, plain/entry/asset hyperlinks, and embedded
+ * entry/asset blocks — so the editor's full round-trip renders against seeded
+ * content.
  */
 export function richTextKitchenSink(embeddedEntryId: string, embeddedAssetId: string) {
   const heading = (level: number) => ({
@@ -242,6 +243,23 @@ export function richTextKitchenSink(embeddedEntryId: string, embeddedAssetId: st
         content: [text("const entry = await client.getEntry('id');")],
       },
       { nodeType: 'hr', content: [] },
+      {
+        nodeType: 'table',
+        data: {},
+        content: [
+          ['Plan', 'Seats', 'Support'],
+          ['Starter', '3', 'Community'],
+          ['Team', '25', 'Email, next business day'],
+        ].map((cells, r) => ({
+          nodeType: 'table-row',
+          data: {},
+          content: cells.map((value) => ({
+            nodeType: r === 0 ? 'table-header-cell' : 'table-cell',
+            data: {},
+            content: [paragraph(text(value))],
+          })),
+        })),
+      },
       paragraph(
         text('A '),
         {
