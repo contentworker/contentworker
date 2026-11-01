@@ -15,6 +15,7 @@ import {
   canvasToEntry,
   cloneEnvironment,
   compareEnvironments,
+  countEntriesByContentType,
   createAgentSchedule,
   createAIAction,
   createApiKey,
@@ -1062,6 +1063,26 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         (await parseBody(c, contentTypeBody)) as unknown as Parameters<typeof createContentType>[2],
       );
       return c.json(ct, 201);
+    },
+  );
+  // Before `/content-types/:apiId`, which would take "entry-counts" for an apiId (apiIds have no
+  // hyphens, so no real type is shadowed).
+  app.get(
+    `${BASE}/content-types/entry-counts`,
+    doc('Content types', 'Count entries per content type', {
+      description:
+        'Entries per content type by status (`draft`, `changed`, `published`, and `archived` ' +
+        'for the trash), from one grouped count. `total` is the live entries, without the ' +
+        'trash. Types the caller cannot read are left out.',
+      ok: docs.contentTypeEntryCounts,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const principal = c.get('principal');
+      const counts = await countEntriesByContentType(ctx, scopeOf(c));
+      return c.json({
+        items: counts.filter((n) => canAccessContentType(principal, 'read', n.contentType)),
+      });
     },
   );
   app.get(

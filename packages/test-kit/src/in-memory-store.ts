@@ -60,6 +60,7 @@ import type {
   DeploymentSettingsRepo,
   EntryQuery,
   EntryRepo,
+  EntryStatusCount,
   EntryWithFields,
   EnvironmentAlias,
   FunctionDefinition,
@@ -294,6 +295,21 @@ export class InMemoryContentStore implements ContentStore {
         ...r,
         fields: projectFields(r.fields, query.select as string[]),
       }));
+    },
+    countByStatus: async (scope) => {
+      const prefix = `${scopeKey(scope)}::`;
+      const groups = new Map<string, EntryStatusCount>();
+      for (const [k, e] of this.entryData) {
+        if (!k.startsWith(prefix)) continue;
+        const key = `${e.contentTypeApiId}\u0000${e.status}`;
+        const g = groups.get(key);
+        groups.set(key, {
+          contentType: e.contentTypeApiId,
+          status: e.status,
+          count: (g?.count ?? 0) + 1,
+        });
+      }
+      return [...groups.values()];
     },
     create: async (scope, entry, version) => {
       this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);

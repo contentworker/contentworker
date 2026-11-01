@@ -22,6 +22,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { PageHeader } from '~/cms/components/page';
+import { RequiredMark } from '~/cms/components/required-mark';
 import { useClient } from '../lib/client-context';
 import {
   type BulkJobSummary,
@@ -340,7 +341,7 @@ export function ImportEntries() {
                     <TableCell>
                       <Label htmlFor={`map-${field.apiId}`} className="gap-1">
                         {field.name}
-                        {field.required && <span className="text-destructive">*</span>}
+                        {field.required && <RequiredMark />}
                       </Label>
                       <div className="text-muted-foreground text-xs">{field.type}</div>
                     </TableCell>

@@ -1,15 +1,6 @@
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@contentworker/ui/card';
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -43,17 +34,32 @@ import {
   Tr as TableRow,
 } from '@contentworker/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@contentworker/ui/tooltip';
+import { useQueries } from '@tanstack/react-query';
 import { CalendarClock, PackageOpen, Plus, Rocket, Trash2, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
+import { Ago } from '~/cms/components/ago';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
+import { entryTitle } from '~/cms/components/layout/Breadcrumbs';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { ReleasePublishConfirm } from '~/cms/components/ReleasePublishConfirm';
 import { StatusBadge } from '~/cms/components/status';
+import { When } from '~/cms/components/when';
+import { humanize, plural, statusLabel } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import { useAllEntriesQuery, useInvalidate, useScopedQuery } from '../lib/queries';
+import type { PreviewEntry } from '../lib/management';
+import {
+  useAllEntriesQuery,
+  useContentTypesQuery,
+  useInvalidate,
+  useScopedQuery,
+} from '../lib/queries';
 import { useToast } from '../lib/toast';
-
-const fmt = (iso?: string) => (iso ? new Date(iso).toLocaleString() : '—');
 
 /** Local datetime → ISO, defaulting to one hour out for the picker initial value. */
 function defaultScheduleLocal(): string {
@@ -63,24 +69,25 @@ function defaultScheduleLocal(): string {
   return new Date(d.getTime() - off).toISOString().slice(0, 16);
 }
 
-/** Releases board + scheduled-actions queue — the P12 editorial surface. */
+/**
+ * Releases and the scheduled-actions queue. Each release is a row with what decides whether to ship
+ * it: how many entries it holds, when it goes (or went) out, and its status. Opening it is the
+ * row's path; publishing lives in the release, beside its members, behind the publish confirm.
+ */
 export function Releases() {
-  const { client, busy, run } = useClient();
+  const { client, conn, busy, run } = useClient();
   const toast = useToast();
   const invalidate = useInvalidate();
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  // At most one card asks "are you sure?" at a time, in place of its footer.
-  const [confirming, setConfirming] = useState<{
-    kind: 'publish' | 'delete';
-    id: string;
-  } | null>(null);
-  const triggerId = (kind: 'publish' | 'delete', id: string) => `release-${kind}-${id}`;
-  // Back to the trigger after a cancel. After a confirm the trigger is disabled
-  // while the request runs (and gone once published), and focus() on it would
-  // drop focus to <body> — so fall back to the card's Open button.
-  const focusTrigger = (kind: 'publish' | 'delete', id: string) => () => {
-    const trigger = document.getElementById(triggerId(kind, id));
+  // At most one row asks "delete this?" at a time, in a row of its own beneath it.
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const triggerId = (id: string) => `release-delete-${id}`;
+  // Back to the trigger after a cancel. After a confirm the trigger is disabled while the request
+  // runs (and gone once deleted), and focus() on it would drop focus to <body>, so fall back to
+  // the row's title.
+  const focusTrigger = (id: string) => () => {
+    const trigger = document.getElementById(triggerId(id));
     return trigger instanceof HTMLButtonElement && !trigger.disabled
       ? trigger
       : document.getElementById(`release-open-${id}`);
@@ -91,6 +98,21 @@ export function Releases() {
   const releases = releasesQuery.data ?? [];
   const scheduled = scheduledQuery.data ?? [];
   const loading = releasesQuery.isPending || scheduledQuery.isPending;
+  // Each release's members, for its entry count: the same `['release', id]` cache the detail
+  // sheet and the publish confirm read, so opening one costs nothing more.
+  const memberQueries = useQueries({
+    queries: releases.map((r) => ({
+      queryKey: [conn.space, conn.environment, 'release', r.id],
+      queryFn: () => client.getRelease(r.id),
+      meta: { silent: true },
+    })),
+  });
+  /** When a pending scheduled publish will ship the release, if one does. */
+  const scheduledFor = (id: string) =>
+    scheduled
+      .filter((a) => a.entityType === 'Release' && a.entityId === id && a.status === 'pending')
+      .map((a) => a.scheduledFor)
+      .sort()[0];
 
   // Publishing a release publishes its entries, so entry lists/details go
   // stale too; the entries invalidations are cheap no-ops when unmounted.
@@ -98,13 +120,6 @@ export function Releases() {
   // just-published release could reopen as still-editable within staleTime.
   const reload = () =>
     invalidate(['releases'], ['scheduled-actions'], ['release'], ['entries'], ['entry']);
-
-  const publishNow = (id: string) =>
-    run(async () => {
-      await client.publishRelease(id);
-      toast.success('Release published');
-      await reload();
-    });
 
   const remove = (id: string) =>
     run(async () => {
@@ -124,224 +139,260 @@ export function Releases() {
   const pendingCount = scheduled.filter((a) => a.status === 'pending').length;
 
   return (
-    <div className="space-y-4">
-      <PageHeader title="Releases" subtitle="Bundle entries and ship them atomically.">
-        <Button type="button" size="sm" onClick={() => setCreating(true)} disabled={busy}>
-          <Plus aria-hidden="true" /> New release
-        </Button>
-      </PageHeader>
+    <TooltipProvider>
+      <div className="space-y-4">
+        <PageHeader title="Releases" subtitle="Bundle entries and ship them atomically.">
+          <Button type="button" size="sm" onClick={() => setCreating(true)} disabled={busy}>
+            <Plus aria-hidden="true" /> New release
+          </Button>
+        </PageHeader>
 
-      <Tabs defaultValue="releases">
-        <TabsList>
-          <TabsTrigger value="releases">Releases</TabsTrigger>
-          <TabsTrigger value="scheduled">
-            Scheduled
-            {pendingCount > 0 && (
-              <Badge variant="secondary" className="ml-2">
-                {pendingCount}
-              </Badge>
-            )}
-          </TabsTrigger>
-        </TabsList>
+        <Tabs defaultValue="releases">
+          <TabsList>
+            <TabsTrigger value="releases">Releases</TabsTrigger>
+            <TabsTrigger value="scheduled">
+              Scheduled
+              {pendingCount > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {pendingCount}
+                </Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="releases" className="mt-4">
-          {loading ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-40 w-full" />
-              ))}
-            </div>
-          ) : releases.length === 0 ? (
-            <EmptyState
-              icon={PackageOpen}
-              title="No releases yet"
-              description="Group entries into a release to publish them together at one moment."
-            >
-              <Button type="button" onClick={() => setCreating(true)}>
-                Create release
-              </Button>
-            </EmptyState>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {releases.map((r) => (
-                <Card key={r.id} className="flex flex-col">
-                  <CardHeader>
-                    <CardTitle className="section-title break-words">
-                      <h2>{r.title}</h2>
-                    </CardTitle>
-                    {r.description && (
-                      <CardDescription className="line-clamp-2">{r.description}</CardDescription>
-                    )}
-                    <CardAction>
-                      <StatusBadge status={r.status} />
-                    </CardAction>
-                  </CardHeader>
-                  <CardContent className="flex-1 text-muted-foreground text-sm">
-                    Created {fmt(r.createdAt)}
-                    {r.publishedAt && <div>Published {fmt(r.publishedAt)}</div>}
-                  </CardContent>
-                  {confirming?.id === r.id ? (
-                    <CardFooter>
-                      {confirming.kind === 'publish' ? (
-                        <ReleasePublishConfirm
-                          releaseId={r.id}
-                          releaseTitle={r.title}
-                          busy={busy}
-                          onCancel={() => setConfirming(null)}
-                          returnFocus={focusTrigger('publish', r.id)}
-                          onConfirm={() => {
-                            setConfirming(null);
-                            void publishNow(r.id);
-                          }}
-                        />
-                      ) : (
-                        <InlineConfirm
-                          message={`Delete “${r.title}”?`}
-                          note="Its entries stay as they are; the release itself can’t be recovered."
-                          onCancel={() => setConfirming(null)}
-                          returnFocus={focusTrigger('delete', r.id)}
-                        >
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="destructive"
-                            disabled={busy}
-                            onClick={() => {
-                              setConfirming(null);
-                              void remove(r.id);
-                            }}
-                          >
-                            Delete release
-                          </Button>
-                        </InlineConfirm>
-                      )}
-                    </CardFooter>
-                  ) : (
-                    <CardFooter className="gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        id={`release-open-${r.id}`}
-                        onClick={() => setOpenId(r.id)}
-                      >
-                        Open
-                      </Button>
-                      {r.status === 'open' && (
-                        <Button
-                          id={triggerId('publish', r.id)}
-                          type="button"
-                          size="sm"
-                          onClick={() => setConfirming({ kind: 'publish', id: r.id })}
-                          disabled={busy}
-                        >
-                          <Rocket className="size-4" />
-                          Publish
-                        </Button>
-                      )}
-                      {r.status !== 'published' && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="ml-auto size-8"
-                          id={triggerId('delete', r.id)}
-                          aria-label={`Delete “${r.title}”`}
-                          onClick={() => setConfirming({ kind: 'delete', id: r.id })}
-                          disabled={busy}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      )}
-                    </CardFooter>
-                  )}
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="scheduled" className="mt-4">
-          {loading ? (
-            <Skeleton className="h-40 w-full" />
-          ) : scheduled.length === 0 ? (
-            <EmptyState
-              icon={CalendarClock}
-              title="Nothing scheduled"
-              description="Schedule a release or entry to publish automatically at a future time."
-            />
-          ) : (
-            <div className="card overflow-clip">
-              <Table stack="cards" caption="Scheduled publishes">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Target</TableHead>
-                    <TableHead>When</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-20">
-                      <span className="sr-only">Actions</span>
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {scheduled.map((a) => (
-                    <TableRow key={a.id}>
-                      <TableCell className="font-medium capitalize">{a.action}</TableCell>
-                      <TableCell label="Target">
-                        <span className="text-muted-foreground">{a.entityType}</span>{' '}
-                        <code className="whitespace-nowrap font-mono text-xs">
-                          {a.entityId.slice(0, 8)}
-                        </code>
-                      </TableCell>
-                      <TableCell label="When">{fmt(a.scheduledFor)}</TableCell>
-                      <TableCell label="Status">
-                        <StatusBadge status={a.status} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {a.status === 'pending' && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => cancel(a.id)}
-                            disabled={busy}
-                          >
-                            <X className="size-4" />
-                            Cancel
-                          </Button>
-                        )}
-                      </TableCell>
+          <TabsContent value="releases" className="mt-4">
+            {loading ? (
+              <div className="card space-y-3 p-5">
+                {[0, 1, 2].map((i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
+              </div>
+            ) : releases.length === 0 ? (
+              <EmptyState
+                icon={PackageOpen}
+                title="No releases yet"
+                description="Group entries into a release to publish them together at one moment."
+              >
+                <Button type="button" onClick={() => setCreating(true)}>
+                  Create release
+                </Button>
+              </EmptyState>
+            ) : (
+              <div className="card overflow-clip">
+                <Table stack="cards" caption="Releases">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Release</TableHead>
+                      <TableHead numeric>Entries</TableHead>
+                      <TableHead>When</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+                  </TableHeader>
+                  <TableBody>
+                    {releases.map((r, i) => {
+                      const at = scheduledFor(r.id);
+                      const members = memberQueries[i];
+                      return (
+                        <Fragment key={r.id}>
+                          <TableRow>
+                            <TableCell className="max-w-md">
+                              {/* Opening is the row's main path; publishing waits inside, with its
+                                members in view. */}
+                              <button
+                                type="button"
+                                id={`release-open-${r.id}`}
+                                className="hit-area break-words text-left font-medium hover:underline"
+                                onClick={() => setOpenId(r.id)}
+                              >
+                                {r.title}
+                              </button>
+                              {r.description ? (
+                                <p className="line-clamp-2 text-muted-foreground text-xs">
+                                  {r.description}
+                                </p>
+                              ) : null}
+                            </TableCell>
+                            <TableCell numeric label="Entries">
+                              {members?.isPending ? (
+                                <Skeleton className="ml-auto h-4 w-8" />
+                              ) : members?.data ? (
+                                members.data.items.length
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell label="When" className="text-muted-foreground">
+                              {r.publishedAt ? (
+                                <>
+                                  Published <Ago at={r.publishedAt} />
+                                </>
+                              ) : at ? (
+                                <>
+                                  Scheduled for <When at={at} />
+                                </>
+                              ) : (
+                                <>
+                                  Created <Ago at={r.createdAt} />
+                                </>
+                              )}
+                            </TableCell>
+                            <TableCell label="Status">
+                              <StatusBadge
+                                status={r.status === 'open' && at ? 'scheduled' : r.status}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {r.status !== 'published' ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="hit-area size-8"
+                                      id={triggerId(r.id)}
+                                      aria-label={`Delete “${r.title}”`}
+                                      aria-expanded={deleting === r.id}
+                                      onClick={() => setDeleting(r.id)}
+                                      disabled={busy}
+                                    >
+                                      <Trash2 className="size-4" aria-hidden="true" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Delete release</TooltipContent>
+                                </Tooltip>
+                              ) : null}
+                            </TableCell>
+                          </TableRow>
+                          {deleting === r.id ? (
+                            <TableRow>
+                              <TableCell colSpan={5}>
+                                <InlineConfirm
+                                  message={`Delete “${r.title}”?`}
+                                  note="Its entries stay as they are; the release itself can’t be recovered."
+                                  onCancel={() => setDeleting(null)}
+                                  returnFocus={focusTrigger(r.id)}
+                                >
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="destructive"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      setDeleting(null);
+                                      void remove(r.id);
+                                    }}
+                                  >
+                                    Delete release
+                                  </Button>
+                                </InlineConfirm>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
 
-      <CreateReleaseDialog
-        open={creating}
-        onOpenChange={setCreating}
-        onCreate={(input) =>
-          run(async () => {
-            const created = await client.createRelease(input);
-            setCreating(false);
-            toast.success('Release created');
-            await reload();
-            setOpenId(created.id);
-          })
-        }
-        busy={busy}
-      />
+          <TabsContent value="scheduled" className="mt-4">
+            {loading ? (
+              <Skeleton className="h-40 w-full" />
+            ) : scheduled.length === 0 ? (
+              <EmptyState
+                icon={CalendarClock}
+                title="Nothing scheduled"
+                description="Schedule a release or entry to publish automatically at a future time."
+              />
+            ) : (
+              <div className="card overflow-clip">
+                <Table stack="cards" caption="Scheduled publishes">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Action</TableHead>
+                      <TableHead>Target</TableHead>
+                      <TableHead>When</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="w-20">
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {scheduled.map((a) => (
+                      <TableRow key={a.id}>
+                        <TableCell className="font-medium">{humanize(a.action)}</TableCell>
+                        <TableCell label="Target">
+                          {a.entityType === 'Release' ? (
+                            (releases.find((r) => r.id === a.entityId)?.title ?? (
+                              <span className="text-muted-foreground">A deleted release</span>
+                            ))
+                          ) : (
+                            <>
+                              <span className="text-muted-foreground">An entry</span>{' '}
+                              <code className="whitespace-nowrap font-mono text-muted-foreground text-xs">
+                                {a.entityId.slice(0, 8)}
+                              </code>
+                            </>
+                          )}
+                        </TableCell>
+                        <TableCell label="When">
+                          <When at={a.scheduledFor} />
+                        </TableCell>
+                        <TableCell label="Status">
+                          <StatusBadge status={a.status} />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {a.status === 'pending' && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => cancel(a.id)}
+                              disabled={busy}
+                            >
+                              <X className="size-4" />
+                              Cancel
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
 
-      <ReleaseDetailSheet
-        releaseId={openId}
-        onClose={() => setOpenId(null)}
-        onChanged={() => void reload()}
-      />
-    </div>
+        <CreateReleaseDialog
+          open={creating}
+          onOpenChange={setCreating}
+          onCreate={(input) =>
+            run(async () => {
+              const created = await client.createRelease(input);
+              setCreating(false);
+              toast.success('Release created');
+              await reload();
+              setOpenId(created.id);
+            })
+          }
+          busy={busy}
+        />
+
+        <ReleaseDetailSheet
+          releaseId={openId}
+          onClose={() => setOpenId(null)}
+          onChanged={() => void reload()}
+        />
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -414,7 +465,7 @@ function ReleaseDetailSheet(props: {
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const { client, busy, run } = useClient();
+  const { client, conn, busy, run } = useClient();
   const toast = useToast();
   const invalidate = useInvalidate();
   // The entry picker resets in-render whenever a different release is opened.
@@ -433,7 +484,8 @@ function ReleaseDetailSheet(props: {
     useScopedQuery(['release', props.releaseId], () => client.getRelease(props.releaseId ?? ''), {
       enabled: !!props.releaseId,
     }).data ?? null;
-  const entries = useAllEntriesQuery({ enabled: !!props.releaseId }).data ?? [];
+  const entriesQuery = useAllEntriesQuery({ enabled: !!props.releaseId });
+  const entries = entriesQuery.data ?? [];
 
   const refresh = async () => {
     await invalidate(['release', props.releaseId]);
@@ -445,6 +497,13 @@ function ReleaseDetailSheet(props: {
   const release = detail?.release;
   const items = detail?.items ?? [];
   const memberIds = new Set(items.map((i) => i.entityId));
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  const types = useContentTypesQuery().data ?? [];
+  const typeName = (apiId: string) => types.find((t) => t.apiId === apiId)?.name ?? apiId;
+  /** An entry by its title, never its id: "Untitled" when its display field is empty. */
+  const titleOf = (e: PreviewEntry) =>
+    entryTitle(e.fields, types.find((t) => t.apiId === e.contentType)?.displayField, conn.locale) ??
+    'Untitled';
   const candidates = entries.filter((e) => !memberIds.has(e.id));
   const editable = release?.status === 'open';
   const asking = !!id && askingFor === id;
@@ -493,11 +552,16 @@ function ReleaseDetailSheet(props: {
       <SheetContent side="right" className="flex w-full flex-col overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{release?.title ?? 'Release'}</SheetTitle>
-          <SheetDescription>
-            {release
-              ? `${items.length} member${items.length === 1 ? '' : 's'} · ${release.status}`
-              : 'Loading…'}
-          </SheetDescription>
+          {release ? (
+            <SheetDescription>
+              {plural(items.length, 'entry', 'entries')} · {statusLabel(release.status)}
+            </SheetDescription>
+          ) : (
+            <>
+              <SheetDescription className="sr-only">Loading the release</SheetDescription>
+              <Skeleton className="h-4 w-40" />
+            </>
+          )}
         </SheetHeader>
 
         <div className="space-y-5 px-4 pb-6">
@@ -517,7 +581,10 @@ function ReleaseDetailSheet(props: {
                     ) : (
                       candidates.map((e) => (
                         <SelectItem key={e.id} value={e.id}>
-                          {e.contentType} · {e.id.slice(0, 8)} ({e.status})
+                          {titleOf(e)}
+                          <span className="ml-2 text-muted-foreground">
+                            {typeName(e.contentType)} · {statusLabel(e.status)}
+                          </span>
                         </SelectItem>
                       ))
                     )}
@@ -531,37 +598,51 @@ function ReleaseDetailSheet(props: {
           )}
 
           <div className="space-y-2">
-            <Label>Members</Label>
+            <h3 className="font-medium text-sm">Entries</h3>
             {items.length === 0 ? (
               <p className="text-muted-foreground text-sm">No entries in this release yet.</p>
             ) : (
               <ul className="divide-y rounded-md border">
-                {items.map((it) => (
-                  <li
-                    key={it.entityId}
-                    className="flex items-center justify-between gap-2 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <code className="text-xs">{it.entityId.slice(0, 12)}</code>
-                      <Badge variant="outline" className="ml-2 capitalize">
-                        {it.action}
-                      </Badge>
-                    </div>
-                    {editable && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-7"
-                        aria-label="Remove entry"
-                        onClick={() => removeEntry(it.entityId)}
-                        disabled={busy}
-                      >
-                        <X className="size-4" />
-                      </Button>
-                    )}
-                  </li>
-                ))}
+                {items.map((it) => {
+                  const member = byId.get(it.entityId);
+                  const name = member ? titleOf(member) : null;
+                  return (
+                    <li
+                      key={it.entityId}
+                      className="flex items-center justify-between gap-2 px-3 py-2"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        {name ? (
+                          <span className="min-w-0 truncate text-sm">{name}</span>
+                        ) : entriesQuery.isPending ? (
+                          <Skeleton className="h-4 w-32" />
+                        ) : (
+                          // Past the list's cap, or gone: named as what it is, the id as detail.
+                          <span className="min-w-0 truncate text-muted-foreground text-sm">
+                            An entry{' '}
+                            <code className="font-mono text-xs">{it.entityId.slice(0, 8)}</code>
+                          </span>
+                        )}
+                        {it.action === 'unpublish' ? (
+                          <Badge variant="outline">Unpublish</Badge>
+                        ) : null}
+                      </div>
+                      {editable && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="hit-area size-7"
+                          aria-label={`Remove “${name ?? 'this entry'}” from the release`}
+                          onClick={() => removeEntry(it.entityId)}
+                          disabled={busy}
+                        >
+                          <X className="size-4" aria-hidden="true" />
+                        </Button>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

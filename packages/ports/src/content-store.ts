@@ -11,6 +11,7 @@ import type {
   Entry,
   EntryFields,
   EntryMetadata,
+  EntryStatus,
   EntryVersion,
   EntryWorkflowState,
   EventType,
@@ -789,6 +790,13 @@ export interface EntryWithFields {
   readonly fields: EntryFields;
 }
 
+/** How many entries of one content type are in one status (a row of {@link EntryRepo.countByStatus}). */
+export interface EntryStatusCount {
+  readonly contentType: string;
+  readonly status: EntryStatus;
+  readonly count: number;
+}
+
 /** The denormalized published snapshot served by the Delivery API. */
 export interface PublishedEntry {
   readonly entryId: string;
@@ -871,6 +879,12 @@ export interface EntryRepo {
   getMany(scope: Scope, ids: readonly string[]): Promise<EntryWithFields[]>;
   /** Lists draft/current entries (the Preview read path), newest-affected first. */
   list(scope: Scope, query: EntryQuery): Promise<EntryWithFields[]>;
+  /**
+   * How many entries this scope holds, per content type and status (trash included, as
+   * `archived`): one grouped count, never a page of rows measured. Groups with no entries are
+   * absent; order unspecified.
+   */
+  countByStatus(scope: Scope): Promise<EntryStatusCount[]>;
   /** Persists a new entry and its first version. */
   create(scope: Scope, entry: Entry, version: EntryVersion): Promise<void>;
   /** Persists the updated aggregate plus a new version snapshot. */

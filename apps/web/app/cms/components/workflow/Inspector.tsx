@@ -29,6 +29,7 @@ import { Switch } from '@contentworker/ui/switch';
 import { Textarea } from '@contentworker/ui/textarea';
 import { AlertTriangle } from 'lucide-react';
 import { cloneElement, useEffect, useId, useState } from 'react';
+import { stepName } from './graph';
 import { CATEGORY_COLOR, NodeIcon } from './NodeIcon';
 
 /** What the pickers offer, read from the space by the editor. */
@@ -123,7 +124,7 @@ export function Inspector({
         ) : null}
         <ItemContent className="min-w-0">
           <ItemTitle className="line-clamp-none font-semibold">
-            <h2>{node.label || spec?.label || node.type}</h2>
+            <h2>{stepName(node, builtinNodeRegistry)}</h2>
           </ItemTitle>
           <ItemDescription className="line-clamp-none text-xs leading-snug">
             <span className="font-medium text-foreground/80">{spec?.label ?? node.type}</span>

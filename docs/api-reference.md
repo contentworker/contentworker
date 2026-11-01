@@ -331,6 +331,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/space-config`                   | `preview:read`    | Space settings for the environment |
 | GET    | `…/content-types`                  | `preview:read`    | List content types                 |
 | POST   | `…/content-types`                  | `content:manage`  | Create/update content type         |
+| GET    | `…/content-types/entry-counts`     | `preview:read`    | Entries per type, by status        |
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 

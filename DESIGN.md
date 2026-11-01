@@ -151,15 +151,15 @@ Neutral greys with no tint carry everything; colour is reserved for one blue and
 Each contentworker status maps to one token (`cms/lib/format.ts` `statusTone`), and every badge, dot
 and chart series for a status reads it through `var()`, so it switches with the theme:
 
-| Token             | Means                       | contentworker statuses                                                      |
-| ----------------- | --------------------------- | --------------------------------------------------------------------------- |
-| `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                    |
-| `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, unsaved changes |
-| `run` (work blue) | in progress or on a clock   | scheduled, running, queued, processing                                      |
-| `idle`            | at rest, or ended otherwise | draft, open (release), archived, revoked, expired, disabled, cancelled      |
-| `bad`             | failed                      | failed, error, rejected, removed                                            |
-| `undo`            | taken back                  | rolled back, reverted                                                       |
-| `ai`              | a model's work              | proposed, suggested, generated (agent output awaiting review)               |
+| Token             | Means                       | contentworker statuses                                                            |
+| ----------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                          |
+| `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, unsaved changes       |
+| `run` (work blue) | in progress or on a clock   | scheduled, running, queued, processing                                            |
+| `idle`            | at rest, or ended otherwise | draft, open (release), archived, revoked, expired, disabled, cancelled            |
+| `bad`             | failed                      | failed, error, rejected, removed                                                  |
+| `undo`            | taken back                  | rolled back, reverted                                                             |
+| `ai`              | a model's work              | proposed, suggested, generated, needs review, held (agent output awaiting review) |
 
 ### Named Rules
 
@@ -340,9 +340,13 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Overview** (`cms/components/Dashboard.tsx`): what needs attention as cards (not yet published,
   coming up, agent proposals, live activity), then search, AI usage and recent agent runs.
 - **Content:** the content types as cards (`PageHeader` with New content type); a content type's
-  entries beside the list of types (from md); the entry editor: the title wraps, the status, version
-  and save state sit under it, and the actions wrap beside it; below md the secondary actions fold
-  into a ghost ⋯ menu ("More entry actions"). Beside the form sits the **side pane** (after felix's):
+  entries beside the list of types (from md); the entry editor: the title wraps; under it an action bar (status,
+  version and save state, then the one primary verb for the state: Save draft for a new entry,
+  Publish while anything isn't live, a disabled "Published" when live and clean) stays under the
+  shell's header from md, and below md its buttons sit above the tab bar. The secondary actions
+  (Draft from prose, Generate with AI, Copy preview link) are ghost and fold into a ghost ⋯ menu
+  ("More entry actions") when the editor is narrower than 56rem. Publishing confirms the same way
+  from the editor and an entries row (`entries/PublishConfirm.tsx`); a first publish offers Undo. Beside the form sits the **side pane** (after felix's):
   where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
   the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
   narrower, it stacks under the form. The divider is an ARIA splitter (drag, arrows, Shift for a

@@ -20,12 +20,13 @@ import {
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { EntryFilterBar } from '~/cms/components/EntryFilterBar';
 import { Empty, EmptyState, PageHeader } from '~/cms/components/page';
 import { EntryDiff } from '../components/EntryDiff';
 import { EntriesTable, type EntryRowActions } from '../components/entries/EntriesTable';
+import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
 import type { EntryAggregate, EntryListQuery, PreviewEntry } from '../lib/management';
@@ -59,6 +60,10 @@ export function EntriesList() {
   // Permanent deletion is the one entry action with no way back, so it is
   // always confirmed by name.
   const [confirmPurge, setConfirmPurge] = useState<PreviewEntry | null>(null);
+  // A row's Publish of an entry that has been live, awaiting the same confirmation (and diff of
+  // what changes) as the editor's Publish.
+  const [confirmPublish, setConfirmPublish] = useState<PreviewEntry | null>(null);
+  const publishAsked = useRef<string | null>(null);
   // Bulk action awaiting confirmation (bulk selections are tedious to rebuild,
   // so the whole batch is confirmed once before it runs).
   const [confirmBulk, setConfirmBulk] = useState<'publish' | 'unpublish' | null>(null);
@@ -80,6 +85,7 @@ export function EntriesList() {
     setPicked(new Set());
     setDiffEntry(null);
     setConfirmPurge(null);
+    setConfirmPublish(null);
     setConfirmBulk(null);
     setBulkFailures(null);
   }
@@ -221,6 +227,7 @@ export function EntriesList() {
       navigate(`/content/${selectedType?.apiId}/${r.output.entry.id}`);
     });
 
+  // What toasts, confirmations and the assistant's cards call an entry: never its id.
   const titleOf = (id: string) => {
     const entry = entries.find((e) => e.id === id);
     const value = selectedType
@@ -228,7 +235,7 @@ export function EntriesList() {
           conn.locale
         ]
       : undefined;
-    return typeof value === 'string' && value ? value : id;
+    return typeof value === 'string' && value ? value : 'Untitled entry';
   };
 
   // One bulk API call handles the whole selection server-side, reporting
@@ -312,6 +319,20 @@ export function EntriesList() {
     }
   };
 
+  // Straight through the API: the status changes at once and rolls back on failure. Callers wrap
+  // it in `mutateEntries`.
+  const applyStatus = async <T,>(id: string, status: string, act: (id: string) => Promise<T>) => {
+    const optimistic = !entriesQuery.isPlaceholderData;
+    const snapshot = entries;
+    if (optimistic) optimisticStatus(new Set([id]), status);
+    try {
+      return await act(id);
+    } catch (e) {
+      if (optimistic) queryClient.setQueryData(entriesKey, snapshot);
+      throw e;
+    }
+  };
+
   // Through the assistant's card, the status changes once confirmed (no optimism before an answer).
   // Straight through the API, it changes at once and rolls back on failure.
   const setStatus = (
@@ -323,32 +344,52 @@ export function EntriesList() {
     toastOptions?: ToastOptions,
   ) =>
     mutateEntries(async () => {
-      const r = await orDirect(await edit(tool, { id }, titleOf(id)), async () => {
-        const optimistic = !entriesQuery.isPlaceholderData;
-        const snapshot = entries;
-        if (optimistic) optimisticStatus(new Set([id]), status);
-        try {
-          return await act(id);
-        } catch (e) {
-          if (optimistic) queryClient.setQueryData(entriesKey, snapshot);
-          throw e;
-        }
-      });
+      const r = await orDirect(await edit(tool, { id }, titleOf(id)), () =>
+        applyStatus(id, status, act),
+      );
       if (!('output' in r)) return;
       toast.success(msg, toastOptions);
+    });
+
+  // A row's Publish says what goes live as surely as the editor's does. A draft has nothing live
+  // to compare with, so it publishes at once and offers Undo: unpublishing is its exact inverse.
+  // An entry that has been live replaces what's live, which Undo can't bring back, so it confirms
+  // first, with the changed fields: the assistant's card, or without it the page's own dialog.
+  const publishRow = (e: PreviewEntry) => {
+    const title = titleOf(e.id);
+    if (e.status === 'draft') {
+      return setStatus(
+        e.id,
+        'entries_publish',
+        'published',
+        (id) => client.publishEntry(id),
+        `“${title}” published`,
+        { action: { label: 'Undo', onAction: () => void undoPublish(e.id, title) } },
+      );
+    }
+    return mutateEntries(async () => {
+      const r = await edit('entries_publish', { id: e.id }, title);
+      if (r === null) {
+        publishAsked.current = e.id;
+        setConfirmPublish(e);
+      } else if ('output' in r) toast.success(`“${title}” published`);
+    });
+  };
+  const publishConfirmed = (e: PreviewEntry) =>
+    mutateEntries(async () => {
+      await applyStatus(e.id, 'published', (id) => client.publishEntry(id));
+      toast.success(`“${titleOf(e.id)}” published`);
+    });
+  const undoPublish = (id: string, title: string) =>
+    mutateEntries(async () => {
+      await client.unpublishEntry(id);
+      toast.success(`“${title}” is back to draft`);
     });
 
   // Per-row actions for the table; each calls the same handler the list always
   // used, so optimistic status, Undo toasts and confirmations are unchanged.
   const rowActions: EntryRowActions = {
-    publish: (e) =>
-      void setStatus(
-        e.id,
-        'entries_publish',
-        'published',
-        (id) => client.publishEntry(id),
-        'Entry published',
-      ),
+    publish: (e) => void publishRow(e),
     diff: (e) => setDiffEntry(e),
     duplicate: (e) => void duplicate(e),
     unpublish: (e) =>
@@ -376,6 +417,16 @@ export function EntriesList() {
     trash: (e) => void trash(e),
     restore: (e) => void restore(e),
     purge: (e) => void requestPurge(e),
+  };
+
+  const rowLink = (id: string | null) => {
+    if (!id || !selectedType) return null;
+    const href = `/content/${selectedType.apiId}/${id}`;
+    return (
+      [...document.querySelectorAll<HTMLElement>('a[data-row-primary]')].find(
+        (a) => a.getAttribute('href') === href,
+      ) ?? null
+    );
   };
 
   if (!selectedType) {
@@ -547,6 +598,27 @@ export function EntriesList() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <PublishConfirm
+        open={confirmPublish !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmPublish(null);
+        }}
+        title={confirmPublish ? titleOf(confirmPublish.id) : ''}
+        contentType={selectedType}
+        status={confirmPublish?.status}
+        compare={
+          confirmPublish ? { client, entry: confirmPublish, locale: conn.locale } : undefined
+        }
+        busy={busy}
+        onConfirm={() => {
+          const entry = confirmPublish;
+          setConfirmPublish(null);
+          if (entry) void publishConfirmed(entry);
+        }}
+        // The row's Publish goes once it is live; its title link keeps the keyboard on the row.
+        returnFocus={() => rowLink(publishAsked.current)}
+      />
 
       {/* Permanent deletion names the entry and says plainly that it cannot be
           undone — it is the only entry action with no way back. */}

@@ -63,6 +63,7 @@ import {
   MIN_READABLE_ZOOM,
   type Rect,
   spreadColumns,
+  stepName,
   withNeighbours,
   wouldCycle,
 } from './graph';
@@ -142,24 +143,27 @@ function Inner({
 
   const fromProps: FlowRfNode[] = useMemo(
     () =>
-      graph.nodes.map((n) => ({
-        id: n.id,
-        type: 'flow' as const,
-        position: n.position,
-        selected: n.id === selectedId,
-        draggable: editable,
-        ariaLabel: runs
-          ? `${n.label}, ${runs[n.id]?.status ?? 'not started'}`
-          : `${n.label}${issues?.[n.id] ? `, ${issues[n.id]}` : ''}`,
-        data: {
-          type: n.type,
-          label: n.label,
-          config: n.config,
-          run: runs?.[n.id],
-          issue: issues?.[n.id],
-          retries: n.retries,
-        },
-      })),
+      graph.nodes.map((n) => {
+        const name = stepName(n, registry);
+        return {
+          id: n.id,
+          type: 'flow' as const,
+          position: n.position,
+          selected: n.id === selectedId,
+          draggable: editable,
+          ariaLabel: runs
+            ? `${name}, ${runs[n.id]?.status ?? 'not started'}`
+            : `${name}${issues?.[n.id] ? `, ${issues[n.id]}` : ''}`,
+          data: {
+            type: n.type,
+            label: name,
+            config: n.config,
+            run: runs?.[n.id],
+            issue: issues?.[n.id],
+            retries: n.retries,
+          },
+        };
+      }),
     [graph.nodes, runs, issues, selectedId, editable],
   );
 

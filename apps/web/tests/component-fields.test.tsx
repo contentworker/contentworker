@@ -61,6 +61,17 @@ function renderForm(contentType: ContentType, initial = {}, onSave = vi.fn()) {
 
 const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
 
+describe('required fields', () => {
+  it('say so in their name, with an asterisk in muted ink rather than an error colour', () => {
+    renderForm(typeWith([field({ apiId: 'title', name: 'Title', required: true, position: 1 })]));
+    const input = screen.getByRole('textbox', { name: 'Title (required)' });
+    expect(input).toBeTruthy();
+    const mark = screen.getByText('*');
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    expect(mark.className).not.toMatch(/destructive|bad/);
+  });
+});
+
 describe('editing a component', () => {
   it('renders an input per nested field, not a JSON blob', () => {
     renderForm(COMPONENT);

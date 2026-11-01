@@ -17,7 +17,7 @@ import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-selec
 import { X } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Section } from '~/cms/components/page';
-import { edgeId, wouldCycle } from './graph';
+import { edgeId, stepName, wouldCycle } from './graph';
 
 export function Connections({
   node,
@@ -33,7 +33,17 @@ export function Connections({
   const baseId = useId();
   const [picks, setPicks] = useState<Record<string, string>>({});
   if (!outputs.length) return null;
-  const label = (id: string) => graph.nodes.find((n) => n.id === id)?.label ?? id;
+  const label = (id: string) => {
+    const n = graph.nodes.find((x) => x.id === id);
+    return n ? stepName(n, nodes) : id;
+  };
+  // An option is named by its step; two steps of one name tell themselves apart by id.
+  const optionName = (n: WorkflowNode, among: readonly WorkflowNode[]) => {
+    const name = stepName(n, nodes);
+    return among.some((o) => o.id !== n.id && stepName(o, nodes) === name)
+      ? `${name} (${n.id})`
+      : name;
+  };
   const forward = graph.edges.filter((e) => e.source === node.id && !isBackEdge(e));
 
   const connect = (output: string, target: string) => {
@@ -127,7 +137,7 @@ export function Connections({
                       <NativeSelectOption value="">Connect to…</NativeSelectOption>
                       {options.map((n) => (
                         <NativeSelectOption key={n.id} value={n.id}>
-                          {n.label} ({n.id})
+                          {optionName(n, options)}
                         </NativeSelectOption>
                       ))}
                     </NativeSelect>

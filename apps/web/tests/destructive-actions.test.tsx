@@ -81,6 +81,7 @@ vi.mock('~/cms/lib/client-context', () => ({
 const { ConfirmButton, InlineConfirm } = await import('~/cms/components/InlineConfirm');
 const { ToastProvider, useToast } = await import('~/cms/lib/toast');
 const { Releases } = await import('~/cms/routes/Releases');
+const { ReleasePublishConfirm } = await import('~/cms/components/ReleasePublishConfirm');
 const { Workflows } = await import('~/cms/routes/Workflows');
 const { Taxonomy } = await import('~/cms/routes/Taxonomy');
 const { AiActions } = await import('~/cms/components/AiActions');
@@ -259,9 +260,51 @@ describe('Releases destructive actions', () => {
     );
   }
 
-  it('confirms a card publish with the member titles and flags before shipping', async () => {
+  it('lists each release with its entry count, and publishes only from inside it', async () => {
     setup();
-    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
+    if (!row) throw new Error('no row');
+    expect(await within(row).findByText('3')).toBeTruthy();
+    // Looking is the row's path; nothing on it ships the release.
+    expect(within(row).queryByRole('button', { name: /Publish/ })).toBeNull();
+  });
+
+  it('shows when a scheduled release goes out, and reads as scheduled', async () => {
+    client.listScheduledActions.mockResolvedValueOnce([
+      {
+        id: 'sa-1',
+        action: 'publish',
+        entityType: 'Release',
+        entityId: 'rel-1',
+        scheduledFor: '2026-11-07T14:00:00.000Z',
+        status: 'pending',
+        createdAt: '2026-10-01T00:00:00.000Z',
+      },
+    ] as never);
+    setup();
+    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
+    if (!row) throw new Error('no row');
+    const when = within(row).getByText(/Nov 7, 2026/);
+    expect(when.closest('time')?.getAttribute('dateTime')).toBe('2026-11-07T14:00:00.000Z');
+    expect(within(row).getByText('Scheduled')).toBeTruthy();
+  });
+
+  it('names a release’s entries by title inside it, never by id', async () => {
+    client.listEntries.mockResolvedValueOnce([entry('e-1', 'Hello world', 'changed')] as never);
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Spring campaign' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findByText('Hello world')).toBeTruthy();
+    expect(within(sheet).getByRole('button', { name: 'Remove “Hello world” from the release' }));
+    expect(within(sheet).queryByText('e-1')).toBeNull();
+  });
+
+  it('confirms a publish from the release with the member titles and flags before shipping', async () => {
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Spring campaign' }));
+    const publishNow = await screen.findByRole('button', { name: 'Publish now…' });
+    await waitFor(() => expect((publishNow as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(publishNow);
 
     const dialog = screen.getByRole('alertdialog', { name: 'Publish “Spring campaign”?' });
     expect(client.publishRelease).not.toHaveBeenCalled();
@@ -365,7 +408,6 @@ describe('Release publish confirm', () => {
   };
 
   it('keeps the publish button disabled while members load and for an empty release', async () => {
-    client.listReleases.mockResolvedValue([release]);
     client.listContentTypes.mockResolvedValue([]);
     let resolveDetail: (v: unknown) => void = () => {};
     client.getRelease.mockImplementation(
@@ -374,8 +416,15 @@ describe('Release publish confirm', () => {
           resolveDetail = r;
         }),
     );
-    renderWithProviders(<Releases />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    renderWithProviders(
+      <ReleasePublishConfirm
+        releaseId="rel-1"
+        releaseTitle="Spring campaign"
+        busy={false}
+        onCancel={() => {}}
+        onConfirm={() => void client.publishRelease()}
+      />,
+    );
 
     const dialog = screen.getByRole('alertdialog', { name: 'Publish “Spring campaign”?' });
     expect(within(dialog).getByText('Checking its entries…')).toBeTruthy();
@@ -389,5 +438,16 @@ describe('Release publish confirm', () => {
     expect((publish() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(publish());
     expect(client.publishRelease).not.toHaveBeenCalled();
+  });
+
+  it('offers no publish inside an empty release', async () => {
+    client.listReleases.mockResolvedValue([release]);
+    client.listContentTypes.mockResolvedValue([]);
+    client.getRelease.mockResolvedValue({ release, items: [] });
+    renderWithProviders(<Releases />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Spring campaign' }));
+    const publishNow = await screen.findByRole('button', { name: 'Publish now…' });
+    expect(await screen.findByText('0 entries · Open')).toBeTruthy();
+    expect((publishNow as HTMLButtonElement).disabled).toBe(true);
   });
 });

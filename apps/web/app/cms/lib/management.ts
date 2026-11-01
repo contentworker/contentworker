@@ -198,6 +198,16 @@ export interface EntryOrder {
   readonly direction: 'asc' | 'desc';
 }
 
+/** How many entries a content type holds, by status; `total` is the live ones (not the trash). */
+export interface ContentTypeEntryCounts {
+  readonly contentType: string;
+  readonly total: number;
+  readonly draft: number;
+  readonly changed: number;
+  readonly published: number;
+  readonly archived: number;
+}
+
 /** Query options for the entries list (filters/order/search). */
 export interface EntryListQuery {
   readonly filters?: readonly EntryFilter[];
@@ -896,6 +906,14 @@ export function createManagementClient(
     },
     publishContentType(apiId: string): Promise<ContentType> {
       return req('POST', `${mgmt}/content-types/${apiId}/published`);
+    },
+    /** Entries per content type by status, from one grouped count (the content overview). */
+    async contentTypeEntryCounts(): Promise<ContentTypeEntryCounts[]> {
+      const r = await req<{ items: ContentTypeEntryCounts[] }>(
+        'GET',
+        `${mgmt}/content-types/entry-counts`,
+      );
+      return r.items;
     },
     /** Lists draft/current entries (Preview API), with optional field filters,
      *  ordering, and full-text search applied server-side. */

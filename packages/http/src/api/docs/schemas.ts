@@ -43,6 +43,19 @@ export const contentType = z.object({
   status: z.enum(['draft', 'published']),
 });
 
+export const contentTypeEntryCounts = z.object({
+  items: z.array(
+    z.object({
+      contentType: z.string().describe('Content type apiId'),
+      total: z.int().describe('Live entries: draft, changed and published (not the trash)'),
+      draft: z.int(),
+      changed: z.int().describe('Published, with unpublished edits'),
+      published: z.int(),
+      archived: z.int().describe('In the trash'),
+    }),
+  ),
+});
+
 export const entry = z.object({
   id: z.uuid().describe('UUIDv7 entry id'),
   contentTypeApiId: z.string(),

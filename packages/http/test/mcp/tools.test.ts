@@ -4,6 +4,7 @@ import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runt
 import {
   type AppContext,
   createContentType,
+  createEntry,
   createSpace,
   publishContentType,
 } from '@contentworker/application';
@@ -107,6 +108,31 @@ describe('MCP tools (end-to-end over the in-memory transport)', () => {
     const res = await client.callTool({ name: 'model_list_content_types', arguments: {} });
     const types = payload(res) as { apiId: string }[];
     expect(types.map((t) => t.apiId)).toContain('article');
+  });
+
+  it('counts entries per content type, only for types the caller can read', async () => {
+    const { ctx } = deps;
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'Counted' } },
+    });
+    type Counts = { contentType: string; total: number; draft: number }[];
+    const admin = await connect(deps, adminPrincipal);
+    const counts = payload(
+      await admin.callTool({ name: 'model_entry_counts', arguments: {} }),
+    ) as Counts;
+    expect(counts.find((c) => c.contentType === 'article')).toMatchObject({ total: 1, draft: 1 });
+
+    const elsewhere: Principal = {
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.previewRead],
+      contentGrants: [{ contentTypeApiId: 'page', actions: ['read'] }],
+    };
+    const scoped = await connect(deps, elsewhere);
+    expect(payload(await scoped.callTool({ name: 'model_entry_counts', arguments: {} }))).toEqual(
+      [],
+    );
   });
 
   it('round-trips a function through create → list → delete', async () => {

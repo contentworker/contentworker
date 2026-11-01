@@ -46,6 +46,7 @@ import { StatusBadge } from '~/cms/components/status';
 import { Team } from '~/cms/components/Team';
 import { WebhookDeliveriesSheet } from '~/cms/components/WebhookDeliveriesSheet';
 import { WebhookDialog } from '~/cms/components/WebhookDialog';
+import { KEY_KINDS, keyKindApi, keyKindLabel } from '../lib/key-kinds';
 import {
   type ApiKeyKind,
   type CreatedApiKey,
@@ -353,11 +354,6 @@ function AuditLog(props: { client: ManagementClient }) {
   );
 }
 
-const KEY_KINDS: { value: ApiKeyKind; label: string }[] = [
-  { value: 'cda', label: 'CDA — Delivery (read published)' },
-  { value: 'cpa', label: 'CPA — Preview (read drafts)' },
-  { value: 'cma', label: 'CMA — Management (full author/publish)' },
-];
 const ROLE_NONE = '__none__';
 
 function RolesSettings(props: { client: ManagementClient }) {
@@ -541,7 +537,8 @@ function ApiKeys(props: { client: ManagementClient }) {
           <Alert>
             <KeyRound />
             <AlertTitle>
-              New {minted.kind.toUpperCase()} token — copy it now, it won't be shown again.
+              New {keyKindLabel(minted.kind).toLowerCase()} token: copy it now, it won’t be shown
+              again.
             </AlertTitle>
             <AlertDescription>
               <code className="break-all text-sm text-foreground">{minted.token}</code>
@@ -568,6 +565,7 @@ function ApiKeys(props: { client: ManagementClient }) {
               {KEY_KINDS.map((k) => (
                 <SelectItem key={k.value} value={k.value}>
                   {k.label}
+                  <span className="text-muted-foreground">: {k.reads}</span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -613,7 +611,9 @@ function ApiKeys(props: { client: ManagementClient }) {
             {keys.map((k) => (
               <TableRow key={k.id}>
                 <TableCell>
-                  <Badge variant="outline">{k.kind.toUpperCase()}</Badge>
+                  <Badge variant="outline" title={keyKindApi(k.kind)}>
+                    {keyKindLabel(k.kind)}
+                  </Badge>
                 </TableCell>
                 <TableCell label="Name" className="font-mono text-xs">
                   {k.name ?? <span className="text-muted-foreground">—</span>}
@@ -632,7 +632,7 @@ function ApiKeys(props: { client: ManagementClient }) {
                 <TableCell className="text-right">
                   {!k.revoked && (
                     <RevokeKeyButton
-                      name={k.name ?? k.kind.toUpperCase()}
+                      name={k.name ?? `${keyKindLabel(k.kind)} key`}
                       onConfirm={() => revoke(k.id)}
                     />
                   )}

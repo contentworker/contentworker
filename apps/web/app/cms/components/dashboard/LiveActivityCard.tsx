@@ -1,11 +1,16 @@
 import { Badge } from '@contentworker/ui/badge';
 import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
 import { Radio } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { ToneBadge } from '~/cms/components/status';
 import { useClient } from '../../lib/client-context';
+import { humanize } from '../../lib/format';
 import { type EntryRef, entryPath } from './entry-titles';
+import { useEntriesById } from './use-entries-by-id';
+
+/** "entry.published" → "Published": the event's verb, in the editor's words. */
+const eventLabel = (type: string) => humanize(type.split('.').pop() ?? type);
 
 type LiveItem = { type: string; entryId?: string; at: number };
 
@@ -17,6 +22,12 @@ type LiveItem = { type: string; entryId?: string; at: number };
 export function LiveActivityCard(props: { entryById?: (id: string) => EntryRef | undefined }) {
   const { client } = useClient();
   const [items, setItems] = useState<LiveItem[]>([]);
+  // Live events name entries by id; the ones the Overview hasn't loaded are looked up in one batch.
+  const unseen = useMemo(
+    () => items.flatMap((it) => (it.entryId && !props.entryById?.(it.entryId) ? [it.entryId] : [])),
+    [items, props.entryById],
+  );
+  const looked = useEntriesById(unseen);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -72,13 +83,15 @@ export function LiveActivityCard(props: { entryById?: (id: string) => EntryRef |
         ) : (
           <ul className="space-y-1.5">
             {items.map((it) => {
-              const ref = it.entryId ? props.entryById?.(it.entryId) : undefined;
+              const ref = it.entryId
+                ? (props.entryById?.(it.entryId) ?? looked.refs.get(it.entryId))
+                : undefined;
               return (
                 <li
                   key={`${it.at}:${it.entryId ?? it.type}`}
                   className="flex min-w-0 items-center gap-2 text-sm"
                 >
-                  <Badge variant="outline">{it.type}</Badge>
+                  <Badge variant="outline">{eventLabel(it.type)}</Badge>
                   {ref ? (
                     <Link
                       to={entryPath(ref)}
@@ -88,8 +101,8 @@ export function LiveActivityCard(props: { entryById?: (id: string) => EntryRef |
                     </Link>
                   ) : (
                     it.entryId && (
-                      <span className="truncate font-mono text-muted-foreground text-xs">
-                        {it.entryId}
+                      <span className="truncate text-muted-foreground">
+                        {looked.isLoading ? '…' : 'Entry no longer available'}
                       </span>
                     )
                   )}

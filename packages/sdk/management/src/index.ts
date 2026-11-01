@@ -41,6 +41,16 @@ export interface ContentType {
   readonly status: ContentTypeStatus;
 }
 
+/** How many entries a content type holds, by status; `total` is the live ones (not the trash). */
+export interface ContentTypeEntryCounts {
+  readonly contentType: string;
+  readonly total: number;
+  readonly draft: number;
+  readonly changed: number;
+  readonly published: number;
+  readonly archived: number;
+}
+
 export interface ContentTypeDraft {
   readonly apiId: string;
   readonly name: string;
@@ -271,6 +281,9 @@ export function createManagementClient(opts: ManagementClientOptions) {
       create: (draft: ContentTypeDraft) => post<ContentType>(`${envBase}/content-types`, draft),
       publish: (apiId: string) =>
         post<ContentType>(`${envBase}/content-types/${e(apiId)}/published`),
+      /** Entries per content type, by status, from one grouped count. */
+      entryCounts: () =>
+        items(get<{ items: ContentTypeEntryCounts[] }>(`${envBase}/content-types/entry-counts`)),
     },
 
     entries: {

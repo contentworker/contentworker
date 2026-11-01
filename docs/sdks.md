@@ -202,7 +202,7 @@ The surface is namespaced; every method maps 1:1 onto a Management route:
 ```ts
 cma.me()                                              // principal probe (/auth/me)
 
-cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId)
+cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
 
 cma.entries.create({ contentTypeApiId, fields })      // fields are locale-keyed
 cma.entries.get(id) / .update(id, fields)             // update = new draft version

@@ -285,6 +285,21 @@ describe('D1 ≡ in-memory query equivalence', { timeout: 60_000 }, () => {
     }
   });
 
+  it('countByStatus matches in-memory, and sees nothing of another scope', async () => {
+    const [a, b] = await Promise.all([
+      d1Ctx.store.entries.countByStatus(scope),
+      memCtx.store.entries.countByStatus(scope),
+    ]);
+    const sorted = (rows: Awaited<typeof a>) =>
+      [...rows].sort(
+        (x, y) => x.contentType.localeCompare(y.contentType) || x.status.localeCompare(y.status),
+      );
+    expect(a.length).toBeGreaterThan(0);
+    expect(sorted(a)).toEqual(sorted(b));
+    const elsewhere = { spaceId: `${scope.spaceId}-other`, environmentId: scope.environmentId };
+    expect(await d1Ctx.store.entries.countByStatus(elsewhere)).toEqual([]);
+  });
+
   it('raises QueryTooBroadError instead of silently truncating', async () => {
     const tiny = createD1Store(testDb, { queryScanLimit: 2 });
     // `exists:true` on `views` matches every fixture > the limit of 2.

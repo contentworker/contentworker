@@ -40,8 +40,16 @@ async function toArticles(page: Page) {
     .first()
     .click();
   // The seeded space has one content type: Article.
-  await page.getByRole('main').getByRole('link', { name: 'View entries' }).first().click();
+  await page
+    .getByRole('main')
+    .getByRole('table')
+    .getByRole('link', { name: 'Article', exact: true })
+    .click();
   await expect(page).toHaveURL(/\/content\/article$/);
+  // From md the header says where you are (once a space is in scope).
+  await expect(
+    page.getByRole('banner').getByRole('navigation', { name: 'breadcrumb' }).getByText('Article'),
+  ).toBeVisible();
 }
 
 /** A new article's editor. */

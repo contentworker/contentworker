@@ -15,6 +15,7 @@ import {
   cancelWorkflowRun,
   canvasToEntry,
   compareEnvironments,
+  countEntriesByContentType,
   createAgentSchedule,
   createAIAction,
   createAppExtension,
@@ -445,6 +446,22 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
       return ok(await getContentType(ctx, scopeOf(args), args.apiId));
+    },
+  );
+
+  server.registerTool(
+    'model_entry_counts',
+    {
+      description:
+        'How many entries each content type holds, by status (draft, changed, published, and ' +
+        'archived for the trash); `total` is the live entries. One grouped count, so use it ' +
+        'instead of paging entries_query to size a type.',
+      inputSchema: toolSchema('model_entry_counts', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      const counts = await countEntriesByContentType(ctx, scopeOf(args));
+      return ok(counts.filter((n) => canAccessContentType(principal, 'read', n.contentType)));
     },
   );
 

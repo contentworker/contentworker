@@ -408,6 +408,22 @@ function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo
         fields: projectFields(r.fields, query.select as string[]),
       }));
     },
+    async countByStatus(scope) {
+      const rows = await db
+        .select({
+          contentType: schema.entries.contentTypeApiId,
+          status: schema.entries.status,
+          n: count(),
+        })
+        .from(schema.entries)
+        .where(scopeFilter(schema.entries, scope))
+        .groupBy(schema.entries.contentTypeApiId, schema.entries.status);
+      return rows.map((r) => ({
+        contentType: r.contentType,
+        status: r.status,
+        count: Number(r.n),
+      }));
+    },
     async create(scope, entry, version) {
       await writeAll(x, [
         db.insert(schema.entries).values(entryRow(scope, entry)),

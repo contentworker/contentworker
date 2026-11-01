@@ -136,6 +136,10 @@ describe('Team', () => {
     renderTeam(fakeClient(oneAdminKey));
     expect(await screen.findByText('Ada')).toBeTruthy();
     expect(screen.getByText('Deploy key')).toBeTruthy();
+    // The key's kind in words; the acronym only in its tooltip.
+    const kind = screen.getByText('Management');
+    expect(kind.getAttribute('title')).toBe('Content Management API (CMA)');
+    expect(screen.queryByText('CMA')).toBeNull();
     const select = screen.getByLabelText('Role for Deploy key') as HTMLSelectElement;
     expect(select.value).toBe('role-admin');
   });

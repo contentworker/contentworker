@@ -131,6 +131,21 @@ describe('granular RBAC over HTTP', () => {
     expect(deniedField.status).toBe(403);
   });
 
+  it('counts entries per content type, leaving out types the role cannot read', async () => {
+    type Counts = { items: { contentType: string; total: number; published: number }[] };
+    const all = await app.request(`${M}/content-types/entry-counts`, { headers: admin });
+    expect(all.status).toBe(200);
+    const everything = ((await all.json()) as Counts).items;
+    expect(everything.map((c) => c.contentType).sort()).toEqual(['page', 'post']);
+    expect(everything.find((c) => c.contentType === 'post')).toMatchObject({
+      total: 1,
+      published: 1,
+    });
+
+    const scoped = await app.request(`${M}/content-types/entry-counts`, { headers: editor });
+    expect(((await scoped.json()) as Counts).items.map((c) => c.contentType)).toEqual(['post']);
+  });
+
   it('denies publish despite the coarse content:publish scope', async () => {
     const res = await app.request(`${M}/entries/${postId}/published`, {
       method: 'POST',
