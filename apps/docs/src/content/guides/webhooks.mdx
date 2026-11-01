@@ -92,7 +92,9 @@ export function verify(rawBody: string, headers: Headers, secret: string): boole
 
 Answer with any 2xx status to acknowledge. A non-2xx answer, a redirect, a timeout (10 seconds) or
 a network error counts as a failure and is retried with exponential backoff. Because a delivery can
-be retried, handle each event `id` once.
+be retried, handle each event `id` once. A bulk publish sends each entry as its own
+`entry.published` or `entry.unpublished` delivery; if some of those fail, only the ones that failed
+are retried, with the same event ids.
 
 Every attempt is logged with its status: **Settings → Webhooks → Deliveries**, or
 `GET …/webhooks/{id}/deliveries`.
