@@ -284,7 +284,14 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
 }
 
 /** The names the asset types take; a content type or component can't have them. */
-const ASSET_TYPE_NAMES = ['Asset', 'AssetSource', 'AssetVideo', 'AssetRights', 'FocalPoint'];
+const ASSET_TYPE_NAMES = [
+  'Asset',
+  'AssetSource',
+  'AssetVideo',
+  'AssetRights',
+  'AssetPlaceholder',
+  'FocalPoint',
+];
 
 /**
  * The `Asset` type: the delivered asset, with its URLs chosen by argument. `url(rendition:)`
@@ -311,6 +318,20 @@ function assetType(): GraphQLObjectType<ResolvedAsset, DeliveryContext> {
   const rights = new GraphQLObjectType({
     name: 'AssetRights',
     fields: { credit: { type: GraphQLString }, license: { type: GraphQLString } },
+  });
+  const placeholder = new GraphQLObjectType({
+    name: 'AssetPlaceholder',
+    description: 'What to show while a raster image loads, computed by ingest',
+    fields: {
+      thumbhash: {
+        type: new GraphQLNonNull(GraphQLString),
+        description: 'ThumbHash of the image (base64), decoded on the client to a blurred preview',
+      },
+      dominantColor: {
+        type: new GraphQLNonNull(GraphQLString),
+        description: 'The image’s dominant colour, #rrggbb',
+      },
+    },
   });
   const focal = new GraphQLObjectType({
     name: 'FocalPoint',
@@ -363,6 +384,7 @@ function assetType(): GraphQLObjectType<ResolvedAsset, DeliveryContext> {
         resolve: (r) => r.asset.srcset,
       },
       renditions: { type: JSONScalar, resolve: (r) => r.asset.renditions },
+      placeholder: { type: placeholder, resolve: (r) => r.asset.placeholder },
       video: { type: video, resolve: (r) => r.asset.video ?? null },
       rights: { type: rights, resolve: (r) => r.asset.rights ?? null },
       file: { type: JSONScalar, resolve: (r) => r.asset.file },

@@ -40,6 +40,7 @@ import {
   ingestErrorMessage,
   MAX_EXTRACT_DOCUMENT_BYTES,
   MAX_HASH_BYTES,
+  MAX_PLACEHOLDER_BYTES,
   MAX_PROBE_BYTES,
   publishAsset,
   reingestAsset,
@@ -445,8 +446,9 @@ describe('asset ingest, under failure and limits', () => {
     const after = await getAsset(t.ctx, scope, asset.id);
     expect(after.contentHash).toBeUndefined();
     expect(after.file.size).toBe(MAX_HASH_BYTES + 1);
-    // Neither the hash nor the probe (over its own, smaller cap) read the body: both let it go.
-    expect(returned).toBe(2);
+    // Neither the hash, the probe nor the placeholder (each over its own, smaller cap) read the
+    // body: each let it go.
+    expect(returned).toBe(3);
     expect(ingested(t.store)[0]?.contentHash).toBeUndefined();
   });
 
@@ -471,6 +473,74 @@ describe('asset ingest, under failure and limits', () => {
     const published = await getPublishedAsset(t.ctx, scope, asset.id);
     expect(published.file).toMatchObject({ width: 640, height: 480, size: 9 });
     expect(ingested(t.store)[0]?.published).toBe(true);
+  });
+
+  const PLACEHOLDER = {
+    thumbhash: 'YJqGPQw7sFlslqhFafSE+Q6oJ1h2iHB2Rw==',
+    dominantColor: '#a07850',
+  };
+
+  it('records a raster image’s placeholder, into a snapshot published before ingest too', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'png-bytes');
+    t.images.set('png-bytes', { width: 640, height: 480, format: 'image/png' });
+    t.images.setPlaceholder('png-bytes', PLACEHOLDER);
+    await publishAsset(t.ctx, scope, asset.id);
+    const out = await t.run(asset.id);
+    expect(out).toMatchObject({ value: { outcome: 'ready', placeholder: true } });
+    expect((await getAsset(t.ctx, scope, asset.id)).file.placeholder).toEqual(PLACEHOLDER);
+    expect((await getPublishedAsset(t.ctx, scope, asset.id)).file.placeholder).toEqual(PLACEHOLDER);
+  });
+
+  it('makes no placeholder for what the image service cannot decode, nor over its input cap', async () => {
+    const svg = await t.upload('logo.svg', 'image/svg+xml', '<svg/>');
+    const pdf = await t.upload('brief.pdf', 'application/pdf', '%PDF');
+    await t.run(svg.id);
+    await t.run(pdf.id);
+    expect(t.images.placeholderCalls).toBe(0);
+
+    const huge = await t.upload('huge.png', 'image/png', 'png-bytes');
+    t.images.setPlaceholder('png-bytes', PLACEHOLDER);
+    let returned = 0;
+    const original = t.blob.open.bind(t.blob);
+    t.blob.open = async (key) => {
+      const o = await original(key);
+      if (!o) return o;
+      const body = o.body;
+      return {
+        ...o,
+        size: MAX_PLACEHOLDER_BYTES + 1,
+        body: {
+          [Symbol.asyncIterator]: () => {
+            const it = body[Symbol.asyncIterator]();
+            return {
+              next: () => it.next(),
+              return: async () => {
+                returned += 1;
+                return { done: true as const, value: undefined };
+              },
+            };
+          },
+        },
+      };
+    };
+    const out = await t.run(huge.id);
+    expect(out).toMatchObject({ value: { outcome: 'ready', placeholder: false } });
+    expect(t.images.placeholderCalls).toBe(0);
+    expect(returned).toBeGreaterThan(0);
+    expect((await getAsset(t.ctx, scope, huge.id)).file.placeholder).toBeUndefined();
+  });
+
+  it('finishes ready without a placeholder when the image service keeps failing to make one', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'png-bytes');
+    t.images.set('png-bytes', { width: 640, height: 480, format: 'image/png' });
+    t.images.failPlaceholders = true;
+    const out = await t.run(asset.id);
+    expect(out).toMatchObject({ value: { outcome: 'ready', placeholder: false } });
+    // Retried as a step is, then given up on.
+    expect(t.images.placeholderCalls).toBeGreaterThan(1);
+    const after = await getAsset(t.ctx, scope, asset.id);
+    expect(after.ingestStatus).toBe('ready');
+    expect(after.file.placeholder).toBeUndefined();
   });
 
   it('leaves a snapshot of another version as it was', async () => {

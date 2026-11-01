@@ -1269,6 +1269,29 @@ function makeAssetRepo(x: Exec): AssetRepo {
           .where(and(scopeFilter(schema.assets, scope), eq(schema.assets.id, id))),
       ]);
     },
+    async listAwaitingUpload(createdBefore, limit) {
+      const t = schema.assets;
+      // The partial index `assets_awaiting_upload` holds exactly these rows, by creation time.
+      const rows = await db
+        .select()
+        .from(t)
+        .where(
+          and(
+            eq(t.status, 'draft'),
+            isNull(t.ingestStatus),
+            isNull(t.size),
+            isNotNull(t.r2Key),
+            gt(t.createdAt, new Date(0)),
+            lt(t.createdAt, createdBefore),
+          ),
+        )
+        .orderBy(asc(t.createdAt))
+        .limit(Math.max(1, Math.min(limit, MAX_ASSET_PAGE)));
+      return rows.map((r) => ({
+        scope: { spaceId: r.spaceId, environmentId: r.environmentId },
+        asset: toAsset(r),
+      }));
+    },
     async recordIngest(scope, id, version, patch) {
       const t = schema.assets;
       const set: Record<string, unknown> = {};
@@ -1290,6 +1313,9 @@ function makeAssetRepo(x: Exec): AssetRepo {
       if (patch.height !== undefined) {
         set.height = patch.height;
         fileSets.push(sql`'$.height', ${patch.height}`);
+      }
+      if (patch.placeholder !== undefined) {
+        fileSets.push(sql`'$.placeholder', json(${JSON.stringify(patch.placeholder)})`);
       }
       if (patch.contentType !== undefined) {
         set.mime = mimeOf(patch.contentType);
@@ -1319,6 +1345,9 @@ function makeAssetRepo(x: Exec): AssetRepo {
       if (measured.size !== undefined) fileSets.push(sql`'$.size', ${measured.size}`);
       if (measured.width !== undefined) fileSets.push(sql`'$.width', ${measured.width}`);
       if (measured.height !== undefined) fileSets.push(sql`'$.height', ${measured.height}`);
+      if (measured.placeholder !== undefined) {
+        fileSets.push(sql`'$.placeholder', json(${JSON.stringify(measured.placeholder)})`);
+      }
       if (fileSets.length === 0) return;
       await x.write(
         db
@@ -1447,7 +1476,7 @@ function makeAssetRepo(x: Exec): AssetRepo {
             // And the rights themselves say so. The column is a copy, and code that predates it
             // (a rollback) can rewrite a snapshot without it: a stale row the sweep only skipped
             // would stay first in line forever and, a hundred of them, starve real expiries.
-            // Rounded to the millisecond as the 0014 backfill rounds it: julianday is a float,
+            // Rounded to the millisecond as the 0015 backfill rounds it: julianday is a float,
             // and an expiry exactly at `at` must count as due.
             sql`round((julianday(json_extract(${p.rights}, '$.expiresAt')) - 2440587.5) * 86400000) <= ${at.getTime()}`,
             // Only in an environment that still exists: a deleted one's rows linger until purged.

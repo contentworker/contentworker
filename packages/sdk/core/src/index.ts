@@ -38,6 +38,11 @@ export interface DeliveredAsset {
   readonly url: string;
   readonly renditions: Readonly<Record<string, string>>;
   readonly srcset: readonly { readonly width: number; readonly url: string }[];
+  /**
+   * What to show while a raster image loads, once ingest has computed it (else `null`): its
+   * ThumbHash (base64; decode with the `thumbhash` package) and dominant colour (`#rrggbb`).
+   */
+  readonly placeholder: { readonly thumbhash: string; readonly dominantColor: string } | null;
   readonly video?: {
     readonly status: string;
     readonly hlsUrl?: string;

@@ -1,4 +1,4 @@
--- 0014_asset_expiry: what the asset expiry sweep reads. Mirrors `asset_published` in
+-- 0015_asset_expiry: what the asset expiry sweep reads. Mirrors `asset_published` in
 -- packages/db/src/schema.ts.
 --
 -- `expires_at` (epoch milliseconds) is the published snapshot's `rights.expiresAt`, copied out of

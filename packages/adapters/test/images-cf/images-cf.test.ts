@@ -1,3 +1,5 @@
+import { encode } from 'fast-png';
+import { thumbHashToAverageRGBA } from 'thumbhash';
 import { describe, expect, it } from 'vitest';
 import {
   type CfImageTransform,
@@ -5,9 +7,11 @@ import {
   cdnCgiOptions,
   createCfImageProbe,
   createCfImageTransformer,
+  dominantColor,
   type ImagesBindingLike,
   negotiateFormat,
   parseTransformParams,
+  rgbaFromPng,
   transformImage,
 } from '../../src/images-cf/index';
 
@@ -214,5 +218,101 @@ describe('createCfImageProbe', () => {
       yield new TextEncoder().encode('cd');
     }
     expect(await probe.info(chunks())).toMatchObject({ width: 2, height: 3, size: 4 });
+  });
+});
+
+describe('image placeholders', () => {
+  /** A width × height image, three quarters red and the last quarter blue, as RGBA. */
+  const mostlyRed = (width: number, height: number) => {
+    const rgba = new Uint8Array(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+      const blue = i >= (width * height * 3) / 4;
+      rgba.set(blue ? [0, 0, 255, 255] : [255, 0, 0, 255], i * 4);
+    }
+    return rgba;
+  };
+
+  it('reads 8-bit RGB and RGBA, 16-bit and grey PNGs as 8-bit RGBA', () => {
+    const rgb = encode({ width: 1, height: 1, data: new Uint8Array([10, 20, 30]), channels: 3 });
+    expect([...(rgbaFromPng(rgb)?.rgba ?? [])]).toEqual([10, 20, 30, 255]);
+    const rgba = encode({ width: 1, height: 1, data: new Uint8Array([1, 2, 3, 4]), channels: 4 });
+    expect([...(rgbaFromPng(rgba)?.rgba ?? [])]).toEqual([1, 2, 3, 4]);
+    const deep = encode({
+      width: 1,
+      height: 1,
+      depth: 16,
+      data: new Uint16Array([0xff00, 0x8000, 0x0100]),
+      channels: 3,
+    });
+    expect([...(rgbaFromPng(deep)?.rgba ?? [])]).toEqual([255, 128, 1, 255]);
+    const grey = encode({ width: 1, height: 1, data: new Uint8Array([7, 9]), channels: 2 });
+    expect([...(rgbaFromPng(grey)?.rgba ?? [])]).toEqual([7, 7, 7, 9]);
+    expect(rgbaFromPng(new TextEncoder().encode('not a png'))).toBeNull();
+  });
+
+  it('picks the colour most of the image is, not the mean of it, and skips the transparent', () => {
+    expect(dominantColor(mostlyRed(4, 4))).toBe('#ff0000');
+    // A transparent majority doesn't count against the visible part.
+    const mostlyClear = new Uint8Array([0, 255, 0, 0, 0, 255, 0, 0, 0, 0, 255, 255]);
+    expect(dominantColor(mostlyClear)).toBe('#0000ff');
+    // Nothing visible at all: the colour of what's there.
+    expect(dominantColor(new Uint8Array([0, 255, 0, 0]))).toBe('#00ff00');
+  });
+
+  /** An Images binding whose output is `png`, recording the transforms asked of it. */
+  const binding = (png: Uint8Array, asked: unknown[] = []) => ({
+    info: async () => ({ format: 'image/png', fileSize: png.byteLength, width: 4, height: 4 }),
+    input(stream: ReadableStream<Uint8Array>) {
+      const handle = {
+        transform(t: CfImageTransform) {
+          asked.push(t);
+          return handle;
+        },
+        async output(o: { format: CfOutputFormat }) {
+          asked.push(o);
+          await new Response(stream).arrayBuffer();
+          return { response: () => new Response(png, { headers: { 'content-type': o.format } }) };
+        },
+      };
+      return handle;
+    },
+  });
+
+  it('shrinks the image through the binding and hashes the thumbnail', async () => {
+    const asked: unknown[] = [];
+    const png = encode({ width: 8, height: 8, data: mostlyRed(8, 8), channels: 4 });
+    const probe = createCfImageProbe(binding(png, asked));
+    const placeholder = await probe.placeholder?.(
+      new Response(new Uint8Array([1, 2, 3])).body as ReadableStream<Uint8Array>,
+    );
+    expect(asked).toEqual([{ width: 32, height: 32, fit: 'scale-down' }, { format: 'image/png' }]);
+    expect(placeholder?.dominantColor).toBe('#ff0000');
+    const hash = Uint8Array.from(atob(placeholder?.thumbhash ?? ''), (c) => c.charCodeAt(0));
+    const average = thumbHashToAverageRGBA(hash);
+    expect(average.r).toBeGreaterThan(average.b);
+    expect(average.a).toBeCloseTo(1, 1);
+  });
+
+  it('answers null for what the binding cannot decode, and throws when the service fails', async () => {
+    const refusing = createCfImageProbe({
+      ...binding(new Uint8Array()),
+      input() {
+        throw new Error('IMAGES_TRANSFORM_ERROR 9412: Unsupported image type');
+      },
+    });
+    expect(await refusing.placeholder?.(new Response('%PDF').body as never)).toBeNull();
+    const down = createCfImageProbe({
+      ...binding(new Uint8Array()),
+      input() {
+        throw new Error('network connection lost');
+      },
+    });
+    await expect(down.placeholder?.(new Response('x').body as never)).rejects.toThrow(
+      'network connection lost',
+    );
+    // Without `input` (an info-only binding), there is no placeholder to make.
+    expect(
+      createCfImageProbe({ info: binding(new Uint8Array()).info }).placeholder,
+    ).toBeUndefined();
   });
 });

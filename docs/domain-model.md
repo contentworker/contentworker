@@ -334,7 +334,7 @@ interface LocaleConfig {
 interface Asset {
   id: string;
   status: 'draft' | 'published' | 'archived';
-  file: AssetFile; // { url, fileName, contentType, size?, width?, height?, video? }
+  file: AssetFile; // { url, fileName, contentType, size?, width?, height?, placeholder?, video? }
   title: LocalizedValue;
   description: LocalizedValue;
   metadata: AssetMetadata; // { altText: LocalizedValue, tags: string[], focalPoint?: { x, y }, fields? }
@@ -360,6 +360,16 @@ leaves them as they are. `aiSuggestions` marks the alt text locales and tag ids 
 from a model; `clearAcceptedSuggestions` drops a field's mark when a metadata patch carries it,
 so saving the field makes it the editor's.
 
+`file.placeholder` (`AssetPlaceholder`: `thumbhash`, base64; `dominantColor`, `#rrggbb`) is
+measured by ingest's `placeholder` step for raster types the Images binding decodes, no larger than
+20 MiB. Like `width` and `height` it lives in the `file` JSON (no column), is written by
+`recordIngest` and copied into the published snapshot by `finish`. It is data a client renders,
+never a URL or markup.
+
+An upload whose presigned PUT never landed leaves a draft with no `ingestStatus` and no `size`;
+`sweepAbandonedUploads` (hourly, see [Architecture](./architecture.md#asset-ingest-and-search))
+removes it a day later, or marks it `error` ("The upload never completed") when an entry links it.
+
 `file.video` is present on hosted video assets (provider, status, playback URLs). `metadata` holds
 the editorial "aspects": per-locale alt text, taxonomy tag ids, a focal point (0..1 on each axis,
 so transforms crop toward it) and free-form `fields`; `applyAssetMetadata` merges a partial patch
@@ -379,7 +389,7 @@ the old bytes.
 `assertRightsAllowDelivery(id, rights, now)` throws `AssetRightsError` (`asset_embargoed` or
 `asset_expired`, with the deciding instant in `details`), which publishing checks;
 `rightsExpireSoon` backs the admin's "Expires soon" status. The published snapshot's expiry is also
-a column (`asset_published.expires_at`, migration `0014_asset_expiry`) for the expiry sweep.
+a column (`asset_published.expires_at`, migration `0015_asset_expiry`) for the expiry sweep.
 
 `publishAsset` / `unpublishAsset` move between `draft` and `published`; `archiveAsset(asset, at)`
 takes any non-archived asset to `archived`, and `restoreAsset` brings an archived one back as a
@@ -431,7 +441,8 @@ SVG). `variantForTransform` maps a legacy `?w=` to the next step up (the largest
 (`publicAssetUrls(origin, scope, { id, version, fileName })` for published files, width steps with
 `?fm=auto`; signed URLs for Preview), the space's rendition names and the locale settings. The
 result, `DeliveredAsset`, is `{ id, title, description, altText, focalPoint, contentType, size,
-width, height, kind, url, renditions, srcset, video?, rights?, file }`; text is flattened with
+width, height, kind, url, renditions, srcset, placeholder, video?, rights?, file }`; `placeholder`
+is `file.placeholder ?? null` (always `null` for a hosted video); text is flattened with
 `resolveLocalizedValue` when a locale is given, a hosted video's `url` is its HLS manifest and it
 has no variants, and the srcset stops at the image's own width.
 

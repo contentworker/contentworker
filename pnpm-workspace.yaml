@@ -59,6 +59,10 @@ catalog:
   "@scalar/hono-api-reference": ^0.12.17
   "@scalar/api-reference": ^1.76.4
 
+  # Image placeholders (asset ingest): pure JS, so they run on workerd
+  fast-png: ^8.0.0
+  thumbhash: ^0.1.1
+
   # AI and MCP
   ai: 7.0.159
   agents: 0.32.0

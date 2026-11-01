@@ -11,12 +11,28 @@ export interface AssetFile {
   readonly size?: number;
   readonly width?: number;
   readonly height?: number;
+  /** What a reader shows while the image loads; ingest computes it from the pixels. */
+  readonly placeholder?: AssetPlaceholder;
   /**
    * Present on video assets hosted by a video service (Cloudflare Stream):
    * the bytes live there, not in the BlobStore, and playback is adaptive
    * streaming rather than a single download URL.
    */
   readonly video?: AssetVideo;
+}
+
+/**
+ * A raster image's stand-in while it loads, computed once by asset ingest. Both parts are data a
+ * client renders for itself: nothing here is a URL or markup.
+ */
+export interface AssetPlaceholder {
+  /**
+   * The image's ThumbHash (https://evanw.github.io/thumbhash/), base64: a ~25-byte blurred
+   * preview with its aspect ratio and alpha, decoded on the client to a tiny image.
+   */
+  readonly thumbhash: string;
+  /** The image's dominant colour, `#rrggbb`: the cheapest placeholder, a solid background. */
+  readonly dominantColor: string;
 }
 
 /** Processing lifecycle of a hosted video, normalized across providers. */

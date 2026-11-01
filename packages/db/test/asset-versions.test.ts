@@ -21,7 +21,7 @@ import { testDb } from './env';
 
 /**
  * File versions and rights expiry on D1: the replace unit's compare-and-set on the version, the
- * history it keeps, the snapshot's `expires_at` column (0014_asset_expiry) and the sweep's
+ * history it keeps, the snapshot's `expires_at` column (0015_asset_expiry) and the sweep's
  * cross-scope read of it, and the guard that leaves a republished asset alone. The file shares one
  * database: each test makes its own space.
  */
@@ -274,7 +274,7 @@ describe('asset expiry on D1', () => {
   });
 });
 
-describe('the 0014 backfill', () => {
+describe('the 0015 backfill', () => {
   it('fills expires_at from the rights of snapshots published before it, and only those', async () => {
     const spaceId = `ver-${uid()}`;
     const insert = (id: string, rights: unknown) =>
@@ -292,7 +292,7 @@ describe('the 0014 backfill', () => {
     await insert('junk', { expiresAt: 'soon' });
 
     const migrations = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS;
-    const expiry = migrations.find((m) => m.name.startsWith('0014_'));
+    const expiry = migrations.find((m) => m.name.startsWith('0015_asset_expiry'));
     const updates = (expiry?.queries ?? []).filter((q) => /UPDATE `asset_published`/.test(q));
     expect(updates).toHaveLength(1);
     for (const q of updates) await testDb.prepare(q).run();

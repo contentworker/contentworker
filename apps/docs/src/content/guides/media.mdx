@@ -99,7 +99,10 @@ Every uploaded file is processed in the background, usually within seconds:
 - its bytes are fingerprinted, and an asset whose file is identical to an older one in the same
   environment shows **Possible duplicate**, linking to the original (a warning; nothing is
   blocked);
-- an image's width and height are read from the file;
+- an image's width and height are read from the file, and a JPEG, PNG, WebP, AVIF or GIF of up to
+  20 MiB gets a **placeholder** (a blurred ThumbHash and a dominant colour; see
+  [Delivering assets](/guides/delivering-assets/#placeholders)). If one can't be made the asset
+  simply has none, and processing carries on;
 - an image with no alt text gets one, and one with no tags gets tags chosen from your existing
   tags, both marked **AI suggestion** until someone changes that value. Values you set are never
   replaced, and when the space's AI budget is spent this part is skipped;
@@ -115,6 +118,11 @@ in bulk: `POST …/assets/reindex` (`{ "all": true }` for every asset), or `asse
 one is running, asking again returns that one. Management reads
 show the state as `ingestStatus` (`pending`, `processing`, `ready`, `error`), with `ingestError`,
 `contentHash`, `duplicateOf` and `aiSuggestions`.
+
+An upload link lives 15 minutes. When a file never arrives (the tab closed mid-upload), the empty
+draft is cleaned up a day later: removed when nothing links to it, and kept with the error "The
+upload never completed" when an entry already does. A file that did arrive but was never noticed
+is picked up by the bulk reprocess above.
 
 ## Search the library
 

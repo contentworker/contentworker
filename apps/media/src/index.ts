@@ -2,7 +2,10 @@
  * The media Worker: published asset files at `media.<domain>`, cached at the edge.
  *
  * This default entrypoint is the gateway, with no cache in front of it. It trusts no request
- * header: it reads `Accept` only to pick an output format and `If-None-Match` only to answer 304.
+ * header: it reads `Accept` only to pick an output format, `If-None-Match` only to answer 304, and
+ * `Range` (one `bytes=` range) and `If-Range` only to pass them to the cache, which slices ranges
+ * out of the whole file it stores. `?download` asks for `Content-Disposition: attachment` (the
+ * default is `inline`); like every other query parameter it never reaches the cache key.
  * Per request it either
  * 1. checks a public URL's token (`/<space>/<env>/<asset>/v<n>/<token>/<variant>/<file>`), maps
  *    it to its canonical form (the path, and for a variant the negotiated format) and asks the
@@ -19,7 +22,7 @@ import type { PurgeMessage } from '@contentworker/platform/messages';
 import { drain } from '@contentworker/platform/purge';
 import { wireMedia } from '@contentworker/platform/wire';
 import type { Media } from './media';
-import { canonicalMediaUrl } from './serve';
+import { canonicalMediaUrl, contentDisposition, singleByteRange } from './serve';
 
 export { Media } from './media';
 
@@ -27,7 +30,8 @@ type Exports = { Media: Service<Media> };
 
 const PUBLIC = {
   'access-control-allow-origin': '*',
-  'access-control-expose-headers': 'etag, cf-cache-status',
+  'access-control-expose-headers':
+    'etag, cf-cache-status, accept-ranges, content-range, content-length, content-disposition',
   'timing-allow-origin': '*',
   'x-content-type-options': 'nosniff',
   'strict-transport-security': 'max-age=31536000',
@@ -89,13 +93,45 @@ export default {
       });
     }
     const exports = (ctx as unknown as { exports: Exports }).exports;
-    // A fresh request: nothing the client sent reaches the cache or its key.
-    const upstream = await exports.Media.fetch(new Request(canonical.url));
+    // A fresh request: nothing the client sent reaches the cache or its key, but one byte range
+    // (and its If-Range), which Workers Caching answers from the whole file it stores. Several
+    // ranges are served whole.
+    const range = singleByteRange(request.headers.get('range'));
+    const ifRange = range ? request.headers.get('if-range') : null;
+    const forwarded = new Headers();
+    if (range) forwarded.set('range', range);
+    if (ifRange) forwarded.set('if-range', ifRange);
+    let upstream = await exports.Media.fetch(new Request(canonical.url, { headers: forwarded }));
     const etag = upstream.headers.get('etag');
     const extra: Record<string, string> = canonical.negotiated ? { vary: 'Accept' } : {};
-    if (upstream.status === 200 && matches(request.headers.get('if-none-match'), etag)) {
+    if (
+      (upstream.status === 200 || upstream.status === 206) &&
+      matches(request.headers.get('if-none-match'), etag)
+    ) {
       await upstream.body?.cancel();
       return withPublic(new Response(null, { status: 304, headers: upstream.headers }), extra);
+    }
+    if (
+      range &&
+      upstream.status === 200 &&
+      canonical.address.variant.kind === 'original' &&
+      (ifRange === null || ifRange.trim() === etag)
+    ) {
+      // Nothing sliced it (no cache in front, or a file the cache didn't keep): R2 reads the
+      // range itself, over RPC, which the cache never stores. A variant is served whole.
+      await upstream.body?.cancel();
+      upstream = await exports.Media.range(canonical.url, range, ifRange);
+    }
+    if (upstream.status === 200 || upstream.status === 206) {
+      // Inline unless asked for a download, or unless the type may never render here (an SVG or
+      // HTML upload, which the cached response already marks as an attachment).
+      const download =
+        url.searchParams.has('download') ||
+        upstream.headers.get('content-disposition')?.startsWith('attachment');
+      extra['content-disposition'] = contentDisposition(
+        download ? 'attachment' : 'inline',
+        canonical.address.fileName,
+      );
     }
     if (request.method === 'HEAD') {
       await upstream.body?.cancel();

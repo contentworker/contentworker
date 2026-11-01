@@ -611,11 +611,14 @@ cyclic target stays a `{ id, linkType }` stub.
 
 A delivered asset, on its own or embedded, is one shape (`deliveredAsset`,
 `packages/domain/src/asset/delivered.ts`): `{ id, title, description, altText, focalPoint,
-contentType, size, width, height, kind, url, renditions, srcset, video?, rights?, file }`.
+contentType, size, width, height, kind, url, renditions, srcset, placeholder, video?, rights?, file }`.
 `title`, `description` and `altText` flatten to `?locale` (with the space's fallbacks), else stay
 per locale. `url`, `renditions` (`{ name: url }`) and `srcset` (`[{ width, url }]`, the ladder
 320–2560 up to the image's own width) are built at read time on `MEDIA_PUBLIC_URL`; `file` is kept
-for existing readers with `file.url` = `url`. `rights` carries only `credit` and `license`. A key
+for existing readers with `file.url` = `url`. `placeholder` is `{ thumbhash, dominantColor }`
+(ThumbHash in base64, `#rrggbb`) for a raster image ingest has processed, else `null` (hosted
+videos, other kinds, assets ingested before it existed: nothing is backfilled); the Management
+`asset.file.placeholder` is the same pair, optional. `rights` carries only `credit` and `license`. A key
 with content grants reads no assets (lists are empty, gets are 403, embeds stay stubs).
 
 ### GraphQL Delivery
@@ -628,6 +631,7 @@ with content grants reads no assets (lists are empty, gets are 403, embeds stay 
 - `asset(id, locale)` is a typed `Asset`: `title`, `description` and `altText` each take
   `locale` (falling back to the query's, then the space default); `url(rendition, width)` picks a
   rendition or the width step at or above `width`; `srcset { width url }`, `renditions`,
+  `placeholder { thumbhash dominantColor }` (type `AssetPlaceholder`, nullable),
   `focalPoint { x y }`, `video { status hlsUrl dashUrl thumbnailUrl durationSeconds }`,
   `rights { credit license }`, `file`.
 

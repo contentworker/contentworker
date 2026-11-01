@@ -30,8 +30,10 @@ const cpa = { Authorization: 'Bearer cpa' };
 const M = '/spaces/s1/environments/main';
 const D = '/delivery/s1/main';
 
-function makeApp(opts: { media?: boolean } = {}) {
-  const { ctx, rag, blob, ai } = wire(config);
+function makeApp(opts: { media?: boolean; onWire?: (w: ReturnType<typeof wire>) => void } = {}) {
+  const wired = wire(config);
+  opts.onWire?.(wired);
+  const { ctx, rag, blob, ai } = wired;
   return createApp(
     {
       ...ctx,
@@ -259,6 +261,48 @@ describe('the GraphQL Asset type', () => {
       video: null,
     });
     expect((res.data.asset.srcset as unknown[]).length).toBe(6);
+  });
+});
+
+describe('image placeholders', () => {
+  const placeholder = {
+    thumbhash: 'YJqGPQw7sFlslqhFafSE+Q6oJ1h2iHB2Rw==',
+    dominantColor: '#a07850',
+  };
+  const scope = { spaceId: 's1', environmentId: 'main' };
+
+  it('are null until ingest records one, then on Delivery, GraphQL and Preview alike', async () => {
+    let store: ReturnType<typeof wire>['ctx']['store'] | undefined;
+    const app = makeApp({ onWire: (w) => (store = w.ctx.store) });
+    const a = await image(app);
+    const before = await json<{ placeholder: unknown }>(
+      app.request(`${D}/assets/${a.id}`, { headers: cda }),
+    );
+    expect(before.placeholder).toBeNull();
+
+    // What ingest's placeholder and finish steps write.
+    await store?.assets.recordIngest(scope, a.id, 1, { placeholder });
+    await store?.assets.recordPublishedFile(scope, a.id, 1, { placeholder });
+
+    const rest = await json<{ placeholder: unknown }>(
+      app.request(`${D}/assets/${a.id}`, { headers: cda }),
+    );
+    expect(rest.placeholder).toEqual(placeholder);
+    const preview = await json<{ placeholder: unknown }>(
+      app.request(`/preview/s1/main/assets/${a.id}`, { headers: cpa }),
+    );
+    expect(preview.placeholder).toEqual(placeholder);
+    const gql = await json<{ data: { asset: { placeholder: unknown } }; errors?: unknown }>(
+      app.request(`${D}/graphql`, {
+        method: 'POST',
+        headers: { ...cda, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `{ asset(id: "${a.id}") { placeholder { thumbhash dominantColor } } }`,
+        }),
+      }),
+    );
+    expect(gql.errors).toBeUndefined();
+    expect(gql.data.asset.placeholder).toEqual(placeholder);
   });
 });
 

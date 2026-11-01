@@ -296,6 +296,12 @@ export const assets = sqliteTable(
     index('assets_by_folder').on(t.spaceId, t.environmentId, t.folderId, t.updatedAt),
     index('assets_by_status').on(t.spaceId, t.environmentId, t.status, t.updatedAt),
     index('assets_by_hash').on(t.spaceId, t.environmentId, t.contentHash),
+    // Drafts whose upload never landed, oldest first, across scopes (0014_asset_upload_sweep).
+    index('assets_awaiting_upload')
+      .on(t.createdAt)
+      .where(
+        sql`${t.status} = 'draft' AND ${t.ingestStatus} IS NULL AND ${t.size} IS NULL AND ${t.r2Key} IS NOT NULL`,
+      ),
   ],
 );
 
@@ -358,7 +364,7 @@ export const assetPublished = sqliteTable(
     r2Key: text('r2_key'),
     kind: text('kind').$type<AssetKind>().notNull().default('other'),
     rights: text('rights', { mode: 'json' }).$type<AssetRights>(),
-    // `rights.expiresAt` copied out on every write (0014_asset_expiry), for the expiry sweep.
+    // `rights.expiresAt` copied out on every write (0015_asset_expiry), for the expiry sweep.
     expiresAt: integer('expires_at', { mode: 'timestamp_ms' }),
   },
   (t) => [

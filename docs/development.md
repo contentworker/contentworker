@@ -244,7 +244,13 @@ plus `tick`, written in one batch at the end of each tick and nowhere else. Not 
 upsert merges in SQL (a success keeps the last error, and an older run never moves a timestamp
 back), so the cron never reads before it writes.
 
-`0014_asset_expiry.sql` adds `asset_published.expires_at` (epoch ms, the snapshot's
+`0014_asset_upload_sweep.sql` adds only the partial index `assets_awaiting_upload` on
+`assets(created_at)` where `status = 'draft'`, `ingest_status` and `size` are NULL and `r2_key` is
+set: the drafts whose presigned upload never landed, for the engine's hourly abandoned-upload sweep
+(see [Architecture](./architecture.md#asset-ingest-and-search)). Nothing is backfilled. The
+placeholder ingest computes lives in the `file` JSON, so it needs no migration.
+
+`0015_asset_expiry.sql` adds `asset_published.expires_at` (epoch ms, the snapshot's
 `rights.expiresAt`, written on every snapshot write), backfills it from existing snapshots' rights,
 and indexes it (`asset_published_by_expiry`, only where set) for the engine's expiry sweep.
 

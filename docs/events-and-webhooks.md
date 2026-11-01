@@ -44,7 +44,7 @@ which cache tags to purge.
                                    │
         scheduled() (every minute): runDueScheduledActions, the outbox sweep,
         stalled-bulk-job recovery, runDueAgentSchedules (AGENTS_SCHEDULES=true);
-        pruneEventHistory on the top-of-hour tick
+        pruneEventHistory and sweepAbandonedUploads on the top-of-hour tick
 ```
 
 `EVENTS_TOPIC` is `contentworker.events` and `BULK_TOPIC` is `contentworker.bulk`. The

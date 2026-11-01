@@ -772,6 +772,18 @@ export class InMemoryContentStore implements ContentStore {
         ...(current.duplicateOf ? { duplicateOf: current.duplicateOf } : {}),
       });
     },
+    listAwaitingUpload: async (createdBefore, limit) => {
+      const out: { scope: Scope; asset: Asset }[] = [];
+      for (const [key, a] of this.assetData) {
+        const created = a.createdAt ? Date.parse(a.createdAt) : 0;
+        if (a.status !== 'draft' || a.ingestStatus || a.file.size !== undefined) continue;
+        if (!a.r2Key || created <= 0 || created >= createdBefore.getTime()) continue;
+        const [spaceId = '', environmentId = ''] = key.split('::');
+        out.push({ scope: { spaceId, environmentId }, asset: a });
+      }
+      out.sort((x, y) => Date.parse(x.asset.createdAt ?? '') - Date.parse(y.asset.createdAt ?? ''));
+      return out.slice(0, Math.max(1, limit));
+    },
     recordIngest: async (scope, id, version, patch) => {
       const key = `${scopeKey(scope)}::${id}`;
       const current = this.assetData.get(key);
@@ -791,6 +803,7 @@ export class InMemoryContentStore implements ContentStore {
       if (patch.size !== undefined) Object.assign(file, { size: patch.size });
       if (patch.width !== undefined) Object.assign(file, { width: patch.width });
       if (patch.height !== undefined) Object.assign(file, { height: patch.height });
+      if (patch.placeholder !== undefined) Object.assign(file, { placeholder: patch.placeholder });
       if (patch.contentType !== undefined) Object.assign(file, { contentType: patch.contentType });
       next.file = file;
       // Not a touch: ingest doesn't move the asset in the library's order.
@@ -804,6 +817,9 @@ export class InMemoryContentStore implements ContentStore {
       if (measured.size !== undefined) Object.assign(file, { size: measured.size });
       if (measured.width !== undefined) Object.assign(file, { width: measured.width });
       if (measured.height !== undefined) Object.assign(file, { height: measured.height });
+      if (measured.placeholder !== undefined) {
+        Object.assign(file, { placeholder: measured.placeholder });
+      }
       this.publishedAssetData.set(key, { ...current, file });
     },
     moveToFolder: async (scope, ids, folderId) => {

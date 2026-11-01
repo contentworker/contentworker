@@ -164,15 +164,15 @@ Consent forms are signed with a key derived from `PRINCIPAL_KEY`. See
 `apps/media` (`contentworker-media`, route `media.<domain>`) reads `EdgeEnv` but binds only what
 it serves from, all read-only:
 
-| Binding / var / secret       | Notes                                                                                                                                                      |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DB` (D1)                    | Read-replica sessions (`first-unconstrained`): the gate's fallback and rendition presets                                                                   |
-| `KV_CACHE` (KV)              | The gate the engine writes (`asset-gate:<space>:<env>:<id>`), read with a 60 s `cacheTtl`                                                                  |
-| `MEDIA_BUCKET` (R2)          | Asset bytes                                                                                                                                                |
-| `IMAGES`                     | Width steps and renditions; absent → only originals are served                                                                                             |
-| `METRICS` (Analytics Engine) | `contentworker_media_purge_dead_letters_total`                                                                                                             |
-| `QUEUE_SUFFIX`, `ROLE=media` | Template vars; consumers `contentworker-media-purge` (+ `-dlq`, logged and acked)                                                                          |
-| `MEDIA_SIGNING_SECRET`       | Its only secret: verifies published paths' tokens and signed `/media/*` GETs (with `exp`). Required with `DB` bound; dev uses the dev key, as the api does |
+| Binding / var / secret        | Notes                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `DB` (D1)                     | Read-replica sessions (`first-unconstrained`): the gate's fallback and rendition presets      |
+| `KV_CACHE` (KV)               | The gate the engine writes (`asset-gate:<space>:<env>:<id>`), read with a 60 s `cacheTtl`  |
+| `MEDIA_BUCKET` (R2)           | Asset bytes                                                                                 |
+| `IMAGES`                      | Width steps and renditions; absent → only originals are served. Ranges need no binding: the `Media.range` RPC reads `MEDIA_BUCKET` |
+| `METRICS` (Analytics Engine)  | `contentworker_media_purge_dead_letters_total`                                              |
+| `QUEUE_SUFFIX`, `ROLE=media`  | Template vars; consumers `contentworker-media-purge` (+ `-dlq`, logged and acked)           |
+| `MEDIA_SIGNING_SECRET`        | Its only secret: verifies published paths' tokens and signed `/media/*` GETs (with `exp`). Required with `DB` bound; dev uses the dev key, as the api does |
 
 Its `exports` put Workers Caching on the `Media` entrypoint only; the default (gateway) entrypoint
 is uncached.
