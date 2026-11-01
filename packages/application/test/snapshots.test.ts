@@ -30,6 +30,7 @@ import {
   type SnapshotWorkflowV2,
   saveWorkflowDraft,
   setEntryMetadata,
+  updateEntry,
 } from '../src/index.js';
 
 const source = { spaceId: 's1', environmentId: 'main' };
@@ -88,6 +89,19 @@ describe('exporting an environment', () => {
       metadata: { tags: [tag.id] },
     });
     expect(snapshot.taxonomy.tags.map((t) => t.name)).toEqual(['news']);
+  });
+
+  it('carries every entry, not the store’s first page', async () => {
+    // D1's list answers 100 rows when no limit is given; the in-memory store answers all of them,
+    // which hid an export that stopped at 100. Cap it the same way here.
+    const list = store.entries.list.bind(store.entries);
+    store.entries.list = (scope, query = {}) =>
+      list(scope, { ...query, limit: query.limit ?? 100 });
+    for (let i = 0; i < 250; i++) await createEntry(ctx, source, article(`Post ${i}`));
+
+    const snapshot = await exportSnapshot(ctx, source);
+    expect(snapshot.entries).toHaveLength(250);
+    expect(new Set(snapshot.entries.map((e) => e.id)).size).toBe(250);
   });
 
   it('serializes to JSON without loss', async () => {
@@ -158,6 +172,20 @@ describe('importing a snapshot', () => {
     expect(after.slice(before).filter((e) => e.type === 'entry.published')).toHaveLength(1);
   });
 
+  it('keeps a changed entry’s live version live and its edits as the draft', async () => {
+    const e = await createEntry(ctx, source, article('Live title'));
+    await publishEntry(ctx, source, e.entry.id);
+    await updateEntry(ctx, source, e.entry.id, { title: { 'en-US': 'Draft title' } });
+
+    await cloneEnvironment(ctx, source, target);
+
+    const live = await getPublishedEntry(ctx, target, e.entry.id, { locale: 'en-US' });
+    expect(live.fields.title).toBe('Live title');
+    const draft = await ctx.store.entries.get(target, e.entry.id);
+    expect(draft?.entry.status).toBe('changed');
+    expect(draft?.fields.title).toEqual({ 'en-US': 'Draft title' });
+  });
+
   it('leaves everything as drafts when publishing is turned off', async () => {
     const { entry } = await createEntry(ctx, source, article('Live'));
     await publishEntry(ctx, source, entry.id);
@@ -197,6 +225,80 @@ describe('importing a snapshot', () => {
     // Binaries stay in the source bucket; an operator should be told, not
     // left to discover it.
     expect(report.skipped.join(' ')).toContain('asset');
+  });
+
+  it('keeps entry and asset ids, so links between them still resolve and publish', async () => {
+    // A category whose parent is another category, and an article linking both a category and
+    // an asset: new ids on import left every link pointing at the source environment.
+    await createContentType(ctx, source, {
+      apiId: 'category',
+      name: 'Category',
+      displayField: 'name',
+      fields: [
+        {
+          apiId: 'name',
+          name: 'Name',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+        {
+          apiId: 'parent',
+          name: 'Parent',
+          type: 'Link',
+          linkType: 'Entry',
+          localized: false,
+          required: false,
+          position: 1,
+        },
+        {
+          apiId: 'image',
+          name: 'Image',
+          type: 'Link',
+          linkType: 'Asset',
+          localized: false,
+          required: false,
+          position: 2,
+        },
+      ],
+    } as Parameters<typeof createContentType>[2]);
+    await publishContentType(ctx, source, 'category');
+    const { createAsset, publishAsset } = await import('../src/assets.js');
+    const blob = {
+      getUploadUrl: async () => ({ url: 'https://upload', headers: {} }),
+      getDownloadUrl: async () => 'https://download',
+      delete: async () => {},
+    };
+    const { asset } = await createAsset(ctx, blob as never, source, {
+      fileName: 'a.png',
+      contentType: 'image/png',
+    });
+    await publishAsset(ctx, source, asset.id);
+    const root = await createEntry(ctx, source, {
+      contentTypeApiId: 'category',
+      fields: { name: { 'en-US': 'Root' } },
+    });
+    const child = await createEntry(ctx, source, {
+      contentTypeApiId: 'category',
+      fields: {
+        name: { 'en-US': 'Child' },
+        parent: { 'en-US': { id: root.entry.id, linkType: 'Entry' } },
+        image: { 'en-US': { id: asset.id, linkType: 'Asset' } },
+      },
+    });
+    await publishEntry(ctx, source, root.entry.id);
+    await publishEntry(ctx, source, child.entry.id);
+
+    await cloneEnvironment(ctx, source, target);
+
+    // Same id, published in the target, its links resolved there.
+    const copied = await getPublishedEntry(ctx, target, child.entry.id, {
+      locale: 'en-US',
+      include: 1,
+    });
+    expect((copied.fields.parent as { fields?: { name?: string } }).fields?.name).toBe('Root');
+    expect((copied.fields.image as { id: string }).id).toBe(asset.id);
   });
 
   it('refuses a target that already has a content model', async () => {

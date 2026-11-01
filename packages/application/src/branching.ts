@@ -9,6 +9,7 @@ import {
   type ValidationContext,
 } from '@contentworker/domain';
 import type { AppContext } from './context.js';
+import { allPages } from './paging.js';
 
 /** How an item in the source environment relates to the target. */
 export type ChangeKind = 'added' | 'removed' | 'changed' | 'unchanged';
@@ -86,9 +87,10 @@ export async function compareEnvironments(
     (a, b) => eq(ctShape(a), ctShape(b)),
   );
 
+  // Every entry on both sides: the store's default page (100 on D1) compared only the first.
   const [srcEntries, tgtEntries] = await Promise.all([
-    ctx.store.entries.list(src, {}),
-    ctx.store.entries.list(tgt, {}),
+    allPages((skip, limit) => ctx.store.entries.list(src, { skip, limit })),
+    allPages((skip, limit) => ctx.store.entries.list(tgt, { skip, limit })),
   ]);
   const srcById = new Map(srcEntries.map((e) => [e.entry.id, e]));
   const tgtById = new Map(tgtEntries.map((e) => [e.entry.id, e]));

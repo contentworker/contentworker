@@ -135,6 +135,18 @@ validation, the reference graph, the delivery read model, the outbox and the sea
 the state they would have reached organically. A snapshot is therefore not a back door: content the
 current model would reject fails the import loudly.
 
+What an import preserves:
+
+- **Ids.** Entries and asset records keep their ids (every table is keyed per environment), so
+  links between them resolve in the target unchanged, and comparing or merging the copy against
+  its source matches entries one to one. Taxonomy ids are remapped.
+- **Every entry.** The export reads every page of entries and assets, not the store's first page.
+- **Live and draft versions.** A `changed` entry (published, with edits since) carries its live
+  version's fields too: the import publishes those, then applies the draft, so the copy has the
+  same live content and the same pending edits. Snapshots from before this carry no live version,
+  and their changed entries land as drafts.
+- **Assets** as records, published as they were; their files stay where they are.
+
 ### Importing from elsewhere
 
 Snapshots move content between contentworker environments. This moves it _in_, from a format
