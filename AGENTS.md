@@ -71,8 +71,8 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
   `peerDependencies` keep their own broad ranges. A new dependency adds its latest stable version
   to the catalog first; a bump is one line there. `scripts/catalog.test.ts` fails CI on a stray
   version or an unused entry.
-- **Generated files are regenerated, not edited:** `apps/docs/src/styles/theme.css`
-  (`pnpm sync:theme`). The docs embed (`packages/docs/src/generated.ts`, from `docs/*.md`) and
+- **Generated files are regenerated, not edited:** `apps/docs/src/styles/theme.css` and
+  `docs/diagrams/themes/ledger-{light,dark}.json` (`pnpm sync:theme`). The docs embed (`packages/docs/src/generated.ts`, from `docs/*.md`) and
   the MCP skills embed (`packages/http/src/mcp/skills.generated.ts`, from
   `packages/http/skills/**`) are gitignored, never committed: `pnpm install` writes them, and
   turbo's `generate` task rewrites them before every `check-types`, `test`, `build` and `dev`

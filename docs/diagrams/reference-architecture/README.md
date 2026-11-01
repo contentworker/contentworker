@@ -16,12 +16,14 @@ Change a source and both its SVGs in the same commit, and the page's callout tex
 
 ## Checking and rendering
 
-The diagrams are grey (Ledger's achromatic tokens) with one accent, Ledger's purple `brand`
-(`oklch(0.49 0.16 310)` light, `oklch(0.75 0.09 305)` dark), on the focal nodes and the shaded
-sequence block only. Each ships as a light and a dark SVG, and the page picks one with `<picture>`
-and `prefers-color-scheme`. Sources carry no colours: `classDef`s set only stroke weight, dashes
-and bold, and the themes in `../themes/` supply every colour, the accent through `themeCSS`
-(`.node.focal`, `rect.rect`), which also overrides Mermaid 12's hard-coded yellow notes.
+The diagrams draw in the workflow canvas's language from Ledger's tokens: `node` boxes with
+`edge` borders and lines on `paper`, `sheet` groups and `ink` words. One accent, Ledger's purple
+`brand`, sits on the focal nodes and the shaded sequence block only. Each diagram ships as a light
+and a dark SVG, and the page picks one with `<picture>` and `prefers-color-scheme`. Sources carry
+no colours: `classDef`s set only stroke weight, dashes and bold. The themes in `../themes/` are
+generated from `packages/design` (`src/mermaid.ts`) by `pnpm sync:theme`, which is also how a
+token change reaches them; re-render after it. packages/design's tests hold the themes current
+and check their contrast.
 
 ```sh
 # lint and slop need the marmalade Claude Code plugin; rendering needs only Node

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { diagramColors, mermaidThemeJson } from '../src/mermaid';
 import { DARK_OVERRIDES, FONTS, LIGHT, palette, starlightThemeCss } from '../src/tokens';
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
@@ -42,6 +43,14 @@ describe('Ledger tokens match apps/web/app/app.css', () => {
 });
 
 describe('generated docs theme', () => {
+  for (const scheme of ['light', 'dark'] as const) {
+    it(`docs/diagrams/themes/ledger-${scheme}.json is current (run \`pnpm sync:theme\`)`, () => {
+      expect(read(`../../../docs/diagrams/themes/ledger-${scheme}.json`)).toBe(
+        mermaidThemeJson(scheme),
+      );
+    });
+  }
+
   it('apps/docs/src/styles/theme.css is current (run `pnpm sync:theme`)', () => {
     expect(read('../../../apps/docs/src/styles/theme.css')).toBe(starlightThemeCss());
   });
@@ -140,6 +149,31 @@ describe('Ledger contrast: the brand accent (DESIGN.md Accent)', () => {
     }
     it(`${scheme}: words and checks on a brand fill hold 4.5:1`, () => {
       expect(contrast(srgb(p['brand-foreground']), brand)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});
+
+// The diagrams' colours as the SVG paints them (hex, so read back through sRGB).
+const fromHex = (h: string): Rgb =>
+  [1, 3, 5].map((i) => Number.parseInt(h.slice(i, i + 2), 16) / 255) as unknown as Rgb;
+
+describe('Diagram contrast (docs/diagrams)', () => {
+  for (const scheme of ['light', 'dark'] as const) {
+    const c = diagramColors(scheme);
+    const cr = (a: string, b: string) => contrast(fromHex(a), fromHex(b));
+    it(`${scheme}: words hold 4.5:1 on a node, a focal node, a group, a note and the shaded block`, () => {
+      for (const ground of [c.node, c.focal, c.group, c.note, c.band, c.page])
+        expect(cr(c.words, ground)).toBeGreaterThanOrEqual(4.5);
+    });
+    it(`${scheme}: node borders and lines hold 3:1 on the page and in a group`, () => {
+      for (const ground of [c.page, c.group]) {
+        expect(cr(c.nodeBorder, ground)).toBeGreaterThanOrEqual(3);
+        expect(cr(c.line, ground)).toBeGreaterThanOrEqual(3);
+      }
+    });
+    it(`${scheme}: the accent edge holds 3:1 on its own tint, the page and a group`, () => {
+      for (const ground of [c.focal, c.page, c.group])
+        expect(cr(c.accent, ground)).toBeGreaterThanOrEqual(3);
     });
   }
 });
