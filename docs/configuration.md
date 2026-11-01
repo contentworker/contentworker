@@ -179,6 +179,7 @@ Worker when needed.
 | `AGENTS_AUTO_APPLY`             | ✓ | ✓ | `false`                | Apply enrich proposals without review                                                                         |
 | `AGENTS_MODERATE_BLOCKING`      |   |   | `false`                | `true` runs moderation before single-entry publish and blocks flagged content                                 |
 | `AGENTS_SCHEDULES`              | ✓ | ✓ | `false`                | Run recurring agent schedules on the engine's cron                                                            |
+| `VERSION_ARCHIVE`               | ✓ | ✓ | `false`                | Move superseded entry version bodies to the media bucket on the engine's cron (turn on once every Worker reads them) |
 | `AGENT_SCHEDULE_MAX_ENTRIES`    |   |   | `25`                   | Entries per scheduled run                                                                                     |
 | `AGENT_SCHEDULE_MAX_RUN_TOKENS` |   |   | `100000`               | Token cap per scheduled run                                                                                   |
 | `EMAIL_FROM`, `EMAIL_FROM_NAME` | ✓ | ✓ | empty                  | Email Sending sender for workflow `content.notify` nodes; rendered from the registry's `email`                 |

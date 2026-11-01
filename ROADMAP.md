@@ -74,6 +74,7 @@ Everything below is built and tested on v2.
   Worker onto their own edge-placed Worker at `media.<domain>`.
 - [ ] **Load testing, rewritten.** A delivery and management load profile against a seeded
   deployment (`SEED_SCALE`), confirming cache hits never reach D1.
-- [ ] **Version bodies in R2.** Keep immutable version bodies in R2 with only the index in D1, so
-  an append-heavy space stays well inside D1's per-database size limit.
+- [ ] **Version history without the bodies.** Store a content hash and a change summary on each
+  version at write time, so history lists need no archived bodies from R2 (one read per version
+  today) and identical bodies can share an object.
 - [ ] **Per-environment content promotion tooling** (diff and promote `main` → `staging`).

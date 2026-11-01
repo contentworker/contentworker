@@ -812,6 +812,15 @@ export interface ContentTypeRepo {
   save(scope: Scope, contentType: ContentType): Promise<void>;
 }
 
+/** A superseded entry version whose body can move to object storage. */
+export interface ArchivableVersion {
+  readonly scope: Scope;
+  readonly entryId: string;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly fields: EntryFields;
+}
+
 /** A draft entry together with the field values of its current version. */
 export interface EntryWithFields {
   readonly entry: Entry;
@@ -938,10 +947,37 @@ export interface EntryRepo {
   /** Drops every claim held by an entry, freeing its values for reuse. */
   releaseUniqueClaims(scope: Scope, entryId: string): Promise<void>;
 
-  /** Lists every saved version of an entry, newest first. */
+  /**
+   * Lists every saved version of an entry, newest first. Versions whose body has moved to
+   * object storage ({@link markVersionsArchived}) are read back from there.
+   */
   listVersions(scope: Scope, entryId: string): Promise<EntryVersion[]>;
-  /** Reads one specific version snapshot, or null if it doesn't exist. */
+  /** Reads one specific version snapshot, or null if it doesn't exist (from object storage if
+   *  its body has moved there). */
   getVersion(scope: Scope, entryId: string, version: number): Promise<EntryVersion | null>;
+  /**
+   * Superseded versions due to have their body moved to object storage, across every space and
+   * environment, with their bodies, for the archive sweep: at most `limit` from the archive queue
+   * (versions are queued when a newer one is saved, and due a day later). A due version that is
+   * not archivable now — still its entry's current or published version — is put back a day; one
+   * that no longer needs it (gone, already moved, its environment being purged) leaves the queue.
+   */
+  claimArchivableVersions(limit: number, now: Date): Promise<ArchivableVersion[]>;
+  /**
+   * Records that each version's body now lives in object storage under `bodyKey`, and drops it
+   * from the store, re-checking in the same write that the version is still superseded and not
+   * published (and is the same row, by `createdAt`). Returns how many it marked; a version that
+   * fails the check keeps its body.
+   */
+  markVersionsArchived(
+    versions: readonly {
+      readonly scope: Scope;
+      readonly entryId: string;
+      readonly version: number;
+      readonly createdAt: string;
+      readonly bodyKey: string;
+    }[],
+  ): Promise<number>;
 
   /** Writes the published read model for an entry. */
   putPublished(scope: Scope, snapshot: PublishedEntry): Promise<void>;

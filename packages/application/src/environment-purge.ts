@@ -121,4 +121,6 @@ async function deleteEnvironmentFiles(
   );
   // Work staged for jobs in it (an import still running when it was deleted): never read now.
   await blob.deletePrefix?.(`imports/${scope.spaceId}/${scope.environmentId}/`, () => false);
+  // Its archived version bodies (version-archive.ts).
+  await blob.deletePrefix?.(`versions/${scope.spaceId}/${scope.environmentId}/`, () => false);
 }

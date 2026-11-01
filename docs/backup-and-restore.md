@@ -7,7 +7,7 @@ What holds state, what is derivable, and how to recover a deployment.
 | Store                         | Holds                                                                                                                                                                                                              | Recoverable from elsewhere?                                                                          |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | **D1** (`DB`)                 | The system of record: spaces, environments, content types, entries and versions, published read models, references, asset metadata, hashed API keys, roles, team, webhooks and deliveries, releases, schedules, workflows, taxonomy, audit, plugins, the outbox; and the web app's users, sessions, passkeys and admin audit | **No.** Protected by D1 Time Travel (below)                                                          |
-| **R2** (`MEDIA_BUCKET`)       | Asset bytes, plugin bundles, staged import chunks (7-day lifecycle), dead letters (30-day lifecycle)                                                                                                              | **No** for asset bytes and plugin bundles                                                            |
+| **R2** (`MEDIA_BUCKET`)       | Asset bytes, plugin bundles, superseded entry version bodies (`versions/`), staged import chunks (7-day lifecycle), dead letters (30-day lifecycle)                                                                                                              | **No** for asset bytes and plugin bundles                                                            |
 | **Vectorize**                 | Embedding chunks for semantic search                                                                                                                                                                               | Yes: `POST …/search/reindex` per space and environment                                               |
 | **`SearchShardDO`**           | FTS5 lexical index                                                                                                                                                                                                 | Yes: the same reindex rebuilds it                                                                    |
 | **KV** (`KV_CACHE`)           | Delivery cache, cached principals, reindex cooldowns                                                                                                                                                               | Yes: rebuilt on demand                                                                               |
@@ -76,9 +76,15 @@ pipeline.
    New code may read columns the restored schema does not have yet.
 4. Asset bytes in R2 are not rolled back with D1. Rows that reference objects created after the
    restore point are gone; objects deleted after it are not restored.
-5. Rebuild derived indexes: `POST …/search/reindex` per space and environment (queued, in
+5. Archived version bodies in R2 are not rolled back either. They are deleted only with their
+   entry (deleting it for good from the trash) or their environment (a purge). A restore to
+   before a version was archived simply finds its body back in D1. A restore that brings back an
+   entry or environment deleted since brings back version rows whose archived bodies are gone:
+   their history lists mark those versions unavailable, while the entries themselves read
+   correctly.
+6. Rebuild derived indexes: `POST …/search/reindex` per space and environment (queued, in
    bounded slices).
-6. Replay events from the outbox for the incident window if downstream systems may have missed
+7. Replay events from the outbox for the incident window if downstream systems may have missed
    them.
 
 **RPO** for D1 is the Time Travel granularity (any minute within the retention window). **RTO**
