@@ -6,7 +6,7 @@
  * text exactly as it is from `Link` fields.
  */
 
-import type { LinkType } from '../content-type/field.js';
+import type { LinkType } from '../content-type/field';
 
 /** Node types that embed or link another entry/asset (carry `data.target`). */
 export const REFERENCE_NODE_TYPES = [

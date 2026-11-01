@@ -50,11 +50,11 @@ import {
   tool,
   type UIMessage,
 } from 'ai';
-import type { McpDeps } from '../mcp/deps.js';
-import { readContext } from './context.js';
-import { assistantCaller, engineKeys } from './gate.js';
-import { BUDGET_SPENT, meterTurn } from './meter.js';
-import { assistantModel, type EmittedCall, type ModelSource, recordingCalls } from './model.js';
+import type { McpDeps } from '../mcp/deps';
+import { readContext } from './context';
+import { assistantCaller, engineKeys } from './gate';
+import { BUDGET_SPENT, meterTurn } from './meter';
+import { assistantModel, type EmittedCall, type ModelSource, recordingCalls } from './model';
 import {
   callAssistantTool,
   errorLine,
@@ -64,7 +64,7 @@ import {
   listAssistantTools,
   NOT_THROUGH,
   ToolRefused,
-} from './tools.js';
+} from './tools';
 
 /** The person behind a socket as they are now. */
 export interface PersonNow {
@@ -92,6 +92,8 @@ export const SESSION_ENDED = 'Your sign-in has ended. Reload the page to sign in
 export const ALREADY_ANSWERED = 'This was already answered.';
 export const CARD_CHANGED = 'This card changed after it was made. Ask again for a new one.';
 export const NOT_PROPOSED = 'That call wasn’t one Coworker proposed.';
+export const NOT_HELD =
+  'Coworker couldn’t read this entry when the card was made, so it can’t say what this would change. Ask again.';
 export const TOO_FAST = 'That’s a lot at once. Wait a moment and try again.';
 const NO_SCOPE = 'The page didn’t say which space and environment you’re in. Reload it.';
 
@@ -103,6 +105,17 @@ const CARD_LIFETIME_MS = 86_400_000;
 
 /** A conversation untouched this long is deleted (an alarm checks). */
 export const RETENTION_MS = 30 * 86_400_000;
+
+/**
+ * Actions on an entry's live state whose confirm is held to the entry's version when the card was
+ * made: confirmed after someone saved a newer draft, they are refused (a 409 from the use-case)
+ * rather than publishing, withdrawing or overwriting content the person never saw.
+ */
+const VERSION_HELD: ReadonlySet<AssistantTool> = new Set<AssistantTool>([
+  'entries_publish',
+  'entries_unpublish',
+  'entries_restore_version',
+]);
 
 /** At most this many page edits and turns per person in a window (one object per person). */
 export const ASSISTANT_RATE = { max: 30, windowMs: 60_000 } as const;
@@ -117,6 +130,12 @@ type Made = {
   digest: string;
   scope: AssistantScope;
   at: number;
+  /**
+   * What the call is held to beyond its input: the entry's version when the card was made, sent
+   * as `expectedVersion` when it runs. `null`: it needed a hold and couldn't get one, so it is
+   * refused. Absent: it needs none (not a held action, or its input names its own version).
+   */
+  bound?: { expectedVersion: number } | null;
 };
 
 /**
@@ -456,12 +475,15 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
         ]);
       if (confirm) {
         // Refused now if they can't act in this space at all, rather than after they confirm.
-        await refusing(() => this.principalIn(deps, who, ctx.scope.spaceId));
+        const principal = await refusing(() => this.principalIn(deps, who, ctx.scope.spaceId));
+        const bound = await versionHold(deps, principal, name, args, ctx.scope);
+        if (bound === null) throw new Error(NOT_HELD);
         await this.ctx.storage.put(directKey(toolCallId), {
           name,
           digest: await fingerprintOf(name, args, ctx.scope),
           scope: ctx.scope,
           at: Date.now(),
+          ...(bound ? { bound } : {}),
         } satisfies Made);
         await say({ ...base, state: 'approval-requested', approval: { id: toolCallId } });
         return { callId: toolCallId, waiting: true as const };
@@ -526,8 +548,15 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
         }
         const approval = { id: callId, approved: true };
         try {
+          if (made.bound === null) throw new ToolRefused(NOT_HELD);
           const principal = await this.principalIn(deps, who, made.scope.spaceId);
-          const output = await callAssistantTool(deps, principal, name, input, made.scope);
+          const output = await callAssistantTool(
+            deps,
+            principal,
+            name,
+            heldInput(input, made.bound),
+            made.scope,
+          );
           await write({ state: 'output-available', approval, output: kept(output) });
           return { output };
         } catch (err) {
@@ -584,8 +613,12 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
     );
   }
 
-  /** Records a tool call the model emitted: only these run, with the input they were made with. */
-  private record(call: EmittedCall, scope: AssistantScope) {
+  /**
+   * Records a tool call the model emitted: only these run, with the input they were made with, and
+   * a held action with the entry's version as it was when the model proposed it (`principal`
+   * reads it, as the person).
+   */
+  private record(call: EmittedCall, scope: AssistantScope, principal: Principal) {
     const made = (async (): Promise<Made | null> => {
       if (!isAssistantTool(call.toolName)) return null;
       let input: unknown;
@@ -594,11 +627,19 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       } catch {
         return null;
       }
+      const name = call.toolName;
+      // Its own wiring: the turn's may be released before this read is done.
+      const bound = VERSION_HELD.has(name)
+        ? await this.wired((deps) => versionHold(deps, principal, name, input, scope)).catch(
+            () => null,
+          )
+        : undefined;
       const m: Made = {
-        name: call.toolName,
-        digest: await fingerprintOf(call.toolName, input, scope),
+        name,
+        digest: await fingerprintOf(name, input, scope),
         scope,
         at: Date.now(),
+        ...(bound !== undefined ? { bound } : {}),
       };
       await this.ctx.storage.put(modelKey(call.toolCallId), m);
       return m;
@@ -649,7 +690,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       const meter = meterTurn(w.deps.ctx.costGuard, scope, () => used.source === 'model', close);
       const model = recordingCalls(
         await assistantModel(this.env, context, used, who.claims.sub),
-        (call) => this.record(call, context.scope),
+        (call) => this.record(call, context.scope, principal),
       );
       if (!(await meter.begin())) {
         await meter.settle();
@@ -739,8 +780,15 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
                   // One run per call.
                   await this.ctx.storage.delete(modelKey(toolCallId));
                   this.emitted.delete(toolCallId);
+                  if (made.bound === null) throw new ToolRefused(NOT_HELD);
                   const p = await this.principalIn(now, await this.caller(), made.scope.spaceId);
-                  const output = await callAssistantTool(now, p, name, input, made.scope);
+                  const output = await callAssistantTool(
+                    now,
+                    p,
+                    name,
+                    heldInput(input, made.bound),
+                    made.scope,
+                  );
                   this.summaries.set(toolCallId, kept(output));
                   return forModel(output);
                 } catch (err) {
@@ -753,6 +801,43 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       }),
     );
   }
+}
+
+/**
+ * The hold a held action's card gets: the entry's `currentVersion` now, read as the person. None
+ * (`undefined`) for a call that isn't a held action or names its own `expectedVersion` (a page
+ * that knows the version it shows); `null` when the entry can't be read, which refuses the card.
+ */
+export async function versionHold(
+  deps: McpDeps,
+  principal: Principal,
+  name: AssistantTool,
+  input: unknown,
+  scope: AssistantScope,
+): Promise<{ expectedVersion: number } | null | undefined> {
+  if (!VERSION_HELD.has(name)) return undefined;
+  const args = (input ?? {}) as { id?: unknown; expectedVersion?: unknown };
+  if (typeof args.expectedVersion === 'number') return undefined;
+  if (typeof args.id !== 'string') return null;
+  try {
+    const entry = (await callAssistantTool(
+      deps,
+      principal,
+      'entries_get',
+      { id: args.id },
+      scope,
+    )) as {
+      version?: unknown;
+    };
+    return typeof entry?.version === 'number' ? { expectedVersion: entry.version } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A call's input as it runs: what it was made with, held to its version when it has a hold. */
+function heldInput(input: unknown, bound: Made['bound']): unknown {
+  return bound ? { ...(input as Record<string, unknown>), ...bound } : input;
 }
 
 /** A failure already reduced to the words the person may see (`errorLine`). */

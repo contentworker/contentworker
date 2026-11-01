@@ -15,8 +15,8 @@ import {
   type AppContext,
   DEFAULT_DELIVERY_CACHE_TTL_SECONDS,
   DEFAULT_DELIVERY_LIST_TTL_SECONDS,
-} from './context.js';
-import { cacheTag, contentTypeTag, epochTag } from './events/dispatch.js';
+} from './context';
+import { cacheTag, contentTypeTag, epochTag } from './events/dispatch';
 
 export interface RenderOptions {
   /** When set, fields are flattened to this locale with fallback. */

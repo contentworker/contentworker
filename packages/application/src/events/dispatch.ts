@@ -6,18 +6,18 @@ import type {
   SearchIndex,
   WebhookSender,
 } from '@contentworker/ports';
-import { runBulkChunk } from '../bulk-jobs.js';
-import type { AppContext } from '../context.js';
-import { runEnvironmentPurge } from '../environment-purge.js';
-import { invokeFunctionsForEvent } from '../functions.js';
-import { importChunkRunner } from '../import-jobs.js';
+import { runBulkChunk } from '../bulk-jobs';
+import type { AppContext } from '../context';
+import { runEnvironmentPurge } from '../environment-purge';
+import { invokeFunctionsForEvent } from '../functions';
+import { importChunkRunner } from '../import-jobs';
 import {
   extractTextByLocale,
   indexEntryEmbeddings,
   type RagDeps,
   removeEntryEmbeddings,
   runReindexJob,
-} from '../rag.js';
+} from '../rag';
 
 /** Reverse-reference walk bound: embed chains deeper than this stay stale
  *  until their own next publish (cycle-safe either way via the visited set). */

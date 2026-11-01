@@ -37,7 +37,7 @@ import {
   scheduleAction,
   setEnvironmentAlias,
   visibleSearchHits,
-} from '../src/index.js';
+} from '../src/index';
 
 const main = { spaceId: 's1', environmentId: 'main' };
 const admin = { spaceId: '*', kind: 'admin', scopes: [] } as unknown as Principal;

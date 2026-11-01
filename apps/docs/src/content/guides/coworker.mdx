@@ -51,7 +51,13 @@ conversation.
 
 Anything the model proposes that changes something stops at a confirm card, the same as a page
 action, and nothing is sent until you confirm. A declined card reads "left as it was". A card
-that nobody answers is let go after a day. Your role and access to the space are checked again
+that nobody answers is let go after a day.
+
+A card that publishes, unpublishes or restores an entry is held to the entry as it was when the
+card was made: the version on your screen for a page's card, the current version when the model
+proposed it. If someone saves a newer draft before you confirm, the card is refused and nothing
+changes, so a confirm never publishes or overwrites a draft you haven't seen. Ask again for a
+card that shows the entry as it is now. Your role and access to the space are checked again
 for every message, so a role change or a revoked space takes effect in an open conversation.
 
 ## The context chip

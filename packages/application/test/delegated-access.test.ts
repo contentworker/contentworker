@@ -14,7 +14,7 @@ import {
   removeMember,
   updateMember,
   webUserAccess,
-} from '../src/index.js';
+} from '../src/index';
 
 const hasher = { hash: (v: string) => `h:${v}` };
 const SSO = { sso: true };

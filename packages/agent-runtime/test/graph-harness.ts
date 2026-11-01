@@ -20,7 +20,7 @@ import {
   RecordingWorkflowEngine,
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
-import { makeGraphActivities, runGraph } from '../src/index.js';
+import { makeGraphActivities, runGraph } from '../src/index';
 
 export const scope = { spaceId: 'blog', environmentId: 'main' };
 

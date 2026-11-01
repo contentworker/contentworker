@@ -6,14 +6,14 @@
  */
 
 import type { EntryFields } from '@contentworker/domain';
-import { updateEntry } from '../entries.js';
-import { unpublishEntry } from '../publishing.js';
-import { removeEntryFromRelease } from '../releases.js';
-import { cancelScheduledAction } from '../scheduling.js';
-import { resolveTask } from '../tasks.js';
-import { getEntryMetadata, setEntryMetadata } from '../taxonomy.js';
-import { isRecord } from './support.js';
-import type { Compensate } from './types.js';
+import { updateEntry } from '../entries';
+import { unpublishEntry } from '../publishing';
+import { removeEntryFromRelease } from '../releases';
+import { cancelScheduledAction } from '../scheduling';
+import { resolveTask } from '../tasks';
+import { getEntryMetadata, setEntryMetadata } from '../taxonomy';
+import { isRecord } from './support';
+import type { Compensate } from './types';
 
 const out = (v: unknown): Record<string, unknown> => (isRecord(v) ? v : {});
 

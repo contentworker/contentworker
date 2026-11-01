@@ -1,6 +1,6 @@
 import { type Scope, ValidationError } from '@contentworker/domain';
 import type { AppExtension } from '@contentworker/ports';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 export interface CreateAppExtensionInput {
   readonly name: string;

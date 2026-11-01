@@ -5,9 +5,9 @@ import {
   nextCronOccurrence,
   ValidationError,
 } from '@contentworker/domain';
-import type { AgentRunner } from './agent-actions.js';
-import { recordAgentRun } from './agent-audit.js';
-import type { AppContext } from './context.js';
+import type { AgentRunner } from './agent-actions';
+import { recordAgentRun } from './agent-audit';
+import type { AppContext } from './context';
 
 /** The agent workflows a schedule may run. */
 export const AGENT_WORKFLOWS = ['enrich', 'moderate', 'curate', 'repurpose'] as const;

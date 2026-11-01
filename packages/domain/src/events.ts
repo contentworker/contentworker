@@ -1,4 +1,4 @@
-import type { EntryFields, Scope } from './types.js';
+import type { EntryFields, Scope } from './types';
 
 /**
  * Domain events. These are appended to the transactional outbox within the same

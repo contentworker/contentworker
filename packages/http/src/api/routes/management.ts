@@ -183,10 +183,10 @@ import {
   environmentMiddleware,
   principalMiddleware,
   requireScope,
-} from '../auth.js';
-import { doc } from '../docs/openapi.js';
-import * as docs from '../docs/schemas.js';
-import { clampCount, MAX_PAGE_LIMIT } from '../query.js';
+} from '../auth';
+import { doc } from '../docs/openapi';
+import * as docs from '../docs/schemas';
+import { clampCount, MAX_PAGE_LIMIT } from '../query';
 import {
   agentScheduleBody,
   agentSchedulePatchBody,
@@ -246,8 +246,8 @@ import {
   updateWebhookBody,
   upgradePluginFromUrlBody,
   webhookBody,
-} from '../validation.js';
-import { workflowRoutes } from './workflows.js';
+} from '../validation';
+import { workflowRoutes } from './workflows';
 
 // Reads the route's scope, preferring the alias-resolved environment id stamped
 // by environmentMiddleware over the raw `:env` param.
@@ -292,6 +292,22 @@ const webhookSummary = (h: Webhook) => ({
 });
 
 const BASE = '/spaces/:space/environments/:env';
+
+/**
+ * `?expectedVersion=N`: hold a publish, unpublish or restore to the version the caller read (a
+ * 409 when the entry has moved on). Absent, the write acts on the entry as it is.
+ */
+function expectedVersionOf(c: Context<AuthVars>): { expectedVersion?: number } {
+  const raw = c.req.query('expectedVersion');
+  if (raw === undefined || raw === '') return {};
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new ValidationError([
+      { field: 'expectedVersion', message: 'expectedVersion must be a positive integer' },
+    ]);
+  }
+  return { expectedVersion: n };
+}
 
 /** Management API (CMA): authoring + publishing, gated by RBAC scopes. */
 /**
@@ -1453,6 +1469,10 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: docs.entry,
       description:
         'Writes the delivery read model and appends entry.published to the transactional outbox atomically.',
+      query: {
+        expectedVersion:
+          "The entry's currentVersion as the caller read it; 409 if it has changed since",
+      },
     }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
@@ -1477,16 +1497,22 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
           ]);
         }
       }
-      return c.json(await publishEntry(ctx, scopeOf(c), id));
+      return c.json(await publishEntry(ctx, scopeOf(c), id, expectedVersionOf(c)));
     },
   );
   app.delete(
     `${BASE}/entries/:id/published`,
-    doc('Entries', 'Unpublish an entry', { ok: docs.entry }),
+    doc('Entries', 'Unpublish an entry', {
+      ok: docs.entry,
+      query: {
+        expectedVersion:
+          "The entry's currentVersion as the caller read it; 409 if it has changed since",
+      },
+    }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
       await guardEntry(c, c.req.param('id'), 'publish');
-      return c.json(await unpublishEntry(ctx, scopeOf(c), c.req.param('id')));
+      return c.json(await unpublishEntry(ctx, scopeOf(c), c.req.param('id'), expectedVersionOf(c)));
     },
   );
 
@@ -1539,6 +1565,13 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   // read-only fields can't resurrect them by restoring, or write an ungranted type.
   app.post(
     `${BASE}/entries/:id/versions/:version/restore`,
+    doc('Entries', 'Restore a version', {
+      description: "Copies the version's fields into a new draft version.",
+      query: {
+        expectedVersion:
+          "The entry's currentVersion as the caller read it; 409 if it has changed since",
+      },
+    }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
       const principal = c.get('principal');
@@ -1552,7 +1585,13 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       );
       assertWritableFields(principal, entry.contentTypeApiId, target.fields);
       return c.json(
-        await restoreVersion(ctx, scopeOf(c), c.req.param('id'), Number(c.req.param('version'))),
+        await restoreVersion(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          Number(c.req.param('version')),
+          expectedVersionOf(c),
+        ),
       );
     },
   );

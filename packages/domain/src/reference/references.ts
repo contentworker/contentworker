@@ -1,7 +1,7 @@
-import type { ContentType } from '../content-type/content-type.js';
-import type { FieldDefinition, LinkType } from '../content-type/field.js';
-import { extractRichTextTargets } from '../rich-text/rich-text.js';
-import type { EntryFields } from '../types.js';
+import type { ContentType } from '../content-type/content-type';
+import type { FieldDefinition, LinkType } from '../content-type/field';
+import { extractRichTextTargets } from '../rich-text/rich-text';
+import type { EntryFields } from '../types';
 
 /**
  * A materialized reference edge: entry `fromEntryId` links to `toId` (an entry

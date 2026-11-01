@@ -123,9 +123,9 @@ import {
   mapD1Error,
   selectChunked,
   UnitOfWork,
-} from './exec.js';
-import { buildFilterPrefilter, buildSearchPrefilter } from './query-pushdown.js';
-import * as schema from './schema.js';
+} from './exec';
+import { buildFilterPrefilter, buildSearchPrefilter } from './query-pushdown';
+import * as schema from './schema';
 
 type Query = BatchItem<'sqlite'>;
 

@@ -1,5 +1,5 @@
-import { ensureContentType } from './helpers.js';
-import type { SeedRun } from './types.js';
+import { ensureContentType } from './helpers';
+import type { SeedRun } from './types';
 
 /**
  * The demo content model. Eight types that together cover every field type

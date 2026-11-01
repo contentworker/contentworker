@@ -3,7 +3,7 @@ import { SecretUnreadableError } from '@contentworker/domain';
 import { dataKeysFromEnv, isResealTick, sealerFromEnv } from '@contentworker/platform/data-key';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { describe, expect, it } from 'vitest';
-import { toHttpError } from '../../src/api/http.js';
+import { toHttpError } from '../../src/api/http';
 
 const env = (vars: Record<string, string>) => vars as unknown as EdgeEnv;
 const STRONG = 'k'.repeat(44);

@@ -16,7 +16,7 @@
  * Pure and DOM-free: the domain runs on Node and in a Worker alike.
  */
 
-import type { RichTextDocument, RichTextMark, RichTextNode } from './rich-text.js';
+import type { RichTextDocument, RichTextMark, RichTextNode } from './rich-text';
 
 interface HtmlElement {
   readonly tag: string;

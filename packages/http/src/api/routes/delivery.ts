@@ -47,10 +47,10 @@ import {
   environmentMiddleware,
   principalMiddleware,
   requireScope,
-} from '../auth.js';
-import type { DeliveryDocKey } from '../docs/delivery-docs.js';
-import { onError } from '../http.js';
-import { clampCount, entryQueryFrom, MAX_PAGE_LIMIT, parseEntryQuery } from '../query.js';
+} from '../auth';
+import type { DeliveryDocKey } from '../docs/delivery-docs';
+import { onError } from '../http';
+import { clampCount, entryQueryFrom, MAX_PAGE_LIMIT, parseEntryQuery } from '../query';
 
 /** Max reference-resolution depth a delivery client may request. */
 const MAX_INCLUDE_DEPTH = 10;

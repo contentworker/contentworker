@@ -8,9 +8,9 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { AIProvider, ModelTier } from '@contentworker/ports';
-import { recordAgentRun } from './agent-audit.js';
-import { generateWithBudget } from './ai-budget.js';
-import type { AppContext } from './context.js';
+import { recordAgentRun } from './agent-audit';
+import { generateWithBudget } from './ai-budget';
+import type { AppContext } from './context';
 
 /** Field types we ask the model to generate for a draft (scalars only). */
 const DRAFTABLE = new Set(['Symbol', 'Text', 'Integer', 'Number', 'Boolean', 'Date']);

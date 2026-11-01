@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type CfQueueBinding, createCfQueueProducer } from '../../src/queue-cf/index.js';
+import { type CfQueueBinding, createCfQueueProducer } from '../../src/queue-cf/index';
 
 type Sent = { body: unknown; delaySeconds?: number };
 

@@ -8,7 +8,7 @@ import {
   negotiateFormat,
   parseTransformParams,
   transformImage,
-} from '../../src/images-cf/index.js';
+} from '../../src/images-cf/index';
 
 /** Signer stand-in: deterministic, records what was signed. */
 function fakeSigner() {

@@ -14,10 +14,10 @@ import {
   type SpaceConfig,
   TransactionConflictError,
 } from '@contentworker/ports';
-import { auditActor } from './audit.js';
-import type { AppContext } from './context.js';
-import { purgeDue } from './environment-purge.js';
-import { ensureRolePresets } from './team.js';
+import { auditActor } from './audit';
+import type { AppContext } from './context';
+import { purgeDue } from './environment-purge';
+import { ensureRolePresets } from './team';
 
 export interface CreateSpaceInput {
   readonly spaceId: string;

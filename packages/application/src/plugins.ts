@@ -18,9 +18,9 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { BlobStore } from '@contentworker/ports';
-import { recordAudit } from './audit.js';
-import type { AppContext } from './context.js';
-import { sha256Hex } from './token-crypto.js';
+import { recordAudit } from './audit';
+import type { AppContext } from './context';
+import { sha256Hex } from './token-crypto';
 
 /**
  * The plugin registry: what is installed, what it was allowed to do, and who

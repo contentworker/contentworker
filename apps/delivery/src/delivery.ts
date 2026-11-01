@@ -8,8 +8,8 @@ import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/deli
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { deliveryScopeTag } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
-import { hasGraphqlErrors } from './client-cache.js';
-import { fromCanonical } from './profile.js';
+import { hasGraphqlErrors } from './client-cache';
+import { fromCanonical } from './profile';
 
 /** Header the gateway uses to hand the authenticated principal to this entrypoint. */
 export const PRINCIPAL_HEADER = 'x-cw-delivery-principal';

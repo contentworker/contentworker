@@ -56,7 +56,7 @@ import {
   withDefaults,
 } from '@contentworker/domain';
 import type { WorkflowSteps } from '@contentworker/ports';
-import type { GraphActivities } from './activities.js';
+import type { GraphActivities } from './activities';
 
 export type GraphRunOutcome =
   | {

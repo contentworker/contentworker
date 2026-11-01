@@ -6,11 +6,11 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { AIActionDefinition, AIProvider, ModelTier } from '@contentworker/ports';
-import { recordAgentRun } from './agent-audit.js';
-import { generateWithBudget } from './ai-budget.js';
-import { UNTRUSTED_CONTENT_GUARD } from './ai-prompt.js';
-import type { AppContext } from './context.js';
-import { getEntry, updateEntry } from './entries.js';
+import { recordAgentRun } from './agent-audit';
+import { generateWithBudget } from './ai-budget';
+import { UNTRUSTED_CONTENT_GUARD } from './ai-prompt';
+import type { AppContext } from './context';
+import { getEntry, updateEntry } from './entries';
 
 const VAR_RE = /\{\{\s*([\w.]+)\s*\}\}/g;
 

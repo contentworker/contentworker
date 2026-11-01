@@ -10,7 +10,7 @@ import {
   listWebhooks,
   scheduleAction,
 } from '@contentworker/application';
-import type { SeedRun } from './types.js';
+import type { SeedRun } from './types';
 
 /**
  * Automation surfaces: webhook subscriptions, event-driven functions, admin UI

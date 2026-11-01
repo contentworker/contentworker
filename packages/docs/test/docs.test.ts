@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { buildSource } from '../scripts/generate.js';
-import { DOC_SEARCH_MAX_RESULTS, listDocs, readDoc, searchDocs, slugify } from '../src/index.js';
+import { buildSource } from '../scripts/generate';
+import { DOC_SEARCH_MAX_RESULTS, listDocs, readDoc, searchDocs, slugify } from '../src/index';
 
 const generated = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'generated.ts');
 

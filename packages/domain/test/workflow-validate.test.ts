@@ -10,7 +10,7 @@ import {
   WORKFLOW_TEMPLATES,
   type WorkflowGraph,
   withDefaults,
-} from '../src/index.js';
+} from '../src/index';
 
 const base = (): WorkflowGraph => ({
   nodes: [

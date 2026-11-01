@@ -1,7 +1,7 @@
 import type { Scope } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { getEntry } from './entries.js';
-import { extractTextByLocale, type RagDeps, type SearchHit, semanticSearch } from './rag.js';
+import type { AppContext } from './context';
+import { getEntry } from './entries';
+import { extractTextByLocale, type RagDeps, type SearchHit, semanticSearch } from './rag';
 
 /** Picks the entry text for a locale (or the first available), for embedding. */
 async function entryText(

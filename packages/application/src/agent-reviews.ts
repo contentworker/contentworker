@@ -1,8 +1,8 @@
 import type { AgentReview, EntryFields, Scope } from '@contentworker/domain';
 import { ConflictError, NotFoundError } from '@contentworker/domain';
-import { recordAgentRun } from './agent-audit.js';
-import type { AppContext } from './context.js';
-import { updateEntry } from './entries.js';
+import { recordAgentRun } from './agent-audit';
+import type { AppContext } from './context';
+import { updateEntry } from './entries';
 
 /** Default watcher wait for a human decision before it stands down: 7 days. */
 export const DEFAULT_REVIEW_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;

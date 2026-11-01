@@ -1,7 +1,7 @@
 import type { EnvironmentPurgeDueEvent, Scope } from '@contentworker/domain';
 import type { BlobStore } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { allPages } from './paging.js';
+import type { AppContext } from './context';
+import { allPages } from './paging';
 
 /**
  * Removing a deleted environment's rows.

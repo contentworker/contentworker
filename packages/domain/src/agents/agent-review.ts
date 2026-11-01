@@ -9,7 +9,7 @@
  * (whichever path wins the CAS applies, the other skips).
  */
 
-import type { EntryFields } from '../types.js';
+import type { EntryFields } from '../types';
 
 export type AgentReviewStatus = 'pending' | 'approved' | 'rejected';
 

@@ -33,7 +33,7 @@ import {
 } from '@contentworker/security/principal';
 import { logger } from '@contentworker/telemetry';
 import { type Context, Hono } from 'hono';
-import type { AuthDeps } from '../auth.js';
+import type { AuthDeps } from '../auth';
 
 /**
  * OAuth 2.1 authorization server + RFC 9728 protected-resource metadata.

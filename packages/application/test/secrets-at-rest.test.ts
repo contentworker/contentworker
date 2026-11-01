@@ -13,7 +13,7 @@ import {
   secretContext,
   updateWebhook,
   withSealedSecrets,
-} from '../src/index.js';
+} from '../src/index';
 
 const KEY = 'current-data-key-0123456789abcdef0123456789';
 const OLD = 'previous-data-key-0123456789abcdef012345678';

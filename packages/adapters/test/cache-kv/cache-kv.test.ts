@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createKvCache, type KvBinding } from '../../src/cache-kv/index.js';
+import { createKvCache, type KvBinding } from '../../src/cache-kv/index';
 
 /** Minimal in-memory KV with TTL capture (no expiry simulation needed here). */
 function fakeKv() {

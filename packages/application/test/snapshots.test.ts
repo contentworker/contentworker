@@ -31,7 +31,7 @@ import {
   saveWorkflowDraft,
   setEntryMetadata,
   updateEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const source = { spaceId: 's1', environmentId: 'main' };
 const target = { spaceId: 's1', environmentId: 'copy' };
@@ -213,7 +213,7 @@ describe('importing a snapshot', () => {
   });
 
   it('names what it deliberately did not carry', async () => {
-    const { createAsset } = await import('../src/assets.js');
+    const { createAsset } = await import('../src/assets');
     const blob = {
       getUploadUrl: async () => 'https://upload',
       getDownloadUrl: async () => 'https://download',
@@ -264,7 +264,7 @@ describe('importing a snapshot', () => {
       ],
     } as Parameters<typeof createContentType>[2]);
     await publishContentType(ctx, source, 'category');
-    const { createAsset, publishAsset } = await import('../src/assets.js');
+    const { createAsset, publishAsset } = await import('../src/assets');
     const blob = {
       getUploadUrl: async () => ({ url: 'https://upload', headers: {} }),
       getDownloadUrl: async () => 'https://download',

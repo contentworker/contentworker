@@ -1,4 +1,4 @@
-import type { AppContext } from '../context.js';
+import type { AppContext } from '../context';
 
 /** Default retention for relayed outbox rows and webhook delivery records. */
 export const DEFAULT_EVENT_RETENTION_HOURS = 168;

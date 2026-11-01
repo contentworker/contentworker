@@ -21,10 +21,10 @@ import {
 } from '@modelcontextprotocol/client';
 import { SkillsClient } from '@modelcontextprotocol/client/ext/skills';
 import { describe, expect, it } from 'vitest';
-import { buildSource } from '../../scripts/generate-skills.js';
-import type { McpDeps } from '../../src/mcp/deps.js';
-import { authInfoFor, createHandler } from '../../src/mcp/http.js';
-import { loadSkillCatalog } from '../../src/mcp/skills.js';
+import { buildSource } from '../../scripts/generate-skills';
+import type { McpDeps } from '../../src/mcp/deps';
+import { authInfoFor, createHandler } from '../../src/mcp/http';
+import { loadSkillCatalog } from '../../src/mcp/skills';
 
 function makeDeps(): McpDeps {
   const ctx: AppContext = {

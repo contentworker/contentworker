@@ -1,6 +1,6 @@
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { type AppContext, agentUsage, listAgentRuns, recordAgentRun } from '../src/index.js';
+import { type AppContext, agentUsage, listAgentRuns, recordAgentRun } from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 

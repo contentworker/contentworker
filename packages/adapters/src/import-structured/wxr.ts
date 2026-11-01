@@ -1,6 +1,6 @@
 import type { ImportSource, SourceReadResult, SourceRecord } from '@contentworker/ports';
-import { identify, MAX_PAYLOAD_BYTES, tooLarge } from './shared.js';
-import { child, childText, parseXml, type XmlElement } from './xml.js';
+import { identify, MAX_PAYLOAD_BYTES, tooLarge } from './shared';
+import { child, childText, parseXml, type XmlElement } from './xml';
 
 /**
  * Reads a WordPress export (WXR — "Tools → Export" in the WordPress admin).

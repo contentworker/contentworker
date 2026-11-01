@@ -32,7 +32,7 @@ import {
   setWorkflowSeparationDefault,
   startWorkflowRun,
   WORKFLOW_COMPENSATIONS,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
 const editor: Principal = {
@@ -438,7 +438,7 @@ describe('workflow runs', () => {
 
   it('compensations never undo later work by someone else', async () => {
     const published = await publishEntry(ctx, scope, entryId);
-    const { updateEntry } = await import('../src/index.js');
+    const { updateEntry } = await import('../src/index');
     await updateEntry(ctx, scope, entryId, { title: { 'en-US': 'Edited' } });
     await publishEntry(ctx, scope, entryId);
     const message = await WORKFLOW_COMPENSATIONS['content.publish']?.({

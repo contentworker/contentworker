@@ -25,8 +25,8 @@ import {
   type TokenIssuance,
   ValidationError,
 } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { invalidateCachedPrincipals } from './principal-cache.js';
+import type { AppContext } from './context';
+import { invalidateCachedPrincipals } from './principal-cache';
 
 /**
  * What the deployment's sign-in looks like, as the composition root knows it. People (members)

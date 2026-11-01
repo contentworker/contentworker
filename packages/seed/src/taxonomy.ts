@@ -6,7 +6,7 @@ import {
   listSchemes,
   listTags,
 } from '@contentworker/application';
-import type { SeedRun } from './types.js';
+import type { SeedRun } from './types';
 
 export interface TaxonomySeed {
   readonly tagIds: readonly string[];

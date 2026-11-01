@@ -2,8 +2,8 @@ import { DurableObject } from 'cloudflare:workers';
 import { liveEventFor } from '@contentworker/application';
 import type { DomainEvent, Principal, Scope } from '@contentworker/domain';
 import type { EventBus } from '@contentworker/ports';
-import type { EdgeEnv } from '../env.js';
-import { LIVE_ACCESS_HEADER, LIVE_STREAM_MAX_MS, liveHubName } from './live-access.js';
+import type { EdgeEnv } from '../env';
+import { LIVE_ACCESS_HEADER, LIVE_STREAM_MAX_MS, liveHubName } from './live-access';
 
 export { LIVE_ACCESS_HEADER, LIVE_STREAM_MAX_MS, liveHubName };
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { placeholderPdf, placeholderPng } from '../src/placeholders.js';
+import { placeholderPdf, placeholderPng } from '../src/placeholders';
 
 /** Walks a PNG's chunks, checking each CRC, and returns them by type. */
 function chunks(png: Uint8Array) {

@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  createCsvImportSource,
-  createJsonImportSource,
-} from '../../src/import-structured/index.js';
+import { createCsvImportSource, createJsonImportSource } from '../../src/import-structured/index';
 
 const csv = createCsvImportSource();
 const json = createJsonImportSource();

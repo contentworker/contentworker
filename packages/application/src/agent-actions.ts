@@ -6,13 +6,13 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { AIProvider, ModelTier } from '@contentworker/ports';
-import { recordAgentRun } from './agent-audit.js';
-import { generateWithBudget } from './ai-budget.js';
-import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt.js';
-import type { AppContext } from './context.js';
-import { getEntry } from './entries.js';
-import { unpublishEntry } from './publishing.js';
-import { createTask } from './tasks.js';
+import { recordAgentRun } from './agent-audit';
+import { generateWithBudget } from './ai-budget';
+import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import type { AppContext } from './context';
+import { getEntry } from './entries';
+import { unpublishEntry } from './publishing';
+import { createTask } from './tasks';
 
 /**
  * Structural view of the agent-workflow runtime (`AgentRuntime` in

@@ -1,8 +1,8 @@
 import { createHmac } from 'node:crypto';
 import type { DomainEvent, Webhook } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
-import { createHttpFunctionInvoker } from '../../src/http-effects/function-invoker.js';
-import { createWebhookSender } from '../../src/http-effects/webhook-sender.js';
+import { createHttpFunctionInvoker } from '../../src/http-effects/function-invoker';
+import { createWebhookSender } from '../../src/http-effects/webhook-sender';
 
 const scope = { spaceId: 'space-1', environmentId: 'env-1' };
 

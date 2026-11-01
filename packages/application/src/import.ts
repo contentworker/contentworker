@@ -10,8 +10,8 @@ import {
   validateEntryFields,
 } from '@contentworker/domain';
 import type { ImportSource, SourceRecord } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { createEntry, updateEntry } from './entries.js';
+import type { AppContext } from './context';
+import { createEntry, updateEntry } from './entries';
 
 /**
  * Importing content from somewhere else, in two phases.

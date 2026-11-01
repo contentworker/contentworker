@@ -20,8 +20,8 @@ import {
 } from '@contentworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { McpDeps } from '../../src/mcp/deps.js';
-import { buildServer } from '../../src/mcp/server.js';
+import type { McpDeps } from '../../src/mcp/deps';
+import { buildServer } from '../../src/mcp/server';
 
 const SPACE = 'space-1';
 const scope = { spaceId: SPACE, environmentId: 'main' };
@@ -302,5 +302,38 @@ describe('video asset tools', () => {
       arguments: { fileName: 'clip.mp4', contentType: 'video/mp4', space: SPACE },
     });
     expect(res.isError).toBe(true);
+  });
+});
+
+describe('MCP writes held to expectedVersion', () => {
+  it('refuses entries_publish, entries_unpublish and entries_restore_version on a moved entry', async () => {
+    const deps = makeDeps();
+    await seed(deps);
+    const client = await connect(deps, adminPrincipal);
+    const call = (name: string, args: Record<string, unknown>) =>
+      client.callTool({ name, arguments: { space: SPACE, environment: 'main', ...args } });
+    const { entry } = payload(
+      await call('entries_create', {
+        contentType: 'article',
+        fields: { title: { 'en-US': 'Seen' } },
+      }),
+    ) as { entry: { id: string } };
+    const id = entry.id;
+    await call('entries_update', { id, fields: { title: { 'en-US': 'Unseen' } } });
+
+    const stale = await call('entries_publish', { id, expectedVersion: 1 });
+    expect(stale.isError).toBe(true);
+    expect(JSON.stringify(stale.content)).toMatch(/version 2, not 1/);
+    expect((payload(await call('entries_get', { id })) as { status: string }).status).toBe('draft');
+
+    expect((await call('entries_publish', { id, expectedVersion: 2 })).isError).toBeFalsy();
+    await call('entries_update', { id, fields: { title: { 'en-US': 'Later' } } });
+    expect((await call('entries_unpublish', { id, expectedVersion: 2 })).isError).toBe(true);
+    expect(
+      (await call('entries_restore_version', { id, version: 1, expectedVersion: 2 })).isError,
+    ).toBe(true);
+    expect(
+      (await call('entries_restore_version', { id, version: 1, expectedVersion: 3 })).isError,
+    ).toBeFalsy();
   });
 });

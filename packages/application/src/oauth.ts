@@ -19,10 +19,10 @@ import {
   verifyPkce,
 } from '@contentworker/domain';
 import type { Hasher, OAuthGrantRecord } from '@contentworker/ports';
-import { createApiKey } from './auth.js';
-import type { AppContext } from './context.js';
-import { invalidateCachedPrincipals } from './principal-cache.js';
-import { randomSecret, randomUserCode, sha256Base64Url } from './token-crypto.js';
+import { createApiKey } from './auth';
+import type { AppContext } from './context';
+import { invalidateCachedPrincipals } from './principal-cache';
+import { randomSecret, randomUserCode, sha256Base64Url } from './token-crypto';
 
 /**
  * OAuth 2.1 authorization server.

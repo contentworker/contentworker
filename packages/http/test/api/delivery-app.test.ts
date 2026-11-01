@@ -1,10 +1,10 @@
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import type { Principal } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
-import { createApiHasher } from '../../src/api/auth.js';
-import { deliveryApp, deliveryRoutes } from '../../src/api/routes/delivery.js';
-import { testConfig } from './config.js';
-import { wire } from './wire.js';
+import { createApiHasher } from '../../src/api/auth';
+import { deliveryApp, deliveryRoutes } from '../../src/api/routes/delivery';
+import { testConfig } from './config';
+import { wire } from './wire';
 
 const config = testConfig({
   seed: {
