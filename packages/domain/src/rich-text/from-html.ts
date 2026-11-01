@@ -16,7 +16,12 @@
  * Pure and DOM-free: the domain runs on Node and in a Worker alike.
  */
 
-import type { RichTextDocument, RichTextMark, RichTextNode } from './rich-text';
+import {
+  type RichTextDocument,
+  type RichTextMark,
+  type RichTextNode,
+  safeLinkUri,
+} from './rich-text';
 
 interface HtmlElement {
   readonly tag: string;
@@ -445,7 +450,7 @@ function inline(node: HtmlNode, marks: readonly RichTextMark[], inLink = false):
     const source = node.children.find(
       (c): c is HtmlElement => typeof c !== 'string' && c.tag === 'source' && !!c.attributes.src,
     );
-    const src = safeUri(node.attributes.src ?? source?.attributes.src);
+    const src = safeLinkUri(node.attributes.src ?? source?.attributes.src);
     const label = node.attributes.alt || node.attributes.title || src;
     // Inside a link, or with no source worth linking to, the image is its alt text.
     if (inLink || !src) return label ? [textNode(label, marks)] : children();
@@ -453,7 +458,9 @@ function inline(node: HtmlNode, marks: readonly RichTextMark[], inLink = false):
   }
 
   if (tag === 'a') {
-    const href = safeUri(node.attributes.href);
+    // Imported HTML is someone else's: an unsafe link keeps its text and loses
+    // its target, rather than failing validation for the whole post.
+    const href = safeLinkUri(node.attributes.href);
     if (!href || inLink) return children();
     const content = children(undefined, true);
     // A link with no text is nothing a reader can click; its breaks, if any, stay.
@@ -462,33 +469,6 @@ function inline(node: HtmlNode, marks: readonly RichTextMark[], inLink = false):
   }
   const mark = MARKS[tag];
   return mark ? children({ type: mark }) : children();
-}
-
-/** Schemes a link may carry. Anything else — `javascript:`, `data:`, `vbscript:` — is not a link. */
-const SAFE_SCHEMES = new Set(['http', 'https', 'mailto', 'tel']);
-
-/**
- * The URI, if it is safe to store as a link; otherwise `undefined`.
- *
- * Imported HTML is someone else's, and delivered rich text is rendered by
- * clients that trust a hyperlink's `uri`. A hostile export must not become
- * stored script links, so an unsafe link keeps its text and loses its target.
- * Relative and fragment URIs have no scheme and are kept.
- */
-function safeUri(raw: string | undefined): string | undefined {
-  // Browsers ignore whitespace and control characters inside a scheme
-  // (`java\tscript:`), so the check reads the URI the way they do.
-  const uri = raw?.trim();
-  if (!uri) return undefined;
-  const scheme = /^([^/?#]*?):/.exec(
-    [...uri].filter((c) => c.charCodeAt(0) > 0x20 && c.charCodeAt(0) !== 0x7f).join(''),
-  )?.[1];
-  // An entity this reader left undecoded can hide a scheme's colon
-  // (`javascript&colon;`) from the check while a careless renderer decodes it,
-  // so a `&` before the path starts makes the URI unusable rather than relative.
-  if (/^[^/?#]*&/.test(uri)) return undefined;
-  if (scheme === undefined) return uri;
-  return SAFE_SCHEMES.has(scheme.toLowerCase()) ? uri : undefined;
 }
 
 function hyperlink(uri: string, content: RichTextNode[]): RichTextNode {
