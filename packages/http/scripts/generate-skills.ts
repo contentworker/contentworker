@@ -3,8 +3,9 @@
  *
  * The skills are served from a Cloudflare Worker too, which has no filesystem,
  * so — like `@contentworker/docs` — they are embedded rather than read at
- * runtime. Run `pnpm --filter @contentworker/http generate:skills` after
- * editing skills/. The output is committed and a test fails if it drifts.
+ * runtime. The output is gitignored and never committed: `pnpm install` runs
+ * this as postinstall and turbo's `generate` task reruns it before every
+ * check-types, test, build and dev.
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';

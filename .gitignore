@@ -25,3 +25,8 @@ test-results/
 playwright-report/
 apps/docs/public/vendor/
 apps/web/public/vendor/
+
+# Embeds generated on install and by the turbo `generate` task; never committed (they would
+# conflict between every pair of PRs that touch docs/ or the MCP skills)
+packages/docs/src/generated.ts
+packages/http/src/mcp/skills.generated.ts

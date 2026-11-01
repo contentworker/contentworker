@@ -102,9 +102,9 @@ list skills with `skills/list` and read them as `skill://contentworker/<name>/SK
 | `import-content`     | Field mapping, `identityField`, analyze → execute, publishing the result                 |
 
 The sources live in `packages/http/skills/<name>/`. A Worker has no filesystem, so the files
-are embedded into `packages/http/src/mcp/skills.generated.ts`, the same approach as the docs. After
-editing a skill, run `pnpm --filter @contentworker/http generate:skills`; a test fails if the
-embed drifts. The catalog is loaded with `strict: true`, so a malformed skill fails loudly instead
+are embedded into `packages/http/src/mcp/skills.generated.ts`, the same approach as the docs. The embed
+is gitignored: `pnpm install` and turbo's `generate` task (before every check-types, test, build
+and dev) rebuild it from the skill files. The catalog is loaded with `strict: true`, so a malformed skill fails loudly instead
 of being skipped. If loading fails, the error is logged and the tools are served without skills;
 the load is retried on the next request. It is digested once per isolate and then attached to
 each request's server. Like the `docs_*` tools, skills describe the product rather than any
