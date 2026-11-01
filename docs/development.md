@@ -193,6 +193,9 @@ read paths), 10 GB per database.
 | `outbox`                                                                | Transactional outbox (`claimed_until` lease, `relayed_at`)    |
 | `_guard`                                                                | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost |
 
+`0003_environment_purges.sql` adds `environment_purges`: deleted environments whose rows the engine
+is still removing in bounded steps (their ids can't be reused until it finishes).
+
 `0002_auth.sql` adds the web app's tables: `users`, `sessions`, `recovery_codes`,
 `sign_in_challenges`, `passkeys`, `passkey_challenges`, `scim_groups`, `scim_group_members`,
 `workspace_settings`, `auth_failures`, `admin_audit`.

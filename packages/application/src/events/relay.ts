@@ -16,7 +16,9 @@ export const BULK_TOPIC = 'contentworker.bulk';
  *  events. Hosts without a bulk queue binding pass `routeTopic: () =>
  *  EVENTS_TOPIC` to keep single-topic operation. */
 export function defaultRouteTopic(event: DomainEvent): string {
-  return event.type === 'bulk.chunk_due' ? BULK_TOPIC : EVENTS_TOPIC;
+  return event.type === 'bulk.chunk_due' || event.type === 'environment.purge_due'
+    ? BULK_TOPIC
+    : EVENTS_TOPIC;
 }
 
 export interface RelayOptions {

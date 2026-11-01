@@ -10,6 +10,7 @@ import {
 } from '@contentworker/domain';
 import type { AppContext } from './context.js';
 import { allPages } from './paging.js';
+import { resolveEnvironment, resolveWritableEnvironment } from './spaces.js';
 
 /** How an item in the source environment relates to the target. */
 export type ChangeKind = 'added' | 'removed' | 'changed' | 'unchanged';
@@ -74,8 +75,9 @@ export async function compareEnvironments(
   source: string,
   target: string,
 ): Promise<EnvironmentComparison> {
-  const src = scopeOf(spaceId, source);
-  const tgt = scopeOf(spaceId, target);
+  // Resolved as an `:env` is: an alias names its target, and a deleted environment is not found.
+  const src = scopeOf(spaceId, await resolveEnvironment(ctx, spaceId, source));
+  const tgt = scopeOf(spaceId, await resolveEnvironment(ctx, spaceId, target));
 
   const [srcTypes, tgtTypes] = await Promise.all([
     ctx.store.contentTypes.list(src),
@@ -143,8 +145,9 @@ export async function mergeEnvironments(
   target: string,
   selection: MergeSelection,
 ): Promise<MergeResult> {
-  const src = scopeOf(spaceId, source);
-  const tgt = scopeOf(spaceId, target);
+  // The source resolves as a read, the target as a write: it must exist (or be an alias of one).
+  const src = scopeOf(spaceId, await resolveEnvironment(ctx, spaceId, source));
+  const tgt = scopeOf(spaceId, await resolveWritableEnvironment(ctx, spaceId, target));
 
   const mergedContentTypes: string[] = [];
   for (const apiId of selection.contentTypes ?? []) {

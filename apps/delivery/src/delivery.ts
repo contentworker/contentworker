@@ -1,8 +1,9 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import { createHasher, resolveEnvironment } from '@contentworker/application';
-import type { Principal } from '@contentworker/domain';
+import { NotFoundError, type Principal } from '@contentworker/domain';
 import type { AuthDeps } from '@contentworker/http/api/auth';
+import { toHttpError } from '@contentworker/http/api/http';
 import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/delivery';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { deliveryScopeTag } from '@contentworker/platform/messages';
@@ -77,7 +78,17 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
       // reach responses served under an alias.
       const space = decodeURIComponent(m[1] as string);
       const named = decodeURIComponent(m[2] as string);
-      const concrete = await resolveEnvironment(wired.ctx, space, named);
+      let concrete: string;
+      try {
+        concrete = await resolveEnvironment(wired.ctx, space, named);
+      } catch (err) {
+        // Deleted between the read and this lookup: answer as the read would now, uncached.
+        if (!(err instanceof NotFoundError)) throw err;
+        const { status, body: errorBody } = toHttpError(err);
+        headers.set('cache-control', NO_STORE);
+        headers.set('content-type', 'application/json');
+        return new Response(JSON.stringify(errorBody), { status, headers });
+      }
       headers.set(
         'cache-tag',
         [...new Set([deliveryScopeTag(space, named), deliveryScopeTag(space, concrete)])].join(','),

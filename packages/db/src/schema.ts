@@ -78,6 +78,21 @@ export const environmentAliases = sqliteTable(
   (t) => [primaryKey({ columns: [t.spaceId, t.alias] })],
 );
 
+/**
+ * Deleted environments whose rows are still being removed, in bounded steps by the engine
+ * (0003_environment_purges). While a row is here the name can't be reused.
+ */
+export const environmentPurges = sqliteTable(
+  'environment_purges',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    requestedAt: integer('requested_at', { mode: 'timestamp_ms' }).notNull(),
+    nudgedAt: integer('nudged_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
+);
+
 export const contentTypes = sqliteTable(
   'content_types',
   {

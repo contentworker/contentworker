@@ -158,7 +158,7 @@ All Cloudflare calls retry up to three times; each step is idempotent.
 
 ## Migrations
 
-Hand-written SQL in `packages/db/migrations/NNNN_*.sql` (`0001_init.sql`, `0002_auth.sql`),
+Hand-written SQL in `packages/db/migrations/NNNN_*.sql` (`0001_init.sql`, `0002_auth.sql`, `0003_environment_purges.sql`),
 mirrored in `packages/db/src/schema.ts` / `auth-schema.ts`. Expand-only and never edited once
 applied: add a table or column now; drop or rename only in a later change once no deployed code
 reads it. Locally: `cd apps/web && npx wrangler d1 migrations apply DB --local`. Remote
@@ -176,3 +176,10 @@ one admin account; its use and every wrong guess go to the audit log.
 CI rolls back a failed deploy itself. A later rollback is a revert merged to `main`, which CI
 ships like any change. Rolling code back never rolls the schema back; restoring data is a D1
 Time Travel restore (see [Backup & restore](./backup-and-restore.md)).
+
+Mind what the older code doesn't know about. Code from before environment purging
+(`0003_environment_purges.sql`) ignores the purge markers: while a deleted environment is still
+being purged, it would serve the leftovers again, let the same id be created on top of them, and
+treat `environment.purge_due` as an ordinary event (so a webhook subscribed to `*` would receive
+it). Check `SELECT * FROM environment_purges` is empty before rolling back past that change;
+purges normally finish within minutes.

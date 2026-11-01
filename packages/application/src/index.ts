@@ -21,6 +21,7 @@ export * from './content-types.js';
 export * from './context.js';
 export * from './delivery.js';
 export * from './entries.js';
+export * from './environment-purge.js';
 export * from './events/consume.js';
 export * from './events/dispatch.js';
 export * from './events/relay.js';
