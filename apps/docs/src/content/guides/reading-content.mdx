@@ -62,9 +62,16 @@ Entries a role-bound key can't read are left out of lists, and denied fields are
 
 ## Assets
 
-`GET /delivery/{space}/{env}/assets` and `…/assets/{id}` return published assets with their file
-URL, size and dimensions. `…/assets/{id}/transform?w=800&fm=webp` (also `h`, `fit` and `q`) redirects to a resized or
-re-encoded image.
+`GET /delivery/{space}/{env}/assets` and `…/assets/{id}` return published assets as
+`{ id, title, description, altText, focalPoint, contentType, size, width, height, kind, url,
+renditions, srcset, video?, rights?, file }`. With `?locale=`, the title, description and alt text
+are one locale's text. The list pages with `limit` and `cursor` (the response's `nextCursor`) and
+filters by `kind`, `tag` and `folder`.
+
+Their URLs point at the workspace's `media.` address and are immutable: `url` is the original,
+`renditions` your space's named sizes and `srcset` a ladder of widths for responsive images.
+Unpublishing an asset stops its URLs. Preview's `…/assets` routes return drafts in the same shape
+with short-lived signed URLs. See [Delivering assets](/guides/delivering-assets/).
 
 ## Search
 
@@ -80,7 +87,8 @@ Delivery keys have.
 ## GraphQL
 
 Each environment has a GraphQL endpoint whose schema is generated from your published content
-types: one type per content type, with typed fields and linked entries as nested objects.
+types: one type per content type, with typed fields and linked entries as nested objects, plus a
+typed `asset` query (see [Delivering assets](/guides/delivering-assets/#graphql)).
 
 ```sh
 curl -s "$CDN/delivery/$SPACE/main/graphql" \

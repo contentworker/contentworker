@@ -359,6 +359,30 @@ Folders nest up to `MAX_ASSET_FOLDER_DEPTH` (16). `assetFolderPath(parent, id)` 
 enforces the depth; `assertFolderMove` refuses a move into the folder itself or below it. Moving a
 folder rewrites the path prefix of its whole subtree.
 
+### Renditions and the delivered asset
+
+`packages/domain/src/asset/delivered.ts`. A **rendition** is a named image preset of a space
+(`AssetRendition`: `name`, `width?`, `height?`, `fit?` (`RENDITION_FITS`), `format?`
+(`RENDITION_FORMATS`, `auto` negotiates AVIF/WebP), `quality?`, `createdAt`, `updatedAt`).
+`assetRenditionName` allows 1–40 lowercase letters, digits and dashes (the name is its URL
+segment); `assetRenditionSpec` requires a width, height or format; a space has at most
+`MAX_ASSET_RENDITIONS` (20). Presets belong to the space, not an environment.
+
+An `AssetVariant` is the original (`o`), a width from `ASSET_WIDTH_LADDER` (320, 640, 960, 1280,
+1920, 2560; `w<width>`) or a rendition (`r-<name>`). `assetMediaPath` / `parseAssetMediaPath`
+build and read `/<space>/<env>/<assetId>/v<n>/<variant>/<fileName>`; a width off the ladder is no
+variant. `isTransformableImage` says which types have variants (JPEG, PNG, WebP, AVIF, GIF; not
+SVG). `variantForTransform` maps a legacy `?w=` to the next step up (the largest past it).
+
+`deliveredAsset(asset, { urlFor?, renditions, locale? })` is the one projector for Delivery
+(REST, embeds, GraphQL) and Preview. It is pure: the caller supplies the URL builder
+(`publicAssetUrls(origin, scope, { id, version, fileName })` for published files, width steps with
+`?fm=auto`; signed URLs for Preview), the space's rendition names and the locale settings. The
+result, `DeliveredAsset`, is `{ id, title, description, altText, focalPoint, contentType, size,
+width, height, kind, url, renditions, srcset, video?, rights?, file }`; text is flattened with
+`resolveLocalizedValue` when a locale is given, a hosted video's `url` is its HLS manifest and it
+has no variants, and the srcset stops at the image's own width.
+
 ## References
 
 ```ts

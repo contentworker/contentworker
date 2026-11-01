@@ -2,8 +2,9 @@
 
 contentworker uses a **transactional outbox** so that domain events are emitted exactly when (and
 only when) their state change commits. The api Worker relays new events onto Cloudflare Queues
-right after each write; the engine Worker consumes them, sweeps the outbox every minute, and
-tells the delivery Worker which cache tags to purge.
+right after each write; the engine Worker consumes them, sweeps the outbox every minute, keeps
+the media Worker's gate in line with what is published, and tells the delivery and media Workers
+which cache tags to purge.
 
 ## The pipeline
 
@@ -26,16 +27,20 @@ tells the delivery Worker which cache tags to purge.
              │    ├─ webhooks  — fan out to subscribers (HMAC-signed)
              │    ├─ functions — invoke user-defined HTTP hooks (FunctionInvoker)
              │    ├─ cache     — invalidate the entry's tag + reverse-reference tags (KV)
+             │    ├─ gate      — asset.*: write or remove asset-gate:<space>:<env>:<id> (KV)
              │    ├─ rag       — re-index (published) or delete (unpublished) embeddings
              │    └─ search    — SearchShardDO index / remove
              ├─ bus.publish(event)  →  LiveHubDO  →  Live Content SSE subscribers
              ├─ on entry.published: on-publish agents, forwarded to contentworker-agents
              │  when that queue is bound, else run inline (runPublishAgents)
-             └─ after the batch: ONE purge message with a tag per space:environment touched
-                by a PURGING_EVENTS event  →  contentworker-purge
+             └─ after the batch (apps/engine/src/purges.ts): ONE purge message with a tag per
+                space:environment touched by a PURGING_EVENTS event  →  contentworker-purge;
+                ONE with the media tags (cwa:/cwr:/cwe:)  →  contentworker-media-purge, and
+                what was revoked again 90 s later
                                    │
         delivery queue(): consumer on contentworker-purge (concurrency 1)
-        └─ purge cache tags, ≤ 100 per call, one call per 12 s (apps/delivery/src/purge.ts)
+        media queue():    consumer on contentworker-media-purge (concurrency 1)
+        └─ purge cache tags, ≤ 100 per call, one call per 12 s (@contentworker/platform/purge)
                                    │
         scheduled() (every minute): runDueScheduledActions, the outbox sweep,
         stalled-bulk-job recovery, runDueAgentSchedules (AGENTS_SCHEDULES=true);
@@ -132,19 +137,39 @@ loudly and acks it.
 ### Delivery cache purges
 
 After each `contentworker-events` batch, the engine collects one `deliveryScopeTag` per
-space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/index.ts`):
+space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/purges.ts`):
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
 `asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
 `environment_alias.changed`, `environment.deleted`. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
-path's environment and the one it resolves to. A failed enqueue is logged and not retried:
-responses then go stale for their 60 s `max-age`.
+path's environment and the one it resolves to. `asset_renditions.changed` adds the tag of every
+environment of the space (presets belong to the space). A failed enqueue is logged, counted
+(`contentworker_purge_enqueue_errors_total`) and not retried: responses then go stale for their
+60 s `max-age`.
 
-The delivery Worker drains the queue at concurrency 1 (`apps/delivery/src/purge.ts`): up to 100
+The delivery Worker drains the queue at concurrency 1 (`drain`, `@contentworker/platform/purge`): up to 100
 tags per purge call, a 12 s pause after each (Cloudflare allows 5 calls a minute), at most 40 calls
 per batch; the rest, or a refused call, goes back with exponential backoff. After 10 retries a
 message lands in `contentworker-purge-dlq`.
+
+### Media purges and the gate
+
+Workers Caching is per Worker, so the media Worker's published files have their own queue. The
+same batch plans them (`planPurges`): `asset.published` purges `cwa:<space>:<env>:<id>` (a
+republish can move the focal point, and so a crop, under the same URL); `asset.unpublished` and
+`asset.deleted` revoke that tag, `asset_renditions.changed` revokes `cwr:<space>:<name>`, and
+`environment.deleted` revokes `cwe:<space>:<env>`. Everything goes in one message on
+`contentworker-media-purge`; what was revoked goes again with `delaySeconds: 90`
+(`REVOCATION_REPURGE_SECONDS`), once KV's 60 s read cache and replica lag have passed, so a colo
+that re-cached a file from a stale gate read loses it too. The media Worker drains it with the same
+`drain`; dead letters land in `contentworker-media-purge-dlq` and are logged
+(`contentworker_media_purge_dead_letters_total`).
+
+Before that, `dispatchEvent` runs `syncAssetGate` for `asset.published`, `asset.unpublished` and
+`asset.deleted` when `assetGate` is bound: it reads the current published snapshot and writes
+`asset-gate:<space>:<env>:<id>` (`{v, r2Key, contentType, fileName, focal, expiresAt}`) or removes
+it, so a redelivered or out-of-order event converges. Nothing on a request path writes the gate.
 
 ### Scheduled work
 
@@ -207,6 +232,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset.published`            | `assetId`                                                                  |
 | `asset.unpublished`          | `assetId` (also when a published asset is archived or deleted)             |
 | `asset.deleted`              | `assetId`, `r2Key` or `videoId` (the engine removes those bytes)           |
+| `asset_renditions.changed`   | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged) |
 | `content_type.published`     | `contentTypeApiId`, `version`                                              |
 | `release.published`          | `releaseId`, `entryIds`                                                    |
 | `environment_alias.changed`  | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias |
@@ -233,7 +259,9 @@ Delivery has two cache layers:
   TTLs come from `DELIVERY_CACHE_TTL_SECONDS` (single-entry renders) and
   `DELIVERY_LIST_TTL_SECONDS` (list results); the TTL only bounds garbage collection. The engine
   invalidates tags after a publish, including for entries that _embed_ the changed one, thanks to
-  the reverse-reference tag set. KV propagates writes to other locations eventually (about 60 s).
+  the reverse-reference tag set. A rendition change (`asset_renditions.changed`) bumps the scope epoch
+  of every environment of the space, since every cached render that embeds an asset lists its
+  renditions. KV propagates writes to other locations eventually (about 60 s).
 
 See [Consistency & guarantees](./consistency.md) for the combined staleness envelope.
 
@@ -242,7 +270,7 @@ See [Consistency & guarantees](./consistency.md) for the combined staleness enve
 `createCfQueueProducer` (`@contentworker/adapters/queue-cf`) implements the producer side of the
 `Queue` port over Cloudflare Queues bindings, one binding per topic. Retries, backoff and
 dead-lettering are queue configuration in `apps/engine/wrangler.jsonc` and
-`apps/delivery/wrangler.jsonc` (`max_retries`, `retry_delay`, `dead_letter_queue`), not code.
+`apps/delivery/wrangler.jsonc` and `apps/media/wrangler.jsonc` (`max_retries`, `retry_delay`, `dead_letter_queue`), not code.
 Cloudflare Queues has no producer-side dedupe, so consumers stay idempotent on the event id.
 
 | Queue                       | Producer      | Consumer | Batch / concurrency / retries |
@@ -252,3 +280,4 @@ Cloudflare Queues has no producer-side dedupe, so consumers stay idempotent on t
 | `contentworker-agents`      | api, engine   | engine   | 25 / 4 / 3 → events DLQ       |
 | `contentworker-events-dlq`  | (queues)      | engine   | logged and acked              |
 | `contentworker-purge`       | engine        | delivery | 100 / 1 / 10 → purge DLQ      |
+| `contentworker-media-purge` | engine        | media    | 100 / 1 / 10 → media purge DLQ |

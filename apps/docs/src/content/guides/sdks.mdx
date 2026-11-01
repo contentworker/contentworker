@@ -16,7 +16,7 @@ description: Typed clients for the Delivery and Management APIs, React and Vue b
 ## Reading content
 
 ```ts
-import { createDeliveryClient } from '@contentworker/sdk-core';
+import { assetUrl, createDeliveryClient, srcset } from '@contentworker/sdk-core';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',
@@ -35,7 +35,14 @@ const latest = await client
   .fetch();
 
 const hits = await client.search('waterproof running shoes', { topK: 5 });
+
+const hero = await client.getAsset(heroId, { locale: 'en-US' });
+const img = `<img src="${assetUrl(hero, { width: 960 })}" srcset="${srcset(hero)}">`;
 ```
+
+`getAsset`, `listAssets`, `assetUrl` and `srcset` read and use
+[delivered assets](/guides/delivering-assets/); React Native's `imageUrl(asset, { width, dpr })`
+picks the right width for the device.
 
 The client takes the same filters, ordering and projection as the
 [Delivery API](/guides/reading-content/), throws `DeliveryError` on a failed request, and can keep

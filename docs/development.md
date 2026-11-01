@@ -18,9 +18,11 @@ pnpm dev                # the api seeds the demo dataset into space-1 on its fir
 dev` for another port). The port is fixed rather than "the next free one": the local OAuth issuer
 (`OAUTH_ISSUER`, so MCP clients can connect with OAuth as on a deployment), the MCP smoke scripts
 and these docs all name it, so a busy port fails fast. The web
-Worker's Vite config (`apps/web/vite.config.ts`) starts the **api, engine and delivery Workers as
+Worker's Vite config (`apps/web/vite.config.ts`) starts the **api, engine, media and delivery Workers as
 auxiliary Workers** in the same session, all on one local D1, with the queues, cron, Durable
-Objects and Workflows emulated. Their vars are overridden with `LOCAL_STACK_VARS`:
+Objects and Workflows emulated. The media Worker isn't routable from the browser locally and
+`MEDIA_PUBLIC_URL` stays empty, so delivered assets keep the api's signed URLs (no renditions or
+srcset); its suite (`pnpm --filter @contentworker/media test`) runs it in workerd instead. Their vars are overridden with `LOCAL_STACK_VARS`:
 
 | Var                       | Local value                             | Why                                                          |
 | ------------------------- | --------------------------------------- | ------------------------------------------------------------ |
@@ -107,7 +109,8 @@ pnpm --filter @contentworker/http generate:skills
 | `@contentworker/application` | node, `@contentworker/test-kit` fakes                                   | Every use-case                                                                                                |
 | `@contentworker/db`          | workerd (vitest-pool-workers), Miniflare D1 with the migrations applied | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest                   |
 | `@contentworker/http`        | node, in-memory fakes                                                   | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                       |
-| `@contentworker/engine`      | workerd                                                                 | Durable Objects (search shard, live hub, cost guard, rate limiter) and real Workflow runs with `AI_MODE=mock` |
+| `@contentworker/engine`      | workerd                                                                 | Durable Objects (search shard, live hub, cost guard, rate limiter), real Workflow runs with `AI_MODE=mock`, the media gate and both purge queues |
+| `@contentworker/media`       | workerd, Miniflare KV, R2 and D1, a fake Images binding                 | The media Worker end to end: gate and replica fallback, 404/410, `Accept` negotiation, purge drain, signed draft reads |
 | `@contentworker/docs`        | node                                                                    | The `docs/` embed matches disk                                                                                |
 | `@contentworker/web`         | vitest; Playwright (`pnpm --filter @contentworker/web e2e`)             | Auth and lib units; device and CMS e2e with axe in WebKit and Chromium                                        |
 
@@ -219,6 +222,13 @@ Vectorize. See [AI, agents & search](./ai-agents-and-search.md).
 `archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)
 and two tables: `asset_folders` (materialized `path`, sibling names unique) and `asset_versions`
 (the files an asset had before its current one).
+
+`0005_asset_renditions.sql` adds `asset_renditions` (`space_id`, `name`, `width`, `height`, `fit`,
+`format`, `quality`, `created_at`, `updated_at`; primary key `(space_id, name)`): a space's
+rendition presets, not environment-scoped. `0006_asset_published_delivery.sql` adds `version`,
+`r2_key`, `kind` and `rights` to `asset_published` (backfilled from each snapshot's asset row), with
+the indexes `asset_published_by_time` (publish order, keyset paging) and
+`asset_published_by_kind`; the delivery list's folder filter reads `assets.folder_id` live.
 
 ## Testing approach
 

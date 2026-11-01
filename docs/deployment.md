@@ -1,8 +1,8 @@
 # Deployment
 
 contentworker deploys to Cloudflare as **one isolated stack per customer**: each deployment has
-its own D1 database, R2 bucket, KV namespace, Vectorize index, queues, AI Gateway and four
-Workers (engine, api, delivery, web). Spaces and environments live inside a deployment's D1.
+its own D1 database, R2 bucket, KV namespace, Vectorize index, queues, AI Gateway and five
+Workers (engine, api, media, delivery, web). Spaces and environments live inside a deployment's D1.
 Merging to `main` is releasing: CI migrates D1 and deploys every deployment, ring by ring.
 Nobody deploys from a workstation or an agent session.
 
@@ -19,7 +19,7 @@ One file per deployment, parsed by `toDeployment` in `scripts/fleet.ts`:
 | `id`            | Lowercase id; reserved words (`api`, `cdn`, `admin`, `docs`, …) need an explicit `domain`                  |
 | `ring`          | `staging`, `internal`, `canary` or `general`                                                                |
 | `slot`          | 1–999, unique; keeps each deployment's rate-limit namespaces apart (`slot × 1000 + n`)                     |
-| `domain`        | The admin host; default `<id>.contentworker.app`. The api is `api.<domain>`, delivery `cdn.<domain>`        |
+| `domain`        | The admin host; default `<id>.contentworker.app`. The api is `api.<domain>`, delivery `cdn.<domain>`, media `media.<domain>` |
 | `suffix`        | Appended to every account-wide resource name; default `-<id>` (contentworker's own is `""`)                |
 | `environment`   | The GitHub environment holding its secrets; default `deploy-<id>`                                          |
 | `d1Id`, `kvId`  | Recorded by `scripts/provision.sh`; required to render                                                       |
@@ -60,8 +60,8 @@ that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and Email Sendi
    - creates the R2 bucket with lifecycle rules (`imports/` 7 days, `dlq/` 30 days);
    - creates the Vectorize index (768 dimensions, cosine; metadata indexes on `spaceId` and
      `environmentId`), except for a demo;
-   - creates the queues (events, events DLQ, bulk, agents, purge, purge DLQ) with 14-day
-     retention;
+   - creates the queues (events, events DLQ, bulk, agents, purge, purge DLQ, media purge, media
+     purge DLQ) with 14-day retention;
    - creates the AI Gateway (authenticated, rate-limited, retries, logs per `aiGatewayLogs`);
    - creates the GitHub environment and generates `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER`,
      `MEDIA_SIGNING_SECRET` and `PASSWORD_PEPPER` if absent (refusing to generate a new
@@ -72,7 +72,15 @@ that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and Email Sendi
    repository secrets, commit the registry file, and merge. CI deploys it in its ring.
 4. Send the customer's first admin `https://<domain>/setup` and the setup code.
 
-Images and Stream are account features; their bindings need no ids. To receive Stream's
+Images and Stream are account features; their bindings need no ids. The routes (`<domain>`,
+`api.`, `cdn.` and `media.<domain>`) are Workers Custom Domains: the deploy creates each one and
+its certificate, on a zone in the same Cloudflare account, so there is no DNS record to add by
+hand.
+
+**A deployment that predates the media Worker** needs its two queues before the merge that ships
+it (`contentworker-media-purge<suffix>` and `…-dlq<suffix>`; the engine binds the first as a
+producer and the media Worker consumes both, so a deploy without them fails). Re-run
+`./scripts/provision.sh <id>` for each such deployment first: it creates only what is missing. To receive Stream's
 webhook, point it at `https://api.<domain>/webhooks/stream` and set `STREAM_WEBHOOK_SECRET`.
 
 ## Secrets
@@ -87,6 +95,7 @@ survives). Which Worker gets which is `SECRETS` in `scripts/fleet.ts`:
 | api      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN` |
 | engine   | `ASSISTANT_PRINCIPAL_KEY`, `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` (derived from the `PRINCIPAL_KEY` pair; never the pair itself), `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET` |
 | delivery | `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`                                                                   |
+| media    | `MEDIA_SIGNING_SECRET` (verifies Preview's short-lived signed reads; it signs nothing)                                                    |
 
 `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER` and `MEDIA_SIGNING_SECRET` are required
 (`REQUIRED_SECRETS`); keys must be at least 32 characters (`openssl rand -hex 32`). Every
@@ -125,7 +134,7 @@ how these paths are signed has to roll out in two steps (verifiers accept both, 
 `.github/workflows/ci.yml`:
 
 - **verify** (every push and pull request): lint, type-check and build in one parallel turbo
-  run (the build is `wrangler deploy --dry-run` for engine, api and delivery), then the tests on
+  run (the build is `wrangler deploy --dry-run` for engine, api, media and delivery), then the tests on
   their own (including the engine's Workflow runs in workerd with `AI_MODE=mock`),
   `pnpm test:fleet`, `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`.
 - **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
@@ -142,14 +151,15 @@ how these paths are signed has to roll out in two steps (verifiers accept both, 
 3. **Migrate D1**: `wrangler d1 migrations apply DB --remote`. Migrations run before the new
    code, so they must be additive (expand).
 4. Deploy **engine** (it owns the DO and Workflow classes the others bind), then **api**, then
-   **delivery**, then build and deploy **web**.
+   **media** (whose URLs delivery hands out), then **delivery**, then build and deploy **web**.
 5. Smoke test: `https://<domain>/health`, `/health/deep` (D1 and the api over the binding),
    `/login`, `https://api.<domain>/health` and `/openapi.json`, `https://cdn.<domain>/health`,
-   and an anonymous delivery read must answer 401.
+   `https://media.<domain>/health`; an anonymous delivery read must answer 401 and an unknown
+   media URL 404.
 6. Latency check (warns only): `/login` 1.5 s, `/health/deep` 1.0 s, `cdn.<domain>/health` 0.3 s.
 7. On any failure after the engine shipped, **roll back in order**: engine first (Cloudflare
    refuses to roll a Worker back past a Durable Object migration; if the engine can't go back,
-   nothing else is rolled back and a person decides), then api, delivery and web, each only if
+   nothing else is rolled back and a person decides), then api, media, delivery and web, each only if
    it deployed. A first deploy has no earlier version and stays. D1 migrations are not rolled
    back.
 8. The deployment with `docs: true` then deploys and smoke-tests the docs site, rolling it back
