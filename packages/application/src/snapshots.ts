@@ -1,14 +1,18 @@
 import {
   type Asset,
+  applyDefaults,
   type Concept,
   type ConceptScheme,
   type ContentType,
   type EntryFields,
   type EntryMetadata,
+  extractReferences,
+  type FieldIssue,
   NotFoundError,
   type Scope,
   type Tag,
   ValidationError,
+  validateEntryFields,
   type WorkflowDefinition,
   type WorkflowGraph,
   type WorkflowVersion,
@@ -294,6 +298,11 @@ export async function importSnapshot(
     ]);
   }
 
+  // Everything that would fail part-way is checked before anything is written: an import that
+  // stopped in the middle left a half-filled environment that refused a retry (not empty).
+  const problems = preflight(snapshot, config, options.publish !== false);
+  if (problems.length > 0) throw new ValidationError(problems);
+
   const skipped: string[] = [];
   if (snapshot.assets.length > 0) {
     // Named rather than silently dropped: an operator restoring content should
@@ -402,6 +411,60 @@ export async function importSnapshot(
     }
   }
   return report;
+}
+
+/** Shown at most, so a broken snapshot's error stays readable. */
+const MAX_PREFLIGHT_ISSUES = 50;
+
+/**
+ * What would stop this snapshot importing into a space with `config`'s locales, found without
+ * writing: an entry of a type the snapshot lacks, fields the content model rejects (validated as
+ * `createEntry` does, defaults first), and links from what will be published to entries or assets
+ * the snapshot doesn't carry (publishing refuses a dangling link). Each issue names the entry.
+ */
+function preflight(
+  snapshot: EnvironmentSnapshot,
+  config: { defaultLocale: string; locales: readonly string[] },
+  publishing: boolean,
+): FieldIssue[] {
+  const types = new Map(snapshot.contentTypes.map((t) => [t.apiId, t]));
+  const entryIds = new Set(snapshot.entries.map((e) => e.id));
+  const assetIds = new Set(snapshot.assets.map((a) => a.id));
+  const vctx = { defaultLocale: config.defaultLocale, locales: config.locales };
+  const issues: FieldIssue[] = [];
+  const add = (entryId: string, issue: FieldIssue) =>
+    issues.push({ ...issue, message: `Entry ${entryId}: ${issue.message}` });
+
+  for (const entry of snapshot.entries) {
+    if (issues.length >= MAX_PREFLIGHT_ISSUES) break;
+    const type = types.get(entry.contentTypeApiId);
+    if (!type) {
+      add(entry.id, {
+        field: '',
+        message: `content type "${entry.contentTypeApiId}" is not in the snapshot`,
+      });
+      continue;
+    }
+    const versions =
+      publishing && entry.publishedFields ? [entry.publishedFields, entry.fields] : [entry.fields];
+    for (const fields of versions) {
+      const withDefaults = applyDefaults(type, fields, vctx.locales, vctx.defaultLocale);
+      for (const issue of validateEntryFields(type, withDefaults, vctx)) add(entry.id, issue);
+    }
+    const published = entry.status === 'published' ? entry.fields : entry.publishedFields;
+    if (publishing && published && (entry.status === 'published' || entry.status === 'changed')) {
+      for (const edge of extractReferences(entry.id, published, type)) {
+        const known = edge.toType === 'Entry' ? entryIds.has(edge.toId) : assetIds.has(edge.toId);
+        if (!known) {
+          add(entry.id, {
+            field: edge.fromField,
+            message: `links ${edge.toType.toLowerCase()} "${edge.toId}", which the snapshot doesn't carry`,
+          });
+        }
+      }
+    }
+  }
+  return issues.slice(0, MAX_PREFLIGHT_ISSUES);
 }
 
 /**

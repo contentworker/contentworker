@@ -301,6 +301,56 @@ describe('importing a snapshot', () => {
     expect((copied.fields.image as { id: string }).id).toBe(asset.id);
   });
 
+  it('refuses a snapshot that would fail part-way before writing anything, so a retry works', async () => {
+    const e = await createEntry(ctx, source, article('Linked'));
+    await publishEntry(ctx, source, e.entry.id);
+    const snapshot = await exportSnapshot(ctx, source);
+    // A published entry linking an entry the snapshot doesn't carry (purged after publishing),
+    // and a draft the content model rejects.
+    const broken = {
+      ...snapshot,
+      contentTypes: snapshot.contentTypes.map((t) =>
+        t.apiId === 'article'
+          ? {
+              ...t,
+              fields: [
+                ...t.fields,
+                {
+                  apiId: 'related',
+                  name: 'Related',
+                  type: 'Link' as const,
+                  linkType: 'Entry' as const,
+                  localized: false,
+                  required: false,
+                  position: 2,
+                },
+              ],
+            }
+          : t,
+      ),
+      entries: [
+        ...snapshot.entries.map((x) =>
+          x.id === e.entry.id
+            ? {
+                ...x,
+                fields: { ...x.fields, related: { 'en-US': { id: 'gone', linkType: 'Entry' } } },
+              }
+            : x,
+        ),
+        { id: 'bad', contentTypeApiId: 'article', status: 'draft', fields: {} },
+      ],
+    };
+
+    const failure = await importSnapshot(ctx, target, broken as never).catch((err) => err);
+    expect(failure).toBeInstanceOf(ValidationError);
+    const messages = (failure as ValidationError).issues.map((i) => i.message).join('\n');
+    expect(messages).toContain(`Entry ${e.entry.id}: links entry "gone"`);
+    expect(messages).toContain('Entry bad:');
+    // Nothing was written: the target is still empty, so a corrected snapshot imports.
+    expect(await ctx.store.contentTypes.list(target)).toEqual([]);
+    expect(await importSnapshot(ctx, target, snapshot)).toMatchObject({ entries: 1 });
+  });
+
   it('refuses a target that already has a content model', async () => {
     await seedModel(target);
     // Merging two content models is a different and much harder operation.

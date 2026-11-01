@@ -147,6 +147,13 @@ What an import preserves:
   and their changed entries land as drafts.
 - **Assets** as records, published as they were; their files stay where they are.
 
+**An import checks before it writes.** Every entry is validated against the snapshot's content
+model and the target space's locales, and every link in what will be published must point at an
+entry or asset the snapshot carries. Any problem refuses the import with a `422` that lists them
+(up to 50, each naming its entry) and writes nothing, so the target stays empty and a corrected
+retry works. `?dryRun=true` runs the same checks. A failure the checks can't foresee (a plugin
+hook refusing an entry, an infrastructure error) can still stop an import part-way.
+
 ### Importing from elsewhere
 
 Snapshots move content between contentworker environments. This moves it _in_, from a format
