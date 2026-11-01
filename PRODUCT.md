@@ -27,7 +27,7 @@ reader picks light or dark.
 The admin UI for contentworker, an API-first, AI-agentic-first headless CMS. It is
 the human surface over the same application use-cases the HTTP API and MCP tools
 call: content modeling, entry editing (rich text via TipTap), publishing and
-releases, media, taxonomy, workflows, webhooks, functions, AI generation and
+releases, assets, taxonomy, workflows, webhooks, functions, AI generation and
 enrichment review. Success looks like an editor shipping content changes quickly
 and confidently, and trusting what the AI agents did on their behalf.
 

@@ -1,16 +1,16 @@
-import { MediaLibrary } from '~/cms/components/MediaLibrary';
+import { AssetLibrary } from '~/cms/components/AssetLibrary';
 import { useClient } from '~/cms/lib/client-context';
 import { CmsPage } from '~/cms/providers';
 
-function Media() {
+function Assets() {
   const { conn } = useClient();
-  return <MediaLibrary locale={conn.locale} />;
+  return <AssetLibrary locale={conn.locale} />;
 }
 
-export default function MediaRoute() {
+export default function AssetsRoute() {
   return (
-    <CmsPage title="Media">
-      <Media />
+    <CmsPage title="Assets">
+      <Assets />
     </CmsPage>
   );
 }

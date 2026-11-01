@@ -224,7 +224,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   `packages/ui/src/sidebar.tsx`. Full height on its own ground, with a rule. From the top: the brand
   row on the header's line, whose mark is the `SidebarTrigger` (named "Sidebar", ⌘\ or Ctrl+\);
   the day's work (Overview, Content, Approvals when on, Releases) with no label; then groups
-  labelled as captions: **Build** (Workflows), **Library** (Media, Taxonomy) and **Settings**
+  labelled as captions: **Build** (Workflows), **Library** (Assets, Taxonomy) and **Settings**
   (Access, Automation, Extensions, Workspace: Settings' own section groups, each opening its first
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
   on its edge. The page you're on is `sidebar-accent` and 500 with `aria-current`, marked as soon
@@ -251,7 +251,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   key), Connection, Keyboard shortcuts (with a fine pointer), the theme (Light, Dark, Match system)
   and Sign out. Its accessible name is that name plus "account menu".
 - **Shortcuts** are written for the device (⌘ on Apple, Ctrl elsewhere). G then a letter goes to a
-  page (H Overview, C Content, A Approvals, R Releases, W Workflows, M Media, T Taxonomy, S
+  page (H Overview, C Content, A Approvals, R Releases, W Workflows, M Assets, T Taxonomy, S
   Settings); ? opens the list of every shortcut (a sheet, with whatever the page registers); ⌘K is
   the command palette; ⌘J Coworker when it is on; ⌘\ the sidebar. Single keys go through
   `plainKeyAllowed` (not with a modifier, while typing, or with a dialog, menu or inline confirm
@@ -350,8 +350,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
   as you type, in the form's locale with delivery's fallbacks, references by name, and links shown
   but never followed. A new entry's pane is its preview alone.
-- **Releases, Workflows, Taxonomy, Media:** `PageHeader` with the page's one "New …" (a `Plus` and
-  the noun), then cards or a stacked table. A media card's name is its control, stretched over the
+- **Releases, Workflows, Taxonomy, Assets:** `PageHeader` with the page's one "New …" (a `Plus` and
+  the noun), then cards or a stacked table. An asset card's name is its control, stretched over the
   card, with the card's own actions above it.
 - **Settings:** one page, its section nav beside the section (a grouped select on a phone); each
   section is cards and stacked tables. The install hint sits at the top of Connection.

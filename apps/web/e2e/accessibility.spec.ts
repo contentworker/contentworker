@@ -48,7 +48,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['releases', '/releases'],
   ['workflows', '/workflows'],
   ['taxonomy', '/taxonomy'],
-  ['media', '/media'],
+  ['assets', '/assets'],
   ['settings: space access', '/settings/team'],
   ['settings: api keys', '/settings/api-keys'],
   ['settings: connected apps', '/settings/connected-apps'],

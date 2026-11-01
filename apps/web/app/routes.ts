@@ -31,7 +31,9 @@ export default [
       route('workflows', 'routes/workflows.tsx', { id: 'workflows' }),
       route('workflows/:id', 'routes/workflow.tsx', { id: 'workflow' }),
       route('taxonomy', 'routes/taxonomy.tsx', { id: 'taxonomy' }),
-      route('media', 'routes/media.tsx', { id: 'media' }),
+      route('assets', 'routes/assets.tsx', { id: 'assets' }),
+      // The screen's old address: bookmarks and links keep working.
+      route('media', 'routes/media-redirect.ts'),
       route('settings/:section?', 'routes/settings.tsx', { id: 'settings' }),
       // The deployment's people, single sign-on and SCIM (admins).
       route('team', 'routes/team.tsx'),

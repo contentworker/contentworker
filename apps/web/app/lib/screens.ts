@@ -62,10 +62,10 @@ export const SCREENS = {
     label: 'Taxonomy',
     summary: 'Concept schemes, concepts and tags to classify entries.',
   },
-  media: {
-    id: 'media',
-    to: '/media',
-    label: 'Media',
+  assets: {
+    id: 'assets',
+    to: '/assets',
+    label: 'Assets',
     summary: 'Assets: upload, describe, find and publish images, video and files.',
   },
   settings: {

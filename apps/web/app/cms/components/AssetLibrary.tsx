@@ -1,21 +1,38 @@
-import type { Asset } from '@contentworker/domain';
+import type { Asset, AssetFolder, ReferenceEdge } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Card } from '@contentworker/ui/card';
-import { ImageIcon, Upload } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Checkbox } from '@contentworker/ui/checkbox';
+import { cn } from '@contentworker/ui/lib/utils';
+import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { Archive, ArchiveRestore, ImageIcon, Trash2, Upload } from 'lucide-react';
+import { type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
 import { AssetDetailSheet } from '~/cms/components/AssetDetailSheet';
 import { AssetPreview } from '~/cms/components/AssetPreview';
+import { AssetBulkBar } from '~/cms/components/assets/AssetBulkBar';
+import { AssetFilterBar, type AssetView } from '~/cms/components/assets/AssetFilterBar';
+import { AssetFolderTree } from '~/cms/components/assets/AssetFolderTree';
+import { AssetInUseNotice } from '~/cms/components/assets/AssetInUseNotice';
+import { AssetUploadList, type UploadItem } from '~/cms/components/assets/AssetUploadList';
+import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
+import {
+  ALL_FOLDERS,
+  type AssetFilterState,
+  activeFilterCount,
+  assetLibraryQuery,
+  assetName,
+  bulkSummary,
+  type FolderSelection,
+  fileSize,
+  runBulk,
+} from '~/cms/lib/assets';
 import { humanize } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import { ApiError } from '../lib/management';
-import { useAssetsQuery, useInvalidate } from '../lib/queries';
+import { ApiError, assetUsageOf } from '../lib/management';
+import { useContentTypesQuery, useInvalidate, useQueryKeys, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
-
-function assetName(asset: Asset, locale: string): string {
-  return String(asset.title?.[locale] ?? asset.file.fileName);
-}
 
 /** Label for a hosted video's processing state, shown beside the asset status. */
 const VIDEO_STATUS_LABEL: Record<string, string> = {
@@ -25,49 +42,144 @@ const VIDEO_STATUS_LABEL: Record<string, string> = {
   error: 'Failed',
 };
 
-/** Media library: lists assets, uploads (blob or hosted video), publishes. */
-export function MediaLibrary(props: { locale: string }) {
+const VIEW_KEY = 'cw.assets.view';
+
+/** Grid or list is how this browser likes the library, kept across visits (like the pane split). */
+function useView(): [AssetView, (v: AssetView) => void] {
+  const [view, setView] = useState<AssetView>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid';
+    } catch {
+      return 'grid';
+    }
+  });
+  const set = useCallback((v: AssetView) => {
+    setView(v);
+    try {
+      if (v === 'grid') localStorage.removeItem(VIEW_KEY);
+      else localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // Storage blocked: the choice lasts for this page.
+    }
+  }, []);
+  return [view, set];
+}
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * The asset library: folders beside a filtered, paged grid or list. Upload by picking or dropping
+ * any number of files (into the open folder), select several to move, publish or archive them, and
+ * archive or delete one at a time; a delete the API refuses shows the entries that use the asset.
+ */
+export function AssetLibrary(props: { locale: string }) {
   const { locale } = props;
   const { client } = useClient();
   const toast = useToast();
   const invalidate = useInvalidate();
-  const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState<Asset | null>(null);
+  const keys = useQueryKeys();
+  const [folder, setFolder] = useState<FolderSelection>(ALL_FOLDERS);
+  const [filters, setFilters] = useState<AssetFilterState>({});
+  const [view, setView] = useView();
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [open, setOpen] = useState<Asset | null>(null);
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [inUse, setInUse] = useState<{ asset: Asset; usage: ReferenceEdge[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const assets = useAssetsQuery().data ?? [];
-  const reload = () => invalidate(['assets']);
+  const query = useMemo(() => assetLibraryQuery(folder, filters), [folder, filters]);
+  const pages = useInfiniteQuery({
+    queryKey: keys.assetLibrary(query),
+    queryFn: ({ pageParam }) =>
+      client.listAssets(pageParam ? { ...query, cursor: pageParam } : query),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.nextCursor,
+  });
+  const assets = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
+  const folders = useScopedQuery(['asset-folders'], () => client.listAssetFolders()).data ?? [];
+  const tags = useScopedQuery(['tags'], () => client.listTags(), { silent: true }).data ?? [];
+  const types = useContentTypesQuery().data ?? [];
 
-  const onUpload = async (file: File) => {
-    setBusy(true);
-    try {
-      if (file.type.startsWith('video/')) {
-        try {
-          // Hosted video (Cloudflare Stream): adaptive playback + poster.
-          await client.uploadVideo(file);
-          toast.success(`Uploaded ${file.name} — publish once processing finishes`);
-        } catch (e) {
-          // 501: no video host bound on this deployment; store it as a plain file.
-          if (!(e instanceof ApiError && e.status === 501)) throw e;
-          await client.uploadAsset(file);
-          toast.success(`Uploaded ${file.name}`);
-        }
-      } else {
-        await client.uploadAsset(file); // create → signed PUT → publish
-        toast.success(`Uploaded ${file.name}`);
-      }
-      await reload();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-      if (fileRef.current) fileRef.current.value = '';
-    }
+  const reload = () => invalidate(['assets']);
+  const reloadFolders = () => invalidate(['asset-folders']);
+  const fail = (e: unknown) => toast.error(message(e));
+  const openFolder = folder.kind === 'folder' ? folders.find((f) => f.id === folder.id) : undefined;
+
+  const changeFolder = (next: FolderSelection) => {
+    setFolder(next);
+    setSelected(new Set());
+  };
+  const changeFilters = (next: AssetFilterState) => {
+    setFilters(next);
+    setSelected(new Set());
   };
 
-  const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e));
+  // --- uploads ------------------------------------------------------------
+  const patchUpload = (id: string, patch: Partial<UploadItem>) =>
+    setUploads((list) => list.map((u) => (u.id === id ? { ...u, ...patch } : u)));
 
-  const publish = (id: string) => void client.publishAsset(id).then(reload).catch(fail);
+  const uploadOne = async (file: File, folderId: string | undefined) => {
+    if (file.type.startsWith('video/')) {
+      try {
+        // Hosted video (Cloudflare Stream): adaptive playback and a poster. Filed afterwards: the
+        // video upload starts on the host, not with a folder.
+        const asset = await client.uploadVideo(file);
+        if (folderId) await client.moveAssets([asset.id], folderId);
+        return;
+      } catch (e) {
+        // 501: no video host bound on this deployment; store it as a plain file.
+        if (!(e instanceof ApiError && e.status === 501)) throw e;
+      }
+    }
+    await client.uploadAsset(file, folderId ? { folderId } : {});
+  };
+
+  const upload = async (files: readonly File[]) => {
+    if (files.length === 0) return;
+    const folderId = openFolder?.id;
+    const batch = files.map((file, i) => ({
+      file,
+      item: {
+        id: `${Date.now()}-${i}-${file.name}`,
+        name: file.name,
+        state: 'queued',
+      } as UploadItem,
+    }));
+    setUploads((list) => [...list.filter((u) => u.state !== 'done'), ...batch.map((b) => b.item)]);
+    let next = 0;
+    const lane = async () => {
+      while (next < batch.length) {
+        const { file, item } = batch[next++] as (typeof batch)[number];
+        patchUpload(item.id, { state: 'uploading' });
+        try {
+          await uploadOne(file, folderId);
+          patchUpload(item.id, { state: 'done' });
+        } catch (e) {
+          patchUpload(item.id, { state: 'failed', error: message(e) });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, batch.length) }, lane));
+    if (fileRef.current) fileRef.current.value = '';
+    await reload();
+  };
+
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    void upload([...e.dataTransfer.files]);
+  };
+  const onDragOver = (e: DragEvent) => {
+    if (![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault();
+    setDragging(true);
+  };
+
+  // --- one asset ----------------------------------------------------------
+  const publish = (a: Asset) => void client.publishAsset(a.id).then(reload).catch(fail);
 
   // Unpublish is only offered on a published asset, so republishing restores
   // exactly what was live: an Undo, not an up-front confirm (as for entries).
@@ -90,105 +202,449 @@ export function MediaLibrary(props: { locale: string }) {
       )
       .catch(fail);
 
+  // Archive is undone by restoring, so it too is an Undo rather than a confirm.
+  const archive = (asset: Asset) =>
+    void client
+      .archiveAsset(asset.id)
+      .then(reload)
+      .then(() =>
+        toast.success(`Archived “${assetName(asset, locale)}”`, {
+          action: {
+            label: 'Undo',
+            onAction: () => void client.restoreAsset(asset.id).then(reload).catch(fail),
+          },
+        }),
+      )
+      .catch(fail);
+
+  const restore = (asset: Asset) =>
+    void client
+      .restoreAsset(asset.id)
+      .then(reload)
+      .then(() => toast.success(`Restored “${assetName(asset, locale)}” as a draft`))
+      .catch(fail);
+
+  const remove = async (asset: Asset) => {
+    setConfirmDelete(null);
+    try {
+      await client.deleteAsset(asset.id);
+      setSelected((s) => {
+        const next = new Set(s);
+        next.delete(asset.id);
+        return next;
+      });
+      toast.success(`Deleted “${assetName(asset, locale)}”`);
+      await reload();
+    } catch (e) {
+      const usage = assetUsageOf(e);
+      if (usage) setInUse({ asset, usage });
+      else fail(e);
+    }
+  };
+
+  // --- selection and bulk ---------------------------------------------------
+  const toggle = (id: string, on: boolean) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const allSelected = assets.length > 0 && assets.every((a) => selected.has(a.id));
+  const ids = [...selected];
+
+  const bulk = async (verb: string, act: (id: string) => Promise<unknown>) => {
+    setBulkBusy(true);
+    try {
+      const outcome = await runBulk(ids, act);
+      (outcome.failed ? toast.error : toast.success)(bulkSummary(verb, outcome));
+      setSelected(new Set());
+      await reload();
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const moveSelected = async (folderId: string | null) => {
+    setBulkBusy(true);
+    try {
+      const { moved } = await client.moveAssets(ids, folderId);
+      const where = folderId ? folders.find((f) => f.id === folderId)?.name : undefined;
+      toast.success(
+        `Moved ${moved} ${moved === 1 ? 'asset' : 'assets'} ${where ? `to “${where}”` : 'out of their folders'}`,
+      );
+      setSelected(new Set());
+      await reload();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  // --- folders --------------------------------------------------------------
+  const createFolder = async (name: string, parentId?: string) => {
+    try {
+      const created = await client.createAssetFolder({ name, ...(parentId ? { parentId } : {}) });
+      await reloadFolders();
+      changeFolder({ kind: 'folder', id: created.id });
+    } catch (e) {
+      fail(
+        e instanceof ApiError && e.status === 409 ? `A folder named “${name}” is already here` : e,
+      );
+    }
+  };
+  const renameFolder = async (f: AssetFolder, name: string) => {
+    try {
+      await client.updateAssetFolder(f.id, { name });
+      await reloadFolders();
+    } catch (e) {
+      fail(
+        e instanceof ApiError && e.status === 409 ? `A folder named “${name}” is already here` : e,
+      );
+    }
+  };
+  const deleteFolder = async (f: AssetFolder) => {
+    try {
+      await client.deleteAssetFolder(f.id);
+      changeFolder({ kind: 'all' });
+      await reloadFolders();
+      toast.success(`Deleted folder “${f.name}”`);
+    } catch (e) {
+      fail(
+        e instanceof ApiError && e.status === 409
+          ? `“${f.name}” isn’t empty: move or delete what is in it first`
+          : e,
+      );
+    }
+  };
+
+  // --- rendering ----------------------------------------------------------
+  const pick = () => fileRef.current?.click();
+
+  /** The actions on one asset, the same in the grid and the list. */
+  const actions = (a: Asset, name: string) =>
+    confirmDelete === a.id ? (
+      <InlineConfirm
+        message={`Delete “${name}”?`}
+        note="Its files go too. This can’t be undone."
+        onCancel={() => setConfirmDelete(null)}
+      >
+        <Button type="button" size="sm" variant="destructive" onClick={() => void remove(a)}>
+          Delete
+        </Button>
+      </InlineConfirm>
+    ) : (
+      <div className="flex items-center gap-0.5">
+        {a.status === 'archived' ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            aria-label={`Restore “${name}”`}
+            onClick={() => restore(a)}
+          >
+            <ArchiveRestore aria-hidden="true" />
+            Restore
+          </Button>
+        ) : a.status === 'published' ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            aria-label={`Unpublish “${name}”`}
+            onClick={() => unpublish(a)}
+          >
+            Unpublish
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            aria-label={`Publish “${name}”`}
+            onClick={() => publish(a)}
+          >
+            Publish
+          </Button>
+        )}
+        {a.status !== 'archived' && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Archive “${name}”`}
+            onClick={() => archive(a)}
+          >
+            <Archive aria-hidden="true" />
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Delete “${name}”`}
+          onClick={() => setConfirmDelete(a.id)}
+        >
+          <Trash2 aria-hidden="true" />
+        </Button>
+      </div>
+    );
+
+  const badges = (a: Asset) => {
+    const video = a.file.video;
+    return (
+      <div className="flex flex-wrap items-center gap-1">
+        <StatusBadge status={a.status} />
+        {video && (
+          <StatusBadge
+            status={video.status === 'ready' ? 'completed' : video.status}
+            label={VIDEO_STATUS_LABEL[video.status] ?? humanize(video.status)}
+          />
+        )}
+      </div>
+    );
+  };
+
+  const selectBox = (a: Asset, name: string) => (
+    <Checkbox
+      aria-label={`Select “${name}”`}
+      checked={selected.has(a.id)}
+      onCheckedChange={(on) => toggle(a.id, on === true)}
+    />
+  );
+
+  const grid = (
+    <ul className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3">
+      {assets.map((a) => {
+        const name = assetName(a, locale);
+        return (
+          <li key={a.id} className="flex">
+            <Card
+              size="sm"
+              // A Ledger board card: hover and the open button's focus tint the card muted; the
+              // card's own controls sit beside the open button, never inside it.
+              className={cn(
+                'relative w-full gap-2 p-2 transition-[background-color] hover:bg-muted/60 has-[[data-open-asset]:focus-visible]:bg-muted/60 has-[[data-open-asset]:focus-visible]:ring-2 has-[[data-open-asset]:focus-visible]:ring-ring/50',
+                selected.has(a.id) && 'bg-muted/60 ring-2 ring-ring/50',
+              )}
+            >
+              <div className="absolute top-3 left-3 z-10 rounded-[5px] bg-background">
+                {selectBox(a, name)}
+              </div>
+              <button
+                type="button"
+                data-open-asset=""
+                onClick={() => setOpen(a)}
+                aria-label={`Open “${name}”`}
+                className="-m-1 flex flex-col gap-2 rounded-xl p-1 text-left outline-none"
+              >
+                <AssetPreview
+                  asset={a}
+                  alt={String(a.metadata.altText?.[locale] ?? a.file.fileName)}
+                  className="h-28 w-full"
+                />
+                <span className="truncate font-medium text-sm">{name}</span>
+              </button>
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                {confirmDelete === a.id ? null : badges(a)}
+                {actions(a, name)}
+              </div>
+            </Card>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  const list = (
+    <div className="card overflow-clip">
+      <Table caption="Assets" stack="cards">
+        <TableHead>
+          <Tr>
+            <Th className="w-8">
+              <Checkbox
+                aria-label="Select all shown"
+                checked={allSelected}
+                onCheckedChange={(on) =>
+                  setSelected(on === true ? new Set(assets.map((a) => a.id)) : new Set())
+                }
+              />
+            </Th>
+            <Th>Name</Th>
+            <Th>Type</Th>
+            <Th numeric>Size</Th>
+            <Th>Status</Th>
+            <Th>
+              <span className="sr-only">Actions</span>
+            </Th>
+          </Tr>
+        </TableHead>
+        <TableBody>
+          {assets.map((a) => {
+            const name = assetName(a, locale);
+            return (
+              <Tr key={a.id}>
+                <Td>{selectBox(a, name)}</Td>
+                <Td>
+                  <button
+                    type="button"
+                    onClick={() => setOpen(a)}
+                    aria-label={`Open “${name}”`}
+                    className="flex min-w-0 items-center gap-2 rounded-full text-left font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+                  >
+                    <AssetPreview asset={a} alt="" className="size-8 shrink-0 rounded-lg" />
+                    <span className="truncate">{name}</span>
+                  </button>
+                </Td>
+                <Td label="Type" className="font-mono text-xs">
+                  {a.file.contentType}
+                </Td>
+                <Td label="Size" numeric>
+                  {fileSize(a.file.size)}
+                </Td>
+                <Td label="Status">{badges(a)}</Td>
+                <Td className="text-right">{actions(a, name)}</Td>
+              </Tr>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+
+  const filtered = activeFilterCount(filters) > 0 || folder.kind !== 'all';
+
   return (
     <div className="space-y-4">
-      <PageHeader title="Media" subtitle="Images, video and files you can reference from entries.">
+      <PageHeader
+        title="Assets"
+        subtitle="Images, video, audio and documents you can link from entries."
+      >
         <input
           ref={fileRef}
           type="file"
+          multiple
           className="hidden"
-          aria-label="Upload asset file"
-          onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
+          aria-label="Upload asset files"
+          onChange={(e) => void upload([...(e.target.files ?? [])])}
         />
-        <Button type="button" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
-          <Upload aria-hidden="true" /> {busy ? 'Uploading…' : 'Upload asset'}
+        <Button type="button" size="sm" onClick={pick}>
+          <Upload aria-hidden="true" />
+          {openFolder ? `Upload to “${openFolder.name}”` : 'Upload'}
         </Button>
       </PageHeader>
-      {assets.length === 0 ? (
-        <EmptyState
-          icon={ImageIcon}
-          title="No assets yet"
-          description="Upload an image, video or file to start building your media library."
+
+      <div className="grid gap-6 md:grid-cols-[13rem_minmax(0,1fr)]">
+        <AssetFolderTree
+          folders={folders}
+          value={folder}
+          onChange={changeFolder}
+          onCreate={createFolder}
+          onRename={renameFolder}
+          onDelete={deleteFolder}
+        />
+
+        {/* The drop target. Picking files with Upload is the keyboard's way to the same place. */}
+        <section
+          aria-label="Asset library"
+          onDragOver={onDragOver}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+          }}
+          onDrop={onDrop}
+          className={cn(
+            'min-w-0 space-y-4 rounded-2xl transition-[box-shadow]',
+            dragging && 'ring-2 ring-ring/50 ring-offset-4 ring-offset-background',
+          )}
         >
-          <Button type="button" disabled={busy} onClick={() => fileRef.current?.click()}>
-            Upload asset
-          </Button>
-        </EmptyState>
-      ) : (
-        <ul className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
-          {assets.map((a) => {
-            const name = assetName(a, locale);
-            const video = a.file.video;
-            return (
-              <li key={a.id} className="flex">
-                <Card
-                  size="sm"
-                  // A Ledger board card: hover and the open button's focus tint the
-                  // card muted; the card's own actions sit beside the open button, not inside it.
-                  className="w-full gap-2 p-2 transition-[background-color] hover:bg-muted/60 has-[[data-open-asset]:focus-visible]:bg-muted/60 has-[[data-open-asset]:focus-visible]:ring-2 has-[[data-open-asset]:focus-visible]:ring-ring/50"
-                >
-                  {/* The card's open action is a real button: reachable by Tab, activated by
-                      Enter/Space, named for screen readers. Publish stays a sibling button. */}
-                  <button
-                    type="button"
-                    data-open-asset=""
-                    onClick={() => setSelected(a)}
-                    aria-label={`Open “${name}”`}
-                    className="-m-1 flex flex-col gap-2 rounded-xl p-1 text-left outline-none"
-                  >
-                    <AssetPreview
-                      asset={a}
-                      alt={String(a.metadata.altText?.[locale] ?? a.file.fileName)}
-                      className="h-28 w-full"
-                    />
-                    <span className="truncate font-medium text-sm">{name}</span>
-                  </button>
-                  <div className="flex items-center justify-between gap-1">
-                    <div className="flex flex-wrap items-center gap-1">
-                      <StatusBadge status={a.status} />
-                      {video && (
-                        <StatusBadge
-                          status={video.status === 'ready' ? 'completed' : video.status}
-                          label={VIDEO_STATUS_LABEL[video.status] ?? humanize(video.status)}
-                        />
-                      )}
-                    </div>
-                    {a.status === 'published' ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        aria-label={`Unpublish “${name}”`}
-                        onClick={() => unpublish(a)}
-                      >
-                        Unpublish
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        aria-label={`Publish “${name}”`}
-                        onClick={() => publish(a.id)}
-                      >
-                        Publish
-                      </Button>
-                    )}
-                  </div>
-                </Card>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+          <AssetFilterBar
+            value={filters}
+            onChange={changeFilters}
+            tags={tags}
+            view={view}
+            onViewChange={setView}
+          />
+          {dragging && (
+            <p className="caption" aria-live="polite">
+              Drop files to upload {openFolder ? `to “${openFolder.name}”` : 'here'}
+            </p>
+          )}
+          <AssetUploadList items={uploads} onDismiss={() => setUploads([])} />
+          {inUse && (
+            <AssetInUseNotice
+              name={assetName(inUse.asset, locale)}
+              usage={inUse.usage}
+              types={types}
+              onArchive={
+                inUse.asset.status === 'archived'
+                  ? undefined
+                  : () => {
+                      archive(inUse.asset);
+                      setInUse(null);
+                    }
+              }
+              onDismiss={() => setInUse(null)}
+            />
+          )}
+          <AssetBulkBar
+            count={selected.size}
+            folders={folders}
+            busy={bulkBusy}
+            onMove={(f) => void moveSelected(f)}
+            onPublish={() => void bulk('Published', (id) => client.publishAsset(id))}
+            onArchive={() => void bulk('Archived', (id) => client.archiveAsset(id))}
+            onClear={() => setSelected(new Set())}
+          />
+          {pages.isPending ? (
+            <p className="text-muted-foreground text-sm">Loading…</p>
+          ) : assets.length === 0 ? (
+            filtered ? (
+              <EmptyState
+                icon={ImageIcon}
+                title="Nothing here"
+                description="No assets match this folder and these filters. Drop files here to add some."
+              />
+            ) : (
+              <EmptyState
+                icon={ImageIcon}
+                title="No assets yet"
+                description="Upload or drop images, video and files to start your library."
+              >
+                <Button type="button" onClick={pick}>
+                  Upload
+                </Button>
+              </EmptyState>
+            )
+          ) : view === 'grid' ? (
+            grid
+          ) : (
+            list
+          )}
+          {pages.hasNextPage && (
+            <div className="flex justify-center">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pages.isFetchingNextPage}
+                onClick={() => void pages.fetchNextPage()}
+              >
+                {pages.isFetchingNextPage ? 'Loading…' : 'Load more'}
+              </Button>
+            </div>
+          )}
+        </section>
+      </div>
+
       <AssetDetailSheet
-        asset={selected}
+        asset={open}
         locale={locale}
-        open={selected !== null}
-        onOpenChange={(open) => !open && setSelected(null)}
+        open={open !== null}
+        onOpenChange={(o) => !o && setOpen(null)}
         onSaved={() => void reload()}
         onAssetChange={(next) => {
-          setSelected(next);
+          setOpen(next);
           void reload();
         }}
       />
