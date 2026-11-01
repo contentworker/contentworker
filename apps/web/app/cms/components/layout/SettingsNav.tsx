@@ -60,7 +60,7 @@ export function SettingsNav(props: { section: string; onSection: (section: strin
                           className={cn(
                             'relative flex items-center rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
                             current
-                              ? 'bg-accent font-medium text-accent-foreground before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-brand'
+                              ? 'bg-accent font-medium text-accent-foreground tick-current'
                               : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                           )}
                         >
