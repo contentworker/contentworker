@@ -4,16 +4,18 @@ What holds state, what is derivable, and how to recover a deployment.
 
 ## What holds state
 
-| Store                         | Holds                                                                                                                                                                                                              | Recoverable from elsewhere?                                                                          |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| **D1** (`DB`)                 | The system of record: spaces, environments, content types, entries and versions, published read models, references, asset metadata, hashed API keys, roles, team, webhooks and deliveries, releases, schedules, workflows, taxonomy, audit, plugins, the outbox; and the web app's users, sessions, passkeys and admin audit | **No.** Protected by D1 Time Travel (below)                                                          |
-| **R2** (`MEDIA_BUCKET`)       | Asset bytes, plugin bundles, superseded entry version bodies (`versions/`), staged import chunks (7-day lifecycle), dead letters (30-day lifecycle)                                                                                                              | **No** for asset bytes and plugin bundles                                                            |
-| **Vectorize**                 | Embedding chunks for semantic search                                                                                                                                                                               | Yes: `POST …/search/reindex` per space and environment                                               |
-| **`SearchShardDO`**           | FTS5 lexical index                                                                                                                                                                                                 | Yes: the same reindex rebuilds it                                                                    |
-| **KV** (`KV_CACHE`)           | Delivery cache, cached principals, reindex cooldowns                                                                                                                                                               | Yes: rebuilt on demand                                                                               |
-| **Workers Caching**           | Delivery responses                                                                                                                                                                                                 | Yes                                                                                                  |
-| **Other Durable Objects**     | Live SSE connections, auth-failure windows, AI budget windows                                                                                                                                                      | Expendable by design                                                                                 |
-| **Queues / Workflows**        | In-flight events and agent runs                                                                                                                                                                                    | Queues persist messages; lost events can be replayed from the outbox; agent runs are recorded proposals |
+| Store                     | Holds                                                                                                                                                                                                                                                                                                                        | Recoverable from elsewhere?                                                                                                                                   |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **D1** (`DB`)             | The system of record: spaces, environments, content types, entries and versions, published read models, references, asset metadata, hashed API keys, roles, team, webhooks and deliveries, releases, schedules, workflows, taxonomy, audit, plugins, the outbox; and the web app's users, sessions, passkeys and admin audit | **No.** Protected by D1 Time Travel (below)                                                                                                                   |
+| **R2** (`MEDIA_BUCKET`)   | Asset bytes, plugin bundles, superseded entry version bodies (`versions/`), staged import chunks (7-day lifecycle), dead letters (30-day lifecycle)                                                                                                                                                                          | **No** for asset bytes and plugin bundles                                                                                                                     |
+| **Vectorize**             | Embedding chunks for semantic search                                                                                                                                                                                                                                                                                         | Yes: `POST …/search/reindex` per space and environment                                                                                                        |
+| **`SearchShardDO`**       | FTS5 lexical index                                                                                                                                                                                                                                                                                                           | Yes: the same reindex rebuilds it                                                                                                                             |
+| **KV** (`KV_CACHE`)       | Delivery cache, cached principals, reindex cooldowns                                                                                                                                                                                                                                                                         | Yes: rebuilt on demand                                                                                                                                        |
+| **Workers Caching**       | Delivery responses                                                                                                                                                                                                                                                                                                           | Yes                                                                                                                                                           |
+| **`AssistantAgent`** (DO) | Coworker conversations, one object per person, in the object's SQLite; kept 30 days from the last activity (`packages/http/src/assistant/agent.ts`)                                                                                                                                                                          | **No.** Not in D1 or R2; losing it loses the conversations, not content                                                                                       |
+| **Other Durable Objects** | Live SSE connections (`LiveHubDO`), auth-failure windows (`RateLimiterDO`), AI budget windows (`CostGuardDO`)                                                                                                                                                                                                                | Expendable by design                                                                                                                                          |
+| **Queues**                | In-flight events                                                                                                                                                                                                                                                                                                             | Queues persist messages; lost events can be replayed from the outbox                                                                                          |
+| **Workflows**             | `AgentWorkflow` instances (on-publish and scheduled agent runs, review watchers) and `EditorialWorkflow` instances (one per editorial workflow run, `EDITORIAL_WF`)                                                                                                                                                          | Agent runs are recorded proposals. Editorial runs have their records in D1 (`workflow_runs`), but the instance holds the execution and is not rebuilt from D1 |
 
 Everything else (Worker code, `wrangler.jsonc` templates, `deployments/*.jsonc`, migrations) is
 in git. Secrets live in each deployment's GitHub environment; `DATA_KEY`, `TOKEN_PEPPER` and
@@ -29,6 +31,11 @@ Before each migration, the deploy job records a restore point:
 wrangler d1 time-travel info DB --json --config wrangler.<id>.json   # → .bookmark
 ```
 
+`wrangler.<id>.json` is the engine's rendered config (`node scripts/fleet.ts render <id>` writes
+`apps/engine/wrangler.<id>.json`, see [Deployment](./deployment.md)). Run the `wrangler` commands
+on this page inside `apps/engine`, or from the repo root as
+`pnpm --filter @contentworker/engine exec wrangler …` (as CI does), so `--config` resolves.
+
 The bookmark is written to the run's step summary and as a notice ("D1 bookmark for `<id>`
 before this deploy"). A migration cannot be rolled back, but the database can be restored to
 that bookmark.
@@ -42,9 +49,18 @@ Import and clone write the content model in the request and the entries and asse
 Import replays domain operations (`createEntry`, `publishEntry`, …) rather than inserting rows,
 so validation, references, read models, the outbox and the search index end up as they would
 organically. A snapshot carries **no credentials and no asset bytes**; see the
-[API reference](./api-reference.md#environment-snapshots). Use snapshots to copy content
+[API reference](./environments-and-snapshots.md). Use snapshots to copy content
 between environments or spaces, or to keep an off-platform copy of content; use Time Travel to
-recover the database.
+recover the database. The same operations are MCP tools (`environment_export`, `environment_import`,
+`environment_clone`).
+
+**Deleting an environment is irreversible.** `DELETE /spaces/:space/environments/:env?confirm=` (and the
+`environment_delete` MCP tool) needs `confirm` to repeat the environment id and refuses `main` and
+any environment an alias points at (409). Deleting removes the environment from the registry at
+once, then purges its rows in bounded steps and deletes its R2 files under
+`<space>/<environment>/` (`packages/application/src/environment-purge.ts`). Time Travel can
+restore the rows but not the bytes. An `environment_export` taken first keeps the content model,
+entries and taxonomy, but a snapshot carries no asset bytes either.
 
 ## Replaying events from the outbox
 
@@ -73,9 +89,14 @@ pipeline.
    The restore itself returns a bookmark from just before it, so it can be undone.
 3. If the restored schema is older than the deployed code expects, roll the Workers back (CI's
    rollback order: engine, api, delivery, web) or fix forward with an expand-only migration.
-   New code may read columns the restored schema does not have yet.
+   New code may read columns the restored schema does not have yet. The engine cannot be rolled
+   back past a Durable Object migration (Cloudflare refuses); CI then leaves the other Workers on
+   the new version to match it and fails for a person to decide (`.github/workflows/deploy.yml`),
+   so fix forward.
 4. Asset bytes in R2 are not rolled back with D1. Rows that reference objects created after the
-   restore point are gone; objects deleted after it are not restored.
+   restore point are gone; objects deleted after it are not restored. That includes the files of a
+   deleted environment: the purge deletes them from R2, so restoring the environment's rows leaves
+   assets that point at bytes that no longer exist.
 5. Archived version bodies in R2 are not rolled back either. They are deleted only with their
    entry (deleting it for good from the trash) or their environment (a purge). A restore to
    before a version was archived simply finds its body back in D1. A restore that brings back an

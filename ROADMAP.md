@@ -78,3 +78,5 @@ Everything below is built and tested on v2.
   version at write time, so history lists need no archived bodies from R2 (one read per version
   today) and identical bodies can share an object.
 - [ ] **Per-environment content promotion tooling** (diff and promote `main` → `staging`).
+- [ ] **Required plugins.** A per-plugin `required` flag so a plugin whose refusal is load-bearing
+  blocks the write when it throws or times out, instead of being skipped.

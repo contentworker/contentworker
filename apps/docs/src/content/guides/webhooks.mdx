@@ -7,6 +7,11 @@ A webhook POSTs a JSON event to your URL whenever something it subscribes to hap
 static site when an article is published, purge a CDN when an asset changes, notify a channel when
 a release ships.
 
+## Before you start
+
+Managing webhooks needs `space:admin`. There are no MCP tools for webhooks; use the admin or the
+REST API.
+
 ## Subscribe
 
 In **Settings → Webhooks**, or with a key holding `space:admin`:
@@ -23,11 +28,27 @@ curl -s "$API/spaces/$SPACE/environments/main/webhooks" \
 ```
 
 - **`topics`** are the event types to send, or `["*"]` for all of them.
-- **`secret`** signs every delivery; keep it somewhere your receiver can read it.
+- **`secret`** signs every delivery; keep it somewhere your receiver can read it. It is never
+  returned by the API.
 - **`headers`** are added to every request, for routing or a static credential on your side.
 - **`active: false`** pauses a webhook without deleting it.
 
-Webhooks belong to an environment, so `staging` changes don't rebuild production.
+The URL must be a public `http` or `https` address (use `https`). Loopback, link-local and private
+addresses, and `localhost`, `.local` and `.internal` names, are refused with a 422 on create and
+update.
+
+**Webhooks belong to the space, not to an environment.** The environment in the route is only
+where you made the call; a publish in any environment of the space fires every webhook subscribed
+to it. If `staging` changes shouldn't rebuild production, read `scope.environmentId` in the payload
+and ignore the events you don't want.
+
+| Route (under `/spaces/{space}/environments/{env}`) | Does |
+| --- | --- |
+| `GET /webhooks` | List webhooks (without secrets) |
+| `POST /webhooks` | Create one: `url`, `topics`, `secret`, optional `headers`, `active` |
+| `PUT /webhooks/{id}` | Change any of those fields; send only what changes |
+| `DELETE /webhooks/{id}` | Delete it (204) |
+| `GET /webhooks/{id}/deliveries` | The delivery log; `limit` up to 100 |
 
 ## Events
 
@@ -42,6 +63,18 @@ Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
 | `asset.unpublished`      | `assetId`                                             | An asset is unpublished                 |
 | `content_type.published` | `contentTypeApiId`, `version`                         | A content type's definition is published |
 | `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
+| `environment_alias.changed` | `targetEnvironmentId` (`null` when removed)        | An alias is created, repointed or removed; `scope.environmentId` is the alias name |
+| `environment.deleted`    | `entryIds`                                            | An environment is deleted; `scope` is the deleted environment, and a large one sends several events splitting `entryIds` |
+| `bulk.job_completed`     | `jobId`, `action` (`publish`, `unpublish`, `import`), `total`, `succeeded`, `failed` | A bulk job finishes |
+| `workflow_run.completed`, `workflow_run.declined`, `workflow_run.cancelled`, `workflow_run.failed`, `workflow_run.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason` | A workflow run ends, one topic per outcome |
+| `workflow.task_opened`   | `taskId`, `runId`, `nodeId`, `kind` (`approval`, `event`, `review`), `entryId`, `contentTypeApiId`, `title`, `assignee`, `requiredScope`, `deadline` | A run opens an approval, event wait or agent review |
+
+A bulk publish or unpublish sends each entry as its own `entry.published` or `entry.unpublished`
+event, followed by `bulk.job_completed` for the job.
+
+`workflow.webhook` (`runId`, `nodeId`, `entryId`, `payload`) is different: the **Webhook** node of a
+[workflow](/reference/nodes/#content.webhook) sends it to the URL set on the node, not to your
+subscriptions. It is signed with an empty secret, so don't treat its signature as a credential.
 
 ```json
 {
@@ -70,7 +103,10 @@ Each delivery carries three headers:
 | `x-contentworker-signature`  | `sha256=` and the hex HMAC-SHA256 of `timestamp.body` with your secret |
 
 Compute the HMAC over the timestamp, a `.`, and the raw request body exactly as received (before
-parsing it), and compare in constant time. Reject old timestamps to stop replays.
+parsing it), and compare in constant time. A retry is the same event with its original
+`occurredAt` and signature, so a freshness window rejects retries that arrive later than the
+window (the example below uses five minutes). Widen it to cover your retry tolerance, or rely on
+deduplicating by event `id`.
 
 ```ts
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -91,12 +127,20 @@ export function verify(rawBody: string, headers: Headers, secret: string): boole
 ## Retries and the delivery log
 
 Answer with any 2xx status to acknowledge. A non-2xx answer, a redirect, a timeout (10 seconds) or
-a network error counts as a failure and is retried with exponential backoff. Because a delivery can
-be retried, handle each event `id` once. A bulk publish sends each entry as its own
+a network error counts as a failure and is retried, for up to **8 attempts** in all. The waits
+between attempts grow by four times each, from 30 seconds: 30 s, 2 min, 8 min, 32 min, about 2 h,
+then 6 h twice, so the last attempt comes about 15 hours after the first. After the eighth the
+delivery is logged as failed and given up. Because a delivery can be retried, handle each event
+`id` once. A bulk publish sends each entry as its own
 `entry.published` or `entry.unpublished` delivery; if some of those fail, only the ones that failed
 are retried, with the same event ids.
 
-Every attempt is logged with its status: **Settings → Webhooks → Deliveries**, or
-`GET …/webhooks/{id}/deliveries`.
+Every attempt is logged with its status and attempt number: **Settings → Webhooks → Deliveries**,
+or `GET …/webhooks/{id}/deliveries`. A webhook you deleted, paused or unsubscribed from the event
+gets no further retries.
 
-Webhook URLs must be public `http` or `https` addresses (use `https`); private and internal addresses are refused.
+## Next steps
+
+- [Reading content](/guides/reading-content/) for the live stream and `since=` when you'd rather pull.
+- [API keys and access](/guides/api-keys/) for the `space:admin` key that manages webhooks.
+- [REST API](/reference/rest-api/) for errors and conventions.

@@ -9,7 +9,11 @@ Each template is an ordinary workflow: start from one, change any node, and publ
 This page is generated from the templates themselves when the docs are built. Each template's
 anchor is its id, and each node links to its entry in the [node catalog](/reference/nodes/).
 
-A template marked **gates publish** is meant to be the only way an entry it covers is published.
-See [Workflows](/guides/workflows/#versions).
+A template marked **gates publish** sets the workflow's `gatesPublish` flag, which records that the
+workflow is meant to be the only route to publishing the entries it covers. The flag is saved and
+shown in the editor, but publishing doesn't check it yet: Publish in the admin, the API and MCP
+still work without a run, so gate publishing by permissions as well (give only the people and keys
+who should publish `content:publish`; see [Permission scopes](/reference/scopes/)). See
+[Workflows](/guides/workflows/#versions).
 
 <WorkflowTemplates />

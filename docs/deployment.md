@@ -14,24 +14,24 @@ For bindings and vars, see [Configuration](./configuration.md); for what each Wo
 
 One file per deployment, parsed by `toDeployment` in `scripts/fleet.ts`:
 
-| Field           | Meaning                                                                                                     |
-| --------------- | ----------------------------------------------------------------------------------------------------------- |
-| `id`            | Lowercase id; reserved words (`api`, `cdn`, `admin`, `docs`, …) need an explicit `domain`                  |
-| `ring`          | `staging`, `internal`, `canary` or `general`                                                                |
-| `slot`          | 1–999, unique; keeps each deployment's rate-limit namespaces apart (`slot × 1000 + n`)                     |
-| `domain`        | The admin host; default `<id>.contentworker.app`. The api is `api.<domain>`, delivery `cdn.<domain>`        |
-| `suffix`        | Appended to every account-wide resource name; default `-<id>` (contentworker's own is `""`)                |
-| `environment`   | The GitHub environment holding its secrets; default `deploy-<id>`                                          |
-| `d1Id`, `kvId`  | Recorded by `scripts/provision.sh`; required to render                                                       |
-| `jurisdiction`  | `eu` or `fedramp`, for D1, R2 and Durable Objects (set at creation)                                         |
-| `hold`          | Skipped by CI: stays on what it runs now                                                                     |
-| `docs`          | Also deploys the public docs site                                                                            |
-| `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI Gateway), no Vectorize; never in `general`                 |
-| `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether AI Gateway logs each call (prompts and answers never)                 |
-| `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`) |
-| `email`         | `{ from, fromName? }`: Email Sending sender; adds the engine's `send_email` binding                          |
+| Field           | Meaning                                                                                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`            | Lowercase id; reserved words (`api`, `cdn`, `admin`, `docs`, …) need an explicit `domain`                                                                      |
+| `ring`          | `staging`, `internal`, `canary` or `general`                                                                                                                   |
+| `slot`          | 1–999, unique; keeps each deployment's rate-limit namespaces apart (`slot × 1000 + n`)                                                                         |
+| `domain`        | The admin host; default `<id>.contentworker.app`. The api is `api.<domain>`, delivery `cdn.<domain>`                                                           |
+| `suffix`        | Appended to every account-wide resource name; default `-<id>` (contentworker's own is `""`)                                                                    |
+| `environment`   | The GitHub environment holding its secrets; default `deploy-<id>`                                                                                              |
+| `d1Id`, `kvId`  | Recorded by `scripts/provision.sh`; required to render                                                                                                         |
+| `jurisdiction`  | `eu` or `fedramp`, for D1, R2 and Durable Objects (set at creation)                                                                                            |
+| `hold`          | Skipped by CI: stays on what it runs now                                                                                                                       |
+| `docs`          | Also deploys the public docs site                                                                                                                              |
+| `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI Gateway), no Vectorize, `ALLOW_FAKE_ADAPTERS=ai,vectors` on the api, delivery and engine; never in `general` |
+| `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether AI Gateway logs each call (prompts and answers never)                                                                   |
+| `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`)                                              |
+| `email`         | `{ from, fromName? }`: Email Sending sender; adds the engine's `send_email` binding                                                                            |
 
-`scripts/fleet.ts` commands:
+`scripts/fleet.ts` commands (`pnpm fleet <command>` is the same script):
 
 ```sh
 node scripts/fleet.ts render <id>          # write apps/{engine,api,delivery,web}/wrangler.<id>.json
@@ -41,6 +41,7 @@ node scripts/fleet.ts names <id>           # resource names as shell variables
 node scripts/fleet.ts set-d1 <id> <uuid>   # record the D1 id in the registry
 node scripts/fleet.ts set-kv <id> <kv id>  # record the KV namespace id
 node scripts/fleet.ts status               # /health/deep of every deployment
+node scripts/fleet.ts demos                # provisioned demo deployments (those with a D1 id), as JSON
 ```
 
 A rendered config is the app's `wrangler.jsonc` with the deployment's names, ids, routes
@@ -81,18 +82,19 @@ Secrets live in each deployment's GitHub environment and reach the Workers throu
 `wrangler deploy --secrets-file` (which adds and never removes, so a secret set by hand
 survives). Which Worker gets which is `SECRETS` in `scripts/fleet.ts`:
 
-| Worker   | Secrets                                                                                                                                   |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| web      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `SETUP_TOKEN`, `PASSWORD_PEPPER`, `OIDC_CLIENT_SECRET`        |
-| api      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN` |
+| Worker   | Secrets                                                                                                                                                                                               |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| web      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `SETUP_TOKEN`, `PASSWORD_PEPPER`, `OIDC_CLIENT_SECRET`                                                                    |
+| api      | `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN`                               |
 | engine   | `ASSISTANT_PRINCIPAL_KEY`, `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` (derived from the `PRINCIPAL_KEY` pair; never the pair itself), `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET` |
-| delivery | `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`                                                                   |
+| delivery | `DATA_KEY`, `DATA_KEY_PREVIOUS`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`                                                                                                                               |
 
 `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER` and `MEDIA_SIGNING_SECRET` are required
 (`REQUIRED_SECRETS`); keys must be at least 32 characters (`openssl rand -hex 32`). Every
-Worker of a deployment holds the same value of each. `DATA_KEY`, `TOKEN_PEPPER` and
-`PASSWORD_PEPPER` never change once a deployment runs (escrow them); `DATA_KEY` and
-`PRINCIPAL_KEY` rotate through their `*_PREVIOUS` companions.
+Worker of a deployment holds the same value of each. `TOKEN_PEPPER` and `PASSWORD_PEPPER` never
+change once a deployment runs (escrow them, and `DATA_KEY` with them). `DATA_KEY` and
+`PRINCIPAL_KEY` rotate through their `*_PREVIOUS` companions: `DATA_KEY` by the procedure in
+[Auth & RBAC](./auth-and-rbac.md#secrets-at-rest), `PRINCIPAL_KEY` below.
 
 **Rotating `PRINCIPAL_KEY`:** set `PRINCIPAL_KEY_PREVIOUS` to the current key and `PRINCIPAL_KEY`
 to a new one in the GitHub environment and deploy; once every Worker runs the new key, remove
@@ -116,9 +118,8 @@ argument), and `provision.sh` generates nothing new for it.
 
 The api gate and the engine accept only the derived key on `/agents/*`; a principal signed with
 `PRINCIPAL_KEY` is refused there, and one signed with the derived key is refused on every other
-path. This shipped in one step because no deployment had run the assistant before it: there was no
-web Worker still signing `/agents/*` with the main key to stay compatible with. A future change to
-how these paths are signed has to roll out in two steps (verifiers accept both, then only the new).
+path. A change to how these paths are signed has to roll out in two steps (verifiers accept both,
+then only the new).
 
 ## The pipeline
 
@@ -131,9 +132,10 @@ how these paths are signed has to roll out in two steps (verifiers accept both, 
 - **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
   against an offline dev server (`apps/web/e2e`). The `changes` job skips it for a pull request
   that only touches `docs/`, `apps/docs/`, `deployments/`, `.claude/` or top-level Markdown.
-- **plan → staging → internal → canary → general** (push to `main` only): `fleet.ts matrix`
-  groups deployments by ring; each ring waits for the previous one to finish cleanly and calls
-  `deploy.yml` once per deployment (`general` four at a time).
+- **plan → staging → internal → canary → general** (push to `main` only): `plan` needs only
+  `verify`, so deploys do not wait for `devices`. `fleet.ts matrix` groups deployments by ring;
+  each ring waits for the previous one to finish cleanly and calls `deploy.yml` once per
+  deployment (`general` four at a time).
 
 `.github/workflows/deploy.yml`, per deployment:
 
@@ -159,11 +161,12 @@ All Cloudflare calls retry up to three times; each step is idempotent.
 
 ## Migrations
 
-Hand-written SQL in `packages/db/migrations/NNNN_*.sql` (`0001_init.sql`, `0002_auth.sql`, `0003_environment_purges.sql`, `0004_version_bodies.sql`),
-mirrored in `packages/db/src/schema.ts` / `auth-schema.ts`. Expand-only and never edited once
-applied: add a table or column now; drop or rename only in a later change once no deployed code
-reads it. Locally: `cd apps/web && npx wrangler d1 migrations apply DB --local`. Remote
-databases are migrated only by CI.
+CI applies the hand-written migrations in `packages/db/migrations/` to each deployment's D1 with
+`wrangler d1 migrations apply DB --remote`, after recording the Time Travel bookmark and before the
+new code ships (see the deploy steps above). That ordering is why they are expand-only; the rules
+for writing one, and applying it locally with `pnpm db:migrate:local`, are in
+[Development](./development.md#changing-the-database-schema). Remote databases are migrated only
+by CI.
 
 ## Recovering admin access
 

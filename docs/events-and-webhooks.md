@@ -74,7 +74,8 @@ work. Concurrent relayers never receive the same row, and a relayer that dies be
 
 `relayOutbox(ctx, queue, opts?)` (`events/relay.ts`) claims a batch of pending events (default
 250), enqueues them grouped by topic, and marks them relayed. A crash between enqueue and
-`markRelayed` re-sends the batch after the lease lapses, which is why consumers are idempotent. `drainOutbox` repeats that until the outbox is empty or `maxIterations` is hit.
+`markRelayed` re-sends the batch after the lease lapses, which is why consumers are idempotent.
+`drainOutbox` repeats that until the outbox is empty or `maxIterations` is hit.
 
 `drainOutbox` runs from three places:
 
@@ -112,8 +113,10 @@ bounded reindex slice, `bulk.chunk_due` runs one bulk-job chunk, `environment.pu
 deleted environment's next purge steps, and `entries.published_bulk` replaces N per-entry fan-outs
 with one bulk-shaped fan-out.
 
-`DispatchDeps` is `{ sender, cache?, rag?, invoker?, searchIndex?, blob?, invalidatedTags? }` —
-optional deps degrade gracefully.
+`DispatchDeps` is `{ sender, cache?, rag?, invoker?, onWebhookDelivery?, scheduleWebhookRetry?,
+searchIndex?, blob?, invalidatedTags? }`; optional deps degrade gracefully. `onWebhookDelivery`
+observes each delivery outcome (the host's metrics); `scheduleWebhookRetry` queues the delayed
+retry of one webhook, and without it a failed delivery is recorded and not retried.
 
 After dispatch, `consumeEvent` publishes the event to the scope's **`LiveHubDO`** Durable Object
 (when `LIVE_HUB` is bound), which fans it out to Live Content SSE clients
@@ -144,9 +147,12 @@ responses then go stale for their 60 s `max-age`.
 The delivery Worker drains the queue at concurrency 1 (`apps/delivery/src/purge.ts`): up to 100
 tags per purge call, a 12 s pause after each (Cloudflare allows 5 calls a minute), at most 40 calls
 per batch; the rest, or a refused call, goes back with exponential backoff. After 10 retries a
-message lands in `contentworker-purge-dlq`.
+message lands in `contentworker-purge-dlq`, whose consumer (the delivery Worker) logs the tags,
+counts `contentworker_purge_dead_letters_total` and drops it. Those responses age out on their
+`max-age` plus stale-while-revalidate. The cache layers these purges feed are described in
+[Consistency & guarantees](./consistency.md#delivery-cache).
 
-### Scheduled work
+## Scheduled work
 
 The engine's cron tick runs `runDueScheduledActions` (deferred publish/unpublish), so scheduled
 publishing has **one-minute granularity**. Its outbox events are then picked up by the sweep in the
@@ -174,6 +180,30 @@ Register a webhook through the Management API (`POST …/webhooks`, scope `space
 }
 ```
 
+A webhook belongs to a **space**, not an environment: the `webhooks` table has no environment
+column and dispatch reads `listByTopic`, which filters on `spaceId` alone. Every environment's
+events therefore reach every active hook subscribed to the topic, so a receiver that cares filters
+on `scope.environmentId` in the payload.
+
+`url` is screened on create and update with `assertSafeExternalUrl`
+(`packages/application/src/url-safety.ts`, shared with function endpoints): `http`/`https` only,
+and no loopback, link-local or private literal address, `localhost`, `*.local` or `*.internal`
+(a `ValidationError`, 422). It is DNS-free, so the sender complements it by not following
+redirects.
+
+Routes (all scope `space:admin`, `packages/http/src/api/routes/management.ts`):
+
+| Operation  | Route                                                   |
+| ---------- | ------------------------------------------------------- |
+| List       | `GET …/webhooks`                                        |
+| Create     | `POST …/webhooks` (201)                                 |
+| Update     | `PUT …/webhooks/:id` (partial; omitted fields are kept) |
+| Delete     | `DELETE …/webhooks/:id` (204)                           |
+| Deliveries | `GET …/webhooks/:id/deliveries?limit=`                  |
+
+There are **no MCP webhook tools**: webhooks are HTTP-only, which breaks the "both surfaces" rule
+in `AGENTS.md`.
+
 The `WebhookSender` (`createWebhookSender` in `@contentworker/adapters/http-effects`) signs
 `<timestamp>.<body>` with HMAC-SHA256 using the webhook's `secret` and POSTs the JSON payload with
 `x-contentworker-signature: sha256=<hex>`, `x-contentworker-timestamp`, and
@@ -199,42 +229,24 @@ to `entries.published_bulk` itself gets the bulk event again.
 
 Domain events (`packages/domain/src/events.ts`):
 
-| `type`                       | Payload (besides `id`, `scope`, `occurredAt`)                              |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `entry.published`            | `entryId`, `contentTypeApiId`, `version`, `fields`                         |
-| `entry.unpublished`          | `entryId`, `contentTypeApiId`                                              |
-| `entries.published_bulk`     | `jobId`, `chunkId`, `action` (`publish` / `unpublish`), `entryIds`         |
-| `asset.published`            | `assetId`                                                                  |
-| `asset.unpublished`          | `assetId`                                                                  |
-| `content_type.published`     | `contentTypeApiId`, `version`                                              |
-| `release.published`          | `releaseId`, `entryIds`                                                    |
-| `environment_alias.changed`  | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias |
-| `environment.deleted`        | `entryIds` (published entries whose search documents and vectors go; chunks of 500) |
-| `bulk.job_completed`         | `jobId`, `action`, `total`, `succeeded`, `failed`                          |
-| `workflow_run.completed` / `.declined` / `.cancelled` / `.failed` / `.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason` |
-| `workflow.task_opened`       | `taskId`, `runId`, `nodeId`, …                                             |
-| `workflow.webhook`           | `runId`, `nodeId`, `entryId`, `payload`                                    |
-| `search.reindex_requested`   | `contentTypeApiId?` (control message)                                      |
-| `bulk.chunk_due`             | `jobId`, `chunkId` (control message, routed to `contentworker-bulk`)       |
-| `environment.purge_due`      | none: `scope` is the deleted environment (control message, routed to `contentworker-bulk`; runs its next purge steps) |
-
-## Delivery cache
-
-Delivery has two cache layers:
-
-- **Workers Caching** in front of the delivery Worker's `Delivery` entrypoint, keyed by visibility
-  profile and canonical URL, purged by tag as above (see
-  [Architecture](./architecture.md#appsdelivery-the-public-cda)).
-- **The KV `Cache` port** inside the delivery routes: a read-through cache with **tag-based
-  invalidation**. The adapter (`@contentworker/adapters/cache-kv`, bound via `KV_CACHE`) uses
-  tag-version keys: `invalidateTag` writes a new version under the tag, each cached render
-  snapshots the versions of its tags, and a read whose snapshot no longer matches is a miss. Entry
-  TTLs come from `DELIVERY_CACHE_TTL_SECONDS` (single-entry renders) and
-  `DELIVERY_LIST_TTL_SECONDS` (list results); the TTL only bounds garbage collection. The engine
-  invalidates tags after a publish, including for entries that _embed_ the changed one, thanks to
-  the reverse-reference tag set. KV propagates writes to other locations eventually (about 60 s).
-
-See [Consistency & guarantees](./consistency.md) for the combined staleness envelope.
+| `type`                                                                             | Payload (besides `id`, `scope`, `occurredAt`)                                                                                                                              |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entry.published`                                                                  | `entryId`, `contentTypeApiId`, `version`, `fields`                                                                                                                         |
+| `entry.unpublished`                                                                | `entryId`, `contentTypeApiId`                                                                                                                                              |
+| `entries.published_bulk`                                                           | `jobId`, `chunkId`, `action` (`publish` / `unpublish`), `entryIds`                                                                                                         |
+| `asset.published`                                                                  | `assetId`                                                                                                                                                                  |
+| `asset.unpublished`                                                                | `assetId`                                                                                                                                                                  |
+| `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                              |
+| `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                    |
+| `environment_alias.changed`                                                        | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias                                                                                              |
+| `environment.deleted`                                                              | `entryIds` (published entries whose search documents and vectors go; chunks of 500)                                                                                        |
+| `bulk.job_completed`                                                               | `jobId`, `action` (`publish` / `unpublish` / `import`), `total`, `succeeded`, `failed`                                                                                     |
+| `workflow_run.completed` / `.declined` / `.cancelled` / `.failed` / `.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason`                                                                                                  |
+| `workflow.task_opened`                                                             | `taskId`, `runId`, `nodeId`, `kind` (`approval` / `event` / `review`), `entryId`, `contentTypeApiId`, `title`, `assignee` (or null), `requiredScope` (or null), `deadline` |
+| `workflow.webhook`                                                                 | `runId`, `nodeId`, `entryId`, `payload`                                                                                                                                    |
+| `search.reindex_requested`                                                         | `contentTypeApiId?`, `afterEntryId?`, `entriesSoFar?` (control message; the last two only on self-enqueued continuation slices)                                            |
+| `bulk.chunk_due`                                                                   | `jobId`, `chunkId` (control message, routed to `contentworker-bulk`)                                                                                                       |
+| `environment.purge_due`                                                            | none: `scope` is the deleted environment (control message, routed to `contentworker-bulk`; runs its next purge steps)                                                      |
 
 ## Queue adapter
 
@@ -244,10 +256,11 @@ dead-lettering are queue configuration in `apps/engine/wrangler.jsonc` and
 `apps/delivery/wrangler.jsonc` (`max_retries`, `retry_delay`, `dead_letter_queue`), not code.
 Cloudflare Queues has no producer-side dedupe, so consumers stay idempotent on the event id.
 
-| Queue                       | Producer      | Consumer | Batch / concurrency / retries |
-| --------------------------- | ------------- | -------- | ----------------------------- |
-| `contentworker-events`      | api, engine   | engine   | 25 / 10 / 5 → events DLQ      |
-| `contentworker-bulk`        | api, engine   | engine   | 1 / 10 / 5 → events DLQ       |
-| `contentworker-agents`      | api, engine   | engine   | 25 / 4 / 3 → events DLQ       |
-| `contentworker-events-dlq`  | (queues)      | engine   | logged and acked              |
-| `contentworker-purge`       | engine        | delivery | 100 / 1 / 10 → purge DLQ      |
+| Queue                      | Producer    | Consumer | Batch / concurrency / retries |
+| -------------------------- | ----------- | -------- | ----------------------------- |
+| `contentworker-events`     | api, engine | engine   | 25 / 10 / 5 → events DLQ      |
+| `contentworker-bulk`       | api, engine | engine   | 1 / 10 / 5 → events DLQ       |
+| `contentworker-agents`     | api, engine | engine   | 25 / 4 / 3 → events DLQ       |
+| `contentworker-events-dlq` | (queues)    | engine   | logged and acked              |
+| `contentworker-purge`      | engine      | delivery | 100 / 1 / 10 → purge DLQ      |
+| `contentworker-purge-dlq`  | (queues)    | delivery | logged, counted and dropped   |

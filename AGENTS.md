@@ -70,7 +70,7 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
   `scripts/do-migrations.test.ts`, in the same change). Never `deleted_classes` without a plan
   for the data.
 - **Trust boundaries:** the api believes `x-cw-principal` only when signed with `PRINCIPAL_KEY`,
-  bound to the request path and under 60 s old; the delivery `Delivery` entrypoint trusts its
+  bound to the request method and path and under 60 s old; the delivery `Delivery` entrypoint trusts its
   principal header only because nothing outside the Worker can reach it. Never add a trusted
   header to a publicly routed handler.
 - Never use a trailing "z" in endpoint names (`/health`, `/ready`, not `/healthz`).
