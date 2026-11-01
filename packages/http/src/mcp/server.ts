@@ -3859,7 +3859,9 @@ export function buildServer(
           spaceId: z
             .string()
             .regex(SPACE_ID_PATTERN)
-            .describe('1–64 letters, digits, ".", "_" or "-", starting with a letter or digit'),
+            .describe(
+              '1–64 letters, digits, ".", "_" or "-", starting with a letter or digit; not versions, imports, plugins or dlq (reserved)',
+            ),
           name: z.string().max(256),
           defaultLocale: z.string().min(2).max(35),
           locales: z.array(z.string().min(2).max(35)).max(200).optional(),

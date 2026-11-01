@@ -272,6 +272,64 @@ describe("a deleted environment's files", () => {
   });
 });
 
+describe("a deleted environment's files, next to other data in the bucket", () => {
+  const purgeDue = (scope: { spaceId: string; environmentId: string }) =>
+    ({
+      id: `evt-${scope.spaceId}-${scope.environmentId}`,
+      type: 'environment.purge_due',
+      scope,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+    }) as const;
+
+  it("never reach another space's version bodies, staging or plugin bundles", async () => {
+    const blob = new FakeBlobStore();
+    await createSpace(ctx, { spaceId: 's2', name: 'S2', defaultLocale: 'en-US' });
+    await createEnvironment(ctx, 's2', 'staging');
+    await blob.put('s1/staging/a1/x.png', 'x', 'image/png');
+    await blob.put('versions/s1/staging/e1/1.json', '{}', 'application/json');
+    const kept = [
+      's1/main/m1/z.png',
+      's2/staging/a2/y.png',
+      'versions/s1/main/e2/1.json',
+      'versions/s2/staging/e3/1.json',
+      'imports/s2/staging/job1/c00000.json',
+      'plugins/s1/p1/abc.js',
+      'dlq/s1/staging/m1.json',
+    ];
+    for (const key of kept) await blob.put(key, '{}', 'application/json');
+    await deleteEnvironment(ctx, 's1', 'staging', { confirm: 'staging', principal: admin });
+    await dispatchEvent(ctx, { sender: new RecordingWebhookSender(), blob }, purgeDue(staging));
+    expect(blob.keys().sort()).toEqual([...kept].sort());
+  });
+
+  it('leave its asset files behind for a space created before reserved ids, not reach others', async () => {
+    // As a row written before space creation refused the bucket's shared prefixes could be.
+    await store.spaces.create({
+      spaceId: 'versions',
+      name: 'Old',
+      defaultLocale: 'en-US',
+      locales: ['en-US'],
+    });
+    await store.spaces.createEnvironment('versions', 'main', 'main');
+    await store.spaces.createEnvironment('versions', 's1', 's1');
+    const blob = new FakeBlobStore();
+    // s1's archived version bodies sit exactly where space "versions", environment "s1" keeps
+    // its asset files.
+    await blob.put('versions/s1/main/e1/1.json', '{}', 'application/json');
+    await blob.put('versions/s1/staging/e2/1.json', '{}', 'application/json');
+    await deleteEnvironment(ctx, 'versions', 's1', { confirm: 's1', principal: admin });
+    await dispatchEvent(
+      ctx,
+      { sender: new RecordingWebhookSender(), blob },
+      purgeDue({ spaceId: 'versions', environmentId: 's1' }),
+    );
+    expect(blob.keys().sort()).toEqual([
+      'versions/s1/main/e1/1.json',
+      'versions/s1/staging/e2/1.json',
+    ]);
+  });
+});
+
 describe('the environment a write names', () => {
   it('is an existing one, or an alias of one; anything else is not found', async () => {
     await setEnvironmentAlias(ctx, 's1', 'live', 'staging');

@@ -24,7 +24,9 @@ echo "   https://$DOMAIN (admin), https://$API_DOMAIN (api), https://$CDN_DOMAIN
 # D1, the system of record, with read replication on: delivery and admin reads go to the nearest
 # replica (the Workers open Sessions API sessions; writes always go to the primary).
 wrangler d1 create "$D1" ${j[@]+"${j[@]}"} || echo "D1 database $D1 already exists"
-uuid=$(wrangler d1 info "$D1" --json | jq -er .uuid)
+# Look the database up by name in the account's list: `d1 info <name>` resolves the name against
+# apps/engine/wrangler.jsonc first, where the binding carries the placeholder id.
+uuid=$(wrangler d1 list --json | jq -er --arg n "$D1" '.[] | select(.name == $n) | .uuid')
 node scripts/fleet.ts set-d1 "$id" "$uuid"
 if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
   curl -fsS -X PUT "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$uuid" \

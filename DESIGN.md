@@ -227,8 +227,10 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   labelled as captions: **Build** (Workflows), **Library** (Assets, Taxonomy) and **Settings**
   (Access, Automation, Extensions, Workspace: Settings' own section groups, each opening its first
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
-  on its edge. The page you're on is `sidebar-accent` and 500 with `aria-current`, marked as soon
-  as it is chosen, not when its page arrives. On touch every row is 44px.
+  on its edge (for a mouse; on touch the mark is the toggle). The page you're on is
+  `sidebar-accent`, 500 and a short ink tick at the row's start (the tab bar marks its tab along
+  its top), with `aria-current`, marked as soon as it is chosen, not when its page arrives. Group
+  labels are captions. On touch every row is 44px.
 - **Expanded or a rail:** 16rem, or a 3.25rem rail of icons. The reader's choice is the
   `cw_sidebar_state` cookie. Below lg, and beside the assistant's column below xl, the sidebar stays a
   rail and its toggle opens it over the page (`peek`, `shadow-overlay`); Escape, a press outside it
@@ -267,9 +269,12 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   2.75rem with the labels for screen readers only. **More reads as the current page** while you're
   on one of its pages. More is a bottom sheet grouped like the sidebar (Pages, Settings), then the
   scope, the theme, the install hint and Sign out. It closes when a page is chosen.
-- **Approvals count:** a filled `wait` pill, 99+ past two digits, in the sidebar, tab bar and More
-  alike (a `wait` dot on the rail): the shell's one call for attention. Approvals is behind the
-  `approvals` feature (`VITE_CW_APPROVALS`) until its inbox ships.
+- **Approvals count:** a filled `wait` pill, 99+ past two digits, in the sidebar and on the tab
+  bar's Approvals tab (a `wait` dot on the rail): the shell's one call for attention. It counts
+  the inbox's own two lists (`cms/lib/approvals.ts`), so deciding an item updates it; it also
+  refreshes every minute while the tab is visible. The link's name carries it for screen readers
+  ("Approvals, 3 waiting"). Approvals is behind the `approvals` feature (`cms/lib/features.tsx`,
+  on): off, it leaves the sidebar, the tab bar, the palette, the shortcuts list and its G-letter.
 - **Main** pads its foot by `--tabbar-h` and lays every page in `Body` (the page width and
   gutters). Never hard-code the bar heights.
 - **Coworker (the assistant):** named Coworker everywhere a person sees it (the button, the panel's
@@ -440,11 +445,26 @@ opacity, colour and a few pixels of travel.
 - **Arrival:** `animate-arrive`, a fade and a 4px rise, for a toast, a confirm or a new row
   (`useArrivals` decides what is new).
 - **Pages** cross-fade with View Transitions while the header, the sidebar and the tab bar hold
-  still.
+  still. A page slow to arrive (400ms) shows `PendingBar`, a link-blue rule sweeping under the
+  top bar.
+- **Loading** (`cw-skeleton`, `cw-refreshing` in `app.css`): a skeleton waits out a 200ms grace,
+  so a quick answer never flashes one, then fades in and breathes slowly between two weights of
+  ink (8% and 4.5% of `ink` over whatever is beneath, so one fill reads on paper, a card or a
+  tile, light or dark). Rows already on screen while a new query runs stay put and readable; after
+  400ms they settle back a step and the link-blue rule sweeps the region's top edge.
+
+**The Drawn Page Rule.** A page that is loading draws everything it already knows for real (the
+title, the intro if it's fixed, the filter bar, the column headers, a sheet's header) and stands a
+skeleton in only for the data, in the shape and size of what replaces it: text as one-line bars
+in the text's own size, badges and buttons as pills, thumbnails as tiles, table rows built from
+the real row's classes so they stack the same on a phone. Nothing moves when the data lands. No
+region says "Loading…" on screen: it announces its load once to assistive technology
+(`LoadingStatus`, "Loading Author entries…") and marks itself `aria-busy`, and its skeletons are
+hidden. A list's skeleton comes back as long as the list was last time this session.
 
 **The Reduced Motion Rule.** With reduced motion nothing travels, but nothing that carries meaning
 is lost: colours still change, arrivals and overlays fade without rising, and page changes happen
-at once.
+at once. A skeleton fades in and holds still: its status line says it is loading.
 
 ## Shapes
 
@@ -470,7 +490,11 @@ for code and data blocks only.
 - **Page** (`components/page.tsx`): `PageHeader` (the h1, an intro held to the measure, the page's
   actions), `Body`, `Section`, `Empty` (with an `icon` and `title` where the empty state is the
   news).
-- **Item, Field, Kbd, Spinner, Badge, Skeleton, Separator, Breadcrumb, Tooltip, Sheet, Dropdown
+- **Skeleton** (`ui/skeleton.tsx`): `Skeleton` (a block, tile radius), `SkeletonText` (lines one
+  line-height tall in the surrounding type), `SkeletonPill` (a badge, or a button with `h-8`). The
+  CMS's regions compose them with `LoadingStatus`, `Refreshing`, `PageSkeleton` and the
+  remembered row count (`cms/components/loading.tsx`).
+- **Item, Field, Kbd, Spinner, Badge, Separator, Breadcrumb, Tooltip, Sheet, Dropdown
   menu, Alert, Alert dialog, Dialog, Select, Tabs, Checkbox, Avatar** (`packages/ui`): radix-maia
   primitives on the Ledger tokens.
 - **Status badge** (`components/status.tsx`): a pill tinted 11% in the status colour with a dot; an

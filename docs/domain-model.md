@@ -14,6 +14,13 @@ defines the structured-content model and the rules that govern it.
 | `EntryStatus`       | `'draft' \| 'changed' \| 'published' \| 'archived'` | Entry lifecycle                                                           |
 | `ContentTypeStatus` | `'draft' \| 'published'`                            | Content-type lifecycle                                                    |
 
+A space id (`SPACE_ID_PATTERN`) is 1–64 ASCII letters, digits, `.`, `_` or `-`, starting with a
+letter or digit. It is the first segment of the space's asset keys in the media bucket
+(`<space>/<environment>/<assetId>/<file>`), which also holds archived version bodies, staged import
+chunks, plugin bundles and dead letters under their own top-level prefixes. Those prefixes are
+`RESERVED_SPACE_IDS` (`versions`, `imports`, `plugins`, `dlq`): `createSpace` refuses each, in any
+case, with a `ValidationError`, so deleting a space's files never reaches them.
+
 Non-localized fields still use `LocalizedValue` with a single entry under the space's default
 locale, keeping the read/write paths uniform.
 

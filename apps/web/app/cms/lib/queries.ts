@@ -49,6 +49,8 @@ export function useScopedQuery<T>(
     readonly staleTime?: number;
     /** Keep the last key's data while a new key loads (a lookup whose id set grows or shrinks). */
     readonly keepPrevious?: boolean;
+    /** Poll every n ms while the tab is visible (react-query pauses it in the background). */
+    readonly refetchInterval?: number;
   },
 ) {
   const { conn } = useClient();
@@ -57,6 +59,7 @@ export function useScopedQuery<T>(
     queryFn,
     enabled: opts?.enabled,
     staleTime: opts?.staleTime,
+    refetchInterval: opts?.refetchInterval,
     placeholderData: opts?.keepPrevious ? keepPreviousData : undefined,
     meta: opts?.silent ? { silent: true } : undefined,
   });

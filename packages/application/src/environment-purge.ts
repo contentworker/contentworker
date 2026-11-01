@@ -1,4 +1,8 @@
-import type { EnvironmentPurgeDueEvent, Scope } from '@contentworker/domain';
+import {
+  type EnvironmentPurgeDueEvent,
+  isReservedSpaceId,
+  type Scope,
+} from '@contentworker/domain';
 import type { AssetGate, BlobStore } from '@contentworker/ports';
 import { type AssetSearchDeps, removeAssetFromSearch } from './asset-search';
 import { allAssets } from './assets';
@@ -144,18 +148,23 @@ async function deleteEnvironmentFiles(
   blob: BlobStore,
   scope: Scope,
 ): Promise<void> {
-  const inUse = new Set<string>();
-  for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
-    if (env.id === scope.environmentId) continue;
-    const other = { spaceId: scope.spaceId, environmentId: env.id };
-    for (const asset of await allAssets(ctx, other)) inUse.add(asset.id);
+  // No space can be named like one of the bucket's shared prefixes, but one created before that
+  // rule could be: its prefix would hold other spaces' data (`versions/<space>/…`), so its asset
+  // files are left behind instead, as deleteAssetFiles does.
+  if (!isReservedSpaceId(scope.spaceId)) {
+    const inUse = new Set<string>();
+    for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
+      if (env.id === scope.environmentId) continue;
+      const other = { spaceId: scope.spaceId, environmentId: env.id };
+      for (const asset of await allAssets(ctx, other)) inUse.add(asset.id);
+    }
+    // An asset's file stays while another environment's asset of the same id points at it; what
+    // ingest derived from it here (`…/assetId/v<n>/…`, five segments) is this environment's alone.
+    await blob.deletePrefix?.(`${scope.spaceId}/${scope.environmentId}/`, (key) => {
+      const parts = key.split('/');
+      return parts.length === 4 && inUse.has(parts[2] ?? '');
+    });
   }
-  // An asset's file stays while another environment's asset of the same id points at it; what
-  // ingest derived from it here (`…/assetId/v<n>/…`, five segments) is this environment's alone.
-  await blob.deletePrefix?.(`${scope.spaceId}/${scope.environmentId}/`, (key) => {
-    const parts = key.split('/');
-    return parts.length === 4 && inUse.has(parts[2] ?? '');
-  });
   // Work staged for jobs in it (an import still running when it was deleted): never read now.
   await blob.deletePrefix?.(`imports/${scope.spaceId}/${scope.environmentId}/`, () => false);
   // Its archived version bodies (version-archive.ts).

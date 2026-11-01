@@ -177,7 +177,7 @@ function Sidebar({ className, children, ...props }: React.ComponentProps<'div'>)
         ref={container}
         data-slot="sidebar-container"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden h-svh w-(--sidebar-width) border-r border-sidebar-border transition-[width,box-shadow] max-lg:w-(--sidebar-width-icon) group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[peek]:z-50 group-data-[peek]:w-(--sidebar-width)! group-data-[peek]:shadow-overlay md:flex',
+          'fixed inset-y-0 left-0 z-40 hidden w-(--sidebar-width) border-r border-sidebar-border transition-[width,box-shadow] max-lg:w-(--sidebar-width-icon) group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[peek]:z-50 group-data-[peek]:w-(--sidebar-width)! group-data-[peek]:shadow-overlay md:flex',
           slide,
           className,
         )}
@@ -221,14 +221,14 @@ function SidebarTrigger({
       {children ?? (
         <>
           <PanelLeftIcon className="size-4" />
-          <span className="sr-only">Toggle Sidebar</span>
+          <span className="sr-only">Toggle sidebar</span>
         </>
       )}
     </button>
   );
 }
 
-/** The panel's edge: a press there toggles it, as in shadcn. */
+/** The panel's edge: a click there toggles it, as in shadcn. A finger has the mark instead. */
 function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
   const { toggleSidebar } = useSidebar();
   return (
@@ -236,12 +236,12 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
       type="button"
       data-sidebar="rail"
       data-slot="sidebar-rail"
-      aria-label="Toggle Sidebar"
+      aria-label="Toggle sidebar"
       tabIndex={-1}
       onClick={toggleSidebar}
-      title="Toggle Sidebar"
+      title="Toggle sidebar"
       className={cn(
-        'absolute inset-y-0 -right-2 z-20 hidden w-4 cursor-w-resize after:absolute after:transition-[background-color] after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex',
+        'absolute inset-y-0 -right-2 z-20 hidden w-4 cursor-w-resize after:absolute after:transition-[background-color] after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex touch:hidden',
         '[[data-state=collapsed]_&]:cursor-e-resize',
         className,
       )}
@@ -319,7 +319,10 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<'div'>) {
   );
 }
 
-/** As a rail the label keeps its height and becomes a hairline, its words left to screen readers. */
+/**
+ * A group's name, set as a caption (DESIGN.md: the sidebar's group labels are captions). As a rail
+ * the label keeps its height and becomes a hairline, its words left to screen readers.
+ */
 function SidebarGroupLabel({
   className,
   asChild = false,
@@ -331,7 +334,7 @@ function SidebarGroupLabel({
       data-slot="sidebar-group-label"
       data-sidebar="group-label"
       className={cn(
-        'relative flex h-8 shrink-0 items-center rounded-md px-2.5 font-medium text-sidebar-foreground/70 text-xs outline-hidden ring-sidebar-ring focus-visible:ring-2 after:absolute after:inset-x-1 after:top-1/2 after:hidden after:h-px after:bg-sidebar-border @max-[8rem]:select-none @max-[8rem]:text-transparent @max-[8rem]:after:block [&>svg]:size-4 [&>svg]:shrink-0',
+        'caption relative flex h-8 shrink-0 items-center rounded-md px-2.5 outline-hidden ring-sidebar-ring focus-visible:ring-2 after:absolute after:inset-x-1 after:top-1/2 after:hidden after:h-px after:bg-sidebar-border @max-[8rem]:select-none @max-[8rem]:text-transparent @max-[8rem]:after:block [&>svg]:size-4 [&>svg]:shrink-0',
         className,
       )}
       {...props}
@@ -373,12 +376,15 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 /*
+ * The current page is the accent fill, 500, and a short ink tick at the row's start (the tab bar
+ * marks its tab the same way, along its top), so it reads at a glance on the rail too.
+ *
  * px-2.5 inside the group's p-2 puts the icon's centre 26px in, which is the centre of a 3.25rem
  * rail: expanded or collapsed, the icon doesn't move. As a rail, the last span (the name) goes to
  * screen readers.
  */
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button group/menu-button relative flex w-full items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-sm outline-hidden ring-sidebar-ring transition-[color,background-color] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-has-data-[sidebar=menu-badge]/menu-item:pr-11 data-open:bg-sidebar-accent data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground @max-[8rem]:pr-2.5! @max-[8rem]:[&>span:last-child]:sr-only [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0',
+  'peer/menu-button group/menu-button relative flex w-full items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-sm outline-hidden ring-sidebar-ring transition-[color,background-color] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-has-data-[sidebar=menu-badge]/menu-item:pr-11 data-open:bg-sidebar-accent data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground data-active:before:absolute data-active:before:inset-y-2.5 data-active:before:left-0 data-active:before:w-0.5 data-active:before:rounded-full data-active:before:bg-sidebar-foreground @max-[8rem]:pr-2.5! @max-[8rem]:[&>span:last-child]:sr-only [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0',
   {
     variants: {
       variant: {

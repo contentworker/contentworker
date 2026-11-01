@@ -131,7 +131,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | Method | Path                                        | Scope            | Description                                     |
 | ------ | ------------------------------------------- | ---------------- | ----------------------------------------------- |
 | GET    | `/spaces`                                   | auth             | List spaces (admin: all; scoped key: own space) |
-| POST   | `/spaces`                                   | `space:admin`    | Create a space                                  |
+| POST   | `/spaces`                                   | `space:admin`    | Create a space (reserved ids are `422`, below)  |
 | GET    | `/spaces/:space/environments`               | `preview:read`   | List environments                               |
 | POST   | `/spaces/:space/environments`               | `space:admin`    | Create environment `{ id, name }`               |
 | DELETE | `/spaces/:space/environments/:env?confirm=` | `space:admin`    | Delete an environment and everything in it      |
@@ -146,6 +146,11 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish` | A promotion, its risk check and result         |
 | POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish` | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
 | POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish` | Reject a waiting promotion                      |
+
+A space id is 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit, and is
+never one of the media bucket's own prefixes: `versions`, `imports`, `plugins` or `dlq`, in any case
+(`RESERVED_SPACE_IDS`). `POST /spaces` and the `space_create` MCP tool refuse one with a validation
+error (`422` over HTTP).
 
 **Promotions** carry content from one environment to another and, unlike merge, go live and
 check first.
