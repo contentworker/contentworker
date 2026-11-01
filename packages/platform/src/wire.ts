@@ -183,6 +183,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     clock,
     ids,
     cache,
+    decisions,
     ...(Number.isFinite(ttlRaw) && ttlRaw > 0 ? { deliveryCacheTtlSeconds: ttlRaw } : {}),
     ...(posNum(env.DELIVERY_LIST_TTL_SECONDS) !== undefined
       ? { deliveryListTtlSeconds: posNum(env.DELIVERY_LIST_TTL_SECONDS) as number }

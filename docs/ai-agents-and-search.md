@@ -74,7 +74,14 @@ Calls go through `decide()` (`ai-decide.ts`), with the same guarantees as `gener
 - every call is an `ai_call` record with its provenance.
 
 Without the `AI` binding the stub answers the first option, no, or the lowest level, and the
-adapter guard refuses it on a persistent deployment.
+adapter guard refuses it on a persistent deployment. The platform binds it both to the workflow
+node deps and to `ctx.decisions`, so use-cases reach it without another parameter. Beyond the nodes
+below:
+- The **moderation agent** asks the same questions as `ai.moderate` (see [moderate](#moderate)).
+- **Tag suggestions** (`suggestEntryTags`, the `ai.suggest_tags` node, `entry_suggest_tags`) ask
+  one yes/no per existing tag, 64 to a request, and take the tags at or above 0.5. A new tag name is
+  writing, not choosing, so the generative model is asked for new names only when no existing tag
+  fits. It doesn't get to overrule that decision by picking existing tags itself.
 
 Workflow nodes that choose ask the decision model when one is bound (the platform always binds one),
 and fall back to a generative model's JSON otherwise:
@@ -351,11 +358,14 @@ Fills empty text/symbol fields (excluding the display field) on a freshly-publis
 ### moderate
 
 1. Load the entry; if missing → `skipped`.
-2. `classify` the concatenated text (tier `fast`, strict `{ flagged, categories }` schema).
-3. If flagged → `record` a hold → `held`; else → `completed`. Only an explicit
-   `flagged: false` passes: an answer that is missing, off the schema or not a boolean holds the
-   entry as `unclassified`, so a model that errs (or is talked out of its schema by the content)
-   never waves content through.
+2. `classify` the concatenated text. With a decision model (`ctx.decisions`, always bound on the
+   platform) it asks the same per-category questions as the `ai.moderate` node (`moderation.ts`),
+   with the text as the state, capped at 20,000 characters. A category at or above 0.5 flags, and
+   a question left unanswered counts as flagged. Without one, it asks the `fast` generative model
+   for a strict `{ flagged, categories }` schema, where only an explicit `flagged: false` passes
+   and anything else holds the entry as `unclassified`.
+3. If flagged → `record` a hold → `held`; else → `completed`. A failed call throws, so the
+   workflow step retries; content is never waved through.
 
 ### curate
 
