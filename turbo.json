@@ -2,23 +2,33 @@
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
   "tasks": {
+    // Writes the gitignored embeds (packages/docs/src/generated.ts from docs/*.md,
+    // packages/http/src/mcp/skills.generated.ts from packages/http/skills/**). Never
+    // committed, so two PRs that touch docs can't conflict on them; `pnpm install`
+    // runs the same generators as postinstall, and every task that compiles,
+    // bundles or tests code that imports an embed depends on this one.
+    "generate": {
+      "outputs": ["src/generated.ts", "src/mcp/skills.generated.ts"]
+    },
     "build": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "^generate", "generate"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["build/**", "dist/**"]
     },
     "lint": {
       "dependsOn": ["^lint"]
     },
-    // No dependsOn on purpose: a failing dependency must not silently skip a
-    // package's tests.
+    // Only the embeds, on purpose: a failing dependency's own tests must not
+    // silently skip a package's tests.
     "test": {
+      "dependsOn": ["^generate", "generate"],
       "outputs": []
     },
     "check-types": {
-      "dependsOn": ["^check-types"]
+      "dependsOn": ["^check-types", "^generate", "generate"]
     },
     "dev": {
+      "dependsOn": ["^generate", "generate"],
       "cache": false,
       "persistent": true
     }

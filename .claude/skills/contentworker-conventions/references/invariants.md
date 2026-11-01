@@ -131,13 +131,14 @@ delete destroys every object of the class. The engine also can't roll back past 
 
 ## Generated files
 
-**Rule.** Regenerate, never edit: `packages/docs/src/generated.ts`
-(`pnpm --filter @contentworker/docs generate`), `packages/http/src/mcp/skills.generated.ts`
-(`pnpm --filter @contentworker/http generate:skills`), `apps/docs/src/styles/theme.css`
-(`pnpm sync:theme`). Also `apps/web/worker-configuration.d.ts` (`pnpm --filter @contentworker/web types`)
+**Rule.** Regenerate, never edit: `apps/docs/src/styles/theme.css` (`pnpm sync:theme`).
+The docs embed (`packages/docs/src/generated.ts`) and MCP skills embed
+(`packages/http/src/mcp/skills.generated.ts`) are gitignored build outputs: `pnpm install` and
+turbo's `generate` task (a dependency of `check-types`, `test`, `build` and `dev`) write them.
+Never commit them; committed, they conflicted between every pair of PRs touching docs. Also `apps/web/worker-configuration.d.ts` (`pnpm --filter @contentworker/web types`)
 and `apps/docs/src/generated/openapi.json` (written on every docs build).
 
-**Check.** The `regen` skill; the docs and http test suites fail on drift.
+**Check.** The `regen` skill; `git ls-files packages/docs/src/generated.ts packages/http/src/mcp/skills.generated.ts` prints nothing.
 
 ## Trust boundaries
 

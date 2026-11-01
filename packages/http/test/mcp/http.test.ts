@@ -158,7 +158,7 @@ describe('the skill catalog', () => {
 describe('embedded skills', () => {
   it('match skills/ on disk', () => {
     // A stale embed would publish skills that disagree with their source.
-    // Run `pnpm --filter @contentworker/http generate:skills` to fix.
+    // Run `pnpm generate` (turbo runs it before `test`) to fix.
     const generated = join(
       dirname(fileURLToPath(import.meta.url)),
       '..',

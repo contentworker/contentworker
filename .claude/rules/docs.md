@@ -9,9 +9,9 @@ paths:
 # Documentation
 
 - Two doc sets. `docs/*.md` are the maintainer docs: unpublished, indexed by `docs/README.md`, and
-  embedded into `packages/docs/src/generated.ts` for the MCP and HTTP docs tools. After editing,
-  run `pnpm --filter @contentworker/docs generate` and commit `generated.ts` with the page (the
-  `@contentworker/docs` test fails on drift; never hand-edit it). `apps/docs`
+  embedded into `packages/docs/src/generated.ts` for the MCP and HTTP docs tools. The embed is
+  gitignored and rebuilt by `pnpm install` and turbo's `generate` task before every check-types,
+  test, build and dev; never commit or hand-edit it. `apps/docs`
   (`@contentworker/docs-site`, Starlight) is the public site at `docs.contentworker.app`.
 - The site's reference pages render from `@contentworker/domain` (node catalog, workflow
   templates, scopes) and the api's OpenAPI at build time: fix the source, not the rendered page.
