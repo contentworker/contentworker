@@ -14,6 +14,24 @@ function setup() {
   store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
   store.seedSpace({ spaceId: 's2', defaultLocale: 'en-US', locales: ['en-US'] });
   const ctx: AppContext = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('x') };
+  // Personal tokens are minted only for enabled team members.
+  const at = new Date(0).toISOString();
+  for (const [spaceId, subject] of [
+    ['s1', 'usr_ann'],
+    ['s2', 'usr_ann'],
+    ['s1', 'usr_bob'],
+  ]) {
+    void store.members.save({
+      id: `m-${spaceId}-${subject}`,
+      spaceId: spaceId as string,
+      email: `${subject}@example.com`,
+      subject,
+      roleId: 'r',
+      disabled: false,
+      createdAt: at,
+      updatedAt: at,
+    });
+  }
   return { ctx, store };
 }
 

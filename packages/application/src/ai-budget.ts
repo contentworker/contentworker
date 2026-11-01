@@ -1,5 +1,6 @@
 import { RateLimitedError, type Scope } from '@contentworker/domain';
 import type { AIProvider, GenerateRequest, GenerateResult } from '@contentworker/ports';
+import { mockGenerate } from './ai-mock.js';
 import type { AppContext } from './context.js';
 
 export interface AiBudgetLimits {
@@ -63,6 +64,8 @@ export async function generateWithBudget(
   scope: Scope,
   req: GenerateRequest,
 ): Promise<GenerateResult> {
+  // AI_MODE=mock: never call the model (local development, demos), from any use-case.
+  if (ctx.ai?.mode === 'mock') return mockGenerate(req);
   if (ctx.costGuard) {
     const decision = await ctx.costGuard.consume(scope);
     if (!decision.allowed) {

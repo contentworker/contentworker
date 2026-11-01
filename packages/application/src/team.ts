@@ -406,7 +406,13 @@ export async function findMemberForSignIn(
 ): Promise<SpaceMember | null> {
   const members = await ctx.store.members.list(spaceId);
   const bySubject = subject ? members.find((m) => m.subject === subject) : undefined;
-  const byEmail = email ? members.find((m) => m.email === normalizeEmail(email)) : undefined;
+  // An email match only counts for a row not yet linked to anyone: a row linked to another
+  // subject belongs to that person, even if this one now has (or once had) the same address.
+  const byEmail = email
+    ? members.find(
+        (m) => m.email === normalizeEmail(email) && (!m.subject || m.subject === subject),
+      )
+    : undefined;
   const member = bySubject ?? byEmail ?? null;
   if (member && !member.subject && subject) {
     // First SSO sign-in links the provider's subject to the person.

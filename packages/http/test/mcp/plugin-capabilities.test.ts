@@ -1,3 +1,4 @@
+import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import { type AppContext, installPlugin } from '@contentworker/application';
 import { type PluginManifest, type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -44,6 +45,7 @@ beforeEach(async () => {
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
     hasher: { hash: (v) => v },
     adminToken: 'admin',
+    agents: new InProcessAgentRuntime(makeActivities({ ctx, ai: new StubAIProvider(() => ({})) })),
   };
   await installPlugin(ctx, new FakeBlobStore(), admin, SPACE, {
     manifest,

@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
 // TypeScript 7 ships no compiler JS API, so this runs its own `tsc` on the source in a temp dir and
@@ -32,9 +33,8 @@ async function tsc(source: string, compilerOptions: Record<string, unknown>): Pr
     return String((error as { stdout?: string }).stdout || error);
   }
 }
-const config: ApiConfig = {
+const config: ApiConfig = testConfig({
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -46,7 +46,7 @@ const config: ApiConfig = {
     locales: ['en-US'],
     scale: 1,
   },
-};
+});
 
 const cma = { Authorization: 'Bearer cma', 'Content-Type': 'application/json' };
 const cda = { Authorization: 'Bearer cda' };

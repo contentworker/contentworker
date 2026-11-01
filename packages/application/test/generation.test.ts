@@ -57,6 +57,61 @@ describe('P6: AI generation over the content model', () => {
     ({ ctx } = makeContext());
   });
 
+  it('tells the model each field’s rules, and a mock draft keeps them', async () => {
+    await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
+    await createContentType(ctx, scope, {
+      apiId: 'post',
+      name: 'Post',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+          validations: { size: { max: 12 } },
+        },
+        {
+          apiId: 'readingTime',
+          name: 'Reading time',
+          type: 'Integer',
+          localized: false,
+          required: true,
+          position: 1,
+          validations: { range: { min: 1, max: 60 } },
+        },
+        {
+          apiId: 'tone',
+          name: 'Tone',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 2,
+          validations: { in: ['calm', 'bold'] },
+        },
+      ],
+    });
+    // The request carries the rules.
+    const seen = new StubAIProvider(() => ({ title: 'Hi', readingTime: 3, tone: 'calm' }));
+    await draftEntry(ctx, seen, scope, { contentTypeApiId: 'post', prompt: 'x' });
+    const schema = seen.requests[0]?.outputSchema as
+      | { properties: Record<string, unknown> }
+      | undefined;
+    const props = schema?.properties ?? {};
+    expect(props.title).toMatchObject({ maxLength: 12 });
+    expect(props.readingTime).toMatchObject({ minimum: 1, maximum: 60 });
+    expect(props.tone).toMatchObject({ enum: ['calm', 'bold'] });
+
+    // And AI_MODE=mock produces a draft that passes them (it used to answer 0 for every number).
+    const mock = { ...ctx, ai: { mode: 'mock' as const, log: () => {} } };
+    const draft = await draftEntry(mock, seen, scope, { contentTypeApiId: 'post', prompt: 'x' });
+    expect(draft.fields.readingTime).toEqual({ 'en-US': 1 });
+    expect(draft.fields.tone).toEqual({ 'en-US': 'calm' });
+    expect(String(draft.fields.title?.['en-US']).length).toBeLessThanOrEqual(12);
+  });
+
   it('builds a schema from the content type and returns validated draft fields', async () => {
     await seedArticle(ctx);
     const ai = new StubAIProvider(() => ({ title: 'A Generated Headline', wordCount: 850 }));

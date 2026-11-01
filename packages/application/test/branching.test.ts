@@ -58,6 +58,23 @@ describe('branch compare/merge', () => {
     ]);
   });
 
+  it('compares every entry, not the store’s first page', async () => {
+    // D1's list answers 100 rows when no limit is given; cap the in-memory store the same way.
+    const store = ctx.store as InMemoryContentStore;
+    const list = store.entries.list.bind(store.entries);
+    store.entries.list = (scope, query = {}) =>
+      list(scope, { ...query, limit: query.limit ?? 100 });
+    await createContentType(ctx, staging, ARTICLE);
+    for (let i = 0; i < 230; i++) {
+      await createEntry(ctx, staging, {
+        contentTypeApiId: 'article',
+        fields: { title: { 'en-US': `Post ${i}` } },
+      });
+    }
+    const diff = await compareEnvironments(ctx, 'shop', 'staging', 'main');
+    expect(diff.entries).toHaveLength(230);
+  });
+
   it('merges selected content types and entries source→target (additive)', async () => {
     await createContentType(ctx, staging, ARTICLE);
     const a = await createEntry(ctx, staging, {

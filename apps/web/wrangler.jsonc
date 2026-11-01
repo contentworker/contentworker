@@ -29,7 +29,12 @@
       "migrations_dir": "../../packages/db/migrations"
     }
   ],
-  "services": [{ "binding": "API", "service": "contentworker-api" }],
+  // API: the api Worker (REST, MCP, OAuth, media). DELIVERY: the delivery Worker, which answers
+  // bearer-key /delivery/* calls on this origin through its cache, exactly as on the cdn host.
+  "services": [
+    { "binding": "API", "service": "contentworker-api" },
+    { "binding": "DELIVERY", "service": "contentworker-delivery" }
+  ],
   // Per-address limits on the sign-in paths that need no session (passkey, SSO start) and on SCIM
   // (app/lib/rate-limit.ts).
   "ratelimits": [

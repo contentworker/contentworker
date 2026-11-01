@@ -183,12 +183,14 @@ test('the assistant opens beside the page from lg, as a sheet below, and never b
   await expect(panel.getByRole('heading', { name: 'Coworker', level: 2 })).toBeVisible();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   // Whether or not the agent answers here, the panel opens on its prompt or says it can't reach it.
+  // The first open starts the person's Durable Object cold, which under a parallel run can take
+  // longer than the default 5 s.
   await expect(
     panel
       .getByRole('textbox', { name: 'Message Coworker' })
       .or(panel.getByText(/Can’t reach Coworker/))
       .first(),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   const wide = (page.viewportSize()?.width ?? 0) >= 1024;
   if (wide) {
     // A column: the page narrows beside it, and nothing is covered.

@@ -44,3 +44,29 @@ export interface PurgeMessage {
 /** Cache tag for everything delivered from one space:environment (delivery responses carry it). */
 export const deliveryScopeTag = (spaceId: string, environmentId: string) =>
   `cw:${spaceId}:${environmentId}`;
+
+/**
+ * Another attempt at one webhook delivery, on the events queue with a delay (the backoff). Not a
+ * domain event: the engine's events consumer recognises it by `kind` and re-sends to that webhook
+ * alone (`redeliverWebhook`), so a down receiver neither loses the event nor re-drives the rest
+ * of its dispatch.
+ */
+export interface WebhookRetryMessage {
+  readonly kind: 'webhook.retry';
+  readonly webhookId: string;
+  readonly event: DomainEvent;
+  /** The attempt this message is (2 for the first retry). */
+  readonly attempt: number;
+}
+
+export function isWebhookRetryMessage(value: unknown): value is WebhookRetryMessage {
+  const m = value as Partial<WebhookRetryMessage> | null;
+  return (
+    !!m &&
+    m.kind === 'webhook.retry' &&
+    typeof m.webhookId === 'string' &&
+    typeof m.attempt === 'number' &&
+    typeof m.event === 'object' &&
+    m.event !== null
+  );
+}

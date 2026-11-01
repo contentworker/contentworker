@@ -165,15 +165,19 @@ Settings → Access → Space access.
 
 A space that has an active administrator keeps one. Refused with **409 `last_admin`**: revoking,
 demoting, disabling or removing the last one, and removing `space:admin` from a role while it is
-all that makes anyone an admin. Administrators are counted as active keys with no expiry whose
-effective scopes include `space:admin` (session keys and OAuth tokens are not seats), plus, when
-the api's OIDC is configured, enabled people whose role does. The bootstrap `ADMIN_TOKEN` never
-counts. Deployment admins of the web app administer every space regardless.
+all that makes anyone an admin. Administrators are counted as enabled people whose role includes
+`space:admin`, plus active keys with no expiry whose effective scopes do (OAuth tokens and other
+expiring tokens are not seats; a setup credential counts unless the space is SSO-only). People
+always count: the api's access policy is the constant `WEB_SIGN_IN`
+(`packages/http/src/api/access-policy.ts`), because every person signs in through the web app and
+there is no api-side sign-in to opt into. The bootstrap `ADMIN_TOKEN` never counts. Deployment
+admins of the web app administer every space regardless.
 
 ### SSO-only (api)
 
-`ssoOnly` stops the api-side setup credential (issuance `setup`) from authenticating. It needs the
-api's OIDC configured and an enabled admin person. Admin sign-in itself is the web Worker's.
+`ssoOnly` stops a setup credential (issuance `setup`) from authenticating in that space. Turning
+it on needs an enabled person with the Administrator role on the space's team. Admin sign-in itself
+is the web Worker's.
 
 ## First-run setup and recovery
 
@@ -194,15 +198,23 @@ an **Admin** account with a password (`apps/web/app/lib/setup.server.ts`):
 it on the deployment's GitHub environment and on the web Worker. Redeeming it creates one more
 admin account even though others exist.
 
-**On the api.** Independently, a persistent api with no administrator in any space (no active,
-non-expiring key with `space:admin`, and no admin person where the api's OIDC is configured)
-answers only `/health`, `/ready`, `/openapi.json`, `/docs`, `/setup`, `/auth/setup`,
-`/.well-known/*` and the bootstrap `ADMIN_TOKEN`; everything else is **503 `setup_required`**
-(`packages/http/src/api/setup.ts`, `setupGate`). Localhost is never held. The api's own
-`POST /auth/setup { code, email, name? }` redeems the api's `SETUP_TOKEN` for an administrator
-token (`cwsetup_cma_…`), but the fleet gives `SETUP_TOKEN` only to the web Worker. The gate does
-not count web app admins, so on a new deployment the api holds until a space has an administrator
-key, which `ADMIN_TOKEN` can mint (`POST /spaces`, then `POST /spaces/:space/api-keys`).
+The web app's `/setup` is the only first-run setup. The api has no setup gate and no setup routes
+of its own: it serves every route from the start, and a new deployment's first admin creates the
+first space and adds people from the admin, through the web principal.
+
+## Ending a person's access
+
+Disabling a person, resetting their password, resetting their two-factor sign-in and SCIM
+deactivating them each end what was made under the old trust, through `endAccess`
+(`apps/web/app/lib/access.server.ts`): their web sessions, their passkeys where the device may be in
+someone else's hands (password and two-factor resets), and their api tokens. For the tokens the web
+Worker calls the api's `DELETE /deployment/people/:subject/credentials`, signing the principal as
+itself acting for the deployment (a deployment admin, so a wildcard principal; anyone else gets
+403). The route runs `revokeEverythingFor` (`packages/application/src/oauth.ts`), which revokes, in
+every space, the OAuth access tokens and grants, personal access tokens and setup credentials whose
+subject is the person's web user id, and answers `{ revokedTokens, revokedGrants }`. A space's own
+API keys are not a person's and are untouched. If the api refuses, the action fails visibly and can
+be repeated; both halves are idempotent. The counts go into the admin audit entry's detail.
 
 ## Custom roles (granular RBAC)
 
@@ -278,7 +290,7 @@ last-used tracking apply to all three without a second code path. Only the prove
 
 | `issuance` | Prefix            | Minted by                                                    | Lifetime                              |
 | ---------- | ----------------- | ------------------------------------------------------------ | ------------------------------------- |
-| `setup`    | `cwsetup_<kind>_` | First-run setup / a recovery code, for the new administrator | Unbounded; stops while SSO-only is on |
+| `setup`    | `cwsetup_<kind>_` | The api's former setup route (removed; existing ones still authenticate) | Unbounded; stops while SSO-only is on |
 | `key`      | `cwk_<kind>_`     | An operator, via `POST …/api-keys`                           | Unbounded unless `expiresAt` is set   |
 | `oauth`    | `cwo_<kind>_`     | An OAuth grant a human approved                              | `OAUTH_ACCESS_TOKEN_TTL_SECONDS`      |
 | `pat`      | `cwpat_<kind>_`   | A human, via `POST …/personal-access-tokens`                 | Unbounded, or `expiresInDays`         |
@@ -337,8 +349,8 @@ interface Principal {
   kind: ApiKeyKind | 'admin' | 'user';
   scopes: readonly string[];
   contentGrants?: readonly ContentTypeGrant[]; // from the key's role; undefined = unrestricted
-  subject?: string; // OIDC subject/email when kind is `user`
-  sessionId?: string; // session revocation id for OIDC users
+  subject?: string; // the person's web user id when kind is `user`
+  sessionId?: string; // session id for revocation when kind is `user`
   clientId?: string; // the OAuth client acting for the subject
 }
 ```
@@ -352,9 +364,6 @@ interface Principal {
 - **`GET /auth/me`** returns the resolved principal summary.
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
-- **api-side OIDC** — `/auth/oidc/*` on the api (`packages/http/src/api/oidc`) mints
-  delegated CMA keys bound to roles; it exists for OAuth consent (below) and is configured with
-  the `OIDC_*` vars on the api Worker.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through
   `/oauth/*` instead of being handed a static key (see below).
 
@@ -364,11 +373,23 @@ Setting `OAUTH_ISSUER` makes the management API an OAuth 2.1 authorization serve
 client (Claude, ChatGPT, an IDE) can be installed as a connector. The endpoint list and env vars
 are in [Configuration](./configuration.md); the implementation is `packages/http/src/api/oauth`.
 
-Consent needs a human: `/oauth/authorize` and `/oauth/device` redirect to the api's own
-`/auth/oidc/login` when there is no api session. `scripts/fleet.ts` sets `OAUTH_ISSUER` on the api
-but renders the OIDC vars only for the web Worker, so on a fleet deployment the consent step has
-no sign-in to use until the api is given OIDC settings. Personal access tokens and API keys work
-regardless.
+OAuth is served on the admin's origin. `scripts/fleet.ts` renders `OAUTH_ISSUER=https://<domain>`
+(the admin host, not `api.<domain>`), and the web gateway forwards `/oauth/*`,
+`/.well-known/oauth-*` and `/mcp` to the api, so the protected resource is `https://<domain>/mcp`.
+`api.<domain>/mcp` still serves callers that present a bearer token.
+
+Consent is approved through web sign-in:
+
+- `/oauth/authorize` and `/oauth/device` verify the signed `x-cw-principal` the gateway adds for a
+  signed-in person. Signed out, they redirect to `/login?next=<the request>`, which brings the
+  person back to the same request after signing in.
+- The consent screen offers a space picker over the spaces the person can act in
+  (`spacesForWebUser`, `packages/application/src/web-principal.ts`); someone on no team gets 403.
+- The grant binds the person's team role in the chosen space (`memberAccess`): the token's
+  permissions resolve live from that role on every use, capped by the scopes consented to, and it
+  stops working when the person is disabled or leaves the team. Only team members can approve: a
+  deployment admin who isn't on a space's team can administer it but can't connect applications
+  to it (the picker lists only spaces where the person is a member).
 
 What the implementation guarantees:
 
@@ -383,7 +404,14 @@ What the implementation guarantees:
 - **Registration is open but bounded.** Dynamic client registration (RFC 7591) is unauthenticated
   by necessity, so a registering client can never ask for `space:admin` or `content:manage` — it
   must not be able to put "administer this space" in front of a human as one approve button. A
-  registered client holds no authority at all until a human approves a grant.
+  registered client holds no authority at all until a human approves a grant. A client that
+  registers without a `scope` (as MCP clients commonly do, choosing scopes when they authorize) may
+  later ask for anything under that ceiling (read, write, publish); the person approving still
+  sees every scope, and the token never exceeds their role.
+- **The consent form keeps its Origin.** The api sends `Referrer-Policy: same-origin`, not
+  `no-referrer`: under `no-referrer` a browser posts the form with `Origin: null`, which the web
+  gateway treats as cross-site and forwards without the session, so approval would fail.
+  `same-origin` still sends no Referer to another origin, so the redirect never leaks its code.
 - **A grant is intersected with the approver.** Granted scopes are `requested ∩ approver's own`. If
   the human holds none of them the approval is refused rather than issuing an empty token.
 - **Codes are single-use, and replay is treated as compromise.** Redeeming an already-consumed
@@ -391,8 +419,10 @@ What the implementation guarantees:
   descendant refresh token and every access token they minted. We cannot tell which party is the
   attacker, so both lose access.
 - **Refresh tokens rotate** on every use and may narrow scope but never widen it.
-- **The consent form is bound to the session** that rendered it, by an HMAC over the exact
-  parameters shown. Tampering with the scope field between render and submit is rejected.
+- **The consent form is bound to the person** who was shown it, by an HMAC over their subject
+  and the exact parameters shown, keyed from `PRINCIPAL_KEY` (with a domain label, so a consent
+  signature can never pass for a principal envelope). Tampering with the scope field between
+  render and submit is rejected.
 - **Resource indicators (RFC 8707)** are validated whenever present: a token minted for this
   deployment cannot be aimed at another.
 

@@ -76,6 +76,8 @@ export async function seedDev(
     cpa: config.cpaKey,
   };
   for (const [kind, token] of Object.entries(tokens) as [ApiKeyKind, string][]) {
+    // Unset (a deployment never gets dev keys): nothing to seed for this kind.
+    if (!token) continue;
     const hashedToken = hasher.hash(token);
     if (!(await ctx.store.auth.findByHash(hashedToken))) {
       await ctx.store.auth.createApiKey({

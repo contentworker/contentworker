@@ -1,11 +1,12 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { scalarBundleUrl } from '../../src/api/docs/openapi.js';
+import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
-const config: ApiConfig = {
+const config: ApiConfig = testConfig({
   role: 'all',
-  port: 0,
   cmaKey: 'cma',
   cdaKey: 'cda',
   cpaKey: 'cpa',
@@ -17,7 +18,7 @@ const config: ApiConfig = {
     locales: ['en-US'],
     scale: 1,
   },
-} as ApiConfig;
+}) as ApiConfig;
 
 function makeApp() {
   const { ctx, rag, blob, ai, bus } = wire(config);
@@ -49,6 +50,29 @@ describe('OpenAPI spec + docs UI', () => {
     // The spec never documents itself or the UI.
     expect(paths).not.toContain('/openapi.json');
     expect(paths).not.toContain('/docs');
+  });
+
+  it('keeps the Delivery routes free of the docs stack, so the delivery Worker stays small', async () => {
+    // The delivery Worker serves these routes but no API docs. Importing the docs (zod,
+    // hono-openapi, the response schemas) from the routes module would put ~40% back on its script;
+    // the descriptions live in docs/delivery-docs.ts, which only the api mounts.
+    const { readFile } = await import('node:fs/promises');
+    const source = await readFile(
+      decodeURIComponent(new URL('../../src/api/routes/delivery.ts', import.meta.url).pathname),
+      'utf8',
+    );
+    const imports = [...source.matchAll(/^import (?!type )[^;]*?from '([^']+)'/gms)].map(
+      (m) => m[1],
+    );
+    for (const banned of [
+      'zod',
+      'hono-openapi',
+      '../docs/openapi.js',
+      '../docs/schemas.js',
+      '../docs/delivery-docs.js',
+    ]) {
+      expect(imports, banned).not.toContain(banned);
+    }
   });
 
   it('describes response schemas, not just paths', async () => {
@@ -143,6 +167,18 @@ describe('OpenAPI spec + docs UI', () => {
     const res = await app.request('/docs');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
-    expect(await res.text()).toContain('openapi.json');
+    const html = await res.text();
+    expect(html).toContain('openapi.json');
+    // The explorer comes from this deployment's own vendored copy, never a third-party CDN.
+    expect(html).toContain('<script src="/vendor/scalar/standalone.js"');
+    expect(html).not.toContain('cdn.jsdelivr.net');
+    expect(html).toMatch(/"withDefaultFonts": ?false/);
+  });
+
+  it('loads the explorer from the admin origin when the api runs on its own host', () => {
+    expect(scalarBundleUrl({ oauthIssuer: 'https://acme.contentworker.app' })).toBe(
+      'https://acme.contentworker.app/vendor/scalar/standalone.js',
+    );
+    expect(scalarBundleUrl({})).toBe('/vendor/scalar/standalone.js');
   });
 });

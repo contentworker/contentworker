@@ -2,7 +2,10 @@
 
 > **Interactive docs:** every deployment serves its own OpenAPI 3.1 spec at
 > `GET /openapi.json` (a complete inventory of the mounted routes — the spec
-> reflects the deployment's `ROLE`) and a browsable Scalar UI at `GET /docs`.
+> reflects the deployment's `ROLE`) and a browsable Scalar UI at `GET /docs`. The page loads
+> Scalar from the deployment's own admin origin (`/vendor/scalar/standalone.js`, copied out of
+> node_modules by `apps/web/scripts/vendor-scalar.mjs` on every web `dev` and `build`), with
+> Scalar's default fonts and "Ask AI" off, so it makes no third-party requests.
 
 The API is a [Hono](https://hono.dev) app (`createApp` in `packages/http/src/api/app.ts`) mounted by
 two Workers. It exposes three role-based surfaces:
@@ -26,7 +29,7 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 | ---------------------------- | --------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
 | `api.<domain>`               | `apps/api`      | `management,preview,delivery`   | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads   |
 | `cdn.<domain>`               | `apps/delivery` | `delivery`                      | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request    |
-| `<domain>` (admin origin)    | `apps/web`      | —                               | Forwards `/spaces*`, `/preview/*`, `/delivery/*`, `/mcp`, `/oauth/*`, `/media/*`, `/docs*`, `/openapi.json` to the api |
+| `<domain>` (admin origin)    | `apps/web`      | —                               | Forwards `/spaces*`, `/preview/*`, `/delivery/*`, `/mcp`, `/oauth/*`, `/.well-known/oauth-*`, `/media/*`, `/docs*`, `/guides*`, `/openapi.json` to the api; OAuth's issuer on a fleet deployment |
 
 Public delivery clients should use `cdn.<domain>`; it answers only `GET`/`HEAD` (cached) and
 `POST` for GraphQL (uncached), and anonymous reads get 401 before the cache.
@@ -51,7 +54,9 @@ Every endpoint except `/health`, `/ready`, and `/graphiql/:space/:env` requires
 
 When `OAUTH_ISSUER` is configured the API also runs an OAuth 2.1 authorization server at
 `/oauth/*` plus `/.well-known/oauth-authorization-server`, so MCP clients authenticate through a
-consent flow rather than a static key. See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
+consent flow rather than a static key. A fleet deployment serves it on the admin host
+(`OAUTH_ISSUER=https://<domain>`, forwarded by the web gateway), and a person approves after
+signing in to the web app. See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 
 Each route then calls `requireScope(scope)`, which runs `authorize(principal, scope, :space)`.
 Delivery and Preview list/get endpoints additionally filter by granular `contentGrants` when the
@@ -129,6 +134,25 @@ and are republished through `publishEntry`. That is slower than a bulk insert, a
 validation, the reference graph, the delivery read model, the outbox and the search index all reach
 the state they would have reached organically. A snapshot is therefore not a back door: content the
 current model would reject fails the import loudly.
+
+What an import preserves:
+
+- **Ids.** Entries and asset records keep their ids (every table is keyed per environment), so
+  links between them resolve in the target unchanged, and comparing or merging the copy against
+  its source matches entries one to one. Taxonomy ids are remapped.
+- **Every entry.** The export reads every page of entries and assets, not the store's first page.
+- **Live and draft versions.** A `changed` entry (published, with edits since) carries its live
+  version's fields too: the import publishes those, then applies the draft, so the copy has the
+  same live content and the same pending edits. Snapshots from before this carry no live version,
+  and their changed entries land as drafts.
+- **Assets** as records, published as they were; their files stay where they are.
+
+**An import checks before it writes.** Every entry is validated against the snapshot's content
+model and the target space's locales, and every link in what will be published must point at an
+entry or asset the snapshot carries. Any problem refuses the import with a `422` that lists them
+(up to 50, each naming its entry) and writes nothing, so the target stays empty and a corrected
+retry works. `?dryRun=true` runs the same checks. A failure the checks can't foresee (a plugin
+hook refusing an entry, an infrastructure error) can still stop an import part-way.
 
 ### Importing from elsewhere
 
@@ -265,6 +289,12 @@ cannot cross a tenancy boundary.
 | GET    | `/spaces/:space/roles/:id`    | `space:admin` | Get role                                                |
 | PUT    | `/spaces/:space/roles/:id`    | `space:admin` | Update role                                             |
 | DELETE | `/spaces/:space/roles/:id`    | `space:admin` | Delete role (refused if keys bound)                     |
+
+`DELETE /deployment/people/:subject/credentials` revokes every OAuth grant and token, personal
+access token and setup credential a person (`subject`, their web user id) holds, in every space,
+and answers `{ revokedTokens, revokedGrants }`. Only a deployment administrator (a wildcard
+principal) may call it; the web app does when it ends a person's access (see
+[Auth & RBAC](./auth-and-rbac.md#ending-a-persons-access)).
 
 ### Space config & content types
 
@@ -537,9 +567,25 @@ that locale; with `?include=N` linked entries embed up to depth N (cycle-guarded
 
 `GET /delivery/:space/:env/live` opens a Server-Sent Events stream. The route authorizes like any
 Delivery route, then hands the connection to the `LiveHubDO` Durable Object for that
-space/environment. After the queue consumer dispatches a domain event, it publishes the event to
-that object, which fans it out to connected clients (filtered by `?types=`). Without a `LIVE_HUB`
-binding the stream yields only keepalives. Use for real-time cache invalidation or live previews on the read side.
+space/environment (named by `liveHubName`, each id percent-encoded so no id can reach another
+scope's hub), stamping the request with the authorized scope and the principal's content grants
+(`x-cw-live-access`; the object refuses a request without it, and sends a subscriber only events
+of its stamped scope). A stream ends after `LIVE_STREAM_MAX_MS` (10 minutes) so the client
+reconnects and is authorized again: a revoked key or narrowed role stops receiving within that
+bound. After the queue consumer
+dispatches a domain event, it publishes the event to that object, which sends each connected
+client only what `liveEventFor` (`packages/application/src/delivery.ts`) allows, filtered by
+`?types=`:
+
+- Published-content facts only (`LIVE_EVENT_TYPES`): entry, asset, bulk-publish, content-type,
+  release and alias events. Workflow runs and tasks, bulk-job control and reindex requests never
+  reach a subscriber.
+- A key with content grants sees entries only of the types it may read, with its denied fields
+  masked, content-type publishes for those types and alias changes, and no asset, bulk or release
+  facts: the same rules as its REST reads.
+
+Without a `LIVE_HUB` binding the in-process stream applies the same rules. Use it for real-time
+cache invalidation or live previews on the read side.
 
 ---
 

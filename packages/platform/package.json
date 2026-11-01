@@ -9,6 +9,7 @@
     "./config": "./src/config.ts",
     "./data-key": "./src/data-key.ts",
     "./do/cost-guard": "./src/do/cost-guard.ts",
+    "./do/live-access": "./src/do/live-access.ts",
     "./do/live-hub": "./src/do/live-hub.ts",
     "./do/rate-limiter": "./src/do/rate-limiter.ts",
     "./do/search-shard": "./src/do/search-shard.ts",

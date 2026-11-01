@@ -10,7 +10,7 @@
  *   node scripts/fleet.ts names <id>           resource names as shell variables (provisioning)
  *   node scripts/fleet.ts set-d1 <id> <uuid>   record the D1 database id in the registry
  *   node scripts/fleet.ts set-kv <id> <kv id>  record the shared KV namespace id
- *   node scripts/fleet.ts demos                the provisioned demo deployments (nightly reset)
+ *   node scripts/fleet.ts demos                the provisioned demo deployments
  *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and hosts put in,
  * written next to it so its relative paths still resolve. Deploy order (CI): engine first (it owns
@@ -146,7 +146,7 @@ export type Deployment = {
   hold: boolean;
   /** Deploys the public docs site with it (contentworker's own deployment only). */
   docs: boolean;
-  /** A public demo: seeded content, mocked models, reset nightly. Never a customer's. */
+  /** A public demo: seeded content and mocked models. Never a customer's. */
   demo: boolean;
   /** Whether the AI Gateway keeps request logs. Default false. */
   aiGatewayLogs: boolean;
@@ -343,7 +343,11 @@ function common(base: Config, d: Deployment, app: App): Config {
     );
   if (c.services)
     c.services = c.services.map((s: Config) =>
-      s.binding === 'API' ? { ...s, service: n.api } : s,
+      s.binding === 'API'
+        ? { ...s, service: n.api }
+        : s.binding === 'DELIVERY'
+          ? { ...s, service: n.delivery }
+          : s,
     );
   // Rate-limit namespaces are account-wide: slot 1 keeps the base ids (1001…), slot 2 2001…
   if (c.ratelimits)
@@ -357,10 +361,15 @@ function common(base: Config, d: Deployment, app: App): Config {
       c.vars.AI_GATEWAY_LOGS = String(d.aiGatewayLogs);
     }
     if ('MEDIA_BASE_URL' in c.vars) c.vars.MEDIA_BASE_URL = `https://${hosts(d).api}`;
-    if (d.jurisdiction) c.vars.DATA_JURISDICTION = d.jurisdiction;
-    if (d.demo && ('AI_MODE' in c.vars || app === 'engine')) {
+    if ('QUEUE_SUFFIX' in c.vars) c.vars.QUEUE_SUFFIX = d.suffix;
+    // Only Workers that bind Durable Objects need the jurisdiction (web binds none).
+    if (d.jurisdiction && app !== 'web') c.vars.DATA_JURISDICTION = d.jurisdiction;
+    // A demo mocks every model and has no vector index: those fakes are its point, so it allows
+    // them (a persistent deployment refuses fakes it doesn't allow).
+    if (d.demo && app !== 'web') {
       c.vars.AI_MODE = 'mock';
       c.vars.AI_GATEWAY_ID = '';
+      c.vars.ALLOW_FAKE_ADAPTERS = 'ai,vectors';
     }
   }
   return c;

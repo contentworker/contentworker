@@ -39,6 +39,10 @@ manages accounts, single sign-on, SCIM provisioning and the audit log, and admin
 - **SCIM provisioning.** Your identity provider can add, update and turn off people through the
   SCIM endpoint (`/scim/v2`) with a token made on this page. Turning someone off signs them out
   everywhere and disconnects their apps and the API tokens they made.
+- **Ending access.** Disabling someone, resetting their password, or resetting their two-factor
+  sign-in does the same: their sessions end, the MCP connections they approved and the personal
+  access tokens they made stop working in every space, and a password or two-factor reset also
+  removes their passkeys. Your space's own API keys are not a person's and keep working.
 
 ## Space access
 
@@ -66,7 +70,7 @@ anyone an administrator: the page says so where you'd make the change, and the A
 ## Setting up a new deployment
 
 A new deployment has no accounts, and until it does, every admin page except `/setup` sends a
-browser there, and API requests without a key get **503**. Whoever runs the deployment sends you
+browser there. Whoever runs the deployment sends you
 the link to `/setup` and a one-time **setup code**. Enter the code, your email, a name and a
 password: that creates your Admin account and signs you in on **People and sign-in**, where you add
 everyone else.

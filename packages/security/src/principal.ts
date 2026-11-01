@@ -16,6 +16,14 @@
 
 import { isRole, type Role } from './roles';
 
+/**
+ * The request target a principal is bound to: the method and the path (`DELETE /spaces/s1/x`), so
+ * a header captured for one request can't be replayed as another method on the same path. Signer
+ * and verifier both build it with this function.
+ */
+export const principalTarget = (method: string, path: string): string =>
+  `${method.toUpperCase()} ${path}`;
+
 /** The header the web gateway sets on requests it forwards to the api. */
 export const PRINCIPAL_HEADER = 'x-cw-principal';
 

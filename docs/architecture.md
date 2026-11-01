@@ -34,7 +34,7 @@ and failure blast radius. Routes are rendered per deployment by `scripts/fleet.t
 
 | Worker          | Route            | Role                                                                                         | Config highlights (`apps/*/wrangler.jsonc`)                                                             |
 | --------------- | ---------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `apps/web`      | `<domain>`       | Admin UI (React Router 8 SSR) and human auth: passwords, passkeys, TOTP, OIDC SSO, SCIM, `/setup` | `cpu_ms` 5000; binds `DB` (auth tables) and `API` (service binding to the api)                         |
+| `apps/web`      | `<domain>`       | Admin UI (React Router 8 SSR) and human auth: passwords, passkeys, TOTP, OIDC SSO, SCIM, `/setup` | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery) |
 | `apps/api`      | `api.<domain>`   | Management + Preview REST, MCP, OAuth 2.1, media (`/media/*`), live SSE                      | Smart Placement, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine DOs/Workflows by script |
 | `apps/delivery` | `cdn.<domain>`   | Public Content Delivery API (REST, GraphQL, search, live); drains the purge queue           | No Smart Placement, `cpu_ms` 2000, head sampling 0.05, Workers Caching on the `Delivery` entrypoint     |
 | `apps/engine`   | none             | Queue consumers, the every-minute cron, every Durable Object and Workflow class              | Smart Placement, `cpu_ms` 30000; owns DO migrations                                                     |
@@ -50,11 +50,13 @@ The gateway (`apps/web/app/lib/gateway.server.ts`) forwards these paths to the a
 `API` service binding, so the admin, REST, GraphQL, MCP, OAuth and the API docs share one
 origin: `/spaces`, `/spaces/*`, `/preview/*`, `/delivery/*`, `/oauth/*`,
 `/.well-known/oauth-*`, `/media/*`, `/mcp`, `/openapi.json`, `/docs`, `/docs/*`, `/guides*`,
-`/agents/*` (the assistant's WebSocket and its message history), `/health/api`. Credentials never
-cross the binding as the browser sent them:
+`/agents/*` (the assistant's WebSocket and its message history), `/health/api`, `/auth/me`.
+Credentials never cross the binding as the browser sent them:
 
 1. A request with `Authorization: Bearer …` (API key, personal access token, OAuth token) goes
-   through unchanged except that any caller-supplied `x-cw-principal` is removed.
+   through unchanged except that any caller-supplied `x-cw-principal` and cookies are removed. A
+   bearer `/delivery/*` call goes to the delivery Worker over the `DELIVERY` binding instead, so it
+   gets the same gateway, cache, ETag and purge as on the `cdn.` host.
 2. Otherwise a same-origin request with a live web session has its cookies removed and a signed
    `x-cw-principal` added (`@contentworker/security/principal`): HMAC-SHA256 under
    `PRINCIPAL_KEY`, payload `{ sub, email, name, role, sid?, iat, exp, path }` (`sid`: the
@@ -66,13 +68,14 @@ page redirects to `/setup` (see [Auth & RBAC](./auth-and-rbac.md#first-run-setup
 
 ### apps/api: the synchronous HTTP surface
 
-`apps/api/src/main.ts` is a thin entry over `@contentworker/http`. Per request it:
+`apps/api/src/index.ts` is a thin entry over `@contentworker/http`. Per request it:
 
 - opens a D1 session from the `x-cw-bookmark` header, or `first-primary` for a mutating method
   and `first-unconstrained` for a read, and returns the session's new bookmark on the response
   (see [Consistency](./consistency.md));
-- applies the setup gate (a persistent deployment with no administrator answers only setup,
-  health and docs, plus the bootstrap `ADMIN_TOKEN`);
+- pins every Durable Object namespace to `DATA_JURISDICTION` when one is set (`withJurisdiction`
+  in `packages/platform/src/env.ts`; the delivery and engine entry points and `wireEdge` do the
+  same);
 - mounts media routes, the DO-backed live route (when `LIVE_HUB` is bound), MCP (only with an
   explicit `MCP_TOKEN` on a persistent deployment) and the REST app from `createApp`;
 - after a mutating request, drains the outbox onto `contentworker-events` in `waitUntil` (the
@@ -297,7 +300,8 @@ selects a dev fallback (in-memory store, fake blob, stub AI, in-memory vectors),
 ### Other packages
 
 - `@contentworker/http`: the Hono surface as a library (REST routes, auth middleware, OpenAPI
-  3.1 + Scalar, OAuth, OIDC, MCP server and skills, media, live).
+  3.1 + Scalar, the OAuth 2.1 authorization server, MCP server and skills, media, live). It has no
+  setup routes and no sign-in of its own: people reach it through the web principal.
 - `@contentworker/security`: the signed principal (`principal.ts`) and deployment roles.
 - `@contentworker/agent-runtime`: engine-agnostic agent workflow logic and the in-process
   executor (the engine runs the same workflows durably on Workflows).

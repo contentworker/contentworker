@@ -43,8 +43,10 @@ describe('principalForWebUser', () => {
     const ctx = await setup();
     expect((await principalForWebUser(ctx, 's1', admin)).scopes).toContain(SCOPES.spaceAdmin);
     expect((await principalForWebUser(ctx, undefined, admin)).spaceId).toBe('*');
-    await expect(principalForWebUser(ctx, undefined, member)).rejects.toBeInstanceOf(
-      ForbiddenError,
-    );
+    // A member outside any space holds nothing: no space, no scopes (only listing their own).
+    expect(await principalForWebUser(ctx, undefined, member)).toMatchObject({
+      spaceId: '',
+      scopes: [],
+    });
   });
 });

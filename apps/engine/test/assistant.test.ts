@@ -25,6 +25,7 @@ import type { EdgeEnv } from '@contentworker/platform/env';
 import { wireEdge } from '@contentworker/platform/wire';
 import {
   PRINCIPAL_HEADER,
+  principalTarget,
   signPrincipal,
   type WebPrincipal,
 } from '@contentworker/security/principal';
@@ -112,8 +113,9 @@ const disable = (p: WebPrincipal) =>
 const signOut = (p: WebPrincipal) =>
   env.DB.prepare('delete from sessions where token_hash = ?').bind(p.sid).run();
 
+/** Signed as the web gateway signs: for the method and path (sockets and history are GETs). */
 const signed = (p: WebPrincipal, path: string, key = env.PRINCIPAL_KEY) =>
-  signPrincipal(key, p, path);
+  signPrincipal(key, p, principalTarget('GET', path));
 
 type RpcAnswer = { success: boolean; error?: string; result?: unknown };
 

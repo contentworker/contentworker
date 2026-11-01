@@ -96,4 +96,21 @@ describe('page CSP', () => {
     expect(closed.headers.get('x-frame-options')).toBe('DENY');
     expect(withSecurityHeaders(new Response(''), url).headers.get('x-frame-options')).toBe('DENY');
   });
+
+  it('keeps its own HSTS over a forwarded Worker’s weaker one, and sends none over http', () => {
+    const forwarded = new Response('', {
+      headers: { 'strict-transport-security': 'max-age=31536000' },
+    });
+    expect(
+      withSecurityHeaders(
+        forwarded,
+        new URL('https://app.example/delivery/s/e/entries'),
+      ).headers.get('strict-transport-security'),
+    ).toBe('max-age=31536000; includeSubDomains');
+    expect(
+      withSecurityHeaders(new Response(''), new URL('http://localhost/')).headers.get(
+        'strict-transport-security',
+      ),
+    ).toBeNull();
+  });
 });

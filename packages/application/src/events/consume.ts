@@ -25,7 +25,7 @@ export interface ConsumeDeps extends DispatchDeps {
  * on-publish agents. This is the single consumer body shared by every queue
  * host (the Worker's Cloudflare queue handler; tests call it directly). A throw propagates to the
  * queue for retry/dead-letter. Delivery is at-least-once — relayOutbox claims
- * rows (SKIP LOCKED) so duplicates are rare, but consumers must tolerate
+ * rows (a lease claim) so duplicates are rare, but consumers must tolerate
  * redelivery: webhook receivers dedupe on the event id, and agent runs are
  * recorded proposals, never direct state changes.
  */

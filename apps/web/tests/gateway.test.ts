@@ -61,6 +61,8 @@ describe('isApiPath', () => {
       '/health/api',
       '/agents/assistant-agent/usr_ada',
       '/agents/assistant-agent/usr_ada/get-messages',
+      // Who the token or session is (the Management SDK's `me()`).
+      '/auth/me',
     ])
       expect(isApiPath(p), p).toBe(true);
   });
@@ -86,10 +88,11 @@ describe('isApiPath', () => {
 });
 
 describe('forwardToApi', () => {
-  it('passes a bearer request through untouched, but never with a caller’s principal', async () => {
+  it('passes a bearer request through, but never with a caller’s principal or cookies', async () => {
     const request = new Request(`${ORIGIN}/spaces/s1/entries`, {
       headers: {
         authorization: 'Bearer cw_pat_123',
+        cookie: '__Host-cw_session=secret',
         [PRINCIPAL_HEADER]: 'forged.value',
         [BOOKMARK_HEADER]: 'bm-1',
       },
@@ -98,6 +101,8 @@ describe('forwardToApi', () => {
     expect(sent?.headers.get('authorization')).toBe('Bearer cw_pat_123');
     expect(sent?.headers.get(PRINCIPAL_HEADER)).toBeNull();
     expect(sent?.headers.get(BOOKMARK_HEADER)).toBe('bm-1');
+    // Cookies never cross the binding, even alongside a bearer token.
+    expect(sent?.headers.get('cookie')).toBeNull();
     // The session is never looked at for a bearer call.
     expect(principal).not.toHaveBeenCalled();
   });
@@ -120,13 +125,15 @@ describe('forwardToApi', () => {
     expect(await sent?.text()).toBe('{"a":1}');
     expect(new URL(sent!.url).search).toBe('?limit=5');
     const header = sent?.headers.get(PRINCIPAL_HEADER);
-    expect(await verifyPrincipal(KEY, header, '/spaces/s1/entries')).toEqual({
+    expect(await verifyPrincipal(KEY, header, 'POST /spaces/s1/entries')).toEqual({
       sub: 'usr_ada',
       email: 'ada@example.com',
       name: 'Ada',
       role: 'admin',
     });
-    expect(await verifyPrincipal(KEY, header, '/spaces/s2/entries')).toBeNull();
+    expect(await verifyPrincipal(KEY, header, 'POST /spaces/s2/entries')).toBeNull();
+    // Bound to the method too: the same header can't be replayed as a DELETE.
+    expect(await verifyPrincipal(KEY, header, 'DELETE /spaces/s1/entries')).toBeNull();
     // The api's bookmark comes back to the browser untouched.
     expect(res.headers.get(BOOKMARK_HEADER)).toBe('bm-2');
   });
@@ -138,7 +145,7 @@ describe('forwardToApi', () => {
     const { sent } = await forward(request, ada);
     const header = sent?.headers.get(PRINCIPAL_HEADER);
     expect(header).not.toBe('forged.value');
-    expect(await verifyPrincipal(KEY, header, '/mcp')).not.toBeNull();
+    expect(await verifyPrincipal(KEY, header, 'GET /mcp')).not.toBeNull();
   });
 
   it('forwards without credentials when nobody is signed in', async () => {
@@ -185,7 +192,7 @@ describe('forwardToApi', () => {
     expect(sent?.headers.get('upgrade')).toBe('websocket');
     expect(sent?.headers.get('sec-websocket-key')).toBe('dGhlIHNhbXBsZSBub25jZQ==');
     expect(sent?.headers.get('cookie')).toBeNull();
-    expect(await verifyPrincipal(KEY, sent?.headers.get(PRINCIPAL_HEADER), path)).toEqual({
+    expect(await verifyPrincipal(KEY, sent?.headers.get(PRINCIPAL_HEADER), `GET ${path}`)).toEqual({
       sub: 'usr_ada',
       email: 'ada@example.com',
       name: 'Ada',
@@ -194,8 +201,9 @@ describe('forwardToApi', () => {
     });
     // Signed for that person's socket only: not for another's, nor for its message history.
     const header = sent?.headers.get(PRINCIPAL_HEADER);
-    expect(await verifyPrincipal(KEY, header, '/agents/assistant-agent/usr_bob')).toBeNull();
-    expect(await verifyPrincipal(KEY, header, `${path}/get-messages`)).toBeNull();
+    expect(await verifyPrincipal(KEY, header, 'GET /agents/assistant-agent/usr_bob')).toBeNull();
+    expect(await verifyPrincipal(KEY, header, `GET ${path}/get-messages`)).toBeNull();
+    expect(await verifyPrincipal(KEY, header, `POST ${path}`)).toBeNull();
   });
 
   it('never lends the session to a socket opened from another site', async () => {
@@ -219,12 +227,74 @@ describe('forwardToApi', () => {
       name: 'local',
       role: 'admin',
     });
-    expect(await verifyPrincipal(KEY, sent?.headers.get(PRINCIPAL_HEADER), '/spaces')).toEqual({
+    expect(await verifyPrincipal(KEY, sent?.headers.get(PRINCIPAL_HEADER), 'GET /spaces')).toEqual({
       sub: 'local',
       email: '',
       name: 'local',
       role: 'admin',
     });
+  });
+});
+
+describe('forwardToApi with the delivery Worker bound', () => {
+  /** Forwards `request` with both bindings, and reports which one answered. */
+  async function route(request: Request, who: Caller = ada) {
+    const hit = (name: string, seen: Request[]) => ({
+      fetch: vi.fn(async (r: Request) => {
+        seen.push(r);
+        return new Response(name);
+      }),
+    });
+    const toApi: Request[] = [];
+    const toDelivery: Request[] = [];
+    const res = await forwardToApi(request, {
+      api: hit('api', toApi) as unknown as Fetcher,
+      delivery: hit('delivery', toDelivery) as unknown as Fetcher,
+      principal: vi.fn(async () => who),
+      sign: setPrincipalHeader,
+    });
+    return { answeredBy: await res.text(), toApi, toDelivery };
+  }
+
+  it('sends a bearer-key delivery call through the delivery Worker, stripped of ambient credentials', async () => {
+    const { answeredBy, toDelivery } = await route(
+      new Request(`${ORIGIN}/delivery/s1/main/entries`, {
+        headers: {
+          authorization: 'Bearer cda',
+          cookie: '__Host-cw_session=secret',
+          [PRINCIPAL_HEADER]: 'forged.value',
+        },
+      }),
+    );
+    expect(answeredBy).toBe('delivery');
+    expect(toDelivery[0]?.headers.get('authorization')).toBe('Bearer cda');
+    expect(toDelivery[0]?.headers.get('cookie')).toBeNull();
+    expect(toDelivery[0]?.headers.get(PRINCIPAL_HEADER)).toBeNull();
+  });
+
+  it('keeps a signed-in session delivery call on the api, which trusts the signed principal', async () => {
+    const { answeredBy, toApi } = await route(new Request(`${ORIGIN}/delivery/s1/main/live`));
+    expect(answeredBy).toBe('api');
+    expect(toApi[0]?.headers.get(PRINCIPAL_HEADER)).not.toBeNull();
+  });
+
+  it('keeps every other bearer call on the api, look-alike paths included', async () => {
+    for (const path of ['/spaces/s1/environments/main/entries', '/deliveryx/s1', '/delivery']) {
+      const { answeredBy } = await route(
+        new Request(`${ORIGIN}${path}`, { headers: { authorization: 'Bearer cma' } }),
+      );
+      expect(answeredBy, path).toBe('api');
+    }
+  });
+
+  it('falls back to the api when the delivery Worker is not bound', async () => {
+    const { res, api } = await forward(
+      new Request(`${ORIGIN}/delivery/s1/main/entries`, {
+        headers: { authorization: 'Bearer cda' },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(api.fetch).toHaveBeenCalledOnce();
   });
 });
 

@@ -26,7 +26,7 @@ review changes; you never edit files. Bash is for `git diff`, `git show` and `gr
    - `packages/db` implements the store port over D1; `packages/adapters` implements the other
      ports, one subpath each, and imports no app.
    - Binding adapters to ports happens only in `packages/platform/src/wire.ts` (`wireEdge`) and the
-     app entries (`apps/*/src/index.ts`, `apps/api/src/main.ts`, `apps/web/workers/app.ts`). Apps
+     app entries (`apps/*/src/index.ts`, `apps/web/workers/app.ts`). Apps
      never import another app; shared code lives in packages.
    - `packages/http` is the Hono surface: it gets its ports from `wireEdge` / its deps object, and
      may use adapter helpers (media signing, image transforms) but never constructs a store or

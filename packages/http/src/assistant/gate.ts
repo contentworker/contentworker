@@ -9,6 +9,7 @@ import { ASSISTANT_AGENT } from '@contentworker/domain';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import {
   PRINCIPAL_HEADER,
+  principalTarget,
   verifyPrincipal,
   type WebPrincipal,
 } from '@contentworker/security/principal';
@@ -56,7 +57,11 @@ export async function assistantCaller(
   const name = assistantName(pathname);
   if (!name || namesSubAgent(pathname)) return refuse(404, 'Not found');
   if (!keys.length) console.error('PRINCIPAL_KEY is not set: refusing every assistant request');
-  const claims = await verifyPrincipal(keys, request.headers.get(PRINCIPAL_HEADER), pathname);
+  const claims = await verifyPrincipal(
+    keys,
+    request.headers.get(PRINCIPAL_HEADER),
+    principalTarget(request.method, pathname),
+  );
   if (!claims) return refuse(401, 'Sign in to use Coworker.');
   if (claims.sub !== name) return refuse(403, 'Not your Coworker.');
   return claims;

@@ -3,7 +3,8 @@ title: MCP server
 description: Connect Claude, ChatGPT, an IDE or your own agent to a workspace over the Model Context Protocol, with the same permissions as a person.
 ---
 
-Every workspace serves an MCP server at `/mcp` on its `api.` address (streamable HTTP). Its tools are the same
+Every workspace serves an MCP server at `/mcp` (streamable HTTP), on the admin's own address for
+clients that connect with OAuth and on its `api.` address for callers with a token. Its tools are the same
 operations the REST API and the admin use, behind the same permission checks, so an agent can do
 exactly what its token allows and nothing a person with that token couldn't.
 
@@ -13,17 +14,23 @@ MCP clients that support remote connectors (Claude, ChatGPT, MCP-capable IDEs) c
 the URL:
 
 ```
-https://api.your-workspace.contentworker.app/mcp
+https://your-workspace.contentworker.app/mcp
 ```
 
-The client discovers where to sign in, registers itself, and opens an approval screen. You sign
-in, see which scopes the client asks for, and approve. The token it receives is capped twice: at
+The client discovers where to sign in, registers itself, and opens an approval screen on the
+admin. If you aren't signed in, the admin's sign-in page comes first and brings you back. You see
+which scopes the client asks for, pick the space it may work in (from the spaces you're on), and
+approve. The connection acts with your role in that space. The token it receives is capped twice: at
 what it asked for, and at what you hold. A client can never ask for `space:admin` or
 `content:manage` this way. Tokens are short-lived and refresh on use; revoke a connection at any
 time under **Settings → Access → Connected apps**.
 
 Command-line clients that can't open a browser use the device flow: they print a code to enter on
-an approval page.
+an approval page on the admin, where you sign in and approve the same way.
+
+When an admin turns your account off, resets your password or two-factor sign-in, or your identity
+provider deactivates you, every connection you approved and every personal access token you made
+stops working.
 
 ## Connect with a token
 

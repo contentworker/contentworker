@@ -199,6 +199,51 @@ export function authorizeContent(
   }
 }
 
+/** The fields `principal` may not read on `contentTypeApiId` (empty when unrestricted). */
+export function deniedFieldsFor(principal: Principal, contentTypeApiId: string): readonly string[] {
+  if (!principal.contentGrants) return [];
+  return grantFor(principal, contentTypeApiId)?.deniedFields ?? [];
+}
+
+/** Every field name any of `principal`'s grants denies (for queries that name no type). */
+function anyDeniedFields(principal: Principal): ReadonlySet<string> {
+  return new Set((principal.contentGrants ?? []).flatMap((g) => g.deniedFields ?? []));
+}
+
+/**
+ * Refuses a query that would reveal fields the principal may not read. Masking only hides values in
+ * the response; a filter (`fields.salary[gt]=100000`), an ordering, a projection or a full-text
+ * search evaluated over a hidden field still answers questions about it. So a query naming a
+ * denied field is refused, and so is full-text search over a type with denied fields (the match
+ * runs over every field and can't be masked per caller). `sys.*` fields are never field-restricted.
+ * No-op for principals without field rules.
+ */
+export function assertQueryRespectsFieldRules(
+  principal: Principal,
+  query: {
+    readonly contentTypeApiId?: string;
+    readonly filters?: readonly { readonly field: string }[];
+    readonly order?: readonly { readonly field: string }[];
+    readonly select?: readonly string[];
+    readonly search?: string;
+  },
+): void {
+  if (!principal.contentGrants) return;
+  const type = query.contentTypeApiId;
+  const denied = type ? new Set(deniedFieldsFor(principal, type)) : anyDeniedFields(principal);
+  if (denied.size === 0) return;
+  const named = [
+    ...(query.filters ?? []).map((f) => f.field),
+    ...(query.order ?? []).map((o) => o.field),
+    ...(query.select ?? []),
+  ]
+    .filter((f) => !f.startsWith('sys.'))
+    .map((f) => f.replace(/^fields\./, '').split('.')[0] as string);
+  const hit = named.find((f) => denied.has(f));
+  if (hit) throw new ForbiddenError(`content:read:${type ?? '*'}.${hit}`);
+  if (query.search) throw new ForbiddenError(`content:search:${type ?? '*'}`);
+}
+
 /**
  * Strips the fields this principal may not read from an entry's field map.
  * Returns the input unchanged for unrestricted principals.

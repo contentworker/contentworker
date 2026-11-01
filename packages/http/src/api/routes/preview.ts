@@ -9,6 +9,7 @@ import {
   suggestEntries,
 } from '@contentworker/application';
 import {
+  assertQueryRespectsFieldRules,
   authorize,
   authorizeContent,
   canAccessContentType,
@@ -122,6 +123,7 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.previewRead),
     async (c) => {
       const query = parseEntryQuery(new URL(c.req.url).searchParams);
+      assertQueryRespectsFieldRules(c.get('principal'), query);
       const items = await listPreviewEntries(ctx, scopeOf(c), query, {
         locale: c.req.query('locale'),
       });

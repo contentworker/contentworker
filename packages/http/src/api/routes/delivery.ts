@@ -5,18 +5,27 @@ import {
   listContentTypes,
   listPublishedAssets,
   listPublishedEntries,
+  liveEventFor,
   maskDeliveredFields,
   parseImageTransform,
   semanticSearch,
   transformPublishedAssetUrl,
+  visibleSearchHits,
 } from '@contentworker/application';
-import { authorizeContent, canAccessContentType, SCOPES, type Scope } from '@contentworker/domain';
+import {
+  assertQueryRespectsFieldRules,
+  authorizeContent,
+  canAccessContentType,
+  SCOPES,
+  type Scope,
+} from '@contentworker/domain';
 import {
   buildDeliverySchema,
   type DeliveryContext,
   type DeliveryResolvers,
   type ResolvedEntry,
 } from '@contentworker/graphql-gen';
+import { LIVE_STREAM_MAX_MS } from '@contentworker/platform/do/live-access';
 import {
   type ASTNode,
   execute,
@@ -30,7 +39,7 @@ import {
   type ValidationRule,
   validate,
 } from 'graphql';
-import { type Context, Hono } from 'hono';
+import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import {
   type AuthDeps,
@@ -39,8 +48,8 @@ import {
   principalMiddleware,
   requireScope,
 } from '../auth.js';
-import { doc } from '../docs/openapi.js';
-import { asset, publishedEntry, publishedEntryList, searchHits } from '../docs/schemas.js';
+import type { DeliveryDocKey } from '../docs/delivery-docs.js';
+import { onError } from '../http.js';
 import { clampCount, entryQueryFrom, MAX_PAGE_LIMIT, parseEntryQuery } from '../query.js';
 
 /** Max reference-resolution depth a delivery client may request. */
@@ -98,7 +107,26 @@ const scopeOf = (c: Context<AuthVars>): Scope => ({
 const BASE = '/delivery/:space/:env';
 
 /** Delivery API (CDA): read-only published content. Requires delivery:read. */
-export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
+/**
+ * The delivery routes as a standalone app, for a Worker that serves them on their own (the
+ * delivery Worker's cached entrypoint and gateway). It carries the api's error mapping, so a
+ * domain error answers as it does on the api (an unpublished or unknown entry is a 404), never as
+ * Hono's bare 500.
+ */
+export function deliveryApp(routes: Hono<AuthVars>): Hono {
+  const app = new Hono();
+  app.onError(onError);
+  app.route('/', routes);
+  return app;
+}
+
+/** Documents a route (the api's OpenAPI); the delivery Worker passes nothing and bundles none. */
+type Describe = (key: DeliveryDocKey) => MiddlewareHandler;
+const undocumented: Describe = () => async (_c, next) => {
+  await next();
+};
+
+export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented): Hono<AuthVars> {
   const { ctx, rag, bus } = deps;
   const app = new Hono<AuthVars>();
   app.use(`${BASE}/*`, principalMiddleware(deps));
@@ -106,61 +134,30 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   // Hybrid (semantic + full-text, RRF-fused) by default; ?mode=semantic or
   // ?mode=lexical selects a single leg.
-  app.get(
-    `${BASE}/search`,
-    doc('Delivery', 'Search published content', {
-      ok: searchHits,
-      description:
-        'Hybrid search by default: Vectorize ANN + the FTS5 SearchShard full-text index, fused with Reciprocal Rank Fusion.',
-      query: {
-        q: 'Search query',
-        mode: 'hybrid (default) | semantic | lexical',
-        top_k: 'Max hits (default 10)',
-      },
-    }),
-    requireScope(SCOPES.searchRead),
-    async (c) => {
-      const q = c.req.query('q') ?? '';
-      const mode = c.req.query('mode') ?? 'hybrid';
-      const opts = { topK: clampCount(c.req.query('top_k'), MAX_PAGE_LIMIT, { min: 1 }) };
-      const scope = scopeOf(c);
-      let hits =
-        mode === 'semantic'
-          ? await semanticSearch(rag, scope, q, opts)
-          : await hybridSearch(rag, ctx, scope, q, {
-              ...opts,
-              lexicalOnly: mode === 'lexical',
-            });
-      const principal = c.get('principal');
-      if (principal.contentGrants) {
-        const visible = [];
-        for (const hit of hits) {
-          try {
-            const entry = await getPublishedEntry(ctx, scope, hit.entryId);
-            if (canAccessContentType(principal, 'read', entry.contentType)) visible.push(hit);
-          } catch {
-            /* skip inaccessible */
-          }
-        }
-        hits = visible;
-      }
-      return c.json({ hits });
-    },
-  );
+  app.get(`${BASE}/search`, describe('search'), requireScope(SCOPES.searchRead), async (c) => {
+    const q = c.req.query('q') ?? '';
+    const mode = c.req.query('mode') ?? 'hybrid';
+    const opts = { topK: clampCount(c.req.query('top_k'), MAX_PAGE_LIMIT, { min: 1 }) };
+    const scope = scopeOf(c);
+    let hits =
+      mode === 'semantic'
+        ? await semanticSearch(rag, scope, q, opts)
+        : await hybridSearch(rag, ctx, scope, q, {
+            ...opts,
+            lexicalOnly: mode === 'lexical',
+          });
+    hits = await visibleSearchHits(ctx, scope, c.get('principal'), hits);
+    return c.json({ hits });
+  });
 
   app.get(
     `${BASE}/entries`,
-    doc('Delivery', 'List published entries', {
-      ok: publishedEntryList,
-      query: {
-        content_type: 'Filter by content type apiId',
-        locale: 'Resolve fields for one locale',
-        include: 'Reference resolution depth',
-      },
-    }),
+    describe('listEntries'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       const query = parseEntryQuery(new URL(c.req.url).searchParams);
+      // Filters, ordering and search over a field the caller can't read would reveal it.
+      assertQueryRespectsFieldRules(c.get('principal'), query);
       const items = await listPublishedEntries(ctx, scopeOf(c), query, {
         locale: c.req.query('locale'),
         include: clampCount(c.req.query('include'), MAX_INCLUDE_DEPTH, { min: 0 }),
@@ -176,10 +173,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   app.get(
     `${BASE}/entries/:id`,
-    doc('Delivery', 'Get a published entry', {
-      ok: publishedEntry,
-      query: { locale: 'Resolve fields for one locale', include: 'Reference resolution depth' },
-    }),
+    describe('getEntry'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       const entry = await getPublishedEntry(ctx, scopeOf(c), c.req.param('id'), {
@@ -197,7 +191,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   app.get(
     `${BASE}/assets`,
-    doc('Delivery', 'List published assets', { query: { limit: 'Max items' } }),
+    describe('listAssets'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       if (c.get('principal').contentGrants) {
@@ -212,7 +206,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   app.get(
     `${BASE}/assets/:id`,
-    doc('Delivery', 'Get a published asset', { ok: asset }),
+    describe('getAsset'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       if (c.get('principal').contentGrants) {
@@ -224,52 +218,44 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   // Live Content API: an SSE stream of published-content changes for this scope.
   // Optional ?types=entry.published,entry.unpublished filters the event types.
-  app.get(
-    `${BASE}/live`,
-    doc('Delivery', 'Live Content API (SSE)', {
-      okDescription: 'text/event-stream of published-content domain events for this scope',
-      query: { types: 'Comma-separated event-type filter, e.g. entry.published' },
-    }),
-    requireScope(SCOPES.deliveryRead),
-    (c) => {
-      const scope = scopeOf(c);
-      const types = (c.req.query('types') ?? '')
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
-      return streamSSE(c, async (stream) => {
-        const sub = bus.subscribe('*', async (event) => {
-          if (event.scope.spaceId !== scope.spaceId) return;
-          if (event.scope.environmentId !== scope.environmentId) return;
-          if (types.length > 0 && !types.includes(event.type)) return;
-          await stream.writeSSE({ event: event.type, id: event.id, data: JSON.stringify(event) });
+  app.get(`${BASE}/live`, describe('live'), requireScope(SCOPES.deliveryRead), (c) => {
+    const scope = scopeOf(c);
+    const types = (c.req.query('types') ?? '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const principal = c.get('principal');
+    return streamSSE(c, async (stream) => {
+      const sub = bus.subscribe('*', async (event) => {
+        if (event.scope.spaceId !== scope.spaceId) return;
+        if (event.scope.environmentId !== scope.environmentId) return;
+        if (types.length > 0 && !types.includes(event.type)) return;
+        // Only published-content facts, and only what this principal may read (as LiveHubDO).
+        const visible = liveEventFor(principal, event);
+        if (!visible) return;
+        await stream.writeSSE({
+          event: visible.type,
+          id: visible.id,
+          data: JSON.stringify(visible),
         });
-        stream.onAbort(() => void sub.close());
-        // Heartbeat so proxies keep the connection open until the client leaves.
-        while (!stream.aborted) {
-          await stream.writeSSE({ event: 'ping', data: '' });
-          await stream.sleep(15000);
-        }
-        await sub.close();
       });
-    },
-  );
+      stream.onAbort(() => void sub.close());
+      // Heartbeat so proxies keep the connection open, until the client leaves or the stream's
+      // lifetime ends (the client reconnects and is authorized again, as with LiveHubDO).
+      const until = Date.now() + LIVE_STREAM_MAX_MS;
+      while (!stream.aborted && Date.now() < until) {
+        await stream.writeSSE({ event: 'ping', data: '' });
+        await stream.sleep(15000);
+      }
+      await sub.close();
+    });
+  });
 
   // Resolves a transformed-image URL for a published asset (resize/crop/format/
   // quality, focal-point-aware) and redirects to it, so it can back an <img src>.
   app.get(
     `${BASE}/assets/:id/transform`,
-    doc('Delivery', 'Resolve a transformed image URL', {
-      status: 302,
-      okDescription: 'Redirects to the CDN-transformable image URL',
-      query: {
-        w: 'Width',
-        h: 'Height',
-        fit: 'Fit mode',
-        fm: 'Output format: auto (AVIF/WebP negotiated from Accept) | jpg | png | webp | avif',
-        q: 'Quality',
-      },
-    }),
+    describe('transform'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
       const { url } = await transformPublishedAssetUrl(
@@ -322,11 +308,24 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
     scope: Scope,
     principal: AuthVars['Variables']['principal'],
   ): DeliveryResolvers {
+    // GraphQL types each field as one value (a String, not a map of locales), so a query that
+    // names no locale reads the space's default one; REST, which can return the map, doesn't.
+    let defaultLocale: Promise<string | undefined> | undefined;
+    const localeOr = async (locale: string | undefined) => {
+      if (locale) return locale;
+      if (!defaultLocale) {
+        defaultLocale = ctx.store.spaces.getConfig(scope).then((config) => config?.defaultLocale);
+      }
+      return defaultLocale;
+    };
     return {
       entry: async (contentType, id, locale) => {
         if (!canAccessContentType(principal, 'read', contentType)) return null;
         try {
-          const e = await getPublishedEntry(ctx, scope, id, { locale, include: 1 });
+          const e = await getPublishedEntry(ctx, scope, id, {
+            locale: await localeOr(locale),
+            include: 1,
+          });
           if (e.contentType !== contentType) return null;
           // Same field-level masking as the REST single-entry path.
           return {
@@ -337,8 +336,8 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
           return null;
         }
       },
-      collection: (contentType, args) => {
-        if (!canAccessContentType(principal, 'read', contentType)) return Promise.resolve([]);
+      collection: async (contentType, args) => {
+        if (!canAccessContentType(principal, 'read', contentType)) return [];
         const raw: [string, string][] = [];
         for (const [k, v] of Object.entries(args.where ?? {})) {
           raw.push([k, Array.isArray(v) ? v.join(',') : String(v)]);
@@ -346,17 +345,17 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
         if (args.order?.length) raw.push(['order', args.order.join(',')]);
         if (args.search) raw.push(['query', args.search]);
         const parsed = entryQueryFrom(raw);
-        return listPublishedEntries(
+        assertQueryRespectsFieldRules(principal, { ...parsed, contentTypeApiId: contentType });
+        const items = await listPublishedEntries(
           ctx,
           scope,
           { ...parsed, contentTypeApiId: contentType, limit: args.limit, skip: args.skip },
-          { locale: args.locale, include: 1 },
-        ).then((items) =>
-          items.map((e) => ({
-            ...e,
-            fields: maskDeliveredFields(principal, e.contentType, e.fields),
-          })),
-        ) as Promise<ResolvedEntry[]>;
+          { locale: await localeOr(args.locale), include: 1 },
+        );
+        return items.map((e) => ({
+          ...e,
+          fields: maskDeliveredFields(principal, e.contentType, e.fields),
+        })) as ResolvedEntry[];
       },
       asset: async (_id, _locale) => {
         if (principal.contentGrants) return null;
@@ -369,17 +368,7 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
       },
       search: async (query, topK) => {
         const raw = await hybridSearch(rag, ctx, scope, query, { topK });
-        if (!principal.contentGrants) return raw;
-        const visible = [];
-        for (const hit of raw) {
-          try {
-            const entry = await getPublishedEntry(ctx, scope, hit.entryId);
-            if (canAccessContentType(principal, 'read', entry.contentType)) visible.push(hit);
-          } catch {
-            /* skip */
-          }
-        }
-        return visible;
+        return visibleSearchHits(ctx, scope, principal, raw);
       },
     };
   }
@@ -439,26 +428,62 @@ export function deliveryRoutes(deps: AuthDeps): Hono<AuthVars> {
 }
 
 /** Minimal GraphiQL explorer page (CDN-hosted assets) wired to `endpoint`. */
-function graphiqlHtml(endpoint: string): string {
+/**
+ * The GraphiQL page's scripts, pinned to exact versions with Subresource Integrity, so a changed
+ * or compromised CDN file is refused rather than run on a page where people paste their keys.
+ * GraphiQL 4 is the last major that ships a browser (UMD) build, and React 18 the last React
+ * with one; an unpinned `graphiql` URL now resolves to 5.x, which has none, and broke the page.
+ */
+const GRAPHIQL_ASSETS = {
+  css: {
+    href: 'https://unpkg.com/graphiql@4.1.2/graphiql.min.css',
+    integrity: 'sha384-1el1QShFBnnXTx9x/Cprg82hZWKt0ry29OAYIXt05swbi0KcZDFoj0CWguMpopJr',
+  },
+  scripts: [
+    {
+      src: 'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
+      integrity: 'sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z',
+    },
+    {
+      src: 'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
+      integrity: 'sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1',
+    },
+    {
+      src: 'https://unpkg.com/graphiql@4.1.2/graphiql.min.js',
+      integrity: 'sha384-9XdHu7ajgGJziD4J1zNBKQ842Q/+zZfDv+ib1eMhZWBH6hPAs806x+Jbcf0yNO6B',
+    },
+  ],
+} as const;
+
+/**
+ * A value as a JavaScript literal safe inside an inline <script>: JSON with `<` escaped, so a
+ * `</script>` in it (the space and environment come from the URL) can't end the element.
+ */
+const inlineJson = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
+
+export function graphiqlHtml(endpoint: string): string {
+  const scripts = GRAPHIQL_ASSETS.scripts
+    .map(
+      (s) => `<script src="${s.src}" integrity="${s.integrity}" crossorigin="anonymous"></script>`,
+    )
+    .join('\n    ');
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <title>contentworker GraphiQL</title>
     <style>body,#graphiql{height:100vh;margin:0}</style>
-    <link rel="stylesheet" href="https://unpkg.com/graphiql/graphiql.min.css" />
+    <link rel="stylesheet" href="${GRAPHIQL_ASSETS.css.href}" integrity="${GRAPHIQL_ASSETS.css.integrity}" crossorigin="anonymous" />
   </head>
   <body>
     <div id="graphiql">Loading…</div>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/graphiql/graphiql.min.js"></script>
+    ${scripts}
     <script>
-      const fetcher = GraphiQL.createFetcher({ url: ${JSON.stringify(endpoint)} });
+      const fetcher = GraphiQL.createFetcher({ url: ${inlineJson(endpoint)} });
       ReactDOM.createRoot(document.getElementById('graphiql')).render(
         React.createElement(GraphiQL, {
           fetcher,
-          defaultHeaders: JSON.stringify({ Authorization: 'Bearer dev-cda-key' }, null, 2),
+          defaultHeaders: JSON.stringify({ Authorization: 'Bearer <your CDA or CPA key>' }, null, 2),
         }),
       );
     </script>

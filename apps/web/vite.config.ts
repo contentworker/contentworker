@@ -12,13 +12,25 @@ import { defineConfig } from 'vite';
 const e2e = process.env.CONTENTWORKER_E2E === '1';
 
 /**
+ * The dev server's port: PORT, else 5173. Fixed (strictPort), never "the next free one", because
+ * the local stack's OAuth issuer, the MCP smoke scripts and the docs all name this origin; a busy
+ * port fails fast instead of moving the admin somewhere they don't point.
+ */
+const port = Number(process.env.PORT) || 5173;
+
+/**
  * Local-only settings for the auxiliary Workers: dev secrets (never a deployment's), mocked
- * models, hash embeddings and in-memory vectors (Vectorize has no local emulator), and fakes
- * allowed. The principal key matches the web Worker's own dev key (DEV_PRINCIPAL_KEY).
+ * models, hash embeddings, KV-backed vectors that every Worker shares (Vectorize has no local
+ * emulator), and fakes allowed. The principal key matches the web Worker's own dev key
+ * (DEV_PRINCIPAL_KEY).
  */
 const LOCAL_STACK_VARS = {
   REQUIRE_SECURE_SECRETS: 'false',
   ADMIN_TOKEN: 'dev-admin-token',
+  // The seeded space's dev keys (space-1): Management, Delivery and Preview.
+  CMA_KEY: 'dev-cma-key',
+  CDA_KEY: 'dev-cda-key',
+  CPA_KEY: 'dev-cpa-key',
   MCP_TOKEN: 'dev-mcp-token',
   TOKEN_PEPPER: 'dev-pepper',
   MEDIA_SIGNING_SECRET: 'dev-media-signing-secret',
@@ -26,16 +38,21 @@ const LOCAL_STACK_VARS = {
   AI_MODE: 'mock',
   AI_GATEWAY_ID: '',
   EMBEDDINGS_PROVIDER: 'local',
-  VECTOR_STORE: 'memory',
+  VECTOR_STORE: 'kv',
   ALLOW_FAKE_ADAPTERS: 'all',
   // Local dev always runs on the demo dataset (@contentworker/seed), loaded on the api's first
   // request. The device tests keep their fresh, empty database: they create what they need.
   // Config validation refuses SEED_DEV wherever secure secrets are required.
   SEED_DEV: e2e ? 'false' : 'true',
-  SEED_SCALE: '1',
+  // SEED_SCALE=10 pnpm dev seeds ~10× the demo corpus (with CONTENTWORKER_STATE so it doesn't
+  // land in the everyday database).
+  SEED_SCALE: process.env.SEED_SCALE ?? '1',
+  // OAuth for MCP clients, served on the admin origin like a deployment's (OAUTH_ISSUER).
+  OAUTH_ISSUER: `http://localhost:${port}`,
 };
 
 export default defineConfig({
+  server: { port, strictPort: true },
   plugins: [
     // TC39 decorators (`@callable()` on the engine's AssistantAgent, run here as an auxiliary
     // Worker), which Vite's Oxc transform doesn't lower yet.
@@ -45,6 +62,10 @@ export default defineConfig({
       // A fleet deploy builds against its rendered config.
       configPath: process.env.CONTENTWORKER_WRANGLER_CONFIG,
       ...(e2e ? { remoteBindings: false, persistState: { path: '.wrangler/e2e' } } : {}),
+      // A separate local database (e.g. CONTENTWORKER_STATE=.wrangler/scale for a large seed).
+      ...(!e2e && process.env.CONTENTWORKER_STATE
+        ? { persistState: { path: process.env.CONTENTWORKER_STATE } }
+        : {}),
       // `pnpm dev` runs the whole stack in one session: this web Worker plus the api, engine
       // (queues, cron, Durable Objects, Workflows) and delivery Workers, all on one local D1.
       // Unless a fleet config is being built, which deploys each Worker on its own.

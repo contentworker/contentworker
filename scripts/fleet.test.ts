@@ -89,6 +89,10 @@ test('the api, delivery and web Workers bind the deployment’s own engine and a
     web.services.find((s: { binding: string }) => s.binding === 'API').service,
     names(acme).api,
   );
+  assert.equal(
+    web.services.find((s: { binding: string }) => s.binding === 'DELIVERY').service,
+    names(acme).delivery,
+  );
   assert.deepEqual(web.routes, [{ pattern: 'acme.contentworker.app', custom_domain: true }]);
 });
 

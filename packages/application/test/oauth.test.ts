@@ -30,13 +30,40 @@ const RESOURCE = 'https://cms.example.com/mcp';
 
 let clock: FixedClock;
 
+/**
+ * Delegated tokens are re-checked against the space's team on every use, so every person these
+ * tests approve as is a member of s1: most with a full-scope role, `u@example.com` with the
+ * `r1` role the ceiling tests edit. (`nobody@example.com` is deliberately not on the team.)
+ */
 function ctx(): AppContext {
   clock = new FixedClock();
-  return {
-    store: new InMemoryContentStore(),
-    clock,
-    ids: new SequenceIdGenerator('o'),
-  };
+  const store = new InMemoryContentStore();
+  store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
+  void store.roles.save({
+    id: 'r-full',
+    spaceId: 's1',
+    name: 'admin',
+    scopes: [...fullApproval.approverScopes],
+  });
+  const at = clock.now().toISOString();
+  for (const [subject, roleId] of [
+    ['user@example.com', 'r-full'],
+    ['limited@example.com', 'r-full'],
+    ['me@example.com', 'r-full'],
+    ['u@example.com', 'r1'],
+  ] as const) {
+    void store.members.save({
+      id: `m-${subject}`,
+      spaceId: 's1',
+      email: subject,
+      subject,
+      roleId,
+      disabled: false,
+      createdAt: at,
+      updatedAt: at,
+    });
+  }
+  return { store, clock, ids: new SequenceIdGenerator('o') };
 }
 
 function config(overrides: Partial<OAuthConfig> = {}): OAuthConfig {
@@ -62,7 +89,12 @@ const fullApproval: OAuthApproval = {
   ],
 };
 
-async function publicClient(c: AppContext, cfg = config(), scope?: string) {
+/** A public client registered for the read scopes unless `scope` says otherwise. */
+async function publicClient(
+  c: AppContext,
+  cfg = config(),
+  scope = `${SCOPES.deliveryRead} ${SCOPES.previewRead} ${SCOPES.searchRead}`,
+) {
   const { client } = await registerOAuthClient(c, hasher, cfg, {
     clientName: 'Test MCP Client',
     redirectUris: ['https://client.example.com/callback'],
@@ -105,7 +137,7 @@ describe('OAuth: dynamic client registration', () => {
     c = ctx();
   });
 
-  it('registers a public client with no secret and defaults to read scopes', async () => {
+  it('registers a public client with no secret, allowed anything under the registration ceiling', async () => {
     const { client, clientSecret } = await registerOAuthClient(c, hasher, config(), {
       clientName: 'Claude',
       redirectUris: ['https://claude.ai/api/mcp/auth_callback'],
@@ -114,7 +146,12 @@ describe('OAuth: dynamic client registration', () => {
     expect(client.hashedClientSecret).toBeUndefined();
     expect(client.tokenEndpointAuthMethod).toBe('none');
     expect(client.grantTypes).toEqual(['authorization_code']);
-    expect(client.scopes).toEqual([SCOPES.deliveryRead, SCOPES.previewRead, SCOPES.searchRead]);
+    // MCP clients commonly register without scopes and choose them when authorizing; the person
+    // approving still sees each one, and the token is capped by their role.
+    expect(client.scopes).toEqual(config().maxClientScopes);
+    expect(client.scopes).toContain(SCOPES.contentWrite);
+    expect(client.scopes).not.toContain(SCOPES.spaceAdmin);
+    expect(client.scopes).not.toContain(SCOPES.contentManage);
   });
 
   it('returns a confidential client secret once and stores only its hash', async () => {

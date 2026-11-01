@@ -1,6 +1,10 @@
 import { assistantName, routeAssistant } from '@contentworker/http/assistant/gate';
 import type { EdgeEnv } from '@contentworker/platform/env';
-import { PRINCIPAL_HEADER, signPrincipal } from '@contentworker/security/principal';
+import {
+  PRINCIPAL_HEADER,
+  principalTarget,
+  signPrincipal,
+} from '@contentworker/security/principal';
 import { describe, expect, it } from 'vitest';
 
 const KEY = 'gate-test-principal-key-0123456789abcdef';
@@ -37,7 +41,7 @@ describe('the assistant’s gate', () => {
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
         headers: {
-          [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, path),
+          [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, principalTarget('GET', path)),
           'x-agents-lifecycle-props': 'eyJmb3JnZWQiOnRydWV9',
           'x-partykit-room': 'usr_bob',
         },
@@ -55,7 +59,9 @@ describe('the assistant’s gate', () => {
     const path = '/agents/assistant-agent/usr_bob/get-messages';
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
-        headers: { [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, path) },
+        headers: {
+          [PRINCIPAL_HEADER]: await signPrincipal(KEY, ada, principalTarget('GET', path)),
+        },
       }),
       env,
     );

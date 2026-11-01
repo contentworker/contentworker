@@ -56,7 +56,7 @@ catalog:
   zod-openapi: ^6.0.1
   "@hono/standard-validator": ^0.4.0
   "@scalar/hono-api-reference": ^0.12.17
-  openid-client: ^6.8.5
+  "@scalar/api-reference": ^1.76.4
 
   # AI and MCP
   ai: 7.0.159

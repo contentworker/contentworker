@@ -12,6 +12,7 @@
  */
 
 import { sessions } from '@contentworker/db/auth';
+import { principalTarget } from '@contentworker/security/principal';
 import { and, eq, ne } from 'drizzle-orm';
 import { api, db } from './env.server';
 import { clearPasskeys } from './passkeys.server';
@@ -60,7 +61,7 @@ const SYSTEM = {
 async function revokeApiCredentials(subject: string): Promise<number> {
   const path = `/deployment/people/${encodeURIComponent(subject)}/credentials`;
   const headers = new Headers();
-  await setPrincipalHeader(headers, SYSTEM, path);
+  await setPrincipalHeader(headers, SYSTEM, principalTarget('DELETE', path));
   const res = await api().fetch(`https://api${path}`, { method: 'DELETE', headers });
   if (!res.ok) throw new Error(`The api refused to revoke ${subject}'s tokens (${res.status})`);
   const body = (await res.json()) as { revokedTokens: number; revokedGrants: number };
