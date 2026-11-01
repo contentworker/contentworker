@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeliveryClient, DeliveryError } from '../src/index.js';
+import {
+  assetUrl,
+  createDeliveryClient,
+  type DeliveredAsset,
+  DeliveryError,
+  srcset,
+} from '../src/index.js';
 
 function fakeFetch(handler: (url: string, init?: RequestInit) => unknown) {
   return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -80,5 +86,92 @@ describe('@contentworker/sdk-core delivery client', () => {
     const hits = await client.search('database', { topK: 3 });
     expect(hits[0]?.entryId).toBe('e1');
     expect(calls[0]?.url).toContain('/search?q=database&top_k=3');
+  });
+});
+
+const image: DeliveredAsset = {
+  id: 'a1',
+  title: 'Hero',
+  description: null,
+  altText: 'A hill',
+  focalPoint: { x: 0.5, y: 0.25 },
+  contentType: 'image/jpeg',
+  size: 1000,
+  width: 1000,
+  height: 600,
+  kind: 'image',
+  url: 'https://media.test/s1/main/a1/v1/o/hero.jpg',
+  renditions: { thumb: 'https://media.test/s1/main/a1/v1/r-thumb/hero.jpg' },
+  srcset: [
+    { width: 320, url: 'https://media.test/s1/main/a1/v1/w320/hero.jpg?fm=auto' },
+    { width: 640, url: 'https://media.test/s1/main/a1/v1/w640/hero.jpg?fm=auto' },
+    { width: 960, url: 'https://media.test/s1/main/a1/v1/w960/hero.jpg?fm=auto' },
+  ],
+  file: { url: 'https://media.test/s1/main/a1/v1/o/hero.jpg' },
+};
+
+describe('assets', () => {
+  it('gets and lists assets on the delivery surface, with paging and filters', async () => {
+    const calls: string[] = [];
+    const fetchImpl = fakeFetch((url) => {
+      calls.push(url);
+      return url.includes('/assets/') ? image : { items: [image], total: 1, nextCursor: 'c2' };
+    });
+    const client = createDeliveryClient({ ...base, fetch: fetchImpl });
+
+    expect((await client.getAsset('a1', { locale: 'de-DE' })).id).toBe('a1');
+    expect(calls[0]).toBe('https://cms.test/delivery/s1/main/assets/a1?locale=de-DE');
+
+    const page = await client.listAssets({
+      limit: 10,
+      cursor: 'c1',
+      skip: 5,
+      kind: 'image',
+      tag: 't1',
+      folder: 'root',
+      locale: 'en-US',
+    });
+    expect(page.nextCursor).toBe('c2');
+    // A cursor wins over an offset.
+    expect(calls[1]).toBe(
+      'https://cms.test/delivery/s1/main/assets?limit=10&cursor=c1&kind=image&tag=t1&folder=root&locale=en-US',
+    );
+    await client.listAssets({ skip: 20 });
+    expect(calls[2]).toBe('https://cms.test/delivery/s1/main/assets?skip=20');
+  });
+
+  it('reads drafts from the preview surface', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      preview: true,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        return image;
+      }),
+    });
+    await client.getAsset('a1');
+    expect(calls[0]).toBe('https://cms.test/preview/s1/main/assets/a1');
+  });
+
+  it('picks a rendition, the width step at or above, or the original', () => {
+    expect(assetUrl(image)).toBe(image.url);
+    expect(assetUrl(image, { rendition: 'thumb' })).toBe(image.renditions.thumb);
+    expect(assetUrl(image, { rendition: 'nope' })).toBeUndefined();
+    expect(assetUrl(image, { width: 500 })).toBe(image.srcset[1]?.url);
+    expect(assetUrl(image, { width: 640 })).toBe(image.srcset[1]?.url);
+    // Past the ladder: its largest step.
+    expect(assetUrl(image, { width: 5000 })).toBe(image.srcset[2]?.url);
+    // No ladder (a PDF, a video): the original.
+    expect(assetUrl({ ...image, srcset: [] }, { width: 500 })).toBe(image.url);
+    const client = createDeliveryClient(base);
+    expect(client.assetUrl(image, { width: 1 })).toBe(image.srcset[0]?.url);
+  });
+
+  it('formats the ladder as an srcset value', () => {
+    expect(srcset(image)).toBe(
+      `${image.srcset[0]?.url} 320w, ${image.srcset[1]?.url} 640w, ${image.srcset[2]?.url} 960w`,
+    );
+    expect(srcset({ srcset: [] })).toBe('');
   });
 });

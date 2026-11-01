@@ -17,6 +17,83 @@ export interface DeliveredEntry<F extends Fields = Fields> {
   readonly publishedAt: string;
 }
 
+/**
+ * A delivered asset. Its URLs are on the media origin and immutable: `url` is the original (a
+ * hosted video's HLS manifest), `renditions` the space's named presets, `srcset` the width ladder
+ * up to the image's own width. Title, description and alt text are one locale's value when a
+ * `locale` was asked for, else keyed by locale. From Preview, every URL is short-lived and signed.
+ */
+export interface DeliveredAsset {
+  readonly id: string;
+  readonly title: string | Record<string, unknown> | null;
+  readonly description: string | Record<string, unknown> | null;
+  readonly altText: string | Record<string, unknown> | null;
+  readonly focalPoint: { readonly x: number; readonly y: number } | null;
+  readonly contentType: string;
+  readonly size: number | null;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly kind: 'image' | 'video' | 'audio' | 'document' | 'other';
+  readonly url: string;
+  readonly renditions: Readonly<Record<string, string>>;
+  readonly srcset: readonly { readonly width: number; readonly url: string }[];
+  readonly video?: {
+    readonly status: string;
+    readonly hlsUrl?: string;
+    readonly dashUrl?: string;
+    readonly thumbnailUrl?: string;
+    readonly durationSeconds?: number;
+  };
+  readonly rights?: { readonly credit?: string; readonly license?: string };
+  /** The stored file description, kept for older readers; `file.url` is `url`. */
+  readonly file: Readonly<Record<string, unknown>>;
+}
+
+/** A page of delivered assets; pass `nextCursor` back as `cursor` for the next. */
+export interface AssetPage {
+  readonly items: DeliveredAsset[];
+  readonly total: number;
+  readonly nextCursor?: string;
+}
+
+export interface AssetQuery {
+  readonly limit?: number;
+  /** `nextCursor` from the previous page. */
+  readonly cursor?: string;
+  /** Offset paging, without a cursor. */
+  readonly skip?: number;
+  readonly kind?: DeliveredAsset['kind'];
+  /** A taxonomy tag id. */
+  readonly tag?: string;
+  /** A folder id, or `root` for assets in no folder. */
+  readonly folder?: string;
+  readonly locale?: string;
+}
+
+/**
+ * One URL of an asset: the named `rendition` (undefined when the space has none by that name,
+ * or the asset isn't a resizable image), the width step at or above `width` (the largest past it;
+ * the original when there is no ladder), or the original.
+ */
+export function assetUrl(
+  asset: Pick<DeliveredAsset, 'url' | 'renditions' | 'srcset'>,
+  opts: { readonly rendition?: string; readonly width?: number } = {},
+): string | undefined {
+  if (opts.rendition !== undefined) return asset.renditions[opts.rendition];
+  if (opts.width !== undefined) {
+    const width = opts.width;
+    const step =
+      asset.srcset.find((s) => s.width >= width) ?? asset.srcset[asset.srcset.length - 1];
+    return step?.url ?? asset.url;
+  }
+  return asset.url;
+}
+
+/** The asset's width ladder as an `<img srcset>` value (`"… 320w, … 640w"`); empty without one. */
+export function srcset(asset: Pick<DeliveredAsset, 'srcset'>): string {
+  return asset.srcset.map((s) => `${s.url} ${s.width}w`).join(', ');
+}
+
 export interface SearchHit {
   readonly entryId: string;
   readonly score: number;
@@ -149,6 +226,30 @@ export function createDeliveryClient(opts: ClientOptions) {
     ): Promise<{ items: DeliveredEntry<F>[]; total: number }> {
       return get('/entries', toParams(q));
     },
+
+    /** Fetch a single published asset by id (from Preview: as it is now, drafts included). */
+    async getAsset(id: string, o: { locale?: string } = {}): Promise<DeliveredAsset> {
+      return get<DeliveredAsset>(`/assets/${encodeURIComponent(id)}`, { locale: o.locale });
+    },
+
+    /** List published assets, a page at a time (pass `nextCursor` back as `cursor`). */
+    async listAssets(q: AssetQuery = {}): Promise<AssetPage> {
+      return get<AssetPage>('/assets', {
+        limit: q.limit,
+        cursor: q.cursor,
+        skip: q.cursor ? undefined : q.skip,
+        kind: q.kind,
+        tag: q.tag,
+        folder: q.folder,
+        locale: q.locale,
+      });
+    },
+
+    /** {@link assetUrl}, for convenience. */
+    assetUrl,
+
+    /** {@link srcset}, for convenience. */
+    srcset,
 
     /** Semantic search over published content. */
     async search(query: string, o: { topK?: number } = {}): Promise<SearchHit[]> {
