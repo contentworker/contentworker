@@ -735,7 +735,7 @@ export async function listConnectedApps(ctx: AppContext, spaceId: string): Promi
 
   const grouped = new Map<string, ConnectedApp>();
   for (const key of live) {
-    const id = `${key.clientId} ${key.subject}`;
+    const id = `${key.clientId}\u0000${key.subject}`;
     const existing = grouped.get(id);
     const later = (a?: string, b?: string) =>
       !a ? b : !b ? a : new Date(a).getTime() >= new Date(b).getTime() ? a : b;
