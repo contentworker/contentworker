@@ -2,6 +2,7 @@ import type {
   AccessPolicy,
   AgentRunner,
   AppContext,
+  AssetSearchDeps,
   RagDeps,
   WorkflowNodeDeps,
 } from '@contentworker/application';
@@ -24,6 +25,8 @@ export interface McpDeps {
   readonly ctx: AppContext;
   readonly ai: AIProvider;
   readonly rag: RagDeps;
+  /** Asset search's indexes (as AuthDeps' `assetSearch`); absent, the RAG wiring's. */
+  readonly assetSearch?: AssetSearchDeps;
   /** Delivers review decisions to a durable HITL watcher (optional). */
   readonly signalReview?: (
     review: AgentReview,

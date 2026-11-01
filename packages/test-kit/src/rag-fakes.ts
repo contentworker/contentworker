@@ -1,5 +1,6 @@
 import type { Scope } from '@contentworker/domain';
 import type {
+  AssetSearchCorpus,
   AssetVectorMatch,
   AssetVectorRow,
   EmbeddingsProvider,
@@ -110,24 +111,32 @@ export class InMemorySearchIndex implements SearchIndex {
 /** In-memory VectorStore mirroring the Vectorize adapter's behavior for tests. */
 export class InMemoryVectorStore implements VectorStore {
   private rows: VectorRow[] = [];
-  /** Asset vectors, by scope and asset: kept apart from entries', as the adapter's namespace. */
+  /**
+   * Asset vectors of the library corpus, by scope and asset (`space::env::asset`), kept apart
+   * from entries', as the adapter's namespace; {@link publishedAssetRows} holds the other corpus.
+   */
   readonly assetRows = new Map<string, AssetVectorRow>();
+  readonly publishedAssetRows = new Map<string, AssetVectorRow>();
 
-  async upsertAsset(scope: Scope, row: AssetVectorRow): Promise<void> {
-    this.assetRows.set(`${key(scope)}::${row.assetId}`, row);
+  private corpusRows(corpus: AssetSearchCorpus): Map<string, AssetVectorRow> {
+    return corpus === 'library' ? this.assetRows : this.publishedAssetRows;
   }
 
-  async deleteAsset(scope: Scope, assetId: string): Promise<void> {
-    this.assetRows.delete(`${key(scope)}::${assetId}`);
+  async upsertAsset(scope: Scope, row: AssetVectorRow): Promise<void> {
+    this.corpusRows(row.corpus).set(`${key(scope)}::${row.assetId}`, row);
+  }
+
+  async deleteAsset(scope: Scope, assetId: string, corpus: AssetSearchCorpus): Promise<void> {
+    this.corpusRows(corpus).delete(`${key(scope)}::${assetId}`);
   }
 
   async queryAssets(
     scope: Scope,
     embedding: number[],
-    opts: { topK: number; minScore?: number },
+    opts: { topK: number; minScore?: number; corpus: AssetSearchCorpus },
   ): Promise<AssetVectorMatch[]> {
     const prefix = `${key(scope)}::`;
-    return [...this.assetRows.entries()]
+    return [...this.corpusRows(opts.corpus).entries()]
       .filter(([k]) => k.startsWith(prefix))
       .map(([, r]) => ({ assetId: r.assetId, score: cosine(embedding, r.embedding) }))
       .filter((m) => m.score >= (opts.minScore ?? 0))

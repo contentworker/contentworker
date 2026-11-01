@@ -1,5 +1,7 @@
+import type { AssetIngestMessage, ObjectCreatedMessage } from '@contentworker/adapters/queue-cf';
 import type { DomainEvent, Scope } from '@contentworker/domain';
-import type { AssetIngestRequest } from '@contentworker/ports';
+
+export type { AssetIngestMessage, ObjectCreatedMessage };
 
 /** Minimal runtime shape check for a queued DomainEvent (defensive, not exhaustive). */
 export function isDomainEvent(body: unknown): body is DomainEvent {
@@ -82,23 +84,6 @@ export function isWebhookRetryMessage(value: unknown): value is WebhookRetryMess
     typeof m.event === 'object' &&
     m.event !== null
   );
-}
-
-/**
- * An R2 event notification for an object written to the media bucket, as the
- * `contentworker-asset-events` queue carries it (R2 sends it; the api sends the same shape when an
- * upload through its signed PUT completes, since local development has no notifications).
- */
-export interface ObjectCreatedMessage {
-  readonly action: string;
-  readonly object: { readonly key: string; readonly size?: number; readonly eTag?: string };
-  readonly bucket?: string;
-  readonly eventTime?: string;
-}
-
-/** A request to run ingest on an asset's file again (a retry, the reindex job). */
-export interface AssetIngestMessage extends AssetIngestRequest {
-  readonly kind: 'asset.ingest';
 }
 
 /** The R2 actions that leave a new object behind. */

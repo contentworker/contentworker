@@ -197,17 +197,17 @@ export class FakeTextExtractor implements TextExtractor {
 
   async extract(file: ExtractableFile): Promise<string> {
     this.read.push(file);
-    return this.texts.get(file.fileName) ?? asciiOf(file.bytes);
+    return this.texts.get(file.fileName) ?? file.chunks.map(asciiOf).join('');
   }
 }
 
 /** An AssetIngestQueue that records what was handed to ingest. */
 export class FakeAssetIngestQueue implements AssetIngestQueue {
-  readonly created: string[] = [];
+  readonly created: { key: string; etag?: string }[] = [];
   readonly requested: AssetIngestRequest[] = [];
 
-  async objectCreated(key: string): Promise<void> {
-    this.created.push(key);
+  async objectCreated(key: string, etag?: string): Promise<void> {
+    this.created.push({ key, ...(etag ? { etag } : {}) });
   }
 
   async request(requests: readonly AssetIngestRequest[]): Promise<void> {
@@ -222,9 +222,10 @@ export class FakeAssetIngestQueue implements AssetIngestQueue {
 export class RecordingAssetIngestStarter implements AssetIngestStarter {
   readonly started: { instanceId: string; params: AssetIngestParams }[] = [];
 
-  async start(instanceId: string, params: AssetIngestParams): Promise<void> {
-    if (this.started.some((s) => s.instanceId === instanceId)) return;
+  async start(instanceId: string, params: AssetIngestParams): Promise<boolean> {
+    if (this.started.some((s) => s.instanceId === instanceId)) return false;
     this.started.push({ instanceId, params });
+    return true;
   }
 }
 

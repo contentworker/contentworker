@@ -91,6 +91,32 @@ export async function generateWithBudget(
 }
 
 /**
+ * Runs any other metered model call (text extraction: Markdown conversion, transcription) under
+ * the space's budget, as {@link generateWithBudget} does: the cost guard is consulted first
+ * ({@link RateLimitedError} when over), and `tokens(result)` is recorded after. Callers handle
+ * AI_MODE=mock themselves (by having no model to call).
+ */
+export async function runWithBudget<T>(
+  ctx: AppContext,
+  scope: Scope,
+  call: () => Promise<T>,
+  tokens: (result: T) => number,
+): Promise<T> {
+  if (ctx.costGuard) {
+    const decision = await ctx.costGuard.consume(scope);
+    if (!decision.allowed) {
+      throw new RateLimitedError(
+        `AI ${decision.reason === 'tokens' ? 'token' : 'request'} budget exceeded for this space; retry later`,
+        decision.retryAfterSeconds,
+      );
+    }
+  }
+  const result = await call();
+  if (ctx.costGuard) await ctx.costGuard.settle(scope, tokens(result));
+  return result;
+}
+
+/**
  * Asks a decision model under the space's budget, exactly as {@link generateWithBudget} does for
  * generation: AI_MODE=mock answers without the model, the cost guard is consulted first
  * ({@link RateLimitedError} when over), and the observed tokens are recorded after (decision

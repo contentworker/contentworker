@@ -9,6 +9,7 @@ import {
   createSpace,
   createVideoAsset,
   deleteEnvironment,
+  finishIngest,
   publishAsset,
   refreshVideoAsset,
   unpublishAsset,
@@ -133,6 +134,36 @@ describe('asset events in the engine', () => {
     // Redelivered: the gate stays removed, and nothing throws.
     await consume(ctx, events);
     expect(await env.KV_CACHE.get(assetGateKey(scope, asset.id))).toBeNull();
+  });
+
+  it('purge delivery for a published asset’s ingest, and nothing for a draft’s', async () => {
+    const { ctx, scope } = await space();
+    const blob = new FakeBlobStore();
+    const { asset: draft } = await createAsset(ctx, blob, scope, {
+      fileName: 'draft.png',
+      contentType: 'image/png',
+    });
+    const { asset: live } = await createAsset(ctx, blob, scope, {
+      fileName: 'live.png',
+      contentType: 'image/png',
+    });
+    await publishAsset(ctx, scope, live.id);
+    const mark = await lastRowid();
+    const hashed = { contentHash: 'a'.repeat(64), size: 3 };
+    await finishIngest(ctx, { scope, assetId: draft.id, version: 1 }, hashed);
+    const draftEvents = await eventsSince(scope, mark);
+    expect(draftEvents).toEqual([
+      expect.objectContaining({ type: 'asset.ingested', assetId: draft.id, published: false }),
+    ]);
+    expect([...(await consume(ctx, draftEvents)).delivery]).toEqual([]);
+
+    const next = await lastRowid();
+    await finishIngest(ctx, { scope, assetId: live.id, version: 1 }, hashed);
+    const liveEvents = await eventsSince(scope, next);
+    expect(liveEvents).toEqual([
+      expect.objectContaining({ type: 'asset.ingested', assetId: live.id, published: true }),
+    ]);
+    expect([...(await consume(ctx, liveEvents)).delivery]).toEqual([`cw:${scope.spaceId}:main`]);
   });
 
   it('purge every environment’s delivery and the preset’s media when a rendition changes', async () => {

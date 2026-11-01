@@ -11,7 +11,6 @@ import {
 } from '@contentworker/adapters/http-effects';
 import {
   archiveSupersededVersions,
-  assetSearchDeps,
   type ConsumeDeps,
   consumeEvent,
   drainOutbox,
@@ -135,7 +134,7 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     // The media origin's gate: written and removed here, from asset events, and nowhere else.
     ...(wired.assetGate ? { assetGate: wired.assetGate } : {}),
     // Asset search: re-indexed on publish, removed on delete. Embeds under the same rule as rag.
-    assetSearch: assetSearchDeps(wired.rag, { embed: Boolean(env.EMBEDDINGS_PROVIDER) }),
+    assetSearch: wired.assetSearch,
     // `asset_reindex` bulk chunks hand their assets to ingest through this queue.
     ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
     bus: env.LIVE_HUB ? createDoEventBus(env.LIVE_HUB) : undefined,
@@ -243,7 +242,12 @@ async function consumeAssetEvents(
     try {
       let outcome: string;
       if (isObjectCreated(body)) {
-        outcome = await startAssetIngestForObject(wired.ctx, starter, body.object.key);
+        outcome = await startAssetIngestForObject(
+          wired.ctx,
+          starter,
+          body.object.key,
+          body.object.eTag,
+        );
       } else if (isAssetIngestMessage(body)) {
         outcome = await startRequestedAssetIngest(wired.ctx, starter, body);
       } else {

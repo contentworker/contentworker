@@ -135,4 +135,73 @@ describe('asset ingest columns on D1', () => {
     });
     expect(page.items.map((x) => x.id)).toEqual([older.id, newer.id]);
   });
+
+  it('applies a status write only from the statuses it names (pending never over processing)', async () => {
+    const scope = freshScope();
+    const a = asset();
+    await store.assets.create(scope, a);
+    const pendingUnlessRunning = {
+      status: 'pending' as const,
+      onlyFrom: [null, 'pending', 'ready', 'error'] as const,
+    };
+    // Never ingested (NULL) counts as one of them.
+    await store.assets.recordIngest(scope, a.id, 1, pendingUnlessRunning);
+    expect((await store.assets.get(scope, a.id))?.ingestStatus).toBe('pending');
+    await store.assets.recordIngest(scope, a.id, 1, { status: 'processing' });
+    await store.assets.recordIngest(scope, a.id, 1, pendingUnlessRunning);
+    expect((await store.assets.get(scope, a.id))?.ingestStatus).toBe('processing');
+    // Restoring a finished status only while it is still pending.
+    await store.assets.recordIngest(scope, a.id, 1, { status: 'ready', onlyFrom: ['pending'] });
+    expect((await store.assets.get(scope, a.id))?.ingestStatus).toBe('processing');
+  });
+
+  it('writes measurements into the published snapshot of the same version only, in a unit', async () => {
+    const scope = freshScope();
+    const a = asset({ status: 'published' });
+    await store.assets.create(scope, a);
+    const snapshot = {
+      assetId: a.id,
+      file: a.file,
+      title: a.title,
+      description: a.description,
+      metadata: a.metadata,
+      publishedAt: '2026-01-01T00:00:00.000Z',
+      version: 1,
+    };
+    await store.assets.putPublished(scope, snapshot);
+    await store.assets.recordPublishedFile(scope, a.id, 2, { width: 1, height: 1 });
+    expect((await store.assets.getPublished(scope, a.id))?.file.width).toBeUndefined();
+    await store.withTransaction(async (tx) => {
+      await tx.assets.recordIngest(scope, a.id, 1, { status: 'ready' });
+      await tx.assets.recordPublishedFile(scope, a.id, 1, { size: 9, width: 640, height: 480 });
+    });
+    expect((await store.assets.getPublished(scope, a.id))?.file).toMatchObject({
+      url: a.file.url,
+      fileName: 'f.bin',
+      size: 9,
+      width: 640,
+      height: 480,
+    });
+  });
+});
+
+describe('a purge’s progress mark on D1', () => {
+  it('commits with the unit it is in, and not without it', async () => {
+    const spaceId = `purge-${uid()}`;
+    await testDb
+      .prepare(
+        'INSERT INTO environment_purges (space_id, environment_id, requested_at, nudged_at) VALUES (?, ?, 0, ?)',
+      )
+      .bind(spaceId, 'gone', 0)
+      .run();
+    const at = new Date('2026-06-01T00:00:00.000Z');
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.spaces.markEnvironmentPurgeProgress(spaceId, 'gone', at);
+        throw new Error('the hand-off failed');
+      }),
+    ).rejects.toThrow('the hand-off failed');
+    const stalled = await store.spaces.claimStalledPurges(new Date('2026-01-01'), at, 100);
+    expect(stalled).toContainEqual({ spaceId, environmentId: 'gone' });
+  });
 });

@@ -85,6 +85,7 @@ export default {
       // Delivery serves API keys only: no admin token, ever (not even a configured one).
       adminToken: '',
       rag: wired.rag,
+      assetSearch: wired.assetSearch,
       blob: wired.blob,
       ai: wired.ai,
       bus: wired.bus,

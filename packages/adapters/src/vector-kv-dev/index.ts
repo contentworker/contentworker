@@ -1,5 +1,6 @@
 import type { Scope } from '@contentworker/domain';
 import type {
+  AssetSearchCorpus,
   AssetVectorMatch,
   AssetVectorRow,
   VectorMatch,
@@ -40,22 +41,27 @@ export function createKvDevVectorStore(kv: KvVectorBinding): VectorStore {
     return raw ? (JSON.parse(raw) as VectorRow[]) : [];
   };
 
-  // Assets under a prefix of their own, so an entry query's scan never reads one.
-  const assetPrefix = (scope: Scope) => `vecasset:${scope.spaceId}:${scope.environmentId}:`;
+  // Assets under a prefix of their own per corpus, so an entry query's scan never reads one.
+  const assetPrefix = (scope: Scope, corpus: AssetSearchCorpus) =>
+    `${corpus === 'library' ? 'vecasset' : 'vecpubasset'}:${scope.spaceId}:${scope.environmentId}:`;
   return {
     async upsertAsset(scope, row) {
-      await kv.put(`${assetPrefix(scope)}${row.assetId}`, JSON.stringify(row));
+      await kv.put(`${assetPrefix(scope, row.corpus)}${row.assetId}`, JSON.stringify(row));
     },
 
-    async deleteAsset(scope, assetId) {
-      await kv.delete(`${assetPrefix(scope)}${assetId}`);
+    async deleteAsset(scope, assetId, corpus) {
+      await kv.delete(`${assetPrefix(scope, corpus)}${assetId}`);
     },
 
     async queryAssets(scope, embedding, opts) {
       const matches: AssetVectorMatch[] = [];
       let cursor: string | undefined;
       do {
-        const page = await kv.list({ prefix: assetPrefix(scope), cursor, limit: 1000 });
+        const page = await kv.list({
+          prefix: assetPrefix(scope, opts.corpus),
+          cursor,
+          limit: 1000,
+        });
         for (const { name } of page.keys) {
           const raw = await kv.get(name);
           if (!raw) continue;

@@ -21,6 +21,7 @@ import {
   type WorkflowGraph,
   type WorkflowVersion,
 } from '@contentworker/domain';
+import { startAssetReindex } from './asset-ingest';
 import { allAssets, publishAsset } from './assets';
 import { createContentType, publishContentType } from './content-types';
 import type { AppContext } from './context';
@@ -261,6 +262,11 @@ export interface ImportOptions {
    * a clone that silently arrives entirely as drafts looks like data loss.
    */
   readonly publish?: boolean;
+  /**
+   * Send the imported assets through ingest once they are written (an `asset_reindex` job), so
+   * the target's search indexes them. Callers set it when the ingest queue is bound.
+   */
+  readonly reindexAssets?: boolean;
 }
 
 export interface ImportReport {
@@ -311,6 +317,7 @@ export async function importSnapshot(
       await publishSnapshotEntry(ctx, target, stagedPublication(entry));
     }
   }
+  if (options.reindexAssets && snapshot.assets.length > 0) await startAssetReindex(ctx, target);
   return report;
 }
 
@@ -529,8 +536,10 @@ function chainDepth(folders: ReadonlyMap<string, AssetFolder>, folder: AssetFold
 /**
  * Creates an asset record as an import does (as a draft, keeping its id). An archived asset
  * arrives as a draft without its `archivedAt`, and one filed in a folder the target lacks (a
- * snapshot from before folders) at the library root. Already there (a job chunk running again)
- * counts as done.
+ * snapshot from before folders) at the library root. What ingest found in the source
+ * (its status and error, the duplicate it pointed at, its unsaved AI suggestion marks) stays
+ * behind: the target's search has never indexed the asset, so it arrives never ingested, for the
+ * reindex the import starts. Already there (a job chunk running again) counts as done.
  */
 export async function createSnapshotAsset(
   ctx: AppContext,
@@ -538,7 +547,15 @@ export async function createSnapshotAsset(
   asset: Asset,
 ): Promise<void> {
   if (await ctx.store.assets.get(target, asset.id)) return;
-  const { archivedAt: _archivedAt, folderId, ...rest } = asset;
+  const {
+    archivedAt: _archivedAt,
+    folderId,
+    ingestStatus: _ingestStatus,
+    ingestError: _ingestError,
+    duplicateOf: _duplicateOf,
+    aiSuggestions: _aiSuggestions,
+    ...rest
+  } = asset;
   const filed =
     folderId && (await ctx.store.assetFolders.get(target, folderId)) ? { folderId } : {};
   await ctx.store.assets.create(target, { ...rest, ...filed, status: 'draft' });

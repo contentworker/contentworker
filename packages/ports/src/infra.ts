@@ -119,11 +119,16 @@ export interface ImageProbe {
   info(body: ByteStream): Promise<ImageInfo | null>;
 }
 
-/** A file to read text out of: its bytes, already capped by the caller. */
+/**
+ * A file to read text out of: its bytes as the stream gave them (already capped by the caller),
+ * never joined into one copy here, since the extractor builds what it sends from the chunks.
+ */
 export interface ExtractableFile {
   readonly fileName: string;
   readonly contentType: string;
-  readonly bytes: Uint8Array;
+  readonly chunks: readonly Uint8Array[];
+  /** The chunks' total length. */
+  readonly size: number;
 }
 
 /**
@@ -538,20 +543,28 @@ export interface VectorStore {
     opts: { topK: number; minScore?: number },
   ): Promise<VectorMatch[]>;
   /**
-   * Asset vectors, one per asset, kept apart from entries' (on Vectorize, a namespace of their
-   * own), so entry search, related entries and RAG answers never see an asset's text.
+   * Asset vectors, one per asset and corpus, kept apart from entries' (on Vectorize, a namespace
+   * of their own per corpus), so entry search, related entries and RAG answers never see an
+   * asset's text, and Delivery's search never ranks a draft.
    */
   upsertAsset(scope: Scope, row: AssetVectorRow): Promise<void>;
-  deleteAsset(scope: Scope, assetId: string): Promise<void>;
+  deleteAsset(scope: Scope, assetId: string, corpus: AssetSearchCorpus): Promise<void>;
   queryAssets(
     scope: Scope,
     embedding: number[],
-    opts: { topK: number; minScore?: number },
+    opts: { topK: number; minScore?: number; corpus: AssetSearchCorpus },
   ): Promise<AssetVectorMatch[]>;
 }
 
+/**
+ * Which asset index: `library`, every asset as the library has it now (Management's search);
+ * `published`, only published assets, from their published snapshots (Delivery's search).
+ */
+export type AssetSearchCorpus = 'library' | 'published';
+
 /** One asset's embedding: its caption, title, alt text, tags and an excerpt of its text. */
 export interface AssetVectorRow {
+  readonly corpus: AssetSearchCorpus;
   readonly assetId: string;
   readonly embedding: number[];
   /** The asset's kind (`image`, `document`, …), kept as metadata. */
@@ -731,8 +744,11 @@ export interface AssetIngestRequest {
  * notifications also feed). At least once: ingest dedupes by file, so a repeat costs nothing.
  */
 export interface AssetIngestQueue {
-  /** An object was written under `key` (a completed upload). */
-  objectCreated(key: string): Promise<void>;
+  /**
+   * An object was written under `key` (a completed upload). `etag` names the bytes written, so a
+   * second write to the same key (the same signed URL used again) is ingested again.
+   */
+  objectCreated(key: string, etag?: string): Promise<void>;
   request(requests: readonly AssetIngestRequest[]): Promise<void>;
 }
 
@@ -749,5 +765,6 @@ export interface AssetIngestParams {
  * notification free.
  */
 export interface AssetIngestStarter {
-  start(instanceId: string, params: AssetIngestParams): Promise<void>;
+  /** `true` when this call started the run; `false` when a run under that id already existed. */
+  start(instanceId: string, params: AssetIngestParams): Promise<boolean>;
 }

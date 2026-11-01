@@ -12,6 +12,7 @@ import {
   type AppContext,
   type AssetSearchDeps,
   archiveAsset,
+  assetTextKey,
   createAsset,
   createAssetFolder,
   createEnvironment,
@@ -22,6 +23,7 @@ import {
   searchAssets,
   searchDeliveredAssets,
   setAssetMetadata,
+  unpublishAsset,
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -31,6 +33,7 @@ describe('asset search', () => {
   let blob: FakeBlobStore;
   let deps: AssetSearchDeps;
   let index: InMemorySearchIndex;
+  let publishedIndex: InMemorySearchIndex;
 
   beforeEach(async () => {
     ctx = {
@@ -40,10 +43,12 @@ describe('asset search', () => {
     };
     blob = new FakeBlobStore();
     index = new InMemorySearchIndex();
+    publishedIndex = new InMemorySearchIndex();
     deps = {
       embeddings: new LocalEmbeddingsProvider(4096),
       vectors: new InMemoryVectorStore(),
       index,
+      publishedIndex,
     };
     await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
   });
@@ -137,9 +142,68 @@ describe('asset search', () => {
     const page = await searchDeliveredAssets(ctx, deps, scope, { q: 'mug' });
     expect(page.items.map((a) => a.id)).toEqual([published.id]);
     expect(page.items[0]).toMatchObject({ kind: 'image', altText: { 'en-US': 'Mug' } });
-    expect((await searchDeliveredAssets(ctx, { index }, scope, { q: 'codename' })).items).toEqual(
-      [],
-    );
+    expect(
+      (await searchDeliveredAssets(ctx, { index, publishedIndex }, scope, { q: 'codename' })).items,
+    ).toEqual([]);
+    // The library's search is of the asset as it is now.
+    const library = await searchAssets(ctx, { index }, scope, { q: 'codename' });
+    expect(library.items.map((a) => a.id)).toEqual([published.id]);
+  });
+
+  it('Delivery search finds a published asset however many drafts match too', async () => {
+    const lexical = { index, publishedIndex };
+    for (let i = 0; i < 120; i++) {
+      const { asset } = await createAsset(ctx, blob, scope, {
+        fileName: `mug-draft-${i}.jpg`,
+        contentType: 'image/jpeg',
+      });
+      await indexAssetForSearch(ctx, lexical, blob, scope, asset.id);
+    }
+    const { asset: live } = await createAsset(ctx, blob, scope, {
+      fileName: 'mug-live.jpg',
+      contentType: 'image/jpeg',
+    });
+    await publishAsset(ctx, scope, live.id);
+    await indexAssetForSearch(ctx, lexical, blob, scope, live.id);
+
+    const page = await searchDeliveredAssets(ctx, lexical, scope, { q: 'mug' });
+    expect(page.items.map((a) => a.id)).toEqual([live.id]);
+    expect(page.total).toBe(1);
+  });
+
+  it('unpublishing takes an asset out of the published corpus, both legs', async () => {
+    const a = await add('mug.jpg', 'image/jpeg', 'Mug');
+    await publishAsset(ctx, scope, a.id);
+    await indexAssetForSearch(ctx, deps, blob, scope, a.id);
+    const vectors = deps.vectors as InMemoryVectorStore;
+    expect(vectors.publishedAssetRows.size).toBe(1);
+    expect(publishedIndex.textOf(scope, a.id)).toBeDefined();
+    await unpublishAsset(ctx, scope, a.id);
+    await indexAssetForSearch(ctx, deps, blob, scope, a.id);
+    expect(vectors.publishedAssetRows.size).toBe(0);
+    expect(publishedIndex.textOf(scope, a.id)).toBeUndefined();
+    expect(index.textOf(scope, a.id)).toBeDefined();
+  });
+
+  it('indexes a published asset’s text from the version it publishes, not a newer draft file', async () => {
+    const { asset } = await createAsset(ctx, blob, scope, {
+      fileName: 'brief.pdf',
+      contentType: 'application/pdf',
+    });
+    await blob.put(assetTextKey(scope, asset.id, 1) as string, 'heliotrope', 'text/markdown');
+    await publishAsset(ctx, scope, asset.id);
+    // The file is replaced (v2) and ingested; the v1 snapshot is still what is published.
+    const v1 = await ctx.store.assets.get(scope, asset.id);
+    await ctx.store.assets.save(scope, { ...(v1 as NonNullable<typeof v1>), version: 2 });
+    await blob.put(assetTextKey(scope, asset.id, 2) as string, 'zeppelin', 'text/markdown');
+    await indexAssetForSearch(ctx, deps, blob, scope, asset.id);
+
+    const lexical = { index, publishedIndex };
+    expect((await searchDeliveredAssets(ctx, lexical, scope, { q: 'zeppelin' })).items).toEqual([]);
+    const v1Hit = await searchDeliveredAssets(ctx, lexical, scope, { q: 'heliotrope' });
+    expect(v1Hit.items.map((a) => a.id)).toEqual([asset.id]);
+    const draftHit = await searchAssets(ctx, lexical, scope, { q: 'zeppelin' });
+    expect(draftHit.items.map((a) => a.id)).toEqual([asset.id]);
   });
 
   it('falls back to scanning recent assets when no index is bound', async () => {

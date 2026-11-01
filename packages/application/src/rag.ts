@@ -17,6 +17,8 @@ export interface RagDeps {
    * ingest and by asset publishes. Separate objects, so entry search never meets an asset.
    */
   readonly assetSearchIndex?: SearchIndex;
+  /** The published assets' corpus of the same shards (`…:pubassets:<n>`): Delivery's search. */
+  readonly publishedAssetSearchIndex?: SearchIndex;
 }
 
 /** Largest `topK` a search may request; bounds vector/FTS over-fetch work. */

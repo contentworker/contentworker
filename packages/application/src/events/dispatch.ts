@@ -9,8 +9,8 @@ import type {
   WebhookSender,
 } from '@contentworker/ports';
 import { syncAssetGate } from '../asset-gate';
-import { assetReindexChunkRunner } from '../asset-ingest';
-import { type AssetSearchDeps, indexAssetForSearch } from '../asset-search';
+import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
+import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../asset-search';
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
@@ -25,6 +25,7 @@ import {
   removeEntryEmbeddings,
   runReindexJob,
 } from '../rag';
+import { isSnapshotJob } from '../snapshot-jobs';
 
 /** Reverse-reference walk bound: embed chains deeper than this stay stale
  *  until their own next publish (cycle-safe either way via the visited set). */
@@ -257,7 +258,7 @@ export async function dispatchEvent(
     }
     // Asset search documents go in one call per shard; asset vectors, which go only by id, go
     // with the purge (it pages the assets before their rows are removed).
-    await deps.assetSearch?.index?.clear?.(scope);
+    await clearAssetSearch(deps.assetSearch, scope);
     if (deps.cache) await deps.cache.invalidateTag(epochTag(scope));
     // Its media stops at once: every gate entry goes (the engine then purges the environment's
     // cached media, now and once more later). The purge clears the gate again when it finishes.
@@ -278,6 +279,16 @@ export async function dispatchEvent(
         ? (await ctx.store.bulkJobs.getJob(scope, nextId)) !== null
         : false;
       await discardStagedJob(deps.blob, scope, job, { nextStarted });
+    }
+  }
+
+  // A snapshot import's or clone's assets are written by its create phase, each never ingested in
+  // its new environment: send them through ingest so the target's search has them. A redelivered
+  // event finds the reindex still running (and gets it back) or nothing left to do.
+  if (deps.assetIngest && event.type === 'bulk.job_completed' && event.action === 'import') {
+    const job = await ctx.store.bulkJobs.getJob(scope, event.jobId);
+    if (isSnapshotJob(job?.config) && job.config.phase === 'create') {
+      await startAssetReindex(ctx, scope);
     }
   }
 

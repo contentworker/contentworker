@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { type CfQueueBinding, createCfQueueProducer } from '../../src/queue-cf/index';
+import {
+  type CfQueueBinding,
+  createAssetIngestQueue,
+  createCfQueueProducer,
+} from '../../src/queue-cf/index';
 
 type Sent = { body: unknown; delaySeconds?: number };
 
@@ -55,5 +59,42 @@ describe('cloudflare queue producer', () => {
     await expect(queue.enqueueMany('missing', [{ payload: 1 }])).rejects.toThrow(
       /No Cloudflare queue binding/,
     );
+  });
+});
+
+describe('asset ingest queue', () => {
+  it('sends an upload as R2’s notification shape, its etag included', async () => {
+    const { binding, sends } = makeBinding();
+    const queue = createAssetIngestQueue(binding, () => new Date('2026-01-01T00:00:00Z'));
+    await queue.objectCreated('s/main/a1/p.png', '"abc"');
+    await queue.objectCreated('s/main/a2/q.png');
+    expect(sends.map((s) => s.body)).toEqual([
+      {
+        action: 'PutObject',
+        object: { key: 's/main/a1/p.png', eTag: '"abc"' },
+        eventTime: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        action: 'PutObject',
+        object: { key: 's/main/a2/q.png' },
+        eventTime: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('sends requests in batches of at most 100', async () => {
+    const { binding, batches } = makeBinding();
+    const queue = createAssetIngestQueue(binding);
+    const scope = { spaceId: 's', environmentId: 'main' };
+    await queue.request(
+      Array.from({ length: 150 }, (_, i) => ({ scope, assetId: `a${i}`, version: 1 })),
+    );
+    expect(batches.map((b) => b.length)).toEqual([100, 50]);
+    expect(batches[0]?.[0]?.body).toEqual({
+      kind: 'asset.ingest',
+      scope,
+      assetId: 'a0',
+      version: 1,
+    });
   });
 });

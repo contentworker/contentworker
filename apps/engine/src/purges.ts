@@ -21,8 +21,6 @@ export const PURGING_EVENTS = new Set<string>([
   'asset.published',
   'asset.unpublished',
   'asset.deleted',
-  // Delivery's asset search ranks on what ingest indexed.
-  'asset.ingested',
   'content_type.published',
   'release.published',
   'environment_alias.changed',
@@ -58,6 +56,11 @@ export async function planPurges(
 ): Promise<void> {
   const { spaceId, environmentId } = event.scope;
   if (PURGING_EVENTS.has(event.type)) {
+    plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
+  }
+  // Ingest changes what Delivery serves (its search, the measured dimensions) only for a published
+  // asset; a draft's ingest leaves every delivery response as it was.
+  if (event.type === 'asset.ingested' && event.published) {
     plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
   }
   switch (event.type) {

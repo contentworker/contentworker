@@ -17,6 +17,7 @@ import {
 } from '@contentworker/application';
 import {
   assertQueryRespectsFieldRules,
+  authorize,
   authorizeContent,
   canAccessContentType,
   resolveLocalizedValue,
@@ -117,6 +118,9 @@ const scopeOf = (c: Context<AuthVars>): Scope => ({
 
 const BASE = '/delivery/:space/:env';
 
+/** An asset search's facet counts when it has no matches to count. */
+const EMPTY_FACETS = { kind: {}, tag: {}, folder: {} };
+
 /** Delivery API (CDA): read-only published content. Requires delivery:read. */
 /**
  * The delivery routes as a standalone app, for a Worker that serves them on their own (the
@@ -205,19 +209,26 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
     describe('listAssets'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
-      if (c.get('principal').contentGrants) {
-        return c.json({ items: [], total: 0 });
+      const principal = c.get('principal');
+      const searching = c.req.query('q') !== undefined;
+      // ?q= is a search, so it takes search:read as well, as /search does.
+      if (searching) authorize(principal, SCOPES.searchRead, c.req.param('space') ?? '*');
+      if (principal.contentGrants) {
+        // A key with content grants reads no assets; a search still answers in its own shape.
+        return c.json(
+          searching ? { items: [], total: 0, facets: EMPTY_FACETS } : { items: [], total: 0 },
+        );
       }
       const locale = c.req.query('locale');
       // ?q= searches published assets (hybrid, with facets) instead of listing them. A read like
       // the listing: nothing is written, so the cached entrypoint caches it by URL.
-      if (c.req.query('q') !== undefined) {
+      if (searching) {
         const { filters, ...query } = parseAssetSearchQuery(c.req.query());
         const { status: _status, ...published } = filters ?? {};
         return c.json(
           await searchDeliveredAssets(
             ctx,
-            assetSearchDeps(rag),
+            deps.assetSearch ?? assetSearchDeps(rag),
             scopeOf(c),
             { ...query, filters: published },
             locale !== undefined ? { locale } : {},

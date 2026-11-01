@@ -2,6 +2,7 @@ import type {
   AccessPolicy,
   AgentRunner,
   AppContext,
+  AssetSearchDeps,
   PluginSourcePolicy,
   RagDeps,
   WorkflowNodeDeps,
@@ -75,7 +76,12 @@ export interface AuthDeps {
   readonly rag: RagDeps;
   /** Object storage for asset uploads/downloads. */
   readonly blob: BlobStore;
-  /** Hands asset files to ingest (re-ingest, which answers 501 without it). */
+  /**
+   * Asset search's indexes (`wireEdge`'s `assetSearch`, which decides once whether queries are
+   * embedded). Absent (tests, local fakes): the RAG wiring's, embedding included.
+   */
+  readonly assetSearch?: AssetSearchDeps;
+  /** Hands asset files to ingest (re-ingest and reindex, which answer 501 without it). */
   readonly assetIngest?: AssetIngestQueue;
   /** AI provider for entry generation. */
   readonly ai: AIProvider;

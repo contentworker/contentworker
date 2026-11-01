@@ -93,8 +93,11 @@ describe('AssetIngestWorkflow on Cloudflare Workflows', () => {
     expect(hits.map((h) => h.entryId)).toEqual([asset.id]);
     expect(vectors.assetRows.size).toBe(1);
 
-    // R2's notification arriving after the upload path started the run: the same id, no run.
+    // R2's notification arriving after the upload path started the run: the same id, no run,
+    // and the finished asset stays ready (Workflows reports the id as taken, code 10405).
     expect(await startAssetIngestForObject(ctx, starter(), key)).toBe('started');
+    expect((await ctx.store.assets.get(scope, asset.id))?.ingestStatus).toBe('ready');
+    expect(await starter().start(instanceId, { scope, assetId: asset.id, version: 1 })).toBe(false);
     const ingested = (ctx.store as InMemoryContentStore)
       .allEvents()
       .filter((e) => e.type === 'asset.ingested');

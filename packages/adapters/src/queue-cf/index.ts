@@ -1,4 +1,9 @@
-import type { Queue, Subscription } from '@contentworker/ports';
+import type {
+  AssetIngestQueue,
+  AssetIngestRequest,
+  Queue,
+  Subscription,
+} from '@contentworker/ports';
 
 /** The subset of a Cloudflare Queues producer binding this adapter uses. */
 export interface CfQueueBinding {
@@ -73,6 +78,49 @@ export function createCfQueueProducer(bindings: Record<string, CfQueueBinding>):
       throw new Error(
         `Queue.process("${topic}") is not supported on Cloudflare — consumers are wired as queue() handlers in apps/engine`,
       );
+    },
+  };
+}
+
+/**
+ * An R2 event notification for an object written to the media bucket, as the
+ * `contentworker-asset-events` queue carries it (R2 sends it; the api sends the same shape when an
+ * upload through its signed PUT completes, since local development has no notifications).
+ */
+export interface ObjectCreatedMessage {
+  readonly action: string;
+  readonly object: { readonly key: string; readonly size?: number; readonly eTag?: string };
+  readonly bucket?: string;
+  readonly eventTime?: string;
+}
+
+/** A request to run ingest on an asset's file again (a retry, the reindex job). */
+export interface AssetIngestMessage extends AssetIngestRequest {
+  readonly kind: 'asset.ingest';
+}
+
+/**
+ * The AssetIngestQueue port over the `contentworker-asset-events` producer. An upload's message
+ * has the shape of R2's own notification (its etag included), so the engine has one path for both.
+ */
+export function createAssetIngestQueue(
+  queue: Pick<CfQueueBinding, 'send' | 'sendBatch'>,
+  now: () => Date = () => new Date(),
+): AssetIngestQueue {
+  return {
+    async objectCreated(key, etag) {
+      const body: ObjectCreatedMessage = {
+        action: 'PutObject',
+        object: { key, ...(etag ? { eTag: etag } : {}) },
+        eventTime: now().toISOString(),
+      };
+      await queue.send(body);
+    },
+    async request(requests) {
+      const bodies = requests.map((r): AssetIngestMessage => ({ kind: 'asset.ingest', ...r }));
+      for (let at = 0; at < bodies.length; at += MAX_BATCH_COUNT) {
+        await queue.sendBatch(bodies.slice(at, at + MAX_BATCH_COUNT).map((body) => ({ body })));
+      }
     },
   };
 }

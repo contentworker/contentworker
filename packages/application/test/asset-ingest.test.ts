@@ -23,6 +23,7 @@ import {
   assetIngestInstanceId,
   assetReindexChunkRunner,
   assetTextKey,
+  beginIngest,
   createAsset,
   createEnvironment,
   createSpace,
@@ -30,8 +31,15 @@ import {
   deleteAsset,
   deleteEnvironment,
   dispatchEvent,
+  exportSnapshot,
+  finishIngest,
   getAsset,
+  getPublishedAsset,
+  importSnapshot,
+  ingestErrorMessage,
   MAX_EXTRACT_DOCUMENT_BYTES,
+  MAX_HASH_BYTES,
+  MAX_PROBE_BYTES,
   publishAsset,
   reingestAsset,
   runAssetIngest,
@@ -303,6 +311,298 @@ describe('asset ingest', () => {
   });
 });
 
+describe('asset ingest, under failure and limits', () => {
+  let t: ReturnType<typeof setup>;
+  beforeEach(async () => {
+    t = setup();
+    await createSpace(t.ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
+  });
+
+  it('a model that keeps failing records failed for its enrichment, and the run finishes', async () => {
+    await createTag(t.ctx, scope, { name: 'kitchen' });
+    const asset = await t.upload('mug.png', 'image/png', 'bytes');
+    t.ai.respondWith = async () => {
+      throw new Error('upstream model 503');
+    };
+    const out = await t.run(asset.id);
+    expect(out).toMatchObject({
+      status: 'complete',
+      value: { outcome: 'ready', altText: 'failed', tags: 'failed' },
+    });
+    expect((await getAsset(t.ctx, scope, asset.id)).ingestStatus).toBe('ready');
+    expect(t.index.textOf(scope, asset.id)).toContain('mug.png');
+  });
+
+  it('a store failure during enrichment still fails the run', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'bytes');
+    const getConfig = t.store.spaces.getConfig.bind(t.store.spaces);
+    let calls = 0;
+    t.store.spaces.getConfig = async (s) => {
+      calls += 1;
+      if (calls > 0) throw new Error('D1 unavailable');
+      return getConfig(s);
+    };
+    const out = await t.run(asset.id);
+    t.store.spaces.getConfig = getConfig;
+    expect(out).toMatchObject({ value: { outcome: 'error', error: 'D1 unavailable' } });
+    expect((await getAsset(t.ctx, scope, asset.id)).ingestStatus).toBe('error');
+  });
+
+  it('meters text extraction: a spent budget skips it, and the run goes on', async () => {
+    const ctx = {
+      ...t.ctx,
+      costGuard: new InMemoryCostGuard({ maxRequests: 0, maxTokens: 1, windowSeconds: 60 }),
+    };
+    const asset = await t.upload('brief.pdf', 'application/pdf', '%PDF');
+    const steps = new FakeWorkflowSteps(t.clock);
+    const out = await steps.run(() =>
+      runAssetIngest(steps, ctx, t.deps, { scope, assetId: asset.id, version: 1 }),
+    );
+    expect(out).toMatchObject({ value: { outcome: 'ready', textChars: 0 } });
+    expect(t.extractor.read).toHaveLength(0);
+    expect(await t.blob.get(assetTextKey(scope, asset.id, 1) as string)).toBeNull();
+  });
+
+  it('meters text extraction against the budget when there is one', async () => {
+    const guard = new InMemoryCostGuard({ maxRequests: 10, maxTokens: 100, windowSeconds: 60 });
+    const ctx = { ...t.ctx, costGuard: guard };
+    const asset = await t.upload('brief.pdf', 'application/pdf', '%PDF');
+    t.extractor.setText('brief.pdf', 'x'.repeat(400));
+    const steps = new FakeWorkflowSteps(t.clock);
+    await steps.run(() =>
+      runAssetIngest(steps, ctx, t.deps, { scope, assetId: asset.id, version: 1 }),
+    );
+    expect(t.extractor.read).toHaveLength(1);
+    // The extraction's ~100 tokens (400 characters) were settled: the budget is now spent.
+    expect(await guard.consume(scope)).toMatchObject({ allowed: false, reason: 'tokens' });
+  });
+
+  it('hands the extractor the stream’s chunks, never one joined copy', async () => {
+    const asset = await t.upload('brief.pdf', 'application/pdf', '%PDF-body');
+    await t.run(asset.id);
+    expect(t.extractor.read[0]).toMatchObject({ size: 9, chunks: [expect.any(Uint8Array)] });
+  });
+
+  it('skips the hash of a file over the cap, and goes on', async () => {
+    const asset = await t.upload('big.png', 'image/png', 'bytes');
+    const original = t.blob.open.bind(t.blob);
+    let returned = 0;
+    t.blob.open = async (key) => {
+      const o = await original(key);
+      if (!o) return o;
+      const inner = o.body;
+      const body = {
+        [Symbol.asyncIterator]() {
+          const it = inner[Symbol.asyncIterator]();
+          return {
+            next: () => it.next(),
+            return: async () => {
+              returned += 1;
+              return { done: true as const, value: undefined };
+            },
+          };
+        },
+      };
+      return { ...o, body, size: MAX_HASH_BYTES + 1 };
+    };
+    const out = await t.run(asset.id);
+    expect(out).toMatchObject({ value: { outcome: 'ready' } });
+    expect((out as { value: { contentHash?: string } }).value.contentHash).toBeUndefined();
+    const after = await getAsset(t.ctx, scope, asset.id);
+    expect(after.contentHash).toBeUndefined();
+    expect(after.file.size).toBe(MAX_HASH_BYTES + 1);
+    // Neither the hash nor the probe (over its own, smaller cap) read the body: both let it go.
+    expect(returned).toBe(2);
+    expect(ingested(t.store)[0]?.contentHash).toBeUndefined();
+  });
+
+  it('does not probe a file over the image cap', async () => {
+    const asset = await t.upload('huge.png', 'image/png', 'bytes');
+    t.images.set('bytes', { width: 10, height: 10, format: 'image/png' });
+    const original = t.blob.open.bind(t.blob);
+    t.blob.open = async (key) => {
+      const o = await original(key);
+      return o ? { ...o, size: MAX_PROBE_BYTES + 1 } : o;
+    };
+    await t.run(asset.id);
+    expect(t.images.calls).toBe(0);
+    expect((await getAsset(t.ctx, scope, asset.id)).file.width).toBeUndefined();
+  });
+
+  it('writes the measured size and dimensions into a snapshot published before ingest', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'png-bytes');
+    t.images.set('png-bytes', { width: 640, height: 480, format: 'image/png' });
+    await publishAsset(t.ctx, scope, asset.id);
+    await t.run(asset.id);
+    const published = await getPublishedAsset(t.ctx, scope, asset.id);
+    expect(published.file).toMatchObject({ width: 640, height: 480, size: 9 });
+    expect(ingested(t.store)[0]?.published).toBe(true);
+  });
+
+  it('leaves a snapshot of another version as it was', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'png-bytes');
+    await publishAsset(t.ctx, scope, asset.id);
+    const stored = await getAsset(t.ctx, scope, asset.id);
+    await t.store.assets.save(scope, {
+      ...stored,
+      version: 2,
+      file: { ...stored.file, width: 1, height: 1 },
+    });
+    await finishIngest(t.ctx, { scope, assetId: asset.id, version: 2 }, { size: 1 });
+    const published = await getPublishedAsset(t.ctx, scope, asset.id);
+    expect(published.file.width).toBeUndefined();
+  });
+
+  it('records a failure without the credentials a provider quoted back', () => {
+    const message = ingestErrorMessage(
+      new Error('fetch https://user:hunter2@r2.example/x failed: Bearer abcdefghijkl'),
+    );
+    expect(message).not.toContain('hunter2');
+    expect(message).not.toContain('abcdefghijkl');
+    expect(message).toContain('r2.example');
+  });
+
+  it('an asset deleted while its text was extracted leaves no text behind', async () => {
+    const asset = await t.upload('brief.pdf', 'application/pdf', '%PDF');
+    const extract = t.extractor.extract.bind(t.extractor);
+    t.extractor.extract = async (file) => {
+      await t.store.assets.delete(scope, asset.id);
+      return extract(file);
+    };
+    await t.run(asset.id);
+    expect(await t.blob.get(assetTextKey(scope, asset.id, 1) as string)).toBeNull();
+  });
+
+  it('deleting the original re-points its copies at the oldest one left', async () => {
+    const original = await t.upload('a.png', 'image/png', 'same');
+    const second = await t.upload('b.png', 'image/png', 'same');
+    const third = await t.upload('c.png', 'image/png', 'same');
+    for (const a of [original, second, third]) await t.run(a.id);
+    expect((await getAsset(t.ctx, scope, third.id)).duplicateOf).toBe(original.id);
+
+    await deleteAsset(t.ctx, scope, original.id);
+    expect((await getAsset(t.ctx, scope, second.id)).duplicateOf).toBeUndefined();
+    expect((await getAsset(t.ctx, scope, third.id)).duplicateOf).toBe(second.id);
+  });
+
+  it('an editor save clears the AI marks only for what it changed', async () => {
+    const kitchen = await createTag(t.ctx, scope, { name: 'kitchen' });
+    t.ai.respondWith = async (req) =>
+      req.outputSchema && 'existingTags' in (req.outputSchema.properties as object)
+        ? { existingTags: ['kitchen'], newTags: [] }
+        : { altText: 'A mug' };
+    const asset = await t.upload('mug.png', 'image/png', 'bytes');
+    await t.run(asset.id);
+    const ingestedAsset = await getAsset(t.ctx, scope, asset.id);
+    expect(ingestedAsset.aiSuggestions).toEqual({ altText: ['en-US'], tags: [kitchen.id] });
+    // A form sends the whole map and list back unchanged: still suggestions.
+    await setAssetMetadata(t.ctx, scope, asset.id, {
+      altText: ingestedAsset.metadata.altText,
+      tags: ingestedAsset.metadata.tags,
+    });
+    expect((await getAsset(t.ctx, scope, asset.id)).aiSuggestions).toEqual({
+      altText: ['en-US'],
+      tags: [kitchen.id],
+    });
+    // Another locale added, the suggested one untouched: still a suggestion.
+    await setAssetMetadata(t.ctx, scope, asset.id, {
+      altText: { ...ingestedAsset.metadata.altText, 'de-DE': 'Ein Becher' },
+    });
+    expect((await getAsset(t.ctx, scope, asset.id)).aiSuggestions?.altText).toEqual(['en-US']);
+    // Edited: the editor's now.
+    await setAssetMetadata(t.ctx, scope, asset.id, { altText: { 'en-US': 'My mug' } });
+    expect((await getAsset(t.ctx, scope, asset.id)).aiSuggestions).toEqual({ tags: [kitchen.id] });
+  });
+});
+
+describe('importing and cloning assets', () => {
+  it('a clone carries no ingest state and sends its assets through ingest', async () => {
+    const t = setup();
+    await createSpace(t.ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
+    await createEnvironment(t.ctx, 'shop', 'copy', 'Copy');
+    const target = { spaceId: 'shop', environmentId: 'copy' };
+    const a = await t.upload('a.png', 'image/png', 'same');
+    const b = await t.upload('b.png', 'image/png', 'same');
+    await t.run(a.id);
+    await t.run(b.id);
+    await t.store.assets.save(scope, {
+      ...(await getAsset(t.ctx, scope, b.id)),
+      aiSuggestions: { altText: ['en-US'] },
+    });
+
+    await importSnapshot(t.ctx, target, await exportSnapshot(t.ctx, scope), {
+      reindexAssets: true,
+    });
+    const copied = await getAsset(t.ctx, target, b.id);
+    expect(copied.ingestStatus).toBeUndefined();
+    expect(copied.ingestError).toBeUndefined();
+    expect(copied.duplicateOf).toBeUndefined();
+    expect(copied.aiSuggestions).toBeUndefined();
+    const [job] = await t.store.bulkJobs.listJobs(target);
+    expect(job).toMatchObject({ action: 'asset_reindex', totalItems: 2 });
+  });
+
+  it('without the ingest queue, an import starts no reindex', async () => {
+    const t = setup();
+    await createSpace(t.ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
+    await createEnvironment(t.ctx, 'shop', 'copy', 'Copy');
+    const target = { spaceId: 'shop', environmentId: 'copy' };
+    await t.upload('a.png', 'image/png', 'a');
+    await importSnapshot(t.ctx, target, await exportSnapshot(t.ctx, scope));
+    expect(await t.store.bulkJobs.listJobs(target)).toEqual([]);
+  });
+
+  it('a snapshot job’s create phase completing starts the reindex, once', async () => {
+    const t = setup();
+    await createSpace(t.ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
+    await t.upload('a.png', 'image/png', 'a');
+    const now = t.clock.now().toISOString();
+    for (const [id, phase] of [
+      ['create-job', 'create'],
+      ['publish-job', 'publish'],
+    ] as const) {
+      await t.store.bulkJobs.createJob(scope, {
+        id,
+        action: 'import',
+        status: 'completed',
+        totalItems: 1,
+        totalChunks: 1,
+        completedChunks: 1,
+        succeeded: 1,
+        failed: 0,
+        createdAt: now,
+        config: { kind: 'snapshot', phase },
+      });
+    }
+    const completed = (jobId: string) =>
+      ({
+        id: `ev-${jobId}`,
+        type: 'bulk.job_completed',
+        scope,
+        occurredAt: now,
+        jobId,
+        action: 'import',
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+      }) as DomainEvent;
+    const deps = {
+      sender: new RecordingWebhookSender(),
+      assetIngest: new FakeAssetIngestQueue(),
+    };
+    await dispatchEvent(t.ctx, deps, completed('publish-job'));
+    expect(
+      (await t.store.bulkJobs.listJobs(scope)).filter((j) => j.action === 'asset_reindex'),
+    ).toEqual([]);
+    await dispatchEvent(t.ctx, deps, completed('create-job'));
+    await dispatchEvent(t.ctx, deps, completed('create-job')); // redelivered
+    const reindex = (await t.store.bulkJobs.listJobs(scope)).filter(
+      (j) => j.action === 'asset_reindex',
+    );
+    expect(reindex).toHaveLength(1);
+  });
+});
+
 describe('starting ingest', () => {
   let t: ReturnType<typeof setup>;
   beforeEach(async () => {
@@ -329,8 +629,17 @@ describe('starting ingest', () => {
     expect(id).toBe(assetIngestInstanceId(scope, 'a-1', 1));
     expect(id).not.toBe(assetIngestInstanceId({ ...scope, environmentId: 'other' }, 'a-1', 1));
     expect(id).not.toBe(assetIngestInstanceId(scope, 'a-1', 2));
-    expect(id).not.toBe(assetIngestInstanceId(scope, 'a-1', 1, 'retry'));
-    const long = assetIngestInstanceId(scope, 'x'.repeat(300), 1, 'retry');
+    expect(id).not.toBe(assetIngestInstanceId(scope, 'a-1', 1, { rerun: 'retry' }));
+    // The bytes: a second PUT through the same URL is a run of its own; R2's quoted and
+    // unquoted forms of one etag are the same bytes.
+    const etag = assetIngestInstanceId(scope, 'a-1', 1, { etag: '"ABC"' });
+    expect(etag).not.toBe(id);
+    expect(etag).toBe(assetIngestInstanceId(scope, 'a-1', 1, { etag: 'abc' }));
+    expect(etag).not.toBe(assetIngestInstanceId(scope, 'a-1', 1, { etag: 'def' }));
+    const long = assetIngestInstanceId(scope, 'x'.repeat(300), 1, {
+      rerun: 'retry',
+      etag: 'e'.repeat(64),
+    });
     expect(long.length).toBeLessThanOrEqual(100);
     expect(long).toMatch(/^[A-Za-z0-9_-]+$/);
   });
@@ -380,8 +689,6 @@ describe('starting ingest', () => {
     const { assets, job } = await startAssetReindex(t.ctx, scope);
     expect(assets).toBe(1);
     expect(job?.action).toBe('asset_reindex');
-    const all = await startAssetReindex(t.ctx, scope, { all: true });
-    expect(all.assets).toBe(2);
 
     const queue = new FakeAssetIngestQueue();
     const runChunk = assetReindexChunkRunner(t.ctx, queue);
@@ -400,6 +707,90 @@ describe('starting ingest', () => {
     const starter = new RecordingAssetIngestStarter();
     for (const r of queue.requested) await startRequestedAssetIngest(t.ctx, starter, r);
     expect(starter.started).toHaveLength(1);
+  });
+
+  it('a reindex while one is running returns that job; once it is done, a new one starts', async () => {
+    await t.upload('a.png', 'image/png', 'a');
+    const done = await t.upload('b.png', 'image/png', 'b');
+    await t.run(done.id);
+    const first = await startAssetReindex(t.ctx, scope);
+    const again = await startAssetReindex(t.ctx, scope, { all: true });
+    expect(again).toEqual({ assets: 1, job: first.job, running: true });
+    expect((await t.store.bulkJobs.listJobs(scope)).length).toBe(1);
+
+    await t.store.bulkJobs.finalizeJob(scope, first.job?.id as string, 'completed', new Date());
+    const all = await startAssetReindex(t.ctx, scope, { all: true });
+    expect(all.assets).toBe(2);
+    expect(all.job?.id).not.toBe(first.job?.id);
+    expect(all.running).toBeUndefined();
+  });
+
+  it('reingest does nothing while a run is queued or running', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'bytes');
+    const queue = new FakeAssetIngestQueue();
+    for (const status of ['pending', 'processing'] as const) {
+      await t.store.assets.recordIngest(scope, asset.id, 1, { status });
+      const out = await reingestAsset(t.ctx, queue, scope, asset.id);
+      expect(out.ingestStatus).toBe(status);
+    }
+    expect(queue.requested).toEqual([]);
+    await t.store.assets.recordIngest(scope, asset.id, 1, { status: 'error', error: 'x' });
+    await reingestAsset(t.ctx, queue, scope, asset.id);
+    expect(queue.requested).toHaveLength(1);
+  });
+
+  it('a repeat start after the run finished leaves the asset as the run left it', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'bytes');
+    const starter = new RecordingAssetIngestStarter();
+    const key = asset.r2Key as string;
+    await startAssetIngestForObject(t.ctx, starter, key, '"e1"');
+    await t.run(asset.id);
+    expect((await getAsset(t.ctx, scope, asset.id)).ingestStatus).toBe('ready');
+    // R2's notification after the upload path's run finished: same bytes, same id, no run.
+    expect(await startAssetIngestForObject(t.ctx, starter, key, 'e1')).toBe('started');
+    expect(starter.started).toHaveLength(1);
+    expect((await getAsset(t.ctx, scope, asset.id)).ingestStatus).toBe('ready');
+
+    // A failed run keeps its status and message through a repeated request too.
+    await t.store.assets.recordIngest(scope, asset.id, 1, { status: 'error', error: 'boom' });
+    const request = { scope, assetId: asset.id, version: 1, rerun: 'job-1' };
+    await startRequestedAssetIngest(t.ctx, starter, request);
+    await t.store.assets.recordIngest(scope, asset.id, 1, { status: 'error', error: 'boom' });
+    await startRequestedAssetIngest(t.ctx, starter, request);
+    expect(await getAsset(t.ctx, scope, asset.id)).toMatchObject({
+      ingestStatus: 'error',
+      ingestError: 'boom',
+    });
+  });
+
+  it('never writes pending over a run in progress (the two triggers racing)', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'bytes');
+    const starter = new RecordingAssetIngestStarter();
+    await startAssetIngestForObject(t.ctx, starter, asset.r2Key as string);
+    await beginIngest(t.ctx, { scope, assetId: asset.id, version: 1 });
+    expect((await getAsset(t.ctx, scope, asset.id)).ingestStatus).toBe('processing');
+    // The other trigger, late, and a requested rerun that does start a run.
+    await startAssetIngestForObject(t.ctx, starter, asset.r2Key as string);
+    await startRequestedAssetIngest(t.ctx, starter, {
+      scope,
+      assetId: asset.id,
+      version: 1,
+      rerun: 'r',
+    });
+    expect(starter.started).toHaveLength(2);
+    expect((await getAsset(t.ctx, scope, asset.id)).ingestStatus).toBe('processing');
+  });
+
+  it('a second PUT of new bytes through the same URL is ingested again', async () => {
+    const asset = await t.upload('mug.png', 'image/png', 'bytes');
+    const starter = new RecordingAssetIngestStarter();
+    await startAssetIngestForObject(t.ctx, starter, asset.r2Key as string, '"first"');
+    await startAssetIngestForObject(t.ctx, starter, asset.r2Key as string, '"first"');
+    await startAssetIngestForObject(t.ctx, starter, asset.r2Key as string, '"second"');
+    expect(starter.started.map((s) => s.instanceId)).toEqual([
+      assetIngestInstanceId(scope, asset.id, 1, { etag: 'first' }),
+      assetIngestInstanceId(scope, asset.id, 1, { etag: 'second' }),
+    ]);
   });
 });
 

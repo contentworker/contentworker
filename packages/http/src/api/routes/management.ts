@@ -834,6 +834,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       const options = {
         dryRun: c.req.query('dryRun') === 'true',
         publish: c.req.query('publish') !== 'false',
+        // Run inline (no blob store): the imported assets go through ingest once written.
+        reindexAssets: Boolean(deps.assetIngest),
       };
       if (options.dryRun || !blob) {
         const report = await importSnapshot(ctx, scopeOf(c), snapshot, options);
@@ -869,7 +871,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         spaceId: body.targetSpaceId ?? (c.req.param('space') as string),
         environmentId: body.targetEnvironmentId,
       };
-      const options = { publish: body.publish !== false };
+      const options = { publish: body.publish !== false, reindexAssets: Boolean(deps.assetIngest) };
       if (!blob) return c.json(await cloneEnvironment(ctx, scopeOf(c), target, options), 201);
       return c.json(await startEnvironmentClone(ctx, scopeOf(c), target, options), 202);
     },
@@ -1783,7 +1785,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const page = await searchAssets(
         ctx,
-        assetSearchDeps(rag),
+        deps.assetSearch ?? assetSearchDeps(rag),
         scopeOf(c),
         parseAssetSearchQuery(c.req.query()),
       );
@@ -1800,10 +1802,15 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         'A resumable bulk job (follow it at /bulk-jobs/{id}) that re-runs ingest — hash, ' +
         'duplicates, dimensions, alt text and tags where empty, text extraction, search index — ' +
         'on assets never ingested (uploaded before ingest) or whose ingest failed; all: true ' +
-        'takes every asset with a file. Hosted videos are left out.',
+        'takes every asset with a file. Hosted videos are left out. While a reindex is running ' +
+        'in the environment, that job is returned instead (running: true). 501 when the ingest ' +
+        'queue is not bound.',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
+      if (!deps.assetIngest) {
+        throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to reindex assets');
+      }
       const { all } = await parseBody(c, assetReindexBody);
       return c.json(await startAssetReindex(ctx, scopeOf(c), { all: all === true }), 202);
     },

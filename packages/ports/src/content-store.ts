@@ -561,6 +561,16 @@ export interface AssetRepo {
    * in turn leaves the ingest columns alone, so neither clobbers the other.
    */
   recordIngest(scope: Scope, id: string, version: number, patch: AssetIngestPatch): Promise<void>;
+  /**
+   * Writes the file's measurements into the published snapshot, only while it delivers `version`
+   * (an asset published before ingest measured it), so Delivery reports what ingest found.
+   */
+  recordPublishedFile(
+    scope: Scope,
+    id: string,
+    version: number,
+    file: { readonly size?: number; readonly width?: number; readonly height?: number },
+  ): Promise<void>;
   putPublished(scope: Scope, snapshot: PublishedAsset): Promise<void>;
   removePublished(scope: Scope, id: string): Promise<void>;
   getPublished(scope: Scope, id: string): Promise<PublishedAsset | null>;
@@ -582,6 +592,11 @@ export interface AssetIngestPatch {
   readonly height?: number;
   /** The real content type, when the upload declared none worth keeping. */
   readonly contentType?: string;
+  /**
+   * Applies the patch only while the asset's ingest status is one of these (`null`: never
+   * ingested), so a write that would move a run backwards (pending over processing) is dropped.
+   */
+  readonly onlyFrom?: readonly (AssetIngestStatus | null)[];
 }
 
 /**
@@ -774,6 +789,8 @@ export interface DeploymentSettingsRepo {
 
 /** The transactional view of the store handed to `withTransaction`. */
 export interface ContentStoreTx {
+  /** Only the purge's progress mark, which commits with the event that continues the purge. */
+  readonly spaces: Pick<SpaceRepo, 'markEnvironmentPurgeProgress'>;
   readonly contentTypes: ContentTypeRepo;
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
@@ -1005,6 +1022,12 @@ export interface SpaceRepo {
     rowsPerTable: number,
     at: Date,
   ): Promise<number>;
+  /**
+   * Marks a purge as progressing at `at` without deleting anything (a step spent elsewhere, on
+   * the environment's search entries), so the stall sweep doesn't restart it. Works in a unit of
+   * work, so the mark and the event that continues the purge commit together.
+   */
+  markEnvironmentPurgeProgress(spaceId: string, environmentId: string, at: Date): Promise<void>;
   /** Clears a finished purge, so the environment's id can be used again. */
   finishEnvironmentPurge(spaceId: string, environmentId: string): Promise<void>;
   /**

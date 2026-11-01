@@ -105,6 +105,44 @@ describe('asset search over HTTP', () => {
     expect((await app.request(`${M}/assets/search?q=x`, { headers: cda })).status).toBe(403);
   });
 
+  it('Delivery ?q= takes search:read as well; a content-granted key gets an empty search', async () => {
+    const { app } = makeApp();
+    const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+    const keyFor = async (scopes: string[], contentGrants?: unknown[]) => {
+      const role = await json<{ id: string }>(
+        app.request('/spaces/s1/roles', {
+          method: 'POST',
+          headers: admin,
+          body: JSON.stringify({ name: `r-${scopes.join('-')}`, scopes, contentGrants }),
+        }),
+      );
+      const key = await json<{ token: string }>(
+        app.request('/spaces/s1/api-keys', {
+          method: 'POST',
+          headers: admin,
+          body: JSON.stringify({ kind: 'cda', roleId: role.id }),
+        }),
+      );
+      return { Authorization: `Bearer ${key.token}` };
+    };
+    const readOnly = await keyFor(['delivery:read']);
+    expect((await app.request(`${D}/assets?q=mug`, { headers: readOnly })).status).toBe(403);
+    // The listing itself still answers that key.
+    expect((await app.request(`${D}/assets`, { headers: readOnly })).status).toBe(200);
+
+    const granted = await keyFor(
+      ['delivery:read', 'search:read'],
+      [{ contentTypeApiId: 'post', actions: ['read'] }],
+    );
+    const res = await app.request(`${D}/assets?q=mug`, { headers: granted });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      items: [],
+      total: 0,
+      facets: { kind: {}, tag: {}, folder: {} },
+    });
+  });
+
   it('re-ingest queues a run (501 without the queue); reindex starts a job', async () => {
     const ingest = new FakeAssetIngestQueue();
     const { app } = makeApp({ ingest });
@@ -136,5 +174,11 @@ describe('asset search over HTTP', () => {
     expect(
       (await bare.request(`${M}/assets/${b.id}/reingest`, { method: 'POST', headers: cma })).status,
     ).toBe(501);
+    const reindex = await bare.request(`${M}/assets/reindex`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({}),
+    });
+    expect(reindex.status).toBe(501);
   });
 });

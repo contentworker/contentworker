@@ -357,11 +357,34 @@ describe('asset search and ingest tools (MCP), on the same use-cases as the HTTP
       arguments: { space: SPACE, q: 'mug' },
     });
     expect(lib.isError).toBe(true);
-    const delivered = await cda.callTool({
+    // delivered: true is Delivery's ?q=: delivery:read and search:read.
+    const deliveredReadOnly = await cda.callTool({
+      name: 'assets_search',
+      arguments: { space: SPACE, q: 'mug', delivered: true },
+    });
+    expect(deliveredReadOnly.isError).toBe(true);
+    const searcher = await connect(deps, {
+      ...deliveryOnly,
+      scopes: [SCOPES.deliveryRead, SCOPES.searchRead],
+    });
+    const delivered = await searcher.callTool({
       name: 'assets_search',
       arguments: { space: SPACE, q: 'mug', delivered: true },
     });
     expect(delivered.isError).toBeFalsy();
+    const granted = await connect(deps, {
+      ...deliveryOnly,
+      scopes: [SCOPES.deliveryRead, SCOPES.searchRead],
+      contentGrants: [{ contentTypeApiId: 'post', actions: ['read'] }],
+    } as Principal);
+    expect(
+      payload(
+        await granted.callTool({
+          name: 'assets_search',
+          arguments: { space: SPACE, q: 'mug', delivered: true },
+        }),
+      ),
+    ).toEqual({ items: [], total: 0, facets: { kind: {}, tag: {}, folder: {} } });
     const r = await connect(deps, reader);
     for (const [name, args] of [
       ['asset_reingest', { id: 'x' }],
@@ -393,5 +416,8 @@ describe('asset search and ingest tools (MCP), on the same use-cases as the HTTP
       (await bare.callTool({ name: 'asset_reingest', arguments: { space: SPACE, id: a.id } }))
         .isError,
     ).toBe(true);
+    const reindex = await bare.callTool({ name: 'assets_reindex', arguments: { space: SPACE } });
+    expect(reindex.isError).toBe(true);
+    expect(JSON.stringify(reindex.content)).toMatch(/ASSET_EVENTS_QUEUE/);
   });
 });

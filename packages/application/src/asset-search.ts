@@ -9,6 +9,7 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type {
+  AssetSearchCorpus,
   BlobStore,
   EmbeddingsProvider,
   PublishedAsset,
@@ -22,8 +23,11 @@ import type { RagDeps } from './rag';
 
 /**
  * Asset search: hybrid, as entry search is (a lexical leg and a semantic one, fused by rank), over
- * an index of assets that ingest and publishing keep. Assets have their own lexical shards and
- * their own vector namespace, so neither leg ever mixes them with entries.
+ * indexes of assets that ingest and publishing keep. Assets have their own lexical shards and
+ * their own vector namespaces, so neither leg ever mixes them with entries. There are two corpora
+ * (`AssetSearchCorpus`): the library (every asset as it is now, for Management) and the published
+ * assets (their published snapshots, for Delivery), so Delivery's candidates are never drafts and
+ * never rank on text only a draft has.
  */
 
 /** The indexes asset search reads and ingest writes; each is optional, and so is its leg. */
@@ -31,11 +35,17 @@ export interface AssetSearchDeps {
   /** Embeddings and vectors for the semantic leg; absent, search is lexical only. */
   readonly embeddings?: EmbeddingsProvider;
   readonly vectors?: VectorStore;
-  /** The asset corpus of the FTS5 shards; absent, the lexical leg scans recent assets. */
+  /** The library corpus of the FTS5 shards; absent, the lexical leg scans recent assets. */
   readonly index?: SearchIndex;
+  /** The published corpus of the FTS5 shards; absent, Delivery's lexical leg scans. */
+  readonly publishedIndex?: SearchIndex;
 }
 
-/** The asset search indexes out of the RAG wiring (`embed: false` leaves the semantic leg out). */
+/**
+ * The asset search indexes out of the RAG wiring. `embed: false` leaves the semantic leg out:
+ * `wireEdge` passes whether EMBEDDINGS_PROVIDER is set, so a query is embedded only by the model
+ * the index was written with.
+ */
 export function assetSearchDeps(
   rag: RagDeps | undefined,
   opts: { readonly embed?: boolean } = {},
@@ -43,6 +53,7 @@ export function assetSearchDeps(
   return {
     ...(rag && opts.embed !== false ? { embeddings: rag.embeddings, vectors: rag.vectors } : {}),
     ...(rag?.assetSearchIndex ? { index: rag.assetSearchIndex } : {}),
+    ...(rag?.publishedAssetSearchIndex ? { publishedIndex: rag.publishedAssetSearchIndex } : {}),
   };
 }
 
@@ -54,20 +65,20 @@ export const ASSET_INDEX_TEXT_CHARS = 100_000;
 const localized = (value: LocalizedValue | undefined): string[] =>
   Object.values(value ?? {}).filter((v): v is string => typeof v === 'string' && v.trim() !== '');
 
-/** What an asset is searched by, as one snapshot (published, or the library's draft). */
+/** What an asset is searched by, as one snapshot (the library's, or the published one). */
 interface SearchSource {
   readonly id: string;
   readonly file: Asset['file'];
   readonly title: LocalizedValue;
   readonly description: LocalizedValue;
   readonly metadata: Asset['metadata'];
+  /** The file version the snapshot is of: its extracted text is that version's. */
   readonly version: number;
 }
 
 /**
  * The text an asset is found by: its file name, title, caption (description), alt text and tag
- * names, and an excerpt of what ingest read out of the file. A published asset is indexed from its
- * published snapshot, so Delivery's search never ranks it on text only a draft has.
+ * names, and an excerpt of what ingest read out of the snapshot's own file version.
  */
 async function searchText(
   ctx: AppContext,
@@ -94,31 +105,38 @@ async function searchText(
     .join('\n');
 }
 
-/** The snapshot an asset is indexed from: published when it is, else the library's. */
-async function searchSource(
+/**
+ * The snapshots an asset is indexed from: the library's (`null` once the asset is gone) and the
+ * published one (`null` while unpublished), each at its own file version.
+ */
+async function searchSources(
   ctx: AppContext,
   scope: Scope,
   assetId: string,
-): Promise<SearchSource | null> {
+): Promise<{ library: SearchSource | null; published: SearchSource | null }> {
   const [asset, published] = await Promise.all([
     ctx.store.assets.get(scope, assetId),
     ctx.store.assets.getPublished(scope, assetId),
   ]);
-  if (!asset) return null;
-  const from = published ?? asset;
-  return {
+  if (!asset) return { library: null, published: null };
+  const source = (from: Asset | PublishedAsset, version: number): SearchSource => ({
     id: assetId,
     file: from.file,
     title: from.title,
     description: from.description,
     metadata: from.metadata,
-    version: asset.version ?? 1,
+    version,
+  });
+  return {
+    library: source(asset, asset.version ?? 1),
+    published: published ? source(published, published.version ?? 1) : null,
   };
 }
 
 /**
- * Writes an asset's semantic leg: one vector over its search text. Idempotent (the vector is
- * replaced). Returns false when there is nothing to do (no embeddings, or the asset is gone).
+ * Writes an asset's semantic leg: one vector over its search text per corpus, the published one
+ * only while it is published (else removed). Idempotent (vectors are replaced). Returns false
+ * when there is nothing to do (no embeddings, or the asset is gone).
  */
 export async function embedAssetForSearch(
   ctx: AppContext,
@@ -128,21 +146,41 @@ export async function embedAssetForSearch(
   assetId: string,
 ): Promise<boolean> {
   if (!deps.embeddings || !deps.vectors) return false;
-  const source = await searchSource(ctx, scope, assetId);
-  if (!source) return false;
-  const text = await searchText(ctx, blob, scope, source, ASSET_EMBED_EXCERPT_CHARS);
-  const [embedding] = await deps.embeddings.embed([text], { taskType: 'document' });
-  if (!embedding) return false;
-  await deps.vectors.upsertAsset(scope, {
+  const { library, published } = await searchSources(ctx, scope, assetId);
+  if (!library) return false;
+  const libraryText = await searchText(ctx, blob, scope, library, ASSET_EMBED_EXCERPT_CHARS);
+  const publishedText = published
+    ? await searchText(ctx, blob, scope, published, ASSET_EMBED_EXCERPT_CHARS)
+    : null;
+  // One call; the same text (published, no draft changes) is embedded once.
+  const texts =
+    publishedText === null || publishedText === libraryText
+      ? [libraryText]
+      : [libraryText, publishedText];
+  const embedded = await deps.embeddings.embed(texts, { taskType: 'document' });
+  const [libraryVector] = embedded;
+  if (!libraryVector) return false;
+  const row = (corpus: AssetSearchCorpus, source: SearchSource, embedding: number[]) => ({
+    corpus,
     assetId,
     embedding,
     assetKind: assetKind(source.file.contentType),
     version: source.version,
   });
+  await deps.vectors.upsertAsset(scope, row('library', library, libraryVector));
+  if (published) {
+    const vector = embedded[texts.length - 1] ?? libraryVector;
+    await deps.vectors.upsertAsset(scope, row('published', published, vector));
+  } else {
+    await deps.vectors.deleteAsset(scope, assetId, 'published');
+  }
   return true;
 }
 
-/** Writes an asset's lexical leg: one document in the asset shards. Idempotent. */
+/**
+ * Writes an asset's lexical leg: one document per corpus, the published one only while it is
+ * published (else removed). Idempotent.
+ */
 export async function indexAssetText(
   ctx: AppContext,
   deps: AssetSearchDeps,
@@ -150,20 +188,25 @@ export async function indexAssetText(
   scope: Scope,
   assetId: string,
 ): Promise<boolean> {
-  if (!deps.index) return false;
-  const source = await searchSource(ctx, scope, assetId);
-  if (!source) return false;
-  const text = await searchText(ctx, blob, scope, source, ASSET_INDEX_TEXT_CHARS);
-  await deps.index.index(scope, {
-    entryId: assetId,
-    contentTypeApiId: 'asset',
-    textByLocale: { '*': text },
-    entryVersion: source.version,
-  });
+  if (!deps.index && !deps.publishedIndex) return false;
+  const { library, published } = await searchSources(ctx, scope, assetId);
+  if (!library) return false;
+  const write = async (index: SearchIndex, source: SearchSource) =>
+    index.index(scope, {
+      entryId: assetId,
+      contentTypeApiId: 'asset',
+      textByLocale: { '*': await searchText(ctx, blob, scope, source, ASSET_INDEX_TEXT_CHARS) },
+      entryVersion: source.version,
+    });
+  if (deps.index) await write(deps.index, library);
+  if (deps.publishedIndex) {
+    if (published) await write(deps.publishedIndex, published);
+    else await deps.publishedIndex.remove(scope, assetId);
+  }
   return true;
 }
 
-/** Both legs, for a publish or unpublish (whose snapshot is what search reads). */
+/** Both legs, for a publish or unpublish (whose snapshot the published corpus is). */
 export async function indexAssetForSearch(
   ctx: AppContext,
   deps: AssetSearchDeps,
@@ -175,14 +218,25 @@ export async function indexAssetForSearch(
   await indexAssetText(ctx, deps, blob, scope, assetId);
 }
 
-/** Removes an asset from both legs. Idempotent. */
+/** Removes an asset from both legs of both corpora. Idempotent. */
 export async function removeAssetFromSearch(
   deps: AssetSearchDeps | undefined,
   scope: Scope,
   assetId: string,
 ): Promise<void> {
-  await deps?.vectors?.deleteAsset(scope, assetId);
+  await deps?.vectors?.deleteAsset(scope, assetId, 'library');
+  await deps?.vectors?.deleteAsset(scope, assetId, 'published');
   await deps?.index?.remove(scope, assetId);
+  await deps?.publishedIndex?.remove(scope, assetId);
+}
+
+/** Empties both corpora's lexical shards for a deleted environment (vectors go by id). */
+export async function clearAssetSearch(
+  deps: AssetSearchDeps | undefined,
+  scope: Scope,
+): Promise<void> {
+  await deps?.index?.clear?.(scope);
+  await deps?.publishedIndex?.clear?.(scope);
 }
 
 // ---- search -----------------------------------------------------------------------------------
@@ -274,20 +328,22 @@ const scanTexts = (a: {
 ];
 
 /**
- * The fused candidate ids, best first. The lexical leg is the asset shards (falling back to
- * `scan` when unbound or unreachable, as entry search falls back to its store scan); the semantic
- * leg embeds the query and asks the asset vectors.
+ * The fused candidate ids of one corpus, best first. The lexical leg is that corpus's asset
+ * shards (falling back to `scan` when unbound or unreachable, as entry search falls back to its
+ * store scan); the semantic leg embeds the query and asks that corpus's asset vectors.
  */
 async function candidates(
   deps: AssetSearchDeps,
   scope: Scope,
   q: string,
+  corpus: AssetSearchCorpus,
   scan: () => Promise<string[]>,
 ): Promise<string[]> {
+  const index = corpus === 'library' ? deps.index : deps.publishedIndex;
   const lexical = async (): Promise<string[]> => {
-    if (deps.index) {
+    if (index) {
       try {
-        const hits = await deps.index.search(scope, q, { topK: MAX_ASSET_SEARCH_RESULTS });
+        const hits = await index.search(scope, q, { topK: MAX_ASSET_SEARCH_RESULTS });
         return hits.map((h) => h.entryId);
       } catch {
         return scan();
@@ -301,7 +357,11 @@ async function candidates(
     if (!embedding) return [];
     const topK = Math.min(MAX_ASSET_SEARCH_RESULTS, deps.vectors.maxTopK ?? 50);
     // Orthogonal vectors share nothing; anything above that is a candidate the fusion ranks.
-    const hits = await deps.vectors.queryAssets(scope, embedding, { topK, minScore: 1e-6 });
+    const hits = await deps.vectors.queryAssets(scope, embedding, {
+      topK,
+      minScore: 1e-6,
+      corpus,
+    });
     return hits.map((h) => h.assetId);
   };
   const [lex, sem] = await Promise.all([lexical(), semantic()]);
@@ -363,7 +423,7 @@ export async function searchAssets(
   const { q, limit } = checkQuery(query);
   const filters = query.filters ?? {};
   const queryTerms = terms(q);
-  const ids = await candidates(deps, scope, q, async () => {
+  const ids = await candidates(deps, scope, q, 'library', async () => {
     const page = await ctx.store.assets.list(scope, {
       limit: ASSET_SCAN_LIMIT,
       filters: { status: filters.status ?? 'all' },
@@ -389,8 +449,9 @@ export async function searchAssets(
 /**
  * Searches what Delivery serves: published assets only, as their published snapshots project
  * (the media origin's URLs, renditions, srcset), filtered by kind, tag and folder (filing is read
- * live, as Delivery's listing reads it). A read: nothing is written, so it caches like any
- * delivery list.
+ * live, as Delivery's listing reads it). The candidates come from the published corpus, so no
+ * draft takes a place among them. A read: nothing is written, so it caches like any delivery
+ * list.
  */
 export async function searchDeliveredAssets(
   ctx: AppContext,
@@ -402,7 +463,7 @@ export async function searchDeliveredAssets(
   const { q, limit } = checkQuery(query);
   const filters = query.filters ?? {};
   const queryTerms = terms(q);
-  const ids = await candidates(deps, scope, q, async () => {
+  const ids = await candidates(deps, scope, q, 'published', async () => {
     const page = await ctx.store.assets.listPublished(scope, { limit: ASSET_SCAN_LIMIT });
     return page.items
       .map((p) => ({ id: p.assetId, score: matches(scanTexts(p), queryTerms) }))

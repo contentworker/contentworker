@@ -5,54 +5,34 @@ import {
   type IngestSummary,
   runAssetIngest,
 } from '@contentworker/application';
-import type {
-  AssetIngestParams,
-  AssetIngestQueue,
-  AssetIngestStarter,
-  WorkflowSteps,
-} from '@contentworker/ports';
-import type { AssetIngestMessage, ObjectCreatedMessage } from './messages';
+import type { AssetIngestParams, AssetIngestStarter, WorkflowSteps } from '@contentworker/ports';
 
-/** Messages per `sendBatch` (the Queues limit). */
-const SEND_BATCH = 100;
+/** Workflows' code for "an instance with this ID already exists" (createBatch's per-entry error). */
+export const WORKFLOW_INSTANCE_EXISTS = 10405;
+
+/** The slice of the Workflows binding the starter uses. */
+export type AssetIngestWorkflowBinding = Pick<Workflow<AssetIngestParams>, 'createBatch'>;
 
 /**
- * The AssetIngestQueue port over the `contentworker-asset-events` producer. An upload's message
- * has the shape of R2's own notification, so the engine has one path for both.
- */
-export function createAssetIngestQueue(queue: Pick<Queue, 'send' | 'sendBatch'>): AssetIngestQueue {
-  return {
-    async objectCreated(key) {
-      const body: ObjectCreatedMessage = {
-        action: 'PutObject',
-        object: { key },
-        eventTime: new Date().toISOString(),
-      };
-      await queue.send(body);
-    },
-    async request(requests) {
-      const bodies = requests.map((r): AssetIngestMessage => ({ kind: 'asset.ingest', ...r }));
-      for (let at = 0; at < bodies.length; at += SEND_BATCH) {
-        await queue.sendBatch(bodies.slice(at, at + SEND_BATCH).map((body) => ({ body })));
-      }
-    },
-  };
-}
-
-/** Workflows' answer for an instance id already in use. */
-const alreadyExists = (err: unknown) => /already|exists/i.test(String(err));
-
-/**
- * The AssetIngestStarter port over the `ASSET_INGEST_WF` binding. An id already used (by the
- * other trigger of the same upload, or a redelivery) is the run that exists, not an error.
+ * The AssetIngestStarter port over the `ASSET_INGEST_WF` binding. It creates through the object
+ * form of `createBatch`, which reports an id already in use as a per-entry error with a stable
+ * code rather than throwing: that one answer (the other trigger of the same upload, or a
+ * redelivery) is the run that exists, so `false`. Every other error throws, and the queue
+ * message that asked is retried.
  */
 export class CloudflareAssetIngestStarter implements AssetIngestStarter {
-  constructor(private readonly wf: Workflow) {}
+  constructor(private readonly wf: AssetIngestWorkflowBinding) {}
 
-  async start(instanceId: string, params: AssetIngestParams): Promise<void> {
-    await this.wf.create({ id: instanceId, params }).catch((err: unknown) => {
-      if (!alreadyExists(err)) throw err;
+  async start(instanceId: string, params: AssetIngestParams): Promise<boolean> {
+    const { created, errors } = await this.wf.createBatch({
+      instances: [{ id: instanceId, params }],
     });
+    if (created.length > 0) return true;
+    const [error] = errors;
+    if (error?.code === WORKFLOW_INSTANCE_EXISTS) return false;
+    throw new Error(
+      `Workflows did not start ${instanceId}: ${error ? `${error.code} ${error.message}` : 'no result'}`,
+    );
   }
 }
 

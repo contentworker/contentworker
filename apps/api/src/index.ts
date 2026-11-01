@@ -53,7 +53,9 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       images: env.IMAGES,
       streamWebhookSecret: env.STREAM ? env.STREAM_WEBHOOK_SECRET : undefined,
       // A completed upload starts its ingest (local dev has no R2 notifications to do it).
-      ...(assetIngest ? { onUploaded: (key: string) => assetIngest.objectCreated(key) } : {}),
+      ...(assetIngest
+        ? { onUploaded: (key: string, etag?: string) => assetIngest.objectCreated(key, etag) }
+        : {}),
     }),
   );
   const mountManagement = mountsRole(wired.config, 'management');
@@ -70,6 +72,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       adminToken: wired.config.adminToken,
       webPrincipalKeys: wired.config.principalKeys,
       rag: wired.rag,
+      assetSearch: wired.assetSearch,
       blob: wired.blob,
       ai: wired.ai,
       bus: wired.bus,
@@ -88,6 +91,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       ctx: wired.ctx,
       ai: wired.ai,
       rag: wired.rag,
+      assetSearch: wired.assetSearch,
       // On-demand agent actions are synchronous request/response, so they run
       // in-process (same policy as the HTTP API's createApp); the durable
       // Workflows runtime serves the queue consumer's on-publish runs.
@@ -134,6 +138,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       {
         ...(wired.workflowEngine ? { workflowEngine: wired.workflowEngine } : {}),
         workflowNodes: wired.workflowNodes,
+        assetSearch: wired.assetSearch,
         ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
       },
     ),

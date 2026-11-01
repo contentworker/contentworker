@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@contentworker/domain": "workspace:*",
-    "@contentworker/ports": "workspace:*"
+    "@contentworker/ports": "workspace:*",
+    "@contentworker/redaction": "workspace:*"
   },
   "devDependencies": {
     "@contentworker/test-kit": "workspace:*",

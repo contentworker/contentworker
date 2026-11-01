@@ -18,11 +18,16 @@ import type {
   BlobStore,
   BulkJob,
   BulkJobChunk,
+  ByteStream,
+  GenerateRequest,
+  GenerateResult,
   ImageProbe,
   TextExtractor,
   WorkflowStepConfig,
   WorkflowSteps,
 } from '@contentworker/ports';
+import { redactCredentials } from '@contentworker/redaction';
+import { runWithBudget } from './ai-budget';
 import { type AssetSearchDeps, embedAssetForSearch, indexAssetText } from './asset-search';
 import { allAssets, assetFileKey, assetTextKey, parseAssetObjectKey } from './assets';
 import type { BulkChunkOutcome } from './bulk-jobs';
@@ -39,11 +44,14 @@ import { autoTagAsset, generateAltText } from './media-ai';
  *    the scope with the same hash).
  * 2. `probe`: an image's dimensions and real format.
  * 3. `alt-text`, `tags`: an image's alt text and tags from the existing AI use-cases, written only
- *    where empty and marked as AI suggestions; a spent AI budget skips them, it doesn't fail ingest.
+ *    where empty and marked as AI suggestions. A spent AI budget skips them, and a model that still
+ *    fails once the step's retries are spent records `failed`: neither fails ingest.
  * 4. `extract-text`: a document's or recording's text, into blob storage beside the file
- *    (`assetTextKey`), never into D1, and never anywhere the media origin serves.
- * 5. `embed`, `index`: the asset's search vector and lexical document.
- * 6. `finish`: `ingest_status` ready and `asset.ingested`, in one unit.
+ *    (`assetTextKey`), never into D1, and never anywhere the media origin serves. Metered by the
+ *    space's AI budget, which skips it when spent.
+ * 5. `embed`, `index`: the asset's search vectors and lexical documents (library and published).
+ * 6. `finish`: `ingest_status` ready, the published snapshot's measurements and `asset.ingested`,
+ *    in one unit.
  *
  * Everything a step writes is checked against the file version the run is for: a file replaced
  * mid-run makes the rest of the run a no-op (the new version has its own run).
@@ -60,6 +68,13 @@ export interface AssetIngestDeps {
   readonly search?: AssetSearchDeps;
 }
 
+/**
+ * Largest file hashed. SHA-256 streams, so memory is not the bound, but a step's time is: a larger
+ * file keeps no hash (and so no duplicate check) and ingest goes on without it.
+ */
+export const MAX_HASH_BYTES = 512 * 1024 * 1024;
+/** Largest file probed for dimensions: an image's size, not a video's or an archive's. */
+export const MAX_PROBE_BYTES = 70 * 1024 * 1024;
 /** Largest document text extraction reads (Markdown conversion takes the whole file). */
 export const MAX_EXTRACT_DOCUMENT_BYTES = 20 * 1024 * 1024;
 /** Largest recording transcription reads (Whisper takes it base64-encoded, in one request). */
@@ -86,36 +101,43 @@ const SLOW_STEP: WorkflowStepConfig = {
 // ---- starting a run ------------------------------------------------------------------------
 
 /**
- * The run id for one file version: the same scope, asset and version always give the same id, so
- * the upload path and R2's notification (and any redelivery of either) start one run between
- * them. A rerun (a person's retry, the reindex job) adds its own token. Workflows ids are at most
- * 100 characters of `[A-Za-z0-9_-]`; an asset id that isn't one is hashed in.
+ * The run id for one write of a file version: the same scope, asset, version and bytes (`etag`,
+ * as R2 names them) always give the same id, so the upload path and R2's notification (and any
+ * redelivery of either) start one run between them, while a second PUT through the same signed
+ * URL (new bytes, same key) is a run of its own. A rerun (a person's retry, the reindex job) adds
+ * its own token. Workflows ids are at most 100 characters of `[A-Za-z0-9_-]`; an asset id that
+ * isn't one is hashed in.
  */
 export function assetIngestInstanceId(
   scope: Scope,
   assetId: string,
   version: number,
-  rerun?: string,
+  opts: { readonly rerun?: string; readonly etag?: string } = {},
 ): string {
   const scopeHash = sha256Hex(`${scope.spaceId}\n${scope.environmentId}`).slice(0, 16);
   const id = /^[A-Za-z0-9-]{1,40}$/.test(assetId) ? assetId : sha256Hex(assetId).slice(0, 32);
-  const suffix = rerun ? `-r${sha256Hex(rerun).slice(0, 12)}` : '';
+  const etag = opts.etag ? normalEtag(opts.etag) : '';
+  const token = etag || opts.rerun ? `${etag}\n${opts.rerun ?? ''}` : '';
+  const suffix = token ? `-x${sha256Hex(token).slice(0, 12)}` : '';
   return `ingest-${id}-v${version}-${scopeHash}${suffix}`;
 }
+
+/** An etag as R2's notification and its `put` result both give it: unquoted, lowercase. */
+const normalEtag = (etag: string) => etag.replace(/^W\//, '').replace(/^"|"$/g, '').toLowerCase();
 
 export type IngestStart = 'started' | 'ignored';
 
 /**
  * Starts ingest for an object that was written (the asset-events queue body for an R2
- * notification, or the api's own upload message). Only an asset's current file starts a run: a
- * key that isn't an asset file (extracted text, a version body), an asset that is gone or has
- * moved to another version, and a hosted video are ignored. A file never ingested is marked
- * pending first; one already ingested keeps its state, since the run id is the one it had.
+ * notification, or the api's own upload message, each naming the bytes by `etag`). Only an
+ * asset's current file starts a run: a key that isn't an asset file (extracted text, a version
+ * body), an asset that is gone or has moved to another version, and a hosted video are ignored.
  */
 export async function startAssetIngestForObject(
   ctx: AppContext,
   starter: AssetIngestStarter,
   key: string,
+  etag?: string,
 ): Promise<IngestStart> {
   const parsed = parseAssetObjectKey(key);
   if (!parsed) return 'ignored';
@@ -123,15 +145,47 @@ export async function startAssetIngestForObject(
   const asset = await ctx.store.assets.get(scope, assetId);
   if (!asset || asset.file.video || assetFileKey(scope, asset) !== key) return 'ignored';
   const version = asset.version ?? 1;
-  if (asset.ingestStatus === undefined) {
-    await ctx.store.assets.recordIngest(scope, assetId, version, { status: 'pending' });
-  }
-  await starter.start(assetIngestInstanceId(scope, assetId, version), {
-    scope,
-    assetId,
-    version,
-  });
+  await startRun(
+    ctx,
+    starter,
+    asset,
+    { scope, assetId, version },
+    assetIngestInstanceId(scope, assetId, version, etag ? { etag } : {}),
+  );
   return 'started';
+}
+
+/** Statuses a new run may mark pending: anything but a run in progress. */
+const NOT_PROCESSING = [null, 'pending', 'ready', 'error'] as const;
+
+/**
+ * Marks the file pending and starts its run. Pending is never written over `processing` (the
+ * other trigger of the same upload got there first, and that run moves the status on). When the
+ * run already existed (a redelivery, or the other trigger after the run finished), the finished
+ * status it had is put back, so an asset is never left pending with no run to move it on.
+ */
+async function startRun(
+  ctx: AppContext,
+  starter: AssetIngestStarter,
+  asset: Asset,
+  params: AssetIngestParams,
+  instanceId: string,
+): Promise<void> {
+  const { scope, assetId, version } = params;
+  const before = asset.ingestStatus ?? null;
+  await ctx.store.assets.recordIngest(scope, assetId, version, {
+    status: 'pending',
+    error: null,
+    onlyFrom: NOT_PROCESSING,
+  });
+  const created = await starter.start(instanceId, params);
+  if (!created && (before === 'ready' || before === 'error')) {
+    await ctx.store.assets.recordIngest(scope, assetId, version, {
+      status: before,
+      error: before === 'error' ? (asset.ingestError ?? null) : null,
+      onlyFrom: ['pending'],
+    });
+  }
 }
 
 /**
@@ -146,18 +200,21 @@ export async function startRequestedAssetIngest(
   const { scope, assetId, version } = request;
   const asset = await ctx.store.assets.get(scope, assetId);
   if (!asset || asset.file.video || (asset.version ?? 1) !== version) return 'ignored';
-  await ctx.store.assets.recordIngest(scope, assetId, version, { status: 'pending', error: null });
-  await starter.start(assetIngestInstanceId(scope, assetId, version, request.rerun), {
-    scope,
-    assetId,
-    version,
-  });
+  await startRun(
+    ctx,
+    starter,
+    asset,
+    { scope, assetId, version },
+    assetIngestInstanceId(scope, assetId, version, request.rerun ? { rerun: request.rerun } : {}),
+  );
   return 'started';
 }
 
 /**
  * Runs ingest on an asset's current file again (a person's retry after an error, or after the
  * extraction or AI setup changed). Refused for a hosted video, whose bytes the video host keeps.
+ * While a run is queued or running it does nothing and returns the asset as it is: a second run
+ * would only repeat the first (and its model calls).
  */
 export async function reingestAsset(
   ctx: AppContext,
@@ -172,6 +229,7 @@ export async function reingestAsset(
       { field: 'id', message: 'A hosted video is processed by its video host, not ingest' },
     ]);
   }
+  if (asset.ingestStatus === 'pending' || asset.ingestStatus === 'processing') return asset;
   const version = asset.version ?? 1;
   await queue.request([{ scope, assetId: id, version, rerun: ctx.ids.newId() }]);
   return { ...asset, ingestStatus: 'pending' };
@@ -182,18 +240,28 @@ export interface AssetReindexResult {
   readonly assets: number;
   /** The bulk job that sends them; absent when there was nothing to do. */
   readonly job?: BulkJob;
+  /** Set when `job` is a reindex that was already running, not a new one. */
+  readonly running?: true;
 }
+
+/** Recent jobs looked through for a reindex still running. */
+const RUNNING_REINDEX_LOOKBACK = 50;
 
 /**
  * Sends the library through ingest as a resumable bulk job (`asset_reindex`): by default the
  * assets never ingested (uploaded before ingest shipped) or whose ingest failed; with `all`, every
- * asset with a file. Hosted videos are left out.
+ * asset with a file. Hosted videos are left out. While a reindex is still running in the scope,
+ * that job is returned instead of a second one (whose runs, and model calls, would repeat it).
  */
 export async function startAssetReindex(
   ctx: AppContext,
   scope: Scope,
   opts: { readonly all?: boolean } = {},
 ): Promise<AssetReindexResult> {
+  const running = (
+    await ctx.store.bulkJobs.listJobs(scope, { limit: RUNNING_REINDEX_LOOKBACK })
+  ).find((j) => j.action === 'asset_reindex' && j.status === 'running');
+  if (running) return { assets: running.totalItems, job: running, running: true };
   const ids = (await allAssets(ctx, scope))
     .filter((a) => !a.file.video)
     .filter((a) => opts.all || a.ingestStatus === undefined || a.ingestStatus === 'error')
@@ -262,8 +330,8 @@ export async function runAssetIngest(
     const hashed = await steps.do('hash', STEP, () => hashAsset(ctx, deps, params));
     if (!hashed) return { outcome: 'stale' };
     await steps.do('probe', STEP, () => probeAsset(ctx, deps, params));
-    const altText = await steps.do('alt-text', SLOW_STEP, () => enrichAltText(ctx, deps, params));
-    const tags = await steps.do('tags', SLOW_STEP, () => enrichTags(ctx, deps, params));
+    const altText = await enrichStep(steps, 'alt-text', () => enrichAltText(ctx, deps, params));
+    const tags = await enrichStep(steps, 'tags', () => enrichTags(ctx, deps, params));
     const text = await steps.do('extract-text', SLOW_STEP, () => extractText(ctx, deps, params));
     await steps.do('embed', STEP, async () =>
       deps.search
@@ -278,7 +346,7 @@ export async function runAssetIngest(
     const finished = await steps.do('finish', STEP, () => finishIngest(ctx, params, hashed));
     return {
       outcome: finished ? 'ready' : 'stale',
-      contentHash: hashed.contentHash,
+      ...(hashed.contentHash ? { contentHash: hashed.contentHash } : {}),
       ...(hashed.duplicateOf ? { duplicateOf: hashed.duplicateOf } : {}),
       altText,
       tags,
@@ -289,6 +357,53 @@ export async function runAssetIngest(
     await steps.do('fail', STEP, () => failIngest(ctx, params, error));
     return { outcome: 'error', error };
   }
+}
+
+/**
+ * An enrichment step (alt text, tags). A model that still fails once the step's retries are spent
+ * is recorded as `failed` and the run goes on: the suggestion is a nicety, the rest of ingest is
+ * not. Anything else (the store) still fails the run.
+ */
+async function enrichStep(
+  steps: Pick<WorkflowSteps, 'do'>,
+  name: string,
+  enrich: () => Promise<EnrichOutcome>,
+): Promise<EnrichOutcome> {
+  try {
+    return await steps.do(name, SLOW_STEP, enrich);
+  } catch (err) {
+    if (isModelFailure(err)) return 'failed';
+    throw err;
+  }
+}
+
+/**
+ * Marks a failure as the model's, in its message: Workflows hands a step's last error back as a
+ * plain `Error`, so the class does not survive the journal, but the message does.
+ */
+const MODEL_FAILURE = 'AI model call failed: ';
+
+class ModelCallError extends Error {
+  constructor(cause: unknown) {
+    super(`${MODEL_FAILURE}${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = 'ModelCallError';
+  }
+}
+
+const isModelFailure = (err: unknown) =>
+  err instanceof ModelCallError || (err instanceof Error && err.message.includes(MODEL_FAILURE));
+
+/** The provider, with what its `generate` throws marked as the model's (see {@link enrichStep}). */
+function markingModelFailures(ai: AIProvider): AIProvider {
+  return {
+    async generate(req: GenerateRequest): Promise<GenerateResult> {
+      try {
+        return await ai.generate(req);
+      } catch (err) {
+        throw new ModelCallError(err);
+      }
+    },
+  };
 }
 
 /** The asset as the run sees it: `null` once it is gone, on another version, or a hosted video. */
@@ -308,7 +423,8 @@ export async function beginIngest(ctx: AppContext, params: AssetIngestParams): P
 }
 
 export interface HashResult {
-  readonly contentHash: string;
+  /** Absent for a file over {@link MAX_HASH_BYTES}, which is not hashed. */
+  readonly contentHash?: string;
   readonly size: number;
   readonly duplicateOf?: string;
 }
@@ -317,7 +433,8 @@ export interface HashResult {
  * Hashes the file (SHA-256, streamed: it is never held whole) and marks duplicates: the oldest
  * asset in the scope with these bytes is the original, and every other one, this one included,
  * points at it. Marking the others too covers two copies uploaded together, where neither sees
- * the other's hash when it looks. `null` when the asset moved on.
+ * the other's hash when it looks. A file over {@link MAX_HASH_BYTES} is not read: its size is
+ * recorded and ingest goes on without a hash. `null` when the asset moved on.
  */
 export async function hashAsset(
   ctx: AppContext,
@@ -330,6 +447,11 @@ export async function hashAsset(
   if (!deps.blob.open) throw new Error('The blob store cannot stream files');
   const object = await deps.blob.open(assetFileKey(scope, asset));
   if (!object) throw new Error('The file is not in storage');
+  if (object.size > MAX_HASH_BYTES) {
+    await discard(object.body);
+    await ctx.store.assets.recordIngest(scope, assetId, version, { size: object.size });
+    return { size: object.size };
+  }
   const hash = createHash('sha256');
   let size = 0;
   for await (const chunk of object.body) {
@@ -375,7 +497,8 @@ const mimeOf = (contentType: string) => (contentType.split(';')[0] ?? '').trim()
 /**
  * Reads an image's dimensions and format (images, and files uploaded without a useful content
  * type, which may turn out to be one). The format replaces the content type only where the
- * upload declared none worth keeping.
+ * upload declared none worth keeping. A file over {@link MAX_PROBE_BYTES} is no image the probe
+ * should read: it is skipped, its body cancelled unread.
  */
 export async function probeAsset(
   ctx: AppContext,
@@ -388,6 +511,10 @@ export async function probeAsset(
   if (!declared.startsWith('image/') && !UNKNOWN_TYPES.has(declared)) return {};
   const object = await deps.blob.open(assetFileKey(params.scope, asset));
   if (!object) return {};
+  if (object.size > MAX_PROBE_BYTES) {
+    await discard(object.body);
+    return {};
+  }
   const info = await deps.images.info(object.body);
   if (!info) return {};
   await ctx.store.assets.recordIngest(params.scope, params.assetId, params.version, {
@@ -400,8 +527,11 @@ export async function probeAsset(
   return { width: info.width, height: info.height, format: info.format };
 }
 
-/** What an enrichment step did: wrote a suggestion, kept a value someone set, or didn't run. */
-export type EnrichOutcome = 'suggested' | 'kept' | 'none' | 'skipped' | 'budget';
+/**
+ * What an enrichment step did: wrote a suggestion, kept a value someone set, or didn't run
+ * (`budget`: the space's AI budget was spent; `failed`: the model kept failing).
+ */
+export type EnrichOutcome = 'suggested' | 'kept' | 'none' | 'skipped' | 'budget' | 'failed';
 
 /**
  * Suggests alt text for an image in the space's default locale, when it has none. The existing
@@ -421,7 +551,13 @@ export async function enrichAltText(
   if (hasText(asset.metadata.altText[locale])) return 'kept';
   let altText: string;
   try {
-    ({ altText } = await generateAltText(ctx, deps.ai, params.scope, params.assetId, { locale }));
+    ({ altText } = await generateAltText(
+      ctx,
+      markingModelFailures(deps.ai),
+      params.scope,
+      params.assetId,
+      { locale },
+    ));
   } catch (err) {
     if (err instanceof RateLimitedError) return 'budget';
     throw err;
@@ -450,7 +586,12 @@ export async function enrichTags(
   if ((await ctx.store.taxonomy.listTags(params.scope)).length === 0) return 'none';
   let tagIds: readonly string[];
   try {
-    ({ tagIds } = await autoTagAsset(ctx, deps.ai, params.scope, params.assetId));
+    ({ tagIds } = await autoTagAsset(
+      ctx,
+      markingModelFailures(deps.ai),
+      params.scope,
+      params.assetId,
+    ));
   } catch (err) {
     if (err instanceof RateLimitedError) return 'budget';
     throw err;
@@ -519,13 +660,15 @@ function plainLine(text: string, max: number): string {
  * Reads a document's or recording's text into blob storage beside the file (`assetTextKey`). The
  * key is derived from the run's scope and asset, and the bytes read are the asset's own file
  * (`assetFileKey`, validated), so a crafted key can neither be read nor written. Files over the
- * size cap are skipped; text beyond its cap is cut. Nothing goes to D1.
+ * size cap are skipped; text beyond its cap is cut. Nothing goes to D1. The conversion is a model
+ * call, metered by the space's AI budget: a spent budget skips it (`budget`). An asset deleted
+ * while the model ran leaves no text behind.
  */
 export async function extractText(
   ctx: AppContext,
   deps: AssetIngestDeps,
   params: AssetIngestParams,
-): Promise<{ chars: number; skipped?: 'unsupported' | 'too-large' }> {
+): Promise<{ chars: number; skipped?: 'unsupported' | 'too-large' | 'budget' }> {
   const asset = await currentAsset(ctx, params);
   if (!asset || !deps.extractor || !deps.blob.open) return { chars: 0, skipped: 'unsupported' };
   const contentType = mimeOf(asset.file.contentType);
@@ -538,38 +681,59 @@ export async function extractText(
   const cap = kind === 'audio' ? MAX_EXTRACT_AUDIO_BYTES : MAX_EXTRACT_DOCUMENT_BYTES;
   const object = await deps.blob.open(assetFileKey(params.scope, asset));
   if (!object) throw new Error('The file is not in storage');
-  if (object.size > cap) return { chars: 0, skipped: 'too-large' };
-  const bytes = await readCapped(object.body, cap);
-  if (!bytes) return { chars: 0, skipped: 'too-large' };
-  const raw = await deps.extractor.extract({
-    fileName: asset.file.fileName,
-    contentType,
-    bytes,
-  });
+  if (object.size > cap) {
+    await discard(object.body);
+    return { chars: 0, skipped: 'too-large' };
+  }
+  const read = await readCapped(object.body, cap);
+  if (!read) return { chars: 0, skipped: 'too-large' };
+  const extractor = deps.extractor;
+  let raw: string;
+  try {
+    raw = await runWithBudget(
+      ctx,
+      params.scope,
+      () => extractor.extract({ fileName: asset.file.fileName, contentType, ...read }),
+      // No usage comes back: the text's length stands in for the tokens it cost.
+      (text) => Math.max(1, Math.ceil(text.length / 4)),
+    );
+  } catch (err) {
+    if (err instanceof RateLimitedError) return { chars: 0, skipped: 'budget' };
+    throw err;
+  }
   const text = storableText(raw);
+  // Deleted meanwhile: its delete already removed what ingest derived, so write nothing; and if
+  // it went just after this check, take the text back out.
+  if (!(await currentAsset(ctx, params))) return { chars: 0 };
   await deps.blob.put(textKey, text, 'text/markdown; charset=utf-8');
+  if (!(await currentAsset(ctx, params))) {
+    await deps.blob.delete(textKey);
+    return { chars: 0 };
+  }
   return { chars: text.length };
 }
 
-/** The stream's bytes, or `null` once it runs past `cap` (a size the store under-reported). */
+/**
+ * The stream's chunks as they came (never joined: the extractor builds what it sends from them),
+ * or `null` once it runs past `cap` (a size the store under-reported).
+ */
 async function readCapped(
-  body: AsyncIterable<Uint8Array>,
+  body: ByteStream,
   cap: number,
-): Promise<Uint8Array | null> {
+): Promise<{ chunks: Uint8Array[]; size: number } | null> {
   const chunks: Uint8Array[] = [];
-  let total = 0;
+  let size = 0;
   for await (const chunk of body) {
-    total += chunk.byteLength;
-    if (total > cap) return null;
+    size += chunk.byteLength;
+    if (size > cap) return null;
     chunks.push(chunk);
   }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
+  return { chunks, size };
+}
+
+/** Lets go of a body unread (a web stream's iterator cancels the stream when returned). */
+async function discard(body: ByteStream): Promise<void> {
+  await body[Symbol.asyncIterator]().return?.();
 }
 
 /** Extracted text as stored: NULs and other control characters (but line breaks) out, capped. */
@@ -582,16 +746,33 @@ function storableText(raw: string): string {
   return out;
 }
 
-/** Ready, and `asset.ingested`, in one unit. `false` when the asset moved on meanwhile. */
+/**
+ * Ready, the published snapshot's measurements, and `asset.ingested`, in one unit. A snapshot
+ * published before ingest measured the file (the usual case: publish right after upload) gets
+ * the size and dimensions ingest found, for the same version only. The event says whether the
+ * asset is published, so only then is Delivery's cache purged. `false` when the asset moved on.
+ */
 export async function finishIngest(
   ctx: AppContext,
   params: AssetIngestParams,
   hashed: HashResult,
 ): Promise<boolean> {
-  if (!(await currentAsset(ctx, params))) return false;
   const { scope, assetId, version } = params;
+  const [asset, published] = await Promise.all([
+    currentAsset(ctx, params),
+    ctx.store.assets.getPublished(scope, assetId),
+  ]);
+  if (!asset) return false;
+  const measured = {
+    ...(asset.file.size !== undefined ? { size: asset.file.size } : {}),
+    ...(asset.file.width !== undefined ? { width: asset.file.width } : {}),
+    ...(asset.file.height !== undefined ? { height: asset.file.height } : {}),
+  };
   await ctx.store.withTransaction(async (tx) => {
     await tx.assets.recordIngest(scope, assetId, version, { status: 'ready', error: null });
+    if (published && (published.version ?? 1) === version) {
+      await tx.assets.recordPublishedFile(scope, assetId, version, measured);
+    }
     await tx.outbox.append({
       id: ctx.ids.newId(),
       type: 'asset.ingested',
@@ -599,7 +780,8 @@ export async function finishIngest(
       occurredAt: ctx.clock.now().toISOString(),
       assetId,
       version,
-      contentHash: hashed.contentHash,
+      published: published !== null,
+      ...(hashed.contentHash ? { contentHash: hashed.contentHash } : {}),
       ...(hashed.duplicateOf ? { duplicateOf: hashed.duplicateOf } : {}),
     });
   });
@@ -617,9 +799,12 @@ export async function failIngest(
   });
 }
 
-/** What a failure says on the asset: its message, on one line, capped. Never a stack. */
+/**
+ * What a failure says on the asset: its message, on one line, credentials masked (a provider error
+ * can quote a URL or a token back), capped. Never a stack.
+ */
 export function ingestErrorMessage(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = redactCredentials(err instanceof Error ? err.message : String(err));
   return plainLine(message, MAX_INGEST_ERROR_CHARS) || 'Ingest failed';
 }
 

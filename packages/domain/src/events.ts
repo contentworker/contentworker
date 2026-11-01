@@ -79,11 +79,14 @@ export interface AssetDeletedEvent extends BaseEvent {
 /**
  * Ingest finished an asset's file (`version`): it is hashed, probed, enriched where empty and
  * indexed for search. `duplicateOf` names an older asset with the same bytes, when there is one.
+ * `published`: whether the asset was published when ingest finished, so only then is Delivery's
+ * cache purged (what Delivery serves, its search and its dimensions, can have changed).
  */
 export interface AssetIngestedEvent extends BaseEvent {
   readonly type: 'asset.ingested';
   readonly assetId: string;
   readonly version: number;
+  readonly published: boolean;
   readonly contentHash?: string;
   readonly duplicateOf?: string;
 }

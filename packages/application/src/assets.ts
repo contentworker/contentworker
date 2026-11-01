@@ -325,8 +325,8 @@ export async function setAssetMetadata(
   const asset = await ctx.store.assets.get(scope, id);
   if (!asset) throw new NotFoundError('Asset', id);
   const { aiSuggestions: _previous, ...applied } = applyAssetMetadata(asset, patch);
-  // A person saving alt text or tags makes them theirs: those fields stop being AI suggestions.
-  const aiSuggestions = clearAcceptedSuggestions(asset.aiSuggestions, patch);
+  // What a person's save changed is theirs: those locales and tags stop being AI suggestions.
+  const aiSuggestions = clearAcceptedSuggestions(asset.aiSuggestions, asset.metadata, patch);
   const updated: Asset = { ...applied, ...(aiSuggestions ? { aiSuggestions } : {}) };
   await ctx.store.assets.save(scope, updated);
   return updated;
@@ -402,9 +402,18 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
   if (usage.length > 0) throw await assetInUse(ctx, scope, id, usage);
   const now = ctx.clock.now().toISOString();
   const videoId = asset.file.video?.videoId;
+  const twins = await duplicatesOf(ctx, scope, asset);
   try {
     await ctx.store.withTransaction(async (tx) => {
       await tx.assets.delete(scope, id);
+      // Copies that named this asset as their original now name the oldest one left (which
+      // becomes the original itself), never an asset that is gone.
+      const [heir] = twins;
+      for (const twin of twins) {
+        await tx.assets.recordIngest(scope, twin.id, twin.version ?? 1, {
+          duplicateOf: twin.id === heir?.id ? null : (heir?.id ?? null),
+        });
+      }
       if (asset.status === 'published') {
         await tx.outbox.append({
           id: ctx.ids.newId(),
@@ -430,6 +439,20 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
     }
     throw err;
   }
+}
+
+/** Most copies of one file re-pointed when their original is deleted. */
+const MAX_DUPLICATES_REPOINTED = 50;
+
+/** The assets that name `asset` as the original of their bytes, oldest first. */
+async function duplicatesOf(ctx: AppContext, scope: Scope, asset: Asset): Promise<Asset[]> {
+  if (!asset.contentHash) return [];
+  const page = await ctx.store.assets.list(scope, {
+    limit: MAX_DUPLICATES_REPOINTED,
+    filters: { contentHash: asset.contentHash, status: 'all' },
+    sort: { field: 'createdAt', direction: 'asc' },
+  });
+  return page.items.filter((a) => a.id !== asset.id && a.duplicateOf === asset.id);
 }
 
 /**

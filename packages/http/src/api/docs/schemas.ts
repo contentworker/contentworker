@@ -155,6 +155,10 @@ export const assetReindex = z.object({
     .looseObject({ id: z.string(), status: z.string(), totalItems: z.int() })
     .optional()
     .describe('The bulk job (GET /bulk-jobs/{id}); absent when there was nothing to do'),
+  running: z
+    .literal(true)
+    .optional()
+    .describe('Set when job is a reindex that was already running, not a new one'),
 });
 
 export const assetPage = z.object({

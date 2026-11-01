@@ -68,12 +68,12 @@ export function createWorkersAITextExtractor(opts: WorkersAITextExtractorOptions
     },
     async extract(file: ExtractableFile) {
       const mime = mimeOf(file.contentType);
-      if (PLAIN_TYPES.has(mime)) return new TextDecoder().decode(file.bytes);
+      if (PLAIN_TYPES.has(mime)) return utf8(file.chunks);
       if (mime.startsWith('audio/')) {
         let res: unknown;
         try {
           res = await withTimeout(
-            opts.run(WORKERS_AI_TRANSCRIBE_MODEL, { audio: base64(file.bytes) }, runOpts),
+            opts.run(WORKERS_AI_TRANSCRIBE_MODEL, { audio: base64(file.chunks) }, runOpts),
             timeoutMs,
           );
         } catch (err) {
@@ -90,7 +90,8 @@ export function createWorkersAITextExtractor(opts: WorkersAITextExtractorOptions
         res = await withTimeout(
           opts.toMarkdown({
             name: file.fileName,
-            blob: new Blob([file.bytes as Uint8Array<ArrayBuffer>], { type: mime }),
+            // The stream's chunks as they came: the Blob is the one copy the binding reads.
+            blob: new Blob(file.chunks as Uint8Array<ArrayBuffer>[], { type: mime }),
           }),
           timeoutMs,
         );
@@ -109,11 +110,46 @@ export function createWorkersAITextExtractor(opts: WorkersAITextExtractorOptions
   };
 }
 
-/** Bytes as base64, in slices (a spread of a large array would overflow the call stack). */
-function base64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let at = 0; at < bytes.length; at += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+/** Chunks decoded as one UTF-8 text (a character split across two chunks stays whole). */
+function utf8(chunks: readonly Uint8Array[]): string {
+  const decoder = new TextDecoder();
+  let out = '';
+  for (const chunk of chunks) out += decoder.decode(chunk, { stream: true });
+  return out + decoder.decode();
+}
+
+/** Bytes of a run of 3 per base64 slice: 4 characters for every 3 bytes, never padded midway. */
+const BASE64_SLICE = 3 * 0x2000;
+
+/**
+ * Chunks as one base64 string, encoded slice by slice straight from the chunks: never joined
+ * into one array first, and no spread of a large array (which would overflow the call stack).
+ * Each slice is a multiple of 3 bytes, so only the last one pads.
+ */
+function base64(chunks: readonly Uint8Array[]): string {
+  const parts: string[] = [];
+  let carry = new Uint8Array(0);
+  const encode = (bytes: Uint8Array) => {
+    let binary = '';
+    for (let at = 0; at < bytes.length; at += 0x2000) {
+      binary += String.fromCharCode(...bytes.subarray(at, at + 0x2000));
+    }
+    parts.push(btoa(binary));
+  };
+  for (const chunk of chunks) {
+    let bytes = chunk;
+    if (carry.length > 0) {
+      const joined = new Uint8Array(carry.length + chunk.length);
+      joined.set(carry);
+      joined.set(chunk, carry.length);
+      bytes = joined;
+    }
+    const whole = bytes.length - (bytes.length % 3);
+    for (let at = 0; at < whole; at += BASE64_SLICE) {
+      encode(bytes.subarray(at, Math.min(at + BASE64_SLICE, whole)));
+    }
+    carry = bytes.slice(whole);
   }
-  return btoa(binary);
+  if (carry.length > 0) encode(carry);
+  return parts.join('');
 }

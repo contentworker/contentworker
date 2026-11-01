@@ -7,6 +7,7 @@ import {
   assetFolderName,
   assetFolderPath,
   assetKind,
+  clearAcceptedSuggestions,
   InvalidStateError,
   MAX_ASSET_FOLDER_DEPTH,
   publishAsset,
@@ -81,5 +82,37 @@ describe('asset folders', () => {
     expect(() => assertFolderMove(a, f('b', '/a/b/'))).toThrow(ValidationError);
     expect(() => assertFolderMove(a, f('ab', '/ab/'))).not.toThrow();
     expect(() => assertFolderMove(a, null)).not.toThrow();
+  });
+});
+
+describe('clearAcceptedSuggestions', () => {
+  const marks = { altText: ['en-US', 'de-DE'], tags: ['t1', 't2'] };
+  const metadata = { altText: { 'en-US': 'A mug', 'de-DE': 'Ein Becher' }, tags: ['t1', 't2'] };
+
+  it('keeps every mark when the save carries the values back unchanged', () => {
+    expect(clearAcceptedSuggestions(marks, metadata, metadata)).toEqual(marks);
+    expect(clearAcceptedSuggestions(marks, metadata, {})).toEqual(marks);
+  });
+
+  it('clears the mark of each alt text locale the save changed, and only those', () => {
+    const patch = { altText: { 'en-US': 'My mug', 'de-DE': 'Ein Becher', fr: 'Une tasse' } };
+    expect(clearAcceptedSuggestions(marks, metadata, patch)).toEqual({
+      altText: ['de-DE'],
+      tags: ['t1', 't2'],
+    });
+  });
+
+  it('clears the mark of a suggested tag the save removed, and keeps the rest', () => {
+    expect(clearAcceptedSuggestions(marks, metadata, { tags: ['t2', 'mine'] })).toEqual({
+      altText: ['en-US', 'de-DE'],
+      tags: ['t2'],
+    });
+  });
+
+  it('is undefined once nothing is left a suggestion', () => {
+    expect(
+      clearAcceptedSuggestions({ altText: ['en-US'] }, metadata, { altText: { 'en-US': 'x' } }),
+    ).toBeUndefined();
+    expect(clearAcceptedSuggestions(undefined, metadata, {})).toBeUndefined();
   });
 });

@@ -65,17 +65,18 @@ export async function runEnvironmentPurge(
     for (const asset of page.items) {
       await removeAssetFromSearch(deps.assetSearch, event.scope, asset.id);
     }
-    // A step of no rows: only the progress mark, so the stall sweep doesn't take a long cleanup
-    // for a lost event and start another.
-    await ctx.store.spaces.purgeEnvironmentStep(
-      event.scope.spaceId,
-      event.scope.environmentId,
-      0,
-      ctx.clock.now(),
-    );
-    await ctx.store.outbox.append({
-      ...purgeDue(ctx, event.scope),
-      ...(page.nextCursor ? { assetCursor: page.nextCursor } : { assetIndexCleared: true }),
+    // The progress mark, so the stall sweep doesn't take a long cleanup for a lost event and
+    // start another, and the event that continues it: in one unit, so neither commits alone.
+    await ctx.store.withTransaction(async (tx) => {
+      await tx.spaces.markEnvironmentPurgeProgress(
+        event.scope.spaceId,
+        event.scope.environmentId,
+        ctx.clock.now(),
+      );
+      await tx.outbox.append({
+        ...purgeDue(ctx, event.scope),
+        ...(page.nextCursor ? { assetCursor: page.nextCursor } : { assetIndexCleared: true }),
+      });
     });
     return 'continued';
   }

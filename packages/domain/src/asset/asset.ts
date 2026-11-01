@@ -181,17 +181,27 @@ export interface AssetAiSuggestions {
   readonly tags?: readonly string[];
 }
 
-/** The suggestion markers left after an editor saves `patch`: the fields it carries are theirs. */
+/**
+ * The suggestion markers left after an editor saves `patch` over `metadata`: only what the save
+ * changed becomes theirs. An alt text locale whose value changed loses its marker; a suggested tag
+ * the save removed loses its marker; a value the save carried unchanged (a form sends the whole
+ * map back) stays a suggestion.
+ */
 export function clearAcceptedSuggestions(
   suggestions: AssetAiSuggestions | undefined,
-  patch: { readonly altText?: unknown; readonly tags?: unknown },
+  metadata: Pick<AssetMetadata, 'altText' | 'tags'>,
+  patch: { readonly altText?: LocalizedValue; readonly tags?: readonly string[] },
 ): AssetAiSuggestions | undefined {
   if (!suggestions) return undefined;
+  const altText = patch.altText
+    ? suggestions.altText?.filter((l) => patch.altText?.[l] === metadata.altText[l])
+    : suggestions.altText;
+  const tags = patch.tags
+    ? suggestions.tags?.filter((t) => patch.tags?.includes(t))
+    : suggestions.tags;
   const next: AssetAiSuggestions = {
-    ...(suggestions.altText?.length && patch.altText === undefined
-      ? { altText: suggestions.altText }
-      : {}),
-    ...(suggestions.tags?.length && patch.tags === undefined ? { tags: suggestions.tags } : {}),
+    ...(altText?.length ? { altText } : {}),
+    ...(tags?.length ? { tags } : {}),
   };
   return next.altText || next.tags ? next : undefined;
 }

@@ -1442,7 +1442,11 @@ export function buildServer(
       const target = scopeOf(args);
       guard(SCOPES.contentManage, target);
       const snapshot = args.snapshot as unknown as EnvironmentSnapshot;
-      const options = { dryRun: args.dryRun, publish: args.publish };
+      const options = {
+        dryRun: args.dryRun,
+        publish: args.publish,
+        reindexAssets: Boolean(deps.assetIngest),
+      };
       if (args.dryRun || !deps.blob)
         return ok(await importSnapshot(ctx, target, snapshot, options));
       return ok(await startSnapshotImport(ctx, deps.blob, target, snapshot, options));
@@ -1480,7 +1484,11 @@ export function buildServer(
       // Authorized separately: cloning into a space the caller cannot manage
       // would be a tenancy hole.
       guard(SCOPES.contentManage, to);
-      const options = { dryRun: args.dryRun, publish: args.publish };
+      const options = {
+        dryRun: args.dryRun,
+        publish: args.publish,
+        reindexAssets: Boolean(deps.assetIngest),
+      };
       if (args.dryRun || !deps.blob) {
         return ok(await importSnapshot(ctx, to, await exportSnapshot(ctx, from), options));
       }
@@ -3130,6 +3138,7 @@ export function buildServer(
 
   // --- assets / media intelligence ---------------------------------------
   const emptyFacets = { kind: {}, tag: {}, folder: {} };
+  const assetSearch = deps.assetSearch ?? assetSearchDeps(rag);
   // Reads hand out a short-lived signed URL, never the stored non-expiring one (as the REST
   // routes do). Without a blob store (local fakes) there is nothing to sign with.
   const signedOne = (s: Scope, asset: Asset) =>
@@ -3230,13 +3239,15 @@ export function buildServer(
         },
       };
       if (args.delivered) {
+        // As the delivery route's ?q=: delivery:read and search:read.
         guard(SCOPES.deliveryRead, scopeOf(args));
+        guard(SCOPES.searchRead, scopeOf(args));
         // As the delivery route: a key with content grants reads no assets.
         if (principal.contentGrants) return ok({ items: [], total: 0, facets: emptyFacets });
         return ok(
           await searchDeliveredAssets(
             ctx,
-            assetSearchDeps(rag),
+            assetSearch,
             scopeOf(args),
             query,
             args.locale !== undefined ? { locale: args.locale } : {},
@@ -3244,7 +3255,7 @@ export function buildServer(
         );
       }
       guard(SCOPES.previewRead, scopeOf(args));
-      const page = await searchAssets(ctx, assetSearchDeps(rag), scopeOf(args), query);
+      const page = await searchAssets(ctx, assetSearch, scopeOf(args), query);
       return ok({
         ...page,
         items: await Promise.all(page.items.map((a) => signedOne(scopeOf(args), a))),
@@ -3281,13 +3292,17 @@ export function buildServer(
       description:
         'Send the asset library through ingest as a resumable bulk job: assets never ingested ' +
         '(uploaded before ingest) or whose ingest failed, or every asset with a file (all: ' +
-        'true). Follow the job with bulk_job_status.',
+        'true). While a reindex is running, that job comes back instead (running: true). ' +
+        'Follow the job with bulk_job_status. Refused when the ingest queue is not bound.',
       inputSchema: toolSchema('assets_reindex', () =>
         z.object({ all: z.boolean().optional(), ...scopeArgs }),
       ),
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      if (!deps.assetIngest) {
+        throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to reindex assets');
+      }
       return ok(await startAssetReindex(ctx, scopeOf(args), { all: args.all === true }));
     },
   );

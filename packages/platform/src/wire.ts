@@ -18,7 +18,7 @@ import { createCfEmailSender } from '@contentworker/adapters/email-cf';
 import { createRemoteFetcher, createWebhookSender } from '@contentworker/adapters/http-effects';
 import { createCfImageProbe, createCfImageTransformer } from '@contentworker/adapters/images-cf';
 import { createWorkerLoaderRuntime } from '@contentworker/adapters/plugins-cf-loader';
-import { createCfQueueProducer } from '@contentworker/adapters/queue-cf';
+import { createAssetIngestQueue, createCfQueueProducer } from '@contentworker/adapters/queue-cf';
 import { createKvDevVectorStore } from '@contentworker/adapters/vector-kv-dev';
 import { createVectorizeStore } from '@contentworker/adapters/vector-vectorize';
 import { createStreamVideoHost } from '@contentworker/adapters/video-stream';
@@ -27,6 +27,7 @@ import {
   type AgentRunner,
   type AppContext,
   type AssetIngestDeps,
+  type AssetSearchDeps,
   aiCallLevel,
   aiModeFakes,
   aiRuntimeConfig,
@@ -75,7 +76,7 @@ import {
   StubAIProvider,
   StubDecisionModel,
 } from '@contentworker/test-kit';
-import { CloudflareAssetIngestStarter, createAssetIngestQueue } from './asset-ingest';
+import { CloudflareAssetIngestStarter } from './asset-ingest';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
 import { doCostGuardFromEnv } from './do/cost-guard';
@@ -92,6 +93,13 @@ export interface EdgeWired {
   readonly ctx: AppContext;
   readonly config: ApiConfig;
   readonly rag: RagDeps;
+  /**
+   * Asset search's indexes, the one place that decides whether queries and documents are
+   * embedded: only with EMBEDDINGS_PROVIDER set, never the dev fallback, so a query is embedded
+   * by the model the index was written with. Management, Delivery, MCP, the engine and ingest
+   * all read it.
+   */
+  readonly assetSearch: AssetSearchDeps;
   readonly blob: BlobStore;
   /** Signs/verifies `/media/*` URLs; present when MEDIA_BUCKET is bound. */
   readonly mediaSigner?: MediaUrlSigner;
@@ -268,6 +276,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     ctx,
     config,
     rag,
+    assetSearch: assetSearchDeps(rag, { embed: Boolean(env.EMBEDDINGS_PROVIDER) }),
     ...(workflowEngine ? { workflowEngine } : {}),
     workflowNodes: {
       ai,
@@ -329,23 +338,28 @@ export function wireMedia(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): Media
 /**
  * What an ingest run uses, from a wired invocation: the bytes (R2), the Images binding's `info`
  * for dimensions, Workers AI's Markdown conversion and Whisper for text, the generation model for
- * alt text and tags, and the asset search indexes. Embedding follows the events consumer's rule:
- * only with EMBEDDINGS_PROVIDER set, never the dev fallback.
+ * alt text and tags, and the asset search indexes (`wired.assetSearch`).
  */
 export function makeAssetIngestDeps(env: EdgeEnv, wired: EdgeWired): AssetIngestDeps {
-  const extractor = makeTextExtractor(env);
+  const extractor = makeTextExtractor(env, wired.ctx);
   return {
     blob: wired.blob,
     ai: wired.ai,
     ...(env.IMAGES ? { images: createCfImageProbe(env.IMAGES) } : {}),
     ...(extractor ? { extractor } : {}),
-    search: assetSearchDeps(wired.rag, { embed: Boolean(env.EMBEDDINGS_PROVIDER) }),
+    search: wired.assetSearch,
   };
 }
 
-/** Text extraction on Workers AI, when the AI binding (with Markdown conversion) is there. */
-function makeTextExtractor(env: EdgeEnv): TextExtractor | undefined {
-  if (!env.AI?.toMarkdown) return undefined;
+/**
+ * Text extraction on Workers AI, when the AI binding (with Markdown conversion) is there. None
+ * under AI_MODE=mock, which never calls a model: documents and recordings are then not read.
+ */
+export function makeTextExtractor(
+  env: EdgeEnv,
+  ctx: Pick<AppContext, 'ai'>,
+): TextExtractor | undefined {
+  if (ctx.ai?.mode === 'mock' || !env.AI?.toMarkdown) return undefined;
   return createWorkersAITextExtractor({
     toMarkdown: env.AI.toMarkdown.bind(env.AI),
     run: env.AI.run.bind(env.AI),
@@ -579,15 +593,20 @@ function makeRag(env: EdgeEnv, fakes: FakeAdapterBinding[]): RagDeps {
       : memoInMemoryVectors();
   const shards = Number(env.SEARCH_SHARDS) || DEFAULT_SEARCH_SHARDS;
   const searchIndex = env.SEARCH ? createShardedSearchIndex(env.SEARCH, shards) : undefined;
-  // Assets in shards of their own (same class, no new Durable Object or tag).
+  // Assets in shards of their own, the library's and the published ones' apart (same class, no
+  // new Durable Object or tag).
   const assetSearchIndex = env.SEARCH
     ? createShardedSearchIndex(env.SEARCH, shards, 'assets')
+    : undefined;
+  const publishedAssetSearchIndex = env.SEARCH
+    ? createShardedSearchIndex(env.SEARCH, shards, 'published-assets')
     : undefined;
   return {
     embeddings,
     vectors,
     ...(searchIndex ? { searchIndex } : {}),
     ...(assetSearchIndex ? { assetSearchIndex } : {}),
+    ...(publishedAssetSearchIndex ? { publishedAssetSearchIndex } : {}),
   };
 }
 

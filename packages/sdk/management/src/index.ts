@@ -484,10 +484,11 @@ export function createManagementClient(opts: ManagementClientOptions) {
       reingest: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/reingest`),
       /**
        * Sends assets through ingest as a bulk job: those never ingested or whose ingest failed,
-       * or every asset with a file (`all`). Follow `job` with `bulkJobs.get`.
+       * or every asset with a file (`all`). While one is running, that job comes back
+       * (`running: true`). Follow `job` with `bulkJobs.get`.
        */
       reindex: (opts: { all?: boolean } = {}) =>
-        post<{ assets: number; job?: { id: string; status: string } }>(
+        post<{ assets: number; job?: { id: string; status: string }; running?: true }>(
           `${envBase}/assets/reindex`,
           opts,
         ),

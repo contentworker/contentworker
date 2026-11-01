@@ -138,6 +138,7 @@ describe('asset vectors', () => {
     const store = createVectorizeStore(index, { dimensions: 3, modelId: 'm' });
     await store.upsert([row(scopeA, 'e1', 0, [1, 0, 0])]);
     await store.upsertAsset(scopeA, {
+      corpus: 'library',
       assetId: 'a1',
       embedding: [1, 0, 0],
       assetKind: 'image',
@@ -146,7 +147,7 @@ describe('asset vectors', () => {
     expect((await store.query(scopeA, [1, 0, 0], { topK: 10 })).map((m) => m.entryId)).toEqual([
       'e1',
     ]);
-    expect(await store.queryAssets(scopeA, [1, 0, 0], { topK: 10 })).toEqual([
+    expect(await store.queryAssets(scopeA, [1, 0, 0], { topK: 10, corpus: 'library' })).toEqual([
       { assetId: 'a1', score: expect.closeTo(1, 5) },
     ]);
     const stored = [...vectors.values()].find((v) => v.metadata?.assetId === 'a1');
@@ -163,12 +164,30 @@ describe('asset vectors', () => {
   it('isolates scopes and replaces an asset in place; delete removes it', async () => {
     const { index, vectors } = fakeIndex();
     const store = createVectorizeStore(index, { dimensions: 3, modelId: 'm' });
-    const asset = { assetId: 'a1', assetKind: 'document', version: 1 };
+    const asset = { corpus: 'library' as const, assetId: 'a1', assetKind: 'document', version: 1 };
     await store.upsertAsset(scopeA, { ...asset, embedding: [1, 0, 0] });
     await store.upsertAsset(scopeA, { ...asset, embedding: [0, 1, 0] });
     expect(vectors.size).toBe(1);
-    expect(await store.queryAssets(scopeB, [0, 1, 0], { topK: 10 })).toEqual([]);
-    await store.deleteAsset(scopeA, 'a1');
-    expect(await store.queryAssets(scopeA, [0, 1, 0], { topK: 10 })).toEqual([]);
+    expect(await store.queryAssets(scopeB, [0, 1, 0], { topK: 10, corpus: 'library' })).toEqual([]);
+    await store.deleteAsset(scopeA, 'a1', 'library');
+    expect(await store.queryAssets(scopeA, [0, 1, 0], { topK: 10, corpus: 'library' })).toEqual([]);
+  });
+
+  it('keeps the published corpus apart from the library: each query sees only its own', async () => {
+    const { index, vectors } = fakeIndex();
+    const store = createVectorizeStore(index, { dimensions: 3, modelId: 'm' });
+    const asset = { assetId: 'a1', assetKind: 'image', version: 1, embedding: [1, 0, 0] };
+    await store.upsertAsset(scopeA, { ...asset, corpus: 'library' });
+    await store.upsertAsset(scopeA, { ...asset, assetId: 'draft', corpus: 'library' });
+    await store.upsertAsset(scopeA, { ...asset, corpus: 'published' });
+    expect(vectors.size).toBe(3);
+    const published = await store.queryAssets(scopeA, [1, 0, 0], { topK: 10, corpus: 'published' });
+    expect(published.map((m) => m.assetId)).toEqual(['a1']);
+    await store.deleteAsset(scopeA, 'a1', 'published');
+    expect(await store.queryAssets(scopeA, [1, 0, 0], { topK: 10, corpus: 'published' })).toEqual(
+      [],
+    );
+    const library = await store.queryAssets(scopeA, [1, 0, 0], { topK: 10, corpus: 'library' });
+    expect(library.map((m) => m.assetId).sort()).toEqual(['a1', 'draft']);
   });
 });

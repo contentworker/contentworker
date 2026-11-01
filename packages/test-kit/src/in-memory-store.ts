@@ -298,6 +298,10 @@ export class InMemoryContentStore implements ContentStore {
       if (purge) purge.nudgedAt = at;
       return deleted;
     },
+    markEnvironmentPurgeProgress: async (spaceId, environmentId, at) => {
+      const purge = this.purgeData.get(`${spaceId}::${environmentId}`);
+      if (purge) purge.nudgedAt = at;
+    },
     finishEnvironmentPurge: async (spaceId, environmentId) => {
       this.purgeData.delete(`${spaceId}::${environmentId}`);
     },
@@ -737,6 +741,7 @@ export class InMemoryContentStore implements ContentStore {
       const key = `${scopeKey(scope)}::${id}`;
       const current = this.assetData.get(key);
       if (!current || (current.version ?? 1) !== version) return;
+      if (patch.onlyFrom && !patch.onlyFrom.includes(current.ingestStatus ?? null)) return;
       const next: Record<string, unknown> = { ...current };
       const setOrClear = (field: string, value: string | null | undefined) => {
         if (value === undefined) return;
@@ -755,6 +760,16 @@ export class InMemoryContentStore implements ContentStore {
       next.file = file;
       // Not a touch: ingest doesn't move the asset in the library's order.
       this.assetData.set(key, next as unknown as Asset);
+    },
+    recordPublishedFile: async (scope, id, version, measured) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const current = this.publishedAssetData.get(key);
+      if (!current || (current.version ?? 1) !== version) return;
+      const file = { ...current.file };
+      if (measured.size !== undefined) Object.assign(file, { size: measured.size });
+      if (measured.width !== undefined) Object.assign(file, { width: measured.width });
+      if (measured.height !== undefined) Object.assign(file, { height: measured.height });
+      this.publishedAssetData.set(key, { ...current, file });
     },
     moveToFolder: async (scope, ids, folderId) => {
       if (folderId !== null && !this.assetFolderData.has(`${scopeKey(scope)}::${folderId}`)) {
@@ -2119,8 +2134,11 @@ export class InMemoryContentStore implements ContentStore {
       (m) => [m, [...m.entries()].map(([k, v]) => [k, clone(v)] as const)] as const,
     );
     const outboxSnapshot = [...this.outboxData];
+    // Purge progress marks hold Dates, so they are copied here rather than JSON round-tripped.
+    const purgeSnapshot = [...this.purgeData].map(([k, v]) => [k, { ...v }] as const);
     try {
       return await fn({
+        spaces: this.spaces,
         contentTypes: this.contentTypes,
         entries: this.entries,
         assets: this.assets,
@@ -2143,6 +2161,8 @@ export class InMemoryContentStore implements ContentStore {
       }
       this.outboxData.length = 0;
       this.outboxData.push(...outboxSnapshot);
+      this.purgeData.clear();
+      for (const [k, v] of purgeSnapshot) this.purgeData.set(k, v);
       throw err;
     }
   }

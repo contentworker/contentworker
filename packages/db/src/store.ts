@@ -4,6 +4,7 @@ import {
   type ApiKey,
   type Asset,
   type AssetFolder,
+  type AssetIngestStatus,
   type AssetRendition,
   assetKind,
   type Comment,
@@ -1257,11 +1258,33 @@ function makeAssetRepo(x: Exec): AssetRepo {
       }
       if (fileSets.length > 0) set.file = sql`json_set(${t.file}, ${sql.join(fileSets, sql`, `)})`;
       if (Object.keys(set).length === 0) return;
+      const conds = [scopeFilter(t, scope), eq(t.id, id), eq(t.version, version)];
+      if (patch.onlyFrom) {
+        const statuses = patch.onlyFrom.filter((s): s is AssetIngestStatus => s !== null);
+        const either: SQL[] = [];
+        if (patch.onlyFrom.includes(null)) either.push(isNull(t.ingestStatus));
+        if (statuses.length > 0) either.push(inArray(t.ingestStatus, statuses));
+        conds.push(either.length > 0 ? (or(...either) as SQL) : sql`0`);
+      }
       await x.write(
         db
           .update(t)
           .set(set)
-          .where(and(scopeFilter(t, scope), eq(t.id, id), eq(t.version, version))),
+          .where(and(...conds)),
+      );
+    },
+    async recordPublishedFile(scope, id, version, measured) {
+      const t = schema.assetPublished;
+      const fileSets: SQL[] = [];
+      if (measured.size !== undefined) fileSets.push(sql`'$.size', ${measured.size}`);
+      if (measured.width !== undefined) fileSets.push(sql`'$.width', ${measured.width}`);
+      if (measured.height !== undefined) fileSets.push(sql`'$.height', ${measured.height}`);
+      if (fileSets.length === 0) return;
+      await x.write(
+        db
+          .update(t)
+          .set({ file: sql`json_set(${t.file}, ${sql.join(fileSets, sql`, `)})` })
+          .where(and(scopeFilter(t, scope), eq(t.assetId, id), eq(t.version, version))),
       );
     },
     async putPublished(scope, s) {
@@ -3088,6 +3111,15 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           0,
         );
     },
+    async markEnvironmentPurgeProgress(spaceId, environmentId, at) {
+      const p = schema.environmentPurges;
+      await x.write(
+        db
+          .update(p)
+          .set({ nudgedAt: at })
+          .where(and(eq(p.spaceId, spaceId), eq(p.environmentId, environmentId))),
+      );
+    },
     async finishEnvironmentPurge(spaceId, environmentId) {
       const p = schema.environmentPurges;
       await x.write(
@@ -4695,6 +4727,7 @@ export interface D1StoreOptions {
 /** The repos `withTransaction` hands out, built over one unit of work. */
 function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentStoreTx {
   return {
+    spaces: { markEnvironmentPurgeProgress: makeSpaceRepo(x).markEnvironmentPurgeProgress },
     contentTypes: makeContentTypeRepo(x),
     entries: makeEntryRepo(x, scanLimit, versionBodies),
     assets: makeAssetRepo(x),
