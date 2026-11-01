@@ -2,8 +2,11 @@ import type { AppContext } from '@contentworker/application';
 import {
   createContentType,
   createEntry,
+  createEnvironment,
   createSpace,
+  deleteEnvironment,
   publishContentType,
+  publishEntry,
   startWorkflowRun,
 } from '@contentworker/application';
 import {
@@ -17,8 +20,8 @@ import {
 import { type Clock, type IdGenerator, TransactionConflictError } from '@contentworker/ports';
 import { RecordingWorkflowEngine } from '@contentworker/test-kit';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createD1Store } from '../src/store.js';
-import { testDb } from './env.js';
+import { createD1Store } from '../src/store';
+import { testDb } from './env';
 
 /**
  * What the D1 store guarantees beyond the port's basics: `withTransaction` as a unit of work (atomic
@@ -381,5 +384,127 @@ describe('stored secrets', () => {
     expect(await store.storedSecrets.replace(ref, 'stale', 'v2')).toBe(false);
     expect(await store.storedSecrets.replace(ref, 'v1', 'v2')).toBe(true);
     expect((await store.webhooks.get(scope, id))?.headers).toEqual({ 'X-"Odd"': 'v2', Keep: 'k' });
+  });
+});
+
+describe('deleting an environment', () => {
+  // The use-cases check aliases before writing; these prove the batch itself re-checks, so an
+  // alias set (or an environment deleted) between that check and the write cannot slip through.
+  const audit = (environmentId: string) => ({
+    id: uid(),
+    spaceId,
+    environmentId,
+    at: clock.now().toISOString(),
+    actor: 'test',
+    action: 'environment.deleted',
+    targetType: 'environment',
+    targetId: environmentId,
+    status: 200,
+  });
+
+  it('aborts, deleting nothing, if an alias points at it when the batch runs', async () => {
+    const env = `aliased-${uid().slice(0, 8)}`;
+    await createEnvironment(ctx, spaceId, env);
+    await store.spaces.setAlias(spaceId, `to-${env}`, env, clock.now().toISOString());
+    await expect(
+      store.spaces.deleteEnvironment(spaceId, env, [], audit(env)),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    expect((await store.spaces.listEnvironments(spaceId)).map((x) => x.id)).toContain(env);
+  });
+
+  it('refuses an alias at an environment that no longer exists', async () => {
+    await expect(
+      store.spaces.setAlias(
+        spaceId,
+        `ghost-${uid().slice(0, 8)}`,
+        'gone',
+        clock.now().toISOString(),
+      ),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+  });
+
+  it('clears every environment-scoped table but the audit log, atomically with its events', async () => {
+    const doomed = { spaceId, environmentId: `doomed-${uid().slice(0, 8)}` };
+    await createEnvironment(ctx, spaceId, doomed.environmentId);
+    await createContentType(ctx, doomed, {
+      apiId: 'article',
+      name: 'Article',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+      ],
+    });
+    await publishContentType(ctx, doomed, 'article');
+    const e = await createEntry(ctx, doomed, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'Going away' } },
+    });
+    await publishEntry(ctx, doomed, e.entry.id);
+    await store.taxonomy.createTag(doomed, { id: `tag-${uid()}`, name: 'Doomed' });
+    await store.audit.append({
+      id: uid(),
+      spaceId,
+      environmentId: doomed.environmentId,
+      at: clock.now().toISOString(),
+      actor: 'test',
+      action: 'entry.published',
+      targetType: 'entry',
+      targetId: e.entry.id,
+      status: 200,
+    });
+
+    await deleteEnvironment(ctx, spaceId, doomed.environmentId, {
+      confirm: doomed.environmentId,
+      principal: { spaceId, kind: 'user', subject: 'usr_admin', scopes: [SCOPES.spaceAdmin] },
+    });
+
+    // Every table with an environment_id column, found from the schema itself, so a table added
+    // later without joining the delete list fails here.
+    const tables = (
+      await testDb
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%`environment_id`%'",
+        )
+        .all<{ name: string }>()
+    ).results.map((r) => r.name);
+    expect(tables.length).toBeGreaterThan(30);
+    const left: Record<string, number> = {};
+    for (const table of tables) {
+      const row = await testDb
+        .prepare(`SELECT count(*) AS n FROM "${table}" WHERE space_id = ? AND environment_id = ?`)
+        .bind(spaceId, doomed.environmentId)
+        .first<{ n: number }>();
+      if ((row?.n ?? 0) > 0) left[table] = row?.n ?? 0;
+    }
+    // Its earlier history stays, and the deletion itself is recorded, by whom.
+    expect(left).toEqual({ audit_log: 2 });
+    const recorded = await testDb
+      .prepare(
+        "SELECT actor, target_id FROM audit_log WHERE environment_id = ? AND action = 'environment.deleted'",
+      )
+      .bind(doomed.environmentId)
+      .first<{ actor: string; target_id: string }>();
+    expect(recorded).toEqual({ actor: 'usr_admin', target_id: doomed.environmentId });
+    expect((await store.spaces.listEnvironments(spaceId)).map((x) => x.id)).not.toContain(
+      doomed.environmentId,
+    );
+    // The cleanup events went into the outbox in the same write.
+    const announced = await testDb
+      .prepare("SELECT payload FROM outbox WHERE type = 'environment.deleted'")
+      .all<{ payload: string }>();
+    expect(
+      announced.results.some(
+        (r) => JSON.parse(r.payload).scope.environmentId === doomed.environmentId,
+      ),
+    ).toBe(true);
+    // The rest of the space is untouched.
+    expect(await store.contentTypes.list(scope)).not.toEqual([]);
   });
 });

@@ -28,7 +28,7 @@ import {
   setSsoOnly,
   updateMember,
   updateRole,
-} from '../src/index.js';
+} from '../src/index';
 
 const hasher = { hash: (v: string) => `h:${v}` };
 const SSO: AccessPolicy = { sso: true };

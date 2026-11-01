@@ -21,9 +21,9 @@ import {
   type ValidationContext,
 } from '@contentworker/domain';
 import type { ContentStoreTx } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { runHook } from './hooks.js';
-import { unpublishEntryTx } from './publishing.js';
+import type { AppContext } from './context';
+import { runHook } from './hooks';
+import { unpublishEntryTx } from './publishing';
 
 /** Loads the validation context (locales) for a scope. */
 async function loadValidationContext(ctx: AppContext, scope: Scope): Promise<ValidationContext> {

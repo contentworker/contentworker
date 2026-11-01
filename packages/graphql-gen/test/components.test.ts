@@ -1,7 +1,7 @@
 import type { ContentType, FieldDefinition } from '@contentworker/domain';
 import { GraphQLList, GraphQLObjectType, type GraphQLSchema, printSchema } from 'graphql';
 import { describe, expect, it } from 'vitest';
-import { buildDeliverySchema } from '../src/index.js';
+import { buildDeliverySchema } from '../src/index';
 
 const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId'>): FieldDefinition =>
   ({

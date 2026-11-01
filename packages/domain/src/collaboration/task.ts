@@ -2,7 +2,7 @@
  * A task attached to an entry — a unit of editorial work ("write alt text",
  * "review copy"). Assignee is a caller-supplied label (no user model yet).
  */
-import { InvalidStateError } from '../errors.js';
+import { InvalidStateError } from '../errors';
 
 export type TaskStatus = 'open' | 'resolved';
 

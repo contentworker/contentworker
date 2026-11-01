@@ -219,7 +219,7 @@ See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 
 ### Tools
 
-The MCP server exposes **121 tools** — one per major Management/Delivery capability. Each tool
+The MCP server exposes **122 tools** — one per major Management/Delivery capability. Each tool
 calls `authorize` before delegating to the same use-case as the HTTP route.
 
 | Category      | Tools                                                                                                                                                                                                                                                                                                                                                                                            |

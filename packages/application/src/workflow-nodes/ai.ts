@@ -29,13 +29,13 @@ import {
   UNSURE,
 } from '@contentworker/domain';
 import type { AIProvider } from '@contentworker/ports';
-import { applyProposedFields, createAgentReview } from '../agent-reviews.js';
-import { generateJson } from '../ai-json.js';
-import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from '../ai-prompt.js';
-import { type AiProvenance, isUncheckedFallback } from '../ai-provenance.js';
-import { autofillField, suggestEntryTags, summarizeEntry, translateEntry } from '../content-ai.js';
-import { defaultLocaleOf, guard, isRecord, loadRunEntry, num, str } from './support.js';
-import type { Exec, ExecInput, NodeResult, Resume } from './types.js';
+import { applyProposedFields, createAgentReview } from '../agent-reviews';
+import { generateJson } from '../ai-json';
+import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from '../ai-prompt';
+import { type AiProvenance, isUncheckedFallback } from '../ai-provenance';
+import { autofillField, suggestEntryTags, summarizeEntry, translateEntry } from '../content-ai';
+import { defaultLocaleOf, guard, isRecord, loadRunEntry, num, str } from './support';
+import type { Exec, ExecInput, NodeResult, Resume } from './types';
 
 /** The model is mandatory for these nodes' live mode; the heuristic still answers without it. */
 function aiOf(i: ExecInput): AIProvider {

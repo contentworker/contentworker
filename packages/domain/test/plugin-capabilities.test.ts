@@ -13,7 +13,7 @@ import {
   type PluginManifest,
   requiresReconsent,
   ValidationError,
-} from '../src/index.js';
+} from '../src/index';
 
 const manifest = (over: Partial<PluginManifest> = {}): PluginManifest => ({
   id: 'com.example.one',

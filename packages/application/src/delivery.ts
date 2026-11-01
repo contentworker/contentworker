@@ -15,8 +15,8 @@ import {
   type AppContext,
   DEFAULT_DELIVERY_CACHE_TTL_SECONDS,
   DEFAULT_DELIVERY_LIST_TTL_SECONDS,
-} from './context.js';
-import { cacheTag, contentTypeTag, epochTag } from './events/dispatch.js';
+} from './context';
+import { cacheTag, contentTypeTag, epochTag } from './events/dispatch';
 
 export interface RenderOptions {
   /** When set, fields are flattened to this locale with fallback. */
@@ -460,7 +460,7 @@ export function maskDeliveredFields(
 /**
  * The search hits `principal` may see: hits on types they can read, and none on a type where they
  * have field restrictions (a hit there may exist only because the query matched a hidden field,
- * and its snippet could quote it). Unrestricted principals see every hit unchanged.
+ * and its snippet could quote it), and, for everyone, only hits on entries published now.
  */
 export async function visibleSearchHits<T extends { readonly entryId: string }>(
   ctx: AppContext,
@@ -468,22 +468,24 @@ export async function visibleSearchHits<T extends { readonly entryId: string }>(
   principal: Principal,
   hits: readonly T[],
 ): Promise<T[]> {
-  if (!principal.contentGrants) return [...hits];
-  const visible: T[] = [];
-  for (const hit of hits) {
-    try {
-      const entry = await getPublishedEntry(ctx, scope, hit.entryId);
-      if (
-        canAccessContentType(principal, 'read', entry.contentType) &&
-        deniedFieldsFor(principal, entry.contentType).length === 0
-      ) {
-        visible.push(hit);
-      }
-    } catch {
-      // Unpublished since it was indexed: not visible.
-    }
-  }
-  return visible;
+  if (hits.length === 0) return [];
+  // Only entries published now, for every caller: an index (or a vector store) can still hold a
+  // document whose entry was unpublished, or whose environment was deleted, and serving its
+  // snippet would show content that is no longer delivered. One batched read for the page.
+  const live = new Map(
+    (await ctx.store.entries.getPublishedMany(scope, [...new Set(hits.map((h) => h.entryId))])).map(
+      (p) => [p.entryId, p.contentTypeApiId],
+    ),
+  );
+  return hits.filter((hit) => {
+    const contentType = live.get(hit.entryId);
+    if (contentType === undefined) return false;
+    if (!principal.contentGrants) return true;
+    return (
+      canAccessContentType(principal, 'read', contentType) &&
+      deniedFieldsFor(principal, contentType).length === 0
+    );
+  });
 }
 
 /**

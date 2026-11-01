@@ -6,8 +6,8 @@ import {
   listAgentSchedules,
 } from '@contentworker/application';
 import { logger } from '@contentworker/telemetry';
-import { backdated, localized, pick } from './helpers.js';
-import type { SeedRun } from './types.js';
+import { backdated, localized, pick } from './helpers';
+import type { SeedRun } from './types';
 
 /**
  * Agent observability data: 30 days of deterministic runs (usage/cost charts),

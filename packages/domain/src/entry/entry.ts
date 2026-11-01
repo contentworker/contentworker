@@ -1,5 +1,5 @@
-import { InvalidStateError } from '../errors.js';
-import type { EntryFields, EntryStatus } from '../types.js';
+import { InvalidStateError } from '../errors';
+import type { EntryFields, EntryStatus } from '../types';
 
 /**
  * An entry aggregate. `currentVersion` always points at the latest saved draft

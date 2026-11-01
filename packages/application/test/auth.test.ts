@@ -7,7 +7,7 @@ import {
 } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
-import { type AppContext, authenticate, createApiKey, revokeApiKey } from '../src/index.js';
+import { type AppContext, authenticate, createApiKey, revokeApiKey } from '../src/index';
 
 // A trivial deterministic hasher for tests.
 const hasher = { hash: (v: string) => `h:${v}` };

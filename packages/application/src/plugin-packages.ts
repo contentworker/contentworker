@@ -6,10 +6,10 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { BlobStore, RemoteFetcher } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { installPlugin, upgradePlugin } from './plugins.js';
-import { sha256Hex } from './token-crypto.js';
-import { assertSafeExternalUrl } from './url-safety.js';
+import type { AppContext } from './context';
+import { installPlugin, upgradePlugin } from './plugins';
+import { sha256Hex } from './token-crypto';
+import { assertSafeExternalUrl } from './url-safety';
 
 /**
  * Installing a plugin from somewhere else.

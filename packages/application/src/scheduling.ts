@@ -9,9 +9,9 @@ import {
   type ScheduledEntityType,
   type Scope,
 } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { publishEntry, unpublishEntry } from './publishing.js';
-import { publishRelease } from './releases.js';
+import type { AppContext } from './context';
+import { publishEntry, unpublishEntry } from './publishing';
+import { publishRelease } from './releases';
 
 export interface ScheduleActionInput {
   readonly action: ScheduledActionType;

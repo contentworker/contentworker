@@ -4,8 +4,8 @@
  * back-edges are ignored for layering.
  */
 
-import type { WorkflowGraph } from './graph-types.js';
-import { isBackEdge } from './planner.js';
+import type { WorkflowGraph } from './graph-types';
+import { isBackEdge } from './planner';
 
 export const LAYOUT_COL_WIDTH = 280;
 export const LAYOUT_ROW_HEIGHT = 150;

@@ -1,4 +1,4 @@
-import type { EventType } from '../events.js';
+import type { EventType } from '../events';
 
 /**
  * A webhook subscription. When a domain event matching one of `topics` is

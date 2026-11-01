@@ -12,8 +12,8 @@ import {
 } from '@contentworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { McpDeps } from '../../src/mcp/deps.js';
-import { buildServer } from '../../src/mcp/server.js';
+import type { McpDeps } from '../../src/mcp/deps';
+import { buildServer } from '../../src/mcp/server';
 
 /**
  * The MCP half of capability approval: the same use-case as the admin's

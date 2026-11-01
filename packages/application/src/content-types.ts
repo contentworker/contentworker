@@ -6,7 +6,7 @@ import {
   reviseContentType,
   type Scope,
 } from '@contentworker/domain';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 /** Creates a new content type definition (status "draft", version 1). */
 export async function createContentType(

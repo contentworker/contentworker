@@ -1,6 +1,6 @@
 import type { VectorRow } from '@contentworker/ports';
 import { describe, expect, it } from 'vitest';
-import { createVectorizeStore, type VectorizeBinding } from '../../src/vector-vectorize/index.js';
+import { createVectorizeStore, type VectorizeBinding } from '../../src/vector-vectorize/index';
 
 const scopeA = { spaceId: 'space-a', environmentId: 'main' };
 const scopeB = { spaceId: 'space-b', environmentId: 'main' };

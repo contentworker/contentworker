@@ -24,12 +24,12 @@ import { liveRoutes } from '@contentworker/http/routes/live';
 import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import type { PurgeMessage } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
-import { clientCacheControl } from './client-cache.js';
-import { type Delivery, matches, PRINCIPAL_HEADER } from './delivery.js';
-import { canonicalUrl, visibilityProfile } from './profile.js';
-import { drain } from './purge.js';
+import { clientCacheControl } from './client-cache';
+import { type Delivery, matches, PRINCIPAL_HEADER } from './delivery';
+import { canonicalUrl, visibilityProfile } from './profile';
+import { drain } from './purge';
 
-export { Delivery } from './delivery.js';
+export { Delivery } from './delivery';
 
 const PUBLIC = {
   'access-control-allow-origin': '*',

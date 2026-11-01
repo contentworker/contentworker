@@ -14,9 +14,9 @@ import {
   seedGeneratedEntries,
   statusFor,
   WORDS,
-} from './helpers.js';
-import type { TaxonomySeed } from './taxonomy.js';
-import type { SeedRun } from './types.js';
+} from './helpers';
+import type { TaxonomySeed } from './taxonomy';
+import type { SeedRun } from './types';
 
 export interface CorpusSeed {
   readonly articleIds: readonly string[];

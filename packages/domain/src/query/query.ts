@@ -9,7 +9,7 @@
  * non-localized fields uniform.
  */
 
-import type { EntryFields, LocaleCode, LocalizedValue } from '../types.js';
+import type { EntryFields, LocaleCode, LocalizedValue } from '../types';
 
 /** The comparison operators a field filter may use. */
 export type FilterOp =

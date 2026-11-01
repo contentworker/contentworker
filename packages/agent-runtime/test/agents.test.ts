@@ -12,7 +12,7 @@ import {
   StubAIProvider,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { InProcessAgentRuntime, makeActivities, UNCLASSIFIED, verdictOf } from '../src/index.js';
+import { InProcessAgentRuntime, makeActivities, UNCLASSIFIED, verdictOf } from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
 
@@ -114,7 +114,7 @@ describe('P8: durable agents (in-process executor)', () => {
     const ai = new StubAIProvider(() => ({ summary: 'x', seoDescription: 'y' }));
     const activities = makeActivities({ ctx, ai });
     const runtime = new InProcessAgentRuntime(activities);
-    const { reviewWorkflow } = await import('../src/workflows.js');
+    const { reviewWorkflow } = await import('../src/workflows');
     const { decideAgentReview } = await import('@contentworker/application');
 
     // Approved before the watcher armed: decide applied directly…
@@ -142,7 +142,7 @@ describe('P8: durable agents (in-process executor)', () => {
 
     // Waitless watcher (via the shared workflow fn): arms, then stands down —
     // the review stays pending and decidable through the direct path.
-    const { reviewWorkflow } = await import('../src/workflows.js');
+    const { reviewWorkflow } = await import('../src/workflows');
     const outcome = await reviewWorkflow(activities, { scope, reviewId, entryId: id });
     expect(outcome.status).toBe('skipped');
     const review = await ctx.store.agentReviews.get(scope, reviewId);

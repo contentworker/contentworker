@@ -15,7 +15,7 @@ import {
   publishEntry,
   searchIndexHealth,
   unpublishEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'kb', environmentId: 'main' };
 const other = { spaceId: 'kb', environmentId: 'staging' };

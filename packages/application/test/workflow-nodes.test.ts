@@ -29,7 +29,7 @@ import {
   WORKFLOW_COMPENSATIONS,
   WORKFLOW_EXECUTORS,
   type WorkflowNodeDeps,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
 const editor: Principal = {

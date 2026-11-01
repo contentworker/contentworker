@@ -27,7 +27,7 @@ import {
   saveWorkflowDraft,
   transitionEntry,
   validateWorkflowGraph,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
 

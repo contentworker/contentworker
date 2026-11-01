@@ -62,13 +62,13 @@ import {
   LocalEmbeddingsProvider,
   StubAIProvider,
 } from '@contentworker/test-kit';
-import { type ApiConfig, loadConfig } from './config.js';
-import { sealerFromEnv } from './data-key.js';
-import { doCostGuardFromEnv } from './do/cost-guard.js';
-import { createShardedSearchIndex, DEFAULT_SEARCH_SHARDS } from './do/search-shard.js';
-import { type EdgeEnv, withJurisdiction } from './env.js';
-import { newId } from './ids.js';
-import { CloudflareWorkflowEngine, CloudflareWorkflowsAgentRuntime } from './workflows.js';
+import { type ApiConfig, loadConfig } from './config';
+import { sealerFromEnv } from './data-key';
+import { doCostGuardFromEnv } from './do/cost-guard';
+import { createShardedSearchIndex, DEFAULT_SEARCH_SHARDS } from './do/search-shard';
+import { type EdgeEnv, withJurisdiction } from './env';
+import { newId } from './ids';
+import { CloudflareWorkflowEngine, CloudflareWorkflowsAgentRuntime } from './workflows';
 
 const clock = { now: () => new Date() };
 // UUIDv7 (time-ordered) — consistent with the rest of the platform's PKs.

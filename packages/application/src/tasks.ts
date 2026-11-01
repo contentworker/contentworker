@@ -6,7 +6,7 @@ import {
   type Scope,
   type Task,
 } from '@contentworker/domain';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 export interface CreateTaskInput {
   readonly entryId: string;

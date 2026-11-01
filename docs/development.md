@@ -22,22 +22,22 @@ Worker's Vite config (`apps/web/vite.config.ts`) starts the **api, engine and de
 auxiliary Workers** in the same session, all on one local D1, with the queues, cron, Durable
 Objects and Workflows emulated. Their vars are overridden with `LOCAL_STACK_VARS`:
 
-| Var                      | Local value                             | Why                                                          |
-| ------------------------ | --------------------------------------- | ------------------------------------------------------------ |
-| `REQUIRE_SECURE_SECRETS` | `false`                                 | Allow the dev tokens below                                   |
-| `ADMIN_TOKEN`            | `dev-admin-token`                       | Root bearer token                                            |
-| `MCP_TOKEN`              | `dev-mcp-token`                         | Mounts `/mcp`                                                |
-| `TOKEN_PEPPER`           | `dev-pepper`                            |                                                              |
-| `MEDIA_SIGNING_SECRET`   | `dev-media-signing-secret`              |                                                              |
-| `PRINCIPAL_KEY`          | `contentworker-local-dev-principal-key` | The same `DEV_PRINCIPAL_KEY` the web Worker uses locally     |
-| `ASSISTANT_PRINCIPAL_KEY` | `DEV_ASSISTANT_PRINCIPAL_KEY`          | Derived from the dev `PRINCIPAL_KEY`, for the engine         |
-| `AI_MODE`                | `mock`                                  | No model calls                                               |
-| `AI_GATEWAY_ID`          | empty                                   | No AI Gateway                                                |
-| `EMBEDDINGS_PROVIDER`    | `local`                                 | Hash embeddings                                              |
-| `VECTOR_STORE`           | `kv`                                    | Vectorize has no local emulator; KV is shared by the Workers |
-| `ALLOW_FAKE_ADAPTERS`    | `all`                                   | Accept every dev fake                                        |
-| `SEED_DEV`               | `true`                                  | Load the demo dataset                                        |
-| `SEED_SCALE`             | `1`, or the shell's `SEED_SCALE`        | Demo size (~550 entries); raise it for a benchmark corpus    |
+| Var                       | Local value                             | Why                                                          |
+| ------------------------- | --------------------------------------- | ------------------------------------------------------------ |
+| `REQUIRE_SECURE_SECRETS`  | `false`                                 | Allow the dev tokens below                                   |
+| `ADMIN_TOKEN`             | `dev-admin-token`                       | Root bearer token                                            |
+| `MCP_TOKEN`               | `dev-mcp-token`                         | Mounts `/mcp`                                                |
+| `TOKEN_PEPPER`            | `dev-pepper`                            |                                                              |
+| `MEDIA_SIGNING_SECRET`    | `dev-media-signing-secret`              |                                                              |
+| `PRINCIPAL_KEY`           | `contentworker-local-dev-principal-key` | The same `DEV_PRINCIPAL_KEY` the web Worker uses locally     |
+| `ASSISTANT_PRINCIPAL_KEY` | `DEV_ASSISTANT_PRINCIPAL_KEY`           | Derived from the dev `PRINCIPAL_KEY`, for the engine         |
+| `AI_MODE`                 | `mock`                                  | No model calls                                               |
+| `AI_GATEWAY_ID`           | empty                                   | No AI Gateway                                                |
+| `EMBEDDINGS_PROVIDER`     | `local`                                 | Hash embeddings                                              |
+| `VECTOR_STORE`            | `kv`                                    | Vectorize has no local emulator; KV is shared by the Workers |
+| `ALLOW_FAKE_ADAPTERS`     | `all`                                   | Accept every dev fake                                        |
+| `SEED_DEV`                | `true`                                  | Load the demo dataset                                        |
+| `SEED_SCALE`              | `1`, or the shell's `SEED_SCALE`        | Demo size (~550 entries); raise it for a benchmark corpus    |
 
 Local dev always runs on the demo dataset (`@contentworker/seed`): on its first request the api
 seeds a space, dev API keys and a corpus covering every capability (content model, entries,
@@ -92,15 +92,15 @@ pnpm --filter @contentworker/http generate:skills
 
 ### Where each suite runs
 
-| Package                          | Environment                         | What it covers                                                                 |
-| -------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------ |
-| `@contentworker/domain`          | node                                | Pure rules                                                                     |
-| `@contentworker/application`     | node, `@contentworker/test-kit` fakes | Every use-case                                                               |
-| `@contentworker/db`              | workerd (vitest-pool-workers), Miniflare D1 with the migrations applied | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest |
-| `@contentworker/http`            | node, in-memory fakes               | REST routes, auth, OpenAPI, MCP tools, the skills embed                       |
-| `@contentworker/engine`          | workerd                             | Durable Objects (search shard, live hub, cost guard, rate limiter) and real Workflow runs with `AI_MODE=mock` |
-| `@contentworker/docs`            | node                                | The `docs/` embed matches disk                                                 |
-| `@contentworker/web`             | vitest; Playwright (`pnpm --filter @contentworker/web e2e`) | Auth and lib units; device and CMS e2e with axe in WebKit and Chromium |
+| Package                      | Environment                                                             | What it covers                                                                                                |
+| ---------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `@contentworker/domain`      | node                                                                    | Pure rules                                                                                                    |
+| `@contentworker/application` | node, `@contentworker/test-kit` fakes                                   | Every use-case                                                                                                |
+| `@contentworker/db`          | workerd (vitest-pool-workers), Miniflare D1 with the migrations applied | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest                   |
+| `@contentworker/http`        | node, in-memory fakes                                                   | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                       |
+| `@contentworker/engine`      | workerd                                                                 | Durable Objects (search shard, live hub, cost guard, rate limiter) and real Workflow runs with `AI_MODE=mock` |
+| `@contentworker/docs`        | node                                                                    | The `docs/` embed matches disk                                                                                |
+| `@contentworker/web`         | vitest; Playwright (`pnpm --filter @contentworker/web e2e`)             | Auth and lib units; device and CMS e2e with axe in WebKit and Chromium                                        |
 
 The web e2e harness starts its own dev server on port 5390 with a fresh local D1 in
 `.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings, and unseeded: the tests
@@ -121,7 +121,8 @@ node apps/api/scripts/mcp-search-smoke.mjs   # search tools
 ## Conventions
 
 - **Strict TypeScript** (`packages/typescript-config/base.json`): `noUncheckedIndexedAccess`,
-  `noUnusedLocals`, `verbatimModuleSyntax`. ESM with `.js` specifiers in the core packages.
+  `noUnusedLocals`, `verbatimModuleSyntax`. ESM: internal packages import relative paths without
+  an extension; the SDKs (`packages/sdk/*`) keep `.js` specifiers and `scripts/*.ts` use `.ts`.
 - **TypeScript 7** is the native compiler and has no JS API: run `tsc`, never
   `import ts from 'typescript'`. The SDKs bundle JS with tsup and emit `.d.ts` with `tsc`.
 - **Dependencies come from the pnpm catalog.** Every version lives in `catalog:` in
@@ -175,23 +176,23 @@ read paths), 10 GB per database.
 `(space_id, environment_id)` leads the primary key or a unique index of every content table.
 `0001_init.sql` creates:
 
-| Tables                                                                  | Purpose                                                       |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `spaces`, `environments`, `environment_aliases`                         | Spaces, branches, alias → environment                         |
-| `content_types`                                                         | Content-type definitions (`fields` JSON)                      |
-| `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values` | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
-| `assets`, `asset_published`                                             | Asset metadata and its published read model                   |
-| `references`                                                            | Link graph (reverse lookups for invalidation and usage)       |
-| `api_keys`, `roles`, `space_members`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings` | Access                       |
-| `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins` | Integrations                                               |
-| `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks` | Publishing at scale                                    |
-| `comments`, `tasks`                                                     | Collaboration                                                 |
-| `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows |
-| `concept_schemes`, `concepts`, `tags`                                   | Taxonomy                                                      |
-| `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`          | AI actions and the agent ledger                               |
-| `audit_log`                                                             | Per-space audit trail                                         |
-| `outbox`                                                                | Transactional outbox (`claimed_until` lease, `relayed_at`)    |
-| `_guard`                                                                | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost |
+| Tables                                                                                                                                            | Purpose                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `spaces`, `environments`, `environment_aliases`                                                                                                   | Spaces, branches, alias → environment                                                     |
+| `content_types`                                                                                                                                   | Content-type definitions (`fields` JSON)                                                  |
+| `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values`                                                           | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
+| `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                               |
+| `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                   |
+| `api_keys`, `roles`, `space_members`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings`                                    | Access                                                                                    |
+| `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins`                                                                        | Integrations                                                                              |
+| `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks`                                                                  | Publishing at scale                                                                       |
+| `comments`, `tasks`                                                                                                                               | Collaboration                                                                             |
+| `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows                                                                       |
+| `concept_schemes`, `concepts`, `tags`                                                                                                             | Taxonomy                                                                                  |
+| `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
+| `audit_log`                                                                                                                                       | Per-space audit trail                                                                     |
+| `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
+| `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost              |
 
 `0002_auth.sql` adds the web app's tables: `users`, `sessions`, `recovery_codes`,
 `sign_in_challenges`, `passkeys`, `passkey_challenges`, `scim_groups`, `scim_group_members`,

@@ -8,8 +8,8 @@ import {
 import type { Clock, EntryQuery, IdGenerator } from '@contentworker/ports';
 import { InMemoryContentStore } from '@contentworker/test-kit';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createD1Store } from '../src/store.js';
-import { testDb } from './env.js';
+import { createD1Store } from '../src/store';
+import { testDb } from './env';
 
 const uuidv7 = () => crypto.randomUUID();
 

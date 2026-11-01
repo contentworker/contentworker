@@ -20,15 +20,15 @@ import type {
   PluginRuntime,
   RemoteFetcher,
 } from '@contentworker/ports';
-import { getAsset, listAssets } from './assets.js';
-import type { AppContext } from './context.js';
-import { listPublishedEntries } from './delivery.js';
-import { createEntry, updateEntry } from './entries.js';
-import { loadPluginBundle } from './plugins.js';
-import { getPreviewEntry, listPreviewEntries } from './preview.js';
-import { publishEntry } from './publishing.js';
-import { createTag, listTags } from './taxonomy.js';
-import { assertSafeExternalUrl } from './url-safety.js';
+import { getAsset, listAssets } from './assets';
+import type { AppContext } from './context';
+import { listPublishedEntries } from './delivery';
+import { createEntry, updateEntry } from './entries';
+import { loadPluginBundle } from './plugins';
+import { getPreviewEntry, listPreviewEntries } from './preview';
+import { publishEntry } from './publishing';
+import { createTag, listTags } from './taxonomy';
+import { assertSafeExternalUrl } from './url-safety';
 
 /**
  * Turns installed plugins into a `HookDispatcher`.

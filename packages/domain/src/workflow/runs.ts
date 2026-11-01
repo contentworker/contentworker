@@ -6,11 +6,11 @@
  * `instructions`.
  */
 
-import type { Principal } from '../auth/auth.js';
-import type { Scope } from '../types.js';
-import type { WorkflowNodeStatus, WorkflowRunStatus } from './graph-types.js';
-import type { RunEntry } from './logic.js';
-import type { PlanState } from './planner.js';
+import type { Principal } from '../auth/auth';
+import type { Scope } from '../types';
+import type { WorkflowNodeStatus, WorkflowRunStatus } from './graph-types';
+import type { RunEntry } from './logic';
+import type { PlanState } from './planner';
 
 /** One node's live detail in a run. Times are epoch ms. */
 export interface NodeRun {

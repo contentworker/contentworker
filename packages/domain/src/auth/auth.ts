@@ -1,5 +1,5 @@
-import { DomainError } from '../errors.js';
-import type { RolePreset } from './team.js';
+import { DomainError } from '../errors';
+import type { RolePreset } from './team';
 
 /** The kind of API key — the CMA/CDA/CPA (management/delivery/preview) split. */
 export type ApiKeyKind = 'cma' | 'cda' | 'cpa';

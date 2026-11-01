@@ -2,16 +2,16 @@
  * Editorial workflow templates. Each is a normal editable workflow built with the `Builder`.
  */
 
-import { SCOPES } from '../auth/auth.js';
+import { SCOPES } from '../auth/auth';
 import type {
   WorkflowEdge,
   WorkflowGraph,
   WorkflowGraphDefinition,
   WorkflowNode,
-} from './graph-types.js';
-import { autoLayout } from './layout.js';
-import { withDefaults } from './nodes.js';
-import { LOOP_INPUT } from './planner.js';
+} from './graph-types';
+import { autoLayout } from './layout';
+import { withDefaults } from './nodes';
+import { LOOP_INPUT } from './planner';
 
 export class WorkflowBuilder {
   nodes: WorkflowNode[] = [];

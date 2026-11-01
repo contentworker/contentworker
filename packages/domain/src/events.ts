@@ -1,4 +1,4 @@
-import type { EntryFields, Scope } from './types.js';
+import type { EntryFields, Scope } from './types';
 
 /**
  * Domain events. These are appended to the transactional outbox within the same
@@ -19,7 +19,8 @@ export type DomainEvent =
   | WorkflowRunEndedEvent
   | WorkflowTaskOpenedEvent
   | WorkflowWebhookEvent
-  | EnvironmentAliasChangedEvent;
+  | EnvironmentAliasChangedEvent
+  | EnvironmentDeletedEvent;
 
 export interface BaseEvent {
   readonly id: string;
@@ -66,6 +67,16 @@ export interface EnvironmentAliasChangedEvent extends BaseEvent {
   readonly type: 'environment_alias.changed';
   /** The new target, or null when the alias was removed. */
   readonly targetEnvironmentId: string | null;
+}
+
+/**
+ * An environment was deleted (`scope` is the deleted environment). Its rows are gone; the engine
+ * removes what was derived from them elsewhere: each entry's search documents and vectors, and the
+ * environment's delivery cache. Large environments emit several, `entryIds` split across them.
+ */
+export interface EnvironmentDeletedEvent extends BaseEvent {
+  readonly type: 'environment.deleted';
+  readonly entryIds: readonly string[];
 }
 
 export interface ContentTypePublishedEvent extends BaseEvent {

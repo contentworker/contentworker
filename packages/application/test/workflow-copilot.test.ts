@@ -32,7 +32,7 @@ import {
   normalizeGraph,
   UNTRUSTED_CONTENT_GUARD,
   validateWorkflowGraph,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 

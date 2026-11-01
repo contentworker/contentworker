@@ -1,6 +1,6 @@
 import { loadConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
-import { oauthConfigFrom } from '../../src/api/oauth/routes.js';
+import { oauthConfigFrom } from '../../src/api/oauth/routes';
 
 describe('OAuth settings as the Worker configs declare them', () => {
   it('reads an empty OAUTH_RESOURCE as unset, so the resource is the issuer’s /mcp', () => {

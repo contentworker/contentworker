@@ -1,6 +1,6 @@
 import type { VectorRow } from '@contentworker/ports';
 import { describe, expect, it } from 'vitest';
-import { createKvDevVectorStore, type KvVectorBinding } from '../../src/vector-kv-dev/index.js';
+import { createKvDevVectorStore, type KvVectorBinding } from '../../src/vector-kv-dev/index';
 
 /** In-memory KV with prefix listing and a small page size, so paging is exercised. */
 function fakeKv(pageSize = 2): KvVectorBinding & { data: Map<string, string> } {

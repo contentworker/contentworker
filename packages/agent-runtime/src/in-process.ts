@@ -4,13 +4,8 @@ import type {
   AgentRuntime,
   WorkflowInput,
   WorkflowName,
-} from './types.js';
-import {
-  curateWorkflow,
-  enrichWorkflow,
-  moderateWorkflow,
-  repurposeWorkflow,
-} from './workflows.js';
+} from './types';
+import { curateWorkflow, enrichWorkflow, moderateWorkflow, repurposeWorkflow } from './workflows';
 
 /**
  * Runs workflows directly in the calling process — the executor for dev, tests,

@@ -7,9 +7,9 @@ import {
   SCOPES,
   ValidationError,
 } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { invalidateCachedPrincipals } from './principal-cache.js';
-import { type AccessPolicy, assertKeepsAnAdmin, NO_SSO } from './team.js';
+import type { AppContext } from './context';
+import { invalidateCachedPrincipals } from './principal-cache';
+import { type AccessPolicy, assertKeepsAnAdmin, NO_SSO } from './team';
 
 export interface RoleInput {
   readonly name: string;

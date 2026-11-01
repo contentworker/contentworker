@@ -1,6 +1,6 @@
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { describe, expect, it } from 'vitest';
-import { type CfRateLimiter, createCfRequestRateLimiter } from '../src/rate-limit.js';
+import { type CfRateLimiter, createCfRequestRateLimiter } from '../src/rate-limit';
 
 /** Stand-in for a native `ratelimit` binding, recording the keys it is asked about. */
 function fakeBinding(success: boolean) {

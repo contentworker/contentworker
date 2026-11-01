@@ -94,6 +94,7 @@ import type {
   WorkflowRunRepo,
   WorkflowTaskRepo,
 } from '@contentworker/ports';
+import { TransactionConflictError } from '@contentworker/ports';
 
 const scopeKey = (s: Scope) => `${s.spaceId}::${s.environmentId}`;
 
@@ -153,6 +154,10 @@ export class InMemoryContentStore implements ContentStore {
     },
     listEnvironments: async (spaceId) => this.environmentData.get(spaceId) ?? [],
     setAlias: async (spaceId, alias, targetEnvironmentId, at) => {
+      // As the D1 store's guard: the target must still exist when the alias lands.
+      if (!(this.environmentData.get(spaceId) ?? []).some((e) => e.id === targetEnvironmentId)) {
+        throw new TransactionConflictError();
+      }
       this.aliasData.set(`${spaceId}::${alias}`, { alias, targetEnvironmentId, updatedAt: at });
     },
     getAlias: async (spaceId, alias) => this.aliasData.get(`${spaceId}::${alias}`) ?? null,
@@ -162,6 +167,69 @@ export class InMemoryContentStore implements ContentStore {
     },
     deleteAlias: async (spaceId, alias) => {
       this.aliasData.delete(`${spaceId}::${alias}`);
+    },
+    deleteEnvironment: async (spaceId, environmentId, events, audit) => {
+      // As the D1 store's guard: no alias may point at it when the deletion runs.
+      if (
+        [...this.aliasData.entries()].some(
+          ([k, v]) => k.startsWith(`${spaceId}::`) && v.targetEnvironmentId === environmentId,
+        )
+      ) {
+        throw new TransactionConflictError();
+      }
+      const scope = { spaceId, environmentId };
+      const key = scopeKey(scope);
+      // The environment-scoped collections, named (a sweep by key prefix would also catch
+      // space-level keys such as an alias that shares the environment's name). Not the audit log.
+      const scoped: Map<string, unknown>[] = [
+        this.contentTypeData,
+        this.entryData,
+        this.versionData,
+        this.publishedData,
+        this.assetData,
+        this.publishedAssetData,
+        this.referenceData,
+        this.agentRunData,
+        this.releaseData,
+        this.releaseItemData,
+        this.scheduledActionData,
+        this.agentReviewData,
+        this.agentScheduleData,
+        this.commentData,
+        this.taskData,
+        this.workflowData,
+        this.workflowStateData,
+        this.workflowVersionData,
+        this.workflowRunData,
+        this.workflowNodeRunData,
+        this.workflowTimelineData,
+        this.workflowTaskData,
+        this.schemeData,
+        this.conceptData,
+        this.tagData,
+        this.entryMetadataData,
+        this.aiActionData,
+        this.functionData,
+        this.appExtensionData,
+        this.previewTokenData,
+        this.uniqueData,
+        this.bulkJobData,
+        this.bulkChunkData,
+      ];
+      for (const map of scoped) {
+        for (const [k, v] of map) {
+          const own = (v as { scope?: Scope } | null)?.scope;
+          if (k === key || k.startsWith(`${key}::`) || (own && scopeKey(own) === key))
+            map.delete(k);
+        }
+      }
+      const list = this.environmentData.get(spaceId) ?? [];
+      this.environmentData.set(
+        spaceId,
+        list.filter((e) => e.id !== environmentId),
+      );
+      for (const event of events) this.outboxData.push({ event, relayed: false });
+      this.auditData.push(audit);
     },
   };
 
@@ -1596,9 +1664,20 @@ export class InMemoryContentStore implements ContentStore {
 
   // ---- test helpers -------------------------------------------------------
 
-  /** Seeds a space's locale configuration (name defaults to the space id). */
-  seedSpace(config: Omit<SpaceConfig, 'name'> & { name?: string }): void {
-    this.spaceConfigs.set(config.spaceId, { name: config.spaceId, ...config });
+  /**
+   * Seeds a space's locale configuration (name defaults to the space id) and registers its
+   * environments (`main` unless named), as `createSpace` does.
+   */
+  seedSpace(
+    config: Omit<SpaceConfig, 'name'> & { name?: string; environments?: readonly string[] },
+  ): void {
+    const { environments = ['main'], ...rest } = config;
+    this.spaceConfigs.set(config.spaceId, { name: config.spaceId, ...rest });
+    const list = this.environmentData.get(config.spaceId) ?? [];
+    for (const id of environments) {
+      if (!list.some((e) => e.id === id)) list.push({ id, name: id });
+    }
+    this.environmentData.set(config.spaceId, list);
   }
 
   /** Synchronously seeds an API key (avoids startup races in dev/tests). */

@@ -11,8 +11,8 @@ import {
   unpublishAsset as unpublishAssetState,
 } from '@contentworker/domain';
 import type { BlobStore, PublishedAsset } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { runHook } from './hooks.js';
+import type { AppContext } from './context';
+import { runHook } from './hooks';
 
 export interface CreateAssetInput {
   readonly fileName: string;

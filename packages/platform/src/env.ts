@@ -3,10 +3,10 @@ import type { R2BucketLike } from '@contentworker/adapters/blob-r2';
 import type { ImagesBindingLike } from '@contentworker/adapters/images-cf';
 import type { WorkerLoaderBinding } from '@contentworker/adapters/plugins-cf-loader';
 import type { StreamBindingLike } from '@contentworker/adapters/video-stream';
-import type { CostGuardDO } from './do/cost-guard.js';
-import type { LiveHubDO } from './do/live-hub.js';
-import type { RateLimiterDO } from './do/rate-limiter.js';
-import type { SearchShardDO } from './do/search-shard.js';
+import type { CostGuardDO } from './do/cost-guard';
+import type { LiveHubDO } from './do/live-hub';
+import type { RateLimiterDO } from './do/rate-limiter';
+import type { SearchShardDO } from './do/search-shard';
 
 /** A native `ratelimit` binding (limits are declared in wrangler.jsonc, not env). */
 export interface CfRateLimiter {

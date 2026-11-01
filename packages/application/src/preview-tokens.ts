@@ -1,8 +1,8 @@
 import { type Principal, SCOPES, type Scope, scopesForKind } from '@contentworker/domain';
 import type { Hasher } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { getEntry } from './entries.js';
-import { randomSecret } from './token-crypto.js';
+import type { AppContext } from './context';
+import { getEntry } from './entries';
+import { randomSecret } from './token-crypto';
 
 const DEFAULT_TTL_HOURS = 72;
 

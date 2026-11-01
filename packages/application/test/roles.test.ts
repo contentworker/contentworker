@@ -10,7 +10,7 @@ import {
   listRoles,
   revokeApiKey,
   updateRole,
-} from '../src/index.js';
+} from '../src/index';
 
 const hasher = { hash: (v: string) => `h:${v}` };
 

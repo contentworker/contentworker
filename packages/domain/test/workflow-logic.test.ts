@@ -6,7 +6,7 @@ import {
   logicHolds,
   logicIssues,
   type RunContext,
-} from '../src/index.js';
+} from '../src/index';
 
 const ctx: RunContext = {
   entry: {

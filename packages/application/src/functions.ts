@@ -4,8 +4,8 @@ import type {
   FunctionInvokeResult,
   FunctionInvoker,
 } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { assertSafeExternalUrl } from './url-safety.js';
+import type { AppContext } from './context';
+import { assertSafeExternalUrl } from './url-safety';
 
 /** True if `type` matches `pattern` ('*' = all, trailing '*' = prefix, else exact). */
 export function eventMatches(pattern: string, type: string): boolean {

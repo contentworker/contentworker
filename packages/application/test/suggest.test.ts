@@ -8,7 +8,7 @@ import {
   SUGGEST_MAX_LIMIT,
   suggestEntries,
   trashEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const SPACE = 's1';
 const scope = { spaceId: SPACE, environmentId: 'main' };

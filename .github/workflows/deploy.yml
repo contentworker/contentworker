@@ -148,8 +148,9 @@ jobs:
           get "https://$DOMAIN/health"
           # D1 and the api (over the service binding) both answer.
           get "https://$DOMAIN/health/deep"
-          # The admin itself renders (sign-in, or setup on a deployment with no people yet).
-          get -L -o /dev/null "https://$DOMAIN/login"
+          # The admin itself renders (sign-in, or setup on a deployment with no people yet). Asked as
+          # a browser asks: before setup a page request redirects to /setup, anything else is a 503.
+          get -L -o /dev/null -H 'Accept: text/html' "https://$DOMAIN/login"
           get "https://$API_DOMAIN/health"
           get -o /dev/null "https://$API_DOMAIN/openapi.json"
           get "https://$CDN_DOMAIN/health"
@@ -163,7 +164,7 @@ jobs:
           check() {
             local url=$1 budget=$2 best=999
             for _ in 1 2 3; do
-              t=$(curl -fsSL -o /dev/null -w '%{time_total}' "$url") || continue
+              t=$(curl -fsSL -o /dev/null -H 'Accept: text/html' -w '%{time_total}' "$url") || continue
               best=$(awk -v a="$t" -v b="$best" 'BEGIN { print (a < b) ? a : b }')
             done
             echo "$url: ${best}s (budget ${budget}s)"

@@ -1,5 +1,5 @@
 import type { CfRateLimiter, EdgeEnv } from '@contentworker/platform/env';
-import type { RateLimitClass, RequestRateLimit } from './api/request-rate-limit.js';
+import type { RateLimitClass, RequestRateLimit } from './api/request-rate-limit';
 
 export type { CfRateLimiter };
 

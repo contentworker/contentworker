@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runInLanes } from '../src/lanes.js';
+import { runInLanes } from '../src/lanes';
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
 

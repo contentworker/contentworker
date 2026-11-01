@@ -7,8 +7,8 @@ import {
   type ReleaseWithItems,
   type Scope,
 } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { publishEntryTx, unpublishEntryTx } from './publishing.js';
+import type { AppContext } from './context';
+import { publishEntryTx, unpublishEntryTx } from './publishing';
 
 export interface CreateReleaseInput {
   readonly title: string;

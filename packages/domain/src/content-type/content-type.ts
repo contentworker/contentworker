@@ -1,12 +1,12 @@
-import { ConflictError, ValidationError } from '../errors.js';
-import type { ContentTypeStatus } from '../types.js';
+import { ConflictError, ValidationError } from '../errors';
+import type { ContentTypeStatus } from '../types';
 import {
   type FieldDefinition,
   isValidApiId,
   MAX_COMPONENT_DEPTH,
   UNIQUE_FIELD_TYPES,
   unsafeRegexReason,
-} from './field.js';
+} from './field';
 
 /**
  * A content type: the schema for a class of entries. Definitions are versioned

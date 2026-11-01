@@ -34,8 +34,8 @@ import {
 } from '@contentworker/domain';
 import type { WorkflowEngine } from '@contentworker/ports';
 import { type Context, Hono } from 'hono';
-import { type AuthDeps, type AuthVars, requireScope } from '../auth.js';
-import { doc } from '../docs/openapi.js';
+import { type AuthDeps, type AuthVars, requireScope } from '../auth';
+import { doc } from '../docs/openapi';
 import {
   cancelWorkflowRunBody,
   createWorkflowBody,
@@ -47,7 +47,7 @@ import {
   workflowDraftBody,
   workflowEventBody,
   workflowSettingsBody,
-} from '../validation.js';
+} from '../validation';
 
 const BASE = '/spaces/:space/environments/:env';
 

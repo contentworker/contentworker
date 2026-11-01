@@ -3,16 +3,16 @@
  * validation, layout, JSON Logic, the editorial node catalog, policy rules, templates and the
  * legacy ordered-steps conversion. Pure; executors live in the application layer.
  */
-export * from './assess.js';
-export * from './catalog.js';
-export * from './diff.js';
-export * from './graph-types.js';
-export * from './layout.js';
-export * from './legacy.js';
-export * from './logic.js';
-export * from './nodes.js';
-export * from './planner.js';
-export * from './policy.js';
-export * from './runs.js';
-export * from './templates.js';
-export * from './validate.js';
+export * from './assess';
+export * from './catalog';
+export * from './diff';
+export * from './graph-types';
+export * from './layout';
+export * from './legacy';
+export * from './logic';
+export * from './nodes';
+export * from './planner';
+export * from './policy';
+export * from './runs';
+export * from './templates';
+export * from './validate';

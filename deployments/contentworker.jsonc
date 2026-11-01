@@ -10,8 +10,6 @@
 {
   "id": "contentworker",
   "ring": "internal",
-  // Held: run locally for now (docs/development.md); remove to let CI deploy it again.
-  "hold": true,
   "slot": 1,
   "domain": "contentworker.app",
   "suffix": "",

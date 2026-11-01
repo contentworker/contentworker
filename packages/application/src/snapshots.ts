@@ -17,20 +17,20 @@ import {
   type WorkflowGraph,
   type WorkflowVersion,
 } from '@contentworker/domain';
-import { publishAsset } from './assets.js';
-import { createContentType, publishContentType } from './content-types.js';
-import type { AppContext } from './context.js';
-import { createEntry, updateEntry } from './entries.js';
-import { allPages } from './paging.js';
-import { publishEntry } from './publishing.js';
-import { createConcept, createScheme, createTag, setEntryMetadata } from './taxonomy.js';
+import { publishAsset } from './assets';
+import { createContentType, publishContentType } from './content-types';
+import type { AppContext } from './context';
+import { createEntry, updateEntry } from './entries';
+import { allPages } from './paging';
+import { publishEntry } from './publishing';
+import { createConcept, createScheme, createTag, setEntryMetadata } from './taxonomy';
 import {
   createWorkflowDraft,
   defineWorkflow,
   listWorkflows,
   publishWorkflowVersion,
   saveWorkflowDraft,
-} from './workflows.js';
+} from './workflows';
 
 /**
  * Environment snapshots: export an environment to portable JSON, and replay it
@@ -287,6 +287,14 @@ export async function importSnapshot(
   }
   const config = await ctx.store.spaces.getConfig(target);
   if (!config) throw new NotFoundError('Space', target.spaceId);
+  // Only into an environment that exists: otherwise the rows would belong to no environment.
+  if (
+    !(await ctx.store.spaces.listEnvironments(target.spaceId)).some(
+      (e) => e.id === target.environmentId,
+    )
+  ) {
+    throw new NotFoundError('Environment', `${target.spaceId}/${target.environmentId}`);
+  }
 
   const existing = await ctx.store.contentTypes.list(target);
   if (existing.length > 0) {

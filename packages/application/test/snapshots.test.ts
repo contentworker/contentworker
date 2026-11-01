@@ -31,7 +31,7 @@ import {
   saveWorkflowDraft,
   setEntryMetadata,
   updateEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const source = { spaceId: 's1', environmentId: 'main' };
 const target = { spaceId: 's1', environmentId: 'copy' };
@@ -68,7 +68,7 @@ beforeEach(async () => {
   store = new InMemoryContentStore();
   store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('e') };
-  await createEnvironment(ctx, 's1', { environmentId: 'copy' });
+  await createEnvironment(ctx, 's1', 'copy');
   await seedModel();
 });
 
@@ -213,7 +213,7 @@ describe('importing a snapshot', () => {
   });
 
   it('names what it deliberately did not carry', async () => {
-    const { createAsset } = await import('../src/assets.js');
+    const { createAsset } = await import('../src/assets');
     const blob = {
       getUploadUrl: async () => 'https://upload',
       getDownloadUrl: async () => 'https://download',
@@ -264,7 +264,7 @@ describe('importing a snapshot', () => {
       ],
     } as Parameters<typeof createContentType>[2]);
     await publishContentType(ctx, source, 'category');
-    const { createAsset, publishAsset } = await import('../src/assets.js');
+    const { createAsset, publishAsset } = await import('../src/assets');
     const blob = {
       getUploadUrl: async () => ({ url: 'https://upload', headers: {} }),
       getDownloadUrl: async () => 'https://download',
@@ -357,6 +357,14 @@ describe('importing a snapshot', () => {
     await expect(
       importSnapshot(ctx, target, await exportSnapshot(ctx, source)),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('refuses a target environment that does not exist, writing nothing', async () => {
+    const typo = { spaceId: 's1', environmentId: 'cpoy' };
+    await expect(
+      importSnapshot(ctx, typo, await exportSnapshot(ctx, source)),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(await store.contentTypes.list(typo)).toEqual([]);
   });
 
   it('refuses a snapshot it cannot read', async () => {

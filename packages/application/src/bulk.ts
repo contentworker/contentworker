@@ -1,12 +1,7 @@
 import { type EntryFields, type Scope, ValidationError } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { type CreateEntryInput, createEntry } from './entries.js';
-import {
-  publishEntriesTx,
-  publishEntry,
-  unpublishEntriesTx,
-  unpublishEntry,
-} from './publishing.js';
+import type { AppContext } from './context';
+import { type CreateEntryInput, createEntry } from './entries';
+import { publishEntriesTx, publishEntry, unpublishEntriesTx, unpublishEntry } from './publishing';
 
 /** Largest batch a single bulk call accepts. */
 export const BULK_LIMIT = 1000;

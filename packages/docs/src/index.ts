@@ -7,7 +7,7 @@
  * ids are UUIDv7. This exposes the same `docs/` a human reads, over the same
  * MCP and HTTP surfaces the agent is already authenticated to.
  */
-import { DOC_SOURCES } from './generated.js';
+import { DOC_SOURCES } from './generated';
 
 export interface DocHeading {
   /** Markdown heading depth: 1 for `#`, 2 for `##`, and so on. */

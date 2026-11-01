@@ -9,7 +9,7 @@ import {
   topologyKey,
   WORKFLOW_TEMPLATES,
   type WorkflowGraph,
-} from '../src/index.js';
+} from '../src/index';
 
 const node = (id: string) => ({
   id,

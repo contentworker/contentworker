@@ -20,7 +20,12 @@ export interface R2BucketLike {
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string,
     options?: { httpMetadata?: { contentType?: string } },
   ): Promise<unknown>;
-  delete(key: string): Promise<void>;
+  delete(keys: string | string[]): Promise<void>;
+  list(options: { prefix: string; cursor?: string; limit?: number }): Promise<{
+    objects: { key: string }[];
+    truncated: boolean;
+    cursor?: string;
+  }>;
 }
 
 /** Path prefix the Worker serves blobs under (see {@link handleMediaRequest}). */
@@ -186,6 +191,20 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
     async get(key) {
       const obj = await bucket.get(key);
       return obj ? obj.text() : null;
+    },
+    async deletePrefix(prefix, keep) {
+      // List everything first, then delete: deleting between pages could shift what a cursor
+      // points at and skip objects.
+      const keys: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await bucket.list({ prefix, cursor, limit: 1000 });
+        for (const { key } of page.objects) if (!keep(key)) keys.push(key);
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+      // R2 deletes up to 1,000 keys per call.
+      for (let at = 0; at < keys.length; at += 1000) await bucket.delete(keys.slice(at, at + 1000));
+      return keys.length;
     },
   };
 }

@@ -1,5 +1,5 @@
-import { type PermissionScope, SCOPES } from '../auth/auth.js';
-import { DomainError, ValidationError } from '../errors.js';
+import { type PermissionScope, SCOPES } from '../auth/auth';
+import { DomainError, ValidationError } from '../errors';
 
 /**
  * Plugins: third-party code that runs inside contentworker's write path.
