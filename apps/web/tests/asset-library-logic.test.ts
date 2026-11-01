@@ -1,6 +1,7 @@
 import type { AssetFolder } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
 import {
+  ASSET_BULK_JOB_THRESHOLD,
   activeFilterCount,
   assetLibraryQuery,
   assetSearchQuery,
@@ -10,7 +11,14 @@ import {
   folderLabel,
   folderRows,
   ingestState,
+  isoToLocalInput,
+  jobFailures,
+  localInputToIso,
+  RIGHTS_EXPIRE_SOON_MS,
+  rightsState,
   runBulk,
+  runsAsJob,
+  timeUntil,
 } from '~/cms/lib/assets';
 
 const folder = (id: string, name: string, path: string, parentId?: string): AssetFolder => ({
@@ -140,5 +148,82 @@ describe('asset search', () => {
     });
     expect(ingestState({ ingestStatus: 'ready' })).toBeNull();
     expect(ingestState({})).toBeNull();
+  });
+});
+
+describe('usage rights at a glance', () => {
+  const now = Date.parse('2026-11-01T12:00:00Z');
+  const day = 24 * 60 * 60 * 1000;
+  const at = (ms: number) => new Date(ms).toISOString();
+
+  it('says expired, expiring within a week, embargoed, or nothing', () => {
+    expect(rightsState(undefined, now)).toBeNull();
+    expect(rightsState({ license: 'CC BY' }, now)).toBeNull();
+    expect(rightsState({ expiresAt: at(now - 1) }, now)).toEqual({
+      state: 'expired',
+      at: at(now - 1),
+    });
+    expect(rightsState({ expiresAt: at(now + 3 * day) }, now)?.state).toBe('expiring');
+    expect(rightsState({ expiresAt: at(now + RIGHTS_EXPIRE_SOON_MS) }, now)?.state).toBe(
+      'expiring',
+    );
+    expect(rightsState({ expiresAt: at(now + RIGHTS_EXPIRE_SOON_MS + 1) }, now)).toBeNull();
+    expect(rightsState({ embargoUntil: at(now + day) }, now)?.state).toBe('embargoed');
+    expect(rightsState({ embargoUntil: at(now - day) }, now)).toBeNull();
+    // Expired wins: an expired asset can't be delivered whatever its embargo says.
+    expect(rightsState({ embargoUntil: at(now + day), expiresAt: at(now - day) }, now)?.state).toBe(
+      'expired',
+    );
+  });
+
+  it('says how long is left in words', () => {
+    expect(timeUntil(now + 3 * day, now)).toBe('in 3 days');
+    expect(timeUntil(now + 5 * 60 * 60 * 1000, now)).toBe('in 5 hours');
+    expect(timeUntil(now + 60 * 60 * 1000, now)).toBe('in 1 hour');
+    expect(timeUntil(now + 20 * 60 * 1000, now)).toBe('in 20 minutes');
+    expect(timeUntil(now + 1000, now)).toBe('in 1 minute');
+  });
+
+  it('turns a date and time on the reader’s clock into an instant with a zone, and back', () => {
+    expect(localInputToIso('')).toBeNull();
+    const iso = localInputToIso('2026-01-31T09:30');
+    expect(iso).toMatch(/^2026-01-3\dT\d{2}:30:00\.000Z$/);
+    expect(isoToLocalInput(iso ?? undefined)).toBe('2026-01-31T09:30');
+    expect(isoToLocalInput(undefined)).toBe('');
+    expect(isoToLocalInput('not a date')).toBe('');
+  });
+});
+
+describe('asset bulk jobs', () => {
+  it('runs a selection bigger than one page as a job', () => {
+    expect(runsAsJob(ASSET_BULK_JOB_THRESHOLD)).toBe(false);
+    expect(runsAsJob(ASSET_BULK_JOB_THRESHOLD + 1)).toBe(true);
+  });
+
+  it('names a job’s failures by the asset name the report gives, else the id', () => {
+    expect(
+      jobFailures({
+        job: {} as never,
+        chunks: [
+          {
+            chunkId: 'c1',
+            status: 'completed',
+            attempts: 1,
+            itemCount: 2,
+            failures: [{ id: 'a1', error: 'embargoed', name: 'hero.jpg' }],
+          },
+          {
+            chunkId: 'c2',
+            status: 'completed',
+            attempts: 2,
+            itemCount: 1,
+            failures: [{ id: 'a9', error: 'gone' }],
+          },
+        ],
+      }),
+    ).toEqual([
+      { id: 'a1', name: 'hero.jpg', error: 'embargoed' },
+      { id: 'a9', name: 'a9', error: 'gone' },
+    ]);
   });
 });

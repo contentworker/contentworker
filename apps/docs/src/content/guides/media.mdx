@@ -157,9 +157,10 @@ as a draft. Select several to archive them together. The routes are `POST …/as
 `asset_delete`). It is refused with `409 asset_in_use` while any entry links to it, and the answer
 names those entries, so archive the asset or remove the links first.
 
-**Act on many at once.** Select assets and use the bulk bar. Past about 50 assets the admin runs
-the action as a background job and shows its progress, then lists any asset it couldn't act on by
-name. Over the API, `POST …/assets/bulk` starts the same job (`202`):
+**Act on many at once.** Select assets and use the bulk bar to publish, unpublish, archive, move,
+or add and remove a tag. Past about 50 assets, and for tagging at any count, the admin runs the
+action as a background job and shows its progress (it keeps going if you close the tab), then
+lists any asset it couldn't act on by name. Over the API, `POST …/assets/bulk` starts the same job (`202`):
 `{ "action": "move", "ids": [...], "folderId": "..." }`, `"tag"` with `addTags` and
 `removeTags`, or `"publish"`, `"unpublish"` and `"archive"`. Each asset gets the same checks as on
 its own. Follow it at `GET …/bulk/jobs/{id}`; `…/bulk/jobs/{id}/report` names each asset that
@@ -200,7 +201,8 @@ one (`content:write`). The MCP tools are `asset_replace_file`, `asset_commit_fil
 
 An asset's **Rights** carry a license and a credit, which delivery returns with it, and two dates:
 an **expiry**, when it stops being delivered, and an **embargo**, before which it can't be
-published. The library marks assets that expire within a week, and those that have expired.
+published. The library marks assets that expire within a week ("Expires soon"), those that have
+expired, and those still under embargo.
 
 Set them in the details sheet's **Rights** tab, or with
 `PUT …/assets/{id}/rights` and `{ "license": "CC-BY-4.0", "credit": "Ada", "expiresAt":

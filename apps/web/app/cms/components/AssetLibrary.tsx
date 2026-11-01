@@ -12,6 +12,7 @@ import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { AssetDetailSheet } from '~/cms/components/AssetDetailSheet';
 import { AssetPreview } from '~/cms/components/AssetPreview';
 import { AssetBulkBar } from '~/cms/components/assets/AssetBulkBar';
+import { AssetBulkJobProgress } from '~/cms/components/assets/AssetBulkJobProgress';
 import { AssetFilterBar, type AssetView } from '~/cms/components/assets/AssetFilterBar';
 import { AssetFolderTree } from '~/cms/components/assets/AssetFolderTree';
 import { AssetIngestBadges } from '~/cms/components/assets/AssetIngestBadges';
@@ -33,23 +34,41 @@ import { EmptyState, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import {
   ALL_FOLDERS,
+  type AssetBulkAction,
   type AssetFilterState,
   activeFilterCount,
   assetLibraryQuery,
   assetName,
   assetSearchQuery,
+  BULK_VERBS,
   bulkSummary,
   type FacetChip,
   type FolderSelection,
   facetChips,
   fileSize,
+  jobFailures,
+  jobOutcome,
+  RIGHTS_BADGE,
+  rightsState,
   runBulk,
+  runsAsJob,
 } from '~/cms/lib/assets';
-import { humanize } from '~/cms/lib/format';
+import { humanize, plural } from '~/cms/lib/format';
+import { useNow } from '~/cms/lib/use-now';
 import { useClient } from '../lib/client-context';
-import { ApiError, type AssetInUse, assetUsageOf } from '../lib/management';
+import {
+  ApiError,
+  type AssetBulkRequest,
+  type AssetInUse,
+  apiErrorMessage,
+  assetUsageOf,
+  type BulkJobSummary,
+} from '../lib/management';
 import { useInvalidate, useQueryKeys, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
+
+/** How often a running bulk job is asked how far it has got (as an import job is). */
+const BULK_JOB_POLL_MS = 2000;
 
 /** Label for a hosted video's processing state, shown beside the asset status. */
 const VIDEO_STATUS_LABEL: Record<string, string> = {
@@ -82,7 +101,8 @@ function useView(): [AssetView, (v: AssetView) => void] {
   return [view, set];
 }
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// The server's own words (a refused publish says why: "under embargo until …"), not the request.
+const message = (e: unknown) => apiErrorMessage(e);
 
 /** How long typing pauses before the library searches. */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -127,8 +147,17 @@ export function AssetLibrary(props: { locale: string }) {
   const [bulkFailures, setBulkFailures] = useState<{
     readonly verb: string;
     readonly items: readonly { name: string; error: string }[];
+    /** How many failed when they can't be named (the job report was refused). */
+    readonly unnamed?: number;
+  } | null>(null);
+  // A bulk action running as a job (past ASSET_BULK_JOB_THRESHOLD, or any tagging), and its progress.
+  const [bulkJob, setBulkJob] = useState<{
+    readonly action: AssetBulkAction;
+    readonly job: BulkJobSummary;
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Rights expire on a clock: "Expires soon" turns to "Expired" without a reload.
+  const now = useNow(60_000);
 
   const [searchText, setSearchText] = useState('');
   // Typing searches once it pauses; clearing the box puts the library back at once.
@@ -440,7 +469,78 @@ export function AssetLibrary(props: { locale: string }) {
     }
   };
 
+  // Past ASSET_BULK_JOB_THRESHOLD the action runs as a job on the server; this tab only watches.
+  const startJob = async (request: AssetBulkRequest) => {
+    setBulkBusy(true);
+    setBulkFailures(null);
+    try {
+      const job = await client.startAssetBulkJob(request);
+      setBulkJob({ action: request.action, job });
+    } catch (e) {
+      fail(e);
+      setBulkBusy(false);
+    }
+  };
+  // Polls the running job, as an import job is polled, and stops once it has finished.
+  const runningJob = bulkJob?.job.status === 'running' ? bulkJob.job.id : null;
+  useEffect(() => {
+    if (!runningJob) return;
+    const timer = setInterval(() => {
+      client
+        .getBulkJob(runningJob)
+        .then((job) => setBulkJob((current) => (current ? { ...current, job } : current)))
+        .catch(() => {
+          /* transient; the next tick tries again */
+        });
+    }, BULK_JOB_POLL_MS);
+    return () => clearInterval(timer);
+  }, [runningJob, client]);
+  // Once it has finished: say so, keep what failed selected and name it from the job's report.
+  const finishedJob = bulkJob && bulkJob.job.status !== 'running' ? bulkJob : null;
+  // Once per finished job (polling stops, so the object no longer changes): the toast and the
+  // report are read when it finishes, not on every render.
+  useEffect(() => {
+    if (!finishedJob) return;
+    const { action, job } = finishedJob;
+    const verb = BULK_VERBS[action].done;
+    setBulkBusy(false);
+    if (job.failed === 0) setSelected(new Set());
+    (job.failed ? toast.error : toast.success)(bulkSummary(verb, jobOutcome(job)));
+    void reload();
+    if (job.failed === 0) return;
+    client
+      .getBulkJobReport(job.id)
+      .then((report) => {
+        const failures = jobFailures(report);
+        setSelected(new Set(failures.map((f) => f.id)));
+        setBulkFailures({ verb, items: failures });
+      })
+      .catch(() =>
+        // A role limited to some content types can't read the report: the counts stand alone.
+        setBulkFailures({ verb, items: [], unnamed: job.failed }),
+      );
+  }, [finishedJob]);
+
+  /** Runs `action` over the selection: in this tab for a few, as a job past the threshold. */
+  const act = (action: 'publish' | 'unpublish' | 'archive') => {
+    if (runsAsJob(ids.length)) return void startJob({ action, ids });
+    const verb = BULK_VERBS[action].done;
+    if (action === 'publish') return void bulk(verb, (id) => client.publishAsset(id));
+    if (action === 'unpublish') return void bulk(verb, (id) => client.unpublishAsset(id));
+    return void bulk(verb, (id) => client.archiveAsset(id));
+  };
+
+  // Tagging always runs as a job, whatever the count: the server adds or removes the tag on each
+  // asset's current tags, where a loop here would write back tags read when the page loaded.
+  const tagSelected = (tagId: string, change: 'add' | 'remove') =>
+    void startJob({
+      action: 'tag',
+      ids,
+      ...(change === 'add' ? { addTags: [tagId] } : { removeTags: [tagId] }),
+    });
+
   const moveSelected = async (folderId: string | null) => {
+    if (runsAsJob(ids.length)) return startJob({ action: 'move', ids, folderId });
     setBulkBusy(true);
     try {
       const { moved } = await client.moveAssets(ids, folderId);
@@ -570,9 +670,16 @@ export function AssetLibrary(props: { locale: string }) {
 
   const badges = (a: Asset) => {
     const video = a.file.video;
+    const rights = rightsState(a.rights, now);
     return (
       <div className="flex flex-wrap items-center gap-1">
         <StatusBadge status={a.status} />
+        {rights && (
+          <StatusBadge
+            status={RIGHTS_BADGE[rights.state].status}
+            label={RIGHTS_BADGE[rights.state].label}
+          />
+        )}
         {video && (
           <StatusBadge
             status={video.status === 'ready' ? 'completed' : video.status}
@@ -810,11 +917,15 @@ export function AssetLibrary(props: { locale: string }) {
           {bulkFailures && (
             <Alert variant="destructive">
               <AlertTitle>
-                {bulkFailures.items.length} {bulkFailures.items.length === 1 ? 'asset' : 'assets'}{' '}
-                not {bulkFailures.verb.toLowerCase()}
+                {plural(bulkFailures.unnamed ?? bulkFailures.items.length, 'asset')} not{' '}
+                {bulkFailures.verb.toLowerCase()}
               </AlertTitle>
               <AlertDescription>
-                <p>They are still selected, to try again.</p>
+                <p>
+                  {bulkFailures.unnamed !== undefined
+                    ? 'Your role can’t read the job’s report, so they can’t be named here.'
+                    : 'They are still selected, to try again.'}
+                </p>
                 <ul className="space-y-0.5">
                   {bulkFailures.items.map((f, i) => (
                     <li key={i}>
@@ -851,13 +962,23 @@ export function AssetLibrary(props: { locale: string }) {
               onDismiss={() => setInUse(null)}
             />
           )}
+          {bulkJob && (
+            <AssetBulkJobProgress
+              action={bulkJob.action}
+              job={bulkJob.job}
+              onDismiss={() => setBulkJob(null)}
+            />
+          )}
           <AssetBulkBar
             count={selected.size}
             folders={folders}
+            tags={tags}
             busy={bulkBusy}
             onMove={(f) => void moveSelected(f)}
-            onPublish={() => void bulk('Published', (id) => client.publishAsset(id))}
-            onArchive={() => void bulk('Archived', (id) => client.archiveAsset(id))}
+            onTag={tagSelected}
+            onPublish={() => act('publish')}
+            onUnpublish={() => act('unpublish')}
+            onArchive={() => act('archive')}
             onClear={() => {
               setSelected(new Set());
               setBulkFailures(null);

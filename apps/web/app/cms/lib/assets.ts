@@ -1,5 +1,18 @@
-import type { Asset, AssetFolder, AssetKind } from '@contentworker/domain';
-import type { AssetFacets, AssetListQuery, AssetSearchQuery } from './management';
+import {
+  type Asset,
+  type AssetFolder,
+  type AssetKind,
+  type AssetRights,
+  rightsExpireSoon,
+} from '@contentworker/domain';
+import {
+  type AssetFacets,
+  type AssetListQuery,
+  type AssetSearchQuery,
+  apiErrorMessage,
+  type BulkJobReport,
+  type BulkJobSummary,
+} from './management';
 
 /** Where the library is looking: everything, the assets in no folder, or one folder. */
 export type FolderSelection =
@@ -159,7 +172,7 @@ export async function runBulk(
         await act(id);
         done += 1;
       } catch (e) {
-        failures.push({ id, error: e instanceof Error ? e.message : String(e) });
+        failures.push({ id, error: apiErrorMessage(e) });
       }
     }
   };
@@ -243,4 +256,119 @@ export function ingestState(
     return { state: 'failed', ...(asset.ingestError ? { error: asset.ingestError } : {}) };
   }
   return null;
+}
+
+// --- bulk jobs ------------------------------------------------------------------
+
+/**
+ * Past this many assets a bulk action runs as a job on the server (`POST …/assets/bulk`) rather
+ * than as a loop of requests from this tab. A page of the library is {@link ASSET_PAGE_SIZE}, so
+ * this is a selection bigger than one page shows: the loop would keep the tab busy for minutes
+ * and stop where it was if the tab closed, while a job keeps going and names what failed.
+ */
+export const ASSET_BULK_JOB_THRESHOLD = 50;
+
+/** Whether acting on `count` assets runs as a job. */
+export const runsAsJob = (count: number): boolean => count > ASSET_BULK_JOB_THRESHOLD;
+
+export type AssetBulkAction = 'move' | 'tag' | 'publish' | 'unpublish' | 'archive';
+
+/** A bulk action's words, done ("Published") and under way ("Publishing"). */
+export const BULK_VERBS: Record<
+  AssetBulkAction,
+  { readonly done: string; readonly doing: string }
+> = {
+  move: { done: 'Moved', doing: 'Moving' },
+  tag: { done: 'Tagged', doing: 'Tagging' },
+  publish: { done: 'Published', doing: 'Publishing' },
+  unpublish: { done: 'Unpublished', doing: 'Unpublishing' },
+  archive: { done: 'Archived', doing: 'Archiving' },
+};
+
+/** A job's tally as a {@link BulkOutcome}, so it is summed up in the same words as a loop. */
+export const jobOutcome = (job: BulkJobSummary): BulkOutcome => ({
+  done: job.succeeded,
+  failed: job.failed,
+});
+
+/** What a job's report says failed, by asset: its name (title or file name) where it gave one. */
+export function jobFailures(
+  report: BulkJobReport,
+): { readonly id: string; readonly name: string; readonly error: string }[] {
+  return report.chunks.flatMap((c) =>
+    c.failures.map((f) => ({ id: f.id, name: f.name ?? f.id, error: f.error })),
+  );
+}
+
+// --- usage rights ---------------------------------------------------------------
+
+/**
+ * "Expires soon" is a week out: a library looked over once a week still shows every asset before
+ * its rights lapse, and a week is about the least lead time to renew a license or replace a file.
+ */
+export const RIGHTS_EXPIRE_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Where an asset's rights stand at a moment; null when there is nothing to say. */
+export type RightsState = {
+  readonly state: 'expired' | 'expiring' | 'embargoed';
+  /** The instant it expired or expires, or the embargo lifts. */
+  readonly at: string;
+} | null;
+
+/**
+ * Expired, expiring within {@link RIGHTS_EXPIRE_SOON_MS}, or under embargo at `now`. Expired wins:
+ * an expired asset can't be delivered whatever its embargo says.
+ */
+export function rightsState(rights: AssetRights | undefined, now: number): RightsState {
+  if (rights?.expiresAt && Date.parse(rights.expiresAt) <= now) {
+    return { state: 'expired', at: rights.expiresAt };
+  }
+  if (rights?.embargoUntil && Date.parse(rights.embargoUntil) > now) {
+    return { state: 'embargoed', at: rights.embargoUntil };
+  }
+  if (rights?.expiresAt && rightsExpireSoon(rights, new Date(now), RIGHTS_EXPIRE_SOON_MS)) {
+    return { state: 'expiring', at: rights.expiresAt };
+  }
+  return null;
+}
+
+/** The status each rights state is stamped with; `format.ts` gives it its tone. */
+export const RIGHTS_BADGE: Record<
+  NonNullable<RightsState>['state'],
+  { readonly status: string; readonly label: string }
+> = {
+  // Lapsed, not failed: the engine has already taken it out of Delivery.
+  expired: { status: 'expired', label: 'Expired' },
+  // Waits on a person: renew the license or replace the file before it lapses.
+  expiring: { status: 'pending', label: 'Expires soon' },
+  // On a clock: it lifts by itself.
+  embargoed: { status: 'scheduled', label: 'Embargoed' },
+};
+
+/** "in 3 days", "in 5 hours", "in 20 minutes": how long from `now` until `ms`. */
+export function timeUntil(ms: number, now: number): string {
+  const minutes = Math.max(1, Math.round((ms - now) / 60_000));
+  if (minutes < 60) return `in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `in ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  return `in ${Math.round(hours / 24)} days`;
+}
+
+/**
+ * A `datetime-local` value ("2026-01-31T09:00", on the reader's clock) as the ISO instant with a
+ * zone the API takes. Empty or unreadable is null: no date.
+ */
+export function localInputToIso(value: string): string | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
+/** An ISO instant as a `datetime-local` value on the reader's clock; empty for none. */
+export function isoToLocalInput(iso: string | undefined): string {
+  const ms = iso ? Date.parse(iso) : Number.NaN;
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

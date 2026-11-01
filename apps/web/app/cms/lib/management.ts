@@ -5,8 +5,10 @@ import type {
   AssetFolder,
   AssetKind,
   AssetMetadata,
+  AssetRights,
   AssetStatus,
   AssetUsage,
+  AssetVersion,
   Comment,
   Concept,
   ConceptScheme,
@@ -433,7 +435,8 @@ export function apiErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     const json = err.message.slice(err.message.indexOf('{'));
     try {
-      const body = JSON.parse(json) as {
+      // The parsed body when the request kept it; else the JSON at the end of the message.
+      const body = (err.body ?? JSON.parse(json)) as {
         error?: { message?: string; issues?: { message: string }[] };
       };
       const issue = body.error?.issues?.[0]?.message;
@@ -671,14 +674,58 @@ export interface EntrySuggestion {
 /** A durable job's progress, as the management API reports it. */
 export interface BulkJobSummary {
   readonly id: string;
-  readonly action: 'publish' | 'unpublish' | 'import' | 'asset_reindex';
+  readonly action:
+    | 'publish'
+    | 'unpublish'
+    | 'import'
+    | 'asset_reindex'
+    | 'asset_move'
+    | 'asset_tag'
+    | 'asset_publish'
+    | 'asset_unpublish'
+    | 'asset_archive';
   readonly status: 'running' | 'completed' | 'cancelled';
   readonly totalItems: number;
   readonly totalChunks: number;
   readonly completedChunks: number;
   readonly succeeded: number;
   readonly failed: number;
+  readonly createdAt?: string;
+  readonly completedAt?: string;
 }
+
+/**
+ * A job's per-item failures, chunk by chunk (`GET …/bulk/jobs/:id/report`). An asset job names
+ * each failure by the asset's title or file name.
+ */
+export interface BulkJobReport {
+  readonly job: BulkJobSummary;
+  readonly chunks: readonly {
+    readonly chunkId: string;
+    readonly status: string;
+    readonly attempts: number;
+    readonly itemCount: number;
+    readonly failures: readonly {
+      readonly id: string;
+      readonly error: string;
+      readonly name?: string;
+    }[];
+  }[];
+}
+
+/** What `POST …/assets/bulk` runs over a selection of assets, as a job. */
+export type AssetBulkRequest =
+  | { readonly action: 'move'; readonly ids: readonly string[]; readonly folderId: string | null }
+  | {
+      readonly action: 'tag';
+      readonly ids: readonly string[];
+      readonly addTags?: readonly string[];
+      readonly removeTags?: readonly string[];
+    }
+  | { readonly action: 'publish' | 'unpublish' | 'archive'; readonly ids: readonly string[] };
+
+/** Rights as the form sends them: a value, or null for none. */
+export type AssetRightsInput = { readonly [K in keyof AssetRights]-?: string | null };
 
 /** Largest import the synchronous route will write; past this, start a job. */
 export const IMPORT_SYNC_MAX_RECORDS = 10_000;
@@ -829,6 +876,26 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The fields a 422 named (`error.issues[].field`, e.g. `rights.expiresAt`), each with its first
+ * message, so a form can say what is wrong beside the field. Empty for any other failure.
+ */
+export function apiFieldIssues(err: unknown): Record<string, string> {
+  if (!(err instanceof ApiError) || err.status !== 422) return {};
+  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
+  const out: Record<string, string> = {};
+  if (!Array.isArray(issues)) return out;
+  for (const issue of issues as { field?: unknown; message?: unknown }[]) {
+    if (typeof issue.field === 'string' && typeof issue.message === 'string') {
+      out[issue.field] ??= issue.message;
+    }
+  }
+  return out;
+}
+
+/** True when the API refused because the caller's role lacks the scope (403). */
+export const isForbidden = (err: unknown): boolean => err instanceof ApiError && err.status === 403;
+
 /** The links that hold an asset, as a refused delete reports them: the first few, and how many. */
 export interface AssetInUse {
   /** The first links (the API sends at most 50), each with its entry's type and title. */
@@ -946,6 +1013,11 @@ export function createManagementClient(
       throw new ApiError(res.status, `${method} ${url} → ${res.status} ${text}`, body);
     }
     return (res.status === 204 ? undefined : await res.json()) as T;
+  }
+  // The bytes go straight to storage on the signed URL the API handed out, not through the API.
+  async function putFile(upload: { url: string; headers: Record<string, string> }, file: File) {
+    const put = await fetchImpl(upload.url, { method: 'PUT', headers: upload.headers, body: file });
+    if (!put.ok) throw new ApiError(put.status, `upload failed: ${put.status}`);
   }
 
   return {
@@ -1199,6 +1271,47 @@ export function createManagementClient(
         ...(input.folderId ? { folderId: input.folderId } : {}),
       });
     },
+    /**
+     * Acts on a selection of assets as a resumable job: follow it with {@link getBulkJob}, and
+     * read what failed, by asset name, with {@link getBulkJobReport}.
+     */
+    startAssetBulkJob(input: AssetBulkRequest): Promise<BulkJobSummary> {
+      return req('POST', `${mgmt}/assets/bulk`, input);
+    },
+    /** Starts replacing an asset's file: a signed PUT for the next version, and what to commit. */
+    startAssetFileReplacement(
+      id: string,
+      input: { fileName: string; contentType: string },
+    ): Promise<{
+      asset: Asset;
+      upload: { url: string; headers: Record<string, string> };
+      commit: { version: number; fileName: string; contentType: string };
+    }> {
+      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/file`, input);
+    },
+    /** Makes the uploaded replacement current as a new version. */
+    commitAssetFile(
+      id: string,
+      commit: { version: number; fileName: string; contentType: string },
+    ): Promise<Asset> {
+      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/file/commit`, commit);
+    },
+    /** Every file the asset has had, newest first, with which is current and which is delivered. */
+    async listAssetVersions(id: string): Promise<AssetVersion[]> {
+      const r = await req<{ items: AssetVersion[] }>(
+        'GET',
+        `${mgmt}/assets/${encodeURIComponent(id)}/versions`,
+      );
+      return r.items;
+    },
+    /** Makes an earlier version's file current again, as a new version. */
+    restoreAssetVersion(id: string, version: number): Promise<Asset> {
+      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/versions/${version}/restore`);
+    },
+    /** Replaces an asset's usage rights (content:publish); null clears a field. */
+    setAssetRights(id: string, rights: AssetRightsInput): Promise<Asset> {
+      return req('PUT', `${mgmt}/assets/${encodeURIComponent(id)}/rights`, rights);
+    },
     /** Files assets in a folder; `null` takes them back to the root. */
     moveAssets(ids: readonly string[], folderId: string | null): Promise<{ moved: number }> {
       return req('POST', `${mgmt}/assets/move`, { ids, folderId });
@@ -1356,6 +1469,10 @@ export function createManagementClient(
     },
     getBulkJob(id: string): Promise<BulkJobSummary> {
       return req('GET', `${mgmt}/bulk/jobs/${encodeURIComponent(id)}`);
+    },
+    /** A job's failures by item; 403 for a role limited to some content types. */
+    getBulkJobReport(id: string): Promise<BulkJobReport> {
+      return req('GET', `${mgmt}/bulk/jobs/${encodeURIComponent(id)}/report`);
     },
 
     // --- plugins (sandboxed code on the write path) ----------------------
@@ -1605,13 +1722,21 @@ export function createManagementClient(
         title: file.name,
         ...(opts.folderId ? { folderId: opts.folderId } : {}),
       });
-      const put = await fetchImpl(upload.url, {
-        method: 'PUT',
-        headers: upload.headers,
-        body: file,
-      });
-      if (!put.ok) throw new ApiError(put.status, `upload failed: ${put.status}`);
+      await putFile(upload, file);
       return this.publishAsset(asset.id);
+    },
+    /**
+     * Replaces an asset's file the way Upload creates one: the signed PUT for the next version,
+     * then the commit that makes it current. A published asset keeps delivering its published
+     * file until it is published again. Returns the asset at its new version.
+     */
+    async replaceAssetFile(id: string, file: File): Promise<Asset> {
+      const { upload, commit } = await this.startAssetFileReplacement(id, {
+        fileName: file.name,
+        contentType: file.type || 'application/octet-stream',
+      });
+      await putFile(upload, file);
+      return this.commitAssetFile(id, commit);
     },
     /**
      * Video upload: create the draft video asset, POST the bytes straight to
