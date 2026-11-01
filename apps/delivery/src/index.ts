@@ -141,7 +141,10 @@ export default {
       ? new Response(null, { status: 304, headers: upstream.headers })
       : new Response(request.method === 'HEAD' ? null : upstream.body, upstream);
     for (const [k, v] of Object.entries(PUBLIC)) response.headers.set(k, v);
-    response.headers.set('cache-control', clientCacheControl(response.status));
+    response.headers.set(
+      'cache-control',
+      clientCacheControl(response.status, upstream.headers.get('cache-control')),
+    );
     response.headers.set('vary', 'authorization');
     return response;
   },

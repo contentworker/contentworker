@@ -7,6 +7,7 @@ import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/deli
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { deliveryScopeTag } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
+import { hasGraphqlErrors } from './client-cache.js';
 import { fromCanonical } from './profile.js';
 
 /** Header the gateway uses to hand the authenticated principal to this entrypoint. */
@@ -62,6 +63,12 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
     const headers = new Headers(res.headers);
     if (res.status === 200 && m) {
       const body = await res.arrayBuffer();
+      // A GraphQL answer carrying errors is still a 200 (GraphQL over HTTP), but it must not be
+      // kept: the cause (a field rule, a bug) can change without any publish to purge it.
+      if (parsed.path.pathname.endsWith('/graphql') && hasGraphqlErrors(body)) {
+        headers.set('cache-control', NO_STORE);
+        return new Response(body, { status: 200, headers });
+      }
       const etag = await bodyEtag(body);
       headers.set('etag', etag);
       headers.set('cache-control', FRESH);

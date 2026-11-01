@@ -6,6 +6,19 @@
  */
 export const CLIENT_CACHE = 'private, max-age=60, must-revalidate';
 
-export function clientCacheControl(status: number): string {
+export function clientCacheControl(status: number, upstream?: string | null): string {
+  // The cached entrypoint marks what must not be kept even when it succeeded (a GraphQL answer
+  // with errors): never upgrade that to a cacheable policy.
+  if (upstream?.includes('no-store')) return 'no-store';
   return status === 200 || status === 304 ? CLIENT_CACHE : 'no-store';
+}
+
+/** Whether a GraphQL response body reports errors. */
+export function hasGraphqlErrors(body: ArrayBuffer): boolean {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as { errors?: unknown[] };
+    return Array.isArray(parsed.errors) && parsed.errors.length > 0;
+  } catch {
+    return true;
+  }
 }
