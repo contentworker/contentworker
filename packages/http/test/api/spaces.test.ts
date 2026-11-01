@@ -135,6 +135,19 @@ describe('POST /spaces', () => {
     expect(res.status).toBe(401);
   });
 
+  it('refuses an id the media bucket keeps for its own data, as a validation error', async () => {
+    for (const spaceId of ['versions', 'imports', 'plugins', 'dlq', 'Versions']) {
+      const res = await create(
+        { authorization: 'Bearer admin' },
+        { spaceId, name: 'Reserved', defaultLocale: 'en-US', starter: 'sample' },
+      );
+      expect(res.status, spaceId).toBe(422);
+      const body = (await res.json()) as { error: { issues: { field: string }[] } };
+      expect(body.error.issues[0]?.field).toBe('spaceId');
+      expect(await wired.ctx.store.spaces.getConfig({ spaceId, environmentId: 'main' })).toBe(null);
+    }
+  });
+
   it('validates the space id and the starter as the docs say', async () => {
     for (const body of [
       { spaceId: '*', name: 'Star', defaultLocale: 'en-US' },

@@ -3,10 +3,12 @@ import {
   type DomainEvent,
   ForbiddenError,
   InvalidStateError,
+  isReservedSpaceId,
   isSpaceId,
   type LocaleCode,
   NotFoundError,
   type Principal,
+  RESERVED_SPACE_IDS,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -42,6 +44,14 @@ export async function createSpace(ctx: AppContext, input: CreateSpaceInput): Pro
         field: 'spaceId',
         message:
           'A space id is 1–64 letters, digits, ".", "_" or "-", starting with a letter or digit',
+      },
+    ]);
+  }
+  if (isReservedSpaceId(input.spaceId)) {
+    throw new ValidationError([
+      {
+        field: 'spaceId',
+        message: `"${input.spaceId}" is reserved for the bucket's own data; reserved ids are ${RESERVED_SPACE_IDS.join(', ')}`,
       },
     ]);
   }

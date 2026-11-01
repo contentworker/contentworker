@@ -17,6 +17,22 @@ export const SPACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export function isSpaceId(value: string): boolean {
   return SPACE_ID_PATTERN.test(value);
 }
+
+/**
+ * The media bucket's top-level prefixes that aren't a space: archived entry version bodies
+ * (`versions/`), staged import and snapshot chunks (`imports/`), plugin bundles (`plugins/`) and
+ * dead letters (`dlq/`, with its own lifecycle rule). A space's asset files sit at
+ * `<space>/<environment>/…` in the same bucket, so a space named like one of these would reach
+ * that data when its files are deleted. No space may take one of these ids, in any case.
+ */
+export const RESERVED_SPACE_IDS = ['versions', 'imports', 'plugins', 'dlq'] as const;
+
+const RESERVED = new Set<string>(RESERVED_SPACE_IDS);
+
+/** True when `value` names one of the bucket's shared prefixes ({@link RESERVED_SPACE_IDS}). */
+export function isReservedSpaceId(value: string): boolean {
+  return RESERVED.has(value.toLowerCase());
+}
 /** An environment is a branch within a space (e.g. "main", "staging"). */
 export type EnvironmentId = string;
 

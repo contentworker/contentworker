@@ -263,7 +263,8 @@ export interface SpaceRef {
 export type SpaceStarter = 'empty' | 'sample';
 
 export interface CreateSpaceInput {
-  /** 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit. */
+  /** 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit; never `versions`,
+   *  `imports`, `plugins` or `dlq` (in any case), which the media bucket keeps for its own data. */
   readonly spaceId: string;
   readonly name: string;
   readonly defaultLocale: string;

@@ -1,4 +1,4 @@
-import { isSpaceId, normalizeSlug } from '@contentworker/domain';
+import { isReservedSpaceId, isSpaceId, normalizeSlug } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import {
   Dialog,
@@ -66,9 +66,11 @@ export function CreateSpaceDialog(props: {
     ? undefined
     : !isSpaceId(spaceId)
       ? 'Use up to 64 letters, digits, “.”, “_” or “-”, starting with a letter or digit.'
-      : spaces?.some((s) => s.id === spaceId)
-        ? 'A space with this id already exists.'
-        : undefined;
+      : isReservedSpaceId(spaceId)
+        ? 'This id is reserved. Choose another.'
+        : spaces?.some((s) => s.id === spaceId)
+          ? 'A space with this id already exists.'
+          : undefined;
   const locale = defaultLocale.trim();
   const localeProblem =
     locale && (locale.length < 2 || locale.length > 35)
