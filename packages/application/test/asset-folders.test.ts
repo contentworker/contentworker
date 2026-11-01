@@ -146,6 +146,43 @@ describe('asset folders', () => {
     expect(await store.assetFolders.get(scope, a.id)).not.toBeNull();
   });
 
+  it('refuses a subfolder whose parent is deleted between the check and the commit', async () => {
+    const a = await createAssetFolder(ctx, scope, { name: 'A' });
+    const get = store.assetFolders.get.bind(store.assetFolders);
+    store.assetFolders.get = async (s, id) => {
+      store.assetFolders.get = get;
+      const found = await get(s, id);
+      await store.assetFolders.delete(s, id);
+      return found;
+    };
+    await expect(
+      createAssetFolder(ctx, scope, { name: 'B', parentId: a.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(await listAssetFolders(ctx, scope)).toEqual([]);
+  });
+
+  it('refuses an upload into a folder deleted between the check and the commit', async () => {
+    const blob = new FakeBlobStore();
+    const a = await createAssetFolder(ctx, scope, { name: 'A' });
+    const get = store.assetFolders.get.bind(store.assetFolders);
+    store.assetFolders.get = async (s, id) => {
+      store.assetFolders.get = get;
+      const found = await get(s, id);
+      await store.assetFolders.delete(s, id);
+      return found;
+    };
+    await expect(
+      createAsset(
+        ctx,
+        blob,
+        scope,
+        { fileName: 'x.png', contentType: 'image/png' },
+        { folderId: a.id },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect((await store.assets.list(scope, { filters: { status: 'all' } })).items).toEqual([]);
+  });
+
   it('keeps folders per environment', async () => {
     await createAssetFolder(ctx, scope, { name: 'A' });
     expect(await listAssetFolders(ctx, { spaceId: 'shop', environmentId: 'staging' })).toEqual([]);

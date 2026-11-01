@@ -202,18 +202,34 @@ export function restoreAsset(asset: Asset): Asset {
 }
 
 /**
+ * One link that holds an asset, with what a person needs to recognise the entry: its content type
+ * and its display title (absent when the entry is gone or has no title).
+ */
+export interface AssetUsage extends ReferenceEdge {
+  readonly contentTypeApiId?: string;
+  readonly entryTitle?: string;
+}
+
+/** Most links an {@link AssetInUseError} carries; `total` still counts them all. */
+export const MAX_ASSET_USAGE_SHOWN = 50;
+
+/**
  * Deleting an asset that entries still link to would leave those links dangling in Delivery, so
- * it is refused; `usage` names the links, for the caller to show or to clear first.
+ * it is refused; `usage` names the links (the first {@link MAX_ASSET_USAGE_SHOWN}) and `total`
+ * counts them, for the caller to show or to clear first.
  */
 export class AssetInUseError extends DomainError {
-  readonly usage: readonly ReferenceEdge[];
-  constructor(assetId: string, usage: readonly ReferenceEdge[]) {
+  readonly usage: readonly AssetUsage[];
+  readonly total: number;
+  constructor(assetId: string, usage: readonly AssetUsage[], total = usage.length) {
+    const shown = usage.slice(0, MAX_ASSET_USAGE_SHOWN);
     super(
       'asset_in_use',
-      `Asset "${assetId}" is linked from ${usage.length} entr${usage.length === 1 ? 'y' : 'ies'}; remove those links before deleting it, or archive it instead`,
-      { usage },
+      `Asset "${assetId}" is linked from ${total} entr${total === 1 ? 'y' : 'ies'}; remove those links before deleting it, or archive it instead`,
+      { usage: shown, total },
     );
-    this.usage = usage;
+    this.usage = shown;
+    this.total = total;
   }
 }
 

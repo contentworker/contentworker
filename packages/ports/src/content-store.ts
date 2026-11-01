@@ -494,6 +494,10 @@ export interface AssetRepo {
   getMany(scope: Scope, ids: readonly string[]): Promise<Asset[]>;
   /** One page of the asset library, filtered and sorted (see {@link AssetListQuery}). */
   list(scope: Scope, query: AssetListQuery): Promise<AssetPage>;
+  /**
+   * Filing it in a folder that is gone by commit throws {@link TransactionConflictError} (in a
+   * unit of work; directly, the create is refused the same way).
+   */
   create(scope: Scope, asset: Asset): Promise<void>;
   save(scope: Scope, asset: Asset): Promise<void>;
   /**
@@ -522,7 +526,10 @@ export interface AssetFolderRepo {
   get(scope: Scope, id: string): Promise<AssetFolder | null>;
   /** Every folder in the scope, in path order (a parent before its children). */
   list(scope: Scope): Promise<AssetFolder[]>;
-  /** A sibling with the same name under the same parent is a `ConflictError`. */
+  /**
+   * A sibling with the same name under the same parent is a `ConflictError`; a parent that is gone
+   * by commit throws {@link TransactionConflictError}.
+   */
   create(scope: Scope, folder: AssetFolder): Promise<void>;
   /**
    * Renames and/or moves `folder` (the updated record). When its `path` changed, every

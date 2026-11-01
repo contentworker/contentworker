@@ -102,6 +102,7 @@ export const snapshotBody = z.object({
   contentTypes: z.array(z.any()).max(1000),
   entries: z.array(z.any()).max(100_000),
   assets: z.array(z.any()).max(100_000).optional(),
+  assetFolders: z.array(z.any()).max(10_000).optional(),
   taxonomy: z
     .object({
       schemes: z.array(z.any()).max(1000),

@@ -27,7 +27,9 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
   if (err instanceof AssetInUseError) {
     return {
       status: 409,
-      body: { error: { code: err.code, message: err.message, usage: err.usage } },
+      body: {
+        error: { code: err.code, message: err.message, usage: err.usage, total: err.total },
+      },
     };
   }
   // Would leave the space with no administrator: a conflict with the space's state.

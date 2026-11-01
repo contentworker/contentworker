@@ -2,10 +2,12 @@ import {
   type Asset,
   AssetInUseError,
   type AssetMetadata,
+  type AssetUsage,
   applyAssetMetadata,
   archiveAsset as archiveAssetState,
   emptyAssetMetadata,
   type LocalizedValue,
+  MAX_ASSET_USAGE_SHOWN,
   NotFoundError,
   publishAsset as publishAssetState,
   type ReferenceEdge,
@@ -95,7 +97,15 @@ export async function createAsset(
     ...(opts.createdBy ? { createdBy: opts.createdBy } : {}),
     ...(opts.folderId ? { folderId: opts.folderId } : {}),
   };
-  await ctx.store.assets.create(scope, asset);
+  try {
+    await ctx.store.assets.create(scope, asset);
+  } catch (err) {
+    // The folder was deleted after the check: report it like the check would have.
+    if (err instanceof TransactionConflictError && opts.folderId) {
+      throw new NotFoundError('AssetFolder', opts.folderId);
+    }
+    throw err;
+  }
   return { asset, upload };
 }
 
@@ -238,6 +248,10 @@ export async function getAssetUsage(
  * Archives an asset: it stops being delivered at once (the published snapshot goes, in the same
  * unit as the `asset.unpublished` event that purges delivery caches) and can't be published until
  * restored. Archiving an archived asset changes nothing, so a retried request is harmless.
+ *
+ * The snapshot is removed and the event sent whatever status the read saw: the unit's read is not
+ * a lock, so a publish that commits between it and this commit would otherwise leave an archived
+ * asset delivered. For an asset that was never published both are no-ops downstream.
  */
 export async function archiveAsset(ctx: AppContext, scope: Scope, id: string): Promise<Asset> {
   return ctx.store.withTransaction(async (tx) => {
@@ -246,16 +260,14 @@ export async function archiveAsset(ctx: AppContext, scope: Scope, id: string): P
     if (asset.status === 'archived') return asset;
     const archived = archiveAssetState(asset, ctx.clock.now().toISOString());
     await tx.assets.save(scope, archived);
-    if (asset.status === 'published') {
-      await tx.assets.removePublished(scope, id);
-      await tx.outbox.append({
-        id: ctx.ids.newId(),
-        type: 'asset.unpublished',
-        scope,
-        occurredAt: ctx.clock.now().toISOString(),
-        assetId: id,
-      });
-    }
+    await tx.assets.removePublished(scope, id);
+    await tx.outbox.append({
+      id: ctx.ids.newId(),
+      type: 'asset.unpublished',
+      scope,
+      occurredAt: ctx.clock.now().toISOString(),
+      assetId: id,
+    });
     return archived;
   });
 }
@@ -287,7 +299,7 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
   const asset = await ctx.store.assets.get(scope, id);
   if (!asset) throw new NotFoundError('Asset', id);
   const usage = await getAssetUsage(ctx, scope, id);
-  if (usage.length > 0) throw new AssetInUseError(id, usage);
+  if (usage.length > 0) throw await assetInUse(ctx, scope, id, usage);
   const now = ctx.clock.now().toISOString();
   const videoId = asset.file.video?.videoId;
   try {
@@ -316,10 +328,43 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
   } catch (err) {
     // A link was made after the check: report it like the check would have.
     if (err instanceof TransactionConflictError) {
-      throw new AssetInUseError(id, await getAssetUsage(ctx, scope, id));
+      throw await assetInUse(ctx, scope, id, await getAssetUsage(ctx, scope, id));
     }
     throw err;
   }
+}
+
+/**
+ * The refusal for an asset still linked from entries, each link named the way a person recognises
+ * it (content type and display title in the default locale), so a client shows the list without a
+ * read per entry. Only the links the error carries are looked up.
+ */
+async function assetInUse(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  edges: readonly ReferenceEdge[],
+): Promise<AssetInUseError> {
+  const shown = edges.slice(0, MAX_ASSET_USAGE_SHOWN);
+  const [entries, types, config] = await Promise.all([
+    ctx.store.entries.getMany(scope, [...new Set(shown.map((e) => e.fromEntryId))]),
+    ctx.store.contentTypes.list(scope),
+    ctx.store.spaces.getConfig(scope),
+  ]);
+  const byId = new Map(entries.map((e) => [e.entry.id, e]));
+  const displayField = new Map(types.map((t) => [t.apiId, t.displayField]));
+  const usage = shown.map((edge): AssetUsage => {
+    const found = byId.get(edge.fromEntryId);
+    if (!found) return edge;
+    const field = displayField.get(found.entry.contentTypeApiId);
+    const value = field ? found.fields[field]?.[config?.defaultLocale ?? ''] : undefined;
+    return {
+      ...edge,
+      contentTypeApiId: found.entry.contentTypeApiId,
+      ...(typeof value === 'string' && value ? { entryTitle: value } : {}),
+    };
+  });
+  return new AssetInUseError(id, usage, edges.length);
 }
 
 /**

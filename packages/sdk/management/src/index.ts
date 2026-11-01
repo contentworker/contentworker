@@ -426,7 +426,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
       restore: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/restore`),
       /**
        * Deletes it for good. A 409 `ManagementError` while entries link to it: its
-       * `body.error.usage` lists the links.
+       * `body.error.usage` lists the first 50 links (each with the entry's `contentTypeApiId` and
+       * `entryTitle`) and `body.error.total` counts them all.
        */
       delete: (id: string) => del<void>(`${envBase}/assets/${e(id)}`),
       /** Files assets in a folder (`null`: the root), up to 500 at once. */

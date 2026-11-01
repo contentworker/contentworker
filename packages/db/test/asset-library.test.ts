@@ -69,6 +69,7 @@ describe('asset listing on D1', () => {
     const jpg = asset({ contentType: 'Image/JPEG; q=1', folderId: 'f1' });
     const pdf = asset({ contentType: 'application/pdf', status: 'published' });
     const gone = asset({ contentType: 'image/png', status: 'archived' });
+    await store.assetFolders.create(scope, folder('f1', '/f1/'));
     for (const a of [png, jpg, pdf, gone]) await store.assets.create(scope, a);
 
     const ids = async (filters: Parameters<typeof store.assets.list>[1]['filters']) =>
@@ -227,6 +228,30 @@ describe('asset folders on D1', () => {
     expect(paths).toEqual({ a: '/a/', ab: '/ab/', b: '/t/b/', c: '/t/b/c/', t: '/t/' });
     expect((await store.assetFolders.get(scope, 'b'))?.name).toBe('B');
     expect((await store.assetFolders.get(scope, 'b'))?.parentId).toBe('t');
+  });
+
+  it('aborts a subfolder, or an asset filed in a folder, when the folder is gone by commit', async () => {
+    const scope = freshScope();
+    await expect(
+      store.withTransaction((tx) =>
+        tx.assetFolders.create(scope, folder('c', '/gone/c/', 'c', 'gone')),
+      ),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    await expect(
+      store.assetFolders.create(scope, folder('c', '/gone/c/', 'c', 'gone')),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    const a = asset({ folderId: 'gone' });
+    await expect(store.withTransaction((tx) => tx.assets.create(scope, a))).rejects.toBeInstanceOf(
+      TransactionConflictError,
+    );
+    await expect(store.assets.create(scope, a)).rejects.toBeInstanceOf(TransactionConflictError);
+    expect(await store.assetFolders.list(scope)).toEqual([]);
+    expect(await store.assets.get(scope, a.id)).toBeNull();
+
+    await store.assetFolders.create(scope, folder('here', '/here/'));
+    await store.assetFolders.create(scope, folder('k2', '/here/k2/', 'k2', 'here'));
+    await store.assets.create(scope, asset({ id: a.id, folderId: 'here' }));
+    expect((await store.assets.get(scope, a.id))?.folderId).toBe('here');
   });
 
   it('keeps sibling names unique, at the root too', async () => {

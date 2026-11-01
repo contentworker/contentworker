@@ -44,7 +44,15 @@ export async function createAssetFolder(
     createdAt: now,
     updatedAt: now,
   };
-  await ctx.store.assetFolders.create(scope, folder);
+  try {
+    await ctx.store.assetFolders.create(scope, folder);
+  } catch (err) {
+    // The parent was deleted after the check: report it like the check would have.
+    if (err instanceof TransactionConflictError && parent) {
+      throw new NotFoundError('AssetFolder', parent.id);
+    }
+    throw err;
+  }
   return folder;
 }
 

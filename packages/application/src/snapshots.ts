@@ -1,6 +1,9 @@
 import {
   type Asset,
+  type AssetFolder,
   applyDefaults,
+  assetFolderName,
+  assetFolderPath,
   type Concept,
   type ConceptScheme,
   type ContentType,
@@ -8,6 +11,7 @@ import {
   type EntryMetadata,
   extractReferences,
   type FieldIssue,
+  MAX_ASSET_FOLDER_DEPTH,
   NotFoundError,
   type Scope,
   type Tag,
@@ -76,6 +80,12 @@ export interface EnvironmentSnapshot {
   readonly entries: readonly SnapshotEntry[];
   /** Metadata only — binaries stay in the blob store and are never copied. */
   readonly assets: readonly Asset[];
+  /**
+   * The asset library's folders, a parent before its children, with their ids (the assets'
+   * `folderId`s name them). Absent in snapshots written before folders: their assets import at the
+   * library root.
+   */
+  readonly assetFolders?: readonly AssetFolder[];
   readonly taxonomy: {
     readonly schemes: readonly ConceptScheme[];
     readonly concepts: readonly Concept[];
@@ -160,6 +170,7 @@ export async function exportSnapshot(
       metadata: byEntry.get(r.entry.id)?.metadata,
     })),
     assets: await allAssets(ctx, scope),
+    assetFolders: await ctx.store.assetFolders.list(scope),
     taxonomy: {
       schemes: await ctx.store.taxonomy.listSchemes(scope),
       concepts: await ctx.store.taxonomy.listConcepts(scope),
@@ -408,6 +419,9 @@ export async function writeSnapshotModel(
     if (ct.status === 'published') await publishContentType(ctx, target, ct.apiId);
   }
 
+  // Folders before assets, so the assets' folderIds have something to point at.
+  await writeSnapshotFolders(ctx, target, snapshot.assetFolders ?? []);
+
   // Taxonomy before entries, so entry metadata has something to point at.
   const taxonomyIds = new Map<string, string>();
   for (const scheme of snapshot.taxonomy.schemes) {
@@ -467,8 +481,55 @@ export function stagedPublication(entry: SnapshotEntry): StagedSnapshotPublicati
 }
 
 /**
- * Creates an asset record as an import does (as a draft, keeping its id). Already there (a job
- * chunk running again) counts as done.
+ * Creates the snapshot's asset folders with their ids, so the assets filed in them land in the
+ * same place; each path is rebuilt from its parent's (`preflight` has checked names, parents and
+ * depth), so a parent is created first. A folder already there (a retried import) is kept.
+ */
+async function writeSnapshotFolders(
+  ctx: AppContext,
+  target: Scope,
+  folders: readonly AssetFolder[],
+): Promise<void> {
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const depth = (f: AssetFolder) => chainDepth(byId, f) ?? 0;
+  const created = new Map<string, AssetFolder>();
+  for (const folder of [...folders].sort((a, b) => depth(a) - depth(b))) {
+    const existing = await ctx.store.assetFolders.get(target, folder.id);
+    if (existing) {
+      created.set(folder.id, existing);
+      continue;
+    }
+    const parent = folder.parentId ? (created.get(folder.parentId) ?? null) : null;
+    const { parentId: _parentId, ...rest } = folder;
+    const copy: AssetFolder = {
+      ...rest,
+      name: assetFolderName(folder.name),
+      ...(parent ? { parentId: parent.id } : {}),
+      path: assetFolderPath(parent, folder.id),
+    };
+    await ctx.store.assetFolders.create(target, copy);
+    created.set(folder.id, copy);
+  }
+}
+
+/**
+ * How deep a folder sits by its chain of parents (1 at the root), or null when the chain loops.
+ * A parent missing from `folders` ends the chain.
+ */
+function chainDepth(folders: ReadonlyMap<string, AssetFolder>, folder: AssetFolder): number | null {
+  const seen = new Set([folder.id]);
+  for (let p = folder.parentId; p; p = folders.get(p)?.parentId) {
+    if (seen.has(p)) return null;
+    seen.add(p);
+  }
+  return seen.size;
+}
+
+/**
+ * Creates an asset record as an import does (as a draft, keeping its id). An archived asset
+ * arrives as a draft without its `archivedAt`, and one filed in a folder the target lacks (a
+ * snapshot from before folders) at the library root. Already there (a job chunk running again)
+ * counts as done.
  */
 export async function createSnapshotAsset(
   ctx: AppContext,
@@ -476,7 +537,10 @@ export async function createSnapshotAsset(
   asset: Asset,
 ): Promise<void> {
   if (await ctx.store.assets.get(target, asset.id)) return;
-  await ctx.store.assets.create(target, { ...asset, status: 'draft' });
+  const { archivedAt: _archivedAt, folderId, ...rest } = asset;
+  const filed =
+    folderId && (await ctx.store.assetFolders.get(target, folderId)) ? { folderId } : {};
+  await ctx.store.assets.create(target, { ...rest, ...filed, status: 'draft' });
 }
 
 /**
@@ -540,6 +604,31 @@ function preflight(
   const assetIds = new Set(snapshot.assets.map((a) => a.id));
   const vctx = { defaultLocale: config.defaultLocale, locales: config.locales };
   const issues: FieldIssue[] = [];
+
+  // Folders are created before anything that could fail on them: a bad one stops the import here.
+  const folders = new Map((snapshot.assetFolders ?? []).map((f) => [f.id, f]));
+  for (const folder of folders.values()) {
+    const refuse = (message: string) =>
+      issues.push({ field: 'assetFolders', message: `Folder ${folder.id}: ${message}` });
+    if (folder.parentId && !folders.has(folder.parentId)) {
+      refuse(`its parent "${folder.parentId}" is not in the snapshot`);
+      continue;
+    }
+    try {
+      assetFolderName(folder.name);
+    } catch (err) {
+      if (!(err instanceof ValidationError)) throw err;
+      refuse(`its name "${folder.name}" is not a folder name`);
+      continue;
+    }
+    // The import rebuilds each path from the parents, so only the chain itself has to hold.
+    const depth = chainDepth(folders, folder);
+    if (depth === null) refuse('its parents form a cycle');
+    else if (depth > MAX_ASSET_FOLDER_DEPTH) {
+      refuse(`it nests ${depth} deep; folders nest at most ${MAX_ASSET_FOLDER_DEPTH} deep`);
+    }
+  }
+
   const add = (entryId: string, issue: FieldIssue) =>
     issues.push({ ...issue, message: `Entry ${entryId}: ${issue.message}` });
 
