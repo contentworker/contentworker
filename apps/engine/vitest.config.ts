@@ -17,6 +17,13 @@ export default defineConfig(async () => ({
     name: 'workers',
     include: ['test/**/*.test.ts'],
     setupFiles: ['./test/setup.ts'],
+    // The Workers pool answers a file's whole warm-module snapshot as ONE WebSocket message, with
+    // every cached transform inlined (twice: a module is keyed by url and by id). This suite's
+    // graph (the assistant pulls in `ai`, the MCP SDK, `agents`, the embedded docs) is already
+    // ~33.4 MB of that, and the runtime closes the socket at 32 MiB (33,554,432 bytes): the first
+    // file of a run passes on a cold cache, every later one dies with "Worker exited unexpectedly".
+    // Without the filesystem cache there is no snapshot; modules are fetched one at a time.
+    fsModuleCache: false,
   },
   plugins: [
     // TC39 decorators (`@callable()` on the assistant), which Vite's Oxc transform doesn't lower.
