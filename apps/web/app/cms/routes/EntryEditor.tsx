@@ -17,6 +17,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@contentworker/ui/dropdown-menu';
+import { cn } from '@contentworker/ui/lib/utils';
+import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ellipsis, FileText, Link2, PenLine } from 'lucide-react';
@@ -26,7 +28,10 @@ import { AiAssistPanel } from '~/cms/components/AiAssistPanel';
 import { CollaborationPanel } from '~/cms/components/CollaborationPanel';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { EntryMetadataPanel } from '~/cms/components/EntryMetadataPanel';
+import { EntryPreview } from '~/cms/components/EntryPreview';
 import { ExtensionFrame } from '~/cms/components/ExtensionFrame';
+import { PaneDivider } from '~/cms/components/pane/PaneDivider';
+import { type PaneView, usePaneLayout, usePaneView } from '~/cms/components/pane/use-pane-layout';
 import { ReferencedBy } from '~/cms/components/ReferencedBy';
 import { SemanticPanel } from '~/cms/components/SemanticPanel';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
@@ -319,6 +324,20 @@ export function EntryEditor() {
       setPublishConfirm(null);
     });
 
+  // The side pane (after felix's): beside the form where the row has room for both, under it
+  // where it hasn't. It shows the draft as a document (live, saved or not) or the entry's panels.
+  const [draft, setDraft] = useState<{ fields: EntryFields; locale: string } | null>(null);
+  const onValuesChange = useCallback(
+    (fields: EntryFields, locale: string) => setDraft({ fields, locale }),
+    [],
+  );
+  const pane = usePaneLayout();
+  const [paneView, setPaneView] = usePaneView();
+  const localeConfig = useMemo(
+    () => ({ defaultLocale, locales, fallbacks }),
+    [defaultLocale, locales, fallbacks],
+  );
+
   const copyPreviewLink = () => {
     if (!entryId) return;
     void run(async () => {
@@ -429,8 +448,8 @@ export function EntryEditor() {
         </p>
       )}
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        <div className="min-w-0 flex-1">
+      <div ref={pane.ref} className={cn('flex', pane.split ? 'items-start' : 'flex-col gap-4')}>
+        <div className={cn('min-w-0 flex-1', pane.split && 'pr-5')}>
           {initial === null ? (
             <div className="max-w-2xl space-y-3">
               <Skeleton className="h-8 w-1/3" />
@@ -470,6 +489,7 @@ export function EntryEditor() {
                 toast.error(`Fix ${count} field ${count === 1 ? 'error' : 'errors'} to ${goal}`);
               }}
               mergePatch={patchState.patch}
+              onValuesChange={onValuesChange}
               onSave={save}
               onCancel={() => navigate(backTo)}
             />
@@ -482,55 +502,99 @@ export function EntryEditor() {
             unique *among siblings*: four panels all keyed `entryId` let React
             match one panel's state to another's element, which is the very
             thing the keying is here to prevent. */}
-        {isEdit && entryId && (
-          <aside className="w-full shrink-0 space-y-4 lg:w-[360px] xl:w-[380px]">
-            {/* Editor work first; AI assist sits last and starts collapsed. */}
-            <CollaborationPanel key={`collab:${entryId}`} entryId={entryId} />
-            <EntryMetadataPanel key={`metadata:${entryId}`} entryId={entryId} />
-            {meta && (
-              <VersionHistory
-                key={`versions:${entryId}`}
-                entryId={entryId}
-                currentVersion={meta.version}
-                publishedVersion={
-                  lastAggregate?.id === entryId
-                    ? lastAggregate.publishedVersion
-                    : meta.status === 'published'
-                      ? meta.version
-                      : null
-                }
-                hasUnsavedChanges={() => dirtyRef.current}
-                onRestored={() => void reseedFromServer()}
-              />
-            )}
-            <ReferencedBy id={entryId} types={types} />
-            <SemanticPanel entryId={entryId} entries={pickers.entries} />
-            {extensions
-              .filter((e) => e.target === 'sidebar')
-              .map((ext) => (
-                <CollapsibleCard key={ext.id} defaultOpen title={ext.name}>
-                  <ExtensionFrame
-                    extension={ext}
-                    context={{
-                      target: 'sidebar',
-                      spaceId: conn.space,
-                      environmentId: conn.environment,
-                      entryId,
-                      contentType: selectedType.apiId,
-                    }}
-                  />
-                </CollapsibleCard>
-              ))}
-            <AiAssistPanel
-              key={`assist:${entryId}`}
-              entryId={entryId}
+        {pane.split ? (
+          <PaneDivider
+            share={pane.share}
+            min={pane.min}
+            max={pane.max}
+            onChange={pane.onChange}
+            onCommit={pane.onCommit}
+            onReset={pane.onReset}
+            controls="entry-pane"
+          />
+        ) : null}
+        <aside
+          id="entry-pane"
+          aria-label="Side pane"
+          style={pane.split ? { width: `${(pane.share * 100).toFixed(2)}%` } : undefined}
+          className={cn(
+            'w-full min-w-0 shrink-0 space-y-4',
+            // Beside the form it holds still while the form scrolls, and scrolls on its own.
+            pane.split &&
+              'sticky top-[calc(var(--shell-h)+1rem)] max-h-[calc(100dvh-var(--shell-h)-2rem)] overflow-y-auto pl-5',
+          )}
+        >
+          {/* A new entry has no panels yet: its pane is the preview alone. */}
+          {isEdit ? (
+            <Segmented
+              aria-label="Side pane"
+              value={paneView}
+              onValueChange={(v) => setPaneView(v as PaneView)}
+              className="grid w-full grid-cols-2"
+            >
+              <SegmentedItem value="details">Details</SegmentedItem>
+              <SegmentedItem value="preview">Preview</SegmentedItem>
+            </Segmented>
+          ) : null}
+          {!isEdit || paneView === 'preview' ? (
+            <EntryPreview
               contentType={selectedType}
-              locales={locales}
-              defaultLocale={defaultLocale}
-              onMergeFields={applyPatch}
+              fields={draft?.fields ?? initial ?? {}}
+              locale={draft?.locale ?? defaultLocale}
+              localeConfig={localeConfig}
+              pickers={pickers}
             />
-          </aside>
-        )}
+          ) : null}
+          {isEdit && entryId && paneView === 'details' && (
+            <>
+              {/* Editor work first; AI assist sits last and starts collapsed. */}
+              <CollaborationPanel key={`collab:${entryId}`} entryId={entryId} />
+              <EntryMetadataPanel key={`metadata:${entryId}`} entryId={entryId} />
+              {meta && (
+                <VersionHistory
+                  key={`versions:${entryId}`}
+                  entryId={entryId}
+                  currentVersion={meta.version}
+                  publishedVersion={
+                    lastAggregate?.id === entryId
+                      ? lastAggregate.publishedVersion
+                      : meta.status === 'published'
+                        ? meta.version
+                        : null
+                  }
+                  hasUnsavedChanges={() => dirtyRef.current}
+                  onRestored={() => void reseedFromServer()}
+                />
+              )}
+              <ReferencedBy id={entryId} types={types} />
+              <SemanticPanel entryId={entryId} entries={pickers.entries} />
+              {extensions
+                .filter((e) => e.target === 'sidebar')
+                .map((ext) => (
+                  <CollapsibleCard key={ext.id} defaultOpen title={ext.name}>
+                    <ExtensionFrame
+                      extension={ext}
+                      context={{
+                        target: 'sidebar',
+                        spaceId: conn.space,
+                        environmentId: conn.environment,
+                        entryId,
+                        contentType: selectedType.apiId,
+                      }}
+                    />
+                  </CollapsibleCard>
+                ))}
+              <AiAssistPanel
+                key={`assist:${entryId}`}
+                entryId={entryId}
+                contentType={selectedType}
+                locales={locales}
+                defaultLocale={defaultLocale}
+                onMergeFields={applyPatch}
+              />
+            </>
+          )}
+        </aside>
       </div>
 
       <AlertDialog

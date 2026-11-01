@@ -281,3 +281,34 @@ test('API calls go to the same origin and carry the read-your-writes bookmark', 
   // Once the api has answered with a bookmark, later requests send it back.
   expect(seen.slice(1).some((s) => s.bookmark)).toBe(true);
 });
+
+test('the editor’s side pane sits beside the form, resizes, and previews the draft as typed', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newArticle(page);
+  // A new entry's pane is its preview alone.
+  const preview = page.getByRole('article', { name: 'Preview' });
+  await expect(preview.getByRole('heading', { name: 'Untitled' })).toBeVisible();
+  const title = `Pane ${Date.now()}`;
+  await page.getByRole('textbox', { name: /Title/ }).fill(title);
+  await expect(preview.getByRole('heading', { name: title })).toBeVisible();
+
+  // Beside the form behind a splitter, which the keyboard moves.
+  const divider = page.getByRole('separator', { name: 'Resize the side pane' });
+  const before = Number(await divider.getAttribute('aria-valuenow'));
+  await divider.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(divider).toHaveAttribute('aria-valuenow', String(before + 2));
+  await page.keyboard.press('Enter');
+  await expect(divider).toHaveAttribute('aria-valuenow', String(before));
+
+  // Saved, the pane switches between the entry's panels and the preview.
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
+  const pane = page.getByRole('complementary', { name: 'Side pane' });
+  await pane.getByRole('radio', { name: 'Preview' }).click();
+  await expect(preview.getByRole('heading', { name: title })).toBeVisible();
+  await pane.getByRole('radio', { name: 'Details' }).click();
+  await expect(preview).toHaveCount(0);
+});

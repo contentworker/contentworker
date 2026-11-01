@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 import { fakeSafeArea, isPhone, isTouch, open, PAGES, tapTargets } from './helpers';
 
 // With nobody added yet, local development is open: every page renders as an admin.
@@ -28,19 +28,79 @@ test('a CMS screen is the real screen, not a placeholder', async ({ page }) => {
   await expect(page.getByText('This screen is being ported')).toHaveCount(0);
 });
 
+/** The sidebar's drawn width, in CSS px. */
+const sidebarWidth = (page: Page) =>
+  page
+    .locator('[data-slot="sidebar-container"]')
+    .evaluate((el) => Math.round(el.getBoundingClientRect().width));
+
 test('wider screens get the sidebar, grouped, with the deployment pages for admins', async ({
   page,
 }, info) => {
   test.skip(isPhone(info), 'phones have the tab bar');
   await open(page, '/content');
   const side = page.getByRole('navigation', { name: 'Main' }).first();
-  for (const name of ['Overview', 'Content', 'Approvals', 'Releases', 'Media', 'Settings'])
-    await expect(side.getByRole('link', { name, exact: true })).toBeVisible();
+  // Settings is its own section groups, Workspace last; the deployment's pages follow for admins.
+  for (const name of [
+    'Overview',
+    'Content',
+    'Approvals',
+    'Releases',
+    'Workflows',
+    'Media',
+    'Access',
+    'Workspace',
+    'People and sign-in',
+  ])
+    await expect(side.getByRole('link', { name, exact: true })).toBeAttached();
   await expect(side.getByRole('link', { name: 'Content', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
   );
-  await expect(side.getByRole('link', { name: 'People and sign-in' })).toBeVisible();
+  await open(page, '/settings/environments');
+  await expect(side.getByRole('link', { name: 'Workspace', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+});
+
+test('the sidebar collapses to a rail, and stays as it was left', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop', 'the full sidebar is lg and up');
+  await open(page, '/content');
+  expect(await sidebarWidth(page)).toBe(256);
+  const toggle = page.getByRole('button', { name: 'Sidebar', exact: true });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await toggle.click();
+  await expect.poll(() => sidebarWidth(page)).toBe(52);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  // A rail keeps every page by name for screen readers.
+  await expect(
+    page.getByRole('navigation', { name: 'Main' }).first().getByRole('link', { name: 'Media' }),
+  ).toBeAttached();
+  await open(page, '/content');
+  expect(await sidebarWidth(page), 'collapsed before paint after a reload').toBe(52);
+  await page.locator('main h1').click();
+  await page.keyboard.press('Meta+Backslash');
+  await expect.poll(() => sidebarWidth(page)).toBe(256);
+});
+
+test('an iPad upright has the rail beside the page, opening over it', async ({ page }, info) => {
+  test.skip(info.project.name !== 'ipad', 'iPad upright');
+  await open(page, '/content');
+  expect(await sidebarWidth(page)).toBe(52);
+  const main = await page.locator('main').boundingBox();
+  await page.getByRole('button', { name: 'Sidebar', exact: true }).tap();
+  await expect.poll(() => sidebarWidth(page)).toBe(256);
+  expect((await page.locator('main').boundingBox())!.x, 'the page stays where it was').toBe(
+    main!.x,
+  );
+  await page
+    .getByRole('navigation', { name: 'Main' })
+    .first()
+    .getByRole('link', { name: 'Media' })
+    .tap();
+  await expect(page).toHaveURL(/\/media$/);
+  await expect.poll(() => sidebarWidth(page)).toBe(52);
 });
 
 test('phones get the tab bar, clear of the status bar and home indicator', async ({

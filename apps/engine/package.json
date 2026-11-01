@@ -13,15 +13,18 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cloudflare/ai-chat": "catalog:",
     "@contentworker/adapters": "workspace:*",
     "@contentworker/agent-runtime": "workspace:*",
     "@contentworker/application": "workspace:*",
     "@contentworker/db": "workspace:*",
     "@contentworker/domain": "workspace:*",
+    "@contentworker/http": "workspace:*",
     "@contentworker/platform": "workspace:*",
     "@contentworker/ports": "workspace:*",
     "@contentworker/redaction": "workspace:*",
-    "@contentworker/test-kit": "workspace:*"
+    "@contentworker/test-kit": "workspace:*",
+    "agents": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",

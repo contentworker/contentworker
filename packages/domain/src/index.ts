@@ -28,3 +28,4 @@ export * from './types.js';
 export * from './validation/validate.js';
 export * from './webhook/webhook.js';
 export * from './workflow/index.js';
+export * from './assistant/assistant.js';

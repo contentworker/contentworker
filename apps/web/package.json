@@ -17,6 +17,8 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@ai-sdk/react": "catalog:",
+    "@cloudflare/ai-chat": "catalog:",
     "@contentworker/db": "workspace:*",
     "@contentworker/domain": "workspace:*",
     "@contentworker/security": "workspace:*",
@@ -31,6 +33,7 @@
     "@tiptap/react": "catalog:",
     "@tiptap/starter-kit": "catalog:",
     "@xyflow/react": "catalog:",
+    "agents": "catalog:",
     "ai": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",

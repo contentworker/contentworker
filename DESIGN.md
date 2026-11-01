@@ -206,7 +206,7 @@ Tailwind's default breakpoints, read as devices:
 | below `sm` (640px)        | iPhone upright            | Header shows the mark, the scope pill and Search as icons                                                                            |
 | below `md` (768px)        | phones, either way up     | Bottom tab bar, no sidebar; tables stack into cards; the content-type list leaves the Content pages (their overview lists the types) |
 | `md` to `lg` (768–1023px) | iPad upright              | The sidebar is an icon rail beside the page and opens over it                                                                        |
-| `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the entry editor's panels beside the form; the assistant as a column                  |
+| `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the entry editor's side pane beside the form; the assistant as a column               |
 | `xl` and up (1280px)      | desktop                   | The space, environment and locale switchers sit in the header; the full sidebar and the assistant's column side by side              |
 
 Size and hint by what is pointing, not by width: `touch:` is a coarse pointer (a finger), `fine:` a
@@ -331,8 +331,14 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Content:** the content types as cards (`PageHeader` with New content type); a content type's
   entries beside the list of types (from md); the entry editor: the title wraps, the status, version
   and save state sit under it, and the actions wrap beside it; below md the secondary actions fold
-  into a ghost ⋯ menu ("More entry actions"). From lg the editor's panels sit beside the form, as
-  OrderLoop's order page puts its panels beside the graph.
+  into a ghost ⋯ menu ("More entry actions"). Beside the form sits the **side pane** (after felix's):
+  where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
+  the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
+  narrower, it stacks under the form. The divider is an ARIA splitter (drag, arrows, Shift for a
+  bigger step, Home and End, Enter or a double click to reset), and its share is kept per browser.
+  A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
+  as you type, in the form's locale with delivery's fallbacks, references by name, and links shown
+  but never followed. A new entry's pane is its preview alone.
 - **Releases, Workflows, Taxonomy, Media:** `PageHeader` with the page's one "New …" (a `Plus` and
   the noun), then cards or a stacked table. A media card's name is its control, stretched over the
   card, with the card's own actions above it.
