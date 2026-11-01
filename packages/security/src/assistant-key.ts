@@ -22,8 +22,12 @@ export const ASSISTANT_KEY_BYTES = 32;
  */
 export const DEV_ASSISTANT_PRINCIPAL_KEY = '6p0bHEH23WvmGbsujFkrKELek1uBjULrkenPsqWpDDE';
 
-/** Paths whose principal is signed with the assistant's key instead of the main one. */
-export const isAssistantPrincipalPath = (path: string) => path.startsWith('/agents/');
+/**
+ * Whether a principal for this target is signed with the assistant's key instead of the main one.
+ * Takes the signed target (`principalTarget`: `GET /agents/…`) or a bare path.
+ */
+export const isAssistantPrincipalPath = (target: string) =>
+  target.replace(/^[A-Z]+ /, '').startsWith('/agents/');
 
 const enc = new TextEncoder();
 const derived = new Map<string, Promise<string>>();

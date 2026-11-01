@@ -37,5 +37,9 @@ describe('the assistant’s principal key', () => {
     expect(isAssistantPrincipalPath('/agents/assistant-agent/usr_ada/get-messages')).toBe(true);
     expect(isAssistantPrincipalPath('/spaces/s1/entries')).toBe(false);
     expect(isAssistantPrincipalPath('/agentsx')).toBe(false);
+    // As the web gateway signs it: for the method and path.
+    expect(isAssistantPrincipalPath('GET /agents/assistant-agent/usr_ada')).toBe(true);
+    expect(isAssistantPrincipalPath('POST /spaces/s1/entries')).toBe(false);
+    expect(isAssistantPrincipalPath('GET /spaces/agents/x')).toBe(false);
   });
 });
