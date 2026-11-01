@@ -151,7 +151,9 @@ What an import preserves:
 **Deleting an environment** (`DELETE …/environments/:env?confirm=:env`, MCP `environment_delete`)
 removes its rows (content model, entries and versions, assets, references, releases, schedules,
 workflows and runs, taxonomy, comments, tasks, jobs) in one atomic write; its audit history stays.
-`confirm` must repeat the environment id. It refuses `main` (`422`) and any environment an alias
+`confirm` must repeat the environment id. It takes a person holding `space:admin` in that space
+(signed in, or through their OAuth or personal access token) or the deployment admin token; a
+plain API key gets `403`, even one with `space:admin`. It refuses `main` (`422`) and any environment an alias
 points at (`409`: repoint or remove the alias first). The same write records an
 `environment.deleted` audit row naming the caller (on both surfaces, so a deletion never commits
 unrecorded) and appends `environment.deleted` events (published entry ids in chunks of 500). From

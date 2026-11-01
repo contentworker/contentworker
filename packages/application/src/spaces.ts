@@ -1,6 +1,7 @@
 import {
   ConflictError,
   type DomainEvent,
+  ForbiddenError,
   InvalidStateError,
   type LocaleCode,
   NotFoundError,
@@ -101,6 +102,14 @@ export async function deleteEnvironment(
   environmentId: string,
   opts: { readonly confirm?: string; readonly principal: Principal },
 ): Promise<DeletedEnvironment> {
+  // A person (signed in, or through their own token) or the deployment admin token: never a plain
+  // API key, even one holding space:admin, since integration and CI keys routinely do, and an agent
+  // steered into calling this can supply `confirm` as easily as anything else.
+  if (opts.principal.kind !== 'user' && opts.principal.kind !== 'admin') {
+    throw new ForbiddenError(
+      'Deleting an environment takes a person or the deployment admin token, not an API key',
+    );
+  }
   if (opts.confirm !== environmentId) {
     throw new ValidationError([
       {

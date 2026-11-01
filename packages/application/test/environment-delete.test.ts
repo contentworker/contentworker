@@ -1,5 +1,6 @@
 import {
   ConflictError,
+  ForbiddenError,
   NotFoundError,
   type Principal,
   ValidationError,
@@ -117,6 +118,14 @@ describe('deleting an environment', () => {
     await expect(
       deleteEnvironment(ctx, 's1', 'staging', { confirm: 'main', principal: admin }),
     ).rejects.toBeInstanceOf(ValidationError);
+    expect((await store.spaces.listEnvironments('s1')).map((e) => e.id)).toContain('staging');
+  });
+
+  it('refuses an API key, even one holding space:admin', async () => {
+    const key = { spaceId: 's1', kind: 'cma', scopes: ['space:admin'] } as unknown as Principal;
+    await expect(
+      deleteEnvironment(ctx, 's1', 'staging', { confirm: 'staging', principal: key }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
     expect((await store.spaces.listEnvironments('s1')).map((e) => e.id)).toContain('staging');
   });
 

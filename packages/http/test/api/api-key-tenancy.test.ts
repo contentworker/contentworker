@@ -140,9 +140,10 @@ describe('deleting an environment stays within the caller’s space and role', (
     expect((await del('s1', 'staging', editorKey)).status).toBe(403);
   });
 
-  it('lets a space admin delete their own space’s environment, and only that one', async () => {
+  it('refuses even a key holding space:admin: it takes a person or the admin token', async () => {
     const s1Writer = await mint('s1', { kind: 'cma' });
-    expect((await del('s1', 'staging', s1Writer)).status).toBe(200);
+    expect((await del('s1', 'staging', s1Writer)).status).toBe(403);
+    expect((await del('s1', 'staging', 'admin')).status).toBe(200);
     const s2 = (await (
       await app.request('/spaces/s2/environments', { headers: admin })
     ).json()) as {
