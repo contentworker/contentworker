@@ -97,6 +97,27 @@ describe('asset versions on D1', () => {
     ).toEqual([]);
   });
 
+  it('keeps a committed replace when a save from an earlier read lands after it', async () => {
+    const h = await harness();
+    const asset = await h.upload();
+    const stale = await store.assets.get(h.scope, asset.id);
+    await h.replace(asset.id, 'hero-2.png');
+    // An editor's metadata save, made from the v1 read.
+    await store.assets.save(h.scope, {
+      ...(stale as Asset),
+      metadata: { ...(stale as Asset).metadata, altText: { 'en-US': 'A hero' } },
+    });
+    const now = (await store.assets.get(h.scope, asset.id)) as Asset;
+    expect(now.version).toBe(2);
+    expect(now.file.fileName).toBe('hero-2.png');
+    expect(now.metadata.altText).toEqual({ 'en-US': 'A hero' });
+    // The history still holds v1 once, and the next replace takes v3.
+    await h.replace(asset.id, 'hero-3.png');
+    const versions = await store.assets.listVersions(h.scope, asset.id);
+    expect(versions.map((v) => v.version)).toEqual([2, 1]);
+    expect(((await store.assets.get(h.scope, asset.id)) as Asset).version).toBe(3);
+  });
+
   it('refuses a replace whose asset moved to another version, writing nothing', async () => {
     const h = await harness();
     const asset = await h.upload();
@@ -184,6 +205,29 @@ describe('asset expiry on D1', () => {
         ids.includes(f.assetId),
       ),
     ).toEqual([]);
+  });
+
+  it('passes over a row whose column is stale (an older writer kept it), so it never blocks the line', async () => {
+    const h = await harness();
+    const base = Date.parse('2026-01-01T00:00:00.000Z');
+    const id = uid();
+    await store.assets.putPublished(h.scope, {
+      assetId: id,
+      file: { url: '', fileName: 'f.png', contentType: 'image/png' },
+      title: {},
+      description: {},
+      metadata: { altText: {}, tags: [] },
+      publishedAt: iso(base),
+      version: 1,
+      rights: { expiresAt: iso(base + 86_400_000) },
+    });
+    // Code that predates the column republished it with a later expiry and left the column past.
+    await testDb
+      .prepare('update asset_published set expires_at = ? where space_id = ? and asset_id = ?')
+      .bind(base - 1000, h.scope.spaceId, id)
+      .run();
+    const found = await store.assets.findExpiredPublished(new Date(base), 1000);
+    expect(found.map((f) => f.assetId)).not.toContain(id);
   });
 
   it('unpublishes an expired asset once, and leaves one whose expiry moved', async () => {

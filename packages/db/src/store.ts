@@ -1118,7 +1118,28 @@ function makeAssetRepo(x: Exec): AssetRepo {
       ingestError: asset.ingestError ?? null,
       duplicateOf: asset.duplicateOf ?? null,
     };
-    const { contentHash: _hash, ...updated } = columns;
+    const { contentHash: _hash, ...edited } = columns;
+    // What a file replace owns: the file and its version. A save made from a read taken before a
+    // replace or restore committed carries the old version, and writing its file back would drop
+    // the new one from the row (it was never put in the history) and hand its version number out
+    // again. So those columns take the saved values only when the version matches the row's.
+    const sameVersion = (column: string) =>
+      sql.raw(
+        `CASE WHEN "assets"."version" = excluded."version" THEN excluded."${column}" ELSE "assets"."${column}" END`,
+      );
+    const updated = {
+      ...edited,
+      file: sameVersion('file'),
+      kind: sameVersion('kind'),
+      mime: sameVersion('mime'),
+      size: sameVersion('size'),
+      width: sameVersion('width'),
+      height: sameVersion('height'),
+      r2Key: sameVersion('r2_key'),
+      // SQLite reads every right-hand side against the row before the update, so this CASE
+      // (always the row's own version) and the ones above all compare the same two values.
+      version: sameVersion('version'),
+    };
     return db
       .insert(schema.assets)
       .values({
@@ -1419,6 +1440,10 @@ function makeAssetRepo(x: Exec): AssetRepo {
           and(
             isNotNull(p.expiresAt),
             lte(p.expiresAt, at),
+            // And the rights themselves say so. The column is a copy, and code that predates it
+            // (a rollback) can rewrite a snapshot without it: a stale row the sweep only skipped
+            // would stay first in line forever and, a hundred of them, starve real expiries.
+            sql`(julianday(json_extract(${p.rights}, '$.expiresAt')) - 2440587.5) * 86400000 <= ${at.getTime()}`,
             // Only in an environment that still exists: a deleted one's rows linger until purged.
             registered(p),
           ),

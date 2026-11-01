@@ -8,6 +8,7 @@ import {
   approvePluginCapabilities,
   approvePromotion,
   archiveAsset,
+  assetBulkActionPublishes,
   assetSearchDeps,
   auditActor,
   auditEntry,
@@ -1870,13 +1871,16 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         'an archived or embargoed asset). move and tag need content:write; publish, unpublish ' +
         'and archive need content:publish.',
     }),
-    requireScope(SCOPES.contentWrite),
+    // No route-level scope: it depends on the action, so it is checked once the body is read.
+    // content:publish alone is enough to publish, as on the single-asset routes and MCP.
     async (c) => {
       const body = await parseBody(c, assetBulkBody);
       const action = body.action as AssetBulkAction;
-      if (action !== 'move' && action !== 'tag') {
-        authorize(c.get('principal'), SCOPES.contentPublish, c.req.param('space'));
-      }
+      authorize(
+        c.get('principal'),
+        assetBulkActionPublishes(action) ? SCOPES.contentPublish : SCOPES.contentWrite,
+        c.req.param('space'),
+      );
       const job = await startAssetBulkJob(ctx, scopeOf(c), {
         action,
         ids: body.ids,

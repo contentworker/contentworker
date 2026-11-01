@@ -1,6 +1,7 @@
 import {
   type Asset,
   type AssetFolder,
+  AssetRightsError,
   applyDefaults,
   assetFolderName,
   assetFolderPath,
@@ -267,6 +268,37 @@ export interface ImportOptions {
    * the target's search indexes them. Callers set it when the ingest queue is bound.
    */
   readonly reindexAssets?: boolean;
+  /**
+   * The space whose files the snapshot's assets may keep pointing at: a clone's source, which the
+   * caller can read. Unset, only the target's own. Never taken from a request: an uploaded
+   * snapshot is anyone's JSON.
+   */
+  readonly filesFrom?: string;
+}
+
+/**
+ * The snapshot with every asset file key that names a space other than `target`'s (or
+ * `filesFrom`) dropped, so the asset falls back to its own key in the target. A file key is
+ * served as it stands (signed reads, the media gate, ingest), so an uploaded snapshot naming
+ * another space's key would otherwise read that space's files, drafts and replaced versions too.
+ */
+export function confineSnapshotFiles(
+  target: Scope,
+  snapshot: EnvironmentSnapshot,
+  filesFrom?: string,
+): EnvironmentSnapshot {
+  const allowed = new Set([target.spaceId, ...(filesFrom ? [filesFrom] : [])]);
+  const foreign = (key: string | undefined) =>
+    key !== undefined && !allowed.has(key.split('/')[0] ?? '');
+  if (!snapshot.assets.some((a) => foreign(a.r2Key))) return snapshot;
+  return {
+    ...snapshot,
+    assets: snapshot.assets.map((asset) => {
+      if (!foreign(asset.r2Key)) return asset;
+      const { r2Key: _foreign, ...rest } = asset;
+      return rest;
+    }),
+  };
 }
 
 export interface ImportReport {
@@ -295,6 +327,7 @@ export async function importSnapshot(
   snapshot: EnvironmentSnapshot,
   options: ImportOptions = {},
 ): Promise<ImportReport> {
+  snapshot = confineSnapshotFiles(target, snapshot, options.filesFrom);
   const { report, publishable } = await prepareSnapshotImport(ctx, target, snapshot, options);
   if (options.dryRun) return report;
   const publishing = options.publish !== false;
@@ -305,7 +338,15 @@ export async function importSnapshot(
   for (const asset of snapshot.assets) await createSnapshotAsset(ctx, target, asset);
   if (publishing) {
     for (const asset of snapshot.assets) {
-      if (asset.status === 'published') await publishAsset(ctx, target, asset.id);
+      if (asset.status !== 'published') continue;
+      try {
+        await publishAsset(ctx, target, asset.id);
+      } catch (err) {
+        // Its rights lapsed since the export (or an embargo older code never enforced): it stays a
+        // draft, named, rather than stopping the import half-written where a retry can't follow.
+        if (!(err instanceof AssetRightsError)) throw err;
+        (report.skipped as string[]).push(`asset ${asset.id}: left as a draft (${err.message})`);
+      }
     }
   }
 
@@ -696,5 +737,8 @@ export async function cloneEnvironment(
   target: Scope,
   options: ImportOptions = {},
 ): Promise<ImportReport> {
-  return importSnapshot(ctx, target, await exportSnapshot(ctx, source), options);
+  return importSnapshot(ctx, target, await exportSnapshot(ctx, source), {
+    ...options,
+    filesFrom: source.spaceId,
+  });
 }

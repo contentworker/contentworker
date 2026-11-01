@@ -50,6 +50,16 @@ export interface StartAssetBulkJobInput {
 /** Most tag ids one tagging job adds and removes together. */
 export const MAX_ASSET_BULK_TAGS = 50;
 
+/** The longest tag id a tagging job takes, as an id anywhere else in the API. */
+const MAX_TAG_ID_LENGTH = 128;
+
+/**
+ * Whether `action` changes what Delivery serves, and so needs `content:publish` as the
+ * single-asset routes do; the others (move, tag) need `content:write`. One rule for both surfaces.
+ */
+export const assetBulkActionPublishes = (action: AssetBulkAction): boolean =>
+  action === 'publish' || action === 'unpublish' || action === 'archive';
+
 /** What a job remembers of its request (the job's `config`), read back by its chunks. */
 interface AssetBulkConfig {
   readonly folderId?: string | null;
@@ -94,6 +104,15 @@ export async function startAssetBulkJob(
       if (addTags.length + removeTags.length > MAX_ASSET_BULK_TAGS) {
         throw new ValidationError([
           { field: 'addTags', message: `At most ${MAX_ASSET_BULK_TAGS} tags at a time` },
+        ]);
+      }
+      // The use-case checks what it writes into every asset, whichever surface sent it.
+      const bad = [...addTags, ...removeTags].find(
+        (t) => t.trim() === '' || t.length > MAX_TAG_ID_LENGTH,
+      );
+      if (bad !== undefined) {
+        throw new ValidationError([
+          { field: 'addTags', message: `A tag id is 1 to ${MAX_TAG_ID_LENGTH} characters` },
         ]);
       }
       if (addTags.some((t) => removeTags.includes(t))) {

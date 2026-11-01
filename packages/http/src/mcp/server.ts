@@ -7,8 +7,10 @@ import {
   approvePluginCapabilities,
   approvePromotion,
   archiveAsset,
+  assetBulkActionPublishes,
   assetSearchDeps,
   assignRolePreset,
+  auditActor,
   auditEntry,
   autofillField,
   autoTagAsset,
@@ -17,6 +19,7 @@ import {
   cancelBulkJob,
   cancelWorkflowRun,
   canvasToEntry,
+  cloneEnvironment,
   commitAssetFile,
   compareEnvironments,
   countEntriesByContentType,
@@ -1499,7 +1502,7 @@ export function buildServer(
         reindexAssets: Boolean(deps.assetIngest),
       };
       if (args.dryRun || !deps.blob) {
-        return ok(await importSnapshot(ctx, to, await exportSnapshot(ctx, from), options));
+        return ok(await cloneEnvironment(ctx, from, to, options));
       }
       return ok(await startEnvironmentClone(ctx, from, to, options));
     },
@@ -3683,7 +3686,8 @@ export function buildServer(
     if (!deps.blob) throw new NotConfiguredError('blob', 'Replacing files needs a blob store');
     return deps.blob;
   };
-  const actor = principal.subject ?? principal.kind;
+  // The same author the REST routes record, so a version shows one name whichever surface made it.
+  const actor = auditActor(principal);
 
   server.registerTool(
     'asset_replace_file',
@@ -3835,17 +3839,19 @@ export function buildServer(
       inputSchema: toolSchema('assets_bulk', () =>
         z.object({
           action: z.enum(['move', 'tag', 'publish', 'unpublish', 'archive']),
-          ids: z.array(z.string()).min(1).max(BULK_JOB_MAX_ITEMS),
-          folderId: z.string().nullable().optional(),
-          addTags: z.array(z.string()).max(MAX_ASSET_BULK_TAGS).optional(),
-          removeTags: z.array(z.string()).max(MAX_ASSET_BULK_TAGS).optional(),
+          ids: z.array(z.string().min(1).max(128)).min(1).max(BULK_JOB_MAX_ITEMS),
+          folderId: z.string().min(1).max(128).nullable().optional(),
+          addTags: z.array(z.string().min(1).max(128)).max(MAX_ASSET_BULK_TAGS).optional(),
+          removeTags: z.array(z.string().min(1).max(128)).max(MAX_ASSET_BULK_TAGS).optional(),
           ...scopeArgs,
         }),
       ),
     },
     async (args) => {
-      const writes = args.action === 'move' || args.action === 'tag';
-      guard(writes ? SCOPES.contentWrite : SCOPES.contentPublish, scopeOf(args));
+      guard(
+        assetBulkActionPublishes(args.action) ? SCOPES.contentPublish : SCOPES.contentWrite,
+        scopeOf(args),
+      );
       return ok(
         await startAssetBulkJob(ctx, scopeOf(args), {
           action: args.action,

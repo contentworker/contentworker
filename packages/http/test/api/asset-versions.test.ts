@@ -58,12 +58,15 @@ async function upload(h: App, fileName = 'hero.png') {
 }
 
 /** A key with content:write and preview:read only: it may edit, never publish. */
-async function writerKey(h: App) {
+const writerKey = (h: App) => keyWithScopes(h, 'Writer', ['content:write', 'preview:read']);
+
+/** A management key whose role holds exactly `scopes`. */
+async function keyWithScopes(h: App, name: string, scopes: string[]) {
   const role = await json<{ id: string }>(
     await h.app.request('/spaces/s1/roles', {
       method: 'POST',
       headers: admin,
-      body: JSON.stringify({ name: 'Writer', scopes: ['content:write', 'preview:read'] }),
+      body: JSON.stringify({ name, scopes }),
     }),
   );
   const { token } = await json<{ token: string }>(
@@ -275,5 +278,28 @@ describe('asset bulk jobs over HTTP', () => {
       body: JSON.stringify({ action: 'explode', ids: [a.id] }),
     });
     expect(unknown.status).toBe(422);
+  });
+
+  it('lets a publish-only key publish in bulk, as one at a time and over MCP, but not tag', async () => {
+    const h = makeApp();
+    const a = await upload(h, 'a.png');
+    const publisher = await keyWithScopes(h, 'Publisher', ['content:publish']);
+    const one = await h.app.request(`${M}/assets/${a.id}/published`, {
+      method: 'POST',
+      headers: publisher,
+    });
+    expect(one.status).toBe(200);
+    const bulk = await h.app.request(`${M}/assets/bulk`, {
+      method: 'POST',
+      headers: publisher,
+      body: JSON.stringify({ action: 'unpublish', ids: [a.id] }),
+    });
+    expect(bulk.status).toBe(202);
+    const tag = await h.app.request(`${M}/assets/bulk`, {
+      method: 'POST',
+      headers: publisher,
+      body: JSON.stringify({ action: 'tag', ids: [a.id], addTags: ['hero'] }),
+    });
+    expect(tag.status).toBe(403);
   });
 });

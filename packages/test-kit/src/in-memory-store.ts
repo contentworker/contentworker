@@ -748,8 +748,18 @@ export class InMemoryContentStore implements ContentStore {
         duplicateOf: _d,
         ...edited
       } = asset;
+      // As the D1 store: a save from a read taken before a replace committed keeps the file.
+      const sameVersion = (current.version ?? 1) === (asset.version ?? 1);
+      const { file: _f, r2Key: _k, version: _v, ...kept } = edited;
       this.touchAsset(scope, {
-        ...edited,
+        ...(sameVersion
+          ? edited
+          : {
+              ...kept,
+              file: current.file,
+              ...(current.r2Key ? { r2Key: current.r2Key } : {}),
+              ...(current.version !== undefined ? { version: current.version } : {}),
+            }),
         ...(current.contentHash ? { contentHash: current.contentHash } : {}),
         ...(current.ingestStatus ? { ingestStatus: current.ingestStatus } : {}),
         ...(current.ingestError ? { ingestError: current.ingestError } : {}),

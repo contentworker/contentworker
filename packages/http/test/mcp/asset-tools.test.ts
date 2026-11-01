@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  auditActor,
   createAsset,
   createContentType,
   createEntry,
@@ -427,6 +428,8 @@ describe('asset version, rights and bulk tools (MCP), with the HTTP routes’ sc
   const writer: Principal = {
     spaceId: SPACE,
     kind: 'cma',
+    // A key's subject is its id; the version history names the key kind, as REST records it.
+    subject: 'key-1',
     scopes: [SCOPES.contentWrite, SCOPES.previewRead],
   };
 
@@ -466,6 +469,13 @@ describe('asset version, rights and bulk tools (MCP), with the HTTP routes’ sc
       version: 3,
       file: { fileName: 'hero.png' },
     });
+    const history = payload(await call('asset_versions_list', { id: a.id })) as {
+      items: { version: number; createdBy?: string }[];
+    };
+    expect(history.items.filter((v) => v.version > 1).map((v) => v.createdBy)).toEqual([
+      auditActor(writer),
+      auditActor(writer),
+    ]);
 
     // A read-only key does none of it.
     const reader2 = await connect({ ...deps, blob }, reader);

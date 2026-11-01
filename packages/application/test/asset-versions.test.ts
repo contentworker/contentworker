@@ -171,6 +171,25 @@ describe('replacing an asset file', () => {
     expect(h.events().filter((e) => e.type === 'asset.file_replaced')).toEqual([]);
   });
 
+  it('refuses a commit naming the file other than the upload was signed for', async () => {
+    const asset = await upload(h);
+    const r = await replaceAssetFile(h.ctx, h.blob, scope, asset.id, {
+      fileName: 'hero-2.png',
+      contentType: 'image/png',
+    });
+    await h.blob.put(`shop/main/${asset.id}/v2/file/hero-2.png`, 'v2', 'image/png');
+    // The same key (only the last segment counts), a name the policy never checked.
+    await expect(
+      commitAssetFile(h.ctx, h.blob, scope, asset.id, {
+        ...r.commit,
+        fileName: 'unchecked name/hero-2.png',
+      }),
+    ).rejects.toThrow(ValidationError);
+    expect((await commitAssetFile(h.ctx, h.blob, scope, asset.id, r.commit)).file.fileName).toBe(
+      'hero-2.png',
+    );
+  });
+
   it('bumps the version, keeps the old file in history and starts ingest, in one unit', async () => {
     const asset = await upload(h);
     await h.store.assets.recordIngest(scope, asset.id, 1, {

@@ -711,6 +711,14 @@ export async function commitAssetFile(
 ): Promise<Asset> {
   const asset = await getAsset(ctx, scope, id);
   assertNotHostedVideo(asset);
+  // The name must be the one the upload was signed for, as it stands: the key keeps only a name's
+  // last segment, so `x/<name>` would find the same bytes and store a name the space's
+  // asset:beforeCreate policy never saw.
+  if (input.fileName !== safeObjectName(input.fileName)) {
+    throw new ValidationError([
+      { field: 'fileName', message: 'Send the fileName from the replace’s commit object' },
+    ]);
+  }
   const current = asset.version ?? 1;
   const key = assetObjectKey(scope, id, input.fileName, input.version);
   // A retried commit (the response was lost) finds its own work done.
