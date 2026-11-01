@@ -47,9 +47,11 @@ import type {
   AIActionRepo,
   AppExtension,
   AppExtensionRepo,
+  ArchivableVersion,
   AssetRepo,
   AuditRepo,
   AuthRepo,
+  BlobStore,
   BulkJob,
   BulkJobChunk,
   BulkJobRepo,
@@ -251,8 +253,34 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
   };
 }
 
-function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo {
+/** How long after a version is superseded before its body may move to object storage. */
+const ARCHIVE_DELAY_MS = 24 * 60 * 60 * 1000;
+/** Archived bodies read at once when listing an entry's history. */
+const VERSION_READ_CONCURRENCY = 6;
+
+function makeEntryRepo(
+  x: Exec,
+  scanLimit = DEFAULT_QUERY_SCAN_LIMIT,
+  versionBodies?: BlobStore,
+): EntryRepo {
   const db = x.db;
+  /** An archived body from object storage, or null when it is not there. */
+  const readBody = async (bodyKey: string, what: string): Promise<EntryFields | null> => {
+    if (!versionBodies) {
+      throw new Error(`${what} is archived, and this store has no object storage to read it from`);
+    }
+    const raw = await versionBodies.get(bodyKey);
+    return raw === null ? null : (JSON.parse(raw) as EntryFields);
+  };
+  /** A version row as a version: its body from object storage if it has moved there. A body
+   *  missing there is marked `bodyUnavailable` (a list shows the rest), unless `strict`. */
+  const resolveVersion = async (r: EntryVersionRow, strict: boolean): Promise<EntryVersion> => {
+    if (!r.bodyKey) return toVersion(r);
+    const fields = await readBody(r.bodyKey, `Version ${r.version} of entry ${r.entryId}`);
+    if (fields) return { ...toVersion(r), fields };
+    if (strict) throw new Error(`The archived body of version ${r.version} is missing`);
+    return { ...toVersion(r), fields: {}, bodyUnavailable: true };
+  };
   // The row's CURRENT version, joined in the same query (one join is cheaper on D1 than a
   // second, pair-chunked query and has no parameter-cap concern).
   const cv = alias(schema.entryVersions, 'cv');
@@ -264,16 +292,26 @@ function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo
   );
   const withFields = () =>
     db
-      .select({ entry: schema.entries, fields: cv.fields })
+      .select({ entry: schema.entries, fields: cv.fields, bodyKey: cv.bodyKey })
       .from(schema.entries)
       .leftJoin(cv, currentVersionJoin);
-  const toEntryWithFields = (r: {
-    entry: EntryRow;
-    fields: EntryFields | null;
-  }): EntryWithFields => ({
-    entry: toEntry(r.entry),
-    fields: r.fields ?? {},
-  });
+  type CurrentRow = { entry: EntryRow; fields: EntryFields | null; bodyKey: string | null };
+  /**
+   * The rows as entries with their current fields. A current version never has its body moved
+   * (the sweep re-checks that as it marks), but should a lost update ever move an entry's current
+   * version back onto an archived one, its body is read from object storage rather than shown
+   * as `{}`: an entry never silently loses its content.
+   */
+  const toEntriesWithFields = (rows: readonly CurrentRow[]): Promise<EntryWithFields[]> =>
+    Promise.all(
+      rows.map(async (r) => ({
+        entry: toEntry(r.entry),
+        fields:
+          (r.bodyKey
+            ? await readBody(r.bodyKey, `The current version of entry ${r.entry.id}`)
+            : r.fields) ?? {},
+      })),
+    );
 
   const putPublishedMany = async (
     scope: Scope,
@@ -343,7 +381,7 @@ function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo
       const [row] = await withFields().where(
         and(scopeFilter(schema.entries, scope), eq(schema.entries.id, id)),
       );
-      return row ? toEntryWithFields(row) : null;
+      return row ? ((await toEntriesWithFields([row]))[0] ?? null) : null;
     },
     async getMany(scope, ids) {
       const rows = await selectChunked(
@@ -355,7 +393,7 @@ function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo
         1,
         RESERVED,
       );
-      return rows.map(toEntryWithFields);
+      return toEntriesWithFields(rows);
     },
     async list(scope, query: EntryQuery) {
       const advanced = isAdvancedQuery(query);
@@ -398,7 +436,7 @@ function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo
         : select.limit(query.limit ?? 100).offset(query.skip ?? 0);
       const rows = await select;
       if (advanced && rows.length > scanLimit) throw new QueryTooBroadError(scanLimit);
-      const results = rows.map(toEntryWithFields);
+      const results = await toEntriesWithFields(rows);
       if (!advanced) return results;
       const filtered = runEntryQuery(
         results,
@@ -438,6 +476,21 @@ function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo
       await writeAll(x, [
         db.insert(schema.entryVersions).values(versionRow(scope, version)),
         saveEntryAggregate(db, scope, entry),
+        // The version this one supersedes becomes due to have its body moved, a day from now.
+        ...(version.version > 1
+          ? [
+              db
+                .insert(schema.versionArchiveQueue)
+                .values({
+                  spaceId: scope.spaceId,
+                  environmentId: scope.environmentId,
+                  entryId: version.entryId,
+                  version: version.version - 1,
+                  dueAt: new Date(Date.now() + ARCHIVE_DELAY_MS),
+                })
+                .onConflictDoNothing(),
+            ]
+          : []),
       ]);
     },
     async saveAggregate(scope, entry) {
@@ -543,7 +596,14 @@ function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo
           and(scopeFilter(schema.entryVersions, scope), eq(schema.entryVersions.entryId, entryId)),
         )
         .orderBy(desc(schema.entryVersions.version));
-      return rows.map(toVersion);
+      // Archived bodies a few at a time: an entry with a long history must not open hundreds of
+      // object reads at once.
+      const out: EntryVersion[] = [];
+      for (let at = 0; at < rows.length; at += VERSION_READ_CONCURRENCY) {
+        const slice = rows.slice(at, at + VERSION_READ_CONCURRENCY);
+        out.push(...(await Promise.all(slice.map((r) => resolveVersion(r, false)))));
+      }
+      return out;
     },
     async getVersion(scope, entryId, version) {
       const [row] = await db
@@ -556,7 +616,138 @@ function makeEntryRepo(x: Exec, scanLimit = DEFAULT_QUERY_SCAN_LIMIT): EntryRepo
             eq(schema.entryVersions.version, version),
           ),
         );
-      return row ? toVersion(row) : null;
+      return row ? resolveVersion(row, true) : null;
+    },
+    async claimArchivableVersions(limit, now) {
+      directOnly(x, 'entries.claimArchivableVersions');
+      const q = schema.versionArchiveQueue;
+      const v = schema.entryVersions;
+      const e = schema.entries;
+      const p = schema.environmentPurges;
+      const due = await db
+        .select({
+          spaceId: q.spaceId,
+          environmentId: q.environmentId,
+          entryId: q.entryId,
+          version: q.version,
+          fields: v.fields,
+          bodyKey: v.bodyKey,
+          createdAt: v.createdAt,
+          rowExists: v.version,
+          currentVersion: e.currentVersion,
+          publishedVersion: e.publishedVersion,
+          purging: p.spaceId,
+        })
+        .from(q)
+        .leftJoin(
+          v,
+          and(
+            eq(v.spaceId, q.spaceId),
+            eq(v.environmentId, q.environmentId),
+            eq(v.entryId, q.entryId),
+            eq(v.version, q.version),
+          ),
+        )
+        .leftJoin(
+          e,
+          and(eq(e.spaceId, q.spaceId), eq(e.environmentId, q.environmentId), eq(e.id, q.entryId)),
+        )
+        .leftJoin(p, and(eq(p.spaceId, q.spaceId), eq(p.environmentId, q.environmentId)))
+        .where(lte(q.dueAt, now))
+        .orderBy(asc(q.dueAt))
+        .limit(limit);
+
+      const archivable: ArchivableVersion[] = [];
+      const housekeeping: Query[] = [];
+      const queueRow = (r: (typeof due)[number]) =>
+        and(
+          eq(q.spaceId, r.spaceId),
+          eq(q.environmentId, r.environmentId),
+          eq(q.entryId, r.entryId),
+          eq(q.version, r.version),
+        );
+      for (const r of due) {
+        const gone =
+          r.rowExists === null ||
+          r.bodyKey !== null ||
+          r.currentVersion === null ||
+          r.purging !== null;
+        if (gone) {
+          housekeeping.push(db.delete(q).where(queueRow(r)));
+        } else if (r.version >= (r.currentVersion ?? 0) || r.version === r.publishedVersion) {
+          // Its entry's current or published version for now: look again in a day.
+          housekeeping.push(
+            db
+              .update(q)
+              .set({ dueAt: new Date(now.getTime() + ARCHIVE_DELAY_MS) })
+              .where(queueRow(r)),
+          );
+        } else {
+          archivable.push({
+            scope: { spaceId: r.spaceId, environmentId: r.environmentId },
+            entryId: r.entryId,
+            version: r.version,
+            createdAt: (r.createdAt as Date).toISOString(),
+            fields: r.fields as EntryFields,
+          });
+        }
+      }
+      await writeAll(x, housekeeping);
+      return archivable;
+    },
+    async markVersionsArchived(versions) {
+      directOnly(x, 'entries.markVersionsArchived');
+      if (versions.length === 0) return 0;
+      const v = schema.entryVersions;
+      const e = schema.entries;
+      const q = schema.versionArchiveQueue;
+      // Re-checked in the same write: still this row (created_at), still holding its body, and
+      // still neither its entry's current nor its published version. A version that fails keeps
+      // its body; its queue row stays (and is looked at again later).
+      const statements: Query[] = [];
+      for (const a of versions) {
+        const row = and(
+          scopeFilter(v, a.scope),
+          eq(v.entryId, a.entryId),
+          eq(v.version, a.version),
+        );
+        statements.push(
+          db
+            .update(v)
+            .set({ fields: {}, bodyKey: a.bodyKey })
+            .where(
+              and(
+                row,
+                isNull(v.bodyKey),
+                eq(v.createdAt, new Date(a.createdAt)),
+                sql`EXISTS (SELECT 1 FROM ${e} WHERE ${e.spaceId} = ${v.spaceId} AND ${e.environmentId} = ${v.environmentId} AND ${e.id} = ${v.entryId} AND ${v.version} < ${e.currentVersion} AND (${e.publishedVersion} IS NULL OR ${v.version} <> ${e.publishedVersion}))`,
+              ),
+            ),
+          // Out of the queue once its body has moved.
+          db
+            .delete(q)
+            .where(
+              and(
+                scopeFilter(q, a.scope),
+                eq(q.entryId, a.entryId),
+                eq(q.version, a.version),
+                sql`EXISTS (SELECT 1 FROM ${v} WHERE ${v.spaceId} = ${a.scope.spaceId} AND ${v.environmentId} = ${a.scope.environmentId} AND ${v.entryId} = ${a.entryId} AND ${v.version} = ${a.version} AND ${v.bodyKey} IS NOT NULL)`,
+              ),
+            ),
+        );
+      }
+      let results: unknown[];
+      try {
+        results = await db.batch(statements as unknown as [Query, ...Query[]]);
+      } catch (err) {
+        throw mapD1Error(err);
+      }
+      // Every other statement is a version's UPDATE.
+      return results.reduce<number>(
+        (n, r, i) =>
+          i % 2 === 0 ? n + ((r as { meta?: { changes?: number } }).meta?.changes ?? 0) : n,
+        0,
+      );
     },
     async putPublished(scope, snapshot) {
       await putPublishedMany(scope, [snapshot]);
@@ -2546,6 +2737,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.previewTokens,
   schema.bulkJobs,
   schema.bulkJobChunks,
+  schema.versionArchiveQueue,
 ] as const;
 
 type ReleaseRow = typeof schema.releases.$inferSelect;
@@ -3962,13 +4154,18 @@ export interface D1StoreOptions {
    * {@link QueryTooBroadError} rather than silently truncating. Default 5000.
    */
   readonly queryScanLimit?: number;
+  /**
+   * Where superseded version bodies live once the archive sweep has moved them
+   * (`entries.markVersionsArchived`). Without it, reading an archived version throws.
+   */
+  readonly versionBodies?: BlobStore;
 }
 
 /** The repos `withTransaction` hands out, built over one unit of work. */
-function makeTx(x: Exec, scanLimit: number): ContentStoreTx {
+function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentStoreTx {
   return {
     contentTypes: makeContentTypeRepo(x),
-    entries: makeEntryRepo(x, scanLimit),
+    entries: makeEntryRepo(x, scanLimit, versionBodies),
     assets: makeAssetRepo(x),
     references: makeReferenceRepo(x),
     releases: makeReleaseRepo(x),
@@ -3991,7 +4188,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
   return {
     spaces: makeSpaceRepo(x),
     contentTypes: makeContentTypeRepo(x),
-    entries: makeEntryRepo(x, scanLimit),
+    entries: makeEntryRepo(x, scanLimit, options.versionBodies),
     assets: makeAssetRepo(x),
     references: makeReferenceRepo(x),
     webhooks: makeWebhookRepo(x),
@@ -4028,7 +4225,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
      */
     async withTransaction<T>(fn: (tx: ContentStoreTx) => Promise<T>): Promise<T> {
       const uow = new UnitOfWork(db);
-      const result = await fn(makeTx(uow, scanLimit));
+      const result = await fn(makeTx(uow, scanLimit, options.versionBodies));
       await uow.commit();
       return result;
     },

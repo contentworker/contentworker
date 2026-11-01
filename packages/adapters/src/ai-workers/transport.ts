@@ -82,3 +82,18 @@ export function asWorkersAIError(err: unknown): WorkersAIError {
   const message = err instanceof Error ? err.message : String(err);
   return new WorkersAIError('upstream', `Workers AI call failed: ${message}`);
 }
+
+/** Run options routing a call through AI Gateway, or none to call Workers AI directly. */
+export function gatewayRunOptions(
+  gatewayId: string | undefined,
+  collectLogs: boolean | undefined,
+): WorkersAiRunOptions | undefined {
+  if (!gatewayId) return undefined;
+  return {
+    gateway: { id: gatewayId },
+    extraHeaders: {
+      ...NO_LOG_PAYLOAD,
+      ...(collectLogs === undefined ? {} : { 'cf-aig-collect-log': String(collectLogs) }),
+    },
+  };
+}

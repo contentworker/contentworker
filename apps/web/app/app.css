@@ -824,6 +824,28 @@
   .rich-text-editor a {
     @apply text-link underline underline-offset-2;
   }
+  /* Tables are content: hairline cells, header cells set apart by weight and a
+     muted fill. A wide one scrolls inside its wrapper rather than the page. */
+  .rich-text-editor .tableWrapper {
+    @apply overflow-x-auto;
+  }
+  .rich-text-editor table {
+    @apply w-full border-collapse;
+  }
+  .rich-text-editor th,
+  .rich-text-editor td {
+    @apply min-w-24 border border-border px-2 py-1 text-left align-top;
+  }
+  .rich-text-editor th {
+    @apply bg-muted font-semibold;
+  }
+  .rich-text-editor td > * + *,
+  .rich-text-editor th > * + * {
+    @apply mt-1;
+  }
+  .rich-text-editor .selectedCell {
+    background-color: color-mix(in oklch, var(--link) 12%, transparent);
+  }
   .rich-text-editor p.is-editor-empty:first-child::before {
     content: attr(data-placeholder);
     @apply pointer-events-none float-left h-0 text-muted-foreground;

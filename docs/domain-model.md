@@ -94,13 +94,16 @@ A `RichText` value is a document tree (`packages/domain/src/rich-text/rich-text.
 `document` root whose `content` is block and inline nodes. Text lives in `text` nodes carrying
 `marks`; reference nodes carry a `data.target` link so the reference graph can be extracted from
 rich text exactly as from `Link` fields (`extractRichTextTargets`). `richTextToPlainText`
-flattens a document for search/embedding.
+flattens a document for search/embedding; a table reads as one block, a line per row with its
+cells separated by ` | `.
 
 The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`):
 
 - **Blocks** — `paragraph`, `heading-1`…`heading-6`, `blockquote`, `unordered-list`,
-  `ordered-list`, `list-item`, `code-block` (optional `data.language`), `hr`, and the table
-  nodes `table`, `table-row`, `table-header-cell`, `table-cell`.
+  `ordered-list`, `list-item`, `code-block` (optional `data.language`), `hr`.
+- **Tables** — `table` → `table-row` → `table-header-cell` | `table-cell` → blocks (normally a
+  `paragraph`), each with `data: {}`. A merged cell carries `data.colspan` / `data.rowspan`
+  (integers above 1); column widths are not stored.
 - **Inline** — `text` (with `marks`), `hard-break`, `hyperlink` (`data.uri`, text children).
 - **References** (`REFERENCE_NODE_TYPES`, each with `data.target: { id, linkType }`) —
   `embedded-entry-block`, `embedded-asset-block`, `embedded-entry-inline`, `entry-hyperlink`,
@@ -119,9 +122,16 @@ The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`
   the path (`javascript&colon;`). The HTML import applies the same rule, keeping an unsafe link's
   text and dropping its target;
 - a document over `MAX_RICH_TEXT_BYTES` (512 KiB serialized, twice the `JSON` field cap) or
-  nested more than `MAX_RICH_TEXT_DEPTH` (64) nodes below the root.
+  nested more than `MAX_RICH_TEXT_DEPTH` (64) nodes below the root;
+- table structure: a table must hold at least one `table-row`, and only rows; a row at least
+  one cell, and only cells; a cell at least one block, and no bare inline nodes (wrap text in a
+  `paragraph`). Rows and cells outside their parent are refused, as is a table over
+  `MAX_TABLE_ROWS` (500) rows or a row over `MAX_TABLE_COLUMNS` (50) cells. Spans must be
+  integers within those bounds. Tables may nest inside a cell.
 
-Which node may hold which (blocks inside inline nodes, table structure) is not yet constrained.
+Beyond tables, which node may hold which (for example blocks inside inline nodes) is not yet
+constrained. The admin editor carries a table it can't draw as a grid (`isWellFormedTable`)
+through unchanged.
 
 In Delivery, `?include=` resolves rich-text references like `Link` fields: each reference node's
 `data.target` becomes the embedded entry or asset (the node and its `nodeType` stay), and a
@@ -274,20 +284,21 @@ Status is **derived**, never set directly, by `deriveStatus(currentVersion, publ
 
 Transitions (pure functions; each throws `InvalidStateError` when its precondition fails):
 
-| Function                   | Effect                                                      | Precondition        |
-| -------------------------- | ----------------------------------------------------------- | ------------------- |
-| `saveDraft(entry, fields)` | `currentVersion += 1`, new `EntryVersion`, re-derive status | not `archived`      |
-| `publish(entry)`           | `publishedVersion = currentVersion`, status `published`     | not `archived`      |
-| `unpublish(entry)`         | `publishedVersion = null`, status `draft`                   | currently published |
-| `archive(entry)`           | status `archived`                                           | —                   |
+| Function                   | Effect                                                      | Precondition         |
+| -------------------------- | ----------------------------------------------------------- | -------------------- |
+| `saveDraft(entry, fields)` | `currentVersion += 1`, new `EntryVersion`, re-derive status | not `archived`       |
+| `publish(entry)`           | `publishedVersion = currentVersion`, status `published`     | not `archived`       |
+| `unpublish(entry)`         | `publishedVersion = null`, status `draft`                   | currently published  |
+| `archive(entry)`           | status `archived`                                           | unpublished          |
+| `restore(entry)`           | status `draft` (re-derived with no published version)       | currently `archived` |
 
 `currentVersion`/`publishedVersion` are pointers into the immutable version ledger; each
 `saveDraft` appends a new version, and `publishedVersion` pins which one Delivery serves.
 
 ### The trash
 
-`archive` moves an entry out of circulation and `restore` brings it back as a _draft_ — never
-straight to published, since archiving requires an unpublished entry and re-publishing should be a
+`archive` moves an entry out of circulation and `restore` brings it back as a _draft_, never
+straight to published: archiving requires an unpublished entry, and re-publishing should be a
 deliberate act rather than a side effect of undoing a delete. Application-side, `trashEntry`
 unpublishes a live entry first so one editor intention stays one step, and `purgeEntry` is the only
 operation that destroys an entry and its version history.
@@ -319,12 +330,17 @@ interface Asset {
   file: AssetFile; // { url, fileName, contentType, size?, width?, height? }
   title: LocalizedValue;
   description: LocalizedValue;
+  metadata: AssetMetadata; // { altText: LocalizedValue, tags: string[], focalPoint?: { x, y }, fields? }
 }
 ```
 
-Assets have a single current revision (no version ledger). `publishAsset` / `unpublishAsset`
-move between `draft` and `published` (throwing `InvalidStateError` on bad transitions). Bytes are
-uploaded directly to object storage via a presigned URL — they never transit the API.
+`file.video` is present on hosted video assets (provider, status, playback URLs). `metadata` holds
+the editorial "aspects": per-locale alt text, taxonomy tag ids, a focal point (0..1 on each axis,
+so transforms crop toward it) and free-form `fields`; `applyAssetMetadata` merges a partial patch
+and validates the focal point. Assets have a single current revision (no version ledger).
+`publishAsset` throws `InvalidStateError` on an `archived` asset and `unpublishAsset` on one that is
+not `published`. File bytes are not part of the aggregate: `createAsset` returns a signed upload URL
+and the bytes go to the blob store (see [Architecture](./architecture.md#media-r2-images-stream)).
 
 ## References
 
@@ -365,25 +381,14 @@ exact event type. Delivery attempts are recorded as `WebhookDelivery` rows for o
 
 ## Domain events
 
-`DomainEvent` is a discriminated union appended to the transactional outbox. All share a
-`BaseEvent` of `{ id, scope, occurredAt }`:
-
-| `type`                      | Extra payload                                                              |
-| --------------------------- | -------------------------------------------------------------------------- |
-| `entry.published`           | `entryId`, `contentTypeApiId`, `version`, `fields`                         |
-| `entry.unpublished`         | `entryId`, `contentTypeApiId`                                              |
-| `entries.published_bulk`    | `jobId`, `chunkId`, `action`, `entryIds`                                   |
-| `asset.published`           | `assetId`                                                                  |
-| `asset.unpublished`         | `assetId`                                                                  |
-| `content_type.published`    | `contentTypeApiId`, `version`                                              |
-| `release.published`         | `releaseId`, `entryIds`                                                    |
-| `environment_alias.changed` | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias name |
-| `bulk.job_completed`        | `jobId`, `action`, `total`, `succeeded`, `failed`                          |
-| `workflow_run.*`            | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason`  |
-| `workflow.task_opened`, `workflow.webhook` | Editorial workflow tasks and inbound webhook nodes          |
-| `search.reindex_requested`, `bulk.chunk_due`, `environment.purge_due` | Control messages for background jobs |
-
-The full list and payloads are in [Events & webhooks](./events-and-webhooks.md#event-payloads).
+`DomainEvent` (`packages/domain/src/events.ts`) is a discriminated union appended to the
+transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. The types are
+`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
+`asset.unpublished`, `content_type.published`, `release.published`, `environment_alias.changed`,
+`environment.deleted`, `bulk.job_completed`, the `workflow_run.*` end states,
+`workflow.task_opened` and `workflow.webhook`, plus control messages for background work
+(`search.reindex_requested`, `bulk.chunk_due`, `environment.purge_due`). Every type and its payload
+is in [Events & webhooks](./events-and-webhooks.md#event-payloads).
 
 `EventType = DomainEvent['type']`. The stable `id` makes dispatch idempotent.
 
@@ -392,23 +397,30 @@ The full list and payloads are in [Events & webhooks](./events-and-webhooks.md#e
 Beyond core content types and entries, the domain (and store) model several platform capabilities.
 See [API reference](./api-reference.md) for HTTP shapes.
 
-| Aggregate                         | Purpose                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------- |
-| **Release**                       | Bundle entries/assets for coordinated publish (`release.published` event) |
-| **ScheduledAction**               | Deferred publish/unpublish at a future time                               |
-| **Comment / Task**                | Editorial collaboration on entries                                        |
-| **WorkflowDefinition**            | Named steps with scope requirements; per-entry workflow state             |
-| **ConceptScheme / Concept / Tag** | Controlled vocabulary and free-form tags                                  |
-| **EntryMetadata**                 | Tags and concept associations on an entry                                 |
-| **Role / ContentTypeGrant**       | Granular RBAC (see [Auth & RBAC](./auth-and-rbac.md))                     |
-| **AiAction**                      | Configurable prompt templates runnable against entries                    |
-| **Function**                      | User-defined HTTP endpoint invoked on domain events                       |
-| **AppExtension**                  | iframe panel registration for the admin UI                                |
-| **AgentRun**                      | Audit record for agent workflow executions                                |
-| **AuditLogEntry**                 | Space-level change audit                                                  |
-| **EnvironmentAlias**              | Map a path alias to a concrete environment id                             |
-
-Asset `metadata` (alt text per locale, tags) lives on the asset aggregate as JSON.
+| Aggregate                                     | Purpose                                                                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Release**                                   | Bundle entries/assets for coordinated publish (`release.published` event)                                                            |
+| **ScheduledAction**                           | Deferred publish/unpublish at a future time                                                                                          |
+| **Comment / Task**                            | Editorial collaboration on entries                                                                                                   |
+| **WorkflowGraphDefinition / WorkflowVersion** | An editable workflow graph (the draft) and its immutable published versions; `gatesPublish` makes single-entry publish require a run |
+| **WorkflowRun / WorkflowTask**                | A durable run pinned to one version, and the approvals, event waits and agent reviews it opens                                       |
+| **WorkflowDefinition** (legacy)               | Ordered `steps`, each gated by a scope; per-entry `EntryWorkflowState`. Kept for existing rows; `legacyStepsToGraph` converts it     |
+| **ConceptScheme / Concept / Tag**             | Controlled vocabulary and free-form tags                                                                                             |
+| **EntryMetadata**                             | Tags and concept associations on an entry                                                                                            |
+| **Role / ContentTypeGrant**                   | Granular RBAC (see [Auth & RBAC](./auth-and-rbac.md))                                                                                |
+| **AiAction**                                  | Configurable prompt templates runnable against entries                                                                               |
+| **Function**                                  | User-defined HTTP endpoint invoked on domain events                                                                                  |
+| **AppExtension**                              | iframe panel registration for the admin UI                                                                                           |
+| **AgentRun**                                  | Audit record for agent workflow executions                                                                                           |
+| **AuditLogEntry**                             | Space-level change audit                                                                                                             |
+| **EnvironmentAlias**                          | Map a path alias to a concrete environment id                                                                                        |
+| **Plugin** (`InstalledPlugin`)                | A sandboxed write-path plugin: manifest, checksum, approved capabilities (see [Plugins](./plugins.md))                               |
+| **BulkJob**                                   | A durable bulk publish, unpublish or import: N items in claimable chunks, with a report                                              |
+| **AgentSchedule**                             | A recurring agent job: workflow, UTC cron, content-type filter, `autoApply`                                                          |
+| **AgentReview**                               | A pending agent proposal a human approves or rejects                                                                                 |
+| **SpaceMember**                               | A person on a space's team: email, linked SSO subject, role, `disabled`                                                              |
+| **PreviewToken**                              | An expiring, entry-scoped token behind a shareable preview link (stored hashed)                                                      |
+| **OAuthClient / OAuth grant**                 | A dynamically registered client (not space-scoped) and the code, device and refresh grants a person approves                         |
 
 ## RBAC types
 
@@ -419,13 +431,23 @@ See [Auth & RBAC](./auth-and-rbac.md) for the full model. The domain owns: the `
 
 All extend `DomainError` (`{ code, message, details? }`) and carry a stable, client-facing `code`:
 
-| Class                              | `code`              | Meaning                                     |
-| ---------------------------------- | ------------------- | ------------------------------------------- |
-| `NotFoundError(resource, id)`      | `not_found`         | Resource missing                            |
-| `ValidationError(issues)`          | `validation_failed` | Carries `issues: FieldIssue[]`              |
-| `ConflictError(message, details?)` | `conflict`          | Uniqueness violation (e.g. duplicate apiId) |
-| `InvalidStateError(message)`       | `invalid_state`     | Illegal state-machine transition            |
-| `UnauthorizedError(message?)`      | `unauthorized`      | Invalid/missing credentials                 |
-| `ForbiddenError(scope)`            | `forbidden`         | Missing the required scope                  |
+| Class                                 | `code`              | HTTP | Meaning                                                          |
+| ------------------------------------- | ------------------- | ---- | ---------------------------------------------------------------- |
+| `NotFoundError(resource, id)`         | `not_found`         | 404  | Resource missing                                                 |
+| `ValidationError(issues)`             | `validation_failed` | 422  | Carries `issues: FieldIssue[]`                                   |
+| `ConflictError(message, details?)`    | `conflict`          | 409  | Uniqueness or identity violation (e.g. duplicate apiId)          |
+| `TransactionConflictError` (ports)    | `conflict`          | 409  | A compare-and-set lost inside a unit of work; nothing committed  |
+| `LastAdminError`                      | `last_admin`        | 409  | Would leave the space with no active administrator               |
+| `InvalidStateError(message)`          | `invalid_state`     | 400  | Illegal state-machine transition                                 |
+| `QueryTooBroadError(scanLimit)`       | `query_too_broad`   | 400  | A field query matched more candidates than the store evaluates   |
+| `UnauthorizedError(message?)`         | `unauthorized`      | 401  | Invalid/missing credentials                                      |
+| `ForbiddenError(scope)`               | `forbidden`         | 403  | Missing the required scope                                       |
+| `HookRejectedError(hook, reason)`     | `hook_rejected`     | 422  | A write-path hook refused the operation                          |
+| `RateLimitedError(message, retry?)`   | `rate_limited`      | 429  | A per-space rate or budget ceiling was exceeded                  |
+| `NotConfiguredError(capability, msg)` | `not_configured`    | 501  | The deployment has not bound the capability the request needs    |
+| `SecretUnreadableError(context)`      | `secret_unreadable` | 500  | A stored secret no configured key opens (never treated as unset) |
 
-The HTTP layer maps each `code` to a status code — see [API reference](./api-reference.md#error-handling).
+`OAuthError` (`oauth_<error>`) carries its own wire code and status for the OAuth endpoints, and
+`PluginCapabilityDeniedError` (`capability_denied`) refuses a plugin call outside its grant.
+
+`toHttpError` (`packages/http/src/api/http.ts`) does the mapping above, and the response body is in the [API reference](./api-reference.md#error-handling).

@@ -26,14 +26,20 @@
 ^packages/application/src/(delivery|preview|preview-tokens)\.ts$	guides/reading-content docs/api-reference.md	prose
 ^packages/domain/src/query/	guides/reading-content docs/api-reference.md	prose
 #
+# Environments and media:
+^packages/application/src/(branching|snapshots|snapshot-jobs|spaces|environment-purge)\.ts$	guides/environments docs/environments-and-snapshots.md docs/domain-model.md	prose
+^apps/web/app/cms/components/(BranchMerge|layout/EnvironmentSwitcher)\.tsx$	guides/environments	prose
+^packages/(application/src/(assets|image|video-assets|media-ai)\.ts$|domain/src/asset/|adapters/src/(blob-r2|images-cf|video-stream)/)	guides/media	prose
+^apps/web/app/cms/components/(MediaLibrary|AssetDetailSheet)\.tsx$	guides/media	prose
+#
 # Workflows, approvals, AI and agents:
 ^packages/domain/src/workflow/(planner|policy|logic|validate|assess)\.ts$	guides/workflows guides/approvals docs/domain-model.md	prose
 ^packages/application/src/(workflows|workflow-runs|workflow-copilot)\.ts$	guides/workflows guides/approvals docs/domain-model.md	prose
 ^packages/application/src/(generation|content-ai|media-ai|ai-actions|ai-budget|rag|semantics|search-index)\.ts$	guides/ai docs/ai-agents-and-search.md	prose
 ^packages/adapters/src/(ai-workers|vector-vectorize)/	guides/ai docs/ai-agents-and-search.md docs/configuration.md	prose
 ^packages/(agent-runtime/src/|application/src/agent-[a-z-]+\.ts$)	guides/ai docs/ai-agents-and-search.md	prose
-^packages/http/src/mcp/server\.ts$	guides/mcp docs/ai-agents-and-search.md	prose
-^packages/http/skills/	guides/mcp docs/ai-agents-and-search.md	prose
+^packages/http/src/mcp/server\.ts$	guides/mcp docs/mcp.md	prose
+^packages/http/skills/	guides/mcp docs/mcp.md	prose
 #
 # Events, webhooks, plugins:
 ^packages/application/src/(webhooks|hooks)\.ts$	guides/webhooks docs/events-and-webhooks.md	prose
@@ -67,3 +73,4 @@
 ^apps/web/app/routes\.ts$	docs/admin-ui.md	prose
 ^packages/seed/src/	start/getting-started docs/development.md	prose
 ^(packages/(domain|http)/src/assistant/|apps/engine/src/assistant\.ts$|apps/web/app/cms/(components/assistant/|lib/assistant))	guides/coworker docs/architecture.md	prose
+^\.github/workflows/deploy\.yml$	docs/backup-and-restore.md docs/deployment.md	prose

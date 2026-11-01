@@ -55,7 +55,7 @@ export default defineConfig(async () => ({
         },
         bindings: {
           AUTH_RATE_LIMIT_MAX: '3',
-          AUTH_RATE_LIMIT_WINDOW_MS: '300',
+          AUTH_RATE_LIMIT_WINDOW_MS: '3000',
           AI_MAX_REQUESTS_PER_WINDOW: '2',
           AI_MAX_TOKENS_PER_WINDOW: '100',
           // Wide enough that a test's sequential RPCs can't straddle a

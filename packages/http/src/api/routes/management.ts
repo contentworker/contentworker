@@ -1239,6 +1239,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       await guardEntry(c, c.req.param('id'), 'publish');
       await purgeEntry(ctx, scopeOf(c), c.req.param('id'), {
         force: c.req.query('force') === 'true',
+        ...(blob ? { blob } : {}),
       });
       return c.body(null, 204);
     },

@@ -6,7 +6,7 @@ import type {
   WorkflowNode,
   WorkflowRunActor,
 } from '@contentworker/domain';
-import type { AIProvider, EmailSender, WebhookSender } from '@contentworker/ports';
+import type { AIProvider, DecisionModel, EmailSender, WebhookSender } from '@contentworker/ports';
 import type { AppContext } from '../context';
 
 /**
@@ -51,6 +51,9 @@ export interface NodeWaitRequest {
 /** The ports node executors use beyond the store. Absent ones make their nodes fail clearly. */
 export interface WorkflowNodeDeps {
   readonly ai?: AIProvider;
+  /** Decision model for the `ai.*` nodes that choose (classify, route, moderate); without one
+   *  they ask `ai` for JSON instead. */
+  readonly decisions?: DecisionModel;
   readonly email?: EmailSender;
   readonly webhooks?: WebhookSender;
 }

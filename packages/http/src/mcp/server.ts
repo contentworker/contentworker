@@ -1886,7 +1886,10 @@ export function buildServer(
       // action that cannot be undone.
       guard(SCOPES.contentPublish, scopeOf(args));
       await guardEntry(scopeOf(args), args.id, 'publish');
-      await purgeEntry(ctx, scopeOf(args), args.id, { force: args.force });
+      await purgeEntry(ctx, scopeOf(args), args.id, {
+        force: args.force,
+        ...(deps.blob ? { blob: deps.blob } : {}),
+      });
       return ok({ purged: args.id });
     },
   );

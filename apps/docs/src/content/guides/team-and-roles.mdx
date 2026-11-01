@@ -1,9 +1,9 @@
 ---
 title: Team and roles
-description: Deployment accounts and sign-in, the five built-in space roles (Viewer, Approver, Editor, Manager, Administrator), setting up a new deployment's first admin, recovering admin access, and the last-administrator rule.
+description: Workspace accounts and sign-in, the five built-in space roles (Viewer, Approver, Editor, Manager, Administrator), setting up a new workspace's first admin, recovering admin access, and the last-administrator rule.
 ---
 
-Access has two layers. A person first needs an **account** on the deployment, which is how they
+Access has two layers. A person first needs an **account** on the workspace, which is how they
 sign in to the admin. Then, in each space they work in, they have a **space role**, as does every API
 key your integrations use. Every space starts with five built-in roles. They are ordered, so each one can do everything the roles before it can:
 
@@ -26,7 +26,7 @@ approval step lets anyone holding it decide unless the step asks for something e
 
 ## Accounts and sign-in
 
-Admins manage the deployment's accounts at **People and sign-in** (`/team`). An account is a
+Admins manage the workspace's accounts at **People and sign-in** (`/team`). An account is a
 **Member**, who signs in and works within the space roles they're given, or an **Admin**, who also
 manages accounts, single sign-on, SCIM provisioning and the audit log, and administers every space.
 
@@ -34,7 +34,7 @@ manages accounts, single sign-on, SCIM provisioning and the audit log, and admin
   password, shown once, to send them privately with the sign-in page; they choose their own the
   first time they sign in.
 - **Sign-in methods.** A password, a passkey, or your organization's **single sign-on** (OpenID
-  Connect) when the deployment has an identity provider configured. Two-factor sign-in with an
+  Connect) when the workspace has an identity provider configured. Two-factor sign-in with an
   authenticator app can be required.
 - **SCIM provisioning.** Your identity provider can add, update and turn off people through the
   SCIM endpoint (`/scim/v2`) with a token made on this page. Turning someone off signs them out
@@ -51,14 +51,26 @@ Administrators of a space manage who works in it at **Settings → Access → Sp
 - **People in this space.** Add someone by email with a space role; their email links their
   account to the space. Change a role from the list, which asks you to confirm in place. **Turn
   off** refuses their access to the space until you turn it back on; **Remove** takes them off it.
-  A deployment Admin who isn't on a space's team still administers it.
+  A workspace Admin who isn't on a space's team still administers it.
 - **API keys.** Every long-lived key with the role it acts with. Change a key's role the same way;
   mint and revoke keys under **Settings → API keys**.
 
-Over the API, the same page is `GET /spaces/{space}/team`, with `POST …/members`,
-`PATCH …/members/{id}`, `PUT …/api-keys/{id}/role` and `PUT …/access-settings`; a role can be named
-by id or by preset (`viewer`, `approver`, `editor`, `manager`, `admin`). The MCP server has
-`role_presets_list`, `team_list` and `role_preset_assign`.
+Over the API, all of these need `space:admin` and live under `/spaces/{space}`:
+
+| Route | Does |
+| --- | --- |
+| `GET /team` | People and keys with their roles, and `adminCount` |
+| `GET /role-presets` | The five built-in roles as seeded in the space |
+| `POST /members` | Add a person |
+| `PATCH /members/{id}` | Change their role, name or access (turn off or on) |
+| `DELETE /members/{id}` | Remove them from the space (204) |
+| `PUT /api-keys/{id}/role` | Change a key's role; `null` unbinds it |
+| `POST /roles/{id}/clone` | Copy a role into a new custom role |
+| `PUT /access-settings` | Require single sign-on (`ssoOnly`) |
+
+A role can be named by id or by preset (`viewer`, `approver`, `editor`, `manager`, `admin`). Custom
+roles are created and edited at `/spaces/{space}/roles`; see [Roles](/guides/api-keys/#roles). The
+MCP server has `role_presets_list`, `team_list` and `role_preset_assign`.
 
 ## The last administrator
 
@@ -67,10 +79,10 @@ removed or revoked, and the Administrator role can't lose `space:admin` while it
 anyone an administrator: the page says so where you'd make the change, and the API answers **409**
 `last_admin`. Make someone else an administrator first.
 
-## Setting up a new deployment
+## Setting up a new workspace
 
-A new deployment has no accounts, and until it does, every admin page except `/setup` sends a
-browser there. Whoever runs the deployment sends you
+A new workspace has no accounts, and until it does, every admin page except `/setup` sends a
+browser there. The workspace's administrator sends you
 the link to `/setup` and a one-time **setup code**. Enter the code, your email, a name and a
 password: that creates your Admin account and signs you in on **People and sign-in**, where you add
 everyone else.
@@ -79,6 +91,5 @@ The code works once. A wrong code is refused, throttled per address, and recorde
 
 ## Recovering admin access
 
-If no admin can sign in, ask whoever runs the deployment for a new setup code (they run
-`scripts/setup-code.sh`). It opens `/setup` once more, now titled **Recover admin access**, and
+If no admin can sign in, ask the workspace's administrator for a new setup code. It opens `/setup` once more, now titled **Recover admin access**, and
 whoever uses it gets a new Admin account, recorded in the audit log as `team.recovery_admin`.

@@ -1,9 +1,23 @@
 ---
 title: Editing and publishing
-description: Drafts and versions, publishing and unpublishing, the trash, collaboration on an entry, previews, bulk changes and imports.
+description: Save drafts and versions, publish and unpublish, use the trash, collaborate on an entry, share previews, change entries in bulk and import content.
 ---
 
-## Drafts and versions
+You will write entries as drafts, publish them to delivery, and recover from mistakes with
+versions and the trash. Everything below works from the admin (**Content**), the Management API
+and the [MCP server](/guides/mcp/).
+
+## Before you start
+
+- Saving, duplicating, trashing, commenting and creating preview links need `content:write`.
+- Publishing, unpublishing, scheduling, deleting permanently and bulk jobs need `content:publish`,
+  which you can withhold from writers so that everything they write goes through someone who may
+  publish. See [Team and roles](/guides/team-and-roles/).
+- Reading drafts, versions and the trash needs `preview:read`.
+
+`…` in the routes below stands for `/spaces/{space}/environments/{env}`.
+
+## Save drafts and restore versions
 
 Every save appends a new immutable version of the entry; nothing is overwritten. The entry's state
 follows from which version is live:
@@ -22,56 +36,130 @@ and **restore** an old version: it is copied forward as a new draft, so history 
 | List versions       | `GET …/entries/{id}/versions`                           | `preview:read`    |
 | Compare two         | `GET …/entries/{id}/versions/diff?from=3&to=5`          | `preview:read`    |
 | Restore one         | `POST …/entries/{id}/versions/{version}/restore`        | `content:write`   |
+| Duplicate           | `POST …/entries/{id}/duplicate`                         | `content:write`   |
 
-`…` stands for `/spaces/{space}/environments/{env}`.
+**Duplicate** (in the entries list's row menu, or `entries_duplicate` over MCP) copies the fields
+and taxonomy metadata into a new draft.
 
-## Publishing
+## Publish and unpublish
 
 **Publish** makes the entry's latest version the one delivery serves; **Unpublish** takes it off
-delivery and leaves the drafts in place. Both need `content:publish`, which you can withhold from
-writers so that everything they write goes through someone who may publish.
+delivery and leaves the drafts in place.
+
+| Do this   | API                           | MCP                  |
+| --------- | ----------------------------- | -------------------- |
+| Publish   | `POST …/entries/{id}/published`   | `entries_publish`   |
+| Unpublish | `DELETE …/entries/{id}/published` | `entries_unpublish` |
 
 Publishing validates the entry against its content type and checks that everything it links to
 exists. A published entry emits `entry.published`, which refreshes delivery caches, updates search
 and notifies [webhooks](/guides/webhooks/).
 
 To publish several entries together, use a [release](/guides/releases-and-scheduling/). To publish
-later, schedule it. To require a review first, use a [workflow](/guides/workflows/).
+later, schedule it. To put a review in front of publishing, use a [workflow](/guides/workflows/).
 
-## The trash
+## Use the trash
 
-Deleting an entry moves it to the trash: it is unpublished first if it was live, and hidden from
-every list. The trash (`GET …/entries?trashed=true`) shows what's there; **Restore** brings an
-entry back as a draft, never straight to published.
+**Move to trash** unpublishes the entry first if it was live and hides it from every list. In the
+entries list, **View trash** shows what's there and **Restore** brings an entry back as a draft,
+never straight to published.
 
-**Delete permanently** is the one action with no way back, so it needs `content:publish`, works
-only on an entry already in the trash, and is refused while published entries still link to it.
-The refusal names those entries.
+| Do this            | API                                                  | MCP                    |
+| ------------------ | ---------------------------------------------------- | ---------------------- |
+| Move to trash      | `DELETE …/entries/{id}`                              | `entries_trash`        |
+| List the trash     | `GET /preview/{space}/{env}/entries?trashed=true`    | `entries_list_trashed` |
+| Restore            | `POST …/entries/{id}/restore`                        | `entries_restore`      |
+| Delete permanently | `DELETE …/entries/{id}/permanent`                    | `entries_purge`        |
 
-## Comments and tasks
+**Delete permanently** is the one action with no way back, so it needs `content:publish` and works
+only on an entry already in the trash. It is refused with a `409` that names the published entries
+still linking to it, unless you pass `?force=true`.
 
-Each entry has a comment thread and a task list. Comment to discuss a change; create a task to ask
-someone for one, with an assignee and a status. Workflows can add comments and assign people too
-(see the [`content.comment`](/reference/nodes/#content.comment) and
+## Comment and assign tasks
+
+Each entry has a comment thread and a task list, in the editor's collaboration panel. Comment to
+discuss a change; create a task to ask someone for one, with an assignee and a status of `open` or
+`resolved`.
+
+| Do this            | API                                                          | MCP             |
+| ------------------ | ------------------------------------------------------------ | --------------- |
+| Read or add comments | `GET` / `POST …/entries/{id}/comments` (`body`, `parentId`)  | `comments_list`, `comments_add` |
+| Read or create tasks | `GET` / `POST …/entries/{id}/tasks` (`body`, `assignee`)     | `tasks_list`, `tasks_create`    |
+| Resolve or reassign  | `PUT …/tasks/{id}` (`status`, `assignee`)                    | `tasks_resolve`                 |
+
+Workflows can add comments and assign people too (see the
+[`content.comment`](/reference/nodes/#content.comment) and
 [`content.assign`](/reference/nodes/#content.assign) nodes).
 
-## Previews
+## Preview drafts
 
 Drafts are readable through the Preview API with a Preview (CPA) key, so a staging site can show
-unpublished changes exactly as the live site will. From the editor, a **preview link** opens your
-site's preview route for the entry with a short-lived token, for reviewers who don't have a key.
+unpublished changes exactly as the live site will.
+
+To show a draft to someone without a key, create a **preview link**. In the editor, press **Copy
+preview link**; over the API:
+
+```sh
+curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/preview-link" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "ttlHours": 24, "previewBaseUrl": "https://preview.example.com" }'
+```
+
+`ttlHours` defaults to 72 and is at most 8,760; `previewBaseUrl` defaults to the request's origin.
+The response is `{ url, token, expiresAt }`, where `url` is
+`{previewBaseUrl}/preview/{space}/{env}/entries/{id}?preview_token=…`. The token opens only that
+entry, through `GET /preview/{space}/{env}/entries/{id}?preview_token=…`, until it expires. See
+[Reading content](/guides/reading-content/#preview) for the Preview routes.
 
 On a previewed page, the SDKs can mark each rendered value with the field it came from, so
 clicking it opens that field in the editor. See [SDKs](/guides/sdks/#inline-editing).
 
-## Bulk changes
+## Change many entries at once
 
-Select entries in the list to publish or unpublish them together. The API
-accepts up to 1,000 entries per bulk request (`POST …/bulk/entries`, `…/bulk/entries/publish`,
-`…/bulk/entries/unpublish`); larger batches run as a background job you can follow.
+In the entries list, select rows and press **Publish selected** or **Unpublish selected**. Over
+the API, the synchronous routes take up to 1,000 entries per request:
 
-## Imports
+- `POST …/bulk/entries` creates entries (`content:write`).
+- `POST …/bulk/entries/publish` and `…/bulk/entries/unpublish` take `{ "ids": [ … ] }`
+  (`content:publish`).
 
-From the entries list, import a CSV, JSON or XML blog export into a content type. You map columns
-to fields, and a dry run reports what would be created, updated and skipped before anything is
-written. Large imports run as a resumable job with progress per batch.
+For bigger sets, start a background job yourself; nothing switches to a job automatically:
+
+```sh
+curl -s -X POST "$API/spaces/$SPACE/environments/main/bulk/jobs" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "action": "publish", "entryIds": ["…", "…"] }'
+```
+
+A job takes 1 to 250,000 ids and answers `202`. Starting, cancelling and reading the report of a
+job need `content:publish` on a role with no per-content-type restrictions. Follow it at
+`GET …/bulk/jobs/{id}`, read per-entry failures at `…/bulk/jobs/{id}/report` and stop it with
+`POST …/bulk/jobs/{id}/cancel`. The MCP tools are `bulk_job_start`, `bulk_job_status`,
+`bulk_job_report` and `bulk_job_cancel`.
+
+## Import content
+
+Import brings entries in from a file as drafts, in three steps. In the admin, open a content type
+and press **Import**; the API and MCP follow the same order.
+
+1. **Analyze.** Choose the file and its format (CSV, JSON or WordPress export). The analysis
+   reports what would be created, updated and skipped, the source fields nothing maps to (what the
+   import would throw away) and the records that would fail. It writes nothing, and an empty
+   mapping is a valid first analysis. (`POST …/imports/analyze`, `import_analyze`;
+   `GET …/imports/sources` lists the formats.)
+2. **Map.** Map source columns to the type's fields, optionally naming an identity field so
+   re-imports update rather than duplicate, and set `conflicts` (`skip`, `update` or `fail`).
+   Analyze again until the report is what you want.
+3. **Run.** The import creates entries through the same validation as any write
+   (`POST …/imports`, `import_execute`), or as a resumable background job with progress per batch
+   (`POST …/imports/job`; follow it at `…/bulk/jobs/{id}`). Entries arrive as drafts; publish
+   them with a bulk job afterwards.
+
+All three need `content:write`. To copy a whole environment instead, see
+[Environments](/guides/environments/).
+
+## Next steps
+
+- [Releases and scheduling](/guides/releases-and-scheduling/): publish many entries as one, or later.
+- [Workflows](/guides/workflows/): put a review between "save" and "publish".
+- [Reading content](/guides/reading-content/): how your site reads what you publish.
