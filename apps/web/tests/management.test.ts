@@ -176,19 +176,30 @@ describe('admin ManagementClient', () => {
   });
 
   it('reads the entries that hold an asset from a refused delete', async () => {
-    const usage = [{ fromEntryId: 'e1', fromField: 'hero', toId: 'a1', toType: 'Asset' }];
+    const usage = [
+      {
+        fromEntryId: 'e1',
+        fromField: 'hero',
+        toId: 'a1',
+        toType: 'Asset',
+        contentTypeApiId: 'page',
+        entryTitle: 'Home page',
+      },
+    ];
     const { fn } = fakeFetch(
       () =>
-        new Response(JSON.stringify({ error: { code: 'asset_in_use', message: 'used', usage } }), {
-          status: 409,
-        }),
+        new Response(
+          JSON.stringify({ error: { code: 'asset_in_use', message: 'used', usage, total: 73 } }),
+          { status: 409 },
+        ),
     );
     const err = await createManagementClient(conn, fn)
       .deleteAsset('a1')
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe('asset_in_use');
-    expect(assetUsageOf(err)).toEqual(usage);
+    // The titles and the full count ride in the body: nothing to fetch per link.
+    expect(assetUsageOf(err)).toEqual({ usage, total: 73 });
     expect(assetUsageOf(new ApiError(409, 'conflict'))).toBeNull();
   });
 

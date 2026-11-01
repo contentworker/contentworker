@@ -136,6 +136,8 @@ export function fileSize(bytes: number | undefined): string {
 export interface BulkOutcome {
   readonly done: number;
   readonly failed: number;
+  /** Which ones failed and why, so the screen can name them and keep them selected. */
+  readonly failures?: readonly { readonly id: string; readonly error: string }[];
 }
 
 /**
@@ -148,7 +150,7 @@ export async function runBulk(
   concurrency = 4,
 ): Promise<BulkOutcome> {
   let done = 0;
-  let failed = 0;
+  const failures: { id: string; error: string }[] = [];
   let next = 0;
   const lane = async () => {
     while (next < ids.length) {
@@ -156,13 +158,13 @@ export async function runBulk(
       try {
         await act(id);
         done += 1;
-      } catch {
-        failed += 1;
+      } catch (e) {
+        failures.push({ id, error: e instanceof Error ? e.message : String(e) });
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, lane));
-  return { done, failed };
+  return { done, failed: failures.length, failures };
 }
 
 /** "Published 3 assets", or "Published 2 of 3 assets; 1 failed". */

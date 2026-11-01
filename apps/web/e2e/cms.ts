@@ -145,3 +145,31 @@ export async function asFreshDeployment(page: Page, keep: (id: string) => boolea
     },
   );
 }
+
+/** Creates an asset record (no bytes: the library lists it all the same) and returns its id. */
+export async function seedAsset(
+  request: APIRequestContext,
+  title: string,
+  opts: { readonly folderId?: string; readonly publish?: boolean } = {},
+): Promise<string> {
+  const res = await api(request, 'POST', `${MGMT}/assets`, {
+    fileName: `${title.replace(/\W+/g, '-')}.png`,
+    contentType: 'image/png',
+    title: { 'en-US': title },
+    ...(opts.folderId ? { folderId: opts.folderId } : {}),
+  });
+  expect(res.ok(), await res.text()).toBe(true);
+  const { asset } = (await res.json()) as { asset: { id: string } };
+  if (opts.publish) {
+    const pub = await api(request, 'POST', `${MGMT}/assets/${asset.id}/published`);
+    expect(pub.ok(), await pub.text()).toBe(true);
+  }
+  return asset.id;
+}
+
+/** Creates an asset folder at the library root and returns its id. */
+export async function seedAssetFolder(request: APIRequestContext, name: string): Promise<string> {
+  const res = await api(request, 'POST', `${MGMT}/asset-folders`, { name });
+  expect(res.ok(), await res.text()).toBe(true);
+  return ((await res.json()) as { id: string }).id;
+}

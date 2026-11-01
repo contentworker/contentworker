@@ -18,7 +18,19 @@ const STATE: Record<UploadState, { status: string; label: string }> = {
   failed: { status: 'failed', label: 'Failed' },
 };
 
-/** The files of a drop or a pick, each with where its upload stands, and the batch's progress. */
+/** "Uploading 1 of 3" while it runs; then "Uploaded 2 files; 1 failed". */
+export function uploadSummary(items: readonly UploadItem[]): string {
+  const done = items.filter((i) => i.state === 'done').length;
+  const failed = items.filter((i) => i.state === 'failed').length;
+  if (done + failed < items.length) return `Uploading ${done + failed} of ${items.length}`;
+  const uploaded = `Uploaded ${done} ${done === 1 ? 'file' : 'files'}`;
+  return failed > 0 ? `${uploaded}; ${failed} failed` : uploaded;
+}
+
+/**
+ * The files of a drop or a pick, each with where its upload stands, and the batch's progress. The
+ * summary is a polite live region, so a screen reader hears the batch move and finish.
+ */
 export function AssetUploadList(props: { items: readonly UploadItem[]; onDismiss: () => void }) {
   const { items } = props;
   if (items.length === 0) return null;
@@ -27,11 +39,9 @@ export function AssetUploadList(props: { items: readonly UploadItem[]; onDismiss
   return (
     <section aria-label="Uploads" className="card space-y-3 p-4">
       <div className="flex items-center gap-3">
-        <h2 className="section-title">
-          {running
-            ? `Uploading ${finished} of ${items.length}`
-            : `Uploaded ${finished} of ${items.length}`}
-        </h2>
+        <p className="section-title" role="status">
+          {uploadSummary(items)}
+        </p>
         {!running && (
           <Button
             type="button"

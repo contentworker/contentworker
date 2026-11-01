@@ -86,7 +86,9 @@ afterEach(() => {
 const renderLibrary = () =>
   render(
     <MemoryRouter>
-      <QueryClientProvider client={new QueryClient()}>
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
         <ToastProvider>
           <AssetLibrary locale="en-US" />
         </ToastProvider>
@@ -279,18 +281,70 @@ describe('acting on several assets', () => {
     renderLibrary();
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Select “one.jpg”' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select “two.jpg”' }));
-    const bar = screen.getByRole('toolbar', { name: 'Selected assets' });
-    expect(within(bar).getByText('2 assets selected')).toBeTruthy();
+    // Labelled as the entries list labels its selection, and a group, not a toolbar (no arrow keys).
+    const bar = screen.getByRole('group', { name: 'Selected assets' });
+    expect(within(bar).getByText('2 selected')).toBeTruthy();
     await waitFor(() =>
       expect(within(bar).getByRole('option', { name: 'Campaigns' })).toBeTruthy(),
     );
     fireEvent.change(within(bar).getByRole('combobox', { name: 'Move to folder' }), {
       target: { value: 'f1' },
     });
-    fireEvent.click(within(bar).getByRole('button', { name: 'Move' }));
+    fireEvent.click(within(bar).getByRole('button', { name: 'Move selected' }));
     await waitFor(() => expect(client.moveAssets).toHaveBeenCalledWith(['a1', 'a2'], 'f1'));
     expect(await screen.findByText('Moved 2 assets to “Campaigns”')).toBeTruthy();
-    expect(screen.queryByRole('toolbar', { name: 'Selected assets' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Selected assets' })).toBeNull();
+  });
+
+  it('names the assets a bulk action failed on, keeping just those selected', async () => {
+    assets = [
+      asset({ id: 'a1', file: { fileName: 'one.jpg' } }),
+      asset({ id: 'a2', file: { fileName: 'two.jpg' } }),
+    ];
+    client.publishAsset.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'a2') throw new Error('embargoed');
+      return {};
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select “one.jpg”' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select “two.jpg”' }));
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Selected assets' })).getByRole('button', {
+        name: 'Publish selected',
+      }),
+    );
+    const alert = await screen.findByText('1 asset not published');
+    const box = alert.closest('[data-slot="alert"]') as HTMLElement;
+    expect(within(box).getByText('two.jpg')).toBeTruthy();
+    expect(within(box).getByText(/embargoed/)).toBeTruthy();
+    const bar = screen.getByRole('group', { name: 'Selected assets' });
+    expect(within(bar).getByText('1 selected')).toBeTruthy();
+    expect(
+      (screen.getByRole('checkbox', { name: 'Select “two.jpg”' }) as HTMLElement).getAttribute(
+        'data-state',
+      ),
+    ).toBe('checked');
+    expect(
+      screen.getByRole('checkbox', { name: 'Select “one.jpg”' }).getAttribute('data-state'),
+    ).toBe('unchecked');
+    client.publishAsset.mockImplementation(async () => ({}));
+  });
+
+  it('asks in place before archiving several, naming how many', async () => {
+    assets = [
+      asset({ id: 'a1', file: { fileName: 'one.jpg' } }),
+      asset({ id: 'a2', file: { fileName: 'two.jpg' } }),
+    ];
+    renderLibrary();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select “one.jpg”' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select “two.jpg”' }));
+    const bar = screen.getByRole('group', { name: 'Selected assets' });
+    fireEvent.click(within(bar).getByRole('button', { name: 'Archive selected' }));
+    expect(client.archiveAsset).not.toHaveBeenCalled();
+    const confirm = within(bar).getByRole('alertdialog', { name: /Archive 2 assets\?/ });
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Archive 2 assets' }));
+    await waitFor(() => expect(client.archiveAsset).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Archived 2 assets')).toBeTruthy();
   });
 
   it('publishes each selected asset and reports the tally, failures included', async () => {
@@ -303,8 +357,8 @@ describe('acting on several assets', () => {
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Select “one.jpg”' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select “two.jpg”' }));
     fireEvent.click(
-      within(screen.getByRole('toolbar', { name: 'Selected assets' })).getByRole('button', {
-        name: 'Publish',
+      within(screen.getByRole('group', { name: 'Selected assets' })).getByRole('button', {
+        name: 'Publish selected',
       }),
     );
     expect(await screen.findByText('Published 1 of 2 assets; 1 failed')).toBeTruthy();
@@ -346,7 +400,17 @@ describe('archiving and deleting', () => {
         error: {
           code: 'asset_in_use',
           message: 'used',
-          usage: [{ fromEntryId: 'e1', fromField: 'hero', toId: 'a1', toType: 'Asset' }],
+          usage: [
+            {
+              fromEntryId: 'e1',
+              fromField: 'hero',
+              toId: 'a1',
+              toType: 'Asset',
+              contentTypeApiId: 'page',
+              entryTitle: 'Home page',
+            },
+          ],
+          total: 1,
         },
       }),
     );
@@ -357,11 +421,86 @@ describe('archiving and deleting', () => {
     );
     const notice = await screen.findByRole('alert');
     expect(within(notice).getByText('“photo.jpg” is used by 1 entry')).toBeTruthy();
-    const link = await within(notice).findByRole('link', { name: 'Home page' });
+    const link = within(notice).getByRole('link', { name: 'Home page' });
     expect(link.getAttribute('href')).toBe('/content/page/e1');
+    // The refusal names each entry: nothing is fetched per link.
+    expect(client.getEntry).not.toHaveBeenCalled();
+    // The confirm that caused it was elsewhere: the notice takes focus, so it is read out.
+    await waitFor(() => expect(document.activeElement).toBe(notice));
 
     fireEvent.click(within(notice).getByRole('button', { name: 'Archive instead' }));
     await waitFor(() => expect(client.archiveAsset).toHaveBeenCalledWith('a1'));
+  });
+});
+
+describe('an asset in heavy use', () => {
+  it('lists the first few links and counts the rest', async () => {
+    assets = [asset()];
+    const usage = Array.from({ length: 50 }, (_, i) => ({
+      fromEntryId: `e${i}`,
+      fromField: 'hero',
+      toId: 'a1',
+      toType: 'Asset',
+      contentTypeApiId: 'page',
+      entryTitle: `Page ${i}`,
+    }));
+    client.deleteAsset.mockRejectedValueOnce(
+      new ApiError(409, 'in use', {
+        error: { code: 'asset_in_use', message: 'used', usage, total: 120 },
+      }),
+    );
+    renderLibrary();
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete “photo.jpg”' }));
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete' }),
+    );
+    const notice = await screen.findByRole('alert');
+    expect(within(notice).getByText('“photo.jpg” is used by 120 entries')).toBeTruthy();
+    expect(within(notice).getAllByRole('link')).toHaveLength(5);
+    expect(within(notice).getByText('and 115 more')).toBeTruthy();
+  });
+});
+
+describe('loading the library', () => {
+  it('says a failed load failed, with Retry, rather than showing an empty library', async () => {
+    client.listAssets.mockRejectedValueOnce(new Error('upstream timed out'));
+    renderLibrary();
+    expect(await screen.findByText('The assets didn’t load')).toBeTruthy();
+    expect(screen.getByText('upstream timed out')).toBeTruthy();
+    expect(screen.queryByText('No assets yet')).toBeNull();
+    assets = [asset()];
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: 'Open “photo.jpg”' })).toBeTruthy();
+  });
+
+  it('shows placeholder cards while the first page loads', async () => {
+    let finish: () => void = () => {};
+    client.listAssets.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          finish = () => r({ items: [] });
+        }),
+    );
+    const { container } = renderLibrary();
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Loading…')).toBeNull();
+    finish();
+    expect(await screen.findByText('No assets yet')).toBeTruthy();
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+  });
+});
+
+describe('the list view on a phone', () => {
+  it('lays rows out itself, names every cell, and gives Open a touch-sized target', async () => {
+    localStorage.setItem('cw.assets.view', 'list');
+    assets = [asset({ file: { size: 2048 } })];
+    renderLibrary();
+    const open = await screen.findByRole('button', { name: 'Open “photo.jpg”' });
+    expect(open.className).toContain('hit-area');
+    const table = screen.getByRole('table');
+    expect(table.getAttribute('data-stack')).toBe('rows');
+    const cells = within(table).getAllByRole('cell');
+    expect(cells.every((c) => c.getAttribute('data-label'))).toBe(true);
   });
 });
 
@@ -387,8 +526,16 @@ describe('uploading many files', () => {
     expect(within(uploads).getByText('Uploaded')).toBeTruthy();
     expect(within(uploads).getByText('Uploading')).toBeTruthy();
 
+    // The summary is a live region, so the batch's progress is read out.
+    expect(within(uploads).getByRole('status').textContent).toBe('Uploading 1 of 2');
     finishSecond();
-    await waitFor(() => expect(within(uploads).getByText('Uploaded 2 of 2')).toBeTruthy());
+    await waitFor(() =>
+      expect(within(uploads).getByRole('status').textContent).toBe('Uploaded 2 files'),
+    );
+    // And its end is a toast, once.
+    const toasts = await screen.findAllByText('Uploaded 2 files');
+    const toast = toasts.map((t) => t.closest('output')).find(Boolean) as HTMLElement;
+    expect(toast.querySelector('.bg-ok')).not.toBeNull();
     expect(client.uploadAsset).toHaveBeenCalledWith(a, { folderId: 'f1' });
     expect(client.uploadAsset).toHaveBeenCalledWith(b, { folderId: 'f1' });
     client.uploadAsset.mockImplementation(async () => asset());
@@ -404,7 +551,13 @@ describe('uploading many files', () => {
       },
     });
     const uploads = await screen.findByRole('region', { name: 'Uploads' });
-    await waitFor(() => expect(within(uploads).getByText('Uploaded 2 of 2')).toBeTruthy());
+    await waitFor(() =>
+      expect(within(uploads).getByRole('status').textContent).toBe('Uploaded 1 file; 1 failed'),
+    );
+    // The toast at the end of the batch is an error, since something failed.
+    const toasts = await screen.findAllByText('Uploaded 1 file; 1 failed');
+    const toast = toasts.map((t) => t.closest('output')).find(Boolean) as HTMLElement;
+    expect(toast.querySelector('.bg-bad')).not.toBeNull();
     expect(within(uploads).getByText('Failed')).toBeTruthy();
     expect(within(uploads).getByText('too big')).toBeTruthy();
   });
@@ -420,6 +573,79 @@ describe('folders', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create folder' }));
     await waitFor(() => expect(client.createAssetFolder).toHaveBeenCalledWith({ name: 'Brand' }));
     await waitFor(() => expect(lastQuery()).toMatchObject({ folder: 'new' }));
+  });
+
+  it('nests subfolders as lists inside their parent', async () => {
+    folders = [
+      folder('f1', 'Brand'),
+      { ...folder('f2', 'Logos'), parentId: 'f1', path: '/f1/f2/' },
+    ];
+    renderLibrary();
+    const logos = await screen.findByRole('button', { name: 'Logos' });
+    const brandItem = screen.getByRole('button', { name: 'Brand' }).closest('li') as HTMLElement;
+    // Logos is an item of a list inside Brand's item: the nesting is in the markup, not padding.
+    expect(brandItem.querySelector('ul')?.contains(logos)).toBe(true);
+    expect(logos.closest('li')?.parentElement?.closest('li')).toBe(brandItem);
+  });
+
+  it('returns focus to the button that opened the name form when it closes', async () => {
+    folders = [folder('f1', 'Campaigns')];
+    renderLibrary();
+    const newFolder = screen.getByRole('button', { name: 'New folder' });
+    fireEvent.click(newFolder);
+    const input = screen.getByRole('textbox', { name: 'New folder name' });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    // The form replaced the button; the one drawn again in its place gets focus.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New folder' })),
+    );
+    expect(newFolder.isConnected).toBe(false);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Campaigns' }));
+    const rename = screen.getByRole('button', { name: 'Rename “Campaigns”' });
+    fireEvent.click(rename);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Rename “Campaigns”' }),
+      ),
+    );
+  });
+
+  it('focuses a folder once it is created', async () => {
+    client.createAssetFolder.mockImplementationOnce(async (input: { name: string }) => {
+      folders = [folder('new', input.name)];
+      return folder('new', input.name);
+    });
+    renderLibrary();
+    await screen.findByText('No assets yet');
+    fireEvent.click(screen.getByRole('button', { name: 'New folder' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'New folder name' }), {
+      target: { value: 'Brand' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create folder' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Brand' })),
+    );
+  });
+
+  it('offers the folders as a select of paths, with the actions in a sheet, for a phone', async () => {
+    folders = [
+      folder('f1', 'Brand'),
+      { ...folder('f2', 'Logos'), parentId: 'f1', path: '/f1/f2/' },
+    ];
+    renderLibrary();
+    const select = screen.getByRole('combobox', { name: 'Folder' });
+    await waitFor(() =>
+      expect(within(select).getByRole('option', { name: 'Brand / Logos' })).toBeTruthy(),
+    );
+    fireEvent.change(select, { target: { value: 'f2' } });
+    await waitFor(() => expect(lastQuery()).toMatchObject({ folder: 'f2' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Folder actions' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByRole('button', { name: 'Rename “Logos”' })).toBeTruthy();
+    expect(within(sheet).getByRole('button', { name: 'New subfolder' })).toBeTruthy();
   });
 
   it('says why a folder with something in it was not deleted', async () => {

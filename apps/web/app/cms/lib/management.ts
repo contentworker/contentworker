@@ -6,6 +6,7 @@ import type {
   AssetKind,
   AssetMetadata,
   AssetStatus,
+  AssetUsage,
   Comment,
   Concept,
   ConceptScheme,
@@ -794,14 +795,24 @@ export class ApiError extends Error {
   }
 }
 
+/** The links that hold an asset, as a refused delete reports them: the first few, and how many. */
+export interface AssetInUse {
+  /** The first links (the API sends at most 50), each with its entry's type and title. */
+  readonly usage: readonly AssetUsage[];
+  /** Every link, counted, so the screen can say how many it isn't showing. */
+  readonly total: number;
+}
+
 /**
  * Why an asset couldn't be deleted: the entries that still link to it (409 `asset_in_use`), so the
- * screen can show where it is used. Null for any other failure.
+ * screen can show where it is used without fetching each entry. Null for any other failure.
  */
-export function assetUsageOf(err: unknown): ReferenceEdge[] | null {
+export function assetUsageOf(err: unknown): AssetInUse | null {
   if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'asset_in_use') return null;
-  const usage = (err.body as { error?: { usage?: unknown } }).error?.usage;
-  return Array.isArray(usage) ? (usage as ReferenceEdge[]) : [];
+  const body = (err.body as { error?: { usage?: unknown; total?: unknown } }).error;
+  const usage = Array.isArray(body?.usage) ? (body.usage as AssetUsage[]) : [];
+  const total = typeof body?.total === 'number' ? body.total : usage.length;
+  return { usage, total };
 }
 
 /** What the asset library can be narrowed and ordered by (the API's `GET …/assets` query). */
