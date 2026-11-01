@@ -194,7 +194,14 @@ describe('asset search', () => {
     await publishAsset(ctx, scope, asset.id);
     // The file is replaced (v2) and ingested; the v1 snapshot is still what is published.
     const v1 = await ctx.store.assets.get(scope, asset.id);
-    await ctx.store.assets.save(scope, { ...(v1 as NonNullable<typeof v1>), version: 2 });
+    const current = v1 as NonNullable<typeof v1>;
+    await ctx.store.withTransaction((tx) =>
+      tx.assets.replaceFile(
+        scope,
+        { ...current, version: 2 },
+        { version: 1, file: current.file, replacedAt: '2026-01-01T00:00:00.000Z' },
+      ),
+    );
     await blob.put(assetTextKey(scope, asset.id, 2) as string, 'zeppelin', 'text/markdown');
     await indexAssetForSearch(ctx, deps, blob, scope, asset.id);
 

@@ -58,6 +58,14 @@ const client = {
     fields: { title: { 'en-US': 'Home page' } },
   })),
   assetUsage: vi.fn(async () => []),
+  // The Versions tab stays mounted, so the sheet reads the versions (and the team) on open.
+  listAssetVersions: vi.fn(async () => []),
+  getTeam: vi.fn(async () => ({
+    people: [],
+    keys: [],
+    adminCount: 1,
+    settings: { ssoOnly: false },
+  })),
   publishAsset: vi.fn(async () => ({})),
   unpublishAsset: vi.fn(async () => ({})),
   archiveAsset: vi.fn(async () => ({})),

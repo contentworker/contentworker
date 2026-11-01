@@ -5,6 +5,7 @@ import { type ChainedJob, persistJob } from './bulk-jobs';
 import type { AppContext } from './context';
 import { importChunkKey } from './job-staging';
 import {
+  confineSnapshotFiles,
   createSnapshotAsset,
   createSnapshotEntry,
   type EnvironmentSnapshot,
@@ -96,6 +97,7 @@ export async function startSnapshotImport(
   snapshot: EnvironmentSnapshot,
   options: StartSnapshotOptions = {},
 ): Promise<StartedSnapshotImport> {
+  snapshot = confineSnapshotFiles(target, snapshot, options.filesFrom);
   const { report, publishable } = await prepareSnapshotImport(ctx, target, snapshot, options);
   const publishing = options.publish !== false;
 
@@ -286,6 +288,7 @@ async function runClonePrepare(
     await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source), {
       publish: config.publish !== false,
       jobIds: { create: createJobId, publish: publishJobId },
+      filesFrom: source.spaceId,
     });
     return { succeeded: 1, failures: [] };
   } catch (err) {

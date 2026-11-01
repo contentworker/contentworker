@@ -89,11 +89,19 @@ export interface BlobStore {
    */
   open?(key: string): Promise<BlobObject | null>;
   /**
-   * What the store records about `key` without reading it, or `null` when the object does not
-   * exist. Optional: a store without it can't tell an upload that landed from one that never did,
-   * so the abandoned-upload sweep doesn't run on it.
+   * What is stored under `key`, without its bytes: `null` when nothing is. Optional: a store
+   * without it can't confirm an upload landed, so replacing an asset's file needs it and the
+   * abandoned-upload sweep doesn't run without it.
    */
-  head?(key: string): Promise<{ readonly size: number } | null>;
+  head?(key: string): Promise<BlobHead | null>;
+}
+
+/** An object's description, as {@link BlobStore.head} reads it. */
+export interface BlobHead {
+  readonly size: number;
+  readonly contentType?: string;
+  /** Names the bytes: a second write to the same key gets another. */
+  readonly etag?: string;
 }
 
 /**

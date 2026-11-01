@@ -323,7 +323,14 @@ describe('asset ingest', () => {
 
   it('a run for a replaced or deleted file does nothing', async () => {
     const asset = await t.upload('mug.png', 'image/png', 'bytes');
-    await t.store.assets.save(scope, { ...asset, version: 2 });
+    // Replaced since the run was queued: a save can't move the version, a replace does.
+    await t.store.withTransaction((tx) =>
+      tx.assets.replaceFile(
+        scope,
+        { ...asset, version: 2 },
+        { version: 1, file: asset.file, replacedAt: '2026-01-01T00:00:00.000Z' },
+      ),
+    );
     expect(await t.run(asset.id)).toMatchObject({ value: { outcome: 'stale' } });
     expect((await getAsset(t.ctx, scope, asset.id)).ingestStatus).toBeUndefined();
   });

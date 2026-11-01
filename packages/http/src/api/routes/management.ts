@@ -1,4 +1,5 @@
 import {
+  type AssetBulkAction,
   addComment,
   addEntryToRelease,
   agentUsage,
@@ -7,6 +8,7 @@ import {
   approvePluginCapabilities,
   approvePromotion,
   archiveAsset,
+  assetBulkActionPublishes,
   assetSearchDeps,
   auditActor,
   auditEntry,
@@ -18,6 +20,7 @@ import {
   cancelScheduledAction,
   canvasToEntry,
   cloneEnvironment,
+  commitAssetFile,
   compareEnvironments,
   countEntriesByContentType,
   createAgentSchedule,
@@ -102,6 +105,7 @@ import {
   listAssetFolders,
   listAssetRenditions,
   listAssets,
+  listAssetVersions,
   listAuditLog,
   listBulkJobs,
   listComments,
@@ -141,10 +145,12 @@ import {
   relatedEntries,
   removeEntryFromRelease,
   reopenTask,
+  replaceAssetFile,
   requestPromotion,
   requestReindex,
   resolveTask,
   restoreAsset,
+  restoreAssetVersion,
   restoreEntry,
   restoreVersion,
   revokeApiKey,
@@ -155,11 +161,13 @@ import {
   searchAssets,
   searchIndexHealth,
   setAssetMetadata,
+  setAssetRights,
   setConceptBroader,
   setEntryMetadata,
   setEnvironmentAlias,
   setPluginEnabled,
   setPluginSettings,
+  startAssetBulkJob,
   startAssetReindex,
   startBulkJob,
   startEnvironmentClone,
@@ -227,12 +235,14 @@ import {
   altTextBody,
   appExtensionBody,
   applyTagsBody,
+  assetBulkBody,
   assetFolderBody,
   assetFolderPatchBody,
   assetMetadataBody,
   assetReindexBody,
   assetRenditionBody,
   assetRenditionPatchBody,
+  assetRightsBody,
   auditBody,
   autofillBody,
   broaderBody,
@@ -241,6 +251,7 @@ import {
   canvasBody,
   cloneBody,
   commentBody,
+  commitAssetFileBody,
   conceptBody,
   contentTypeBody,
   createAiActionBody,
@@ -271,6 +282,7 @@ import {
   promotionBody,
   reindexBody,
   releaseItemBody,
+  replaceAssetFileBody,
   revokeConnectionBody,
   roleBody,
   runAiActionBody,
@@ -1896,6 +1908,40 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => c.json(await moveAssets(ctx, scopeOf(c), await parseBody(c, moveAssetsBody))),
   );
   app.post(
+    `${BASE}/assets/bulk`,
+    doc('Assets', 'Act on many assets as a bulk job', {
+      body: assetBulkBody,
+      ok: docs.assetBulkJob,
+      status: 202,
+      description:
+        'A resumable bulk job over a selection of assets (follow it at /bulk/jobs/{id}, failures ' +
+        'at /bulk/jobs/{id}/report, each named by the asset’s title or file name): move ' +
+        '(folderId, null for the root), tag (addTags, removeTags), publish, unpublish or ' +
+        'archive. Each asset goes through the same checks as one at a time (publishing refuses ' +
+        'an archived or embargoed asset). move and tag need content:write; publish, unpublish ' +
+        'and archive need content:publish.',
+    }),
+    // No route-level scope: it depends on the action, so it is checked once the body is read.
+    // content:publish alone is enough to publish, as on the single-asset routes and MCP.
+    async (c) => {
+      const body = await parseBody(c, assetBulkBody);
+      const action = body.action as AssetBulkAction;
+      authorize(
+        c.get('principal'),
+        assetBulkActionPublishes(action) ? SCOPES.contentPublish : SCOPES.contentWrite,
+        c.req.param('space'),
+      );
+      const job = await startAssetBulkJob(ctx, scopeOf(c), {
+        action,
+        ids: body.ids,
+        ...(body.folderId !== undefined ? { folderId: body.folderId } : {}),
+        ...(body.addTags ? { addTags: body.addTags } : {}),
+        ...(body.removeTags ? { removeTags: body.removeTags } : {}),
+      });
+      return c.json(job, 202);
+    },
+  );
+  app.post(
     `${BASE}/assets/videos`,
     doc('Assets', 'Create a video asset (direct upload to the video host)', {
       body: createVideoAssetBody,
@@ -2010,6 +2056,112 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => c.json(await signedOne(c, await restoreAsset(ctx, scopeOf(c), c.req.param('id')))),
+  );
+  app.post(
+    `${BASE}/assets/:id/file`,
+    doc('Assets', "Start replacing an asset's file", {
+      body: replaceAssetFileBody,
+      ok: docs.assetFileReplacement,
+      status: 201,
+      description:
+        'Returns a signed PUT for the next version. PUT the bytes to upload.url with ' +
+        'upload.headers, then POST commit to /assets/{id}/file/commit. Nothing changes until ' +
+        'then. A published asset keeps delivering its published file until it is published ' +
+        'again. 400 for a hosted video.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const replacement = await replaceAssetFile(
+        ctx,
+        blob,
+        scopeOf(c),
+        c.req.param('id'),
+        await parseBody(c, replaceAssetFileBody),
+      );
+      return c.json({ ...replacement, asset: await signedOne(c, replacement.asset) }, 201);
+    },
+  );
+  app.post(
+    `${BASE}/assets/:id/file/commit`,
+    doc('Assets', 'Commit an uploaded replacement file', {
+      body: commitAssetFileBody,
+      ok: docs.asset,
+      description:
+        'Makes the uploaded file current as a new version and keeps the old one in the ' +
+        'history; ingest runs on it. 422 when nothing was uploaded; 409 when another replace or ' +
+        'restore committed first. Committing again what is already committed returns the asset.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) =>
+      c.json(
+        await signedOne(
+          c,
+          await commitAssetFile(
+            ctx,
+            blob,
+            scopeOf(c),
+            c.req.param('id'),
+            await parseBody(c, commitAssetFileBody),
+            { by: auditActor(c.get('principal')) },
+          ),
+        ),
+      ),
+  );
+  app.get(
+    `${BASE}/assets/:id/versions`,
+    doc('Assets', "List an asset's file versions", {
+      ok: docs.assetVersionList,
+      description:
+        'Newest first: the current file and every earlier one, each with when it became the ' +
+        'asset’s and by whom, and which one Delivery serves (published).',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) =>
+      c.json({ items: await listAssetVersions(ctx, scopeOf(c), c.req.param('id'), { blob }) }),
+  );
+  app.post(
+    `${BASE}/assets/:id/versions/:version/restore`,
+    doc('Assets', 'Restore an earlier file version', {
+      ok: docs.asset,
+      description:
+        'Makes that version’s file current again as a new version (the bytes are not copied). ' +
+        'Delivery keeps its published file until the asset is published again. 422 for the ' +
+        'current version; 404 for one the asset never had.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const version = Number(c.req.param('version'));
+      if (!Number.isInteger(version) || version < 1) {
+        throw new ValidationError([{ field: 'version', message: 'A version number (1 or more)' }]);
+      }
+      const asset = await restoreAssetVersion(ctx, blob, scopeOf(c), c.req.param('id'), version, {
+        by: auditActor(c.get('principal')),
+      });
+      return c.json(await signedOne(c, asset));
+    },
+  );
+  app.put(
+    `${BASE}/assets/:id/rights`,
+    doc('Assets', "Set an asset's usage rights", {
+      body: assetRightsBody,
+      ok: docs.asset,
+      description:
+        'Replaces the rights (an empty body clears them): license and credit (Delivery shows ' +
+        'both), expiresAt (the asset is unpublished then, and its media answers 410) and ' +
+        'embargoUntil (publishing is refused before then with 409 asset_embargoed). On a ' +
+        'published asset they apply at once, without a republish; an embargo cannot be set on ' +
+        'one. Requires content:publish: rights decide whether the asset is delivered.',
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) => {
+      const body = await parseBody(c, assetRightsBody);
+      const rights = Object.fromEntries(
+        Object.entries(body).filter(([, v]) => v !== null && v !== undefined),
+      );
+      return c.json(
+        await signedOne(c, await setAssetRights(ctx, scopeOf(c), c.req.param('id'), rights)),
+      );
+    },
   );
   app.delete(
     `${BASE}/assets/:id`,

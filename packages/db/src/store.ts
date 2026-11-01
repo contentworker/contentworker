@@ -61,6 +61,7 @@ import type {
   AssetRenditionRepo,
   AssetRepo,
   AssetSortField,
+  AssetVersionRecord,
   AuditRepo,
   AuthRepo,
   BlobStore,
@@ -1121,7 +1122,28 @@ function makeAssetRepo(x: Exec): AssetRepo {
       ingestError: asset.ingestError ?? null,
       duplicateOf: asset.duplicateOf ?? null,
     };
-    const { contentHash: _hash, ...updated } = columns;
+    const { contentHash: _hash, ...edited } = columns;
+    // What a file replace owns: the file and its version. A save made from a read taken before a
+    // replace or restore committed carries the old version, and writing its file back would drop
+    // the new one from the row (it was never put in the history) and hand its version number out
+    // again. So those columns take the saved values only when the version matches the row's.
+    const sameVersion = (column: string) =>
+      sql.raw(
+        `CASE WHEN "assets"."version" = excluded."version" THEN excluded."${column}" ELSE "assets"."${column}" END`,
+      );
+    const updated = {
+      ...edited,
+      file: sameVersion('file'),
+      kind: sameVersion('kind'),
+      mime: sameVersion('mime'),
+      size: sameVersion('size'),
+      width: sameVersion('width'),
+      height: sameVersion('height'),
+      r2Key: sameVersion('r2_key'),
+      // SQLite reads every right-hand side against the row before the update, so this CASE
+      // (always the row's own version) and the ones above all compare the same two values.
+      version: sameVersion('version'),
+    };
     return db
       .insert(schema.assets)
       .values({
@@ -1348,6 +1370,7 @@ function makeAssetRepo(x: Exec): AssetRepo {
         r2Key: s.r2Key ?? null,
         kind: assetKind(s.file.contentType),
         rights: s.rights ?? null,
+        expiresAt: expiryOf(s.rights),
       };
       await x.write(
         db
@@ -1369,9 +1392,118 @@ function makeAssetRepo(x: Exec): AssetRepo {
               r2Key: values.r2Key,
               kind: values.kind,
               rights: values.rights,
+              expiresAt: values.expiresAt,
             },
           }),
       );
+    },
+    async replaceFile(scope, next, previous) {
+      const t = schema.assets;
+      const v = schema.assetVersions;
+      const file = next.file;
+      await writeAll(x, [
+        // Still on the version the caller read when the batch runs: a replace or restore that
+        // committed in between aborts this one (TransactionConflictError), so no version is
+        // written twice and no file is lost from the history.
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT EXISTS (SELECT 1 FROM ${t} WHERE ${t.spaceId} = ${scope.spaceId} AND ${t.environmentId} = ${scope.environmentId} AND ${t.id} = ${next.id} AND ${t.version} = ${previous.version}) AS ok`,
+          ),
+        db.delete(schema.guard),
+        db.insert(v).values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          assetId: next.id,
+          version: previous.version,
+          file: previous.file,
+          r2Key: previous.r2Key ?? null,
+          contentHash: previous.contentHash ?? null,
+          createdAt: new Date(previous.replacedAt),
+          createdBy: previous.replacedBy ?? null,
+        }),
+        db
+          .update(t)
+          .set({
+            file,
+            updatedAt: new Date(),
+            kind: assetKind(file.contentType),
+            mime: mimeOf(file.contentType),
+            size: file.size ?? null,
+            width: file.width ?? null,
+            height: file.height ?? null,
+            version: next.version ?? 1,
+            r2Key: next.r2Key ?? null,
+            contentHash: next.contentHash ?? null,
+            ingestStatus: next.ingestStatus ?? null,
+            ingestError: next.ingestError ?? null,
+            duplicateOf: next.duplicateOf ?? null,
+          })
+          .where(and(scopeFilter(t, scope), eq(t.id, next.id))),
+      ]);
+    },
+    async listVersions(scope, id) {
+      const v = schema.assetVersions;
+      const rows = await db
+        .select()
+        .from(v)
+        .where(and(scopeFilter(v, scope), eq(v.assetId, id)))
+        .orderBy(desc(v.version));
+      return rows.map(toAssetVersionRecord);
+    },
+    async getVersion(scope, id, version) {
+      const v = schema.assetVersions;
+      const [row] = await db
+        .select()
+        .from(v)
+        .where(and(scopeFilter(v, scope), eq(v.assetId, id), eq(v.version, version)));
+      return row ? toAssetVersionRecord(row) : null;
+    },
+    async findExpiredPublished(at, limit) {
+      const p = schema.assetPublished;
+      const rows = await db
+        .select({
+          spaceId: p.spaceId,
+          environmentId: p.environmentId,
+          assetId: p.assetId,
+          expiresAt: p.expiresAt,
+        })
+        .from(p)
+        .where(
+          and(
+            isNotNull(p.expiresAt),
+            lte(p.expiresAt, at),
+            // And the rights themselves say so. The column is a copy, and code that predates it
+            // (a rollback) can rewrite a snapshot without it: a stale row the sweep only skipped
+            // would stay first in line forever and, a hundred of them, starve real expiries.
+            // Rounded to the millisecond as the 0015 backfill rounds it: julianday is a float,
+            // and an expiry exactly at `at` must count as due.
+            sql`round((julianday(json_extract(${p.rights}, '$.expiresAt')) - 2440587.5) * 86400000) <= ${at.getTime()}`,
+            // Only in an environment that still exists: a deleted one's rows linger until purged.
+            registered(p),
+          ),
+        )
+        .orderBy(asc(p.expiresAt))
+        .limit(Math.max(1, limit));
+      return rows.map((r) => ({
+        scope: { spaceId: r.spaceId, environmentId: r.environmentId },
+        assetId: r.assetId,
+        expiresAt: (r.expiresAt ?? at).toISOString(),
+      }));
+    },
+    async removeExpiredPublished(scope, id, at) {
+      const p = schema.assetPublished;
+      await writeAll(x, [
+        // Still expired when the batch runs: republished meanwhile under a later expiry (or none),
+        // it stays delivered and the whole unit aborts (TransactionConflictError).
+        db
+          .insert(schema.guard)
+          .select(
+            sql`SELECT EXISTS (SELECT 1 FROM ${p} WHERE ${p.spaceId} = ${scope.spaceId} AND ${p.environmentId} = ${scope.environmentId} AND ${p.assetId} = ${id} AND ${p.expiresAt} <= ${at.getTime()}) AS ok`,
+          ),
+        db.delete(schema.guard),
+        db.delete(p).where(and(scopeFilter(p, scope), eq(p.assetId, id))),
+      ]);
     },
     async removePublished(scope, id) {
       await x.write(
@@ -5222,6 +5354,22 @@ const toWebhook = (r: WebhookRow): Webhook => ({
 });
 
 type PubAssetRow = typeof schema.assetPublished.$inferSelect;
+/** The epoch instant a snapshot's rights expire at, for its `expires_at` column; `null`: none. */
+function expiryOf(rights: { readonly expiresAt?: string } | null | undefined): Date | null {
+  const ms = rights?.expiresAt ? Date.parse(rights.expiresAt) : Number.NaN;
+  return Number.isNaN(ms) ? null : new Date(ms);
+}
+
+type AssetVersionRow = typeof schema.assetVersions.$inferSelect;
+const toAssetVersionRecord = (r: AssetVersionRow): AssetVersionRecord => ({
+  version: r.version,
+  file: r.file,
+  ...(r.r2Key ? { r2Key: r.r2Key } : {}),
+  ...(r.contentHash ? { contentHash: r.contentHash } : {}),
+  replacedAt: r.createdAt.toISOString(),
+  ...(r.createdBy ? { replacedBy: r.createdBy } : {}),
+});
+
 const toPublishedAsset = (r: PubAssetRow): PublishedAsset => ({
   assetId: r.assetId,
   file: r.file,

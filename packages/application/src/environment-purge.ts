@@ -5,7 +5,7 @@ import {
 } from '@contentworker/domain';
 import type { AssetGate, BlobStore } from '@contentworker/ports';
 import { type AssetSearchDeps, removeAssetFromSearch } from './asset-search';
-import { allAssets } from './assets';
+import { allAssets, isAssetFileKey } from './assets';
 import type { AppContext } from './context';
 
 /**
@@ -142,7 +142,7 @@ export async function resumeStalledEnvironmentPurges(
 /**
  * Deletes a removed environment's asset files, except any another environment's asset records
  * still point at: an environment import keeps asset ids and their files, so a clone shares its
- * source's files. Keys are `${space}/${environment}/${assetId}/${fileName}` (assetObjectKey).
+ * source's files. Keys are `${space}/${environment}/${assetId}/…` (assetObjectKey).
  */
 async function deleteEnvironmentFiles(
   ctx: AppContext,
@@ -159,12 +159,13 @@ async function deleteEnvironmentFiles(
       const other = { spaceId: scope.spaceId, environmentId: env.id };
       for (const asset of await allAssets(ctx, other)) inUse.add(asset.id);
     }
-    // An asset's file stays while another environment's asset of the same id points at it; what
-    // ingest derived from it here (`…/assetId/v<n>/…`, five segments) is this environment's alone.
-    await blob.deletePrefix?.(`${scope.spaceId}/${scope.environmentId}/`, (key) => {
-      const parts = key.split('/');
-      return parts.length === 4 && inUse.has(parts[2] ?? '');
-    });
+    // An asset's files (every version's) stay while another environment's asset of the same id
+    // may point at them; what ingest derived from them here (`…/assetId/v<n>/text.md`, five
+    // segments) is this environment's alone.
+    await blob.deletePrefix?.(
+      `${scope.spaceId}/${scope.environmentId}/`,
+      (key) => isAssetFileKey(key) && inUse.has(key.split('/')[2] ?? ''),
+    );
   }
   // Work staged for jobs in it (an import still running when it was deleted): never read now.
   await blob.deletePrefix?.(`imports/${scope.spaceId}/${scope.environmentId}/`, () => false);

@@ -250,6 +250,10 @@ set: the drafts whose presigned upload never landed, for the engine's hourly aba
 (see [Architecture](./architecture.md#asset-ingest-and-search)). Nothing is backfilled. The
 placeholder ingest computes lives in the `file` JSON, so it needs no migration.
 
+`0015_asset_expiry.sql` adds `asset_published.expires_at` (epoch ms, the snapshot's
+`rights.expiresAt`, written on every snapshot write), backfills it from existing snapshots' rights,
+and indexes it (`asset_published_by_expiry`, only where set) for the engine's expiry sweep.
+
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
 `archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)

@@ -6,6 +6,7 @@ export const CRON_JOBS = {
   prune: 'event-history-prune',
   reseal: 'secrets-reseal',
   scheduledActions: 'scheduled-actions',
+  assetExpiry: 'asset-expiry',
   relay: 'outbox-relay',
   bulkResume: 'bulk-resume',
   purgeResume: 'environment-purge-resume',

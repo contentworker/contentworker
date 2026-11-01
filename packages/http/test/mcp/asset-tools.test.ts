@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  auditActor,
   createAsset,
   createContentType,
   createEntry,
@@ -420,5 +421,123 @@ describe('asset search and ingest tools (MCP), on the same use-cases as the HTTP
     const reindex = await bare.callTool({ name: 'assets_reindex', arguments: { space: SPACE } });
     expect(reindex.isError).toBe(true);
     expect(JSON.stringify(reindex.content)).toMatch(/ASSET_EVENTS_QUEUE/);
+  });
+});
+
+describe('asset version, rights and bulk tools (MCP), with the HTTP routes’ scopes', () => {
+  const writer: Principal = {
+    spaceId: SPACE,
+    kind: 'cma',
+    // A key's subject is its id; the version history names the key kind, as REST records it.
+    subject: 'key-1',
+    scopes: [SCOPES.contentWrite, SCOPES.previewRead],
+  };
+
+  it('replaces a file, lists versions and restores one, as a write key may', async () => {
+    const { deps, add } = await setup();
+    const blob = new FakeBlobStore();
+    const a = await add('hero.png', 'image/png');
+    await blob.put(`${SPACE}/main/${a.id}/hero.png`, 'v1', 'image/png');
+    const client = await connect({ ...deps, blob }, writer);
+    const call = async (name: string, args: Record<string, unknown>) =>
+      client.callTool({ name, arguments: { space: SPACE, ...args } });
+
+    const started = payload(
+      await call('asset_replace_file', {
+        id: a.id,
+        fileName: 'hero-2.png',
+        contentType: 'image/png',
+      }),
+    ) as { commit: { version: number; fileName: string; contentType: string } };
+    expect(started.commit).toEqual({
+      version: 2,
+      fileName: 'hero-2.png',
+      contentType: 'image/png',
+    });
+    const early = await call('asset_commit_file', { id: a.id, ...started.commit });
+    expect(early.isError).toBe(true);
+
+    await blob.put(`${SPACE}/main/${a.id}/v2/file/hero-2.png`, 'v2', 'image/png');
+    expect(payload(await call('asset_commit_file', { id: a.id, ...started.commit }))).toMatchObject(
+      { version: 2, file: { fileName: 'hero-2.png' } },
+    );
+    const versions = payload(await call('asset_versions_list', { id: a.id })) as {
+      items: { version: number; current: boolean }[];
+    };
+    expect(versions.items.map((v) => v.version)).toEqual([2, 1]);
+    expect(payload(await call('asset_restore_version', { id: a.id, version: 1 }))).toMatchObject({
+      version: 3,
+      file: { fileName: 'hero.png' },
+    });
+    const history = payload(await call('asset_versions_list', { id: a.id })) as {
+      items: { version: number; createdBy?: string }[];
+    };
+    expect(history.items.filter((v) => v.version > 1).map((v) => v.createdBy)).toEqual([
+      auditActor(writer),
+      auditActor(writer),
+    ]);
+
+    // A read-only key does none of it.
+    const reader2 = await connect({ ...deps, blob }, reader);
+    expect(
+      (
+        await reader2.callTool({
+          name: 'asset_restore_version',
+          arguments: { space: SPACE, id: a.id, version: 2 },
+        })
+      ).isError,
+    ).toBe(true);
+  });
+
+  it('sets rights with content:publish only, and an embargo refuses publishing by name', async () => {
+    const { deps, add } = await setup();
+    const a = await add('hero.png', 'image/png');
+    const denied = await (await connect(deps, writer)).callTool({
+      name: 'asset_set_rights',
+      arguments: { space: SPACE, id: a.id, license: 'CC BY' },
+    });
+    expect(denied.isError).toBe(true);
+
+    const client = await connect(deps, admin);
+    const set = payload(
+      await client.callTool({
+        name: 'asset_set_rights',
+        arguments: { space: SPACE, id: a.id, credit: 'Ana', embargoUntil: '2999-01-01T00:00:00Z' },
+      }),
+    );
+    expect(set).toMatchObject({
+      rights: { credit: 'Ana', embargoUntil: '2999-01-01T00:00:00.000Z' },
+    });
+    const invalid = await client.callTool({
+      name: 'asset_set_rights',
+      arguments: { space: SPACE, id: a.id, expiresAt: 'next week' },
+    });
+    expect(invalid.isError).toBe(true);
+
+    const job = payload(
+      await client.callTool({
+        name: 'assets_bulk',
+        arguments: { space: SPACE, action: 'publish', ids: [a.id] },
+      }),
+    );
+    expect(job).toMatchObject({ action: 'asset_publish', totalItems: 1, status: 'running' });
+  });
+
+  it('starts a move or tag job with content:write, and refuses publishing ones', async () => {
+    const { deps, add } = await setup();
+    const a = await add('a.png', 'image/png');
+    const client = await connect(deps, writer);
+    const tag = payload(
+      await client.callTool({
+        name: 'assets_bulk',
+        arguments: { space: SPACE, action: 'tag', ids: [a.id], addTags: ['hero'] },
+      }),
+    );
+    expect(tag).toMatchObject({ action: 'asset_tag' });
+    const archive = await client.callTool({
+      name: 'assets_bulk',
+      arguments: { space: SPACE, action: 'archive', ids: [a.id] },
+    });
+    expect(archive.isError).toBe(true);
   });
 });

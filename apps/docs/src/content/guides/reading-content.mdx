@@ -79,7 +79,7 @@ A search needs a key with **`search:read`** as well as `delivery:read`; without 
 Their URLs point at the workspace's `media.` address, are immutable and carry a signature (use
 them as given; an edited one is a `404`): `url` is the original,
 `renditions` your space's named sizes and `srcset` a ladder of widths for responsive images.
-Unpublishing an asset stops its URLs. Preview's `…/assets` routes return drafts in the same shape
+Unpublishing an asset stops its URLs, and so does its rights' expiry (they answer `410 Gone`). Preview's `…/assets` routes return drafts in the same shape
 with short-lived signed URLs. See [Delivering assets](/guides/delivering-assets/).
 
 `…/assets/{id}/transform?w=800&fm=webp` (also `h`, `fit` and `q`) redirects to a resized or

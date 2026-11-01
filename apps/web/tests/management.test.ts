@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  apiFieldIssues,
   assetUsageOf,
   BOOKMARK_HEADER,
   type Connection,
@@ -107,6 +108,99 @@ describe('admin ManagementClient', () => {
       'PUT https://blob.test/put?sig',
       'POST /spaces/s1/environments/main/assets/asset_1/published',
     ]);
+  });
+
+  it('replaceAssetFile starts → PUTs the next version → commits what the start returned', async () => {
+    const seq: string[] = [];
+    const bodies: unknown[] = [];
+    const commit = { version: 3, fileName: 'v3.txt', contentType: 'text/plain' };
+    const fn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      seq.push(`${init?.method ?? 'GET'} ${url}`);
+      if (typeof init?.body === 'string') bodies.push(JSON.parse(init.body));
+      if (url.endsWith('/assets/a1/file')) {
+        return new Response(
+          JSON.stringify({
+            asset: { id: 'a1', version: 2 },
+            upload: { url: 'https://blob.test/v3?sig', headers: { 'content-type': 'text/plain' } },
+            commit,
+          }),
+          { status: 201 },
+        );
+      }
+      if (url === 'https://blob.test/v3?sig') return new Response('', { status: 200 });
+      return new Response(JSON.stringify({ id: 'a1', version: 3 }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const next = await createManagementClient(conn, fn).replaceAssetFile(
+      'a1',
+      new File(['new'], 'v3.txt', { type: 'text/plain' }),
+    );
+    expect(next.version).toBe(3);
+    expect(seq).toEqual([
+      'POST /spaces/s1/environments/main/assets/a1/file',
+      'PUT https://blob.test/v3?sig',
+      'POST /spaces/s1/environments/main/assets/a1/file/commit',
+    ]);
+    expect(bodies).toEqual([{ fileName: 'v3.txt', contentType: 'text/plain' }, commit]);
+  });
+
+  it('does not commit a replacement whose bytes never arrived', async () => {
+    const seq: string[] = [];
+    const fn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      seq.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url.endsWith('/file')) {
+        return new Response(
+          JSON.stringify({
+            asset: { id: 'a1' },
+            upload: { url: 'https://blob.test/v2', headers: {} },
+            commit: { version: 2, fileName: 'x', contentType: 'x' },
+          }),
+          { status: 201 },
+        );
+      }
+      return new Response('denied', { status: 403 });
+    }) as unknown as typeof fetch;
+    await expect(
+      createManagementClient(conn, fn).replaceAssetFile('a1', new File(['x'], 'x')),
+    ).rejects.toBeInstanceOf(ApiError);
+    expect(seq.some((s) => s.endsWith('/commit'))).toBe(false);
+  });
+
+  it('reads the fields a 422 named, and nothing from other failures', () => {
+    const body = {
+      error: {
+        code: 'validation',
+        issues: [
+          { field: 'rights.expiresAt', message: 'expiresAt must be after embargoUntil' },
+          { field: 'rights.expiresAt', message: 'a second, ignored' },
+          { field: 'rights.license', message: 'license is at most 500 characters' },
+        ],
+      },
+    };
+    expect(apiFieldIssues(new ApiError(422, 'PUT → 422', body))).toEqual({
+      'rights.expiresAt': 'expiresAt must be after embargoUntil',
+      'rights.license': 'license is at most 500 characters',
+    });
+    expect(apiFieldIssues(new ApiError(409, 'x', body))).toEqual({});
+    expect(apiFieldIssues(new Error('x'))).toEqual({});
+  });
+
+  it('starts an asset bulk job and reads its report', async () => {
+    const { fn, calls } = fakeFetch((url) =>
+      url.endsWith('/report') ? { job: { id: 'j1' }, chunks: [] } : { id: 'j1', status: 'running' },
+    );
+    const client = createManagementClient(conn, fn);
+    await client.startAssetBulkJob({ action: 'move', ids: ['a1'], folderId: null });
+    await client.getBulkJobReport('j1');
+    expect(calls[0]?.url).toBe('/spaces/s1/environments/main/assets/bulk');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      action: 'move',
+      ids: ['a1'],
+      folderId: null,
+    });
+    expect(calls[1]?.url).toBe('/spaces/s1/environments/main/bulk/jobs/j1/report');
   });
 
   it('lists assets from the management base', async () => {

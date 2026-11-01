@@ -13,9 +13,13 @@ and `snapshot-jobs.ts`).
 A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows,
 asset **metadata** and the asset folders. It deliberately never carries **credentials** (API keys, OAuth clients and
 grants, preview tokens, webhook signing secrets), because a snapshot is a file people move around.
-Asset **binaries** stay in the blob store: a restore into a space pointing at the same bucket
-works, and one pointing elsewhere has dangling files, which is visible rather than silent. The
-import report names everything it did not carry.
+Asset **binaries** stay in the blob store: a restore into the same space, on a deployment
+pointing at the same bucket, works, and one pointing elsewhere has dangling files, which is
+visible rather than silent. An uploaded snapshot's asset may only name files in the space it is
+imported into (`confineSnapshotFiles`): a file key naming another space is dropped, so the asset
+points at its own (empty) key, because a snapshot is anyone's JSON and those keys are served as
+they stand. A clone (`POST …/clone`, including across spaces) keeps its source's keys, since the
+caller can read that space. The import report names everything it did not carry.
 
 **Import replays domain operations** rather than injecting rows: entries go through `createEntry`
 and are republished through `publishEntry`. That is slower than a bulk insert, and deliberate:
@@ -39,7 +43,9 @@ What an import preserves:
   same live content and the same pending edits. Snapshots from before this carry no live version,
   and their changed entries land as drafts.
 - **Assets** as records, published as they were; their files stay where they are. An archived
-  asset arrives as a draft.
+  asset arrives as a draft, and so does one whose rights no longer allow publishing (expired since
+  the export, or under embargo), named in the report's `skipped`. Only the current file travels:
+  an asset's earlier versions stay in the source's history.
 - **Asset folders**, with their ids and paths, so each asset lands in the same folder. A snapshot
   from before folders carries none, and its assets land at the library root.
 

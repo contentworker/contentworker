@@ -38,6 +38,12 @@ export interface R2BucketLike {
     options?: { httpMetadata?: { contentType?: string } },
   ): Promise<unknown>;
   delete(keys: string | string[]): Promise<void>;
+  /** Metadata only (R2's `head`); optional so a test stub may leave it out. */
+  head?(key: string): Promise<{
+    readonly size: number;
+    readonly httpEtag: string;
+    readonly httpMetadata?: { readonly contentType?: string };
+  } | null>;
   list(options: { prefix: string; cursor?: string; limit?: number }): Promise<{
     objects: { key: string }[];
     truncated: boolean;
@@ -267,14 +273,15 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
       };
     },
     async head(key) {
-      if (bucket.head) {
-        const obj = await bucket.head(key);
-        return obj ? { size: obj.size } : null;
-      }
-      const obj = await bucket.get(key);
+      // Without `head`, a read whose body is let go unread says the same.
+      const obj = bucket.head ? await bucket.head(key) : await bucket.get(key);
       if (!obj) return null;
-      await obj.body.cancel();
-      return { size: obj.size };
+      if ('body' in obj) await (obj.body as ReadableStream).cancel();
+      return {
+        size: obj.size,
+        etag: obj.httpEtag,
+        ...(obj.httpMetadata?.contentType ? { contentType: obj.httpMetadata.contentType } : {}),
+      };
     },
     async deletePrefix(prefix, keep) {
       // List everything first, then delete: deleting between pages could shift what a cursor

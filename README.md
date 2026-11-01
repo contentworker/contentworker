@@ -22,7 +22,7 @@ live inside that deployment's D1.
 - **Hexagonal core.** `domain` depends on nothing; `application` depends only on `ports`;
   Cloudflare adapters (`@contentworker/adapters`, one subpath each) and the D1 store
   (`@contentworker/db`) are bound in one place, `@contentworker/platform`'s `wire.ts`.
-- **One set of use-cases, every caller.** The HTTP API, the MCP server (158 tools), the queue
+- **One set of use-cases, every caller.** The HTTP API, the MCP server (165 tools), the queue
   consumers and the agents call the _same_ application use-cases, so an AI agent can never do
   what a human API client couldn't, and every write goes through the same validation and RBAC.
 - **Structured content model.** Typed fields with validations, localization with fallback
@@ -49,22 +49,22 @@ live inside that deployment's D1.
 The public docs (guides for editors and integrators) are the Starlight site in `apps/docs`. The
 maintainer docs live in [`docs/`](./docs) (start at [the index](./docs/README.md)):
 
-| Doc                                                   | What's in it                                                                    |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------- |
-| [Architecture](./docs/architecture.md)                | The Workers, the hexagonal layers, the package map, request and event flows     |
-| [Domain model](./docs/domain-model.md)                | Field types, validation, entry state machine, locales, references, events       |
-| [API reference](./docs/api-reference.md)              | Every HTTP endpoint, the query language, hybrid search, live SSE                |
-| [Auth & RBAC](./docs/auth-and-rbac.md)                | Web sign-in, the signed principal, API key kinds, scopes, roles, OAuth for MCP  |
-| [AI, agents & search](./docs/ai-agents-and-search.md) | Generation, hybrid search, MCP tools, the agent runtime                         |
-| [Events & webhooks](./docs/events-and-webhooks.md)    | Outbox → relay → queue consumers, functions, scheduled actions, live updates    |
-| [Consistency](./docs/consistency.md)                  | The D1 unit of work, read replicas and bookmarks, delivery staleness bounds     |
+| Doc                                                   | What's in it                                                                      |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [Architecture](./docs/architecture.md)                | The Workers, the hexagonal layers, the package map, request and event flows       |
+| [Domain model](./docs/domain-model.md)                | Field types, validation, entry state machine, locales, references, events         |
+| [API reference](./docs/api-reference.md)              | Every HTTP endpoint, the query language, hybrid search, live SSE                  |
+| [Auth & RBAC](./docs/auth-and-rbac.md)                | Web sign-in, the signed principal, API key kinds, scopes, roles, OAuth for MCP    |
+| [AI, agents & search](./docs/ai-agents-and-search.md) | Generation, hybrid search, MCP tools, the agent runtime                           |
+| [Events & webhooks](./docs/events-and-webhooks.md)    | Outbox → relay → queue consumers, functions, scheduled actions, live updates      |
+| [Consistency](./docs/consistency.md)                  | The D1 unit of work, read replicas and bookmarks, delivery staleness bounds       |
 | [SDKs](./docs/sdks.md)                                | Delivery clients (core, web, vue, edge, react-native), Management client, codegen |
-| [Deployment](./docs/deployment.md)                    | The fleet registry, provisioning, CI's ring deploys, rollback                   |
-| [Configuration](./docs/configuration.md)              | Every var, secret and binding, and which Worker uses it                         |
-| [Backup & restore](./docs/backup-and-restore.md)      | D1 Time Travel, environment snapshots, outbox replay                            |
-| [Development](./docs/development.md)                  | Workspace commands, local stack, testing, adding a use-case                     |
-| [Admin UI](./docs/admin-ui.md)                        | The React Router admin in `apps/web`                                            |
-| [Plugins](./docs/plugins.md)                          | Sandboxed write-path plugins on Worker Loader                                   |
+| [Deployment](./docs/deployment.md)                    | The fleet registry, provisioning, CI's ring deploys, rollback                     |
+| [Configuration](./docs/configuration.md)              | Every var, secret and binding, and which Worker uses it                           |
+| [Backup & restore](./docs/backup-and-restore.md)      | D1 Time Travel, environment snapshots, outbox replay                              |
+| [Development](./docs/development.md)                  | Workspace commands, local stack, testing, adding a use-case                       |
+| [Admin UI](./docs/admin-ui.md)                        | The React Router admin in `apps/web`                                              |
+| [Plugins](./docs/plugins.md)                          | Sandboxed write-path plugins on Worker Loader                                     |
 
 For coding agents, the rules every change keeps are in [`AGENTS.md`](./AGENTS.md).
 

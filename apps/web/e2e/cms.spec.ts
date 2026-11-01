@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
 import {
   api,
@@ -8,9 +9,11 @@ import {
   openCms,
   SPACE,
   seedAsset,
+  seedAssetFolder,
   seedCms,
   seedIngestFindings,
   statusOf,
+  uploadAssetBytes,
   useCmsScope,
   withoutAssistant,
 } from './cms';
@@ -650,4 +653,121 @@ test('the asset library shows what ingest found: a duplicate opens its original,
   await expect(library.getByRole('button', { name: `Retry processing “${broken}”` })).toHaveCount(
     0,
   );
+});
+
+test('an asset’s file is replaced, republished and restored from its Versions tab', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  const name = `versions-${stamp}.txt`;
+  const id = await uploadAssetBytes(request, name, Buffer.from(`first ${stamp}`));
+  const pub = await api(request, 'POST', `${MGMT}/assets/${id}/published`);
+  expect(pub.ok(), await pub.text()).toBe(true);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('button', { name: `Open “${name}”` }).click();
+  const sheet = page.getByRole('dialog');
+  await sheet.getByRole('tab', { name: 'Versions' }).click();
+  const versions = sheet.getByRole('list', { name: 'File versions' });
+  await expect(versions.getByRole('listitem')).toHaveCount(1);
+
+  // Replace: the signed PUT, then the commit; the new file is v2 and current.
+  const next = `versions-${stamp}-new.txt`;
+  await sheet.getByLabel('Replacement file').setInputFiles({
+    name: next,
+    mimeType: 'text/plain',
+    buffer: Buffer.from(`second ${stamp}`),
+  });
+  await expect(page.getByText(`Replaced the file with “${next}” (version 2)`)).toBeVisible();
+  await expect(versions.getByRole('listitem')).toHaveCount(2);
+  const top = versions.getByRole('listitem').first();
+  await expect(top.getByText('v2', { exact: true })).toBeVisible();
+  await expect(top.getByText(next)).toBeVisible();
+  await expect(top.getByText('Current')).toBeVisible();
+
+  // Delivery keeps v1 until the asset is published again.
+  await expect(sheet.getByText('Delivery serves version 1')).toBeVisible();
+  await sheet.getByRole('button', { name: 'Publish v2' }).click();
+  await expect(sheet.getByText('Delivery serves version 1')).toHaveCount(0);
+  await expect(top.getByText('Published')).toBeVisible();
+
+  // Restore v1: asked in place, then its file is current again as v3.
+  await sheet.getByRole('button', { name: 'Restore version 1' }).click();
+  await sheet
+    .getByRole('alertdialog', { name: /Restore version 1\?/ })
+    .getByRole('button', { name: 'Restore v1' })
+    .click();
+  await expect(page.getByText('Restored version 1 as version 3')).toBeVisible();
+  await expect(versions.getByRole('listitem')).toHaveCount(3);
+  const restored = versions.getByRole('listitem').first();
+  await expect(restored.getByText('v3', { exact: true })).toBeVisible();
+  await expect(restored.getByText('Restored from v1')).toBeVisible();
+  await expect(restored.getByText(name)).toBeVisible();
+});
+
+test('publishing more assets than a page shows runs as a job and names the one it refused', async ({
+  page,
+  request,
+}) => {
+  // 51 assets seeded, then a job the engine works through in batches.
+  test.setTimeout(180_000);
+  const stamp = Date.now();
+  const folderName = `Bulk ${stamp}`;
+  const folderId = await seedAssetFolder(request, folderName);
+  const titles = Array.from(
+    { length: 51 },
+    (_, i) => `Bulk ${stamp} ${String(i + 1).padStart(2, '0')}`,
+  );
+  const ids: string[] = [];
+  for (let i = 0; i < titles.length; i += 10) {
+    ids.push(
+      ...(await Promise.all(
+        titles.slice(i, i + 10).map((title) => seedAsset(request, title, { folderId })),
+      )),
+    );
+  }
+  // One under embargo: the job refuses it, and says which.
+  const embargoed = titles[6] as string;
+  const rights = await api(request, 'PUT', `${MGMT}/assets/${ids[6]}/rights`, {
+    embargoUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+  expect(rights.ok(), await rights.text()).toBe(true);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: folderName, exact: true })
+    .click();
+  await library.getByRole('radio', { name: 'List' }).click();
+  await expect(library.getByRole('row')).toHaveCount(51); // the header and the first page of 50
+  await expect(library.getByText('Embargoed')).toBeVisible();
+  await library.getByRole('button', { name: 'Load more' }).click();
+  await expect(library.getByRole('row')).toHaveCount(52);
+  await library.getByRole('checkbox', { name: 'Select all shown' }).check();
+  const bar = page.getByRole('group', { name: 'Selected assets' });
+  await expect(bar.getByText('51 selected')).toBeVisible();
+
+  await bar.getByRole('button', { name: 'Publish selected', exact: true }).click();
+  const job = page.getByRole('region', { name: 'Bulk job' });
+  await expect(job.getByRole('progressbar', { name: 'Bulk job progress' })).toBeVisible();
+  await expect(job.getByRole('status')).toHaveText('Published 50 of 51 assets; 1 failed', {
+    timeout: 120_000,
+  });
+  await expect(job.getByText('Finished with failures')).toBeVisible();
+  // The job card, finished, passes the same WCAG sweep as the rest of the admin.
+  const axe = await new AxeBuilder({ page })
+    .include('section[aria-label="Bulk job"]')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  expect(axe.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(', ')}`)).toEqual(
+    [],
+  );
+  const failures = page.getByRole('alert').filter({ hasText: '1 asset not published' });
+  await expect(failures.getByText(embargoed, { exact: true })).toBeVisible();
+  await expect(failures.getByText(/under embargo/)).toBeVisible();
+  await expect(bar.getByText('1 selected')).toBeVisible();
+  await expect(library.getByRole('checkbox', { name: `Select “${embargoed}”` })).toBeChecked();
 });

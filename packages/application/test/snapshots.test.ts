@@ -306,6 +306,70 @@ describe('importing a snapshot', () => {
     expect((copied.fields.image as { id: string }).id).toBe(asset.id);
   });
 
+  it('drops an uploaded asset file key that names another space, so it can only read its own', async () => {
+    const { createAsset, assetFileKey } = await import('../src/assets');
+    const blob = {
+      getUploadUrl: async () => ({ url: 'https://upload', headers: {} }),
+      getDownloadUrl: async () => 'https://download',
+      delete: async () => {},
+    };
+    const { asset } = await createAsset(ctx, blob as never, source, {
+      fileName: 'a.png',
+      contentType: 'image/png',
+    });
+    const snapshot = await exportSnapshot(ctx, source);
+    // Forged: another space's key for this id, and a version past anything committed.
+    const forged = {
+      ...snapshot,
+      assets: snapshot.assets.map((a) => ({
+        ...a,
+        r2Key: `victim/main/${a.id}/v2/file/a.png`,
+        version: 999,
+      })),
+    };
+    await importSnapshot(ctx, target, forged);
+    const imported = await getAsset(ctx, target, asset.id);
+    expect(imported.r2Key).toBeUndefined();
+    expect(assetFileKey(target, imported).startsWith('s1/copy/')).toBe(true);
+
+    // A clone keeps its source's keys: the caller can read that space.
+    const other = { spaceId: 's1', environmentId: 'clone' };
+    await createEnvironment(ctx, 's1', 'clone');
+    await cloneEnvironment(ctx, source, other);
+    expect(assetFileKey(other, await getAsset(ctx, other, asset.id))).toBe(
+      assetFileKey(source, asset),
+    );
+  });
+
+  it('imports an asset whose rights lapsed since the export as a draft, and says so', async () => {
+    const { createAsset, publishAsset } = await import('../src/assets');
+    const blob = {
+      getUploadUrl: async () => ({ url: 'https://upload', headers: {} }),
+      getDownloadUrl: async () => 'https://download',
+      delete: async () => {},
+    };
+    const { asset } = await createAsset(ctx, blob as never, source, {
+      fileName: 'a.png',
+      contentType: 'image/png',
+    });
+    await publishAsset(ctx, source, asset.id);
+    const e = await createEntry(ctx, source, article('After the asset'));
+    await publishEntry(ctx, source, e.entry.id);
+    const snapshot = await exportSnapshot(ctx, source);
+    const lapsed = {
+      ...snapshot,
+      assets: snapshot.assets.map((a) => ({
+        ...a,
+        rights: { expiresAt: '2000-01-01T00:00:00.000Z' },
+      })),
+    };
+    const report = await importSnapshot(ctx, target, lapsed);
+    expect((await getAsset(ctx, target, asset.id)).status).toBe('draft');
+    expect(report.skipped.some((s) => s.includes(asset.id))).toBe(true);
+    // The rest of the import went on: the entry after it is published.
+    expect(await getPublishedEntry(ctx, target, e.entry.id, { locale: 'en-US' })).toBeTruthy();
+  });
+
   it('refuses a snapshot that would fail part-way before writing anything, so a retry works', async () => {
     const e = await createEntry(ctx, source, article('Linked'));
     await publishEntry(ctx, source, e.entry.id);

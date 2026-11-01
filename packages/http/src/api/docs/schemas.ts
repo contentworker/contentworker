@@ -285,6 +285,46 @@ export const uploadTicket = z.object({
   }),
 });
 
+export const assetFileReplacement = z.object({
+  asset,
+  upload: z.object({
+    url: z.string().describe('Signed PUT URL for the new file (expires); upload the bytes here'),
+    headers: z.record(z.string(), z.string()),
+  }),
+  commit: z
+    .object({ version: z.int(), fileName: z.string(), contentType: z.string() })
+    .describe('POST this to /assets/{id}/file/commit once the bytes are uploaded'),
+});
+
+export const assetVersionList = z.object({
+  items: z.array(
+    z.object({
+      version: z.int(),
+      file: asset.shape.file.describe('file.url is a short-lived signed read URL'),
+      contentHash: z.string().optional(),
+      createdAt: z.iso.datetime().optional().describe('When this file became the asset’s'),
+      createdBy: z.string().optional(),
+      current: z.boolean(),
+      published: z.boolean().describe('The file Delivery serves now'),
+      restoredFrom: z
+        .int()
+        .optional()
+        .describe('For a restore: the earliest version with the same file'),
+    }),
+  ),
+});
+
+export const assetBulkJob = z.looseObject({
+  id: z.string(),
+  action: z.enum(['asset_move', 'asset_tag', 'asset_publish', 'asset_unpublish', 'asset_archive']),
+  status: z.enum(['running', 'completed', 'cancelled']),
+  totalItems: z.int(),
+  totalChunks: z.int(),
+  completedChunks: z.int(),
+  succeeded: z.int(),
+  failed: z.int(),
+});
+
 export const videoUploadTicket = z.object({
   asset,
   upload: z.object({

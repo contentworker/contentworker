@@ -1,14 +1,17 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
 import {
+  api,
   asFreshDeployment,
   createChanged,
+  MGMT,
   openCms,
   PROPOSAL_TARGET,
   seedAsset,
   seedAssetFolder,
   seedCms,
   seedIngestFindings,
+  uploadAssetBytes,
   useCmsScope,
   withoutAssistant,
 } from './cms';
@@ -160,6 +163,74 @@ test('the asset library with ingest badges has no accessibility violations', asy
   await sheet.getByLabel('Alt text (en-US)').fill('Not saved yet');
   await sheet.getByRole('button', { name: duplicateBadge }).click();
   await expect(sheet.getByRole('alertdialog')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+// The asset sheet, tab by tab: a version list with an older version to restore (and its in-place
+// confirm), usage, renditions, and the rights form with its status and a field the API refused.
+test('the asset sheet’s tabs have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const stamp = Date.now();
+  const name = `a11y-versions-${stamp}.txt`;
+  const id = await uploadAssetBytes(request, name, Buffer.from(`one ${stamp}`));
+  const replace = await api(request, 'POST', `${MGMT}/assets/${id}/file`, {
+    fileName: `a11y-versions-${stamp}-2.txt`,
+    contentType: 'text/plain',
+  });
+  expect(replace.ok(), await replace.text()).toBe(true);
+  const { upload, commit } = (await replace.json()) as {
+    upload: { url: string; headers: Record<string, string> };
+    commit: unknown;
+  };
+  const put = await request.fetch(upload.url, {
+    method: 'PUT',
+    headers: upload.headers,
+    data: Buffer.from(`two ${stamp}`),
+  });
+  expect(put.ok(), await put.text()).toBe(true);
+  const committed = await api(request, 'POST', `${MGMT}/assets/${id}/file/commit`, commit);
+  expect(committed.ok(), await committed.text()).toBe(true);
+  const rights = await api(request, 'PUT', `${MGMT}/assets/${id}/rights`, {
+    license: 'CC BY 4.0',
+    expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+  expect(rights.ok(), await rights.text()).toBe(true);
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await expect(library.getByText('Expires soon').first()).toBeVisible();
+  await library.getByRole('button', { name: `Open “${name}”` }).click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByLabel('Alt text (en-US)')).toBeVisible();
+  await scan(page, testInfo);
+
+  await sheet.getByRole('tab', { name: 'Versions' }).click();
+  await expect(
+    sheet.getByRole('list', { name: 'File versions' }).getByRole('listitem'),
+  ).toHaveCount(2);
+  await scan(page, testInfo);
+  await sheet.getByRole('button', { name: 'Restore version 1' }).click();
+  await expect(sheet.getByRole('alertdialog')).toBeVisible();
+  await scan(page, testInfo);
+  await sheet.getByRole('button', { name: 'Cancel' }).click();
+
+  await sheet.getByRole('tab', { name: 'Usage' }).click();
+  await expect(sheet.getByText('Not referenced by any entry.')).toBeVisible();
+  await scan(page, testInfo);
+
+  await sheet.getByRole('tab', { name: 'Renditions' }).click();
+  await expect(sheet.getByText(/Renditions are made from images/)).toBeVisible();
+  await scan(page, testInfo);
+
+  await sheet.getByRole('tab', { name: 'Rights' }).click();
+  await expect(sheet.getByText(/Expires in 3 days/)).toBeVisible();
+  await scan(page, testInfo);
+  // An embargo after the expiry: refused beside the field.
+  await sheet.getByLabel('Embargo until').fill('2099-01-01T09:00');
+  await sheet.getByRole('button', { name: 'Save rights' }).click();
+  await expect(sheet.getByLabel('Expires at')).toHaveAttribute('aria-invalid', 'true');
   await scan(page, testInfo);
 });
 

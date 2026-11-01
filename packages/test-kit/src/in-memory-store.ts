@@ -59,6 +59,7 @@ import type {
   AssetFolderRepo,
   AssetRenditionRepo,
   AssetRepo,
+  AssetVersionRecord,
   AuditEntry,
   AuditRepo,
   AuthRepo,
@@ -254,6 +255,7 @@ export class InMemoryContentStore implements ContentStore {
         this.publishedData,
         this.assetData,
         this.publishedAssetData,
+        this.assetVersionData,
         this.assetTouched,
         this.assetFolderData,
         this.referenceData,
@@ -647,6 +649,8 @@ export class InMemoryContentStore implements ContentStore {
 
   private readonly assetData = new Map<string, Asset>();
   private readonly publishedAssetData = new Map<string, PublishedAsset>();
+  /** Earlier files, keyed `scope::assetId::version`. */
+  private readonly assetVersionData = new Map<string, AssetVersionRecord>();
   /** Write order per asset key, standing in for D1's `updated_at` (the clock may be frozen). */
   private readonly assetTouched = new Map<string, number>();
   private assetWrites = 0;
@@ -750,8 +754,18 @@ export class InMemoryContentStore implements ContentStore {
         duplicateOf: _d,
         ...edited
       } = asset;
+      // As the D1 store: a save from a read taken before a replace committed keeps the file.
+      const sameVersion = (current.version ?? 1) === (asset.version ?? 1);
+      const { file: _f, r2Key: _k, version: _v, ...kept } = edited;
       this.touchAsset(scope, {
-        ...edited,
+        ...(sameVersion
+          ? edited
+          : {
+              ...kept,
+              file: current.file,
+              ...(current.r2Key ? { r2Key: current.r2Key } : {}),
+              ...(current.version !== undefined ? { version: current.version } : {}),
+            }),
         ...(current.contentHash ? { contentHash: current.contentHash } : {}),
         ...(current.ingestStatus ? { ingestStatus: current.ingestStatus } : {}),
         ...(current.ingestError ? { ingestError: current.ingestError } : {}),
@@ -829,6 +843,63 @@ export class InMemoryContentStore implements ContentStore {
       const key = `${prefix}${id}`;
       this.assetData.delete(key);
       this.assetTouched.delete(key);
+      this.publishedAssetData.delete(key);
+      for (const k of [...this.assetVersionData.keys()]) {
+        if (k.startsWith(`${key}::v`)) this.assetVersionData.delete(k);
+      }
+    },
+    replaceFile: async (scope, next, previous) => {
+      // As the D1 store's guard: still on the version the caller read.
+      const key = `${scopeKey(scope)}::${next.id}`;
+      const current = this.assetData.get(key);
+      if (!current || (current.version ?? 1) !== previous.version) {
+        throw new TransactionConflictError();
+      }
+      this.assetVersionData.set(`${key}::v${previous.version}`, previous);
+      const {
+        contentHash: _h,
+        ingestStatus: _s,
+        ingestError: _e,
+        duplicateOf: _d,
+        ...kept
+      } = current;
+      this.touchAsset(scope, {
+        ...kept,
+        file: next.file,
+        version: next.version ?? 1,
+        ...(next.r2Key ? { r2Key: next.r2Key } : {}),
+        ...(next.contentHash ? { contentHash: next.contentHash } : {}),
+        ...(next.ingestStatus ? { ingestStatus: next.ingestStatus } : {}),
+        ...(next.ingestError ? { ingestError: next.ingestError } : {}),
+        ...(next.duplicateOf ? { duplicateOf: next.duplicateOf } : {}),
+      });
+    },
+    listVersions: async (scope, id) =>
+      [...this.assetVersionData.entries()]
+        .filter(([k]) => k.startsWith(`${scopeKey(scope)}::${id}::v`))
+        .map(([, v]) => v)
+        .sort((a, b) => b.version - a.version),
+    getVersion: async (scope, id, version) =>
+      this.assetVersionData.get(`${scopeKey(scope)}::${id}::v${version}`) ?? null,
+    findExpiredPublished: async (at, limit) =>
+      [...this.publishedAssetData.entries()]
+        .flatMap(([k, p]) => {
+          const ms = p.rights?.expiresAt ? Date.parse(p.rights.expiresAt) : Number.NaN;
+          if (Number.isNaN(ms) || ms > at.getTime()) return [];
+          const [spaceId = '', environmentId = ''] = k.split('::');
+          const scope = { spaceId, environmentId };
+          if (!this.registered(scope)) return [];
+          return [{ scope, assetId: p.assetId, expiresAt: new Date(ms).toISOString(), ms }];
+        })
+        .sort((a, b) => a.ms - b.ms)
+        .slice(0, Math.max(1, limit))
+        .map(({ ms: _ms, ...found }) => found),
+    removeExpiredPublished: async (scope, id, at) => {
+      // As the D1 store's guard: still expired by `at`.
+      const key = `${scopeKey(scope)}::${id}`;
+      const p = this.publishedAssetData.get(key);
+      const ms = p?.rights?.expiresAt ? Date.parse(p.rights.expiresAt) : Number.NaN;
+      if (!p || Number.isNaN(ms) || ms > at.getTime()) throw new TransactionConflictError();
       this.publishedAssetData.delete(key);
     },
     putPublished: async (scope, snapshot) => {
@@ -2260,6 +2331,7 @@ export class InMemoryContentStore implements ContentStore {
       this.publishedData,
       this.assetData,
       this.publishedAssetData,
+      this.assetVersionData,
       this.assetTouched,
       this.assetFolderData,
       this.renditionData,

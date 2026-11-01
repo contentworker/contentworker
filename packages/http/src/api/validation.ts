@@ -1,5 +1,12 @@
-import { AGENT_WORKFLOWS, BULK_JOB_MAX_ITEMS, MAX_ASSET_MOVE } from '@contentworker/application';
 import {
+  AGENT_WORKFLOWS,
+  ASSET_BULK_ACTION_NAMES,
+  BULK_JOB_MAX_ITEMS,
+  MAX_ASSET_BULK_TAGS,
+  MAX_ASSET_MOVE,
+} from '@contentworker/application';
+import {
+  MAX_ASSET_RIGHTS_TEXT,
   PLUGIN_SETTING_MAX_STRING,
   SPACE_ID_PATTERN,
   ValidationError,
@@ -288,6 +295,35 @@ export const createAssetBody = z.object({
 export const moveAssetsBody = z.object({
   ids: z.array(zId).min(1).max(MAX_ASSET_MOVE),
   folderId: zId.nullable().describe('The folder to file them in; null takes them to the root'),
+});
+export const replaceAssetFileBody = z.object({
+  fileName: z.string().min(1).max(1024),
+  contentType: z.string().min(1).max(256),
+});
+export const commitAssetFileBody = z.object({
+  version: z.int().min(2).describe('commit.version from the replace response'),
+  fileName: z.string().min(1).max(1024),
+  contentType: z.string().min(1).max(256),
+});
+const rightsText = z.string().max(MAX_ASSET_RIGHTS_TEXT).nullable().optional();
+const rightsInstant = z
+  .string()
+  .max(64)
+  .nullable()
+  .optional()
+  .describe('ISO-8601 date and time with a zone; null or absent: none');
+export const assetRightsBody = z.object({
+  license: rightsText,
+  credit: rightsText,
+  expiresAt: rightsInstant,
+  embargoUntil: rightsInstant,
+});
+export const assetBulkBody = z.object({
+  action: z.enum(ASSET_BULK_ACTION_NAMES as unknown as [string, ...string[]]),
+  ids: z.array(zId).min(1).max(BULK_JOB_MAX_ITEMS),
+  folderId: zId.nullable().optional().describe('move: the folder (null: the root)'),
+  addTags: z.array(zId).max(MAX_ASSET_BULK_TAGS).optional().describe('tag: tag ids to add'),
+  removeTags: z.array(zId).max(MAX_ASSET_BULK_TAGS).optional().describe('tag: tag ids to remove'),
 });
 export const assetReindexBody = z.object({
   all: z

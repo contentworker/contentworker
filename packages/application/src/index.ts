@@ -11,6 +11,7 @@ export * from './ai-prompt';
 export * from './ai-provenance';
 export * from './app-extensions';
 export * from './approvals';
+export * from './asset-bulk';
 export * from './asset-delivery';
 export * from './asset-folders';
 export * from './asset-gate';

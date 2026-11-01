@@ -101,14 +101,142 @@ export function assetKind(contentType: string): AssetKind {
 }
 
 /**
- * Usage rights carried with an asset. `expiresAt` is when it must stop being delivered and
- * `embargoUntil` the earliest it may be (both ISO-8601); enforcing them is the scheduler's job.
+ * Usage rights carried with an asset. `expiresAt` is when it must stop being delivered (the
+ * engine's expiry sweep unpublishes it then) and `embargoUntil` the earliest it may be published
+ * (publishing refuses before then); both ISO-8601.
  */
 export interface AssetRights {
   readonly license?: string;
   readonly credit?: string;
   readonly expiresAt?: string;
   readonly embargoUntil?: string;
+}
+
+/** Longest license or credit line kept. */
+export const MAX_ASSET_RIGHTS_TEXT = 500;
+
+/**
+ * Checks and normalizes rights as an editor sets them: text trimmed (an empty value is no value)
+ * and at most {@link MAX_ASSET_RIGHTS_TEXT} characters, dates parsed and written back as UTC
+ * ISO-8601, and an expiry that falls after the embargo lifts (otherwise the asset could never be
+ * delivered). Returns `undefined` when nothing is left.
+ */
+export function validateAssetRights(rights: AssetRights): AssetRights | undefined {
+  const issues: { field: string; message: string }[] = [];
+  const text = (field: 'license' | 'credit') => {
+    const value = rights[field];
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string') {
+      issues.push({ field: `rights.${field}`, message: `${field} must be text` });
+      return undefined;
+    }
+    const trimmed = value.trim();
+    if (trimmed.length > MAX_ASSET_RIGHTS_TEXT) {
+      issues.push({
+        field: `rights.${field}`,
+        message: `${field} is at most ${MAX_ASSET_RIGHTS_TEXT} characters`,
+      });
+    }
+    return trimmed || undefined;
+  };
+  const date = (field: 'expiresAt' | 'embargoUntil') => {
+    const value = rights[field];
+    if (value === undefined || value === '') return undefined;
+    const ms = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+    // A bare date or time has no zone, and would mean a different instant per reader.
+    if (Number.isNaN(ms) || !/^\d{4}-\d{2}-\d{2}T.*(Z|[+-]\d{2}:\d{2})$/.test(value)) {
+      issues.push({
+        field: `rights.${field}`,
+        message: `${field} must be an ISO-8601 date and time with a zone (2026-01-31T00:00:00Z)`,
+      });
+      return undefined;
+    }
+    return new Date(ms).toISOString();
+  };
+  const license = text('license');
+  const credit = text('credit');
+  const expiresAt = date('expiresAt');
+  const embargoUntil = date('embargoUntil');
+  if (expiresAt && embargoUntil && Date.parse(expiresAt) <= Date.parse(embargoUntil)) {
+    issues.push({
+      field: 'rights.expiresAt',
+      message: 'expiresAt must be after embargoUntil, or the asset could never be delivered',
+    });
+  }
+  if (issues.length > 0) throw new ValidationError(issues);
+  const out: AssetRights = {
+    ...(license ? { license } : {}),
+    ...(credit ? { credit } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+    ...(embargoUntil ? { embargoUntil } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The asset's rights don't allow it to be delivered now: it is under embargo until `until`
+ * (`asset_embargoed`), or its rights expired at `until` (`asset_expired`). Publishing refuses with
+ * it, and so does setting an embargo on an asset that is already delivered.
+ */
+export class AssetRightsError extends DomainError {
+  readonly assetId: string;
+  readonly until: string;
+  constructor(assetId: string, reason: 'embargoed' | 'expired', until: string) {
+    super(
+      reason === 'embargoed' ? 'asset_embargoed' : 'asset_expired',
+      reason === 'embargoed'
+        ? `Asset "${assetId}" is under embargo until ${until}; it can be published from then on`
+        : `Asset "${assetId}" can't be delivered: its rights expired at ${until}. Extend or clear the expiry first`,
+      reason === 'embargoed' ? { embargoUntil: until } : { expiresAt: until },
+    );
+    this.assetId = assetId;
+    this.until = until;
+  }
+}
+
+/** Refuses with {@link AssetRightsError} when the rights forbid delivering the asset at `now`. */
+export function assertRightsAllowDelivery(
+  assetId: string,
+  rights: AssetRights | undefined,
+  now: Date,
+): void {
+  if (rights?.embargoUntil && Date.parse(rights.embargoUntil) > now.getTime()) {
+    throw new AssetRightsError(assetId, 'embargoed', rights.embargoUntil);
+  }
+  if (rights?.expiresAt && Date.parse(rights.expiresAt) <= now.getTime()) {
+    throw new AssetRightsError(assetId, 'expired', rights.expiresAt);
+  }
+}
+
+/** Whether the rights expire within `withinMs` of `now` (and haven't yet): "expires soon". */
+export function rightsExpireSoon(
+  rights: AssetRights | undefined,
+  now: Date,
+  withinMs: number,
+): boolean {
+  if (!rights?.expiresAt) return false;
+  const left = Date.parse(rights.expiresAt) - now.getTime();
+  return left > 0 && left <= withinMs;
+}
+
+/**
+ * One file an asset has had. The current file is the asset's own; the earlier ones are kept (their
+ * bytes too) so any can be made current again. `createdAt`/`createdBy`: when, and by whom, the
+ * file became the asset's (an upload, or a restore of an older one).
+ */
+export interface AssetVersion {
+  readonly version: number;
+  readonly file: AssetFile;
+  readonly r2Key?: string;
+  readonly contentHash?: string;
+  readonly createdAt?: string;
+  readonly createdBy?: string;
+  /** The asset's file now. */
+  readonly current: boolean;
+  /** The file Delivery serves now (the published snapshot's), which may be an older one. */
+  readonly published: boolean;
+  /** For a restore: the version whose file this one brought back. */
+  readonly restoredFrom?: number;
 }
 
 /**

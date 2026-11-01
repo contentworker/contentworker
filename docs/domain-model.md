@@ -373,12 +373,28 @@ removes it a day later, or marks it `error` ("The upload never completed") when 
 `file.video` is present on hosted video assets (provider, status, playback URLs). `metadata` holds
 the editorial "aspects": per-locale alt text, taxonomy tag ids, a focal point (0..1 on each axis,
 so transforms crop toward it) and free-form `fields`; `applyAssetMetadata` merges a partial patch
-and validates the focal point. An asset has one current file (no version ledger).
+and validates the focal point.
+
+An asset has one current file; `version` counts its files. Replacing or restoring one keeps the
+previous file in `asset_versions` (`AssetVersionRecord`: `version`, `file`, `r2Key`,
+`contentHash`, `replacedAt`, `replacedBy`), and `listAssetVersions` reads them as `AssetVersion`
+(`{ version, file, r2Key?, contentHash?, createdAt?, createdBy?, current, published,
+restoredFrom? }`, newest first; `createdAt`/`createdBy` are when and by whom the file became the
+asset's, `published` marks the one the snapshot delivers). A restore is a new version pointing at
+the old bytes.
+
+`AssetRights` carry `license` and `credit` (delivered with the asset) and `expiresAt` and
+`embargoUntil` (ISO-8601). `validateAssetRights` trims text (at most `MAX_ASSET_RIGHTS_TEXT`,
+500), requires dates with a zone and an expiry after the embargo;
+`assertRightsAllowDelivery(id, rights, now)` throws `AssetRightsError` (`asset_embargoed` or
+`asset_expired`, with the deciding instant in `details`), which publishing checks;
+`rightsExpireSoon` backs the admin's "Expires soon" status. The published snapshot's expiry is also
+a column (`asset_published.expires_at`, migration `0015_asset_expiry`) for the expiry sweep.
 
 `publishAsset` / `unpublishAsset` move between `draft` and `published`; `archiveAsset(asset, at)`
 takes any non-archived asset to `archived`, and `restoreAsset` brings an archived one back as a
 `draft` (each throws `InvalidStateError` on a bad transition; an archived asset cannot be
-published). File bytes are not part of the aggregate: `createAsset` returns a signed upload URL
+published, nor one under embargo or past its expiry). File bytes are not part of the aggregate: `createAsset` returns a signed upload URL
 and the bytes go to the blob store (see [Architecture](./architecture.md#media-r2-images-stream)).
 
 `assetKind(contentType)` derives an `AssetKind` (`image`, `video`, `audio`, `document`, `other`;
@@ -475,7 +491,7 @@ under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows
 `DomainEvent` (`packages/domain/src/events.ts`) is a discriminated union appended to the
 transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. The types are
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-`asset.unpublished`, `asset.deleted`, `asset.ingested`, `content_type.published`, `release.published`, `environment_alias.changed`,
+`asset.unpublished`, `asset.deleted`, `asset.ingested`, `asset.file_replaced`, `asset.rights_changed`, `asset.expired`, `content_type.published`, `release.published`, `environment_alias.changed`,
 `environment.deleted`, `promotion.awaiting_approval`, `environment.promoted`, `bulk.job_completed`,
 the `workflow_run.*` end states,
 `workflow.task_opened` and `workflow.webhook`, plus control messages for background work
