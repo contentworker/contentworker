@@ -11,10 +11,12 @@ import {
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
+import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { History, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { Ago } from '~/cms/components/ago';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
+import { LoadingStatus } from '~/cms/components/loading';
 import { ToneBadge } from '~/cms/components/status';
 import { useAssistantEdit } from '../lib/assistant';
 import { useClient, useLocalRun } from '../lib/client-context';
@@ -114,10 +116,30 @@ export function VersionHistory(props: {
       }
       contentClassName="space-y-3"
     >
-      {versions.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          {versionsQuery.isLoading ? 'Loading versions…' : 'No versions yet.'}
-        </p>
+      {versionsQuery.isLoading ? (
+        <>
+          <LoadingStatus>Loading versions…</LoadingStatus>
+          <ul className="space-y-1">
+            {[0, 1, 2].map((i) => (
+              <li key={i} aria-hidden="true" className="rounded-md border px-3 py-2">
+                <div className="flex min-h-8 items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">
+                      <SkeletonText width="1.5rem" />
+                    </span>
+                    {i === 0 ? <SkeletonPill className="w-14" /> : null}
+                    <span className="text-xs">
+                      <SkeletonText width="4rem" />
+                    </span>
+                  </div>
+                  {i === 0 ? null : <SkeletonPill className="h-8 w-[5.5rem]" />}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : versions.length === 0 ? (
+        <p className="text-muted-foreground text-sm">No versions yet.</p>
       ) : (
         <ul className="space-y-1">
           {versions.map((v) => {

@@ -17,12 +17,19 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@contentworker/ui/sheet';
-import { Skeleton } from '@contentworker/ui/skeleton';
+import { SkeletonText } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { EntryFilterBar } from '~/cms/components/EntryFilterBar';
+import {
+  LoadingStatus,
+  PageSkeleton,
+  Refreshing,
+  rememberCount,
+  rememberedCount,
+} from '~/cms/components/loading';
 import { Empty, EmptyState, PageHeader } from '~/cms/components/page';
 import { EntryDiff } from '../components/EntryDiff';
 import { EntriesTable, type EntryRowActions } from '../components/entries/EntriesTable';
@@ -50,7 +57,7 @@ export function EntriesList() {
   const navigate = useNavigate();
   const toast = useToast();
   const { client, conn, busy, run } = useClient();
-  const { types } = useContentOutlet();
+  const { types, typesPending } = useContentOutlet();
   const queryClient = useQueryClient();
   const keys = useQueryKeys();
   const edit = useAssistantEdit();
@@ -106,6 +113,12 @@ export function EntriesList() {
   const entries = entriesQuery.data ?? [];
   const loading = entriesQuery.isPending;
   const entriesKey = keys.entries(typeId, debouncedQuery);
+  // The skeleton comes back as long as this list was last time (this session).
+  const countKey = `entries:${typeId ?? 'all'}`;
+  useEffect(() => {
+    if (entriesQuery.data && !entriesQuery.isPlaceholderData)
+      rememberCount(countKey, entriesQuery.data.length);
+  }, [countKey, entriesQuery.data, entriesQuery.isPlaceholderData]);
 
   const togglePick = (id: string) =>
     setPicked((prev) => {
@@ -440,6 +453,20 @@ export function EntriesList() {
     );
   };
 
+  if (!selectedType && typesPending) {
+    return (
+      <PageSkeleton
+        label="entries"
+        title={
+          <>
+            <span className="sr-only">Entries</span>
+            <SkeletonText width="min(16rem, 60vw)" />
+          </>
+        }
+      />
+    );
+  }
+
   if (!selectedType) {
     return (
       <Empty icon={<FileText />} title="No such content type" className="card mt-6">
@@ -455,11 +482,13 @@ export function EntriesList() {
       <PageHeader
         title={viewingTrash ? `${selectedType.name} trash` : `${selectedType.name} entries`}
         description={
-          loading
-            ? undefined
-            : viewingTrash
-              ? `${count} in the trash — restore, or delete permanently`
-              : `${count} ${count === 1 ? 'entry' : 'entries'}`
+          loading ? (
+            <SkeletonText width="5.5rem" />
+          ) : viewingTrash ? (
+            `${count} in the trash — restore, or delete permanently`
+          ) : (
+            `${count} ${count === 1 ? 'entry' : 'entries'}`
+          )
         }
       >
         {picked.size > 0 && !viewingTrash && (
@@ -532,11 +561,22 @@ export function EntriesList() {
       )}
 
       {loading ? (
-        <div className="space-y-2">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-12 w-full" />
-          ))}
-        </div>
+        <>
+          <LoadingStatus>Loading {selectedType.name} entries…</LoadingStatus>
+          <EntriesTable
+            type={selectedType}
+            entries={[]}
+            locale={conn.locale}
+            picked={picked}
+            busy
+            viewingTrash={viewingTrash}
+            hrefFor={(e) => `/content/${selectedType.apiId}/${e.id}`}
+            onTogglePick={togglePick}
+            onPickAll={() => {}}
+            actions={rowActions}
+            pending={rememberedCount(countKey)}
+          />
+        </>
       ) : entries.length === 0 && hasQuery ? (
         <EmptyState
           icon={FileText}
@@ -562,18 +602,20 @@ export function EntriesList() {
           </Button>
         </EmptyState>
       ) : (
-        <EntriesTable
-          type={selectedType}
-          entries={entries}
-          locale={conn.locale}
-          picked={picked}
-          busy={busy}
-          viewingTrash={viewingTrash}
-          hrefFor={(e) => `/content/${selectedType.apiId}/${e.id}`}
-          onTogglePick={togglePick}
-          onPickAll={(all) => setPicked(all ? new Set(entries.map((e) => e.id)) : new Set())}
-          actions={rowActions}
-        />
+        <Refreshing busy={entriesQuery.isPlaceholderData}>
+          <EntriesTable
+            type={selectedType}
+            entries={entries}
+            locale={conn.locale}
+            picked={picked}
+            busy={busy}
+            viewingTrash={viewingTrash}
+            hrefFor={(e) => `/content/${selectedType.apiId}/${e.id}`}
+            onTogglePick={togglePick}
+            onPickAll={(all) => setPicked(all ? new Set(entries.map((e) => e.id)) : new Set())}
+            actions={rowActions}
+          />
+        </Refreshing>
       )}
 
       <AlertDialog

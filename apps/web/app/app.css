@@ -780,6 +780,66 @@
   }
 }
 
+/* Skeletons (`@contentworker/ui/skeleton`): the shape of data still on its way. Ink laid thin
+   over whatever is beneath, so one fill reads on paper, a card or a muted tile, light or dark.
+   Nothing shows for the first 200ms (a quick answer never flashes a skeleton), then it fades in
+   and breathes slowly between two weights of ink; skeletons mounted together breathe together.
+   Where motion is reduced it fades in and holds still: the region's status line says it's
+   loading. */
+:root {
+  --skeleton: color-mix(in oklch, var(--ink) 8%, transparent);
+  --skeleton-low: color-mix(in oklch, var(--ink) 4.5%, transparent);
+  --skeleton-grace: 200ms;
+}
+@keyframes cw-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes cw-skeleton-breath {
+  to {
+    background-color: var(--skeleton-low);
+  }
+}
+.cw-skeleton {
+  background-color: var(--skeleton);
+  animation:
+    cw-fade-in var(--motion-move) cubic-bezier(0.16, 1, 0.3, 1) var(--skeleton-grace) both,
+    cw-skeleton-breath 1.4s ease-in-out calc(var(--skeleton-grace) + var(--motion-move)) infinite
+    alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cw-skeleton {
+    animation: cw-fade-in var(--motion-move) linear var(--skeleton-grace) both;
+  }
+}
+
+/* Rows already on screen while a new query runs (a filter, a folder): they stay where they are
+   and stay readable; only if the answer is slow (400ms, as the page's PendingBar) do they settle
+   back a step and a link-blue rule sweeps the region's top edge. */
+.cw-refreshing {
+  position: relative;
+}
+.cw-refreshing[aria-busy="true"] > :not(.cw-refreshing-bar) {
+  animation: cw-settle var(--motion-move) ease-out 400ms both;
+}
+@keyframes cw-settle {
+  to {
+    opacity: 0.72;
+  }
+}
+.cw-refreshing-bar {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  z-index: 20;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 9999px;
+  pointer-events: none;
+  animation: cw-fade-in var(--motion-move) ease-out 400ms both;
+}
+
 /* Rich-text editor (TipTap/ProseMirror) content styles, scoped to the editor. */
 @layer components {
   .rich-text-editor {

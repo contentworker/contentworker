@@ -18,9 +18,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@contentworker/ui/sheet';
+import { SkeletonText } from '@contentworker/ui/skeleton';
 import { Textarea } from '@contentworker/ui/textarea';
 import { useEffect, useRef, useState } from 'react';
 import { AssetPreview, FallbackTile } from '~/cms/components/AssetPreview';
+import { LoadingStatus } from '~/cms/components/loading';
 import { StatusBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { ImageTransform } from '../lib/management';
@@ -367,7 +369,11 @@ export function AssetDetailSheet(props: {
           <div className="space-y-1.5">
             <Label>Used by {usage ? `(${usage.length})` : ''}</Label>
             {usage === null ? (
-              <p className="text-muted-foreground text-sm">Loading…</p>
+              <div className="space-y-1 text-xs">
+                <LoadingStatus>Loading where this asset is used…</LoadingStatus>
+                <SkeletonText width="78%" />
+                <SkeletonText width="64%" />
+              </div>
             ) : usage.length === 0 ? (
               <p className="text-muted-foreground text-sm">Not referenced by any entry.</p>
             ) : (

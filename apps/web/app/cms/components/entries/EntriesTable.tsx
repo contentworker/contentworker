@@ -8,6 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@contentworker/ui/dropdown-menu';
+import { Skeleton, SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -65,6 +66,8 @@ export interface EntriesTableProps {
   onTogglePick(id: string): void;
   onPickAll(all: boolean): void;
   readonly actions: EntryRowActions;
+  /** Skeleton rows to draw after the entries: the first page, before it has arrived. */
+  readonly pending?: number;
 }
 
 /** The entry's display-field value in `locale`, or null when it has none. */
@@ -157,6 +160,7 @@ export function EntriesTable(props: EntriesTableProps) {
                 <Checkbox
                   aria-label="Select all entries"
                   checked={allPicked}
+                  disabled={entries.length === 0}
                   onCheckedChange={(c) => props.onPickAll(c === true)}
                 />
               </TableHead>
@@ -296,6 +300,9 @@ export function EntriesTable(props: EntriesTableProps) {
                 </TableRow>
               );
             })}
+            {Array.from({ length: props.pending ?? 0 }, (_, i) => (
+              <EntryRowSkeleton key={i} index={i} viewingTrash={viewingTrash} />
+            ))}
           </TableBody>
         </Table>
       </div>
@@ -305,6 +312,39 @@ export function EntriesTable(props: EntriesTableProps) {
         </p>
       )}
     </div>
+  );
+}
+
+/** Title lengths for skeleton rows, so a column of them reads as titles of different lengths. */
+const TITLE_WIDTHS = ['58%', '42%', '71%', '50%', '64%', '37%'];
+
+/**
+ * A row still on its way, laid out by the real row's classes so nothing moves when it arrives:
+ * the checkbox, the title, a status pill, and Publish on about half (as on a list of drafts).
+ */
+function EntryRowSkeleton({ index, viewingTrash }: { index: number; viewingTrash: boolean }) {
+  return (
+    <TableRow role="row" aria-hidden="true" className={`hover:bg-transparent ${ROW_STACK}`}>
+      <TableCell
+        role="cell"
+        className={`${CELL_STACK} max-md:row-span-2 max-md:self-start max-md:pt-0.5`}
+      >
+        <Skeleton className="size-4 rounded-[4px]" />
+      </TableCell>
+      <TableCell role="cell" className={`${CELL_STACK} max-md:col-span-3`}>
+        <SkeletonText width={TITLE_WIDTHS[index % TITLE_WIDTHS.length]} />
+      </TableCell>
+      <TableCell role="cell" className={`${CELL_STACK} max-md:col-start-2`}>
+        <SkeletonPill className={index % 3 === 1 ? 'w-[5.5rem]' : 'w-[4.5rem]'} />
+      </TableCell>
+      <TableCell role="cell" className={`${CELL_STACK} max-md:text-right`}>
+        {viewingTrash || index % 2 === 0 ? <SkeletonPill className="h-8 w-[4.75rem]" /> : null}
+      </TableCell>
+      <TableCell role="cell" className={`${CELL_STACK} text-right`}>
+        {/* The row menu's ghost button is only its icon at rest: hold its height, draw nothing. */}
+        <span className="inline-block size-8 align-middle" />
+      </TableCell>
+    </TableRow>
   );
 }
 

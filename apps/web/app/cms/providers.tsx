@@ -12,6 +12,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { useCan } from '~/lib/use-me';
 import { CreateSpaceDialog } from './components/layout/CreateSpaceDialog';
+import { PageSkeleton } from './components/loading';
 import { Body } from './components/page';
 import { ClientProvider, useClient, useScopeState } from './lib/client-context';
 import { FeaturesProvider } from './lib/features';
@@ -32,7 +33,7 @@ export function CmsProviders({ children }: { children: React.ReactNode }) {
 
 /**
  * A CMS screen: its title, the page's body width, and — until the scope is known (after
- * hydration, once `GET /spaces` answers) — a quiet loading line, or why there's nothing to show.
+ * hydration, once `GET /spaces` answers) — the page's skeleton under its real title, or why there's nothing to show.
  */
 export function CmsPage({
   title,
@@ -55,9 +56,7 @@ export function CmsPage({
         The API didn’t answer. Reload the page to try again.
       </ScopeNotice>
     ) : (
-      <p className="pt-7 text-muted-foreground text-sm" role="status">
-        Loading…
-      </p>
+      <PageSkeleton title={title} />
     );
   return (
     <>

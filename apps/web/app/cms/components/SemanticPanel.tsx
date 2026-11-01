@@ -1,7 +1,9 @@
+import { SkeletonText } from '@contentworker/ui/skeleton';
 import { GitCompare } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Source, Sources } from '~/cms/components/ai/Sources';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
+import { LoadingStatus } from '~/cms/components/loading';
 import { ToneBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { SearchHit } from '../lib/management';
@@ -99,7 +101,19 @@ export function SemanticPanel(props: {
       )}
 
       {related === null ? (
-        <p className="text-muted-foreground text-sm">Loading…</p>
+        <>
+          <LoadingStatus>Loading related entries…</LoadingStatus>
+          <ul className="space-y-1">
+            {['74%', '58%', '66%'].map((w) => (
+              <li key={w} aria-hidden="true" className="flex items-center gap-2 text-sm">
+                <SkeletonText width={w} className="flex-1" />
+                <span className="shrink-0 text-xs">
+                  <SkeletonText width="1.75rem" />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
       ) : related.length === 0 ? (
         <p className="text-muted-foreground text-sm">
           No related entries yet (publish entries to index them).

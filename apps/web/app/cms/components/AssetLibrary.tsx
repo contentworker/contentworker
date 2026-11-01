@@ -4,11 +4,11 @@ import { Button } from '@contentworker/ui/button';
 import { Card } from '@contentworker/ui/card';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import { cn } from '@contentworker/ui/lib/utils';
-import { Skeleton } from '@contentworker/ui/skeleton';
+import { Skeleton, SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, ImageIcon, Trash2, Upload } from 'lucide-react';
-import { type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
+import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AssetDetailSheet } from '~/cms/components/AssetDetailSheet';
 import { AssetPreview } from '~/cms/components/AssetPreview';
 import { AssetBulkBar } from '~/cms/components/assets/AssetBulkBar';
@@ -21,6 +21,12 @@ import {
   uploadSummary,
 } from '~/cms/components/assets/AssetUploadList';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
+import {
+  LoadingStatus,
+  Refreshing,
+  rememberCount,
+  rememberedCount,
+} from '~/cms/components/loading';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import {
@@ -108,8 +114,21 @@ export function AssetLibrary(props: { locale: string }) {
       client.listAssets(pageParam ? { ...query, cursor: pageParam } : query),
     initialPageParam: '',
     getNextPageParam: (last) => last.nextCursor,
+    // Another folder or filter keeps the assets on screen (dimmed if slow) until its own arrive.
+    placeholderData: keepPreviousData,
   });
   const assets = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
+  // Skeletons: the first page comes back as long as the library was last time (this session);
+  // the next page, as a row of them after the last asset.
+  const countKey = `assets:${view}`;
+  const pending = pages.isPending
+    ? rememberedCount(countKey, view === 'grid' ? 8 : 6)
+    : pages.isFetchingNextPage
+      ? 4
+      : 0;
+  useEffect(() => {
+    if (pages.data && !pages.isPlaceholderData) rememberCount(countKey, assets.length);
+  }, [countKey, pages.data, pages.isPlaceholderData, assets.length]);
   const folders = useScopedQuery(['asset-folders'], () => client.listAssetFolders()).data ?? [];
   const tags = useScopedQuery(['tags'], () => client.listTags(), { silent: true }).data ?? [];
 
@@ -492,6 +511,11 @@ export function AssetLibrary(props: { locale: string }) {
           </li>
         );
       })}
+      {Array.from({ length: pending }, (_, i) => (
+        <li key={`pending-${i}`} className="flex" aria-hidden="true">
+          <AssetCardSkeleton index={i} />
+        </li>
+      ))}
     </ul>
   );
 
@@ -514,6 +538,7 @@ export function AssetLibrary(props: { locale: string }) {
               <Checkbox
                 aria-label="Select all shown"
                 checked={allSelected}
+                disabled={assets.length === 0}
                 onCheckedChange={(on) =>
                   setSelected(on === true ? new Set(assets.map((a) => a.id)) : new Set())
                 }
@@ -571,6 +596,14 @@ export function AssetLibrary(props: { locale: string }) {
               </Tr>
             );
           })}
+          {Array.from({ length: pending }, (_, i) => (
+            <AssetRowSkeleton
+              key={`pending-${i}`}
+              index={i}
+              rowClassName={ROW_STACK}
+              cellClassName={CELL_STACK}
+            />
+          ))}
         </TableBody>
       </Table>
     </div>
@@ -690,27 +723,11 @@ export function AssetLibrary(props: { locale: string }) {
               setBulkFailures(null);
             }}
           />
-          {pages.isPending && (
-            <p role="status" className="sr-only">
-              Loading assets…
-            </p>
-          )}
           {pages.isPending ? (
-            view === 'grid' ? (
-              <ul className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3">
-                {[0, 1, 2, 3].map((i) => (
-                  <li key={i}>
-                    <Skeleton className="h-44 w-full" />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="space-y-2">
-                {[0, 1, 2].map((i) => (
-                  <Skeleton key={i} className="h-12 w-full" />
-                ))}
-              </div>
-            )
+            <>
+              <LoadingStatus>Loading assets…</LoadingStatus>
+              {view === 'grid' ? grid : list}
+            </>
           ) : pages.isError && assets.length === 0 ? (
             // A failed load is said as one, never as an empty library.
             <Alert variant="destructive">
@@ -746,10 +763,8 @@ export function AssetLibrary(props: { locale: string }) {
                 </Button>
               </EmptyState>
             )
-          ) : view === 'grid' ? (
-            grid
           ) : (
-            list
+            <Refreshing busy={pages.isPlaceholderData}>{view === 'grid' ? grid : list}</Refreshing>
           )}
           {pages.hasNextPage && (
             <div className="flex justify-center">
@@ -758,10 +773,14 @@ export function AssetLibrary(props: { locale: string }) {
                 variant="outline"
                 size="sm"
                 disabled={pages.isFetchingNextPage}
+                aria-busy={pages.isFetchingNextPage || undefined}
                 onClick={() => void pages.fetchNextPage()}
               >
-                {pages.isFetchingNextPage ? 'Loading…' : 'Load more'}
+                Load more
               </Button>
+              {pages.isFetchingNextPage ? (
+                <LoadingStatus>Loading more assets…</LoadingStatus>
+              ) : null}
             </div>
           )}
         </section>
@@ -779,5 +798,72 @@ export function AssetLibrary(props: { locale: string }) {
         }}
       />
     </div>
+  );
+}
+
+/** Name lengths for skeleton cards and rows, so a run of them reads as different file names. */
+const NAME_WIDTHS = ['72%', '54%', '86%', '61%', '47%', '78%'];
+
+/** A board card still on its way: the real card's padding, preview, name line and footer. */
+function AssetCardSkeleton({ index }: { index: number }) {
+  return (
+    <Card size="sm" className="relative w-full gap-2 p-2">
+      <Skeleton className="h-28 w-full" />
+      <span className="font-medium text-sm">
+        <SkeletonText width={NAME_WIDTHS[index % NAME_WIDTHS.length]} />
+      </span>
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <SkeletonPill className={index % 3 === 2 ? 'w-[5.5rem]' : 'w-[4.5rem]'} />
+        <AssetActionsSkeleton />
+      </div>
+    </Card>
+  );
+}
+
+/** A list row still on its way, laid out by the real row's classes (it stacks the same). */
+function AssetRowSkeleton({
+  index,
+  rowClassName,
+  cellClassName,
+}: {
+  index: number;
+  rowClassName: string;
+  cellClassName: string;
+}) {
+  return (
+    <Tr aria-hidden="true" className={rowClassName}>
+      <Td className={`${cellClassName} max-md:row-span-2 max-md:self-start`}>
+        <Skeleton className="size-4 rounded-[4px]" />
+      </Td>
+      <Td className={`${cellClassName} max-md:col-span-2`}>
+        <div className="flex min-w-0 items-center gap-2">
+          <Skeleton className="size-8 shrink-0 rounded-lg" />
+          <SkeletonText className="font-medium" width={NAME_WIDTHS[index % NAME_WIDTHS.length]} />
+        </div>
+      </Td>
+      <Td className={`text-xs ${cellClassName} max-md:col-start-2`}>
+        <SkeletonText width="6.5rem" />
+      </Td>
+      <Td numeric className={`text-xs ${cellClassName} max-md:text-left`}>
+        <SkeletonText width="3rem" className="items-end max-md:items-start" />
+      </Td>
+      <Td className={`${cellClassName} max-md:col-start-2`}>
+        <SkeletonPill className="w-[4.5rem]" />
+      </Td>
+      <Td className={`text-right ${cellClassName}`}>
+        <AssetActionsSkeleton className="ml-auto" />
+      </Td>
+    </Tr>
+  );
+}
+
+/** The ghost actions (Publish or Unpublish, Archive, Delete) as they sit at rest: a label, two icons. */
+function AssetActionsSkeleton({ className }: { className?: string }) {
+  return (
+    <span className={cn('flex h-6 w-[8.25rem] items-center gap-2.5 px-2.5 text-xs', className)}>
+      <SkeletonText width="3.5rem" className="w-auto" />
+      <Skeleton className="size-3 rounded-[3px]" />
+      <Skeleton className="size-3 rounded-[3px]" />
+    </span>
   );
 }

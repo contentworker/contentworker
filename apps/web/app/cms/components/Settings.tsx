@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
+import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -40,6 +41,7 @@ import { BranchMerge } from '~/cms/components/BranchMerge';
 import { ConnectedApps } from '~/cms/components/ConnectedApps';
 import { Functions } from '~/cms/components/Functions';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { LoadingStatus } from '~/cms/components/loading';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
@@ -309,12 +311,10 @@ function AuditLog(props: { client: ManagementClient }) {
         </Button>
       </CardHeader>
       <CardContent>
-        {loading ? (
-          <p className="text-muted-foreground text-sm">Loading…</p>
-        ) : entries.length === 0 ? (
+        {!loading && entries.length === 0 ? (
           <p className="text-muted-foreground text-sm">No audit entries yet.</p>
         ) : (
-          <Table edge="flush" stack="cards" caption="Audit log">
+          <Table edge="flush" stack="cards" caption="Audit log" aria-busy={loading || undefined}>
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -346,9 +346,31 @@ function AuditLog(props: { client: ManagementClient }) {
                   </TableCell>
                 </TableRow>
               ))}
+              {loading
+                ? ['48%', '62%', '40%', '55%', '44%'].map((w) => (
+                    <TableRow key={w} aria-hidden="true">
+                      <TableCell className="text-xs">
+                        <SkeletonText width="4.5rem" />
+                      </TableCell>
+                      <TableCell label="Actor">
+                        <SkeletonPill className="w-20" />
+                      </TableCell>
+                      <TableCell label="Action" className="text-xs">
+                        <SkeletonText width="7.5rem" />
+                      </TableCell>
+                      <TableCell label="Target" className="text-xs">
+                        <SkeletonText width={w} />
+                      </TableCell>
+                      <TableCell label="Status" numeric className="text-sm">
+                        <SkeletonText width="1.75rem" className="items-end" />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                : null}
             </TableBody>
           </Table>
         )}
+        {loading ? <LoadingStatus>Loading the audit log…</LoadingStatus> : null}
       </CardContent>
     </Card>
   );

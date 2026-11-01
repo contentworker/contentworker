@@ -440,11 +440,26 @@ opacity, colour and a few pixels of travel.
 - **Arrival:** `animate-arrive`, a fade and a 4px rise, for a toast, a confirm or a new row
   (`useArrivals` decides what is new).
 - **Pages** cross-fade with View Transitions while the header, the sidebar and the tab bar hold
-  still.
+  still. A page slow to arrive (400ms) shows `PendingBar`, a link-blue rule sweeping under the
+  top bar.
+- **Loading** (`cw-skeleton`, `cw-refreshing` in `app.css`): a skeleton waits out a 200ms grace,
+  so a quick answer never flashes one, then fades in and breathes slowly between two weights of
+  ink (8% and 4.5% of `ink` over whatever is beneath, so one fill reads on paper, a card or a
+  tile, light or dark). Rows already on screen while a new query runs stay put and readable; after
+  400ms they settle back a step and the link-blue rule sweeps the region's top edge.
+
+**The Drawn Page Rule.** A page that is loading draws everything it already knows for real (the
+title, the intro if it's fixed, the filter bar, the column headers, a sheet's header) and stands a
+skeleton in only for the data, in the shape and size of what replaces it: text as one-line bars
+in the text's own size, badges and buttons as pills, thumbnails as tiles, table rows built from
+the real row's classes so they stack the same on a phone. Nothing moves when the data lands. No
+region says "Loading…" on screen: it announces its load once to assistive technology
+(`LoadingStatus`, "Loading Author entries…") and marks itself `aria-busy`, and its skeletons are
+hidden. A list's skeleton comes back as long as the list was last time this session.
 
 **The Reduced Motion Rule.** With reduced motion nothing travels, but nothing that carries meaning
 is lost: colours still change, arrivals and overlays fade without rising, and page changes happen
-at once.
+at once. A skeleton fades in and holds still: its status line says it is loading.
 
 ## Shapes
 
@@ -470,7 +485,11 @@ for code and data blocks only.
 - **Page** (`components/page.tsx`): `PageHeader` (the h1, an intro held to the measure, the page's
   actions), `Body`, `Section`, `Empty` (with an `icon` and `title` where the empty state is the
   news).
-- **Item, Field, Kbd, Spinner, Badge, Skeleton, Separator, Breadcrumb, Tooltip, Sheet, Dropdown
+- **Skeleton** (`ui/skeleton.tsx`): `Skeleton` (a block, tile radius), `SkeletonText` (lines one
+  line-height tall in the surrounding type), `SkeletonPill` (a badge, or a button with `h-8`). The
+  CMS's regions compose them with `LoadingStatus`, `Refreshing`, `PageSkeleton` and the
+  remembered row count (`cms/components/loading.tsx`).
+- **Item, Field, Kbd, Spinner, Badge, Separator, Breadcrumb, Tooltip, Sheet, Dropdown
   menu, Alert, Alert dialog, Dialog, Select, Tabs, Checkbox, Avatar** (`packages/ui`): radix-maia
   primitives on the Ledger tokens.
 - **Status badge** (`components/status.tsx`): a pill tinted 11% in the status colour with a dot; an
