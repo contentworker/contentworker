@@ -313,14 +313,21 @@ describe('asset collections', () => {
     expect(within(bar).getByText('1 selected')).toBeTruthy();
   });
 
-  it('sends the whole loaded order in one reorder, past the 500 an add takes', async () => {
+  // Rendering 600 rows in jsdom takes most of a second here and far longer on a loaded CI runner.
+  it('sends the whole loaded order in one reorder, past the 500 an add takes', {
+    timeout: 30_000,
+  }, async () => {
     collections = [collection({ itemCount: 600 })];
     members = Array.from({ length: 600 }, (_, i) => asset(`m${i}`, `m-${i}.pdf`));
     renderLibrary();
     const nav = screen.getByRole('navigation', { name: 'Collections' });
     fireEvent.click(await within(nav).findByRole('button', { name: 'Launch, 600 assets' }));
     const list = await screen.findByRole('list', { name: 'Assets in “Launch”, in order' });
-    fireEvent.click(within(list).getByRole('button', { name: 'Move “m-0.pdf” down' }));
+    // Look in the first row only: a role-and-name query over 600 rows computes every button's
+    // accessible name, and that alone outlasted the 15 s timeout on CI.
+    const [first] = within(list).getAllByRole('listitem');
+    if (!first) throw new Error('the collection rendered no rows');
+    fireEvent.click(within(first).getByRole('button', { name: 'Move “m-0.pdf” down' }));
     await waitFor(() => expect(client.reorderAssetCollection).toHaveBeenCalledTimes(1));
     const sent = client.reorderAssetCollection.mock.calls[0]?.[1] as string[];
     expect(sent).toHaveLength(600);
