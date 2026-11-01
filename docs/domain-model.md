@@ -96,20 +96,36 @@ A `RichText` value is a document tree (`packages/domain/src/rich-text/rich-text.
 rich text exactly as from `Link` fields (`extractRichTextTargets`). `richTextToPlainText`
 flattens a document for search/embedding.
 
-The node vocabulary the admin editor produces:
+The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`):
 
 - **Blocks** — `paragraph`, `heading-1`…`heading-6`, `blockquote`, `unordered-list`,
-  `ordered-list`, `list-item`, `code-block` (optional `data.language`), `hr`.
+  `ordered-list`, `list-item`, `code-block` (optional `data.language`), `hr`, and the table
+  nodes `table`, `table-row`, `table-header-cell`, `table-cell`.
 - **Inline** — `text` (with `marks`), `hard-break`, `hyperlink` (`data.uri`, text children).
 - **References** (`REFERENCE_NODE_TYPES`, each with `data.target: { id, linkType }`) —
   `embedded-entry-block`, `embedded-asset-block`, `embedded-entry-inline`, `entry-hyperlink`,
   `asset-hyperlink`.
 - **Marks** — `bold`, `italic`, `underline`, `code`, `strikethrough`.
 
-`nodeType` is an open string: validation (`validateRichText`) only constrains `text` nodes
-(string `value`) and reference nodes (well-formed `data.target`), so documents authored through
-the API may carry additional node types and still validate; delivery consumers should render
-unrecognized nodes defensively.
+`validateRichText` runs on every write (API, MCP, editor, import, AI) and refuses:
+
+- a `nodeType` outside the vocabulary, anywhere in the tree — delivery clients switch on
+  `nodeType`, so a type they cannot know is refused rather than delivered;
+- a `text` node without a string `value`, a reference node without a well-formed `data.target`,
+  and a node whose `data` is not an object or whose `content` is not an array;
+- a `hyperlink` whose `data.uri` is missing or unsafe. `safeLinkUri` allows `http`, `https`,
+  `mailto` and `tel`, plus relative and fragment URIs; it reads the scheme the way a browser does
+  (ignoring embedded whitespace and control characters) and refuses an undecoded entity before
+  the path (`javascript&colon;`). The HTML import applies the same rule, keeping an unsafe link's
+  text and dropping its target;
+- a document over `MAX_RICH_TEXT_BYTES` (512 KiB serialized, twice the `JSON` field cap) or
+  nested more than `MAX_RICH_TEXT_DEPTH` (64) nodes below the root.
+
+Which node may hold which (blocks inside inline nodes, table structure) is not yet constrained.
+
+In Delivery, `?include=` resolves rich-text references like `Link` fields: each reference node's
+`data.target` becomes the embedded entry or asset (the node and its `nodeType` stay), and a
+dangling, unpublished or cyclic target stays a `{ id, linkType }` stub.
 
 ### Slug, `unique` and `defaultValue`
 
@@ -333,7 +349,8 @@ components nest — and returns deduplicated edges attributed to the top-level f
 edges are materialized so the platform can:
 
 - enforce **referential integrity** (publishing fails if a linked entry/asset doesn't exist),
-- **resolve links** in Delivery (`?include=` embedding), and
+- **resolve links** in Delivery (`?include=` embedding, including links inside `Component`
+  values and rich-text reference nodes), and
 - **invalidate caches** in reverse — when X changes, entries embedding X are refreshed.
 
 ## Webhooks

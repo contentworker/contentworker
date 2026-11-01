@@ -4,8 +4,14 @@ import {
   extractReferences,
   extractRichTextTargets,
   isRichTextDocument,
+  MAX_RICH_TEXT_BYTES,
+  MAX_RICH_TEXT_DEPTH,
+  RICH_TEXT_BLOCK_NODE_TYPES,
+  RICH_TEXT_INLINE_NODE_TYPES,
   type RichTextDocument,
+  type RichTextNode,
   richTextToPlainText,
+  safeLinkUri,
   validateEntryFields,
   validateRichText,
 } from '../src/index';
@@ -43,6 +49,118 @@ describe('rich text document', () => {
     ).not.toEqual([]);
     // A reference node missing its target is invalid.
     expect(validateRichText(doc([{ nodeType: 'embedded-entry-block' }]))).not.toEqual([]);
+  });
+
+  it('accepts every node type in the vocabulary', () => {
+    const text = { nodeType: 'text', value: 'x', marks: [] };
+    const target = (linkType: 'Entry' | 'Asset') => ({ target: { id: 't1', linkType } });
+    const node = (nodeType: string): RichTextNode => {
+      if (nodeType === 'text') return text;
+      if (nodeType === 'hyperlink')
+        return { nodeType, data: { uri: 'https://example.com' }, content: [text] };
+      if (nodeType.includes('asset')) return { nodeType, data: target('Asset'), content: [] };
+      if (nodeType.includes('entry')) return { nodeType, data: target('Entry'), content: [] };
+      return { nodeType, content: [text] };
+    };
+    const value = doc([
+      ...RICH_TEXT_BLOCK_NODE_TYPES.map(node),
+      { nodeType: 'paragraph', content: RICH_TEXT_INLINE_NODE_TYPES.map(node) },
+    ]);
+    expect(validateRichText(value)).toEqual([]);
+  });
+
+  it('refuses a node type outside the vocabulary, wherever it sits', () => {
+    expect(validateRichText(doc([{ nodeType: 'script', content: [] }]))).toEqual([
+      'content[0]: unknown nodeType "script"',
+    ]);
+    const nested = doc([
+      {
+        nodeType: 'paragraph',
+        content: [{ nodeType: 'footnote-ref', data: { note: 'n1' }, content: [] }],
+      },
+    ]);
+    expect(validateRichText(nested)).toEqual([
+      'content[0].content[0]: unknown nodeType "footnote-ref"',
+    ]);
+    // A second root inside the tree is not a node type either.
+    expect(validateRichText(doc([{ nodeType: 'document', content: [] }]))).not.toEqual([]);
+  });
+
+  it('refuses malformed content and data instead of throwing', () => {
+    expect(validateRichText(doc([{ nodeType: 'paragraph', content: 'oops' } as never]))).toEqual([
+      'content[0]: content must be an array',
+    ]);
+    expect(validateRichText(doc([{ nodeType: 'paragraph', data: 'x' } as never]))).toEqual([
+      'content[0]: data must be an object',
+    ]);
+    expect(validateRichText(doc([null as never]))).toEqual([
+      'content[0]: node is missing a nodeType',
+    ]);
+  });
+
+  it('requires a hyperlink to carry a safe uri', () => {
+    const link = (data: Record<string, unknown> | undefined) =>
+      doc([
+        {
+          nodeType: 'paragraph',
+          content: [{ nodeType: 'hyperlink', data, content: [{ nodeType: 'text', value: 'x' }] }],
+        },
+      ]);
+    for (const uri of [
+      'https://example.com/a?b=1&c=2',
+      'mailto:a@example.com',
+      '/relative',
+      '#top',
+    ])
+      expect(validateRichText(link({ uri })), uri).toEqual([]);
+    for (const data of [
+      undefined,
+      {},
+      { uri: '' },
+      { uri: 42 },
+      { uri: 'javascript:alert(1)' },
+      { uri: ' JaVaScRiPt:alert(1)' },
+      { uri: 'java\tscript:alert(1)' },
+      { uri: 'data:text/html,<script>alert(1)</script>' },
+      { uri: 'vbscript:msgbox' },
+      { uri: 'javascript&colon;alert(1)' },
+    ]) {
+      expect(validateRichText(link(data)), JSON.stringify(data)).toEqual([
+        'content[0].content[0]: hyperlink requires data.uri with an http, https, mailto or tel URI',
+      ]);
+    }
+  });
+
+  it('shares one link-safety rule with the HTML import', () => {
+    expect(safeLinkUri('  https://example.com  ')).toBe('https://example.com');
+    expect(safeLinkUri('javascript:alert(1)')).toBeUndefined();
+    expect(safeLinkUri(undefined)).toBeUndefined();
+  });
+
+  it('caps serialized size', () => {
+    const big = 'x'.repeat(MAX_RICH_TEXT_BYTES);
+    expect(validateRichText(doc([paragraph(big)]))).toEqual([
+      `Rich text exceeds ${MAX_RICH_TEXT_BYTES} bytes`,
+    ]);
+    expect(validateRichText(doc([paragraph('x'.repeat(MAX_RICH_TEXT_BYTES / 2))]))).toEqual([]);
+  });
+
+  it('caps nesting depth', () => {
+    const nest = (levels: number): RichTextNode => {
+      let node: RichTextNode = {
+        nodeType: 'paragraph',
+        content: [{ nodeType: 'text', value: 'x' }],
+      };
+      for (let i = 1; i < levels; i++) node = { nodeType: 'blockquote', content: [node] };
+      return node;
+    };
+    // The text node sits one level below the innermost paragraph.
+    expect(validateRichText(doc([nest(MAX_RICH_TEXT_DEPTH - 1)]))).toEqual([]);
+    const issues = validateRichText(doc([nest(MAX_RICH_TEXT_DEPTH)]));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(`nodes nest more than ${MAX_RICH_TEXT_DEPTH} deep`);
+    // Far past the cap: refused, not a stack overflow.
+    expect(validateRichText(doc([nest(10_000)]))).not.toEqual([]);
   });
 
   it('extracts embedded entry/asset targets (deep)', () => {
@@ -188,6 +306,28 @@ describe('rich text in the content model', () => {
       ctx,
     );
     expect(issues.some((i) => i.field === 'body')).toBe(true);
+  });
+
+  it('refuses a script link and an unknown node on every entry write', () => {
+    const body = doc([
+      {
+        nodeType: 'paragraph',
+        content: [
+          {
+            nodeType: 'hyperlink',
+            data: { uri: 'javascript:alert(1)' },
+            content: [{ nodeType: 'text', value: 'click' }],
+          },
+        ],
+      },
+      { nodeType: 'iframe', content: [] },
+    ]);
+    const issues = validateEntryFields(
+      article,
+      { title: { 'en-US': 'T' }, body: { 'en-US': body } },
+      ctx,
+    );
+    expect(issues.filter((i) => i.field === 'body')).toHaveLength(2);
   });
 
   it('extracts references embedded in a rich-text body', () => {

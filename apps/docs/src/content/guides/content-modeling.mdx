@@ -44,6 +44,14 @@ Each field also says whether it is **required**, **localized** (a separate value
 **unique** (no two entries of the type may share a value; a clash is refused with the entry that
 holds it). A field can carry a **default value** that new entries start with.
 
+### Rich text
+
+A `RichText` value is a document of nodes: paragraphs, headings, lists, quotes, code blocks, rules,
+tables, links, and embedded entries and assets. Every write is checked against that vocabulary,
+whoever makes it: an unknown node type is refused, a link must point at an `http`, `https`,
+`mailto` or `tel` address (or a relative one), and a document may be at most 512 KiB and 64 levels
+deep.
+
 ### Components and repeaters
 
 A `Component` field groups nested fields that belong together: a hero block's heading, image and

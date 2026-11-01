@@ -27,6 +27,10 @@ A delivered entry is `{ id, contentType, fields, publishedAt }`. Lists return
 `{ items, total }`, where `total` is the number of items on this page, not the number of matches;
 page with `limit` and `skip` until a page comes back short.
 
+`include` embeds links wherever an entry holds them: in `Link` and list fields, inside components,
+and inside rich text, where an embed or entry link's `data.target` becomes the linked entry or
+asset. A link to something unpublished, or beyond the depth, stays `{ "id": …, "linkType": … }`.
+
 | Parameter      | Example                         | Meaning                                                    |
 | -------------- | ------------------------------- | ---------------------------------------------------------- |
 | `content_type` | `content_type=article`          | Only entries of this type                                  |
