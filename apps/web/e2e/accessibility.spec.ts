@@ -266,8 +266,12 @@ test('the asset library with ingest badges has no accessibility violations', asy
 }, testInfo) => {
   test.setTimeout(240_000);
   const stamp = Date.now();
-  const { copy, broken } = await seedIngestFindings(request, stamp);
+  const { copy, broken, folder } = await seedIngestFindings(request, stamp);
   await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: folder, exact: true })
+    .click();
   const library = page.getByRole('region', { name: 'Asset library' });
   const duplicateBadge = `Possible duplicate: open the asset “${copy}” duplicates`;
   await expect(library.getByRole('button', { name: duplicateBadge })).toBeVisible();

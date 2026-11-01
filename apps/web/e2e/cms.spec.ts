@@ -623,9 +623,13 @@ test('the asset library shows what ingest found: a duplicate opens its original,
   // Waits for ingest to find the twin and to give up on the missing file (after its retries).
   test.setTimeout(240_000);
   const stamp = Date.now();
-  const { original, copy, broken } = await seedIngestFindings(request, stamp);
+  const { original, copy, broken, folder } = await seedIngestFindings(request, stamp);
 
   await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: folder, exact: true })
+    .click();
   const library = page.getByRole('region', { name: 'Asset library' });
   const duplicateBadge = `Possible duplicate: open the asset “${copy}” duplicates`;
 

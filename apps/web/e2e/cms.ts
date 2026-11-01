@@ -332,5 +332,14 @@ export async function seedIngestFindings(request: APIRequestContext, stamp: numb
   await expect
     .poll(async () => (await ingestOf(request, brokenId)).ingestStatus, { timeout: 120_000 })
     .toBe('error');
-  return { original, copy, broken };
+  // Filed in a folder of their own: specs upload side by side during the ingest waits above, and
+  // the library's first page (the latest 50) can no longer be counted on to hold these.
+  const folder = `Ingest ${stamp}`;
+  const folderId = await seedAssetFolder(request, folder);
+  const moved = await api(request, 'POST', `${MGMT}/assets/move`, {
+    ids: [originalId, copyId, brokenId],
+    folderId,
+  });
+  expect(moved.ok(), await moved.text()).toBe(true);
+  return { original, copy, broken, folder };
 }
