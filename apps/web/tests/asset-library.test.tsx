@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
 import type { Asset, AssetFolder, Tag } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * On a CI runner the library's first render can take longer than testing-library's default
+ * second (the Unpublish button missed it on PR #36), as the entries list's did: every find and
+ * waitFor in this file waits up to five.
+ */
+configure({ asyncUtilTimeout: 5000 });
 
 const asset = (
   over: Omit<Partial<Asset>, 'file'> & { file?: Partial<Asset['file']> } = {},
