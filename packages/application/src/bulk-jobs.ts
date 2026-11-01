@@ -10,8 +10,8 @@ import {
   type BulkJobChunk,
   TransactionConflictError,
 } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { publishEntriesTx, unpublishEntriesTx } from './publishing.js';
+import type { AppContext } from './context';
+import { publishEntriesTx, unpublishEntriesTx } from './publishing';
 
 /** Entry ids processed per chunk (one transaction + one coalesced event each). */
 export const BULK_JOB_CHUNK_SIZE = 200;

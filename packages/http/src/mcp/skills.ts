@@ -3,7 +3,7 @@ import {
   type SkillCatalog,
   SkillsExtension,
 } from '@modelcontextprotocol/server/ext/skills';
-import { SKILL_FILES } from './skills.generated.js';
+import { SKILL_FILES } from './skills.generated';
 
 let catalog: Promise<SkillCatalog> | undefined;
 

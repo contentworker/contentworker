@@ -6,7 +6,7 @@ import {
   keyFromMediaPath,
   type R2BucketLike,
   type R2ObjectBodyLike,
-} from '../../src/blob-r2/index.js';
+} from '../../src/blob-r2/index';
 
 /** In-memory R2 bucket: stores bytes + content type, like the binding. */
 function fakeBucket() {

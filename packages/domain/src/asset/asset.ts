@@ -1,5 +1,5 @@
-import { InvalidStateError, ValidationError } from '../errors.js';
-import type { LocalizedValue } from '../types.js';
+import { InvalidStateError, ValidationError } from '../errors';
+import type { LocalizedValue } from '../types';
 
 /** Metadata describing the stored binary (the bytes live in the BlobStore). */
 export interface AssetFile {

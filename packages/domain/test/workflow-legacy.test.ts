@@ -7,7 +7,7 @@ import {
   stageNodeFor,
   validateGraph,
   type WorkflowDefinition,
-} from '../src/index.js';
+} from '../src/index';
 
 const def: WorkflowDefinition = {
   id: 'wf1',

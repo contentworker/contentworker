@@ -16,7 +16,7 @@ import {
   type Scope,
 } from '@contentworker/domain';
 import type { AIProvider } from '@contentworker/ports';
-import type { Activities, GenerateFieldsInput, LoadedEntry } from './types.js';
+import type { Activities, GenerateFieldsInput, LoadedEntry } from './types';
 
 export interface ActivitiesDeps {
   readonly ctx: AppContext;

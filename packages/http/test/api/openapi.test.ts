@@ -1,9 +1,9 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { scalarBundleUrl } from '../../src/api/docs/openapi.js';
-import { testConfig } from './config.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { scalarBundleUrl } from '../../src/api/docs/openapi';
+import { testConfig } from './config';
+import { wire } from './wire';
 
 const config: ApiConfig = testConfig({
   role: 'all',
@@ -67,9 +67,9 @@ describe('OpenAPI spec + docs UI', () => {
     for (const banned of [
       'zod',
       'hono-openapi',
-      '../docs/openapi.js',
-      '../docs/schemas.js',
-      '../docs/delivery-docs.js',
+      '../docs/openapi',
+      '../docs/schemas',
+      '../docs/delivery-docs',
     ]) {
       expect(imports, banned).not.toContain(banned);
     }

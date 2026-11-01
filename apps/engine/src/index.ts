@@ -45,10 +45,10 @@ import {
   wireEdge,
 } from '@contentworker/platform/wire';
 import { redactCredentials } from '@contentworker/redaction';
-import { AssistantAgent } from './assistant.js';
-import { runInLanes } from './lanes.js';
-import { AgentWorkflow } from './workflows/agent-workflow.js';
-import { EditorialWorkflow } from './workflows/editorial-workflow.js';
+import { AssistantAgent } from './assistant';
+import { runInLanes } from './lanes';
+import { AgentWorkflow } from './workflows/agent-workflow';
+import { EditorialWorkflow } from './workflows/editorial-workflow';
 
 /** A queue message's payload (kept as one accessor so every consumer reads it the same way). */
 const payloadOf = (m: { body: unknown }): unknown => m.body;

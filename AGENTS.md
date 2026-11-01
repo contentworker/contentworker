@@ -98,8 +98,9 @@ pnpm docs:build
 - TypeScript is strict (`packages/typescript-config/base.json`: `noUncheckedIndexedAccess`,
   `noUnusedLocals`, `verbatimModuleSyntax`). Use `import type` for types. TypeScript 7 (native)
   ships no compiler JS API: never `import ts from 'typescript'`; run its `tsc` binary instead (the
-  SDKs emit `.d.ts` with `tsc`, tsup bundles JS only). ESM with `.js`
-  specifiers in the core packages.
+  SDKs emit `.d.ts` with `tsc`, tsup bundles JS only). ESM; internal packages and apps import
+  relative paths without an extension (Bundler resolution), the published SDKs (`packages/sdk/*`)
+  keep `.js` specifiers for npm consumers, and `scripts/*.ts` use `.ts` (Node type stripping).
 - Biome formats: single quotes, semicolons, trailing commas, 2-space indent, width 100.
 - New use-case: take `AppContext`, thread `Scope`, add a test in `packages/application/test/`
   with `@contentworker/test-kit` fakes. New store behavior: a contract test in

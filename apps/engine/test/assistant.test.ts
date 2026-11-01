@@ -31,7 +31,7 @@ import {
   type WebPrincipal,
 } from '@contentworker/security/principal';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import type { AssistantAgent } from '../src/assistant.js';
+import type { AssistantAgent } from '../src/assistant';
 
 const db = () => authDbOf(env.DB);
 type Part = Parameters<AssistantAgent['persistMessages']>[0][number]['parts'][number];

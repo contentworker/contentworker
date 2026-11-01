@@ -8,8 +8,8 @@ import {
 } from '@contentworker/test-kit';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
-import type { McpDeps } from '../src/mcp/deps.js';
-import { mcpRoutes } from '../src/mcp/routes.js';
+import type { McpDeps } from '../src/mcp/deps';
+import { mcpRoutes } from '../src/mcp/routes';
 
 const ROOT_TOKEN = 'edge-mcp-root-token';
 const oauth = { issuer: 'https://cms.test', resource: 'https://cms.test/mcp' };

@@ -4,7 +4,7 @@ import {
   richTextFromHtml,
   richTextToPlainText,
   validateRichText,
-} from '../src/index.js';
+} from '../src/index';
 
 /** The tree without the bookkeeping, so a test reads as the structure it pins. */
 function shape(node: RichTextNode): unknown {

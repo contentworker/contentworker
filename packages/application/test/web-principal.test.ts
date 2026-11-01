@@ -8,7 +8,7 @@ import {
   NO_SSO,
   principalForWebUser,
   updateMember,
-} from '../src/index.js';
+} from '../src/index';
 
 async function setup() {
   const store = new InMemoryContentStore();

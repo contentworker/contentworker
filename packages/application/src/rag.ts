@@ -1,7 +1,7 @@
 import type { EntryFields, Scope, SearchReindexRequestedEvent } from '@contentworker/domain';
 import { isRichTextDocument, RateLimitedError, richTextToPlainText } from '@contentworker/domain';
 import type { EmbeddingsProvider, SearchIndex, VectorRow, VectorStore } from '@contentworker/ports';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 export interface RagDeps {
   readonly embeddings: EmbeddingsProvider;

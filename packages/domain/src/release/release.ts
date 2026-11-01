@@ -4,7 +4,7 @@
  * release ships.
  */
 
-import { InvalidStateError } from '../errors.js';
+import { InvalidStateError } from '../errors';
 
 export type ReleaseStatus = 'open' | 'published' | 'archived';
 

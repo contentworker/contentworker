@@ -1,8 +1,8 @@
 import type { Principal } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
-import { CLIENT_CACHE, clientCacheControl, hasGraphqlErrors } from '../src/client-cache.js';
-import { canonicalUrl, fromCanonical, visibilityProfile } from '../src/profile.js';
-import { backoff, drain, PURGE_CALLS, PURGE_TAGS } from '../src/purge.js';
+import { CLIENT_CACHE, clientCacheControl, hasGraphqlErrors } from '../src/client-cache';
+import { canonicalUrl, fromCanonical, visibilityProfile } from '../src/profile';
+import { backoff, drain, PURGE_CALLS, PURGE_TAGS } from '../src/purge';
 
 const cda = (over: Partial<Principal> = {}): Principal =>
   ({ spaceId: 's1', kind: 'cda', scopes: ['delivery:read', 'search:read'], ...over }) as Principal;

@@ -1,4 +1,4 @@
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 /** Cache tag on every cached principal of a space (see {@link authenticateCached}). */
 export const principalCacheTag = (spaceId: string) => `principals:${spaceId}`;

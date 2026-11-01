@@ -1,6 +1,6 @@
 import { type EventType, NotFoundError, type Scope, type Webhook } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { assertSafeExternalUrl } from './url-safety.js';
+import type { AppContext } from './context';
+import { assertSafeExternalUrl } from './url-safety';
 
 export interface CreateWebhookInput {
   readonly url: string;

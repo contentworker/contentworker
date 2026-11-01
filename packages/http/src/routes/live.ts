@@ -8,7 +8,7 @@ import {
   environmentMiddleware,
   principalMiddleware,
   requireScope,
-} from '../api/auth.js';
+} from '../api/auth';
 
 /**
  * Cloudflare-native Live Content API: authorizes exactly like the stock

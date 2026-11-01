@@ -1,7 +1,7 @@
 import { loadConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { wire } from './wire';
 
 const config = loadConfig({
   ROLE: 'all',

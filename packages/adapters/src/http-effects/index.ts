@@ -1,3 +1,3 @@
-export { createHttpFunctionInvoker } from './function-invoker.js';
-export * from './remote-fetcher.js';
-export { createWebhookSender } from './webhook-sender.js';
+export { createHttpFunctionInvoker } from './function-invoker';
+export * from './remote-fetcher';
+export { createWebhookSender } from './webhook-sender';

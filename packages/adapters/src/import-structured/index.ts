@@ -1,9 +1,9 @@
 import type { ImportSource, SourceReadResult, SourceRecord } from '@contentworker/ports';
-import { identify, MAX_PAYLOAD_BYTES, type StructuredSourceOptions, tooLarge } from './shared.js';
-import { createWxrImportSource } from './wxr.js';
+import { identify, MAX_PAYLOAD_BYTES, type StructuredSourceOptions, tooLarge } from './shared';
+import { createWxrImportSource } from './wxr';
 
-export { MAX_PAYLOAD_BYTES, type StructuredSourceOptions } from './shared.js';
-export { createWxrImportSource, type WxrSourceOptions } from './wxr.js';
+export { MAX_PAYLOAD_BYTES, type StructuredSourceOptions } from './shared';
+export { createWxrImportSource, type WxrSourceOptions } from './wxr';
 
 /**
  * Import sources for the shapes content actually arrives in: a spreadsheet

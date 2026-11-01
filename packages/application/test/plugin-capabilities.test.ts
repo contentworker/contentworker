@@ -28,7 +28,7 @@ import {
   recordPluginCapabilityDenial,
   setPluginEnabled,
   upgradePlugin,
-} from '../src/index.js';
+} from '../src/index';
 
 /**
  * Capability manifests: what a plugin declares, what a human approves, and the

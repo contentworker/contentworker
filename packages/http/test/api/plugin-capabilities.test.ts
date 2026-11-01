@@ -1,9 +1,9 @@
 import type { PluginManifest } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { testConfig } from './config.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { testConfig } from './config';
+import { wire } from './wire';
 
 /** Capability manifests over HTTP: the grant in the summary, and the approve route. */
 

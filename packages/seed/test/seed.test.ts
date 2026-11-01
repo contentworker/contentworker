@@ -17,7 +17,7 @@ import {
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
-import { type SeedConfig, seedDev, volumes } from '../src/index.js';
+import { type SeedConfig, seedDev, volumes } from '../src/index';
 
 const config: SeedConfig = {
   spaceId: 'space-1',

@@ -2,10 +2,10 @@ import { WorkflowBuilder } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { RecordingEmailSender } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { makeTestWorkflowEngine } from '../workflow-engine-harness.js';
-import { testConfig } from './config.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { makeTestWorkflowEngine } from '../workflow-engine-harness';
+import { testConfig } from './config';
+import { wire } from './wire';
 
 const config: ApiConfig = testConfig({
   role: 'all',

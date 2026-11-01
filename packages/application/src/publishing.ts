@@ -11,8 +11,8 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { ContentStoreTx, EntryWithFields, PublishedEntry } from '@contentworker/ports';
-import type { AppContext } from './context.js';
-import { runHook } from './hooks.js';
+import type { AppContext } from './context';
+import { runHook } from './hooks';
 
 /**
  * Publishes one entry inside an existing transaction. Writes the denormalized

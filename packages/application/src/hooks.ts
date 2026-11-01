@@ -1,6 +1,6 @@
 import { HookRejectedError, type Scope, ValidationError } from '@contentworker/domain';
 import type { HookName } from '@contentworker/ports';
-import type { AppContext } from './context.js';
+import type { AppContext } from './context';
 
 /**
  * The use-case side of the hook seam.

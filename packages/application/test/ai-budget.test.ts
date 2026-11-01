@@ -7,7 +7,7 @@ import {
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
-import { type AppContext, aiBudgetLimits, generateWithBudget } from '../src/index.js';
+import { type AppContext, aiBudgetLimits, generateWithBudget } from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 const scopeB = { spaceId: 's2', environmentId: 'main' };

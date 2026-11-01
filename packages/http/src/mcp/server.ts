@@ -160,8 +160,8 @@ import { generateTypes } from '@contentworker/sdk-codegen';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
-import { toHttpError } from '../api/http.js';
-import type { McpDeps } from './deps.js';
+import { toHttpError } from '../api/http';
+import type { McpDeps } from './deps';
 
 /**
  * What a tool call that failed inside the server says, in place of the failure, as REST does: a

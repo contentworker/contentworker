@@ -1,4 +1,4 @@
-import type { EntryFields, LocaleCode, LocalizedValue } from './types.js';
+import type { EntryFields, LocaleCode, LocalizedValue } from './types';
 
 /**
  * Locale configuration for a space: the default locale plus an optional

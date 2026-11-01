@@ -7,9 +7,9 @@ import {
 } from '@contentworker/application';
 import type { BlobStore } from '@contentworker/ports';
 import { logger } from '@contentworker/telemetry';
-import { localized, pick } from './helpers.js';
-import { placeholderPdf, placeholderPng } from './placeholders.js';
-import type { SeedRun } from './types.js';
+import { localized, pick } from './helpers';
+import { placeholderPdf, placeholderPng } from './placeholders';
+import type { SeedRun } from './types';
 
 const FILES = [
   { fileName: 'hero-coastline.png', contentType: 'image/png', title: 'Coastline at dawn' },

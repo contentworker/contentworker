@@ -18,9 +18,9 @@ import {
 } from '@contentworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { McpDeps } from '../../src/mcp/deps.js';
-import { buildServer } from '../../src/mcp/server.js';
-import { makeTestWorkflowEngine } from '../workflow-engine-harness.js';
+import type { McpDeps } from '../../src/mcp/deps';
+import { buildServer } from '../../src/mcp/server';
+import { makeTestWorkflowEngine } from '../workflow-engine-harness';
 
 const SPACE = 'space-1';
 const scope = { spaceId: SPACE, environmentId: 'main' };

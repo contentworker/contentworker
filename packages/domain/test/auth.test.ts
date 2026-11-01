@@ -11,7 +11,7 @@ import {
   ROLE_PRESET_DEFINITIONS,
   SCOPES,
   scopesForKind,
-} from '../src/index.js';
+} from '../src/index';
 
 const unrestricted: Principal = {
   spaceId: 's1',

@@ -8,7 +8,7 @@ import type {
   ImageTransformer,
   VideoHost,
 } from '@contentworker/ports';
-import type { AiCallRecord } from './ai-provenance.js';
+import type { AiCallRecord } from './ai-provenance';
 
 /** `live` calls the model; `mock` answers every `generateJson` from its heuristic. */
 export type AiMode = 'live' | 'mock';

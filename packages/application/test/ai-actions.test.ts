@@ -18,7 +18,7 @@ import {
   renderTemplate,
   runAIAction,
   templateVariables,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
 

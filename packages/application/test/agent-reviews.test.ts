@@ -9,7 +9,7 @@ import {
   decideAgentReview,
   listAgentReviews,
   settleReviewOutcome,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'hitl', environmentId: 'main' };
 

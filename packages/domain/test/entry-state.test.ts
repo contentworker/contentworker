@@ -8,7 +8,7 @@ import {
   saveDraft,
   unpublish,
   validateEntryFields,
-} from '../src/index.js';
+} from '../src/index';
 
 const baseEntry: Entry = {
   id: 'e1',

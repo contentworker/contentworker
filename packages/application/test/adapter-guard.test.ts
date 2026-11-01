@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertNoFakeAdapters } from '../src/adapter-guard.js';
+import { assertNoFakeAdapters } from '../src/adapter-guard';
 
 const stubAI = { key: 'ai', detail: 'StubAIProvider — bind AI' } as const;
 const fakeBlob = { key: 'blob', detail: 'FakeBlobStore — bind MEDIA_BUCKET' } as const;

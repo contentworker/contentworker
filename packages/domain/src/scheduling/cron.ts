@@ -6,7 +6,7 @@
  * fires. Month is 1–12; day-of-week 0–6 with both 0 and 7 meaning Sunday.
  */
 
-import { ValidationError } from '../errors.js';
+import { ValidationError } from '../errors';
 
 const invalid = (message: string) => new ValidationError([{ field: 'cron', message }]);
 

@@ -1,5 +1,5 @@
-import { doc } from './openapi.js';
-import { asset, publishedEntry, publishedEntryList, searchHits } from './schemas.js';
+import { doc } from './openapi';
+import { asset, publishedEntry, publishedEntryList, searchHits } from './schemas';
 
 /**
  * The Delivery routes' OpenAPI descriptions, kept apart from the routes themselves so the

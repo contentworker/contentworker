@@ -8,8 +8,8 @@ import {
   type Scope,
   type ValidationContext,
 } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { allPages } from './paging.js';
+import type { AppContext } from './context';
+import { allPages } from './paging';
 
 /** How an item in the source environment relates to the target. */
 export type ChangeKind = 'added' | 'removed' | 'changed' | 'unchanged';

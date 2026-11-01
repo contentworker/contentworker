@@ -1,6 +1,6 @@
 import type { DomainEvent } from '@contentworker/domain';
 import type { Queue } from '@contentworker/ports';
-import type { AppContext } from '../context.js';
+import type { AppContext } from '../context';
 
 /** Queue topic that carries relayed domain events to the worker dispatcher. */
 export const EVENTS_TOPIC = 'contentworker.events';

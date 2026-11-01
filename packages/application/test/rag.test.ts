@@ -24,7 +24,7 @@ import {
   requestReindex,
   runReindexJob,
   semanticSearch,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'kb', environmentId: 'main' };
 

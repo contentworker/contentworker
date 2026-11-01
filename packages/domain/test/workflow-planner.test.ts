@@ -14,7 +14,7 @@ import {
   type WorkflowGraph,
   type WorkflowGraphDefinition,
   type WorkflowNode,
-} from '../src/index.js';
+} from '../src/index';
 
 /**
  * Drives the planner the way the workflow interpreter does, with `choose` standing in for node

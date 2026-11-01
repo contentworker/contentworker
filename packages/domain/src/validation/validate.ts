@@ -1,13 +1,13 @@
-import type { ContentType } from '../content-type/content-type.js';
+import type { ContentType } from '../content-type/content-type';
 import {
   type FieldDefinition,
   type FieldValidations,
   unsafeRegexReason,
-} from '../content-type/field.js';
-import { isSlug } from '../content-type/slug.js';
-import { type FieldIssue, ValidationError } from '../errors.js';
-import { validateRichText } from '../rich-text/rich-text.js';
-import type { EntryFields, LocaleCode } from '../types.js';
+} from '../content-type/field';
+import { isSlug } from '../content-type/slug';
+import { type FieldIssue, ValidationError } from '../errors';
+import { validateRichText } from '../rich-text/rich-text';
+import type { EntryFields, LocaleCode } from '../types';
 
 export interface ValidationContext {
   readonly defaultLocale: LocaleCode;

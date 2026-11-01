@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createWorkerLoaderRuntime,
   type WorkerLoaderBinding,
-} from '../../src/plugins-cf-loader/index.js';
+} from '../../src/plugins-cf-loader/index';
 
 /**
  * A stand-in for the Worker Loader binding.

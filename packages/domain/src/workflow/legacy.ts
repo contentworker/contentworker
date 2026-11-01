@@ -10,15 +10,15 @@
  * exactly (including the first step, which has no approval in front of it).
  */
 
-import type { PermissionScope } from '../auth/auth.js';
+import type { PermissionScope } from '../auth/auth';
 import {
   assertValidWorkflow,
   type WorkflowDefinition,
   type WorkflowStep,
-} from '../collaboration/workflow.js';
-import type { WorkflowGraph, WorkflowGraphDefinition } from './graph-types.js';
-import { levelsOf } from './layout.js';
-import { WorkflowBuilder } from './templates.js';
+} from '../collaboration/workflow';
+import type { WorkflowGraph, WorkflowGraphDefinition } from './graph-types';
+import { levelsOf } from './layout';
+import { WorkflowBuilder } from './templates';
 
 const label = (s: string) => (s.length > 80 ? `${s.slice(0, 79)}…` : s);
 

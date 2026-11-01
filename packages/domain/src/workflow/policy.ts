@@ -8,8 +8,8 @@
  * checked by {@link parsePolicyRules}.
  */
 
-import { richTextToPlainText } from '../rich-text/rich-text.js';
-import type { EntryFields, LocalizedValue } from '../types.js';
+import { richTextToPlainText } from '../rich-text/rich-text';
+import type { EntryFields, LocalizedValue } from '../types';
 
 export type PolicyRule =
   /** Each listed field has a non-empty value (in `locale`, else in any locale). */

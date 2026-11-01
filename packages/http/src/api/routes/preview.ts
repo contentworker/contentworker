@@ -29,10 +29,10 @@ import {
   requireScope,
   resolveWebPrincipal,
   throttleAuth,
-} from '../auth.js';
-import { doc } from '../docs/openapi.js';
-import { publishedEntryList } from '../docs/schemas.js';
-import { clampCount, parseEntryQuery } from '../query.js';
+} from '../auth';
+import { doc } from '../docs/openapi';
+import { publishedEntryList } from '../docs/schemas';
+import { clampCount, parseEntryQuery } from '../query';
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({
   spaceId: c.req.param('space') as string,

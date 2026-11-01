@@ -12,7 +12,7 @@ import {
   publishEntry,
   unpublishEntry,
   updateEntry,
-} from '../src/index.js';
+} from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
 

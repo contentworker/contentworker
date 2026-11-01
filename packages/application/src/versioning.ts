@@ -1,6 +1,6 @@
 import { type EntryVersion, NotFoundError, type Scope } from '@contentworker/domain';
-import type { AppContext } from './context.js';
-import { type EntryView, updateEntry } from './entries.js';
+import type { AppContext } from './context';
+import { type EntryView, updateEntry } from './entries';
 
 /** Lists every saved version of an entry, newest first. */
 export async function listVersions(

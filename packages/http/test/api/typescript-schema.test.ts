@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/api/app.js';
-import { testConfig } from './config.js';
-import { wire } from './wire.js';
+import { createApp } from '../../src/api/app';
+import { testConfig } from './config';
+import { wire } from './wire';
 
 // TypeScript 7 ships no compiler JS API, so this runs its own `tsc` on the source in a temp dir and
 // returns the diagnostics it prints ('' when it compiles clean).
