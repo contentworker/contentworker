@@ -15,17 +15,21 @@ three paths that matter most: publishing, public reads and assets. Each diagram 
 callouts explained in the text, and the text is a complete equivalent of the picture. For how
 the code is layered, see [Architecture](./architecture.md); this page is about the runtime.
 
-Shapes and colors mean the same thing in every diagram. A rectangle is a Worker or entrypoint
+Shapes and line weights mean the same thing in every diagram. The diagrams are grey, with one
+purple accent, and follow the reader's light or dark setting. A rectangle is a Worker or entrypoint
 contentworker owns. A cylinder is durable state (D1, KV, R2, a queue, a Durable Object's storage,
 an index). A stadium with a dashed border is a client or a Cloudflare service contentworker calls
 but does not run (Workers AI, Images, Stream). A double-bordered box is a step detailed elsewhere.
-Blue marks the one or two nodes each diagram is about. A subgraph is a boundary: the customer
+Purple, with a bold label, marks the one or two nodes each diagram is about. A subgraph is a boundary: the customer
 deployment, or the line between what is publicly routed and what is reachable only from inside
 the Worker.
 
 ## The deployment
 
-![A contentworker deployment, with numbered callouts](./diagrams/reference-architecture/overview.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./diagrams/reference-architecture/overview.dark.svg">
+  <img alt="A contentworker deployment, with numbered callouts" src="./diagrams/reference-architecture/overview.light.svg">
+</picture>
 
 _Figure: A contentworker deployment, with numbered callouts. Source: [`overview.mmd`](./diagrams/reference-architecture/overview.mmd)._
 
@@ -118,7 +122,10 @@ and they are listed here instead:
 
 ## Publish to deliver
 
-![From Publish to a fresh Delivery API read](./diagrams/reference-architecture/publish-to-deliver.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./diagrams/reference-architecture/publish-to-deliver.dark.svg">
+  <img alt="From Publish to a fresh Delivery API read" src="./diagrams/reference-architecture/publish-to-deliver.light.svg">
+</picture>
 
 _Figure: From Publish to a fresh Delivery API read. Source: [`publish-to-deliver.mmd`](./diagrams/reference-architecture/publish-to-deliver.mmd)._
 
@@ -158,7 +165,10 @@ the agents queue.
 
 ## Delivery read path
 
-![How a Delivery API request is authenticated and cached](./diagrams/reference-architecture/delivery-read.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./diagrams/reference-architecture/delivery-read.dark.svg">
+  <img alt="How a Delivery API request is authenticated and cached" src="./diagrams/reference-architecture/delivery-read.light.svg">
+</picture>
 
 _Figure: How a Delivery API request is authenticated and cached. Source: [`delivery-read.mmd`](./diagrams/reference-architecture/delivery-read.mmd)._
 
@@ -201,7 +211,10 @@ The client-facing `cache-control` rewrite.
 
 ## Asset pipeline
 
-![From upload to a file served at media.&lt;domain&gt;](./diagrams/reference-architecture/asset-pipeline.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./diagrams/reference-architecture/asset-pipeline.dark.svg">
+  <img alt="From upload to a file served at media.&lt;domain&gt;" src="./diagrams/reference-architecture/asset-pipeline.light.svg">
+</picture>
 
 _Figure: From upload to a file served at media.&lt;domain&gt;. Source: [`asset-pipeline.mmd`](./diagrams/reference-architecture/asset-pipeline.mmd)._
 

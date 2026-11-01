@@ -21,7 +21,7 @@ sequenceDiagram
     Web->>Api: ① forwards over API binding, signed x-cw-principal
     Note over Api: verifies signature, method, path, age under 60 s,<br/>then requireScope content:publish
 
-    rect rgb(219, 234, 245)
+    rect rgba(128, 128, 128, 0.16)
         Api->>D1P: ② commits one batch: entry, published read model, outbox row
         D1P-->>Api: committed, new bookmark
     end

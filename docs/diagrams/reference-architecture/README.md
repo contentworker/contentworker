@@ -12,17 +12,27 @@ gets if the image fails to load.
 | `delivery-read.mmd`      | flowchart       | balanced | 11 of 12      |
 | `asset-pipeline.mmd`     | flowchart       | balanced | 12 of 12      |
 
-Change a source and its SVG in the same commit, and the page's callout text if a callout moved.
+Change a source and both its SVGs in the same commit, and the page's callout text if a callout moved.
 
 ## Checking and rendering
 
+The diagrams are grey (Ledger's achromatic tokens) with one accent, Ledger's purple `brand`
+(`oklch(0.49 0.16 310)` light, `oklch(0.75 0.09 305)` dark), on the focal nodes and the shaded
+sequence block only. Each ships as a light and a dark SVG, and the page picks one with `<picture>`
+and `prefers-color-scheme`. Sources carry no colours: `classDef`s set only stroke weight, dashes
+and bold, and the themes in `../themes/` supply every colour, the accent through `themeCSS`
+(`.node.focal`, `rect.rect`), which also overrides Mermaid 12's hard-coded yellow notes.
+
 ```sh
-# needs the marmalade Claude Code plugin (scripts) and Node (mermaid-cli)
+# lint and slop need the marmalade Claude Code plugin; rendering needs only Node
 P=~/.claude/plugins/cache/marmalade/marmalade/0.1.3/scripts
 python3 $P/marmalade_lint.py docs/diagrams/reference-architecture
 python3 $P/marmalade_slop.py docs/diagrams/reference-architecture/overview.mmd --detail faithful
 python3 $P/marmalade_slop.py docs/diagrams/reference-architecture/{publish-to-deliver,delivery-read,asset-pipeline}.mmd --detail balanced
-npx @mermaid-js/mermaid-cli -i overview.mmd -o overview.svg -c $P/../assets/themes/light.json
+cd docs/diagrams/reference-architecture
+for n in overview publish-to-deliver delivery-read asset-pipeline; do for m in light dark; do
+  npx @mermaid-js/mermaid-cli -i $n.mmd -o $n.$m.svg -c ../themes/ledger-$m.json -b transparent
+done; done
 ```
 
 The rubric scores `publish-to-deliver.mmd` 82 with one SLOP001, and that finding is a counting
