@@ -392,7 +392,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   button, shows on this tab only), **Versions**, **Usage** (the entries using it), **Renditions**
   (the transform preview; a non-image says it is delivered as uploaded) and **Rights**; what
   ingest found sits above the tabs, in sight from any. **Versions** (`assets/AssetVersions.tsx`)
-  is a list newest first: the version in mono, the file name, its size, when and by whom, and
+  is a list newest first: the version in mono, the file name, its size, when and by whom (a
+  teammate by name when the team is readable, else "a teammate", "an API key"; never an id), and
   outline badges for Current and "Restored from v1" beside the `ok` Published stamp on the file
   Delivery serves. Replace file (outline, a file picker) says "Uploading “x”…" in a status line
   while the signed PUT and commit run, then a toast names the new version; a failure is a
@@ -405,7 +406,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   a stamp and a sentence ("Expires soon · Expires in 3 days (date)", "Expired", "Embargoed ·
   Under embargo until …", or "No expiry or embargo."), then License, Credit, Expires at and
   Embargo until (`datetime-local` on the reader's clock, named in the hint, sent as UTC
-  instants) and Save rights. A field the API refused is `aria-invalid` with its message under it;
+  instants) and Save rights; an expiry already past on a published asset asks in place first
+  ("Expire it now?", destructive "Expire now"), and on a published asset the embargo hint says
+  it can't be set until it is unpublished. Versions and Rights stay mounted while another tab
+  shows, so an upload under way or rights not yet saved survive a look elsewhere. A field the API refused is `aria-invalid` with its message under it;
   a role without content:publish gets a warning Alert in place saying who can set rights; a
   refusal of the whole asset is a destructive Alert with the server's words. **Rights on cards and
   rows**: beside the status, "Expires soon" in `wait` (a person must renew or replace it; a week
@@ -426,10 +430,13 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   in the entries list. Past 50 selected (one page, `ASSET_BULK_JOB_THRESHOLD`), and for tagging
   at any count, the action runs as a **bulk job** on the server: a card shaped like the upload
   queue ("Bulk job") with a polite status line ("Publishing 51 assets…", then "Published 49 of
-  51 assets; 2 failed"), the job's status stamp, a `<progress>` of batches (batches are what
-  complete) and "this keeps running if you close the tab"; the bar is disabled while it runs.
+  51 assets; 2 failed"), the job's status stamp (a `wait` "Finished with failures" when any
+  failed, never a green done), the upload queue's `Progress` of batches (batches are what
+  complete) and "this keeps running if you close the tab"; the bar is disabled while it runs,
+  and freed with a toast if the job can no longer be followed (a refused poll).
   When it ends the failures are read from the job's report and named in the same Alert by the
-  asset's title or file name, still selected; a role that can't read the report gets the count
+  asset's title or file name (the library's name for one a failed batch left unnamed), still
+  selected; a role that can't read the report gets the count
   and why they can't be named. The **upload queue** lists each
   file with a badge and the batch's progress, its summary a live region ("Uploading 1 of 3", then
   "Uploaded 2 files; 1 failed"), and a toast at the end of the batch. Archiving one asset is an

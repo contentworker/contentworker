@@ -1731,12 +1731,17 @@ export function createManagementClient(
      * file until it is published again. Returns the asset at its new version.
      */
     async replaceAssetFile(id: string, file: File): Promise<Asset> {
-      const { upload, commit } = await this.startAssetFileReplacement(id, {
+      // Straight through `req`, not `this`: the method still works passed around on its own.
+      const base = `${mgmt}/assets/${encodeURIComponent(id)}/file`;
+      const { upload, commit } = await req<{
+        upload: { url: string; headers: Record<string, string> };
+        commit: { version: number; fileName: string; contentType: string };
+      }>('POST', base, {
         fileName: file.name,
         contentType: file.type || 'application/octet-stream',
       });
       await putFile(upload, file);
-      return this.commitAssetFile(id, commit);
+      return req<Asset>('POST', `${base}/commit`, commit);
     },
     /**
      * Video upload: create the draft video asset, POST the bytes straight to

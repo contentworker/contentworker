@@ -36,7 +36,8 @@ const version = (n: number, over: Partial<AssetVersion> = {}): AssetVersion => (
     size: 2048 * n,
   },
   createdAt: new Date(Date.now() - n * 60_000).toISOString(),
-  createdBy: 'ada@example.com',
+  // As the api records a person: their id, which the team turns into a name.
+  createdBy: 'u-ada',
   current: false,
   published: false,
   ...over,
@@ -63,6 +64,12 @@ const client = {
   reingestAsset: vi.fn(),
   setAssetMetadata: vi.fn(),
   listAssetVersions: vi.fn(async (_id: string) => versions),
+  getTeam: vi.fn(async () => ({
+    people: [{ id: 'u-ada', email: 'ada@example.com', name: 'Ada' }],
+    keys: [],
+    adminCount: 1,
+    settings: { ssoOnly: false },
+  })),
   replaceAssetFile: vi.fn(async (id: string, _file: File) => asset({ id, version: 3 })),
   restoreAssetVersion: vi.fn(async (id: string, _v: number) => asset({ id, version: 4 })),
   setAssetRights: vi.fn(async (id: string, rights: Record<string, string | null>) =>
@@ -146,7 +153,7 @@ describe('the Versions tab', () => {
     versions = [
       version(3, { current: true, published: true, restoredFrom: 1 }),
       version(2),
-      version(1),
+      version(1, { createdBy: 'cma' }),
     ];
     renderLibrary();
     const sheet = await openTab('photo.jpg', 'Versions');
@@ -159,7 +166,9 @@ describe('the Versions tab', () => {
     expect(within(top).getByText('Published')).toBeTruthy();
     expect(within(top).getByText('Restored from v1')).toBeTruthy();
     expect(within(top).getByText(/6\.0 KB/)).toBeTruthy();
-    expect(within(top).getByText(/by ada@example\.com/)).toBeTruthy();
+    // A person by name, never their id; a key by kind.
+    await waitFor(() => expect(within(top).getByText(/by Ada$/)).toBeTruthy());
+    expect(within(rows[2] as HTMLElement).getByText(/by an API key/)).toBeTruthy();
     // The current file can't be restored over itself; the others can.
     expect(within(top).queryByRole('button', { name: /Restore/ })).toBeNull();
     expect(within(rows[1] as HTMLElement).getByRole('button', { name: 'Restore version 2' }));
@@ -207,6 +216,8 @@ describe('the Versions tab', () => {
       versions = [version(3, { current: true }), version(2), version(1)];
       throw new ApiError(409, 'POST → 409', { error: { code: 'conflict', message: 'conflict' } });
     });
+    // What the asset is now, read back after the lost race.
+    client.getAsset.mockResolvedValueOnce(asset({ version: 3 }));
     renderLibrary();
     const sheet = await openTab('photo.jpg', 'Versions');
     await within(sheet).findByRole('list', { name: 'File versions' });
@@ -219,6 +230,8 @@ describe('the Versions tab', () => {
     await waitFor(() =>
       expect(within(sheet).getAllByRole('listitem')[0]?.textContent).toContain('v3'),
     );
+    // The sheet itself caught up too, not only the list.
+    expect(client.getAsset).toHaveBeenCalledWith('a1');
   });
 
   it('asks in place before restoring, and restores on yes', async () => {
@@ -357,6 +370,38 @@ describe('the Rights tab', () => {
     ]);
     expect(client.setAssetRights.mock.calls[0]?.[1].expiresAt).toMatch(/Z$/);
     expect(await screen.findByText('Rights saved')).toBeTruthy();
+  });
+
+  it('keeps rights typed but not saved across a look at another tab', async () => {
+    assets = [asset()];
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    fireEvent.change(within(sheet).getByLabelText('License'), { target: { value: 'CC0' } });
+    const details = within(sheet).getByRole('tab', { name: 'Details' });
+    fireEvent.mouseDown(details);
+    fireEvent.click(details);
+    await waitFor(() => expect(details.getAttribute('aria-selected')).toBe('true'));
+    const rights = within(sheet).getByRole('tab', { name: 'Rights' });
+    fireEvent.mouseDown(rights);
+    fireEvent.click(rights);
+    await waitFor(() => expect(rights.getAttribute('aria-selected')).toBe('true'));
+    expect((within(sheet).getByLabelText('License') as HTMLInputElement).value).toBe('CC0');
+  });
+
+  it('asks before an expiry already past takes a published asset out of Delivery', async () => {
+    assets = [asset({ status: 'published' })];
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    // Published: the embargo's rule is said before saving, not only after a refusal.
+    expect(within(sheet).getByText(/an embargo can’t be set now/)).toBeTruthy();
+    fireEvent.change(within(sheet).getByLabelText('Expires at'), {
+      target: { value: '2001-01-01T09:00' },
+    });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save rights' }));
+    const ask = within(sheet).getByRole('alertdialog', { name: /Expire it now\?/ });
+    expect(client.setAssetRights).not.toHaveBeenCalled();
+    fireEvent.click(within(ask).getByRole('button', { name: 'Expire now' }));
+    await waitFor(() => expect(client.setAssetRights).toHaveBeenCalled());
   });
 
   it('shows what the API refused beside each field', async () => {

@@ -489,8 +489,16 @@ export function AssetLibrary(props: { locale: string }) {
       client
         .getBulkJob(runningJob)
         .then((job) => setBulkJob((current) => (current ? { ...current, job } : current)))
-        .catch(() => {
-          /* transient; the next tick tries again */
+        .catch((e) => {
+          // A refusal (the session ended, the job is gone) won't pass by itself: stop watching
+          // and free the bar, rather than keep it disabled until a reload. Anything else is
+          // transient, and the next tick tries again.
+          if (!(e instanceof ApiError) || e.status < 400 || e.status >= 500) return;
+          setBulkJob(null);
+          setBulkBusy(false);
+          toast.error(
+            `Stopped following the bulk job: ${apiErrorMessage(e)}. It goes on running; reload to see what it did.`,
+          );
         });
     }, BULK_JOB_POLL_MS);
     return () => clearInterval(timer);
@@ -511,7 +519,9 @@ export function AssetLibrary(props: { locale: string }) {
     client
       .getBulkJobReport(job.id)
       .then((report) => {
-        const failures = jobFailures(report);
+        // A batch that failed as a whole names no asset: the library's own names fill in.
+        const known = new Map(assets.map((a) => [a.id, assetName(a, locale)]));
+        const failures = jobFailures(report, known);
         setSelected(new Set(failures.map((f) => f.id)));
         setBulkFailures({ verb, items: failures });
       })

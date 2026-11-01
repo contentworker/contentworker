@@ -428,7 +428,9 @@ export function AssetDetailSheet(props: {
               </div>
             </TabsContent>
 
-            <TabsContent value="versions" className="pt-3">
+            {/* Versions and Rights stay mounted while hidden: an upload under way, or rights typed
+                but not saved, would otherwise be dropped by a look at another tab. */}
+            <TabsContent value="versions" forceMount className="pt-3 data-[state=inactive]:hidden">
               <AssetVersions asset={asset} onAssetChange={props.onAssetChange} />
             </TabsContent>
 
@@ -543,7 +545,7 @@ export function AssetDetailSheet(props: {
               )}
             </TabsContent>
 
-            <TabsContent value="rights" className="pt-3">
+            <TabsContent value="rights" forceMount className="pt-3 data-[state=inactive]:hidden">
               <AssetRightsForm key={asset.id} asset={asset} onAssetChange={props.onAssetChange} />
             </TabsContent>
           </Tabs>

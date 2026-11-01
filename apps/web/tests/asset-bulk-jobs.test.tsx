@@ -42,6 +42,14 @@ const client = {
   ]),
   listTags: vi.fn(async () => [{ id: 't1', name: 'Hero' }]),
   assetUsage: vi.fn(async () => []),
+  // The Versions tab stays mounted, so the sheet reads the versions (and the team) on open.
+  listAssetVersions: vi.fn(async () => []),
+  getTeam: vi.fn(async () => ({
+    people: [],
+    keys: [],
+    adminCount: 1,
+    settings: { ssoOnly: false },
+  })),
   publishAsset: vi.fn(async () => ({})),
   unpublishAsset: vi.fn(async () => ({})),
   archiveAsset: vi.fn(async () => ({})),
@@ -126,8 +134,7 @@ describe('acting on more assets than a page shows', () => {
     const region = await screen.findByRole('region', { name: 'Bulk job' });
     expect(within(region).getByRole('status').textContent).toBe('Publishing 51 assets…');
     const progress = within(region).getByRole('progressbar', { name: 'Bulk job progress' });
-    expect(progress.getAttribute('value')).toBe('0');
-    expect(progress.getAttribute('max')).toBe('2');
+    expect(progress.getAttribute('aria-valuenow')).toBe('0');
     expect(within(region).getByText(/keeps running if you close the tab/)).toBeTruthy();
     // While it runs the bar can't start another.
     expect(within(bar).getByRole('button', { name: 'Publish selected' })).toHaveProperty(
@@ -137,7 +144,8 @@ describe('acting on more assets than a page shows', () => {
 
     client.getBulkJob.mockResolvedValueOnce(job({ completedChunks: 1, succeeded: 25 }));
     await tick();
-    await waitFor(() => expect(progress.getAttribute('value')).toBe('1'));
+    // One of two batches: half way.
+    await waitFor(() => expect(progress.getAttribute('aria-valuenow')).toBe('50'));
 
     client.getBulkJob.mockResolvedValueOnce(
       job({ status: 'completed', completedChunks: 2, succeeded: 49, failed: 2 }),
@@ -167,6 +175,8 @@ describe('acting on more assets than a page shows', () => {
         'Published 49 of 51 assets; 2 failed',
       ),
     );
+    // Ended with failures: waiting on a person, not stamped as done.
+    expect(within(region).getByText('Finished with failures')).toBeTruthy();
     await waitFor(() => expect(client.getBulkJobReport).toHaveBeenCalledWith('job1'));
     const alert = (await screen.findByText('2 assets not published')).closest(
       '[data-slot="alert"]',

@@ -160,7 +160,8 @@ names those entries, so archive the asset or remove the links first.
 **Act on many at once.** Select assets and use the bulk bar to publish, unpublish, archive, move,
 or add and remove a tag. Past about 50 assets, and for tagging at any count, the admin runs the
 action as a background job and shows its progress (it keeps going if you close the tab), then
-lists any asset it couldn't act on by name. Over the API, `POST …/assets/bulk` starts the same job (`202`):
+lists any asset it couldn't act on by name (a role that can't read the job's report sees how many
+instead). Over the API, `POST …/assets/bulk` starts the same job (`202`):
 `{ "action": "move", "ids": [...], "folderId": "..." }`, `"tag"` with `addTags` and
 `removeTags`, or `"publish"`, `"unpublish"` and `"archive"`. Each asset gets the same checks as on
 its own. Follow it at `GET …/bulk/jobs/{id}`; `…/bulk/jobs/{id}/report` names each asset that

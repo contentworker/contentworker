@@ -4,6 +4,7 @@ import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { useState } from 'react';
+import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
 import {
@@ -60,6 +61,9 @@ export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: A
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [refusal, setRefusal] = useState<{ forbidden: boolean; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // An expiry already past on a published asset takes it out of Delivery at once: asked first.
+  const [confirmExpire, setConfirmExpire] = useState(false);
+  const published = asset.status === 'published';
 
   const set = (field: Field, value: string) => {
     setValues((v) => ({ ...v, [field]: value }));
@@ -68,8 +72,19 @@ export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: A
   // A 422 names `rights.expiresAt`; a malformed body would name the bare field.
   const issueOf = (field: Field) => issues[`rights.${field}`] ?? issues[field];
 
-  const save = async (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
+    const expiresAt = localInputToIso(values.expiresAt);
+    const unchanged = expiresAt !== null && expiresAt === asset.rights?.expiresAt;
+    if (published && expiresAt && Date.parse(expiresAt) <= Date.now() && !unchanged) {
+      setConfirmExpire(true);
+      return;
+    }
+    void save();
+  };
+
+  const save = async () => {
+    setConfirmExpire(false);
     setBusy(true);
     setRefusal(null);
     try {
@@ -127,7 +142,7 @@ export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: A
           {...input}
         />
         {hint && (
-          <p id={`${id}-hint`} className="text-muted-foreground text-xs">
+          <p id={`${id}-hint`} className="max-w-measure text-muted-foreground text-xs">
             {hint}
           </p>
         )}
@@ -144,7 +159,7 @@ export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: A
   const clock = tz ? `On your clock (${tz}). Empty for none.` : 'On your clock. Empty for none.';
 
   return (
-    <form className="space-y-4" onSubmit={save} noValidate>
+    <form className="space-y-4" onSubmit={submit} noValidate>
       <RightsStatus rights={asset.rights} now={now} />
       {refusal && (
         <Alert variant={refusal.forbidden ? 'warning' : 'destructive'}>
@@ -166,11 +181,25 @@ export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: A
         'embargoUntil',
         'Embargo until',
         { type: 'datetime-local' },
-        `${clock} Publishing is refused before then.`,
+        published
+          ? `${clock} It is published, so an embargo can’t be set now: unpublish it first.`
+          : `${clock} Publishing is refused before then.`,
       )}
-      <Button type="submit" disabled={busy}>
-        {busy ? 'Saving…' : 'Save rights'}
-      </Button>
+      {confirmExpire ? (
+        <InlineConfirm
+          message="Expire it now?"
+          note="That expiry has passed, so it stops being delivered at once."
+          onCancel={() => setConfirmExpire(false)}
+        >
+          <Button type="button" variant="destructive" size="sm" onClick={() => void save()}>
+            Expire now
+          </Button>
+        </InlineConfirm>
+      ) : (
+        <Button type="submit" disabled={busy}>
+          {busy ? 'Saving…' : 'Save rights'}
+        </Button>
+      )}
     </form>
   );
 }

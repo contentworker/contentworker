@@ -9,9 +9,9 @@ import { Ago } from '~/cms/components/ago';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { StatusBadge } from '~/cms/components/status';
-import { fileSize } from '~/cms/lib/assets';
+import { fileSize, versionAuthor } from '~/cms/lib/assets';
 import { useClient } from '~/cms/lib/client-context';
-import { ApiError, apiErrorMessage } from '~/cms/lib/management';
+import { ApiError, apiErrorMessage, type TeamPerson } from '~/cms/lib/management';
 import { useToast } from '~/cms/lib/toast';
 
 type Replacing =
@@ -34,7 +34,22 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
   const [replacing, setReplacing] = useState<Replacing | null>(null);
   const [confirm, setConfirm] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  // The team names who uploaded each file; only an administrator may read it, so a refusal just
+  // leaves the authors described by kind.
+  const [people, setPeople] = useState<readonly TeamPerson[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    let live = true;
+    client
+      .getTeam()
+      .then((team) => live && setPeople(team.people))
+      .catch(() => {
+        /* not an administrator: authors read by kind */
+      });
+    return () => {
+      live = false;
+    };
+  }, [client]);
 
   const load = useCallback(
     () =>
@@ -55,6 +70,15 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
     props.onAssetChange?.(next);
     await load();
   };
+  // After a lost race the asset moved on: show the sheet (its "· v{n}") and the list what it is now.
+  const caughtUp = async () => {
+    try {
+      props.onAssetChange?.(await client.getAsset(asset.id));
+    } catch {
+      /* the list below still says what is current */
+    }
+    await load();
+  };
 
   const replaceWith = async (file: File) => {
     setReplacing({ state: 'uploading', name: file.name });
@@ -73,7 +97,7 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
           ? 'Another replace or restore finished first. The list shows it now; replace again to put this file on top.'
           : apiErrorMessage(e),
       });
-      if (lost) await load();
+      if (lost) await caughtUp();
     } finally {
       if (fileRef.current) fileRef.current.value = '';
     }
@@ -88,6 +112,10 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
       await changed(next);
     } catch (e) {
       toast.error(apiErrorMessage(e));
+      if (e instanceof ApiError && e.status === 409) {
+        setConfirm(null);
+        await caughtUp();
+      }
     } finally {
       setBusy(false);
     }
@@ -240,7 +268,7 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
                         <Ago at={v.createdAt} />
                       </>
                     )}
-                    {v.createdBy && ` · by ${v.createdBy}`}
+                    {v.createdBy && ` · by ${versionAuthor(v.createdBy, people)}`}
                   </p>
                 </div>
                 {!v.current && confirm !== v.version && (
@@ -261,7 +289,7 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
                   message={`Restore version ${v.version}?`}
                   note={
                     asset.status === 'published'
-                      ? `Its file becomes current as a new version. Delivery keeps v${delivered?.version ?? '?'} until you publish again.`
+                      ? `Its file becomes current as a new version. Delivery keeps ${delivered ? `v${delivered.version}` : 'the published file'} until you publish again.`
                       : 'Its file becomes current as a new version; nothing is deleted.'
                   }
                   onCancel={() => setConfirm(null)}

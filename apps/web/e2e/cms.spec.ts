@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
 import {
   api,
@@ -755,6 +756,15 @@ test('publishing more assets than a page shows runs as a job and names the one i
   await expect(job.getByRole('status')).toHaveText('Published 50 of 51 assets; 1 failed', {
     timeout: 120_000,
   });
+  await expect(job.getByText('Finished with failures')).toBeVisible();
+  // The job card, finished, passes the same WCAG sweep as the rest of the admin.
+  const axe = await new AxeBuilder({ page })
+    .include('section[aria-label="Bulk job"]')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  expect(axe.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(', ')}`)).toEqual(
+    [],
+  );
   const failures = page.getByRole('alert').filter({ hasText: '1 asset not published' });
   await expect(failures.getByText(embargoed, { exact: true })).toBeVisible();
   await expect(failures.getByText(/under embargo/)).toBeVisible();

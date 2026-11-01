@@ -19,6 +19,7 @@ import {
   runBulk,
   runsAsJob,
   timeUntil,
+  versionAuthor,
 } from '~/cms/lib/assets';
 
 const folder = (id: string, name: string, path: string, parentId?: string): AssetFolder => ({
@@ -225,5 +226,36 @@ describe('asset bulk jobs', () => {
       { id: 'a1', name: 'hero.jpg', error: 'embargoed' },
       { id: 'a9', name: 'a9', error: 'gone' },
     ]);
+  });
+
+  it('names a failure the report left unnamed from the library before falling back to the id', () => {
+    const report = {
+      job: {} as never,
+      chunks: [
+        {
+          chunkId: 'c1',
+          status: 'failed' as const,
+          attempts: 3,
+          itemCount: 2,
+          failures: [
+            { id: 'a1', error: 'batch failed' },
+            { id: 'a2', error: 'batch failed' },
+          ],
+        },
+      ],
+    };
+    expect(jobFailures(report, new Map([['a1', 'Hero']])).map((f) => f.name)).toEqual([
+      'Hero',
+      'a2',
+    ]);
+  });
+
+  it('says who uploaded a version by name, or by kind, never by a raw id', () => {
+    const people = [{ id: 'u1', email: 'ada@example.com', name: 'Ada' }];
+    expect(versionAuthor('u1', people)).toBe('Ada');
+    expect(versionAuthor('u1', [{ id: 'u1', email: 'ada@example.com' }])).toBe('ada@example.com');
+    expect(versionAuthor('cma')).toBe('an API key');
+    expect(versionAuthor('admin-token')).toBe('the admin token');
+    expect(versionAuthor('0193f1e2-7c4a-7000-8000-000000000000')).toBe('a teammate');
   });
 });

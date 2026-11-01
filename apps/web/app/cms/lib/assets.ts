@@ -291,13 +291,41 @@ export const jobOutcome = (job: BulkJobSummary): BulkOutcome => ({
   failed: job.failed,
 });
 
-/** What a job's report says failed, by asset: its name (title or file name) where it gave one. */
+/**
+ * What a job's report says failed, by asset: its name (title or file name) where it gave one,
+ * else the name of the asset as the library has it loaded (a batch that failed as a whole names
+ * no asset), and only then its id.
+ */
 export function jobFailures(
   report: BulkJobReport,
+  known: ReadonlyMap<string, string> = new Map(),
 ): { readonly id: string; readonly name: string; readonly error: string }[] {
   return report.chunks.flatMap((c) =>
-    c.failures.map((f) => ({ id: f.id, name: f.name ?? f.id, error: f.error })),
+    c.failures.map((f) => ({ id: f.id, name: f.name ?? known.get(f.id) ?? f.id, error: f.error })),
   );
+}
+
+/**
+ * Who a version's file came from, as a person reads it: a teammate by name or email when the team
+ * is known (only administrators can read it), else what kind of caller it was. Never a raw id.
+ */
+export function versionAuthor(
+  createdBy: string,
+  people: readonly { readonly id: string; readonly email: string; readonly name?: string }[] = [],
+): string {
+  const person = people.find((p) => p.id === createdBy);
+  if (person) return person.name?.trim() || person.email;
+  if (createdBy === 'admin-token' || createdBy === 'admin') return 'the admin token';
+  if (
+    createdBy === 'cma' ||
+    createdBy === 'cda' ||
+    createdBy === 'cpa' ||
+    createdBy === 'api_key'
+  ) {
+    return 'an API key';
+  }
+  // An email recorded as itself reads fine; any other id is a teammate the reader can't look up.
+  return createdBy.includes('@') ? createdBy : 'a teammate';
 }
 
 // --- usage rights ---------------------------------------------------------------
