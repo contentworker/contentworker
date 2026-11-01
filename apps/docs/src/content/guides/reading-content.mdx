@@ -71,6 +71,11 @@ renditions, srcset, video?, rights?, file }`. With `?locale=`, the title, descri
 are one locale's text. The list pages with `limit` and `cursor` (the response's `nextCursor`) and
 filters by `kind`, `tag` and `folder`.
 
+`…/assets?q=coffee` searches published assets instead (file name, title, caption, alt text, tag
+names and the text of documents, by words and by meaning) and answers `{ items, total, facets }`.
+A search needs a key with **`search:read`** as well as `delivery:read`; without it the answer is
+**403**. See [Delivering assets](/guides/delivering-assets/#search).
+
 Their URLs point at the workspace's `media.` address, are immutable and carry a signature (use
 them as given; an edited one is a `404`): `url` is the original,
 `renditions` your space's named sizes and `srcset` a ladder of widths for responsive images.
@@ -81,7 +86,7 @@ with short-lived signed URLs. See [Delivering assets](/guides/delivering-assets/
 re-encoded image.
 
 A key bound to a [role](/guides/api-keys/#roles) with content grants gets an empty asset list
-(`{ "items": [], "total": 0 }`) and a **403** on a single asset: assets aren't covered by
+(`{ "items": [], "total": 0 }`, plus empty `facets` for a search) and a **403** on a single asset: assets aren't covered by
 per-content-type grants, so they stay closed to it.
 
 ## Search

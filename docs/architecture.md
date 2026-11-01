@@ -142,10 +142,9 @@ bind them by `script_name`) and handles:
   It forwards `entry.published` to the agents queue when it is bound, and sends one coalesced purge message
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-  `asset.unpublished`, `asset.deleted`, `asset.ingested`, `content_type.published`,
-  `release.published`,
-  `environment_alias.changed`, `environment.deleted`; `asset_renditions.changed` purges every
-  environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
+  `asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
+  `environment_alias.changed`, `environment.deleted`; `asset.ingested` only when `published`;
+  `asset_renditions.changed` purges every environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
   and send the media Worker's tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`):
   see [Assets](#assets-r2-images-stream-and-the-media-worker).
 - **Cron** (`* * * * *`): due scheduled actions, the outbox relay sweep, bulk-job stall recovery,
@@ -300,38 +299,54 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   logged, never the upload's). The engine's consumer (`startAssetIngestForObject`) ignores any key
   that isn't an asset's current file (`parseAssetObjectKey` and `assetFileKey`: extracted text,
   version bodies, staged jobs, an older version) and starts the run under
-  `assetIngestInstanceId(scope, assetId, version)`, so both triggers and any redelivery start one
-  run; `CloudflareAssetIngestStarter` treats an id already in use as that run. A re-run (`POST
-  …/assets/:id/reingest`, the `asset_reindex` bulk job) adds a token of its own.
+  `assetIngestInstanceId(scope, assetId, version, { etag })`, so both triggers and any redelivery
+  start one run, and a second PUT of new bytes through the same signed URL starts another (the
+  signed PUT answers with the stored etag, R2's notification carries it).
+  `CloudflareAssetIngestStarter` creates through `createBatch`'s object form and treats only its
+  duplicate-id code (`10405`) as the run that exists; any other error retries the message. The
+  `pending` mark is written only over a status that isn't `processing`, and put back to `ready` or
+  `error` when the run already existed. A re-run (`POST …/assets/:id/reingest`, a no-op while
+  pending or processing; the `asset_reindex` bulk job, of which one runs per environment at a
+  time) adds a token of its own. Both answer `501` without `ASSET_EVENTS_QUEUE`.
 - **Steps** (`runAssetIngest`), each a `step.do` and one unit of work, each re-checking the asset is
   still on the run's version: `begin` (`ingest_status` processing), `hash` (SHA-256 streamed from
-  R2; `duplicate_of` set to the oldest other asset in the scope with that hash, on this asset and
-  on later copies), `probe` (the Images binding's `info`: width, height, and the format when the
-  upload declared `application/octet-stream`), `alt-text` and `tags` (images: `generateAltText`
-  and `autoTagAsset` under the AI budget, only where empty, existing tags only, recorded in
-  `ai_suggestions`; a spent budget skips them), `extract-text` (documents through Workers AI
-  `toMarkdown`, audio through Whisper large v3 turbo; at most 20 MiB and 10 MiB read, 500,000
-  characters kept, at `space/env/asset/v<n>/text.md`, which no media URL can name), `embed`, `index`
-  and `finish` (`ingest_status` ready and `asset.ingested` in one unit). A step that still fails
-  after its retries records `ingest_status` error and the message.
+  R2, skipped above 512 MiB; `duplicate_of` set to the oldest other asset in the scope with that
+  hash, on this asset and on later copies, and re-pointed at the oldest copy left when the
+  original is deleted), `probe` (the Images binding's `info`, skipped above 70 MiB: width,
+  height, and the format when the upload declared `application/octet-stream`), `alt-text` and
+  `tags` (images: `generateAltText` and `autoTagAsset` under the AI budget, the uploader's text
+  wrapped as untrusted, only where empty, existing tags only, recorded in `ai_suggestions`; a
+  spent budget skips them, and a model that still fails after the step's retries records
+  `failed` without failing the run), `extract-text` (documents through Workers AI `toMarkdown`,
+  audio through Whisper large v3 turbo, metered by the AI budget and absent under
+  `AI_MODE=mock`; at most 20 MiB and 10 MiB read, handed over as the stream's chunks, 500,000
+  characters kept, at `space/env/asset/v<n>/text.md`, which no media URL can name, and removed if
+  the asset was deleted meanwhile), `embed`, `index` and `finish` (`ingest_status` ready, the
+  measured size and dimensions written into a published snapshot of the same version, and
+  `asset.ingested` with `published`, in one unit). A step that still fails after its retries
+  records `ingest_status` error and the message, credentials redacted.
 - **Writes.** `AssetRepo.recordIngest` writes only `ingest_status`, `ingest_error`,
   `content_hash`, `duplicate_of` and the file's measurements, and only while the asset is on the
   run's version; `save` leaves those columns alone, so an editor's save from an older read never
   undoes a step. Alt text and tags go through `applyAssetMetadata` and `save` after a re-read, so
-  a value an editor saved meanwhile wins; saving a field through the metadata path clears its
-  `ai_suggestions` mark.
-- **Search.** Assets are indexed apart from entries: their own SearchShard objects
-  (`space:env:assets:<n>`, the same class, so no new migration tag) and their own Vectorize
-  namespace (metadata `kind: 'asset'`, `spaceId`, `environmentId`, `assetId`), so entry search,
-  related entries and RAG answers never see asset text. The indexed text is the file name, title,
-  description, alt text, tag names and an excerpt of the extracted text, from the published
-  snapshot when the asset is published (re-indexed on `asset.published` and
-  `asset.unpublished`). `searchAssets` (Management `GET …/assets/search`, MCP `assets_search`) and
+  a value an editor saved meanwhile wins; a save through the metadata path clears the
+  `ai_suggestions` marks of the alt text locales it changed and the suggested tags it removed.
+- **Search.** Assets are indexed apart from entries, in two corpora (`AssetSearchCorpus`): the
+  library (every asset as it is now) and the published assets (their published snapshots, written
+  on publish and ingest, removed on unpublish). Each has its own SearchShard objects
+  (`space:env:assets:<n>` and `space:env:pubassets:<n>`, the same class, so no new migration tag)
+  and its own Vectorize namespace (metadata `kind: 'asset'`, `spaceId`, `environmentId`,
+  `assetId`), so entry search, related entries and RAG answers never see asset text, and
+  Delivery's candidates are never drafts. The indexed text is the file name, title, description,
+  alt text, tag names and an excerpt of the extracted text of the snapshot's own file version.
+  Queries and documents are embedded only with `EMBEDDINGS_PROVIDER` set: `wireEdge` builds one
+  `assetSearch` that the api, delivery, MCP, the engine and ingest share. `searchAssets` (Management `GET …/assets/search`, MCP `assets_search`) and
   `searchDeliveredAssets` (Delivery `GET …/assets?q=`) fuse the two legs by rank (RRF), filter by
   kind, tag, folder and (Management) status, and count facets; Delivery returns only published
-  assets, projected. Without a bound index the lexical leg scans the 500 most recent assets.
-- **Cleanup.** `asset.deleted` removes the vector, the search document and the extracted text;
-  `environment.deleted` clears the environment's asset shards, and its purge removes each asset's
+  assets, projected, and a search there (and MCP's `delivered: true`) needs `search:read` as well
+  as `delivery:read`. Without a bound index the lexical leg scans the 500 most recent assets.
+- **Cleanup.** `asset.deleted` removes both corpora's vectors and documents and the extracted
+  text; `environment.deleted` clears the environment's asset shards (both corpora), and its purge removes each asset's
   vector, a page of 200 per event, before the rows go.
 
 ## Data placement

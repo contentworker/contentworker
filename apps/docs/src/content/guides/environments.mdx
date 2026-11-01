@@ -53,7 +53,9 @@ exports and checks the source (a refused snapshot fails it, and its report names
 `dryRun` option); follow its jobs with `bulk_job_status`.
 
 Snapshots and clones carry asset metadata, not the files themselves, and never carry API keys,
-OAuth clients or webhook secrets.
+OAuth clients or webhook secrets. What processing found about each file (its status, a duplicate
+warning, unsaved AI suggestions) stays behind: the copied assets are processed again in the new
+environment, so its search finds them.
 
 ## Compare and merge
 

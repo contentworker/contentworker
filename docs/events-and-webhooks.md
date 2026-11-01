@@ -143,13 +143,13 @@ loudly and acks it.
 After each `contentworker-events` batch, the engine collects one `deliveryScopeTag` per
 space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/purges.ts`):
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-`asset.unpublished`, `asset.deleted`, `asset.ingested` (Delivery's asset search ranks on what
-ingest indexed), `content_type.published`, `release.published`,
+`asset.unpublished`, `asset.deleted`, `content_type.published`, `release.published`,
 `environment_alias.changed`, `environment.deleted`. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
 path's environment and the one it resolves to. `asset_renditions.changed` adds the tag of every
-environment of the space (presets belong to the space). A failed enqueue is logged, counted
+environment of the space (presets belong to the space). `asset.ingested` adds the tag only when
+its `published` is true: ingest of a draft changes nothing Delivery serves. A failed enqueue is logged, counted
 (`contentworker_purge_enqueue_errors_total`) and not retried: responses then go stale for their
 60 s `max-age`.
 
@@ -294,7 +294,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset.published`                                                                  | `assetId`                                                                                                                                                                  |
 | `asset.unpublished`                                                                | `assetId` (also when a published asset is archived or deleted)                                                                                                             |
 | `asset.deleted`                                                                    | `assetId`, `r2Key` or `videoId` (the engine removes those bytes)                                                                                                           |
-| `asset.ingested`                                                                   | `assetId`, `version`, `contentHash`, `duplicateOf` (ingest finished a file version: hashed, measured, enriched where empty, indexed)                                       |
+| `asset.ingested`                                                                   | `assetId`, `version`, `published`, `contentHash` (absent over 512 MiB), `duplicateOf` (ingest finished a file version: hashed, measured, enriched where empty, indexed)     |
 | `asset_renditions.changed`                                                         | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged; `scope` is the environment it was changed through, so other environments' scoped hooks don't hear it)                                                             |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                              |
 | `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                    |

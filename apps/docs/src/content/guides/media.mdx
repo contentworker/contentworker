@@ -101,16 +101,18 @@ Every uploaded file is processed in the background, usually within seconds:
   blocked);
 - an image's width and height are read from the file;
 - an image with no alt text gets one, and one with no tags gets tags chosen from your existing
-  tags, both marked **AI suggestion** until someone saves that field. Values you set are never
+  tags, both marked **AI suggestion** until someone changes that value. Values you set are never
   replaced, and when the space's AI budget is spent this part is skipped;
 - the text of a PDF, office document or audio recording is read (documents up to 20 MiB, audio up
-  to 10 MiB), so search finds the file by what it says;
+  to 10 MiB, counted against the AI budget), so search finds the file by what it says;
 - the asset becomes searchable.
 
 While this runs the asset shows **Processing**. If it fails, the asset shows the error and a
-**Retry**; over the API that is `POST …/assets/{id}/reingest` (the MCP tool is `asset_reingest`).
-Assets uploaded before processing existed can be sent through it in bulk:
-`POST …/assets/reindex` (`{ "all": true }` for every asset), or `assets_reindex`. Management reads
+**Retry**; over the API that is `POST …/assets/{id}/reingest` (the MCP tool is `asset_reingest`;
+it does nothing while the asset is still processing). Assets uploaded before processing existed,
+or copied in by an environment import or clone (which starts this itself), can be sent through it
+in bulk: `POST …/assets/reindex` (`{ "all": true }` for every asset), or `assets_reindex`; while
+one is running, asking again returns that one. Management reads
 show the state as `ingestStatus` (`pending`, `processing`, `ready`, `error`), with `ingestError`,
 `contentHash`, `duplicateOf` and `aiSuggestions`.
 

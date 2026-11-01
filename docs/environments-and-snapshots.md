@@ -43,6 +43,13 @@ What an import preserves:
 - **Asset folders**, with their ids and paths, so each asset lands in the same folder. A snapshot
   from before folders carries none, and its assets land at the library root.
 
+What ingest found is not carried: an imported asset arrives without `ingestStatus`,
+`ingestError`, `duplicateOf` or `aiSuggestions` (`createSnapshotAsset`), because the target's
+search has never indexed it. When the ingest queue is bound (`ASSET_EVENTS_QUEUE`), the import
+then starts an `asset_reindex` job in the target: a synchronous import or clone as it returns, a
+job-run one when its create job completes (`bulk.job_completed`, in the engine). The bytes are
+the source's, so the content hash comes along.
+
 ### Checks before any write
 
 Every entry is validated against the snapshot's content model and the target space's locales,
