@@ -204,7 +204,12 @@ admin account even though others exist.
 
 The web app's `/setup` is the only first-run setup. The api has no setup gate and no setup routes
 of its own: it serves every route from the start, and a new deployment's first admin creates the
-first space and adds people from the admin, through the web principal.
+first space (empty, or with the sample starter) from the CMS's no-spaces notice and adds people
+from the admin, through the web principal. `POST /spaces` takes `space:admin` across the
+deployment (`authorize(…, '*')`), which only a deployment-wide principal holds: the root tokens and
+a deployment admin signed in to the admin. A space's own keys and tokens, and a member (who gets a
+principal with no space and no scopes on a route that names none), are refused; the `space_create`
+MCP tool makes the same check.
 
 ## Ending a person's access
 

@@ -23,6 +23,41 @@ public Delivery API at `cdn.`.
 Every Management route lives under `/spaces/$SPACE/environments/main/…`; `main` is the
 environment every space starts with. See [Concepts](/start/concepts/#spaces-and-environments).
 
+## Your first space
+
+A new workspace has no spaces. Sign in to the admin as its first admin and it offers to create
+one: give it a name (the space id follows the name, and appears in every API path), a default
+locale, and choose what it starts with:
+
+- **Start with sample content** (recommended): a content model that covers every field type
+  (articles, authors, categories, pages, products, events, recipes, landing pages), a few dozen
+  entries in each state (draft, changed and published), tags and two concept schemes, sample
+  images and documents, and one open release. It is ordinary content: edit or delete any of it.
+- **Empty space**: no content types and no entries, to model your own from scratch.
+
+The admin switches to the new space when it's created. Later spaces come from the space menu in
+the header (**New space…**), with the same choice. Creating a space takes a deployment admin;
+someone who signs in before being added to a space is asked to have an admin add them.
+
+Over the API, `POST /spaces` does the same. It takes a credential that spans the workspace (its
+admin token, held by whoever runs the workspace), never a space's own keys. `starter` is
+`"sample"` or `"empty"` (the default):
+
+```sh
+curl -s "$API/spaces" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{ "spaceId": "marketing", "name": "Marketing", "defaultLocale": "en-US", "starter": "sample" }'
+```
+
+MCP clients holding the workspace's MCP token have the same operation as the `space_create` tool,
+and `spaces_list` to see what exists.
+
+The steps below build an `article` type from scratch, so follow them in an **empty** space. In a
+space with the sample content, `article` already exists: skip to step 3, or use another apiId in
+step 2.
+
+## The loop
+
 <Steps>
 
 1. **Get a Management key.** In the admin, open **Settings → API keys** and create a key of kind

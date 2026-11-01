@@ -69,4 +69,6 @@ export interface SeedRun {
   readonly locales: readonly string[];
   readonly hasDe: boolean;
   readonly scale: number;
+  /** Leave a content type that already exists as it is (the starter); else re-save it (dev). */
+  readonly keepExistingTypes?: boolean;
 }

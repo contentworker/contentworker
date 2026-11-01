@@ -683,6 +683,9 @@ importers:
       '@contentworker/application':
         specifier: workspace:*
         version: link:../application
+      '@contentworker/seed':
+        specifier: workspace:*
+        version: link:../seed
       '@contentworker/test-kit':
         specifier: workspace:*
         version: link:../test-kit
@@ -801,6 +804,9 @@ importers:
       '@contentworker/security':
         specifier: workspace:*
         version: link:../security
+      '@contentworker/seed':
+        specifier: workspace:*
+        version: link:../seed
       '@contentworker/telemetry':
         specifier: workspace:*
         version: link:../telemetry

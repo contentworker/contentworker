@@ -6,9 +6,14 @@
  * hydration, and the scope is read from the browser.
  */
 
+import { Button } from '@contentworker/ui/button';
+import { Plus } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'react-router';
+import { useCan } from '~/lib/use-me';
+import { CreateSpaceDialog } from './components/layout/CreateSpaceDialog';
 import { Body } from './components/page';
-import { ClientProvider, useScopeState } from './lib/client-context';
+import { ClientProvider, useClient, useScopeState } from './lib/client-context';
 import { FeaturesProvider } from './lib/features';
 import { AppQueryProvider } from './lib/query';
 import { ToastProvider } from './lib/toast';
@@ -44,10 +49,7 @@ export function CmsPage({
     state === 'ready' ? (
       children
     ) : state === 'no-spaces' ? (
-      <ScopeNotice page={title} title="No spaces yet">
-        You aren’t on any space in this deployment. A deployment admin can add you to one, or create
-        the first space from the API.
-      </ScopeNotice>
+      <NoSpaces page={title} />
     ) : state === 'error' ? (
       <ScopeNotice page={title} title="Couldn’t load your spaces">
         The API didn’t answer. Reload the page to try again.
@@ -65,14 +67,56 @@ export function CmsPage({
   );
 }
 
+/**
+ * No space to work in. A deployment admin creates the first one here (with the sample content,
+ * or empty), and lands in it; anyone else is told who can let them in.
+ */
+function NoSpaces({ page }: { page: string }) {
+  const admin = useCan('admin');
+  const { updateConn } = useClient();
+  const [open, setOpen] = useState(false);
+  if (!admin) {
+    return (
+      <ScopeNotice page={page} title="No spaces yet">
+        You aren’t on any space in this deployment yet. Ask a deployment admin to add you to one.
+      </ScopeNotice>
+    );
+  }
+  return (
+    <ScopeNotice
+      page={page}
+      title="Create your first space"
+      action={
+        <>
+          <Button className="mt-4" onClick={() => setOpen(true)}>
+            <Plus aria-hidden="true" /> Create a space
+          </Button>
+          <CreateSpaceDialog
+            open={open}
+            onOpenChange={setOpen}
+            onCreated={(id) => updateConn({ space: id, environment: 'main' })}
+          />
+        </>
+      }
+    >
+      A space holds a content model, its entries and media, and the team that works on them. Start
+      with sample content to see every part of the CMS at work, or with an empty space to model your
+      own.
+    </ScopeNotice>
+  );
+}
+
 /** Why a screen has nothing to show: under the page's own h1, so it still says where you are. */
 function ScopeNotice({
   page,
   title,
+  action,
   children,
 }: {
   page: string;
   title: string;
+  /** What to do about it, in place of the link to the account page. */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -83,12 +127,14 @@ function ScopeNotice({
           {title}
         </h2>
         <p className="mt-1 max-w-measure text-muted-foreground text-sm">{children}</p>
-        <Link
-          to="/account"
-          className="mt-3 inline-block font-medium text-link text-sm hover:underline"
-        >
-          Your account
-        </Link>
+        {action ?? (
+          <Link
+            to="/account"
+            className="mt-3 inline-block font-medium text-link text-sm hover:underline"
+          >
+            Your account
+          </Link>
+        )}
       </section>
     </div>
   );

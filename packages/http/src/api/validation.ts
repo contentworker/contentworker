@@ -1,5 +1,6 @@
 import { AGENT_WORKFLOWS, BULK_JOB_MAX_ITEMS } from '@contentworker/application';
-import { ValidationError } from '@contentworker/domain';
+import { SPACE_ID_PATTERN, ValidationError } from '@contentworker/domain';
+import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
 
@@ -55,12 +56,23 @@ export const zText = z.string().max(100_000);
 // these schemas stay at the "shape + bounds + strip unknown keys" altitude.
 
 export const createSpaceBody = z.object({
-  spaceId: zId,
+  spaceId: z
+    .string()
+    .regex(SPACE_ID_PATTERN, 'letters, digits, ".", "_" or "-", starting with a letter or digit')
+    .describe('1–64 letters, digits, ".", "_" or "-", starting with a letter or digit'),
   name: zShort,
   defaultLocale: zLocale,
   locales: z.array(zLocale).max(200).optional(),
   fallbacks: z.record(zLocale, zLocale.nullable()).optional(),
   environments: z.array(zId).max(100).optional(),
+  starter: z
+    .enum(STARTERS)
+    .optional()
+    .describe(
+      '`sample` installs sample content into the first environment: a content model covering ' +
+        'every field type, a few dozen entries, taxonomy, sample images and documents, and one ' +
+        'open release. `empty` (the default) creates the space with nothing in it.',
+    ),
 });
 export const createEnvironmentBody = z.object({ id: zId, name: zShort.optional() });
 export const setAliasBody = z.object({ targetEnvironmentId: zId });

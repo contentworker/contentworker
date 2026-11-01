@@ -26,6 +26,7 @@
     "@contentworker/redaction": "workspace:*",
     "@contentworker/sdk-codegen": "workspace:*",
     "@contentworker/security": "workspace:*",
+    "@contentworker/seed": "workspace:*",
     "@contentworker/telemetry": "workspace:*",
     "@contentworker/test-kit": "workspace:*",
     "@hono/standard-validator": "catalog:",

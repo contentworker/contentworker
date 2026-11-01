@@ -3,6 +3,7 @@ import {
   type DomainEvent,
   ForbiddenError,
   InvalidStateError,
+  isSpaceId,
   type LocaleCode,
   NotFoundError,
   type Principal,
@@ -18,6 +19,7 @@ import { auditActor } from './audit';
 import type { AppContext } from './context';
 import { purgeDue } from './environment-purge';
 import { ensureRolePresets } from './team';
+import { spacesForSubject } from './web-principal';
 
 export interface CreateSpaceInput {
   readonly spaceId: string;
@@ -34,6 +36,15 @@ export interface CreateSpaceInput {
  * entry point that lets the platform be set up over the API instead of by hand.
  */
 export async function createSpace(ctx: AppContext, input: CreateSpaceInput): Promise<SpaceConfig> {
+  if (!isSpaceId(input.spaceId)) {
+    throw new ValidationError([
+      {
+        field: 'spaceId',
+        message:
+          'A space id is 1–64 letters, digits, ".", "_" or "-", starting with a letter or digit',
+      },
+    ]);
+  }
   const locales = input.locales?.length ? input.locales : [input.defaultLocale];
   if (!locales.includes(input.defaultLocale)) {
     throw new ValidationError([
@@ -67,6 +78,21 @@ export async function getSpaceConfig(ctx: AppContext, scope: Scope): Promise<Spa
 /** All spaces (admin view). */
 export async function listSpaces(ctx: AppContext): Promise<SpaceConfig[]> {
   return ctx.store.spaces.list();
+}
+
+/**
+ * The spaces a principal can reach: every space for a deployment-wide one (the root tokens, a
+ * signed-in deployment admin), the teams a signed-in member is on when the request names no
+ * space, else the one space its credential is bound to.
+ */
+export async function listSpacesFor(ctx: AppContext, principal: Principal): Promise<SpaceConfig[]> {
+  const spaces = await ctx.store.spaces.list();
+  if (principal.spaceId === '*') return spaces;
+  const own =
+    principal.kind === 'user' && !principal.spaceId && principal.subject
+      ? new Set(await spacesForSubject(ctx, principal.subject))
+      : new Set([principal.spaceId]);
+  return spaces.filter((s) => own.has(s.spaceId));
 }
 
 /** Adds an environment (branch) to an existing space. */

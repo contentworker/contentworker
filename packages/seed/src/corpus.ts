@@ -27,6 +27,8 @@ export interface CorpusSeed {
   readonly publishedArticleIds: readonly string[];
 }
 
+export type CorpusVolumes = ReturnType<typeof volumes>;
+
 /** Generated-type volumes; the bulk types scale linearly for benchmarking. */
 export function volumes(scale: number) {
   return {
@@ -51,9 +53,9 @@ export async function seedCorpus(
   run: SeedRun,
   assetIds: readonly string[],
   taxonomy: TaxonomySeed,
+  vol: CorpusVolumes = volumes(run.scale),
 ): Promise<CorpusSeed> {
-  const { locale, hasDe, scale } = run;
-  const vol = volumes(scale);
+  const { locale, hasDe } = run;
   const asset = (i: number) => (assetIds.length ? assetLink(pick(assetIds, i)) : undefined);
 
   // --- categories (tree: roots first so children can reference real ids) ----
@@ -335,9 +337,13 @@ export async function seedCorpus(
 
   // --- curated pages (stable) + generated filler ----------------------------
   const pageSeeds = [
-    { title: 'Home', slug: 'home', body: 'Welcome to the demo site.' },
+    { title: 'Home', slug: 'home', body: 'Welcome to the sample site.' },
     { title: 'About us', slug: 'about', body: 'contentworker is an API-first headless CMS.' },
-    { title: 'Documentation', slug: 'docs', body: 'See docs/ in the repository.' },
+    {
+      title: 'Documentation',
+      slug: 'docs',
+      body: 'The contentworker documentation covers modeling, publishing and delivery.',
+    },
   ] as const;
   const pageIds: string[] = [];
   for (const p of pageSeeds) {
@@ -349,7 +355,7 @@ export async function seedCorpus(
       ),
       slug: localized(locale, p.slug),
       body: localized(locale, richTextDoc(p.body)),
-      seoDescription: localized(locale, `${p.title} — seeded for local development.`),
+      seoDescription: localized(locale, `${p.title}: a sample page.`),
     });
     pageIds.push(result.id);
   }
