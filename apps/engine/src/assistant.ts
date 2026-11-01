@@ -33,6 +33,7 @@ export class AssistantAgent extends AssistantAgentBase {
         hasher: createHasher(env.TOKEN_PEPPER),
         // The MCP root token never authenticates anything here: the principal is resolved first.
         adminToken: '',
+        blob: wired.blob,
         moderateBeforePublish: wired.config.moderateBeforePublish,
         accessPolicy: WEB_SIGN_IN,
         signalReview: env.AGENT_WF

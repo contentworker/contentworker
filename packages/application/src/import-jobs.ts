@@ -12,6 +12,8 @@ import {
   type PlannedRecord,
   planImport,
 } from './import';
+import { importChunkKey } from './job-staging';
+import { isSnapshotJob, runSnapshotChunk } from './snapshot-jobs';
 
 /**
  * Importing more than one request can hold.
@@ -49,10 +51,7 @@ export interface StartImportJobResult {
   readonly analysis: ImportAnalysis;
 }
 
-/** Where a job's staged records live. Keyed by job, so cleanup is a prefix. */
-export function importChunkKey(scope: Scope, jobId: string, chunkId: string): string {
-  return `imports/${scope.spaceId}/${scope.environmentId}/${jobId}/${chunkId}.json`;
-}
+export { importChunkKey } from './job-staging';
 
 /**
  * Plans an import and starts it as a durable job.
@@ -213,6 +212,14 @@ export async function discardImportChunk(blob: BlobStore, payloadKey: string): P
  */
 export function importChunkRunner(ctx: AppContext, blob: BlobStore) {
   return async (scope: Scope, job: BulkJob, chunk: BulkJobChunk) => {
+    if (isSnapshotJob(job.config)) {
+      if (!chunk.payloadKey) {
+        throw new Error(`Import chunk ${job.id}/${chunk.chunkId} is missing its staged work`);
+      }
+      const outcome = await runSnapshotChunk(ctx, blob, scope, job.config, chunk.payloadKey);
+      await discardImportChunk(blob, chunk.payloadKey);
+      return outcome;
+    }
     const config = job.config as ImportJobConfig | undefined;
     if (!chunk.payloadKey || !config?.contentTypeApiId) {
       throw new Error(`Import chunk ${job.id}/${chunk.chunkId} is missing its staged work`);

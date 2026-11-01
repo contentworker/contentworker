@@ -133,8 +133,8 @@ Base paths: `/spaces` and `…` = `/spaces/:space/environments/:env`.
 | Method | Path       | Scope            | Description                                                                            |
 | ------ | ---------- | ---------------- | -------------------------------------------------------------------------------------- |
 | GET    | `…/export` | `content:manage` | Export the environment as portable JSON                                                |
-| POST   | `…/import` | `content:manage` | Replay a snapshot into this environment (`?dryRun=true`, `?publish=false`)             |
-| POST   | `…/clone`  | `content:manage` | Copy this environment into another `{ targetSpaceId?, targetEnvironmentId, publish? }` |
+| POST   | `…/import` | `content:manage` | Replay a snapshot into this environment, as a job (`202`; `?dryRun=true` reports, `200`; `?publish=false`) |
+| POST   | `…/clone`  | `content:manage` | Copy this environment into another, as a job (`202`) `{ targetSpaceId?, targetEnvironmentId, publish? }` |
 
 A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows, and
 asset **metadata**. It deliberately never carries **credentials** — API keys, OAuth clients and
@@ -190,7 +190,33 @@ model and the target space's locales, and every link in what will be published m
 entry or asset the snapshot carries. Any problem refuses the import with a `422` that lists them
 (up to 50, each naming its entry) and writes nothing, so the target stays empty and a corrected
 retry works. `?dryRun=true` runs the same checks. A failure the checks can't foresee (a plugin
-hook refusing an entry, an infrastructure error) can still stop an import part-way.
+hook refusing an entry, an infrastructure error) is reported per entry in the job's report.
+
+**Import and clone run as jobs.** Replaying every entry through the use-cases is far more than one
+request can hold for an environment of any size. After the checks, the request writes the content
+model, taxonomy and workflows (small, and everything else depends on them) and answers `202` with
+`{ report, job, publishJobId }`. The assets and entries are staged in the blob store in chunks of
+100 before the model is written (so a staging failure leaves the target empty and a retry works),
+and written by bulk jobs, with progress at `…/bulk/jobs/:id` and per-item failures at
+`…/bulk/jobs/:id/report` in the **target** environment:
+
+1. `job` creates the asset records and entries, as drafts, under their own ids.
+2. `publishJobId` starts when `job` completes, in the same write that finalizes it: it publishes
+   what the snapshot had published (assets, then entries), then lays each changed entry's draft on
+   top. It waits because publishing an entry needs every entry and asset it links to to exist, and
+   chunks run concurrently. It starts only if `job` completes with no failures (otherwise `job`'s
+   report names what failed, and nothing is published); it never starts if `job` is cancelled, and
+   it is `null` when nothing is published (`?publish=false`, or a snapshot of drafts).
+
+Staged work is removed as each chunk finishes, and whatever is left (a chunk that failed for good, a
+publishing job that never started, a cancelled job) when the job completes or is cancelled. Each
+imported entry is created and published through the use-cases, so it emits its own events (webhooks,
+search and vector indexing) as an entry written by hand would.
+
+Every chunk step is safe to run again after a crash: an entry already created isn't created twice,
+and one already published (or already carrying its draft) isn't published again. A snapshot with no
+entries or assets answers `job: null`. Without a blob store (local fakes), import and clone run
+synchronously and answer `201` with the report. The clone's export still runs inside the request.
 
 ### Importing from elsewhere
 

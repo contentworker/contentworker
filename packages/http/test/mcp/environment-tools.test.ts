@@ -2,12 +2,16 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  createContentType,
+  createEntry,
   createEnvironment,
   createSpace,
+  publishContentType,
   setEnvironmentAlias,
 } from '@contentworker/application';
 import { type Principal, SCOPES, scopesForKind } from '@contentworker/domain';
 import {
+  FakeBlobStore,
   FixedClock,
   InMemoryContentStore,
   InMemoryVectorStore,
@@ -172,5 +176,49 @@ describe('the environment a tool names', () => {
       ),
     );
     expect(real?.content).toEqual(missing?.content);
+  });
+});
+
+describe('environment_clone over MCP', () => {
+  it('copies the model and starts a job for the entries when object storage is bound', async () => {
+    const deps = { ...makeDeps(), blob: new FakeBlobStore() };
+    await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
+    await createEnvironment(deps.ctx, 'space-1', 'copy');
+    const main = { spaceId: 'space-1', environmentId: 'main' };
+    await createContentType(deps.ctx, main, {
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+      ],
+    } as Parameters<typeof createContentType>[2]);
+    await publishContentType(deps.ctx, main, 'note');
+    await createEntry(deps.ctx, main, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'Hello' } },
+    });
+    const client = await connect(deps, {
+      spaceId: '*',
+      kind: 'admin',
+      scopes: [...scopesForKind('cma')],
+    });
+    const res = await client.callTool({
+      name: 'environment_clone',
+      arguments: { space: 'space-1', targetEnvironment: 'copy' },
+    });
+    expect(res.isError).toBeFalsy();
+    const body = JSON.parse((res.content as { text: string }[])[0]?.text ?? '{}');
+    expect(body).toMatchObject({
+      report: { entries: 1 },
+      job: { action: 'import', status: 'running' },
+    });
   });
 });
