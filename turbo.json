@@ -15,6 +15,16 @@
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["build/**", "dist/**"]
     },
+    // The docs site's type check and its build both run the site's generators (scripts/openapi.ts
+    // writes src/generated/openapi.json; `astro sync` rewrites .astro/*.d.ts in place and renames
+    // its dependency cache under node_modules/.astro/vite-sync), and `astro build` always runs the
+    // same sync with no way to skip it. Run side by side they collide (ENOTEMPTY on the cache
+    // rename, or tsc reading a half-written file), so the build follows its own type check.
+    "@contentworker/docs-site#build": {
+      "dependsOn": ["^build", "^generate", "generate", "check-types"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": ["build/**", "dist/**"]
+    },
     "lint": {
       "dependsOn": ["^lint"]
     },

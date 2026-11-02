@@ -23,6 +23,12 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { McpDeps } from '../../src/mcp/deps';
 import { buildServer } from '../../src/mcp/server';
+import {
+  drainImportJobs,
+  SNAPSHOT_ENVELOPE,
+  sections,
+  seedEverySection,
+} from '../snapshot-round-trip';
 
 const hasher = { hash: (v: string) => createHash('sha256').update(v).digest('hex') };
 
@@ -281,6 +287,38 @@ describe('environment_import over MCP', () => {
     expect(res.isError).toBeFalsy();
     expect(body(res)).toMatchObject({ report: { entries: 1 }, job: { status: 'running' } });
     expect((await deps.ctx.store.contentTypes.list(copy)).map((t) => t.apiId)).toEqual(['note']);
+  });
+
+  it('round-trips every section an export writes', async () => {
+    const deps = { ...makeDeps(), blob: new FakeBlobStore() };
+    await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
+    await createEnvironment(deps.ctx, 'space-1', 'copy');
+    await seedEverySection(deps.ctx, deps.blob, { spaceId: 'space-1', environmentId: 'main' });
+    const admin = await connect(deps, {
+      spaceId: '*',
+      kind: 'admin',
+      scopes: [...scopesForKind('cma')],
+    });
+    const exported = body(
+      await admin.callTool({ name: 'environment_export', arguments: { space: 'space-1' } }),
+    );
+    expect(Object.keys(exported).sort()).toEqual(
+      [...Object.keys(sections(exported)), ...SNAPSHOT_ENVELOPE].sort(),
+    );
+    const res = await admin.callTool({
+      name: 'environment_import',
+      arguments: { space: 'space-1', environment: 'copy', snapshot: exported },
+    });
+    expect(res.isError).toBeFalsy();
+    await drainImportJobs(deps.ctx, deps.blob);
+    const copied = body(
+      await admin.callTool({
+        name: 'environment_export',
+        arguments: { space: 'space-1', environment: 'copy' },
+      }),
+    );
+    expect(sections(copied)).toEqual(sections(exported));
+    expect(sections(copied).assetCollections).toHaveLength(1);
   });
 
   it('refuses a caller who cannot manage the target space', async () => {
