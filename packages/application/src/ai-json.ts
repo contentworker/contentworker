@@ -108,6 +108,36 @@ export function conforms(value: unknown, schema: Schema): boolean {
   return true;
 }
 
+/**
+ * A model's structured answer when it has the schema's shape, else `undefined`. JSON mode asks the
+ * model for the shape; it does not promise it, so a use-case reads the answer through this rather
+ * than casting it: a malformed answer is no answer (the caller's empty result or refusal), never a
+ * `TypeError` on the first field it touches. Keys the answer adds beside the schema's are let be:
+ * the caller reads only the ones it names.
+ */
+export function conformingAnswer<T>(
+  result: { readonly object?: unknown },
+  schema: Schema,
+): T | undefined {
+  const value = result.object;
+  if (value === undefined || value === null) return undefined;
+  const { additionalProperties: _extra, ...named } = schema;
+  return conforms(value, named) ? (value as T) : undefined;
+}
+
+/**
+ * The strings in one list field of a model's structured answer (`field` of `result.object`): what
+ * isn't a list is no list, and what in it isn't a string is left out. Read per field, so a model
+ * that got one list right and fumbled the other still counts for the one.
+ */
+export function answerStrings(result: { readonly object?: unknown }, field: string): string[] {
+  const value =
+    typeof result.object === 'object' && result.object !== null && !Array.isArray(result.object)
+      ? (result.object as Record<string, unknown>)[field]
+      : undefined;
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
 // ---- generateJson -----------------------------------------------------------
 
 class AiTimeoutError extends Error {}
