@@ -20,6 +20,7 @@ import type {
   DomainEvent,
   Entry,
   EntryFields,
+  EntryKeyset,
   EntryMetadata,
   EntryStatus,
   EntryVersion,
@@ -1395,6 +1396,8 @@ export interface ArchivableVersion {
 export interface EntryWithFields {
   readonly entry: Entry;
   readonly fields: EntryFields;
+  /** When the entry last changed (ISO-8601), as the store stamps it. Set by `list`. */
+  readonly updatedAt?: string;
 }
 
 /** How many entries of one content type are in one status (a row of {@link EntryRepo.countByStatus}). */
@@ -1447,6 +1450,13 @@ export interface EntryQuery {
    * schedules' delta windows).
    */
   readonly after?: { readonly publishedAt: string; readonly entryId: string };
+  /**
+   * Keyset cursor in the list's own order (`order`, or `sys.updatedAt` ascending without one),
+   * ties broken by entry id: only entries strictly after this row. `'start'` reads the first
+   * page in that same total order. Honoured by `list` (the draft path), where `sys.updatedAt`
+   * is the entry's `updatedAt`; build it with `entryKeysetOf`.
+   */
+  readonly afterRow?: EntryKeyset | 'start';
   /** Field-level predicates (all must match). `field` is a field apiId or `sys.*`. */
   readonly filters?: readonly QueryFilter[];
   /** Sort keys, applied in order. */

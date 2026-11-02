@@ -470,6 +470,16 @@ function makeEntryRepo(
       if (keyset && query.afterEntryId !== '') {
         conditions.push(gt(schema.entries.id, query.afterEntryId as string));
       }
+      // Keyset paging in the list's own order. Without an `order` that is (updatedAt, id),
+      // which SQL walks itself; an `order` is sorted in JS over the scan, which applies the
+      // cursor there.
+      const rowKeyset = query.afterRow !== undefined && !query.order?.length;
+      if (rowKeyset && query.afterRow !== 'start' && query.afterRow) {
+        const at = Date.parse(String(query.afterRow.values[0] ?? ''));
+        conditions.push(
+          sql`(${schema.entries.updatedAt}, ${schema.entries.id}) > (${Number.isNaN(at) ? 0 : at}, ${query.afterRow.id})`,
+        );
+      }
       if (advanced) {
         // Draft field values live in entry_versions, so the superset prefilter
         // runs against the joined CURRENT version. Same contract as the
@@ -489,7 +499,13 @@ function makeEntryRepo(
       }
       let select = withFields()
         .where(and(...conditions))
-        .orderBy(keyset ? asc(schema.entries.id) : asc(schema.entries.updatedAt))
+        .orderBy(
+          ...(keyset
+            ? [asc(schema.entries.id)]
+            : rowKeyset
+              ? [asc(schema.entries.updatedAt), asc(schema.entries.id)]
+              : [asc(schema.entries.updatedAt)]),
+        )
         .$dynamic();
       // SQL pagination is only valid when there are no JS-side field predicates;
       // otherwise bound the candidate scan (+1 to detect overflow).
@@ -498,13 +514,21 @@ function makeEntryRepo(
         : select.limit(query.limit ?? 100).offset(query.skip ?? 0);
       const rows = await select;
       if (advanced && rows.length > scanLimit) throw new QueryTooBroadError(scanLimit);
-      const results = await toEntriesWithFields(rows);
+      const results = (await toEntriesWithFields(rows)).map((r, i) => ({
+        ...r,
+        updatedAt: (rows[i] as CurrentRow).entry.updatedAt.toISOString(),
+      }));
       if (!advanced) return results;
       const filtered = runEntryQuery(
         results,
         query,
         (r) => r.fields,
-        (r) => ({ id: r.entry.id, contentType: r.entry.contentTypeApiId, status: r.entry.status }),
+        (r) => ({
+          id: r.entry.id,
+          contentType: r.entry.contentTypeApiId,
+          status: r.entry.status,
+          updatedAt: r.updatedAt,
+        }),
       );
       if (!query.select) return filtered;
       return filtered.map((r) => ({

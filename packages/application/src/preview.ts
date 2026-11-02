@@ -1,4 +1,13 @@
-import { NotFoundError, type Scope } from '@contentworker/domain';
+import {
+  type EntryKeyset,
+  entryKeysetOf,
+  keysetOrder,
+  NotFoundError,
+  projectFields,
+  type QueryOrder,
+  type Scope,
+  ValidationError,
+} from '@contentworker/domain';
 import type { EntryQuery } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { localeFallbackChain, type RenderOptions } from './delivery';
@@ -62,6 +71,117 @@ export async function listPreviewEntries(
     version: found.entry.currentVersion,
     fields: renderFields(found.fields, config, opts.locale),
   }));
+}
+
+/** A row of a paged preview list: the previewed entry and when it last changed. */
+export interface ListedPreviewEntry extends PreviewedEntry {
+  /** When the entry last changed (ISO-8601). */
+  readonly updatedAt?: string;
+}
+
+/** One page of the preview list; pass `nextCursor` back as `cursor` for the next. */
+export interface PreviewEntryPage {
+  readonly items: readonly ListedPreviewEntry[];
+  readonly nextCursor?: string;
+}
+
+/** The most entries one page holds, and what a page holds when the caller names no limit. */
+export const PREVIEW_ENTRY_PAGE_MAX = 100;
+
+/** What a cursor is for: the order it walks, so a cursor from another sort is refused. */
+const orderSignature = (order: readonly QueryOrder[]) =>
+  order.map((o) => `${o.direction === 'desc' ? '-' : ''}${o.field}`).join(',');
+
+function encodeEntryCursor(order: readonly QueryOrder[], key: EntryKeyset): string {
+  const json = JSON.stringify([orderSignature(order), key.values, key.id]);
+  return btoa(encodeURIComponent(json)).replace(/=+$/, '');
+}
+
+function decodeEntryCursor(order: readonly QueryOrder[], cursor: string): EntryKeyset {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decodeURIComponent(atob(cursor)));
+  } catch {
+    // Falls through to the refusal.
+  }
+  if (
+    Array.isArray(parsed) &&
+    parsed.length === 3 &&
+    parsed[0] === orderSignature(order) &&
+    Array.isArray(parsed[1]) &&
+    parsed[1].length === order.length &&
+    typeof parsed[2] === 'string'
+  ) {
+    return { values: parsed[1], id: parsed[2] };
+  }
+  throw new ValidationError([
+    { field: 'cursor', message: 'cursor is not one this list returned for this order' },
+  ]);
+}
+
+/**
+ * One page of the Preview list, walked with a keyset cursor in the list's own order (`order`,
+ * or least recently changed first), so paging on never skips or repeats an entry that was
+ * edited between two reads, as an offset would. Same reads as {@link listPreviewEntries}: one
+ * row past the page says whether another follows.
+ */
+export async function listPreviewEntryPage(
+  ctx: AppContext,
+  scope: Scope,
+  query: Omit<EntryQuery, 'afterRow' | 'afterEntryId' | 'after' | 'skip'> & {
+    readonly cursor?: string;
+  } = {},
+  opts: RenderOptions = {},
+): Promise<PreviewEntryPage> {
+  const { cursor, select, ...rest } = query;
+  const order = keysetOrder(rest.order);
+  const afterRow = cursor ? decodeEntryCursor(order, cursor) : 'start';
+  const limit = Math.min(Math.max(1, rest.limit ?? PREVIEW_ENTRY_PAGE_MAX), PREVIEW_ENTRY_PAGE_MAX);
+  const config = await spaceConfig(ctx, scope);
+  const locale = rest.locale ?? opts.locale ?? config.defaultLocale;
+  const fallbackLocales = localeFallbackChain(config, locale);
+  // A projection still reads the ordered fields: the cursor is built from them.
+  const ordered = order.flatMap((o) =>
+    o.field.startsWith('sys.') || o.field.startsWith('metadata.') ? [] : [o.field],
+  );
+  const rows = await ctx.store.entries.list(scope, {
+    ...rest,
+    ...(select ? { select: [...new Set([...select, ...ordered])] } : {}),
+    limit: limit + 1,
+    afterRow,
+    locale,
+    fallbackLocales,
+  });
+  const page = rows.slice(0, limit);
+  const last = page.at(-1);
+  const sysOf = (r: (typeof rows)[number]) => ({
+    id: r.entry.id,
+    contentType: r.entry.contentTypeApiId,
+    status: r.entry.status,
+    updatedAt: r.updatedAt,
+  });
+  return {
+    items: page.map((found) => ({
+      id: found.entry.id,
+      contentType: found.entry.contentTypeApiId,
+      status: found.entry.status,
+      version: found.entry.currentVersion,
+      ...(found.updatedAt ? { updatedAt: found.updatedAt } : {}),
+      fields: renderFields(
+        select ? projectFields(found.fields, select) : found.fields,
+        config,
+        opts.locale,
+      ),
+    })),
+    ...(rows.length > limit && last
+      ? {
+          nextCursor: encodeEntryCursor(
+            order,
+            entryKeysetOf(order, last.fields, sysOf(last), locale, fallbackLocales),
+          ),
+        }
+      : {}),
+  };
 }
 
 /** One entry, reduced to what a chooser shows. */
