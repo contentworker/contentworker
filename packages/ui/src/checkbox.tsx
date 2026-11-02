@@ -1,6 +1,6 @@
 'use client';
 
-import { CheckIcon } from 'lucide-react';
+import { CheckIcon, MinusIcon } from 'lucide-react';
 import { Checkbox as CheckboxPrimitive } from 'radix-ui';
 import type * as React from 'react';
 import { cn } from './lib/utils';
@@ -19,7 +19,9 @@ function Checkbox({ className, ...props }: React.ComponentProps<typeof CheckboxP
         data-slot="checkbox-indicator"
         className="grid place-content-center text-current transition-none [&>svg]:size-3.5"
       >
-        <CheckIcon />
+        {/* Mixed (some of a list ticked) is a dash, never a tick that reads as "all". */}
+        <CheckIcon className="in-data-[state=indeterminate]:hidden" />
+        <MinusIcon className="hidden in-data-[state=indeterminate]:block" />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   );
