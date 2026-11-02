@@ -19,7 +19,7 @@ export function Sources(props: {
 }) {
   return (
     <Collapsible.Root defaultOpen={props.defaultOpen} className={cn('min-w-0', props.className)}>
-      <Collapsible.Trigger className="group flex w-full min-w-0 items-center gap-2 rounded-md text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+      <Collapsible.Trigger className="group flex w-full min-w-0 items-center gap-2 rounded-md text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <span className="flex min-w-0 flex-1 items-center gap-2">{props.summary}</span>
         <ChevronDown
           aria-hidden
@@ -76,7 +76,7 @@ export function Source(props: {
             aria-controls={excerptId}
             aria-label={`${open ? 'Hide' : 'Show'} excerpt from ${props.title}`}
             onClick={() => setOpen((o) => !o)}
-            className="group shrink-0 rounded-md p-0.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
+            className="group shrink-0 rounded-md p-0.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ChevronDown
               aria-hidden

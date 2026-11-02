@@ -66,7 +66,7 @@ export function ProposalBanner({
       className={className}
       provenance={
         <p className="text-muted-foreground text-xs">
-          <span className="font-medium text-ai">
+          <span className={heuristic ? 'font-medium text-foreground' : 'font-medium text-ai'}>
             {heuristic ? 'Drafted without the model' : 'Drafted by AI'}
           </span>
           {heuristic && proposal.provenance?.fallback ? ` · ${proposal.provenance.fallback}` : ''}

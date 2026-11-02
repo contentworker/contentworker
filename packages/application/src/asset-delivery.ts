@@ -21,13 +21,17 @@ import type {
   ImageTransformSpec,
   PublishedAsset,
   PublishedAssetQuery,
+  SpaceConfig,
 } from '@contentworker/ports';
 import { getPublishedAsset, READ_URL_TTL_SECONDS, withReadUrl } from './assets';
 import type { AppContext } from './context';
+import { type DeliveryReads, deliveryReads } from './delivery-reads';
 
 export interface AssetReadOptions {
   /** Flattens title, description and alt text to this locale (with the space's fallbacks). */
   readonly locale?: string;
+  /** The request's reads, when it has some already (see {@link DeliveryReads}). */
+  readonly reads?: DeliveryReads;
 }
 
 /**
@@ -44,25 +48,35 @@ export async function assetProjectionContext(
   scope: Scope,
   opts: AssetReadOptions = {},
 ): Promise<AssetProjectionContext> {
-  const [renditions, config] = await Promise.all([
-    ctx.store.assetRenditions.list(scope),
-    opts.locale !== undefined ? ctx.store.spaces.getConfig(scope) : Promise.resolve(null),
-  ]);
-  if (opts.locale !== undefined && !config) throw new NotFoundError('Space', scope.spaceId);
+  const { renditions, config } = await (opts.reads ?? deliveryReads(ctx)).read(scope, {
+    renditions: true,
+    config: opts.locale !== undefined,
+  });
+  return projectionContextOf(scope, renditions ?? [], opts.locale, config);
+}
+
+/**
+ * The projection context from reads already made: the renditions and, when `locale` is set, the
+ * space's config (a missing space is a 404, as on every Delivery read).
+ */
+export function projectionContextOf(
+  scope: Scope,
+  renditions: readonly AssetRendition[],
+  locale: string | undefined,
+  config: SpaceConfig | null | undefined,
+): AssetProjectionContext {
+  if (locale === undefined) return { renditions };
+  if (!config) throw new NotFoundError('Space', scope.spaceId);
   return {
     renditions,
-    ...(opts.locale !== undefined && config
-      ? {
-          locale: {
-            requested: opts.locale,
-            config: {
-              defaultLocale: config.defaultLocale,
-              locales: config.locales,
-              fallbacks: config.fallbacks,
-            },
-          },
-        }
-      : {}),
+    locale: {
+      requested: locale,
+      config: {
+        defaultLocale: config.defaultLocale,
+        locales: config.locales,
+        fallbacks: config.fallbacks,
+      },
+    },
   };
 }
 
@@ -120,11 +134,19 @@ export async function getDeliveredAsset(
   id: string,
   opts: AssetReadOptions = {},
 ): Promise<DeliveredAsset> {
-  const [snapshot, pc] = await Promise.all([
-    getPublishedAsset(ctx, scope, id),
-    assetProjectionContext(ctx, scope, opts),
-  ]);
-  return projectPublishedAsset(ctx, scope, snapshot, pc);
+  // The snapshot, the renditions and (for a locale) the space config: one round trip.
+  const { asset, renditions, config } = await (opts.reads ?? deliveryReads(ctx)).read(scope, {
+    assetId: id,
+    renditions: true,
+    config: opts.locale !== undefined,
+  });
+  if (!asset) throw new NotFoundError('PublishedAsset', id);
+  return projectPublishedAsset(
+    ctx,
+    scope,
+    asset,
+    projectionContextOf(scope, renditions ?? [], opts.locale, config),
+  );
 }
 
 export interface DeliveredAssetPage {
@@ -139,10 +161,14 @@ export async function listDeliveredAssets(
   query: PublishedAssetQuery = {},
   opts: AssetReadOptions = {},
 ): Promise<DeliveredAssetPage> {
-  const [page, pc] = await Promise.all([
-    ctx.store.assets.listPublished(scope, query),
-    assetProjectionContext(ctx, scope, opts),
-  ]);
+  // The page, the renditions and (for a locale) the space config: one round trip.
+  const r = await (opts.reads ?? deliveryReads(ctx)).read(scope, {
+    assetPage: query,
+    renditions: true,
+    config: opts.locale !== undefined,
+  });
+  const page = r.assetPage ?? { items: [] };
+  const pc = projectionContextOf(scope, r.renditions ?? [], opts.locale, r.config);
   return {
     items: page.items.map((s) => projectPublishedAsset(ctx, scope, s, pc)),
     ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),

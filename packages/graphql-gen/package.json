@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@contentworker/domain": "workspace:*",
+    "@contentworker/ports": "workspace:*",
     "graphql": "catalog:"
   },
   "devDependencies": {

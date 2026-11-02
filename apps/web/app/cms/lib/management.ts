@@ -161,7 +161,7 @@ export interface Connection {
 export const BOOKMARK_HEADER = 'x-cw-bookmark';
 let bookmark: string | null = null;
 
-/** The latest bookmark seen (tests and diagnostics). */
+/** The newest bookmark seen (tests and diagnostics). */
 export const currentBookmark = () => bookmark;
 
 /** Forget the bookmark (tests). */
@@ -169,10 +169,21 @@ export const resetBookmark = () => {
   bookmark = null;
 };
 
-/** Notes the bookmark a response carries, if any. */
+/**
+ * D1 bookmarks are hex groups joined by dashes; the api ignores anything else, so do we. The
+ * same shape as `packages/sdk/core/src/bookmark.ts` and `apps/api/src/index.ts`: the admin
+ * doesn't depend on the published SDK, so it carries its own copy; keep the three in step.
+ */
+const BOOKMARK_SHAPE = /^[0-9a-f]+(?:-[0-9a-f]+){2,8}$/i;
+
+/**
+ * Notes the bookmark a response carries when it is newer than the one held. Bookmarks sort
+ * oldest to newest as strings; concurrent requests can answer out of order, and an older
+ * bookmark must not undo the freshness a write just bought.
+ */
 export function rememberBookmark(res: Response): void {
   const b = res.headers?.get?.(BOOKMARK_HEADER);
-  if (b) bookmark = b;
+  if (b && BOOKMARK_SHAPE.test(b) && (bookmark === null || b > bookmark)) bookmark = b;
 }
 
 /** The headers every same-origin API request carries: JSON, plus the bookmark once there is one. */

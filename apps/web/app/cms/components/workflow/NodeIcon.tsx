@@ -103,7 +103,7 @@ export function NodeIcon({
 /** Category accent, as a CSS color (tokens in index.css). */
 export const CATEGORY_COLOR: Record<NodeCategory, string> = {
   trigger: 'var(--cat-trigger)',
-  content: 'var(--cat-content)',
+  content: 'var(--color-cat-content)',
   control: 'var(--cat-control)',
   ai: 'var(--cat-ai)',
 };

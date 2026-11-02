@@ -78,6 +78,13 @@ through the same validation, versioning and events as a person's.
 API keys have no MCP tools, and a personal access token can't be minted over MCP: an agent can't
 mint itself a longer-lived credential. Manage those in the admin or over the REST API.
 
+Every tool call that changes something is written to the space's audit log, like a REST write, as
+`MCP <tool>` (`MCP entries_update`) with who made it, the environment and the target id. Reads,
+and calls that only propose (an AI tool without `apply`, an import or clone `dryRun`), write
+nothing. A call refused for invalid fields returns `isError` with the same body as the REST
+`422`: `{ "error": { "code": "validation_failed", "issues": [...] } }`, each issue naming its
+field path (`body[0].heading`), locale and message.
+
 ## Skills
 
 The server also publishes MCP skills, short task guides a client can load before it works:

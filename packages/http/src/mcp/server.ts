@@ -133,6 +133,7 @@ import {
   listWorkflowVersions,
   MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
+  MAX_PAGE_LIMIT,
   MAX_PART_URLS,
   mergeEnvironments,
   moderateEntry,
@@ -256,8 +257,8 @@ import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { assetPageResponse, assetResponse, assetVersionResponse } from '../api/asset-response';
 import { toHttpError } from '../api/http';
-import { MAX_PAGE_LIMIT } from '../api/query';
 import { createAssetBody, snapshotBody, updateWebhookBody, webhookBody } from '../api/validation';
+import { auditToolCall, declaredArgs } from './audit';
 import type { McpDeps } from './deps';
 
 /**
@@ -291,6 +292,16 @@ const scopeOf = (a: { space?: string; environment?: string }): Scope => ({
 const ok = (data: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
 });
+
+/**
+ * A validation failure as a tool result rather than a thrown error: a thrown error reaches the
+ * caller as its message alone, and "One or more fields are invalid" tells an agent nothing it can
+ * fix. The text is REST's 422 body, so each issue names its field path (`body[0].heading`), its
+ * locale and what is wrong, exactly as an HTTP client sees it.
+ */
+function validationResult(err: ValidationError) {
+  return { ...ok(toHttpError(err).body), isError: true as const };
+}
 
 const fieldSchema = z.object({
   apiId: z.string(),
@@ -426,7 +437,9 @@ export function buildServer(
     { name: 'contentworker', version: '0.1.0' },
     { cacheHints: CACHE_HINTS },
   );
-  // Every tool's failures pass through `toolFailure`, so no handler can leak an internal error.
+  // Every tool's failures pass through `toolFailure`, so no handler can leak an internal error,
+  // and a validation failure comes back with its field issues (`validationResult`). Every
+  // successful call that changed something is audited here, once for all tools (`auditToolCall`).
   // And every tool's `environment` argument resolves the way an HTTP `:env` does: an alias names
   // its target, and a name that is neither an alias nor an environment is refused
   // (`NotFoundError`), so a typo'd or deleted environment never collects rows. Two tools take the
@@ -437,8 +450,9 @@ export function buildServer(
   // that must not pin anything to an alias's current target (the webhook tools) reads it back.
   const requestedEnvironment = new WeakMap<object, string>();
   const register = server.registerTool.bind(server);
-  server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) =>
-    register(
+  server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) => {
+    const declared = declaredArgs((config as { inputSchema?: unknown }).inputSchema);
+    return register(
       name,
       config as never,
       (async (args: unknown, ...rest: unknown[]) => {
@@ -454,12 +468,25 @@ export function buildServer(
             args = { ...a, environment };
             requestedEnvironment.set(args as object, a.environment);
           }
-          return await handler(args, ...rest);
+          const result = await handler(args, ...rest);
+          if (!(result as { isError?: boolean } | undefined)?.isError) {
+            await auditToolCall(ctx, {
+              tool: name,
+              args: (args ?? {}) as Record<string, unknown>,
+              declared,
+              principal,
+              defaultSpace: DEFAULT_SPACE,
+              defaultEnvironment: DEFAULT_ENV,
+            });
+          }
+          return result;
         } catch (err) {
+          if (err instanceof ValidationError) return validationResult(err);
           throw toolFailure(name, err);
         }
       }) as never,
-    )) as typeof server.registerTool;
+    );
+  }) as typeof server.registerTool;
   const guard = (scope: PermissionScope, s: Scope) => authorize(principal, scope, s.spaceId);
   // Granular RBAC: content-level check for role-bound principals (unrestricted
   // principals short-circuit inside the domain helpers). Same enforcement as

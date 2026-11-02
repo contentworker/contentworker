@@ -847,7 +847,7 @@ function MoreMenu({ pages, deployment }: { pages: NavItem[]; deployment: NavItem
   const { me, auth } = useLoaderData<typeof loader>();
   const theme = useTheme();
   const row =
-    'flex min-h-11 items-center justify-between gap-3 rounded-md px-3 text-base hover:bg-accent aria-[current=page]:font-medium';
+    'flex min-h-11 items-center justify-between gap-3 rounded-md px-3 text-base hover:bg-accent aria-[current=page]:bg-accent aria-[current=page]:font-medium aria-[current=page]:tick-current relative';
   const heading = 'caption px-3 pt-2 pb-1';
   const list = (items: NavItem[]) => (
     <ul>
