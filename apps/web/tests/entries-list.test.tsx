@@ -423,7 +423,9 @@ describe('EntriesList counts and paging', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search entries' }), {
       target: { value: 'zzz' },
     });
-    await screen.findByText('No entries match the current filters.');
+    await screen.findByText('No entries match the current filters.', undefined, {
+      timeout: FIRST_RENDER_MS,
+    });
     expect(screen.getByRole('columnheader', { name: 'Title' })).toBeTruthy();
     expect(client.listEntryPage).toHaveBeenLastCalledWith(
       'article',
