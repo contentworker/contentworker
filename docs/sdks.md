@@ -22,6 +22,7 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 | React Native apps with offline sync                                 | `@contentworker/sdk-react-native` |
 | Programmatic authoring/publishing (writes)                          | `@contentworker/sdk-management`   |
 | Types for entry fields                                              | `@contentworker/sdk-codegen`      |
+| Rendering rich text to HTML, Markdown or plain text (any framework) | `@contentworker/sdk-rich-text`    |
 
 The five Delivery packages are **read-only**. For writes and publishing, use
 `@contentworker/sdk-management`, call the Management API directly, or drive the MCP tools
@@ -265,6 +266,35 @@ Returns `CompactEntry` = `{ id, contentType, fields }` where `fields` is already
 client locale (no locale nesting). It asks for no `include`, so an asset field is the bare link
 `{ id, linkType: 'Asset' }`; fetch the asset with `sdk-core`'s `getAsset` (and render it with
 `imageProps`) where a device shows images.
+
+## `@contentworker/sdk-rich-text` — render rich text anywhere
+
+Rich text is delivered as a `RichTextDocument` tree, never as HTML. Every channel renders it
+for itself. This package does that for web and text channels, with no dependencies, in any
+framework or runtime.
+
+```ts
+import { toHtml, toMarkdown, toPlainText, excerpt } from '@contentworker/sdk-rich-text';
+
+const html = toHtml(entry.fields.body, {
+  entryHref: (target) => `/${target.fields?.slug}`,      // links to other entries
+  renderEntry: (target) => renderMyBlock(target),          // embedded entries: your components
+  imageSizes: '(min-width: 900px) 800px, 100vw',           // embedded images' `sizes`
+});
+```
+
+- **Safe by default.** All text is escaped. Links pass `safeLinkUri`, the same rule the CMS
+  applies on save (http, https, mailto, tel or relative; `java\tscript:` and entity-hidden
+  colons are refused), so the output can go straight into a page.
+- **Embedded assets** render as a sized, lazy `<img>` with the delivered `srcset`. Embedded
+  entries render nothing until you pass `renderEntry`, because only your app knows what a CTA
+  or a product card looks like. Third-party `embed` nodes render as a plain link; render an
+  iframe yourself if you want one.
+- **Overrides:** `nodes: { paragraph: (node, next) => … }` replaces one node type (return
+  `undefined` to keep the default). `next()` renders the node's children. `marks: { bold: (html)
+  => … }` does the same for marks.
+- **`toMarkdown`** gives CommonMark with GFM tables, for agents, feeds and `.md` endpoints.
+  **`toPlainText`** and **`excerpt`** give search text and meta descriptions.
 
 ## `@contentworker/sdk-react-native` — offline Delivery sync
 
