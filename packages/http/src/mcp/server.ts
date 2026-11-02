@@ -113,6 +113,7 @@ import {
   listPlugins,
   listPreviewAssets,
   listPreviewEntries,
+  listPreviewEntryPage,
   listPromotions,
   listReleases,
   listRolePresets,
@@ -637,12 +638,13 @@ export function buildServer(
     {
       description:
         'List entries (current/draft versions) with optional field-level filters, ' +
-        'ordering, projection, and full-text search.',
+        'ordering, projection, and full-text search. Returns one page; pass nextCursor back ' +
+        'as cursor, with the same filters and order, for the next.',
       inputSchema: toolSchema('entries_query', () =>
         z.object({
           contentType: z.string().optional(),
-          limit: z.number().int().positive().optional(),
-          skip: z.number().int().nonnegative().optional(),
+          limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+          cursor: z.string().optional().describe('nextCursor from the previous page'),
           locale: z.string().optional(),
           filters: z
             .array(
@@ -671,22 +673,23 @@ export function buildServer(
         select: args.select,
         search: args.search,
       });
-      const items = await listPreviewEntries(ctx, scopeOf(args), {
+      const page = await listPreviewEntryPage(ctx, scopeOf(args), {
         contentTypeApiId: args.contentType,
         limit: args.limit,
-        skip: args.skip,
         locale: args.locale,
         filters: args.filters,
         order: args.order,
         select: args.select,
         search: args.search,
+        ...(args.cursor ? { cursor: args.cursor } : {}),
       });
       // Granular RBAC: drop entries of ungranted types, mask denied fields.
-      return ok(
-        items
+      return ok({
+        items: page.items
           .filter((e) => canAccessContentType(principal, 'read', e.contentType))
           .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) })),
-      );
+        ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      });
     },
   );
 

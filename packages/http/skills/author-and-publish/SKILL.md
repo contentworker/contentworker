@@ -15,7 +15,8 @@ publishing does.
 - Resolve a name to an id with `entries_suggest` (matches the display field). Do not page through
   `entries_query` looking for a title: you will miss everything past the first page.
 - Use `entries_query` for structured questions (field filters, ordering, `select` projection) and
-  `entries_get` for a full entry.
+  `entries_get` for a full entry. It returns one page (`{ items, nextCursor? }`); pass `nextCursor`
+  back as `cursor`, with the same filters and order, for the next.
 
 ## Write
 

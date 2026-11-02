@@ -721,11 +721,19 @@ Base path: `/preview/:space/:env`. Reads **draft/current** versions. Supports th
 
 | Method | Path                               | Scope          | Description                                                                                                                   |
 | ------ | ---------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/preview/:space/:env/entries`     | `preview:read` | List current entries                                                                                                          |
+| GET    | `/preview/:space/:env/entries`     | `preview:read` | One page of current entries, each with `updatedAt`: `limit` (≤ 100), `cursor` → `{ items, total, nextCursor? }`                |
 | GET    | `/preview/:space/:env/entries/:id` | `preview:read` | Get one current entry                                                                                                         |
 | GET    | `/preview/:space/:env/suggest`     | `preview:read` | Entries matching what is being typed                                                                                          |
 | GET    | `/preview/:space/:env/assets`      | `preview:read` | Current assets (drafts included, archived left out) in Delivery's shape: `limit`, `cursor`, `kind`, `tag`, `folder`, `locale` |
 | GET    | `/preview/:space/:env/assets/:id`  | `preview:read` | One current asset in Delivery's shape                                                                                         |
+
+The entries list pages with a **keyset cursor**, not `skip` (which it ignores): pass the
+response's `nextCursor` back as `cursor`, with the same filters, search and `order`. It walks the
+list's own order (`order`, or least recently changed first, `sys.updatedAt` ascending), ties
+broken by entry id, so an entry edited between two pages is never skipped and one never shows
+twice unless it changed in between. A cursor from another order is refused (`422`). `sys.updatedAt`
+sorts and filters like any `sys.*` field. The MCP tool `entries_query` is the same read, paged
+the same way.
 
 Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
 least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and

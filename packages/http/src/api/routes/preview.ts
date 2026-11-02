@@ -3,7 +3,7 @@ import {
   getPreviewAsset,
   getPreviewEntry,
   listPreviewAssets,
-  listPreviewEntries,
+  listPreviewEntryPage,
   principalFromPreviewToken,
   SUGGEST_DEFAULT_LIMIT,
   SUGGEST_MAX_LIMIT,
@@ -33,7 +33,7 @@ import {
   throttleAuth,
 } from '../auth';
 import { doc } from '../docs/openapi';
-import { deliveredAsset, deliveredAssetPage, publishedEntryList } from '../docs/schemas';
+import { deliveredAsset, deliveredAssetPage, previewEntryPage } from '../docs/schemas';
 import { clampCount, parseDeliveredAssetQuery, parseEntryQuery } from '../query';
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({
@@ -117,23 +117,44 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.get(
     `${BASE}/entries`,
     doc('Preview', 'List draft/current entries', {
-      ok: publishedEntryList,
-      query: { content_type: 'Filter by content type apiId', locale: 'Resolve one locale' },
+      ok: previewEntryPage,
+      description:
+        'One page of entries as they are now, drafts included (the trash with trashed=true). ' +
+        'Page with the response’s nextCursor: it walks the list’s own order (order, or least ' +
+        'recently changed first), so an entry edited between two pages is never skipped.',
+      query: {
+        content_type: 'Filter by content type apiId',
+        locale: 'Resolve one locale',
+        limit: 'Page size (at most 100)',
+        cursor: 'nextCursor from the previous page, with the same filters and order',
+        order: 'Sort keys, e.g. -sys.updatedAt,fields.title',
+        query: 'Full-text search across text fields',
+        trashed: 'true lists the trash',
+      },
     }),
     principalMiddleware(deps),
     environmentMiddleware(deps),
     requireScope(SCOPES.previewRead),
     async (c) => {
-      const query = parseEntryQuery(new URL(c.req.url).searchParams);
+      // A cursor walks keys, not offsets: `skip` has no meaning here.
+      const { skip: _skip, ...query } = parseEntryQuery(new URL(c.req.url).searchParams);
       assertQueryRespectsFieldRules(c.get('principal'), query);
-      const items = await listPreviewEntries(ctx, scopeOf(c), query, {
-        locale: c.req.query('locale'),
-      });
+      const cursor = c.req.query('cursor');
+      const page = await listPreviewEntryPage(
+        ctx,
+        scopeOf(c),
+        { ...query, ...(cursor ? { cursor } : {}) },
+        { locale: c.req.query('locale') },
+      );
       const principal = c.get('principal');
-      const visible = items
+      const visible = page.items
         .filter((e) => canAccessContentType(principal, 'read', e.contentType))
         .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) }));
-      return c.json({ items: visible, total: visible.length });
+      return c.json({
+        items: visible,
+        total: visible.length,
+        ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      });
     },
   );
 

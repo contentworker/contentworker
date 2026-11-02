@@ -121,6 +121,21 @@ export const publishedEntryList = z.object({
   total: z.int(),
 });
 
+export const previewEntry = z.object({
+  id: z.uuid(),
+  contentType: z.string().describe('Content type apiId'),
+  status: z.enum(['draft', 'published', 'changed', 'archived']),
+  version: z.int().describe('The current (draft) version'),
+  updatedAt: z.iso.datetime().optional().describe('When the entry last changed'),
+  fields: entryFields,
+});
+
+export const previewEntryPage = z.object({
+  items: z.array(previewEntry),
+  total: z.int().describe('Entries on this page'),
+  nextCursor: z.string().optional().describe('Pass back as cursor for the next page'),
+});
+
 export const searchHits = z.object({
   hits: z.array(
     z.object({
