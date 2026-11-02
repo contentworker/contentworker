@@ -138,6 +138,24 @@ there for tests. Entries unpublished since the last sync are not removed locally
 `imageSource(asset, { width, dpr: PixelRatio.get() })` is an `<Image source>` with the width step
 for the device's density and the image's size in dp.
 
+### Rendering rich text
+
+Rich text arrives as a document tree, not HTML. `@contentworker/sdk-rich-text` renders it in any
+framework, with all text escaped and only safe links emitted:
+
+```ts
+import { toHtml } from '@contentworker/sdk-rich-text';
+
+const html = toHtml(entry.fields.body, {
+  entryHref: (target) => `/${target.fields?.slug}`,
+  renderEntry: (target) => renderMyBlock(target),
+});
+```
+
+Embedded images come out sized and lazy, with the delivered `srcset`. `toMarkdown`,
+`toPlainText` and `excerpt` cover agents, search and meta descriptions. Override any node with
+`nodes: { paragraph: (node, next) => … }`.
+
 ### Routes
 
 `client.routes()` returns `{ contentType, urlPattern }` for every published content type with a URL
