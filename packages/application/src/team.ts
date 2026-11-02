@@ -307,7 +307,8 @@ export interface AddMemberInput {
   readonly role: string;
 }
 
-async function resolveRoleRef(ctx: AppContext, spaceId: string, ref: string): Promise<Role> {
+/** A role by id, or the space's preset by name (seeding the presets first when needed). */
+export async function resolveRoleRef(ctx: AppContext, spaceId: string, ref: string): Promise<Role> {
   if (isRolePreset(ref)) {
     const id = await presetRoleId(ctx, spaceId, ref);
     const role = await ctx.store.roles.get(spaceId, id);

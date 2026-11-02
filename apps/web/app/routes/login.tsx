@@ -13,6 +13,7 @@ import {
 } from 'react-router';
 import { Mark } from '~/components/mark';
 import { authEnabled, principal, type SignInResult, signIn, Throttled } from '~/lib/auth.server';
+import { INVITE_INVALID } from '~/lib/invites';
 import { nextPath, withNext } from '~/lib/next-path';
 import { ssoOnlyInEffect } from '~/lib/settings.server';
 import { ssoConfig } from '~/lib/sso.server';
@@ -34,6 +35,7 @@ const SSO_ERRORS: Record<string, string> = {
   refused:
     'Your identity provider signed you in, but you aren’t on this deployment’s team. Ask an admin to add you.',
   disabled: 'Your account here is disabled. Ask an admin to enable it.',
+  invite: INVITE_INVALID,
 };
 
 export async function action({ request }: Route.ActionArgs) {

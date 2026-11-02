@@ -31,7 +31,8 @@ another origin are refused (403).
 | `/logout`                                              | Signing out is a POST (the origin check covers it); a GET asks first                                                                                                             |
 | `/login/sso`, `/login/sso/callback`, `/login/sso/link` | OpenID Connect single sign-on with the deployment's provider (`app/lib/sso.server.ts`)                                                                                           |
 | `/scim/v2/*`                                           | SCIM provisioning from the identity provider, with its own bearer token. Answered by `workers/app.ts` (`scimFetch`) before React Router, so it is not a route in `app/routes.ts` |
-| `/team`                                                | People, deployment roles (Member, Admin), SSO and SCIM settings (admins)                                                                                                         |
+| `/invite/:token`                                       | Accepting an invitation: a password or single sign-on for someone new, or Accept when signed in as the invited address (`app/lib/invites.server.ts`)                             |
+| `/team`                                                | People, invitations, deployment roles (Member, Admin), SSO and SCIM settings (admins)                                                                                            |
 | `/audit`                                               | The deployment's admin audit log (`admin_audit`, hash-chained)                                                                                                                   |
 | `/account`                                             | Your password, passkeys, two-factor                                                                                                                                              |
 

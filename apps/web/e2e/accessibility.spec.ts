@@ -416,6 +416,15 @@ test('the asset sheet’s tabs have no accessibility violations', async ({
   await scan(page, testInfo);
 });
 
+// The page a link opens when it no longer works: public, so it is reachable before sign-in is on.
+test('an invitation link that no longer works has no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await page.goto(`/invite/cwi_${'A'.repeat(43)}`);
+  await expect(page.getByRole('alert')).toContainText('isn’t valid');
+  await scan(page, testInfo);
+});
+
 test('the content type dialog has no accessibility violations', async ({ page }, testInfo) => {
   await openCms(page, '/content');
   await page

@@ -23,6 +23,8 @@ The web app keeps its own accounts in D1 (`users`, `sessions`, `passkeys`, `reco
 - **Passwords** are PBKDF2 (`pbkdf2p:` when peppered with `PASSWORD_PEPPER`). **Passkeys** are
   WebAuthn. **TOTP** two-factor has one-time recovery codes. Authenticator secrets are sealed with
   `DATA_KEY`.
+- **Invitations** let an admin invite an email with a role and space roles; the person accepts at
+  `/invite/:token` with a password or single sign-on (see [Invitations](#invitations)).
 - **Single sign-on** uses the deployment's OIDC provider (`OIDC_ISSUER`, `OIDC_CLIENT_ID`,
   `OIDC_CLIENT_SECRET`); admins choose the rest on the Team page. **SCIM** (`/scim/v2`) provisions
   people and groups from the provider with its own bearer token.
@@ -234,6 +236,62 @@ deployment (`authorize(…, '*')`), which only a deployment-wide principal holds
 a deployment admin signed in to the admin. A space's own keys and tokens, and a member (who gets a
 principal with no space and no scopes on a route that names none), are refused; the `space_create`
 MCP tool makes the same check.
+
+## Invitations
+
+A deployment admin can invite an email instead of making an account for them
+(`packages/application/src/invites.ts`, table `member_invites`, migration `0019`). An invitation
+carries the deployment role the person joins with (`member` or `admin`) and roles in any number of
+spaces (`grants`: a role id or preset per space).
+
+- **Who.** Managing invitations takes `space:admin` across the deployment (`authorizeInviter`:
+  `authorize(…, '*')`), so a deployment admin signed in to the admin or the root tokens; a space's
+  own keys and its team's administrators are refused. The inviter can't grant more than they hold
+  (`assertCanGrant`): an `admin` invitation needs deployment-wide `space:admin`, and each space
+  role's scopes (and, for an inviter limited per content type, its content grants) must be within
+  theirs. A resend checks again, as the resender. In the admin, inviting an admin (or resending an
+  admin's invitation) asks for a step-up first.
+- **The link is a credential.** Its token (`cwi_` + 32 random bytes) is returned once, to the
+  inviter, as `/invite/<token>` on the admin's origin (`OAUTH_ISSUER`). Only its SHA-256 with
+  `TOKEN_PEPPER` is stored, as for API keys; after the indexed lookup, the hash is compared again
+  in constant time. When the deployment sends email, `invite.email_due` (a control event that
+  carries the invitation's id and version, never a token or address) has the engine mint a
+  **second** token for the emailed link, record its hash, and send it; a stale event (resent,
+  revoked, accepted or expired since) sends nothing. Either link works once.
+- **Lifecycle.** `pending`, then `accepted` or `revoked`; `expired` is a pending invitation past
+  `expires_at` (default 7 days, at most 30), read that way and never written. Every change bumps
+  `version`, the compare-and-set that makes a link single-use: accepting replaces the row at the
+  version it read in the same unit of work as the `space_members` rows it adds, so of two racing
+  accepts one wins and the other gets `invalid_invite` with nothing written. A resend issues a new
+  token (both old links stop working) and a fresh expiry.
+- **Redeeming.** `POST /deployment/invites/lookup` and `/accept` are the web app's sign-up
+  handshake, called by the web Worker as itself acting for the deployment (as the credential
+  revocation below), so nothing outside it can redeem a link for someone. Every failure (unknown,
+  used, revoked, expired, rotated, another address, a lost race) is the same 400
+  `invalid_invite`.
+- **Accepting** (`/invite/:token`, `apps/web/app/lib/invites.server.ts`). Public, throttled per
+  address (`invite-ip`, ten failures in 15 minutes) and protected from cross-site posts like every
+  form (`origin.ts`); the page is `no-store` with `Referrer-Policy: no-referrer`. A new person
+  either sets a password (refused while web SSO-only is on) or continues with single sign-on, which
+  joins them when the provider vouches for the invited address. The link is redeemed **before** the
+  `users` row is written, under the id it is about to get, so a failure in between fails closed: the
+  link is spent and no one was created. Someone whose address already has an account signs in as
+  that person and accepts; the grants are added (a space whose team already has them keeps their
+  role) and an `admin` invitation raises a member to admin. Two-factor sign-in, where their role
+  needs it, is due on their first session as for anyone. An inviter who has since been disabled,
+  removed or made a member no longer vouches: their pending invitations stop working.
+- **Audit.** Creating, resending, revoking and accepting are recorded in each granted space's
+  `audit_log` (`invite.created`, …), whichever surface did it, and the admin's actions and every
+  accept or refused link in `admin_audit` (`team.invite_*`, `auth.invite_failed`). No token is
+  logged or audited.
+
+| Route (`/deployment/invites`) | MCP tool        | Does                                              |
+| ----------------------------- | --------------- | ------------------------------------------------- |
+| `GET ?status=`                | `invites_list`  | Invitations, newest first (never a token)         |
+| `POST`                        | `invite_create` | Invite; the link comes back once (201)            |
+| `POST /{id}/resend`           | `invite_resend` | A new link and expiry; the old ones stop working  |
+| `POST /{id}/revoke`           | `invite_revoke` | End it (an accepted one can't be: 400)            |
+| `POST /lookup`, `POST /accept` | none           | The web app's sign-up handshake                   |
 
 ## Ending a person's access
 

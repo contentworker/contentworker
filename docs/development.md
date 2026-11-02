@@ -220,7 +220,7 @@ read paths), 10 GB per database.
 | `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values`                                                           | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
 | `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                               |
 | `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                   |
-| `api_keys`, `roles`, `space_members`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings`                                    | Access                                                                                    |
+| `api_keys`, `roles`, `space_members`, `member_invites`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings`                  | Access                                                                                    |
 | `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins`, `plugin_settings`, `plugin_kv`                                        | Integrations (`plugin_kv`: a plugin's `kv:storage`, per environment)                      |
 | `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks`                                                                  | Publishing at scale                                                                       |
 | `comments`, `tasks`                                                                                                                               | Collaboration                                                                             |
@@ -263,6 +263,12 @@ and indexes it (`asset_published_by_expiry`, only where set) for the engine's ex
 for the engine's hourly zip sweep) and `asset_uploads` (multipart uploads in progress, indexed by
 `created_at` for the abandoned-upload sweep). Every table is environment-scoped, and the environment purge clears it. Nothing is backfilled (see
 [Architecture](./architecture.md#collections-share-links-multipart-uploads-and-zips)).
+
+`0019_member_invites.sql` adds `member_invites` and touches no existing table: invitations to the
+admin, deployment-wide (`grants` JSON names each space). Only the links' token hashes are stored
+(`token_hash`, `email_token_hash`, each uniquely indexed); `version` is the compare-and-set that
+makes a link work once, and `expired` is read from `expires_at`, never written (see
+[Auth & RBAC](./auth-and-rbac.md#invitations)). Nothing is backfilled.
 
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,

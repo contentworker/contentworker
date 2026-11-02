@@ -13,6 +13,7 @@ import {
   archiveSupersededVersions,
   type ConsumeDeps,
   consumeEvent,
+  createHasher,
   drainOutbox,
   pruneEventHistory,
   redeliverWebhook,
@@ -114,6 +115,16 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     // cache tag once instead of once per message (KV rate-limits per key).
     invalidatedTags: new Set<string>(),
     sender: createWebhookSender(),
+    // Invitation links go out by email only where the deployment sends it; the token is minted
+    // and hashed (TOKEN_PEPPER, as the api's) at the send.
+    ...(wired.workflowNodes.email
+      ? {
+          inviteMail: {
+            email: wired.workflowNodes.email,
+            hasher: createHasher(env.TOKEN_PEPPER),
+          },
+        }
+      : {}),
     // A failed webhook delivery comes back later for that webhook alone.
     ...(env.EVENTS_QUEUE
       ? {

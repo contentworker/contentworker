@@ -39,6 +39,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'roles_list',
   'role_presets_list',
   'team_list',
+  'invites_list',
   'plugins_list',
   'plugin_get_settings',
   'import_sources',

@@ -4,6 +4,7 @@ export * from './asset/collection';
 export * from './asset/delivered';
 export * from './assistant/assistant';
 export * from './auth/auth';
+export * from './auth/invites';
 export * from './auth/oauth';
 export * from './auth/team';
 export * from './collaboration/comment';

@@ -26,8 +26,10 @@ import type {
   EntryWorkflowState,
   EventType,
   InstalledPlugin,
+  InviteStatus,
   LocaleCode,
   LocalizedValue,
+  MemberInvite,
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
@@ -111,6 +113,8 @@ export interface ContentStore {
   readonly auth: AuthRepo;
   readonly roles: RoleRepo;
   readonly members: MemberRepo;
+  /** Invitations to the admin (deployment-wide: they grant roles in any number of spaces). */
+  readonly invites: InviteRepo;
   readonly settings: DeploymentSettingsRepo;
   /** The engine cron's heartbeat (deployment-wide). */
   readonly schedulerJobs: SchedulerJobRepo;
@@ -1063,6 +1067,46 @@ export interface MemberRepo {
   delete(spaceId: string, id: string): Promise<void>;
 }
 
+/**
+ * Invitations to the admin. Deployment-wide like the people they make: no `Scope`, because one
+ * invitation grants roles in any number of spaces (each grant names its own). Only token hashes
+ * are ever stored.
+ */
+export interface InviteRepo {
+  create(invite: MemberInvite): Promise<void>;
+  get(id: string): Promise<MemberInvite | null>;
+  /** The invitation whose link token, or emailed link token, hashes to `tokenHash`. */
+  findByTokenHash(tokenHash: string): Promise<MemberInvite | null>;
+  /**
+   * Newest first. `status` filters on what is stored, read as of `now` (`pending` leaves out the
+   * expired; `expired` is the pending ones past their expiry); `email` on the address.
+   */
+  list(opts: {
+    readonly now: Date;
+    readonly status?: InviteStatus;
+    readonly email?: string;
+    readonly limit?: number;
+  }): Promise<MemberInvite[]>;
+  /**
+   * Replaces the invitation if it is still at `expectedVersion` (the caller bumps `version`).
+   * Another change since the caller read it (a resend, a revoke, another accept) throws
+   * {@link TransactionConflictError}: at commit inside a unit of work, at once outside one.
+   */
+  replace(invite: MemberInvite, expectedVersion: number): Promise<void>;
+  /**
+   * Records the token hash of the link the engine is emailing, and (after the send, with
+   * `emailedAt`) that it went, if the invitation is still pending at `version`; false (nothing
+   * written) when it is not. Doesn't bump `version`. Not in a unit of work: the engine records,
+   * sends, then records again.
+   */
+  recordEmailToken(
+    id: string,
+    version: number,
+    emailTokenHash: string,
+    emailedAt: string | null,
+  ): Promise<boolean>;
+}
+
 /** A deployment-wide setting as stored, with the version its compare-and-set checks. */
 export interface StoredSetting {
   readonly value: unknown;
@@ -1143,6 +1187,12 @@ export interface ContentStoreTx {
   readonly outbox: OutboxRepo;
   /** A promotion's record is created in the same unit as the event that announces it. */
   readonly promotions: PromotionRepo;
+  /**
+   * An invitation is created, resent, revoked or used in the same unit as the event that emails
+   * it, or as the team places it grants (`members.save`).
+   */
+  readonly invites: Pick<InviteRepo, 'create' | 'replace'>;
+  readonly members: Pick<MemberRepo, 'save'>;
 }
 
 /** Promotion fields a status change may set. */

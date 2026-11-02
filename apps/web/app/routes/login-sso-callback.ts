@@ -1,6 +1,8 @@
 import { redirect } from 'react-router';
 import { audit } from '~/lib/audit.server';
-import { principal, recordReauth } from '~/lib/auth.server';
+import { principal, recordReauth, startSession, Throttled } from '~/lib/auth.server';
+import { inviteTokenIn } from '~/lib/invites';
+import { InviteError, joinWithSso } from '~/lib/invites.server';
 import {
   clearSsoCookie,
   LINK_PATH,
@@ -32,6 +34,21 @@ export async function loader({ request }: Route.LoaderArgs) {
       }
       // Otherwise another tab finished first: keep that session.
       return redirect(next, { headers });
+    }
+    // Back from accepting an invitation: someone with no account yet joins from it, when the
+    // provider vouches for the invited address. Anyone who has one signs in and accepts on the page.
+    const invited = inviteTokenIn(next);
+    if (invited) {
+      try {
+        const id = await joinWithSso(request, identity, invited);
+        if (id) {
+          headers.append('set-cookie', await startSession(request, id));
+          return redirect('/?joined=1', { headers });
+        }
+      } catch (err) {
+        if (!(err instanceof InviteError || err instanceof Throttled)) throw err;
+        return redirect('/login?sso=invite', { headers });
+      }
     }
     const outcome = await signInWithSso(request, identity);
     if ('confirmLink' in outcome) {

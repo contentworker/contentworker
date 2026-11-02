@@ -18,6 +18,7 @@ import { Ago } from '~/components/ago';
 import { Confirm } from '~/components/confirm';
 import { CopyButton } from '~/components/copy-button';
 import { Field } from '~/components/field';
+import { InvitesSection } from '~/components/invites';
 import { Empty, PageHeader, Section } from '~/components/page';
 import { StepUpField } from '~/components/step-up-field';
 import { audit } from '~/lib/audit.server';
@@ -28,6 +29,16 @@ import {
   stepUp,
   stepUpMethod,
 } from '~/lib/auth.server';
+import { openInvites } from '~/lib/invites';
+import {
+  createInvite,
+  InviteError,
+  inviteRole,
+  listInvites,
+  resendInvite,
+  revokeInvite,
+  spaceChoices,
+} from '~/lib/invites.server';
 import { isRole, ROLE_LABELS, ROLES, type Role } from '~/lib/roles';
 import { SCIM_PATH, SCIM_TOKEN_MS } from '~/lib/scim';
 import {
@@ -70,12 +81,15 @@ export async function loader({ request }: Route.LoaderArgs) {
   const me = await requireUser(request, 'admin');
   const stepUp = await stepUpMethod(me);
   // One clock for the page, so the server and the hydrating browser agree on the token's age.
-  const [team, twoFactorRequired, sso, scimToken, scimGroups] = await Promise.all([
+  const [team, twoFactorRequired, sso, scimToken, scimGroups, invites, spaces] = await Promise.all([
     listTeam(),
     twoFactorRequirement(),
     ssoSettings(),
     scimTokenSet(),
     scimGroupsWithRoles(),
+    // Open local development (nobody signed in) has no admin to sign for, and no invitations.
+    me.kind === 'user' ? listInvites(me).then(openInvites, () => null) : Promise.resolve([]),
+    me.kind === 'user' ? spaceChoices(me) : Promise.resolve([]),
   ]);
   const provider = ssoConfig();
   // The address a new person signs in at, to send along with their temporary password.
@@ -91,6 +105,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       token: scimToken,
       groups: scimGroups,
     },
+    invites,
+    spaces,
     me,
     now: Date.now(),
     signInUrl,
@@ -115,7 +131,12 @@ export async function action({ request }: Route.ActionArgs) {
       });
       return redirect('/team', { headers: { 'set-cookie': await startSession(request, id) } });
     }
-    if (me.kind === 'user' && (await needsStepUp(str('intent'), f))) {
+    // A new link to an admin's seat asks as inviting one does; the invitation's role is the api's.
+    const resendsAdmin =
+      me.kind === 'user' &&
+      str('intent') === 'invite-resend' &&
+      (await inviteRole(me, str('id'))) === 'admin';
+    if (me.kind === 'user' && (resendsAdmin || (await needsStepUp(str('intent'), f)))) {
       const failed = await stepUp(request, me, { code: str('code'), password: str('password') });
       if (failed) {
         await audit(request, 'auth.step_up_failed', {
@@ -127,6 +148,26 @@ export async function action({ request }: Route.ActionArgs) {
       }
     }
     switch (str('intent')) {
+      case 'invite':
+      case 'invite-resend':
+      case 'invite-revoke': {
+        if (me.kind === 'open')
+          throw new TeamError('Create your own admin account first; then invite people.');
+        if (str('intent') === 'invite-revoke') {
+          const r = await revokeInvite(request, me, str('id'));
+          return { done: `The invitation for ${r.email} is revoked.` };
+        }
+        const issued =
+          str('intent') === 'invite'
+            ? await createInvite(request, me, {
+                email: str('email'),
+                role: str('role'),
+                space: str('space'),
+                spaceRole: str('spaceRole'),
+              })
+            : await resendInvite(request, me, str('id'));
+        return { link: { email: issued.email, url: issued.link, expiresAt: issued.expiresAt } };
+      }
       case 'add-user': {
         if (me.kind === 'open')
           throw new TeamError(
@@ -227,6 +268,8 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ error: 'Unknown action' }, { status: 400 });
   } catch (err) {
     if (err instanceof TeamError) return data({ error: err.message }, { status: 400 });
+    if (err instanceof InviteError)
+      return data({ error: err.message }, { status: err.status >= 500 ? 502 : 400 });
     throw err;
   }
 }
@@ -316,7 +359,7 @@ function RoleSelect({
 }
 
 export default function Team() {
-  const { people, me, now, twoFactorRequired, sso, scim, signInUrl, stepUp } =
+  const { people, me, now, twoFactorRequired, sso, scim, signInUrl, stepUp, invites, spaces } =
     useLoaderData<typeof loader>();
   const [newRole, setNewRole] = useState<Role>('member');
   const result = useActionData<typeof action>();
@@ -567,6 +610,8 @@ export default function Team() {
               ) : null}
             </fetcher.Form>
           </Section>
+
+          <InvitesSection invites={invites} spaces={spaces} stepUp={stepUp} />
 
           <TwoFactorRequirementForm
             stepUp={stepUp}

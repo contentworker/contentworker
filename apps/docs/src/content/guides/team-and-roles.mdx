@@ -1,6 +1,6 @@
 ---
 title: Team and roles
-description: Workspace accounts and sign-in, the five built-in space roles (Viewer, Approver, Editor, Manager, Administrator), setting up a new workspace's first admin, recovering admin access, and the last-administrator rule.
+description: Workspace accounts, invitations and sign-in, the five built-in space roles (Viewer, Approver, Editor, Manager, Administrator), setting up a new workspace's first admin, recovering admin access, and the last-administrator rule.
 ---
 
 Access has two layers. A person first needs an **account** on the workspace, which is how they
@@ -33,6 +33,14 @@ manages accounts, single sign-on, SCIM provisioning and the audit log, and admin
 - **People.** Add someone with their email, a name and an account role. They get a temporary
   password, shown once, to send them privately with the sign-in page; they choose their own the
   first time they sign in.
+- **Invitations.** **Invite a person** with their email, an account role and, optionally, a role
+  in a space. You get a link, shown once, to send them; when the workspace sends email they get
+  their own link by email too. The link works once, for 7 days. Opening it, they create their
+  account with a password (and can add a passkey after) or continue with single sign-on, and join
+  with exactly what you chose. If their email already has an account, they sign in and accept it
+  there. Pending invitations are listed on the page: **Resend** sends a new link (the old one stops
+  working) and **Revoke** ends one. Inviting someone as an Admin asks you to confirm who you are
+  first, and you can only give roles you hold yourself.
 - **Sign-in methods.** A password, a passkey, or your organization's **single sign-on** (OpenID
   Connect) when the workspace has an identity provider configured. Two-factor sign-in with an
   authenticator app can be required.
@@ -43,6 +51,12 @@ manages accounts, single sign-on, SCIM provisioning and the audit log, and admin
   sign-in does the same: their sessions end, the MCP connections they approved and the personal
   access tokens they made stop working in every space, and a password or two-factor reset also
   removes their passkeys. Your space's own API keys are not a person's and keep working.
+
+Over the API, invitations live at `/deployment/invites` (workspace Admins and the admin token
+only): `GET` lists them, `POST` creates one and returns its link once, and
+`POST /deployment/invites/{id}/resend` and `/revoke` act on one. The MCP server has
+`invites_list`, `invite_create`, `invite_resend` and `invite_revoke`. A link that no longer works
+(used, revoked, expired or resent) always gets the same answer, so it says nothing about why.
 
 ## Space access
 

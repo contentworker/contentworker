@@ -101,6 +101,10 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       blob: wired.blob,
       moderateBeforePublish: wired.config.moderateBeforePublish,
       accessPolicy: WEB_SIGN_IN,
+      // Where invitation links open: the admin's origin, as the HTTP API's.
+      ...(wired.config.oauthIssuer
+        ? { inviteOrigin: wired.config.oauthIssuer.replace(/\/$/, '') }
+        : {}),
       // Bounded and redirect-refusing, as the HTTP API's: embed_resolve fetches with it.
       remoteFetcher: wired.remoteFetcher,
       signalReview: env.AGENT_WF

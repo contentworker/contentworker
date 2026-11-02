@@ -316,8 +316,8 @@ export async function endOtherSessions(
 
 /**
  * Changes that hand out access or lower the bar for it ask who is at the keyboard first
- * (`stepUp`): making a SCIM token, making someone an admin (directly, or by mapping a group to
- * Admin), enabling an admin, resetting someone's password or two-factor
+ * (`stepUp`): making a SCIM token, making someone an admin (directly, by inviting them as one, or
+ * by mapping a group to Admin), enabling an admin, resetting someone's password or two-factor
  * sign-in, and the single sign-on and two-factor settings. Open local dev (no one
  * signed in) has no one to ask.
  */
@@ -337,6 +337,6 @@ export async function needsStepUp(intent: string, f: FormData): Promise<boolean>
   // Enabling an admin gives back what their old password could do.
   if (intent === 'enable') return (await roleOf(String(f.get('id') ?? ''))) === 'admin';
   if (f.get('role') !== 'admin') return false;
-  if (intent === 'add-user') return true;
+  if (intent === 'add-user' || intent === 'invite') return true;
   return intent === 'role' && (await roleOf(String(f.get('id') ?? ''))) !== 'admin';
 }

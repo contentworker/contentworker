@@ -330,6 +330,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `search.reindex_requested`                                                         | `contentTypeApiId?`, `afterEntryId?`, `entriesSoFar?` (control message; the last two only on self-enqueued continuation slices)                                                                                      |
 | `bulk.chunk_due`                                                                   | `jobId`, `chunkId` (control message, routed to `contentworker-bulk`)                                                                                                                                                 |
 | `environment.purge_due`                                                            | none: `scope` is the deleted environment (control message, routed to `contentworker-bulk`; runs its next purge steps)                                                                                                |
+| `invite.email_due`                                                                 | `inviteId`, `version`, `origin` (control message: the engine emails the link when the deployment sends email; no token, no address, no webhooks; `scope` is `*`)                                                     |
 
 ## Queue adapter
 
