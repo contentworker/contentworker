@@ -241,8 +241,10 @@ instead). Over the API, `POST …/assets/bulk` starts the same job (`202`):
 `{ "action": "move", "ids": [...], "folderId": "..." }`, `"tag"` with `addTags` and
 `removeTags`, or `"publish"`, `"unpublish"` and `"archive"`. Each asset gets the same checks as on
 its own. Follow it at `GET …/bulk/jobs/{id}`; `…/bulk/jobs/{id}/report` names each asset that
-failed and why. `move` and `tag` need `content:write`; the others `content:publish`. The MCP tool
-is `assets_bulk`.
+failed and why. `POST …/bulk/jobs/{id}/cancel` (`content:publish`) stops a job taking new work:
+assets it hasn't reached are left as they were, a batch already running finishes, and nothing done
+is undone (MCP `bulk_job_cancel`). `move` and `tag` need `content:write`; the others
+`content:publish`. The MCP tool is `assets_bulk`.
 
 ## Replace a file and restore a version
 

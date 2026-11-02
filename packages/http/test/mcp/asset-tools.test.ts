@@ -548,6 +548,25 @@ describe('asset version, rights and bulk tools (MCP), with the HTTP routes’ sc
     });
     expect(archive.isError).toBe(true);
   });
+  it('takes the same metadata patches as the REST body, and refuses the same ones', async () => {
+    const { deps, add } = await setup();
+    const a = await add('a.png', 'image/png');
+    const client = await connect(deps, admin);
+    const call = async (args: Record<string, unknown>) =>
+      client.callTool({
+        name: 'asset_set_metadata',
+        arguments: { space: SPACE, id: a.id, ...args },
+      });
+
+    const saved = await call({ altText: { 'en-US': 'A cup' }, tags: ['t1'], unknown: 1 });
+    expect(saved.isError).toBeFalsy();
+    expect(payload(saved)).toMatchObject({
+      metadata: { altText: { 'en-US': 'A cup' }, tags: ['t1'] },
+    });
+    // Refused on REST too (packages/http/test/api/sdk-management-assets.test.ts).
+    expect((await call({ altText: { 'en-US': 5 } })).isError).toBe(true);
+    expect((await call({ tags: ['x'.repeat(129)] })).isError).toBe(true);
+  });
 });
 
 describe('single-asset tools (MCP), on the same use-cases, scopes and serializer as REST', () => {

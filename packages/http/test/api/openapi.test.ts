@@ -162,6 +162,37 @@ describe('OpenAPI spec + docs UI', () => {
     expect(spec['x-tagGroups'].every((g) => g.tags.length > 0)).toBe(true);
   });
 
+  it('describes every asset, collection, zip, rendition and share-link operation with a response', async () => {
+    const app = makeApp();
+    const spec = (await (await app.request('/openapi.json')).json()) as {
+      paths: Record<
+        string,
+        Record<string, { responses?: Record<string, { content?: Record<string, unknown> }> }>
+      >;
+    };
+    const asset = /\/(assets|asset-[a-z]+|share-links)(\/|$)/;
+    const undescribed: string[] = [];
+    let checked = 0;
+    for (const [path, ops] of Object.entries(spec.paths)) {
+      if (!asset.test(path)) continue;
+      for (const [method, op] of Object.entries(ops)) {
+        checked++;
+        const responses = Object.entries(op.responses ?? {}).filter(([s]) => /^[23]/.test(s));
+        // A 204 or a redirect has no body to describe; any other success must say what it
+        // returns. A bare inventory entry (no doc()) has one 200 with no content.
+        const described = responses.some(
+          ([status, r]) =>
+            status === '204' ||
+            status.startsWith('3') ||
+            r.content?.['application/json'] !== undefined,
+        );
+        if (!described) undescribed.push(`${method.toUpperCase()} ${path}`);
+      }
+    }
+    expect(checked).toBeGreaterThan(50);
+    expect(undescribed).toEqual([]);
+  });
+
   it('serves the Scalar UI at /docs', async () => {
     const app = makeApp();
     const res = await app.request('/docs');
