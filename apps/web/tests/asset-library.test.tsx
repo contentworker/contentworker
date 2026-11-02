@@ -267,6 +267,9 @@ describe('finding assets', () => {
     expect(
       screen.getByRole('button', { name: 'Not in a folder' }).getAttribute('aria-current'),
     ).toBe('true');
+    expect(screen.getByRole('button', { name: 'Not in a folder' }).className).toContain(
+      'tick-current',
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     await waitFor(() =>

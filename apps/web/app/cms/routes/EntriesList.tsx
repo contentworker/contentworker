@@ -36,8 +36,13 @@ import { EntriesTable, type EntryRowActions } from '../components/entries/Entrie
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
-import type { EntryAggregate, EntryListQuery, PreviewEntry } from '../lib/management';
-import { useDebouncedValue, useEntriesQuery, useQueryKeys } from '../lib/queries';
+import {
+  ENTRY_PAGE,
+  type EntryAggregate,
+  type EntryListQuery,
+  type PreviewEntry,
+} from '../lib/management';
+import { useDebouncedValue, useEntriesQuery, useQueryKeys, useScopedQuery } from '../lib/queries';
 import { type ToastOptions, useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
@@ -109,10 +114,23 @@ export function EntriesList() {
   // re-key the query after 250ms while the previous page stays visible.
   const debounced = useDebouncedValue(filterState, 250);
   const debouncedQuery = debounced.typeId === typeId ? debounced.query : {};
-  const entriesQuery = useEntriesQuery(typeId, debouncedQuery);
+  // The list reads `ENTRY_PAGE` rows at a time; "Show more" asks for one page more. Another type
+  // or another filter starts again from one page.
+  const listKey = JSON.stringify([typeId, debouncedQuery]);
+  const [shown, setShown] = useState({ key: listKey, pages: 1 });
+  const pages = shown.key === listKey ? shown.pages : 1;
+  const listQuery: EntryListQuery = { ...debouncedQuery, limit: ENTRY_PAGE * pages };
+  const entriesQuery = useEntriesQuery(typeId, listQuery);
   const entries = entriesQuery.data ?? [];
   const loading = entriesQuery.isPending;
-  const entriesKey = keys.entries(typeId, debouncedQuery);
+  const entriesKey = keys.entries(typeId, listQuery);
+  // A full last page means there may be more past it.
+  const hasMore = !loading && entries.length >= ENTRY_PAGE * pages;
+  // The type's real total, for the header (the list itself holds only what has been read). Under
+  // the entries prefix, so entry mutations refresh it; silent, as the header works without it.
+  const countsQuery = useScopedQuery(['entries', 'counts'], () => client.contentTypeEntryCounts(), {
+    silent: true,
+  });
   // The skeleton comes back as long as this list was last time (this session).
   const countKey = `entries:${typeId ?? 'all'}`;
   useEffect(() => {
@@ -477,6 +495,14 @@ export function EntriesList() {
 
   const count = entries.length;
   const hasQuery = (query.filters?.length ?? 0) > 0 || !!query.search;
+  // The total is known only for the whole type: filters and the trash count what was read, with a
+  // "+" while more may follow.
+  const total =
+    hasQuery || viewingTrash
+      ? undefined
+      : countsQuery.data?.find((c) => c.contentType === selectedType.apiId)?.total;
+  const counted = `${count}${hasMore ? '+' : ''}`;
+  const entriesWord = (n: number) => (n === 1 ? 'entry' : 'entries');
   return (
     <div className="space-y-4">
       <PageHeader
@@ -485,9 +511,13 @@ export function EntriesList() {
           loading ? (
             <SkeletonText width="5.5rem" />
           ) : viewingTrash ? (
-            `${count} in the trash — restore, or delete permanently`
+            `${counted} in the trash — restore, or delete permanently`
+          ) : total !== undefined && total > count ? (
+            `Showing ${count} of ${total} ${entriesWord(total)}`
+          ) : total !== undefined ? (
+            `${total} ${entriesWord(total)}`
           ) : (
-            `${count} ${count === 1 ? 'entry' : 'entries'}`
+            `${counted} ${entriesWord(count)}`
           )
         }
       >
@@ -615,6 +645,18 @@ export function EntriesList() {
             onPickAll={(all) => setPicked(all ? new Set(entries.map((e) => e.id)) : new Set())}
             actions={rowActions}
           />
+          {hasMore ? (
+            <div className="flex justify-center pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={entriesQuery.isFetching}
+                onClick={() => setShown({ key: listKey, pages: pages + 1 })}
+              >
+                {entriesQuery.isFetching ? 'Loading more…' : 'Show more'}
+              </Button>
+            </div>
+          ) : null}
         </Refreshing>
       )}
 

@@ -1,20 +1,26 @@
-import type {
-  ContentRef,
-  DeliveredEntry,
-  DeliveryClient,
-  EntryQuery,
-  Fields,
-  SearchHit,
+import {
+  type ContentRef,
+  type DeliveredAsset,
+  type DeliveredEntry,
+  type DeliveryClient,
+  type EntryQuery,
+  type Fields,
+  type ImagePropsOptions,
+  imageProps,
+  type SearchHit,
 } from '@contentworker/sdk-core';
 import { mountInlineEditor } from '@contentworker/sdk-core/inline-edit';
 /**
  * @contentworker/sdk-web — React hooks over @contentworker/sdk-core. Provide a client via
- * `ContentworkerProvider`, then call `useEntry` / `useEntries` /
- * `useSemanticSearch`. SSR-safe (no fetch on the server unless invoked).
+ * `ContentworkerProvider`, then call `useEntry` / `useEntries` / `useAsset` /
+ * `useSemanticSearch`, and render assets with `<Image>`. SSR-safe (no fetch on the server unless invoked).
  */
 import {
+  type CSSProperties,
   createContext,
   createElement,
+  type ImgHTMLAttributes,
+  type ReactElement,
   type ReactNode,
   useCallback,
   useContext,
@@ -65,6 +71,44 @@ export function useEntry<F extends Fields = Fields>(
 ): AsyncState<DeliveredEntry<F>> {
   const client = useDeliveryClient();
   return useAsync(() => client.getEntry<F>(id, opts), [id, opts.locale, opts.include]);
+}
+
+/** Fetches a single published asset (from a preview client: as it is now). */
+export function useAsset(id: string, opts: { locale?: string } = {}): AsyncState<DeliveredAsset> {
+  const client = useDeliveryClient();
+  return useAsync(() => client.getAsset(id, opts), [id, opts.locale]);
+}
+
+export interface ImageComponentProps
+  extends ImagePropsOptions,
+    Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 'srcSet' | 'sizes' | 'width'> {
+  /** The delivered asset; nothing renders while it's `null` or `undefined` (still loading). */
+  readonly asset: DeliveredAsset | null | undefined;
+}
+
+/**
+ * An `<img>` for a delivered asset, with {@link imageProps} applied: the width ladder as
+ * `srcSet`, `sizes`, intrinsic `width`/`height`, `alt` (alt text, else the title, else decorative),
+ * lazy loading unless `priority`, the focal point as `object-position` (it shows once CSS gives
+ * the image `object-fit: cover` in a box of another shape) and the dominant colour as the
+ * background while it loads. Other `<img>` attributes pass through; `alt` and `style` given
+ * here win. Renders nothing for an asset with no image to show (audio, a document).
+ *
+ * ```tsx
+ * <Image asset={hero} sizes="(min-width: 960px) 960px, 100vw" priority className="hero" />
+ * ```
+ */
+export function Image(props: ImageComponentProps): ReactElement | null {
+  const { asset, sizes, width, rendition, locale, priority, style, ...rest } = props;
+  if (!asset) return null;
+  const image = imageProps(asset, { sizes, width, rendition, locale, priority });
+  if (!image) return null;
+  return createElement('img', {
+    ...image,
+    ...rest,
+    alt: rest.alt ?? image.alt,
+    style: { ...image.style, ...style } satisfies CSSProperties,
+  });
 }
 
 /** Lists published entries. */
@@ -138,6 +182,15 @@ export type {
   DeliveredEntry,
   DeliveryClient,
   EntryQuery,
+  ImageProps,
+  ImagePropsOptions,
   SearchHit,
 } from '@contentworker/sdk-core';
-export { assetUrl, createDeliveryClient, srcset } from '@contentworker/sdk-core';
+export {
+  assetUrl,
+  createDeliveryClient,
+  DeliveryError,
+  imageProps,
+  localizedText,
+  srcset,
+} from '@contentworker/sdk-core';

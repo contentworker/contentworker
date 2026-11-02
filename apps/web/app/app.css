@@ -425,6 +425,22 @@
   padding-left: max(--spacing(--value(integer)), var(--safe-left));
 }
 
+/* The current item's tick (DESIGN.md, Brand): a 2px brand rule 1rem long, centred on the item's
+   leading edge, so it is one length on every row height. The item is `relative`. */
+@utility tick-current {
+  &::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    height: 1rem;
+    width: 2px;
+    translate: 0 -50%;
+    border-radius: 9999px;
+    background: var(--brand);
+  }
+}
+
 /* A 44px target for a finger without changing how a small control looks: an invisible box centred
    on it, grown to 2.75rem where the control is smaller. Mouse and trackpad keep the drawn size. */
 @utility hit-area {

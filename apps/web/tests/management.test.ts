@@ -50,6 +50,26 @@ describe('admin ManagementClient', () => {
     expect(calls[0]?.url).toBe('/preview/s1/main/entries?content_type=article');
   });
 
+  it('reads a list longer than one API page page by page, and stops at a short page', async () => {
+    const { fn, calls } = fakeFetch((url) => {
+      const skip = Number(new URL(url, 'http://x').searchParams.get('skip') ?? 0);
+      // 250 entries in all: two full pages of 100, then 50.
+      const n = Math.max(0, Math.min(100, 250 - skip));
+      return { items: Array.from({ length: n }, (_, i) => ({ id: `e${skip + i}` })) };
+    });
+    const client = createManagementClient(conn, fn);
+    const items = await client.listEntries('article', { limit: 300 });
+    expect(items).toHaveLength(250);
+    expect(calls.map((c) => new URL(c.url, 'http://x').searchParams.get('skip'))).toEqual([
+      '0',
+      '100',
+      '200',
+    ]);
+    expect(calls.every((c) => new URL(c.url, 'http://x').searchParams.get('limit') === '100')).toBe(
+      true,
+    );
+  });
+
   it('sends localized fields through on create (the form owns localization)', async () => {
     const { fn, calls } = fakeFetch(() => ({ entry: { id: 'e1' }, fields: {} }));
     const client = createManagementClient(conn, fn);

@@ -63,6 +63,25 @@ describe('Tabs', () => {
   });
 });
 
+// The admin's screens' source, for rules that hold across files.
+const screens = import.meta.glob(['../app/**/*.tsx', '!../app/**/*.test.tsx'], {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
+
+describe('The current item', () => {
+  it('is marked by the one `tick-current` utility, never a hand-drawn brand stripe', () => {
+    expect(css).toMatch(/@utility tick-current \{/);
+    const stripes = Object.entries({ ...primitives, ...screens })
+      .filter(([, src]) =>
+        /before:w-0\.5[^'"`]*before:bg-brand|before:bg-brand[^'"`]*before:w-0\.5/.test(src),
+      )
+      .map(([file]) => file);
+    expect(stripes).toEqual([]);
+  });
+});
+
 describe('Ledger tokens in app.css', () => {
   it('defines the motion tokens and state variants the CMS screens and primitives use', () => {
     for (const t of ['--motion-instant', '--motion-move', '--motion-travel', '--ease-arrive'])

@@ -15,7 +15,8 @@ globalThis.ResizeObserver ??= class {
 Element.prototype.scrollIntoView ??= () => {};
 
 const client = {
-  listEntries: vi.fn<() => Promise<PreviewEntry[]>>(),
+  listEntries: vi.fn<(type?: string, query?: { limit?: number }) => Promise<PreviewEntry[]>>(),
+  contentTypeEntryCounts: vi.fn(async (): Promise<{ contentType: string; total: number }[]> => []),
   trashEntry: vi.fn(async () => {}),
   restoreEntry: vi.fn(async () => {}),
   publishEntry: vi.fn<(id: string) => Promise<unknown>>(async () => ({})),
@@ -104,8 +105,9 @@ const ENTRIES = [
   entry('e-live2', 'published', 'Careers'),
 ];
 
-function setup() {
-  client.listEntries.mockResolvedValue(ENTRIES);
+function setup(list?: (type?: string, query?: { limit?: number }) => Promise<PreviewEntry[]>) {
+  if (list) client.listEntries.mockImplementation(list);
+  else client.listEntries.mockResolvedValue(ENTRIES);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const outlet = { types: [article], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
   render(
@@ -378,5 +380,28 @@ describe('EntriesList through the assistant', () => {
     await screen.findByText('Entry duplicated');
     expect(assistant.edit).toHaveBeenCalledWith('entries_duplicate', { id: 'e-live' }, 'About us');
     expect(client.duplicateEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe('EntriesList counts and paging', () => {
+  it("names the type's real total when the list holds one page of it, and shows more on request", async () => {
+    const page = (from: number) =>
+      Array.from({ length: 100 }, (_, i) => entry(`e${from + i}`, 'draft', `Entry ${from + i}`));
+    client.contentTypeEntryCounts.mockResolvedValue([{ contentType: 'article', total: 250 }]);
+    setup(async (_type, query) => (query?.limit === 200 ? [...page(0), ...page(100)] : page(0)));
+    await screen.findByText('Showing 100 of 250 entries', {}, { timeout: FIRST_RENDER_MS });
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    await screen.findByText('Showing 200 of 250 entries');
+    expect(client.listEntries).toHaveBeenLastCalledWith(
+      'article',
+      expect.objectContaining({ limit: 200 }),
+    );
+  });
+
+  it('counts a list shorter than a page as it is, with no Show more', async () => {
+    client.contentTypeEntryCounts.mockResolvedValue([]);
+    setup();
+    await screen.findByText('4 entries', {}, { timeout: FIRST_RENDER_MS });
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
   });
 });
