@@ -195,6 +195,26 @@ total }`, each with `id`, `source`, `destination`, `status` and an optional `loc
 contentworker serves no site, so your front end or an edge Worker applies them. See
 [Redirects](/guides/redirects/).
 
+## Routes
+
+`GET /delivery/{space}/{env}/routes` returns where each published content type's entries live on
+your site, so a front end can route pages from the content model instead of hard-coding them:
+
+```json
+{
+  "items": [
+    { "contentType": "article", "urlPattern": "/blog/{slug}" },
+    { "contentType": "page", "urlPattern": "/{slug}" }
+  ],
+  "total": 2
+}
+```
+
+Only published content types that have a URL pattern are listed, sorted by `contentType`. A
+pattern's placeholders are `{id}`, `{locale}` or one of the type's Slug fields (see
+[Content modeling](/guides/content-modeling/)). A key whose role limits it to some content types
+sees only their routes. A type with an unpublished revision drops out until it is published again.
+
 ## Caching
 
 Delivery answers from a cache in front of the database. Your key is checked on every request,

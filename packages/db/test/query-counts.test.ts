@@ -17,6 +17,7 @@ import {
   listDeliveredAssets,
   listDeliveredConcepts,
   listDeliveredRedirects,
+  listDeliveredRoutes,
   listDeliveredTags,
   listPreviewEntries,
   listPreviewEntryPage,
@@ -388,6 +389,7 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     'delivery: GET /redirects/resolve',
     () => resolveDeliveredRedirect(ctx, scope, '/blog/old-3?ref=x'),
   ],
+  ['delivery: GET /routes', () => listDeliveredRoutes(ctx, scope)],
   ['management: GET /entries/:id', () => getEntry(ctx, scope, article(5))],
   [
     'management: GET /entries?content_type=article',

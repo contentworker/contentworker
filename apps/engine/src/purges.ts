@@ -31,6 +31,7 @@ export const PURGING_EVENTS = new Set<string>([
   'taxonomy.changed',
   // Delivery serves the enabled set (`GET …/redirects`) and each path's match from it.
   'redirects.changed',
+  // Delivery serves each published type's URL pattern (`GET …/routes`) and builds GraphQL from it.
   'content_type.published',
   'release.published',
   'environment_alias.changed',

@@ -66,6 +66,7 @@ client.listConcepts({ scheme?, locale?, contentType? }): Promise<DeliveredConcep
 client.getConcept(slug, { scheme?, locale?, contentType? }): Promise<DeliveredConcept>
 client.redirects(): Promise<DeliveredRedirect[]>         // Delivery only: the enabled set, to apply
 client.resolveRedirect(path, { locale? }): Promise<RedirectMatch | null>  // Delivery only; null on 404
+client.routes(): Promise<DeliveredRoute[]>               // Delivery only: { contentType, urlPattern } per published type
 client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void

@@ -138,6 +138,12 @@ there for tests. Entries unpublished since the last sync are not removed locally
 `imageSource(asset, { width, dpr: PixelRatio.get() })` is an `<Image source>` with the width step
 for the device's density and the image's size in dp.
 
+### Routes
+
+`client.routes()` returns `{ contentType, urlPattern }` for every published content type with a URL
+pattern, sorted by content type, so a front end can route pages from the content model (see
+[Routes](/guides/reading-content/#routes)).
+
 ### Redirects
 
 `client.redirects()` returns the environment's enabled redirects and

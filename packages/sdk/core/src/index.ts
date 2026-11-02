@@ -247,6 +247,14 @@ export interface DeliveredConcept extends DeliveredTag {
   readonly broaderId: string | null;
 }
 
+/** A published content type's place on the site, as Delivery serves it. */
+export interface DeliveredRoute {
+  /** The content type's apiId. */
+  readonly contentType: string;
+  /** e.g. `/blog/{slug}`: placeholders are `{id}`, `{locale}` or one of the type's Slug fields. */
+  readonly urlPattern: string;
+}
+
 export interface TermQuery {
   /** Resolve labels for one locale. */
   readonly locale?: string;
@@ -518,6 +526,15 @@ export function createDeliveryClient(opts: ClientOptions) {
      */
     async redirects(): Promise<DeliveredRedirect[]> {
       return (await get<{ items: DeliveredRedirect[] }>('/redirects', {})).items;
+    },
+
+    /**
+     * Where each published content type's entries live on the site (its `urlPattern`, e.g.
+     * `/blog/{slug}`), by content type: route pages from the content model instead of
+     * hard-coding them. A key limited to some content types gets only theirs. Delivery only.
+     */
+    async routes(): Promise<DeliveredRoute[]> {
+      return (await get<{ items: DeliveredRoute[] }>('/routes', {})).items;
     },
 
     /**

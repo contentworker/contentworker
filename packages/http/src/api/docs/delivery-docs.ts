@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { doc } from './openapi';
 import { deliveredCollection } from './schemas/asset-collections';
 import { deliveredAsset, deliveredAssetPage, deliveredAssetSearchPage } from './schemas/assets';
+import { deliveredRouteList } from './schemas/content-types';
 import { publishedEntry, publishedEntryList, searchHits } from './schemas/entries';
 import { deliveredRedirectList, deliveredRedirectMatch } from './schemas/redirects';
 import {
@@ -135,6 +136,15 @@ const DOCS = {
         'Every enabled redirect, by source: the set a front end or an edge Worker applies ' +
         'itself (contentworker serves no site). Match exact sources first, then the most ' +
         'specific pattern, as `redirects/resolve` does; the SDKs ship that matcher.',
+    }),
+  listRoutes: () =>
+    doc('Delivery', 'List the site routes', {
+      ok: deliveredRouteList,
+      description:
+        'Where each published content type’s entries live on the site (its `urlPattern`), for a ' +
+        'front end that routes pages from the content model. Only published types that have ' +
+        'one, by content type; a key limited to some content types sees only theirs. A ' +
+        'pattern’s placeholders are `{id}`, `{locale}` or one of the type’s Slug fields.',
     }),
   resolveRedirect: () =>
     doc('Delivery', 'Resolve a path against the redirects', {
