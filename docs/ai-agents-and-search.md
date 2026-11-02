@@ -298,7 +298,7 @@ existing vocabulary: ingest never creates a tag.
 
 ## MCP server
 
-The api Worker serves MCP at `/mcp`, with 189 tools and published agent skills. Transport, auth,
+The api Worker serves MCP at `/mcp`, with 198 tools and published agent skills. Transport, auth,
 connecting a client, the tool catalog and skills are in [MCP server](./mcp.md). The assistant in the
 admin calls the same tools in-process (see [Coworker](#coworker-the-admins-assistant)).
 

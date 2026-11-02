@@ -20,6 +20,8 @@ import type {
   PromotionResult,
   PromotionRisk,
   PromotionStatus,
+  RedirectOrigin,
+  RedirectStatus,
   RenditionFit,
   RenditionFormat,
   RolePreset,
@@ -149,6 +151,8 @@ export const contentTypes = sqliteTable(
     version: integer('version').notNull(),
     status: text('status').$type<'draft' | 'published'>().notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** Where the type's entries live on the site (0017_redirects). */
+    urlPattern: text('url_pattern'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.apiId] })],
 );
@@ -1113,6 +1117,42 @@ export const tags = sqliteTable(
     name: text('name').notNull(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
+);
+
+/** Redirects, as delivery data (0017_redirects). `locale` is '' for every locale. */
+export const redirects = sqliteTable(
+  'redirects',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    source: text('source').notNull(),
+    locale: text('locale').notNull().default(''),
+    destination: text('destination').notNull(),
+    status: integer('status').$type<RedirectStatus>().notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    note: text('note'),
+    origin: text('origin').$type<RedirectOrigin>().notNull(),
+    entryId: text('entry_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    uniqueIndex('redirects_by_source').on(t.spaceId, t.environmentId, t.source, t.locale),
+    index('redirects_by_destination').on(t.spaceId, t.environmentId, t.destination),
+  ],
+);
+
+/** A redirect set's revision, the compare-and-set every write to it rides with (0017_redirects). */
+export const redirectSets = sqliteTable(
+  'redirect_sets',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    revision: integer('revision').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
 );
 
 export const entryMetadata = sqliteTable(

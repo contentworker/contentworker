@@ -64,13 +64,13 @@ fontFamily: "IBM Plex Mono, ui-monospace, SF Mono, Menlo, monospace"
 fontSize: "0.75rem"
 fontWeight: 400
 rounded:
-sm: "0.375rem"
-md: "0.5rem"
-lg: "0.625rem"
-xl: "0.875rem"
-2xl: "1.125rem"
-3xl: "1.375rem"
-4xl: "1.625rem"
+sm: "0.15rem"
+md: "0.2rem"
+lg: "0.25rem"
+xl: "0.35rem"
+2xl: "0.45rem"
+3xl: "0.55rem"
+4xl: "0.65rem"
 full: "9999px"
 spacing:
 gutter-phone: "1rem"
@@ -81,18 +81,18 @@ components:
 button-primary:
 backgroundColor: "{colors.primary}"
 textColor: "{colors.primary-foreground}"
-rounded: "{rounded.4xl}"
+rounded: "{rounded.md}"
 height: "2.25rem"
 padding: "0 0.75rem"
 button-outline:
 backgroundColor: "{colors.paper}"
 textColor: "{colors.ink}"
-rounded: "{rounded.4xl}"
+rounded: "{rounded.md}"
 height: "2.25rem"
 padding: "0 0.75rem"
 input:
 textColor: "{colors.ink}"
-rounded: "{rounded.4xl}"
+rounded: "{rounded.md}"
 height: "2.25rem"
 padding: "0.25rem 0.75rem"
 card:
@@ -618,7 +618,7 @@ opacity, colour and a few pixels of travel.
 **The Drawn Page Rule.** A page that is loading draws everything it already knows for real (the
 title, the intro if it's fixed, the filter bar, the column headers, a sheet's header) and stands a
 skeleton in only for the data, in the shape and size of what replaces it: text as one-line bars
-in the text's own size, badges and buttons as pills, thumbnails as tiles, table rows built from
+in the text's own size, badges as pills, buttons as square-cornered blocks, thumbnails as tiles, table rows built from
 the real row's classes so they stack the same on a phone. Nothing moves when the data lands. No
 region says "Loading…" on screen: it announces its load once to assistive technology
 (`LoadingStatus`, "Loading Author entries…") and marks itself `aria-busy`, and its skeletons are
@@ -630,19 +630,23 @@ at once. A skeleton fades in and holds still: its status line says it is loading
 
 ## Shapes
 
-Generous and round. The radius base is 0.625rem on a multiplying scale: cards are 2xl, tiles xl,
-one-line fields 4xl, text areas xl, menus 2xl. Buttons, one-line fields, badges, segmented controls
-and icon buttons are pills. Hairlines divide rows inside a card; cards have no border.
+Tight, not soft: this is a data tool. The radius base is 0.25rem on a multiplying scale, so a
+corner is a few pixels, never a bubble. Cards, dialogs, sheets, menus and tooltips are 2xl (about
+7px); tiles xl, one step inside the card that holds them. Buttons, one-line fields, selects, text
+areas, input groups and the shell's controls are md (about 3px); menu and list items md;
+checkboxes and key hints sm. A focus ring follows its control's corner. Hairlines divide rows
+inside a card; cards have no border.
 
-**The Pill Rule.** Anything you press or that labels a status is fully round. Square corners are
-for code and data blocks only.
+**The Label Rule.** Only what labels a state is fully round: status badges, counts, the
+segmented control's track, switches and dots. Anything you press or type into is square-cornered,
+so a pill always means "this is a status", never "this is a button".
 
 ## Components
 
-- **Buttons** (`ui/button.tsx`): pills. Primary is an ink fill with paper text; outline is a rule
+- **Buttons** (`ui/button.tsx`): square-cornered (`rounded-md`). Primary is an ink fill with paper text; outline is a rule
   over a faint `input` fill; ghost fills muted on hover; link is the work blue. Every size carries
   `hit-area`.
-- **Fields** (`ui/input.tsx`, `ui/textarea.tsx`, `ui/native-select.tsx`): pills with an `input`
+- **Fields** (`ui/input.tsx`, `ui/textarea.tsx`, `ui/native-select.tsx`): square-cornered (`rounded-md`) with an `input`
   hairline over an `input` fill. Focus: the `ring` edge and halo. Invalid: the destructive edge.
 - **Segmented** (`ui/segmented.tsx`): a radio group drawn as a muted pill track; the chosen
   segment is raised on paper.

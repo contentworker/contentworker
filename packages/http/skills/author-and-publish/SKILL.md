@@ -27,6 +27,10 @@ publishing does.
 - A `RichText` value is a node tree under `{ "nodeType": "document", "content": [...] }`. A table
   is `table` → `table-row`s → `table-header-cell` or `table-cell` → blocks, each with
   `"data": {}`; put a cell's text in a `paragraph`, never directly in the cell.
+- To embed a video, post or track (YouTube, Vimeo, X, Bluesky, Mastodon, Spotify, SoundCloud),
+  call `embed_resolve` with its https URL and put the returned `embed` in the document as
+  `{ "nodeType": "embed", "data": <embed>, "content": [] }`. Never write the provider's HTML or an
+  `<iframe>` into rich text; it is refused. If `resolved` is false, the embed is still valid.
 - Validation errors come back with the field that failed. Fix the value; do not retry unchanged.
 
 ## Publish
@@ -42,6 +46,10 @@ publishing does.
 
 Prefer a release over publishing several entries one by one: a failure halfway through a sequence
 leaves the site half-updated, and a release cannot.
+
+A publish that changes a slug named by its type's `urlPattern` writes a `301` from the old path to
+the new one in the same step; check with `redirects_resolve` (path of the old URL). Manage other
+redirects with the `redirects_*` tools.
 
 ## Editorial workflows
 

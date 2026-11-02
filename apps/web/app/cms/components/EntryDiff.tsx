@@ -25,8 +25,14 @@ interface FieldDelta {
 /** A rich-text document's words, block by block (`nodeType`/`value`/`content`). */
 function richText(node: unknown): string {
   if (!node || typeof node !== 'object') return '';
-  const n = node as { nodeType?: unknown; value?: unknown; content?: unknown };
+  const n = node as { nodeType?: unknown; value?: unknown; content?: unknown; data?: unknown };
   if (n.nodeType === 'text') return typeof n.value === 'string' ? n.value : '';
+  // External media reads as its title and URL, so swapping one video for another shows.
+  if (n.nodeType === 'embed') {
+    const { title, url } = (n.data ?? {}) as { title?: unknown; url?: unknown };
+    const link = typeof url === 'string' ? url : '';
+    return typeof title === 'string' && title ? `${title} (${link})` : link;
+  }
   const parts = Array.isArray(n.content) ? n.content.map(richText) : [];
   // Blocks under the document break onto their own lines; inline runs join as they are.
   return n.nodeType === 'document' ? parts.filter(Boolean).join('\n') : parts.join('');

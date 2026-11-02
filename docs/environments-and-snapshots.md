@@ -11,7 +11,8 @@ and `POST …/clone` does both, including across spaces (`packages/application/s
 and `snapshot-jobs.ts`).
 
 A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows,
-asset **metadata**, the asset folders and the asset collections. It deliberately never carries **credentials** (API keys, OAuth clients and
+asset **metadata**, the asset folders, the asset collections and the redirects (a `redirects` array,
+optional, so snapshots written before redirects still import). It deliberately never carries **credentials** (API keys, OAuth clients and
 grants, preview tokens, webhook signing secrets), because a snapshot is a file people move around.
 Asset **binaries** stay in the blob store: a restore into the same space, on a deployment
 pointing at the same bucket, works, and one pointing elsewhere has dangling files, which is
@@ -37,6 +38,11 @@ What an import preserves:
 - **Ids.** Entries and asset records keep their ids (every table is keyed per environment), so
   links between them resolve in the target unchanged, and comparing or merging the copy against
   its source matches entries one to one. Taxonomy ids are remapped.
+- **Redirects.** They keep their ids, `origin` and timestamps (`writeSnapshotRedirects`). Preflight
+  checks each against the target's locales and the set as a whole (no loop, no duplicate source, at
+  most `MAX_REDIRECTS`). A source the target already redirects keeps the target's, so a retry adds
+  nothing twice. They are written in one unit with the set's revision and a `redirects.changed`
+  event. A content type's `urlPattern` travels with the content model.
 - **Every entry.** The export reads every page of entries and assets, not the store's first page.
 - **Live and draft versions.** A `changed` entry (published, with edits since) carries its live
   version's fields too: the import publishes those, then applies the draft, so the copy has the
@@ -75,7 +81,7 @@ infrastructure error) is reported per entry in the job's report.
 
 Replaying every entry through the use-cases is far more than one request can hold for an
 environment of any size. After the checks, the import request writes the content model, asset
-folders, taxonomy and workflows (small, and everything else depends on them) and answers `202` with
+folders, taxonomy, redirects and workflows (small, and everything else depends on them) and answers `202` with
 `{ report, job, publishJobId }`. The assets and entries are staged in the blob store in chunks of
 100 before the model is written (so a staging failure leaves the target empty and a retry works),
 and written by bulk jobs, with progress at `…/bulk/jobs/:id` and per-item failures at
@@ -119,7 +125,7 @@ published. A dry run (`dryRun: true` on the MCP tool) still exports and checks i
 
 `DELETE …/environments/:env?confirm=:env` (MCP `environment_delete`) removes the environment and
 everything in it: content model, entries and versions, assets, references, releases, schedules,
-workflows and runs, taxonomy, comments, tasks and jobs, and the webhooks scoped to it (space-wide
+workflows and runs, taxonomy, redirects, comments, tasks and jobs, and the webhooks scoped to it (space-wide
 ones stay). Its audit history stays. `confirm` must
 repeat the environment id. It takes a person holding `space:admin` in that space (signed in, or
 through their OAuth or personal access token) or the deployment admin token; a plain API key gets
@@ -199,8 +205,13 @@ matched as conflicts: an import must not silently revive something someone delet
 rules, tables, links and inline marks map to their rich-text nodes; a blank-line-separated block of
 plain text becomes paragraphs, as WordPress renders it. The reader is lenient (unclosed tags and stray
 end tags are recovered the way a browser recovers them) and keeps the text of any element it does not
-know. Images and embeds become **links to their source**, since there is no asset to point an embed at
-yet; a link is visible and fixable, where a dropped image is neither. A `<table>` becomes a `table`
+know. Media from an allowed embed provider becomes an **`embed` node** holding its page URL and
+provider (no title until someone resolves it): a provider's player `<iframe>`, a post
+`<blockquote>` (`twitter-tweet`, `bluesky-embed`, `mastodon-embed`), a WordPress `wp-block-embed`
+figure (its caption kept as a paragraph) and a provider URL alone on its line or in
+`[embed]…[/embed]`; the player markup is dropped. Images and other media become **links to their
+source**, since there is no asset to point an embed at yet; a link is visible and fixable, where a
+dropped image is neither. A `<table>` becomes a `table`
 (rows from `thead`, `tbody` and `tfoot` alike, `th` as header cells, `colspan`/`rowspan` kept); its
 caption becomes a paragraph before it, and a table with no cells or over the size limits keeps its
 text as paragraphs instead. A value that is already a rich-text document is left alone.
