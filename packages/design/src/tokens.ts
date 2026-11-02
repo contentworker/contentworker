@@ -13,7 +13,7 @@
  * another token with `var(--name)`, exactly as the app writes it.
  */
 export const LIGHT = {
-  radius: '0.625rem',
+  radius: '0.25rem',
   paper: 'oklch(1 0 0)',
   background: 'var(--paper)',
   ink: 'oklch(0.145 0 0)',
