@@ -194,6 +194,48 @@ describe('collection, share, upload and zip tools (MCP), on the HTTP routes’ u
     ).toEqual({ aborted: aborted.upload.uploadId });
   });
 
+  it('replaces a file in parts through the upload tools, committing on completion', async () => {
+    const { deps, add, blob } = await setup();
+    const a = await add('hero.png');
+    await blob.put(`${SPACE}/main/${a.id}/hero.png`, 'v1', 'image/png');
+    const asReader = await connect(deps, reader);
+    expect(
+      (
+        await asReader('asset_replace_file_upload', {
+          id: a.id,
+          fileName: 'b.png',
+          contentType: 'image/png',
+          size: 12,
+        })
+      ).isError,
+    ).toBe(true);
+    const call = await connect(deps, writer);
+    const started = (
+      await call('asset_replace_file_upload', {
+        id: a.id,
+        fileName: 'b.png',
+        contentType: 'image/png',
+        size: 12,
+      })
+    ).body as { version: number; upload: { uploadId: string } };
+    expect(started.version).toBe(2);
+    const key = blob.uploadsInProgress.get(started.upload.uploadId)?.key ?? '';
+    expect(key).toMatch(new RegExp(`^${SPACE}/main/${a.id}/v2/file-[^/]+/b\\.png$`));
+    const part = await blob.multipart.uploadPart(
+      key,
+      started.upload.uploadId,
+      1,
+      new Uint8Array(12),
+    );
+    const done = await call('asset_upload_complete', {
+      id: a.id,
+      uploadId: started.upload.uploadId,
+      parts: [part],
+    });
+    expect(done.isError).toBe(false);
+    expect(done.body).toMatchObject({ version: 2, file: { fileName: 'b.png', size: 12 } });
+  });
+
   it('refuses a key with content grants on zips and collection members, as on asset reads', async () => {
     const { deps, add } = await setup();
     const a = await add('a.png');

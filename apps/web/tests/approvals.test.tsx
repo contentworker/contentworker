@@ -109,7 +109,9 @@ const entries = [
   },
 ];
 
-function setup(opts: { hangLookupAfterApprove?: boolean; beside?: React.ReactNode } = {}) {
+function setup(
+  opts: { hangLookupAfterApprove?: boolean; beside?: React.ReactNode; noTasks?: boolean } = {},
+) {
   let approved = false;
   const calls: { method: string; url: string; body?: unknown }[] = [];
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -120,7 +122,8 @@ function setup(opts: { hangLookupAfterApprove?: boolean; beside?: React.ReactNod
     if (url === '/spaces') return json({ items: [{ id: 'space-1', name: 'Space 1' }] });
     if (url === `${BASE}/approvals/count`)
       return json({ workflowTasks: 1, agentReviews: 2, total: 3 });
-    if (url.startsWith(`${BASE}/workflow-tasks?`)) return json({ items: [task] });
+    if (url.startsWith(`${BASE}/workflow-tasks?`))
+      return json({ items: opts.noTasks ? [] : [task] });
     if (url.startsWith(`${BASE}/agent-reviews?`))
       return json({ items: approved ? [orphan] : [review, orphan] });
     if (url === `${BASE}/content-types`) return json({ items: [post, article] });
@@ -292,5 +295,25 @@ describe('Approvals', () => {
         calls.some((c) => c.method === 'POST' && c.url === `${BASE}/agent-reviews/review-1/reject`),
       ).toBe(true),
     );
+  });
+});
+
+describe('Approvals order', () => {
+  const headings = () =>
+    screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent?.trim());
+
+  it('puts what is waiting first: with no workflow step waiting, proposals come before steps', async () => {
+    setup({ noTasks: true });
+    await screen.findByText('No workflow step is waiting on a decision.');
+    const order = headings();
+    expect(order.indexOf('Agent proposals')).toBeLessThan(order.indexOf('Workflow steps'));
+  });
+
+  it('keeps workflow steps first while one is waiting', async () => {
+    setup();
+    // The waiting step's entry, named once the lists and the lookup have loaded.
+    await screen.findAllByText('Spring launch');
+    const order = headings();
+    expect(order.indexOf('Workflow steps')).toBeLessThan(order.indexOf('Agent proposals'));
   });
 });

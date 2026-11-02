@@ -1,15 +1,20 @@
 import {
   assetSearchDeps,
   assetTransformTarget,
+  clampCount,
+  type DeliveryReads,
+  deliveryGraphResolvers,
+  deliveryReads,
   getDeliveredAsset,
   getDeliveredCollection,
   getPublishedEntry,
   hybridSearch,
-  listContentTypes,
   listDeliveredAssets,
   listPublishedEntries,
   liveEventFor,
+  MAX_PAGE_LIMIT,
   maskDeliveredFields,
+  parseEntryQuery,
   parseImageTransform,
   searchDeliveredAssets,
   semanticSearch,
@@ -21,16 +26,10 @@ import {
   authorize,
   authorizeContent,
   canAccessContentType,
-  resolveLocalizedValue,
   SCOPES,
   type Scope,
 } from '@contentworker/domain';
-import {
-  buildDeliverySchema,
-  type DeliveryContext,
-  type DeliveryResolvers,
-  type ResolvedEntry,
-} from '@contentworker/graphql-gen';
+import { buildDeliverySchema, type DeliveryContext } from '@contentworker/graphql-gen';
 import { LIVE_STREAM_MAX_MS } from '@contentworker/platform/do/live-access';
 import {
   type ASTNode,
@@ -56,14 +55,7 @@ import {
 } from '../auth';
 import type { DeliveryDocKey } from '../docs/delivery-docs';
 import { onError } from '../http';
-import {
-  clampCount,
-  entryQueryFrom,
-  MAX_PAGE_LIMIT,
-  parseAssetSearchQuery,
-  parseDeliveredAssetQuery,
-  parseEntryQuery,
-} from '../query';
+import { parseAssetSearchQuery, parseDeliveredAssetQuery } from '../query';
 
 /** Max reference-resolution depth a delivery client may request. */
 const MAX_INCLUDE_DEPTH = 10;
@@ -366,8 +358,14 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
   async function schemaFor(
     scope: Scope,
     principal: AuthVars['Variables']['principal'],
+    reads: DeliveryReads,
   ): Promise<GraphQLSchema> {
-    const types = await listContentTypes(ctx, scope);
+    // The space config rides along: every field the query resolves needs its default locale, so
+    // reading it here saves the resolvers a round trip of their own.
+    const { contentTypes: types = [] } = await reads.read(scope, {
+      contentTypes: true,
+      config: true,
+    });
     const grantedTypes = principal.contentGrants
       ? types.filter((t) => canAccessContentType(principal, 'read', t.apiId))
       : types;
@@ -387,89 +385,6 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
     return schema;
   }
 
-  function resolversFor(
-    scope: Scope,
-    principal: AuthVars['Variables']['principal'],
-  ): DeliveryResolvers {
-    // GraphQL types each field as one value (a String, not a map of locales), so a query that
-    // names no locale reads the space's default one; REST, which can return the map, doesn't.
-    let config: ReturnType<typeof ctx.store.spaces.getConfig> | undefined;
-    const spaceConfig = () => {
-      config ??= ctx.store.spaces.getConfig(scope);
-      return config;
-    };
-    const localeOr = async (locale: string | undefined) =>
-      locale || (await spaceConfig())?.defaultLocale;
-    return {
-      entry: async (contentType, id, locale) => {
-        if (!canAccessContentType(principal, 'read', contentType)) return null;
-        try {
-          const e = await getPublishedEntry(ctx, scope, id, {
-            locale: await localeOr(locale),
-            include: 1,
-          });
-          if (e.contentType !== contentType) return null;
-          // Same field-level masking as the REST single-entry path.
-          return {
-            ...e,
-            fields: maskDeliveredFields(principal, e.contentType, e.fields),
-          } as ResolvedEntry;
-        } catch {
-          return null;
-        }
-      },
-      collection: async (contentType, args) => {
-        if (!canAccessContentType(principal, 'read', contentType)) return [];
-        const raw: [string, string][] = [];
-        for (const [k, v] of Object.entries(args.where ?? {})) {
-          raw.push([k, Array.isArray(v) ? v.join(',') : String(v)]);
-        }
-        if (args.order?.length) raw.push(['order', args.order.join(',')]);
-        if (args.search) raw.push(['query', args.search]);
-        const parsed = entryQueryFrom(raw);
-        assertQueryRespectsFieldRules(principal, { ...parsed, contentTypeApiId: contentType });
-        const items = await listPublishedEntries(
-          ctx,
-          scope,
-          { ...parsed, contentTypeApiId: contentType, limit: args.limit, skip: args.skip },
-          { locale: await localeOr(args.locale), include: 1 },
-        );
-        return items.map((e) => ({
-          ...e,
-          fields: maskDeliveredFields(principal, e.contentType, e.fields),
-        })) as ResolvedEntry[];
-      },
-      asset: async (id, locale) => {
-        if (principal.contentGrants) return null;
-        try {
-          // Text per locale: each Asset field resolves its own `locale`, then the query's.
-          const asset = await getDeliveredAsset(ctx, scope, id);
-          return { asset, ...(locale ? { locale } : {}) };
-        } catch {
-          return null;
-        }
-      },
-      localize: async (value, locale) => {
-        const config = await spaceConfig();
-        if (!config) return null;
-        const v = resolveLocalizedValue(
-          value,
-          {
-            defaultLocale: config.defaultLocale,
-            locales: config.locales,
-            fallbacks: config.fallbacks,
-          },
-          locale ?? config.defaultLocale,
-        );
-        return typeof v === 'string' ? v : null;
-      },
-      search: async (query, topK) => {
-        const raw = await hybridSearch(rag, ctx, scope, query, { topK });
-        return visibleSearchHits(ctx, scope, principal, raw);
-      },
-    };
-  }
-
   // In-browser GraphQL explorer. Registered OUTSIDE the guarded BASE/* prefix so
   // the page loads without a token; the user sets the bearer in GraphiQL's header
   // editor and the /graphql POST it issues is what gets scope-checked.
@@ -483,7 +398,9 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
     if (!source) return c.json({ errors: [{ message: 'No GraphQL query provided' }] }, 400);
     const scope = scopeOf(c);
     const principal = c.get('principal');
-    const schema = await schemaFor(scope, principal);
+    // One request's reads: what the schema read, the resolvers reuse (never across requests).
+    const reads = deliveryReads(ctx);
+    const schema = await schemaFor(scope, principal, reads);
 
     let document: ReturnType<typeof parse>;
     try {
@@ -505,7 +422,9 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       document,
       // Data access is bound to THIS caller here — never inside the cached
       // schema (see schemaFor).
-      contextValue: { resolvers: resolversFor(scope, principal) } satisfies DeliveryContext,
+      contextValue: {
+        resolvers: deliveryGraphResolvers(ctx, scope, principal, { rag, reads }),
+      } satisfies DeliveryContext,
       variableValues: (body as { variables?: Record<string, unknown> }).variables,
       operationName: (body as { operationName?: string }).operationName,
     });

@@ -1,5 +1,5 @@
+import { clampCount, MAX_PAGE_LIMIT, parseEntryQuery } from '@contentworker/application';
 import { describe, expect, it } from 'vitest';
-import { clampCount, MAX_PAGE_LIMIT, parseEntryQuery } from '../../src/api/query';
 
 describe('clampCount (pagination DoS guard)', () => {
   it('caps limit at the maximum', () => {

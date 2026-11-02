@@ -28,7 +28,9 @@ Worker's Vite config (`apps/web/vite.config.ts`) starts the **api, engine, media
 auxiliary Workers** in the same session, all on one local D1, with the queues, cron, Durable
 Objects and Workflows emulated. The media Worker isn't routable from the browser locally and
 `MEDIA_PUBLIC_URL` stays empty, so delivered assets keep the api's signed URLs (no renditions or
-srcset); its suite (`pnpm --filter @contentworker/media test`) runs it in workerd instead. Their vars are overridden with `LOCAL_STACK_VARS`:
+srcset); its suite (`pnpm --filter @contentworker/media test`) runs it in workerd instead. Asset
+ingest still runs after an upload: with no R2 notifications locally, the api's signed `PUT` is its
+one trigger ([Architecture](./architecture.md#asset-ingest-and-search)). Their vars are overridden with `LOCAL_STACK_VARS`:
 
 | Var                               | Local value                                   | Why                                                                 |
 | --------------------------------- | --------------------------------------------- | ------------------------------------------------------------------- |
@@ -144,7 +146,8 @@ create what they need; the first-run spec sees a deployment with no spaces by fi
 `packages/db/test/query-counts.test.ts` runs representative Delivery and Management requests
 (entry by id, with a locale and with `include`, filtered and searched lists, a link list past the
 100-parameter cap, GraphQL entry, collection and asset queries, asset delivery, create, publish,
-get and list entries) through their use-cases over the real D1 store, with no delivery cache, and
+get and list entries) through their use-cases over the real D1 store (GraphQL through the
+route's own resolvers, `deliveryGraphResolvers`), with no delivery cache, and
 counts the statements and round trips each sends to D1 (a `batch()` is one round trip). The
 counts are compared with the committed `packages/db/test/query-counts.json`; any change fails the
 `@contentworker/db` suite with a report of what moved and, for an increase, the SQL the request now

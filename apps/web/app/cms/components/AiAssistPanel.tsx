@@ -381,6 +381,7 @@ export function AiAssistPanel(props: {
             disabled={busy !== null}
             onClick={audit}
           >
+            {runs('audit', composeIcons.search)}
             {busy === 'audit' ? 'Auditing…' : 'Audit entry'}
           </Button>
           <Button
@@ -391,6 +392,7 @@ export function AiAssistPanel(props: {
             disabled={busy !== null}
             onClick={createTasks}
           >
+            {runs('tasks-create', composeIcons.workflow)}
             {busy === 'tasks-create' ? 'Creating…' : 'Audit → tasks'}
           </Button>
         </div>

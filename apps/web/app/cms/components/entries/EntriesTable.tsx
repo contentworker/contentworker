@@ -219,7 +219,7 @@ export function EntriesTable(props: EntriesTableProps) {
                       <Link
                         to={props.hrefFor(e)}
                         data-row-primary=""
-                        className={`rounded-md font-medium underline-offset-4 outline-none hover:underline focus-visible:underline focus-visible:ring-3 focus-visible:ring-ring/30 ${title ? '' : 'text-muted-foreground'}`}
+                        className={`rounded-md font-medium underline-offset-4 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring ${title ? '' : 'text-muted-foreground'}`}
                       >
                         {title ?? 'Untitled entry'}
                       </Link>

@@ -1,11 +1,12 @@
 import type { ContentType, ContentTypeDraft } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
-import { Skeleton } from '@contentworker/ui/skeleton';
+import { Skeleton, SkeletonText } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
 import { Plus, Shapes } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { ContentTypeDialog } from '~/cms/components/ContentTypeDialog';
+import { LoadingStatus } from '~/cms/components/loading';
 import { Empty, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { count, plural } from '~/cms/lib/format';
@@ -23,7 +24,7 @@ import { useContentOutlet } from './content-context';
  */
 export function ContentTypesOverview() {
   const { client, run } = useClient();
-  const { types, reload } = useContentOutlet();
+  const { types, typesPending, reload } = useContentOutlet();
   const toast = useToast();
   const [dialog, setDialog] = useState<{ open: boolean; initial?: ContentType }>({ open: false });
   // Under the entries prefix, so every entry mutation's invalidation refreshes them too. Silent:
@@ -70,7 +71,20 @@ export function ContentTypesOverview() {
           </Button>
         }
       />
-      {types.length === 0 ? (
+      {typesPending ? (
+        // Never "No content types yet" before the types have arrived.
+        <div className="card overflow-clip" aria-busy="true">
+          <LoadingStatus>Loading content types…</LoadingStatus>
+          <div className="divide-y text-sm">
+            {['38%', '52%', '44%', '60%'].map((w) => (
+              <div key={w} className="flex items-center gap-3 px-4 py-3">
+                <SkeletonText width={w} className="flex-1" />
+                <Skeleton className="h-4 w-8" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : types.length === 0 ? (
         <Empty icon={<Shapes />} title="No content types yet" className="card">
           A content type defines the fields its entries have. Make one to start writing content.
         </Empty>

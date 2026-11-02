@@ -254,6 +254,69 @@ describe('multipart uploads and zips over HTTP', () => {
     expect((await send(h, 'GET', `/assets/${again.asset.id}`)).status).toBe(404);
   });
 
+  it('replaces a file in parts: completing commits the version, needs content:write, and one whose version was taken is 409', async () => {
+    const h = makeApp();
+    const asset = await upload(h, 'hero.png');
+    await h.blob.put(`s1/main/${asset.id}/hero.png`, 'v1', 'image/png');
+    const size = 8 * 1024 * 1024 + 10;
+    const reader = await keyWithScopes(h, 'Reader', ['preview:read']);
+    const body = { fileName: 'hero-large.png', contentType: 'image/png', size };
+    expect((await send(h, 'POST', `/assets/${asset.id}/file/uploads`, body, reader)).status).toBe(
+      403,
+    );
+    const res = await send(h, 'POST', `/assets/${asset.id}/file/uploads`, body);
+    expect(res.status).toBe(201);
+    const started = await json<{
+      version: number;
+      upload: { uploadId: string; partCount: number };
+    }>(res);
+    expect(started).toMatchObject({ version: 2, upload: { partCount: 2 } });
+    const base = `/assets/${asset.id}/uploads/${started.upload.uploadId}`;
+    const signed = await json<{ parts: { partNumber: number; length: number }[] }>(
+      await send(h, 'POST', `${base}/parts`, { partNumbers: [1, 2] }),
+    );
+    // The upload's own key for version 2.
+    const key = h.blob.uploadsInProgress.get(started.upload.uploadId)?.key ?? '';
+    expect(key).toMatch(new RegExp(`^s1/main/${asset.id}/v2/file-[^/]+/hero-large\\.png$`));
+    const parts = [];
+    for (const p of signed.parts) {
+      parts.push(
+        await h.blob.multipart.uploadPart(
+          key,
+          started.upload.uploadId,
+          p.partNumber,
+          new Uint8Array(p.length),
+        ),
+      );
+    }
+    const done = await send(h, 'POST', `${base}/complete`, { parts });
+    expect(done.status).toBe(200);
+    expect(await json(done)).toMatchObject({ version: 2, r2Key: key, file: { size } });
+    const versions = await json<{ items: { version: number; createdBy?: string }[] }>(
+      await send(h, 'GET', `/assets/${asset.id}/versions`),
+    );
+    expect(versions.items.map((v) => v.version)).toEqual([2, 1]);
+
+    // A replace in parts started from v1 completes after v2 was committed: 409, nothing changes.
+    await send(h, 'POST', `/assets/${asset.id}/versions/1/restore`);
+    const stale = await json<{ upload: { uploadId: string } }>(
+      await send(h, 'POST', `/assets/${asset.id}/file/uploads`, body),
+    );
+    await send(h, 'POST', `/assets/${asset.id}/versions/2/restore`);
+    const late = await send(
+      h,
+      'POST',
+      `/assets/${asset.id}/uploads/${stale.upload.uploadId}/complete`,
+      {
+        parts: [
+          { partNumber: 1, etag: 'e' },
+          { partNumber: 2, etag: 'e' },
+        ],
+      },
+    );
+    expect(late.status).toBe(409);
+  });
+
   it('asks for a zip with preview:read, refusing a key with content grants (as asset reads do)', async () => {
     const h = makeApp();
     const a = await upload(h, 'a.png');

@@ -135,6 +135,28 @@ describe('Ledger contrast (PRODUCT.md: text 4.5:1 in both themes)', () => {
   }
 });
 
+/** The tint a status stamp lays under its words, read from the admin's stamp. */
+const stampTint = (() => {
+  const m = /color-mix\(in oklch, \$\{color\} (\d+)%, transparent\)/.exec(
+    read('../../../apps/web/app/components/status.tsx'),
+  );
+  if (!m) throw new Error('status.tsx has no color-mix stamp tint');
+  return Number(m[1]) / 100;
+})();
+
+/** The brand tint a checked option card (packages/ui field.tsx) paints, light and dark. */
+const optionTint = (() => {
+  const field = read('../../ui/src/field.tsx');
+  const pct = (prefix: string) => {
+    const m = new RegExp(`(?:^|\\s)${prefix}has-data-checked:bg-brand/(\\d+)(?:\\s|'|$)`).exec(
+      field,
+    );
+    if (!m) throw new Error(`field.tsx has no ${prefix}has-data-checked:bg-brand/N`);
+    return Number(m[1]) / 100;
+  };
+  return { light: pct(''), dark: pct('dark:') };
+})();
+
 describe('Ledger contrast: the brand accent (DESIGN.md Accent)', () => {
   for (const scheme of ['light', 'dark'] as const) {
     const p = palette(scheme);
@@ -150,6 +172,21 @@ describe('Ledger contrast: the brand accent (DESIGN.md Accent)', () => {
     it(`${scheme}: words and checks on a brand fill hold 4.5:1`, () => {
       expect(contrast(srgb(p['brand-foreground']), brand)).toBeGreaterThanOrEqual(4.5);
     });
+    // The AI stamp ("AI suggestion", an agent's run): brand words on the stamp's own brand tint.
+    for (const ground of ['paper', 'card', 'muted', 'sidebar-accent'] as const) {
+      it(`${scheme}: the AI stamp's words on its tint over ${ground} hold 4.5:1`, () => {
+        const fill = over(brand, stampTint, srgb(p[ground]));
+        expect(contrast(brand, fill)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+    // The chosen option card: a field's words, body and muted, on its brand tint.
+    for (const ground of ['paper', 'card', 'muted'] as const) {
+      it(`${scheme}: words on the chosen option card over ${ground} hold 4.5:1`, () => {
+        const fill = over(brand, optionTint[scheme], srgb(p[ground]));
+        expect(contrast(srgb(p.foreground), fill)).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(srgb(p['muted-foreground']), fill)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
   }
 });
 
@@ -176,4 +213,59 @@ describe('Diagram contrast (docs/diagrams)', () => {
         expect(cr(c.accent, ground)).toBeGreaterThanOrEqual(3);
     });
   }
+});
+
+// The One Meaning Rule: a workflow node's category colour never looks like a status.
+describe('Node categories never take a status hue', () => {
+  const hue = (c: string) => {
+    const m = /^oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)$/.exec(c);
+    return m && Number(m[2]) > 0.03 ? Number(m[3]) : null;
+  };
+  const apart = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+  for (const scheme of ['light', 'dark'] as const) {
+    it(`${scheme}: every chromatic cat-* sits 20° or more from ok, wait, bad and undo`, () => {
+      const p = palette(scheme);
+      const statuses = (['ok', 'wait', 'bad', 'undo'] as const)
+        .map((t) => hue(p[t]))
+        .filter((h): h is number => h !== null);
+      for (const cat of ['cat-trigger', 'cat-commerce', 'cat-control', 'cat-ai'] as const) {
+        const h = hue(p[cat]);
+        if (h === null) continue;
+        for (const s of statuses)
+          expect(apart(h, s), `${cat} near a status hue`).toBeGreaterThanOrEqual(20);
+      }
+    });
+  }
+});
+
+describe('the docs draw only with defined `--cw-*` names', () => {
+  const docs = (rel: string) => read(`../../../apps/docs/src/${rel}`);
+  const sources = [
+    docs('styles/brand.css'),
+    ...[
+      'EndpointIndex',
+      'NodeCatalog',
+      'NodeIcon',
+      'PageTitle',
+      'Scopes',
+      'SocialIcons',
+      'ThemeProvider',
+      'ThemeSelect',
+      'WorkflowTemplates',
+    ].map((c) => docs(`components/${c}.astro`)),
+  ].join('\n');
+  const defined = (css: string) =>
+    new Set([...css.matchAll(/(--cw-[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+  const theme = defined(docs('styles/theme.css'));
+  const local = defined(docs('styles/brand.css'));
+
+  it('every `var(--cw-*)` resolves to the generated theme or a brand.css local', () => {
+    const used = new Set([...sources.matchAll(/var\((--cw-[a-z0-9-]+)/g)].map((m) => m[1]));
+    const missing = [...used].filter((n) => !theme.has(n) && !local.has(n));
+    expect(missing).toEqual([]);
+  });
+
+  it('brand.css never redefines a token the theme owns', () => {
+    expect([...local].filter((n) => theme.has(n))).toEqual([]);
+  });
 });

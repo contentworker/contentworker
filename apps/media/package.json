@@ -16,6 +16,7 @@
     "@contentworker/adapters": "workspace:*",
     "@contentworker/application": "workspace:*",
     "@contentworker/db": "workspace:*",
+    "@contentworker/design": "workspace:*",
     "@contentworker/domain": "workspace:*",
     "@contentworker/platform": "workspace:*",
     "@contentworker/ports": "workspace:*"

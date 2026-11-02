@@ -42,8 +42,8 @@ export function TreeButton(props: {
       data-folder-id={props.folderId}
       onClick={props.onClick}
       className={cn(
-        'hit-area flex w-full items-center gap-2 rounded-full px-3 py-1.5 text-left text-sm outline-none transition-[background-color] hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground',
-        props.current && 'bg-muted font-medium [&_svg]:text-brand',
+        'hit-area relative flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm outline-none transition-[background-color] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground',
+        props.current && 'tick-current bg-muted font-medium [&_svg]:text-brand',
       )}
     >
       {props.icon}

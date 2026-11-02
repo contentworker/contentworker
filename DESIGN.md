@@ -136,10 +136,12 @@ status.
 ### Accent
 
 - **Brand** (`brand`, purple): contentworker's accent, the colour of its mark. It marks where you
-  are and what you chose: the mark (sidebar, top bar, sign-in), the current page's tick and icon
-  (sidebar and tab bar), the current item's tick in a page's own list (Settings sections, content
-  types), the current folder's icon, the active tab's underline, focus (`ring` and the page-wide outline), checked checkboxes and switches
-  and the chosen option card, the text selection and the caret. A model's work wears it too: `ai`
+  are and what you chose: the mark (sidebar, top bar, sign-in); the current item, in one rule
+  everywhere (the sidebar, a page's own list such as Settings sections, content types and asset
+  folders): a 2px tick 1rem long on its leading edge (`tick-current`), and its icon in brand when
+  it has one (on the phone's tab bar the tick runs along the top); the active tab's underline;
+  focus (`ring` and the page-wide outline); checked checkboxes, switches and radio items and the
+  chosen option card; the text selection and the caret. A model's work wears it too: `ai`
   is the brand, so the AI loader (`ComposeLoader`), the AI stamp and agent proposals read as
   contentworker at work. Never a button fill, never a background wash. Its edge holds 3:1 and its
   words 4.5:1 on paper and muted fills in both themes; on a brand fill, words are
@@ -231,13 +233,13 @@ alike are held to `max-w-measure` (55ch), not a hand-written `max-w-[…ch]`.
 
 Tailwind's default breakpoints, read as devices:
 
-| Width                     | Typically                 | What changes                                                                                                                         |
-| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| below `sm` (640px)        | iPhone upright            | Header shows the mark, the scope pill and Search as icons                                                                            |
-| below `md` (768px)        | phones, either way up     | Bottom tab bar, no sidebar; tables stack into cards; the content-type list leaves the Content pages (their overview lists the types) |
-| `md` to `lg` (768–1023px) | iPad upright              | The sidebar is an icon rail beside the page and opens over it                                                                        |
-| `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the entry editor's side pane beside the form; the assistant as a column               |
-| `xl` and up (1280px)      | desktop                   | The space, environment and locale switchers sit in the header; the full sidebar and the assistant's column side by side              |
+| Width                     | Typically                 | What changes                                                                                                                                                                      |
+| ------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| below `sm` (640px)        | iPhone upright            | Header shows the mark, and Search and Coworker as icons; the scope (space, environment, locale) opens from More                                                                   |
+| below `md` (768px)        | phones, either way up     | Bottom tab bar, no sidebar; tables stack into cards; the content-type list leaves the Content pages (their overview lists the types)                                              |
+| `md` to `lg` (768–1023px) | iPad upright              | The sidebar is an icon rail beside the page and opens over it                                                                                                                     |
+| `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the space, environment and locale switchers in the header; the entry editor's side pane beside the form; the assistant as a column |
+| `xl` and up (1280px)      | desktop                   | The full sidebar and the assistant's column side by side                                                                                                                          |
 
 Size and hint by what is pointing, not by width: `touch:` is a coarse pointer (a finger), `fine:` a
 mouse or trackpad. `short:` is a phone on its side (landscape, under 32rem tall, under 64rem wide).
@@ -300,7 +302,9 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   bar's Approvals tab (a `wait` dot on the rail): the shell's one call for attention. It counts
   the inbox's own two lists (`cms/lib/approvals.ts`), so deciding an item updates it; it also
   refreshes every minute while the tab is visible. The link's name carries it for screen readers
-  ("Approvals, 3 waiting"). Approvals is behind the `approvals` feature (`cms/lib/features.tsx`,
+  ("Approvals, 3 waiting"); on the tab the pill follows the label in reading order, a space
+  between (it is drawn over the icon), so the visible "Approvals 3" sits inside that name for
+  voice control. Approvals is behind the `approvals` feature (`cms/lib/features.tsx`,
   on): off, it leaves the sidebar, the tab bar, the palette, the shortcuts list and its G-letter.
 - **Main** pads its foot by `--tabbar-h` and lays every page in `Body` (the page width and
   gutters). Never hard-code the bar heights.
@@ -444,12 +448,22 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   hosted video's status, the focal point, alt text and tags; Save metadata, the footer's one
   button, shows on this tab only), **Versions**, **Usage** (the entries using it), **Renditions**
   (the transform preview; a non-image says it is delivered as uploaded) and **Rights**; what
-  ingest found sits above the tabs, in sight from any. **Versions** (`assets/AssetVersions.tsx`)
+  ingest found sits above the tabs, in sight from any. On Details, the focal point is one control
+  for pointer and keyboard: click to place it, or Enter (the middle) and the arrow keys (1%, 10%
+  with Shift); its name says where it is ("Focal point: 30% across, 60% down") and its hint, a
+  polite live region, says where it moved. Its marker is an ink ring (`foreground`) on a paper
+  halo (`background`) with an ink dot, no shadow, so one of the two stands off any picture in
+  either theme, never a fixed white. Generate alt text and Suggest tags are ghost `xs` buttons led
+  by the AI mark in `text-ai` at rest (`ComposeLoader`, still), its task's icon (`write`, `asset`)
+  composing beside "Generating…"/"Suggesting…" while the model works, the other disabled
+  meanwhile; no emoji. **Versions** (`assets/AssetVersions.tsx`)
   is a list newest first: the version in mono, the file name, its size, when and by whom (a
   teammate by name when the team is readable, else "a teammate", "an API key"; never an id), and
   outline badges for Current and "Restored from v1" beside the `ok` Published stamp on the file
   Delivery serves. Replace file (outline, a file picker) says "Uploading “x”…" in a status line
-  while the signed PUT and commit run, then a toast names the new version; a failure is a
+  while the signed PUT and commit run (past 100 MiB the file goes in parts: a `Progress` of bytes
+  stored with the upload queue's "120 MB of 400 MB · 3 of 50 parts" under it, and a ghost Cancel
+  upload that gives the upload up and keeps the current file), then a toast names the new version; a failure is a
   destructive Alert in place, and a lost race (another replace committed first) says so and
   reloads the list. A hosted video's Replace file is disabled, its reason written under it. Each
   older version has a ghost Restore that asks in place ("Restore version 1?", ink pill, since
@@ -490,7 +504,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   51 assets; 2 failed"), the job's status stamp (a `wait` "Finished with failures" when any
   failed, never a green done), the upload queue's `Progress` of batches (batches are what
   complete) and "this keeps running if you close the tab"; the bar is disabled while it runs,
-  and freed with a toast if the job can no longer be followed (a refused poll).
+  and freed with a toast if the job can no longer be followed (a refused poll). A ghost Stop asks
+  in place ("Stop this bulk job?", Keep running focused, destructive "Stop job"). A stop takes no
+  new batches but is no rollback: stopped, the line reads "Stopped: Published 25 assets", the
+  stamp is Cancelled, "Stopped after 1 of 2 batches. A batch under way when you stopped may still
+  finish; the library shows what changed." sits under the bar, focus moves to Dismiss, the library
+  reloads and the selection stays. A zip has no stop (the server can't cancel one).
   When it ends the failures are read from the job's report and named in the same Alert by the
   asset's title or file name (the library's name for one a failed batch left unnamed), still
   selected; a role that can't read the report gets the count
@@ -550,7 +569,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   selected step's Connections list offers only targets that wouldn't close a cycle. A Loop's
   second input, `next`, is a hollow ink ring on the node's bottom edge, named under the outputs,
   and its back-edge is dashed ink labelled `next`: colour on the canvas is for status only (The
-  One Meaning Rule); node categories colour only their icon (`--cat-*`). A selected node is an ink
+  One Meaning Rule); node categories colour only their icon (`--cat-*`: triggers ink, control
+  steps the muted grey, commerce slate, AI the brand; none takes a status hue). A selected node is an ink
   edge with the focus ring, never the link blue. A workflow too wide to read whole opens framed on
   its first loop or wait, never below 0.7 zoom; Fit view (⇧1) stops at the zoom that keeps a 13px
   label at 10px. Every canvas with a loop or a wait has **Jump to**. React Flow's credit stays, at
@@ -708,5 +728,7 @@ theme follows the system until the reader picks Light or Dark. There is no servi
 - **Don't** import the SaaS-gradient look: no gradients, glassmorphism or marketing energy.
 - **Don't** scatter sparkle icons or "AI" buttons; AI lives inside flows and, when it ships, in the
   one summonable assistant.
-- **Don't** use coloured side-stripes as accents, or solid saturated fills for status.
+- **Don't** use coloured side-stripes as accents (a card's, row's or alert's thick coloured edge), or
+  solid saturated fills for status. The current item's 2px `tick-current` marks place, not
+  emphasis, and is the one brand edge.
 - **Don't** make a person wait on motion: an action responds at once.

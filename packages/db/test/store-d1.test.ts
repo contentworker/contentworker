@@ -22,6 +22,7 @@ import { RecordingWorkflowEngine } from '@contentworker/test-kit';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createD1Store } from '../src/store';
 import { testDb } from './env';
+import { countingD1 } from './query-counter';
 
 /**
  * What the D1 store guarantees beyond the port's basics: `withTransaction` as a unit of work (atomic
@@ -366,6 +367,83 @@ describe('D1 parameter cap', () => {
       { maxDepth: 3, maxEntries: 1000 },
     );
     expect(closure).toHaveLength(30);
+  });
+});
+
+describe("Delivery's batched reads", () => {
+  it('sends every part in one round trip, under the parameter cap, in the scope only', async () => {
+    const counter = countingD1(testDb);
+    const counted = createD1Store(counter.d1);
+    const tag = `dr-${uid()}`;
+    const snaps = Array.from({ length: 150 }, (_, i) => ({
+      entryId: `${tag}-${i}`,
+      contentTypeApiId: 'article',
+      version: 1,
+      fields: { title: { 'en-US': `t${i}` } },
+      publishedAt: clock.now().toISOString(),
+    }));
+    await store.entries.putPublishedMany(scope, snaps);
+    // Another environment, holding one of the same ids and one of its own: never an answer here.
+    const elsewhere = { spaceId, environmentId: `other-${uid()}` };
+    const head = snaps[0] as (typeof snaps)[number];
+    await store.entries.putPublishedMany(elsewhere, [
+      { ...head, fields: { title: { 'en-US': 'elsewhere' } } },
+      { ...head, entryId: `${tag}-other` },
+    ]);
+
+    const entryIds = [
+      ...snaps.map((s) => s.entryId),
+      `${tag}-other`,
+      ...Array.from({ length: 50 }, () => uid()),
+    ];
+    const first = head.entryId;
+    let result: Awaited<ReturnType<typeof counted.delivery.read>> = {};
+    const log = await counter.measure(async () => {
+      result = await counted.delivery.read(scope, {
+        config: true,
+        contentTypes: true,
+        renditions: true,
+        entryId: first,
+        assetId: uid(),
+        entryIds,
+        assetIds: [],
+        assetPage: { limit: 5 },
+      });
+    });
+    // config, content types, renditions, entry, asset, the page, and 201 ids in 3 chunks.
+    expect(log).toMatchObject({ roundTrips: 1, statements: 9 });
+    expect(result.config).toEqual(await store.spaces.getConfig(scope));
+    expect(result.contentTypes).toEqual(await store.contentTypes.list(scope));
+    expect(result.renditions).toEqual([]);
+    expect(result.entry).toEqual(await store.entries.getPublished(scope, first));
+    expect(result.entry?.fields.title).toEqual({ 'en-US': 't0' });
+    expect(result.asset).toBeNull();
+    expect(result.entries?.map((e) => e.entryId).sort()).toEqual(
+      snaps.map((s) => s.entryId).sort(),
+    );
+    expect(result.entries?.some((e) => e.fields.title?.['en-US'] === 'elsewhere')).toBe(false);
+    expect(result.assets).toEqual([]);
+    expect(result.assetPage).toEqual(await store.assets.listPublished(scope, { limit: 5 }));
+    await store.entries.removePublishedMany(
+      scope,
+      snaps.map((s) => s.entryId),
+    );
+  });
+
+  it('answers only what was asked, and sends nothing for nothing', async () => {
+    const counter = countingD1(testDb);
+    const counted = createD1Store(counter.d1);
+    let result = {};
+    const none = await counter.measure(async () => {
+      result = await counted.delivery.read(scope, { entryIds: [], config: false });
+    });
+    expect(none).toMatchObject({ roundTrips: 0, statements: 0 });
+    expect(result).toEqual({ entries: [] });
+    const lone = await counter.measure(async () => {
+      result = await counted.delivery.read(scope, { config: true });
+    });
+    expect(lone).toMatchObject({ roundTrips: 1, statements: 1 });
+    expect(Object.keys(result)).toEqual(['config']);
   });
 });
 

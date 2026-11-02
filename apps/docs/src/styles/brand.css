@@ -17,7 +17,8 @@
   --cw-pill: 999px;
   --cw-r-panel: 1.5rem;
   --cw-r-md: calc(var(--cw-radius) * 0.8);
-  --cw-ring: 0 0 0 1px color-mix(in oklch, var(--cw-foreground) 10%, transparent);
+  /* A hairline edge drawn as a shadow (cards, the API explorer pill). */
+  --cw-hairline: 0 0 0 1px color-mix(in oklch, var(--cw-foreground) 10%, transparent);
 }
 
 body {
@@ -28,10 +29,10 @@ body {
 /* ── Browser surfaces ───────────────────────────────────────────────────── */
 
 ::selection {
-  background-color: color-mix(in oklch, var(--cw-foreground) 18%, transparent);
+  background-color: color-mix(in oklch, var(--cw-brand) 22%, transparent);
 }
 
-/* The admin's focus treatment: a ring-coloured outline, never a hue. */
+/* The admin's focus treatment: the brand ring as an outline. */
 :where(a, button, summary, select, input, [tabindex]):focus-visible {
   outline: 2px solid var(--cw-ring);
   outline-offset: 2px;
@@ -73,8 +74,14 @@ header.header {
   border-bottom: 1px solid var(--cw-border);
 }
 
-/* The admin's wordmark: lowercase "contentworker", semibold, tight. */
+/* The admin's wordmark: the mark in brand, then lowercase "contentworker", semibold, tight. */
+.site-title img {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
 .site-title {
+  gap: 0.5rem;
   flex-shrink: 0;
   white-space: nowrap;
   font-size: 0.9375rem;
@@ -126,7 +133,7 @@ starlight-theme-select select {
   font-size: 0.8125rem;
 }
 
-/* Table of contents: quiet until current, then ink. */
+/* Table of contents: quiet until current, then brand (where you are, as in the admin). */
 starlight-toc a,
 mobile-starlight-toc a {
   color: var(--cw-muted-foreground);
@@ -134,7 +141,7 @@ mobile-starlight-toc a {
 
 starlight-toc a[aria-current="true"],
 mobile-starlight-toc a[aria-current="true"] {
-  color: var(--cw-foreground);
+  color: var(--cw-brand);
   font-weight: 500;
 }
 
@@ -160,13 +167,27 @@ mobile-starlight-toc a[aria-current="true"] {
   color: var(--cw-foreground);
 }
 
-/* Where you are is the admin's active nav item: the raised fill in ink, not an inverted pill. */
+/* Where you are is the admin's active nav item: the raised fill, 500, and a short brand tick at the
+   row's start. */
 .sidebar-content a[aria-current="page"],
 .sidebar-content a[aria-current="page"]:hover,
 .sidebar-content a[aria-current="page"]:focus {
+  position: relative;
   background: var(--cw-muted);
   color: var(--cw-foreground);
   font-weight: 500;
+}
+
+.sidebar-content a[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  height: 1rem;
+  translate: 0 -50%;
+  inset-inline-start: 0;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--cw-brand);
 }
 
 /* ── Page header ────────────────────────────────────────────────────────── */
@@ -359,7 +380,7 @@ mobile-starlight-toc a[aria-current="true"] {
   border: 0;
   border-radius: var(--cw-r-panel);
   background: var(--cw-card);
-  box-shadow: var(--cw-ring);
+  box-shadow: var(--cw-hairline);
 }
 
 .sl-link-card:hover {
@@ -479,7 +500,7 @@ mobile-starlight-toc a[aria-current="true"] {
   padding: 0.875rem 1rem 1rem;
   border-radius: var(--cw-r-md);
   background: var(--cw-card);
-  box-shadow: var(--cw-ring);
+  box-shadow: var(--cw-hairline);
   scroll-margin-top: calc(var(--sl-nav-height) + 1rem);
 }
 

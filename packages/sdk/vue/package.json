@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "check-types": "tsc --noEmit",
     "lint": "biome check ."
   },

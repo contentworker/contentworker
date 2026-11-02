@@ -77,6 +77,56 @@ describe('@contentworker/sdk-core delivery client', () => {
     await expect(client.getEntry('missing')).rejects.toMatchObject({ status: 404 });
   });
 
+  it('carries the API error code, message and parsed body on DeliveryError', async () => {
+    const body = { error: { code: 'not_found', message: 'Entry missing not found' } };
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch(() => Response.json(body, { status: 404 })),
+    });
+    const err = await client.getEntry('missing').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect(err).toMatchObject({ status: 404, code: 'not_found', body });
+    expect((err as Error).message).toContain('(Entry missing not found)');
+  });
+
+  it('keeps the gateway’s string error as the message, with no code', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch(() => Response.json({ error: 'rate limited' }, { status: 429 })),
+    });
+    const err = (await client.getEntry('e1').catch((e: unknown) => e)) as DeliveryError;
+    expect(err.status).toBe(429);
+    expect(err.code).toBeUndefined();
+    expect(err.body).toEqual({ error: 'rate limited' });
+    expect(err.message).toContain('(rate limited)');
+  });
+
+  it('caps the server message it puts into DeliveryError.message', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch(() =>
+        Response.json({ error: { code: 'x', message: 'm'.repeat(5000) } }, { status: 400 }),
+      ),
+    });
+    const err = (await client.getEntry('e1').catch((e: unknown) => e)) as DeliveryError;
+    expect(err.message).toContain(`(${'m'.repeat(200)})`);
+    expect(err.message).not.toContain('m'.repeat(201));
+  });
+
+  it('assetUrl ignores a rendition name that is a prototype key', () => {
+    expect(assetUrl(image, { rendition: 'constructor' })).toBeUndefined();
+    expect(assetUrl(image, { rendition: '__proto__' })).toBeUndefined();
+  });
+
+  it('leaves code and body undefined when the error body is not JSON', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch(() => new Response('<html>bad gateway</html>', { status: 502 })),
+    });
+    const err = (await client.getEntry('e1').catch((e: unknown) => e)) as DeliveryError;
+    expect(err).toMatchObject({ status: 502, code: undefined, body: undefined });
+  });
+
   it('hits the search endpoint and unwraps hits', async () => {
     const fetchImpl = fakeFetch((url) => {
       calls.push({ url });
@@ -116,6 +166,7 @@ const image: DeliveredAsset = {
       url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/w960/hero.jpg?fm=auto',
     },
   ],
+  placeholder: null,
   file: { url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/o/hero.jpg' },
 };
 
@@ -179,6 +230,105 @@ describe('assets', () => {
     expect(page.nextCursor).toBe('n2');
     expect(calls[0]).toBe(
       'https://cms.test/delivery/s1/main/collections/c%201?limit=5&cursor=n1&locale=en-US',
+    );
+  });
+
+  it('iterates every asset across pages, following nextCursor until the last page', async () => {
+    const calls: string[] = [];
+    const pages: Record<string, unknown> = {
+      first: {
+        items: [
+          { ...image, id: 'a1' },
+          { ...image, id: 'a2' },
+        ],
+        total: 2,
+        nextCursor: 'c2',
+      },
+      c2: { items: [{ ...image, id: 'a3' }], total: 1, nextCursor: 'c3' },
+      c3: { items: [], total: 0 },
+    };
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        return pages[new URL(url).searchParams.get('cursor') ?? 'first'];
+      }),
+    });
+    const ids: string[] = [];
+    for await (const asset of client.iterateAssets({ kind: 'image', limit: 2, skip: 10 })) {
+      ids.push(asset.id);
+    }
+    expect(ids).toEqual(['a1', 'a2', 'a3']);
+    expect(calls).toEqual([
+      'https://cms.test/delivery/s1/main/assets?limit=2&skip=10&kind=image',
+      'https://cms.test/delivery/s1/main/assets?limit=2&cursor=c2&kind=image',
+      'https://cms.test/delivery/s1/main/assets?limit=2&cursor=c3&kind=image',
+    ]);
+  });
+
+  it('fetches the next page only when the loop asks for it', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        return { items: [image, image], total: 2, nextCursor: 'more' };
+      }),
+    });
+    for await (const _ of client.iterateAssets()) break;
+    expect(calls).toHaveLength(1);
+  });
+
+  it('stops with an error on a cursor that repeats instead of paging forever', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch(() => ({ items: [image], total: 1, nextCursor: 'same' })),
+    });
+    const seen: string[] = [];
+    await expect(async () => {
+      for await (const asset of client.iterateAssets()) seen.push(asset.id);
+    }).rejects.toThrow(/cursor same twice/);
+    expect(seen).toHaveLength(2);
+  });
+
+  it('treats a starting cursor that comes back as a repeat, without yielding its page twice', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch(() => ({ items: [image], total: 1, nextCursor: 'c' })),
+    });
+    const seen: string[] = [];
+    await expect(async () => {
+      for await (const asset of client.iterateAssets({ cursor: 'c' })) seen.push(asset.id);
+    }).rejects.toThrow(/cursor c twice/);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('iterates a collection’s members across pages, in its order', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        return new URL(url).searchParams.get('cursor') === 'n2'
+          ? { id: 'c1', name: 'Kit', items: [{ ...image, id: 'm3' }] }
+          : {
+              id: 'c1',
+              name: 'Kit',
+              items: [
+                { ...image, id: 'm1' },
+                { ...image, id: 'm2' },
+              ],
+              nextCursor: 'n2',
+            };
+      }),
+    });
+    const ids: string[] = [];
+    for await (const a of client.iterateCollection('c1', { limit: 2, locale: 'en-US' })) {
+      ids.push(a.id);
+    }
+    expect(ids).toEqual(['m1', 'm2', 'm3']);
+    expect(calls[1]).toBe(
+      'https://cms.test/delivery/s1/main/collections/c1?limit=2&cursor=n2&locale=en-US',
     );
   });
 

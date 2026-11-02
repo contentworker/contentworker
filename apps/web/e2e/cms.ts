@@ -15,7 +15,7 @@ const JSON_HEADERS = { 'content-type': 'application/json' };
 /** Same-origin API calls the way the CMS screens make them. */
 export async function api(
   request: APIRequestContext,
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   data?: unknown,
 ) {

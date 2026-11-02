@@ -143,7 +143,7 @@ export function ToastProvider(props: { children: React.ReactNode }) {
             {t.action && (
               <button
                 type="button"
-                className="hit-area h-7 shrink-0 rounded-md px-2.5 font-medium text-foreground outline-none transition-[background-color] hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30"
+                className="hit-area h-7 shrink-0 rounded-md px-2.5 font-medium text-foreground outline-none transition-[background-color] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => {
                   const action = t.action;
                   dismiss(t.id);

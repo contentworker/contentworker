@@ -19,8 +19,9 @@ export interface MediaRouteDeps {
   /**
    * Called with the key and etag of each upload the signed PUT stored, to start its ingest. R2's
    * own notification starts it too where notifications exist (not in local development); the
-   * run id is the bytes', so whichever arrives first starts the one run, and a second PUT of new
-   * bytes through the same URL starts another. A failure here is logged, never the upload's.
+   * run id is the bytes', so whichever arrives first starts the one run. A PUT that finds the key
+   * already stored (412: an upload URL never writes over a file) starts nothing. A failure here is
+   * logged, never the upload's.
    */
   readonly onUploaded?: (key: string, etag?: string) => Promise<void>;
   /** Injected for tests; seconds since the epoch. */

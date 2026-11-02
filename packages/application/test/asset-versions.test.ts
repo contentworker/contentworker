@@ -79,7 +79,7 @@ async function replace(h: Harness, id: string, fileName: string, bytes = `${file
     contentType: 'image/png',
   });
   await h.blob.put(
-    assetObjectKey(scope, id, r.commit.fileName, r.commit.version),
+    assetObjectKey(scope, id, r.commit.fileName, r.commit.version, r.commit.attempt),
     bytes,
     'image/png',
   );
@@ -95,6 +95,13 @@ describe('asset file keys', () => {
     expect(assetObjectKey(scope, id, '../../x/a.png', 3)).toBe(`shop/main/${id}/v3/file/a.png`);
     expect(assetKeyVersion(`shop/main/${id}/a.png`, id)).toBe(1);
     expect(assetKeyVersion(`shop/main/${id}/v3/file/a.png`, id)).toBe(3);
+    // A replace attempt's own key: still version 3, still a file of this asset.
+    expect(assetObjectKey(scope, id, 'a.png', 3, 'att-1')).toBe(
+      `shop/main/${id}/v3/file-att-1/a.png`,
+    );
+    expect(assetKeyVersion(`shop/main/${id}/v3/file-att-1/a.png`, id)).toBe(3);
+    expect(isAssetFileKey(`shop/main/${id}/v3/file-/a.png`)).toBe(false);
+    expect(isAssetFileKey(`shop/main/${id}/v3/file-a.b/a.png`)).toBe(false);
   });
 
   it('never takes a derived file, a non-canonical version, or a shared prefix for a file', () => {
@@ -154,8 +161,16 @@ describe('replacing an asset file', () => {
       fileName: 'hero-2.png',
       contentType: 'image/png',
     });
-    expect(r.commit).toEqual({ version: 2, fileName: 'hero-2.png', contentType: 'image/png' });
-    expect(h.blob.uploads.at(-1)?.key).toBe(`shop/main/${asset.id}/v2/file/hero-2.png`);
+    expect(r.commit).toEqual({
+      version: 2,
+      fileName: 'hero-2.png',
+      contentType: 'image/png',
+      attempt: expect.any(String),
+    });
+    // This attempt's own key for version 2.
+    expect(h.blob.uploads.at(-1)?.key).toBe(
+      `shop/main/${asset.id}/v2/file-${r.commit.attempt}/hero-2.png`,
+    );
     expect((await getAsset(h.ctx, scope, asset.id)).version).toBe(1);
   });
 
@@ -177,7 +192,11 @@ describe('replacing an asset file', () => {
       fileName: 'hero-2.png',
       contentType: 'image/png',
     });
-    await h.blob.put(`shop/main/${asset.id}/v2/file/hero-2.png`, 'v2', 'image/png');
+    await h.blob.put(
+      assetObjectKey(scope, asset.id, 'hero-2.png', 2, r.commit.attempt),
+      'v2',
+      'image/png',
+    );
     // The same key (only the last segment counts), a name the policy never checked.
     await expect(
       commitAssetFile(h.ctx, h.blob, scope, asset.id, {
@@ -197,9 +216,11 @@ describe('replacing an asset file', () => {
       contentHash: 'hash-1',
     });
     const updated = await replace(h, asset.id, 'hero-2.png');
+    const key = updated.r2Key ?? '';
+    expect(key).toMatch(new RegExp(`^shop/main/${asset.id}/v2/file-[^/]+/hero-2\\.png$`));
     expect(updated).toMatchObject({
       version: 2,
-      r2Key: `shop/main/${asset.id}/v2/file/hero-2.png`,
+      r2Key: key,
       file: { fileName: 'hero-2.png', contentType: 'image/png', size: 'hero-2.png-bytes'.length },
     });
     const stored = await getAsset(h.ctx, scope, asset.id);
@@ -219,14 +240,14 @@ describe('replacing an asset file', () => {
       assetId: asset.id,
       version: 2,
       previousVersion: 1,
-      r2Key: `shop/main/${asset.id}/v2/file/hero-2.png`,
+      r2Key: key,
       etag: expect.any(String),
     });
     await h.drain();
     // The same message an upload sends, naming the bytes: R2's own notice starts no second run.
     expect(h.ingest.created).toEqual([
       {
-        key: `shop/main/${asset.id}/v2/file/hero-2.png`,
+        key,
         etag: (replaced as { etag: string }).etag,
       },
     ]);
@@ -244,7 +265,7 @@ describe('replacing an asset file', () => {
     });
     for (const r of [first, second]) {
       await h.blob.put(
-        assetObjectKey(scope, asset.id, r.commit.fileName, r.commit.version),
+        assetObjectKey(scope, asset.id, r.commit.fileName, r.commit.version, r.commit.attempt),
         r.commit.fileName,
         'image/png',
       );
@@ -266,7 +287,11 @@ describe('replacing an asset file', () => {
       fileName: 'a.png',
       contentType: 'image/png',
     });
-    await h.blob.put(assetObjectKey(scope, asset.id, 'a.png', 2), 'a', 'image/png');
+    await h.blob.put(
+      assetObjectKey(scope, asset.id, 'a.png', 2, r.commit.attempt),
+      'a',
+      'image/png',
+    );
     // Another commit lands after this one read the asset, before its unit runs.
     const withTransaction = h.store.withTransaction.bind(h.store);
     h.store.withTransaction = (async (fn) => {
@@ -286,7 +311,7 @@ describe('replacing an asset file', () => {
   it('keeps delivering the published file until a republish, which retires the old version', async () => {
     const asset = await upload(h);
     await publishAsset(h.ctx, scope, asset.id);
-    await replace(h, asset.id, 'hero-2.png');
+    const v2Key = (await replace(h, asset.id, 'hero-2.png')).r2Key;
     const live = await getPublishedAsset(h.ctx, scope, asset.id);
     expect(live).toMatchObject({ version: 1, r2Key: `shop/main/${asset.id}/hero.png` });
     await h.drain();
@@ -295,7 +320,7 @@ describe('replacing an asset file', () => {
     await publishAsset(h.ctx, scope, asset.id);
     expect(await getPublishedAsset(h.ctx, scope, asset.id)).toMatchObject({
       version: 2,
-      r2Key: `shop/main/${asset.id}/v2/file/hero-2.png`,
+      r2Key: v2Key,
     });
     expect(
       h
@@ -308,7 +333,7 @@ describe('replacing an asset file', () => {
     await h.drain();
     expect(await h.gate.get(scope, asset.id)).toMatchObject({
       v: 2,
-      r2Key: `shop/main/${asset.id}/v2/file/hero-2.png`,
+      r2Key: v2Key,
     });
     // A republish of the same file names nothing replaced.
     await publishAsset(h.ctx, scope, asset.id);
@@ -460,24 +485,20 @@ describe('deleting a versioned asset', () => {
 
   it('keeps the files while another environment still has the asset, but drops derived text', async () => {
     const asset = await upload(h);
-    await replace(h, asset.id, 'hero-2.png');
+    const v2Key = (await replace(h, asset.id, 'hero-2.png')).r2Key ?? '';
     await h.blob.put(`shop/main/${asset.id}/v2/text.md`, 'text', 'text/markdown');
     await createEnvironment(h.ctx, 'shop', 'staging');
     await h.store.assets.create(
       { spaceId: 'shop', environmentId: 'staging' },
       await getAsset(h.ctx, scope, asset.id),
     );
-    await deleteAssetFiles(
-      h.ctx,
-      { blob: h.blob },
-      { scope, assetId: asset.id, r2Key: `shop/main/${asset.id}/v2/file/hero-2.png` },
-    );
+    await deleteAssetFiles(h.ctx, { blob: h.blob }, { scope, assetId: asset.id, r2Key: v2Key });
     expect(
       h.blob
         .keys()
         .filter((k) => k.includes(asset.id))
         .sort(),
-    ).toEqual([`shop/main/${asset.id}/hero.png`, `shop/main/${asset.id}/v2/file/hero-2.png`]);
+    ).toEqual([`shop/main/${asset.id}/hero.png`, v2Key]);
   });
 
   it('builds the delivered snapshot from the version’s own key', () => {

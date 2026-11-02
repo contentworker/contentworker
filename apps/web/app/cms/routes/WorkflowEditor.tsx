@@ -876,7 +876,7 @@ function CheckItem({
       asChild
       variant={tone === 'bad' ? 'muted' : 'default'}
       size="xs"
-      className="relative flex-nowrap items-start hover:bg-muted touch:py-3 has-focus-visible:ring-[3px] has-focus-visible:ring-ring/50"
+      className="relative flex-nowrap items-start hover:bg-muted touch:py-3 has-focus-visible:ring-2 has-focus-visible:ring-ring"
     >
       <li>
         <ItemMedia variant="icon" className={tone === 'bad' ? 'text-bad' : 'text-wait'}>

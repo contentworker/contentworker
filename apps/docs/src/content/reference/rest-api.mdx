@@ -50,7 +50,10 @@ Errors use the HTTP status and a body with a stable `code`:
 { "error": { "code": "validation_failed", "message": "One or more fields are invalid", "issues": [{ "field": "title", "message": "Required" }] } }
 ```
 
-`issues` appears on a 422 for a validation failure and lists each field and why.
+`issues` appears on a 422 for a validation failure and lists each field and why. A 409 may add
+`details` saying what it conflicts with: saving a content type that removes a field or block type
+that entries still hold lists each one and its entries in `details.fieldsInUse` /
+`details.variantsInUse`.
 
 | Status | `code` | When |
 | ------ | ------ | ---- |

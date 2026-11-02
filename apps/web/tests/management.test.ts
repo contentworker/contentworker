@@ -50,6 +50,26 @@ describe('admin ManagementClient', () => {
     expect(calls[0]?.url).toBe('/preview/s1/main/entries?content_type=article');
   });
 
+  it('reads a list longer than one API page page by page, and stops at a short page', async () => {
+    const { fn, calls } = fakeFetch((url) => {
+      const skip = Number(new URL(url, 'http://x').searchParams.get('skip') ?? 0);
+      // 250 entries in all: two full pages of 100, then 50.
+      const n = Math.max(0, Math.min(100, 250 - skip));
+      return { items: Array.from({ length: n }, (_, i) => ({ id: `e${skip + i}` })) };
+    });
+    const client = createManagementClient(conn, fn);
+    const items = await client.listEntries('article', { limit: 300 });
+    expect(items).toHaveLength(250);
+    expect(calls.map((c) => new URL(c.url, 'http://x').searchParams.get('skip'))).toEqual([
+      '0',
+      '100',
+      '200',
+    ]);
+    expect(calls.every((c) => new URL(c.url, 'http://x').searchParams.get('limit') === '100')).toBe(
+      true,
+    );
+  });
+
   it('sends localized fields through on create (the form owns localization)', async () => {
     const { fn, calls } = fakeFetch(() => ({ entry: { id: 'e1' }, fields: {} }));
     const client = createManagementClient(conn, fn);
@@ -464,36 +484,76 @@ describe('read-your-writes bookmark', () => {
     expect(headers[BOOKMARK_HEADER]).toBeUndefined();
   });
 
-  it('keeps the latest x-cw-bookmark and sends it on every later request, from any client', async () => {
+  // Real D1 bookmarks: hex groups joined by dashes, ordered oldest to newest as strings.
+  const bm = (n: number) => `0000000${n}-00000033-00005008-a8d7ea3c4bb30f2ca9e0e0b8f6e00e19`;
+
+  it('keeps the newest x-cw-bookmark and sends it on every later request, from any client', async () => {
     let n = 0;
     const { fn, calls } = fakeFetch(() => {
       n += 1;
       return new Response(JSON.stringify({ items: [] }), {
         status: 200,
-        headers: { [BOOKMARK_HEADER]: `bm-${n}` },
+        headers: { [BOOKMARK_HEADER]: bm(n) },
       });
     });
     await createManagementClient(conn, fn).listContentTypes();
-    expect(currentBookmark()).toBe('bm-1');
+    expect(currentBookmark()).toBe(bm(1));
     // A different client (another scope) still carries the browser's latest write position.
     await createManagementClient({ ...conn, space: 's2' }, fn).listContentTypes();
-    expect((calls[1]!.init!.headers as Record<string, string>)[BOOKMARK_HEADER]).toBe('bm-1');
-    expect(currentBookmark()).toBe('bm-2');
+    expect((calls[1]!.init!.headers as Record<string, string>)[BOOKMARK_HEADER]).toBe(bm(1));
+    expect(currentBookmark()).toBe(bm(2));
     await createManagementClient(conn, fn).listContentTypes();
-    expect((calls[2]!.init!.headers as Record<string, string>)[BOOKMARK_HEADER]).toBe('bm-2');
+    expect((calls[2]!.init!.headers as Record<string, string>)[BOOKMARK_HEADER]).toBe(bm(2));
+  });
+
+  it('never moves backwards when concurrent replies arrive out of order', async () => {
+    // The write's reply (newer bookmark) lands first; a slower read started earlier lands after.
+    let releaseSlow: () => void = () => {};
+    const slow = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const replies = vi.fn(async (input: string | URL | Request) => {
+      const older = String(input).endsWith('/content-types');
+      if (older) await slow;
+      return new Response(JSON.stringify({ items: [] }), {
+        headers: { [BOOKMARK_HEADER]: bm(older ? 1 : 5) },
+      });
+    }) as unknown as typeof fetch;
+    const client = createManagementClient(conn, replies);
+    const older = client.listContentTypes();
+    await client.listAssets();
+    expect(currentBookmark()).toBe(bm(5));
+    releaseSlow();
+    await older;
+    expect(currentBookmark()).toBe(bm(5));
+  });
+
+  it('ignores a bookmark that is not D1-shaped', async () => {
+    const { fn } = fakeFetch(
+      (url) =>
+        new Response(JSON.stringify({ items: [] }), {
+          headers: {
+            [BOOKMARK_HEADER]: url.endsWith('/content-types') ? bm(2) : 'zzzz-not-a-bookmark',
+          },
+        }),
+    );
+    const client = createManagementClient(conn, fn);
+    await client.listContentTypes();
+    await client.listAssets();
+    expect(currentBookmark()).toBe(bm(2));
   });
 
   it('keeps the bookmark a failed response carries, and the previous one when none comes back', async () => {
     const { fn } = fakeFetch((url) =>
       url.endsWith('/content-types')
-        ? new Response('nope', { status: 500, headers: { [BOOKMARK_HEADER]: 'bm-err' } })
+        ? new Response('nope', { status: 500, headers: { [BOOKMARK_HEADER]: bm(3) } })
         : new Response(JSON.stringify({ items: [] }), { status: 200 }),
     );
     const client = createManagementClient(conn, fn);
     await expect(client.listContentTypes()).rejects.toBeInstanceOf(ApiError);
-    expect(currentBookmark()).toBe('bm-err');
+    expect(currentBookmark()).toBe(bm(3));
     await client.listAssets();
-    expect(currentBookmark()).toBe('bm-err');
+    expect(currentBookmark()).toBe(bm(3));
   });
 });
 
@@ -567,6 +627,28 @@ describe('collections, share links, multipart uploads and zips', () => {
       expiresAt: '2026-11-08T00:00:00.000Z',
       allowDownload: false,
       password: 'correct horse',
+    });
+  });
+
+  it('starts replacing a file in parts on the asset’s own route', async () => {
+    const { fn, calls } = fakeFetch(() => ({
+      asset: { id: 'a/1' },
+      version: 2,
+      upload: { uploadId: 'u1', partSize: 8, partCount: 2 },
+    }));
+    const started = await createManagementClient(conn, fn).startAssetFileUpload('a/1', {
+      fileName: 'cut.mov',
+      contentType: 'video/quicktime',
+      size: 12,
+    });
+    expect(started.version).toBe(2);
+    expect(calls.map((c) => `${c.init?.method} ${c.url}`)).toEqual([
+      `POST ${MGMT}/assets/a%2F1/file/uploads`,
+    ]);
+    expect(body(calls[0])).toEqual({
+      fileName: 'cut.mov',
+      contentType: 'video/quicktime',
+      size: 12,
     });
   });
 

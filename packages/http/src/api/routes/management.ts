@@ -21,6 +21,7 @@ import {
   cancelBulkJob,
   cancelScheduledAction,
   canvasToEntry,
+  clampCount,
   cloneEnvironment,
   commitAssetFile,
   compareEnvironments,
@@ -142,6 +143,7 @@ import {
   listWebhookDeliveries,
   listWebhooks,
   listWorkflows,
+  MAX_PAGE_LIMIT,
   mergeEnvironments,
   moderateEntry,
   moveAssets,
@@ -190,6 +192,7 @@ import {
   startBulkJob,
   startEnvironmentClone,
   startImportJob,
+  startMultipartAssetFileReplacement,
   startMultipartAssetUpload,
   startSnapshotImport,
   suggestEntryTags,
@@ -251,7 +254,7 @@ import {
 } from '../auth';
 import { doc } from '../docs/openapi';
 import * as docs from '../docs/schemas';
-import { clampCount, MAX_PAGE_LIMIT, parseAssetListQuery, parseAssetSearchQuery } from '../query';
+import { parseAssetListQuery, parseAssetSearchQuery } from '../query';
 import {
   agentScheduleBody,
   agentSchedulePatchBody,
@@ -313,6 +316,7 @@ import {
   reindexBody,
   releaseItemBody,
   replaceAssetFileBody,
+  replaceAssetFileUploadBody,
   revokeConnectionBody,
   roleBody,
   runAiActionBody,
@@ -2268,7 +2272,10 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Assets', 'Complete a multipart upload', {
       body: completeUploadBody,
       ok: docs.asset,
-      description: 'Name parts 1..n, each once, with its ETag. Ingest then starts.',
+      description:
+        'Name parts 1..n, each once, with its ETag. Ingest then starts. For a replacement ' +
+        '(…/file/uploads), completing commits the new version; 409 when another replace or ' +
+        'restore took that version first (the upload is dropped).',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
@@ -2281,6 +2288,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
           c.req.param('id'),
           c.req.param('uploadId'),
           parts,
+          { by: auditActor(c.get('principal')) },
         ),
       );
     },
@@ -2452,10 +2460,11 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: docs.assetFileReplacement,
       status: 201,
       description:
-        'Returns a signed PUT for the next version. PUT the bytes to upload.url with ' +
-        'upload.headers, then POST commit to /assets/{id}/file/commit. Nothing changes until ' +
-        'then. A published asset keeps delivering its published file until it is published ' +
-        'again. 400 for a hosted video.',
+        'Returns a signed PUT for the next version (up to 100 MiB; past that, ' +
+        '/assets/{id}/file/uploads). PUT the bytes to upload.url with upload.headers, then POST ' +
+        'commit to /assets/{id}/file/commit. Nothing changes until then. The URL stores once: a ' +
+        'second PUT through it is 412. A published asset keeps delivering its published file ' +
+        'until it is published again. 400 for a hosted video.',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
@@ -2467,6 +2476,31 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         await parseBody(c, replaceAssetFileBody),
       );
       return c.json({ ...replacement, asset: await signedOne(c, replacement.asset) }, 201);
+    },
+  );
+  app.post(
+    `${BASE}/assets/:id/file/uploads`,
+    doc('Assets', "Start replacing an asset's file with a multipart upload (large files)", {
+      body: replaceAssetFileUploadBody,
+      ok: docs.multipartReplacement,
+      status: 201,
+      description:
+        'For a replacement past one signed PUT (100 MiB). Sign part URLs at ' +
+        '/assets/{id}/uploads/{uploadId}/parts, PUT each part, then complete it there: that ' +
+        'commits the new version. Abort to give up (the asset keeps its file). Replaces started ' +
+        'side by side each upload to their own key: the first to commit wins, the others get ' +
+        '409. 422 past the deployment’s cap.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const started = await startMultipartAssetFileReplacement(
+        ctx,
+        blob,
+        scopeOf(c),
+        c.req.param('id'),
+        await parseBody(c, replaceAssetFileUploadBody),
+      );
+      return c.json({ ...started, asset: await signedOne(c, started.asset) }, 201);
     },
   );
   app.post(

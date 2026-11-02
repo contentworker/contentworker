@@ -53,7 +53,8 @@ export const LIGHT = {
   'chart-5': 'oklch(0.269 0 0)',
   'cat-trigger': 'var(--ink)',
   'cat-commerce': 'oklch(0.45 0.07 230)',
-  'cat-control': 'oklch(0.5 0.1 62)',
+  // Neutral: an amber here read as `wait` ("waiting on a person") beside the status colours.
+  'cat-control': 'var(--muted-foreground)',
   'cat-ai': 'var(--ai)',
   sidebar: 'oklch(0.985 0 0)',
   'sidebar-foreground': 'var(--ink)',
@@ -105,7 +106,6 @@ export const DARK_OVERRIDES: Partial<Record<Token, string>> = {
   'chart-4': 'oklch(0.708 0 0)',
   'chart-5': 'oklch(0.87 0 0)',
   'cat-commerce': 'oklch(0.76 0.07 230)',
-  'cat-control': 'oklch(0.8 0.11 75)',
   sidebar: 'oklch(0.205 0 0)',
   'sidebar-accent': 'oklch(0.269 0 0)',
   sheet: 'oklch(0.17 0 0)',
@@ -145,36 +145,11 @@ export function palette(scheme: Scheme): Record<Token, string> {
 
 const mix = (a: string, pct: number, b: string) => `color-mix(in oklch, ${a} ${pct}%, ${b})`;
 
-/** The status signals and node categories the docs' components draw with, as `--ol-*`. */
-const SIGNALS: Token[] = [
-  'ok',
-  'run',
-  'wait',
-  'bad',
-  'undo',
-  'idle',
-  'ai',
-  'cat-trigger',
-  'cat-commerce',
-  'cat-control',
-  'cat-ai',
-  'card',
-  'muted',
-  'muted-foreground',
-  'rule',
-  'input',
-  'link',
-  'brand',
-  'paper',
-  'ink',
-  'sheet',
-  'sheet-grid',
-  'node',
-  'node-border',
-  'edge',
-  'edge-active',
-  'edge-idle',
-];
+/**
+ * Every Ledger token, as `--cw-<token>` resolved per scheme: the names apps/docs' brand.css and
+ * its components draw with (`--cw-foreground`, `--cw-brand`, `--cw-ok`, …).
+ */
+const CW_TOKENS = Object.keys(LIGHT).filter((t) => t !== 'radius') as Token[];
 
 function starlightBlock(scheme: Scheme): string[] {
   const p = palette(scheme);
@@ -191,8 +166,9 @@ function starlightBlock(scheme: Scheme): string[] {
     ['--sl-color-gray-5', p.rule],
     ['--sl-color-gray-6', p.muted],
     ['--sl-color-gray-7', p.secondary],
-    // The brand accent: focus, the current page marker, buttons and selection. Links keep the
-    // work blue (`--sl-color-text-accent`), as in the admin.
+    // The brand accent: focus, the current page marker and selection, never a button fill
+    // (brand.css keeps primary buttons ink). Links keep the work blue (`--sl-color-text-accent`),
+    // as in the admin.
     ['--sl-color-accent', p.brand],
     ['--sl-color-accent-high', mix(p.brand, 72, p.ink)],
     ['--sl-color-accent-low', mix(p.brand, 14, p.paper)],
@@ -225,7 +201,7 @@ function starlightBlock(scheme: Scheme): string[] {
     ['--sl-color-hairline-light', p.rule],
     ['--sl-color-hairline-shade', p.rule],
     ['--sl-color-backdrop-overlay', mix(p.ink, 40, 'transparent')],
-    ...SIGNALS.map((t): [string, string] => [`--ol-${t}`, p[t]]),
+    ...CW_TOKENS.map((t): [string, string] => [`--cw-${t}`, p[t]]),
   ];
   return vars.map(([k, v]) => `  ${k}: ${v};`);
 }
@@ -250,7 +226,7 @@ export function starlightThemeCss(): string {
     ':root {',
     `  --sl-font: ${FONTS.sans};`,
     `  --sl-font-mono: ${FONTS.mono};`,
-    `  --ol-radius: ${LIGHT.radius};`,
+    `  --cw-radius: ${LIGHT.radius};`,
     '}',
     '',
   ].join('\n');
