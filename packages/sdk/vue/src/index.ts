@@ -1,15 +1,18 @@
-import type {
-  DeliveredEntry,
-  DeliveryClient,
-  EntryQuery,
-  Fields,
-  SearchHit,
+import {
+  type DeliveredAsset,
+  type DeliveredEntry,
+  type DeliveryClient,
+  type EntryQuery,
+  type Fields,
+  imageProps,
+  type SearchHit,
 } from '@contentworker/sdk-core';
 /**
  * @contentworker/sdk-vue — Vue 3 composables over @contentworker/sdk-core, mirroring @contentworker/sdk-web's
  * React hooks. Install the client with `app.use(createContentworker(client))`
  * (in Nuxt: inside a plugin via `nuxtApp.vueApp.use(...)`), then call
- * `useEntry` / `useEntries` / `useSemanticSearch` in setup. Inputs accept
+ * `useEntry` / `useEntries` / `useAsset` / `useSemanticSearch` in setup, and render assets
+ * with `<CwImage>`. Inputs accept
  * plain values, refs, or getters; changes re-fetch automatically.
  *
  * Fetching starts on mount (client-side), matching the React hooks' SSR
@@ -18,14 +21,17 @@ import type {
  */
 import {
   type App,
+  defineComponent,
   getCurrentInstance,
   getCurrentScope,
+  h,
   type InjectionKey,
   inject,
   type MaybeRefOrGetter,
   onMounted,
   onScopeDispose,
   type Plugin,
+  type PropType,
   type Ref,
   ref,
   shallowRef,
@@ -132,6 +138,64 @@ export function useEntry<F extends Fields = Fields>(
   );
 }
 
+/** Fetches a single published asset (from a preview client: as it is now); re-fetches on change. */
+export function useAsset(
+  id: MaybeRefOrGetter<string>,
+  opts: { locale?: MaybeRefOrGetter<string | undefined> } = {},
+): AsyncRefs<DeliveredAsset> {
+  const client = useDeliveryClient();
+  return useAsync(client, (c) => c.getAsset(toValue(id), { locale: toValue(opts.locale) }));
+}
+
+/**
+ * An `<img>` for a delivered asset, with `imageProps` applied: the width ladder as `srcset`,
+ * `sizes`, intrinsic `width`/`height`, `alt` (alt text, else the title, else decorative), lazy
+ * loading unless `priority`, the focal point as `object-position` (shown once CSS gives the image
+ * `object-fit: cover`) and the dominant colour as the background while it loads. Other attributes
+ * fall through, and an `alt`, `class` or `style` given here wins or merges. Renders nothing while
+ * `asset` is unset or for an asset with no image to show (audio, a document).
+ *
+ * ```vue
+ * <CwImage :asset="hero" sizes="(min-width: 960px) 960px, 100vw" priority class="hero" />
+ * ```
+ */
+export const CwImage = defineComponent({
+  name: 'CwImage',
+  props: {
+    asset: { type: Object as PropType<DeliveredAsset | null | undefined>, default: undefined },
+    sizes: { type: String, default: undefined },
+    width: { type: Number, default: undefined },
+    rendition: { type: String, default: undefined },
+    locale: { type: String, default: undefined },
+    priority: { type: Boolean, default: false },
+  },
+  setup(props) {
+    return () => {
+      if (!props.asset) return null;
+      const image = imageProps(props.asset, {
+        sizes: props.sizes,
+        width: props.width,
+        rendition: props.rendition,
+        locale: props.locale,
+        priority: props.priority,
+      });
+      if (!image) return null;
+      return h('img', {
+        src: image.src,
+        srcset: image.srcSet,
+        sizes: image.sizes,
+        width: image.width,
+        height: image.height,
+        alt: image.alt,
+        loading: image.loading,
+        decoding: image.decoding,
+        fetchpriority: image.fetchPriority,
+        style: image.style,
+      });
+    };
+  },
+});
+
 /**
  * Lists published entries; re-fetches when the query changes. Tracking is
  * top-level: replace the query (or nested `filters`/`order` arrays), or pass
@@ -163,6 +227,15 @@ export type {
   DeliveredEntry,
   DeliveryClient,
   EntryQuery,
+  ImageProps,
+  ImagePropsOptions,
   SearchHit,
 } from '@contentworker/sdk-core';
-export { assetUrl, createDeliveryClient, srcset } from '@contentworker/sdk-core';
+export {
+  assetUrl,
+  createDeliveryClient,
+  DeliveryError,
+  imageProps,
+  localizedText,
+  srcset,
+} from '@contentworker/sdk-core';
