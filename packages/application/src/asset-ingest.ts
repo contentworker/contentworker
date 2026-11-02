@@ -34,7 +34,7 @@ import { allAssets, assetFileKey, assetTextKey, parseAssetObjectKey } from './as
 import type { BulkChunkOutcome } from './bulk-jobs';
 import { startBulkJob } from './bulk-jobs';
 import type { AppContext } from './context';
-import { autoTagAsset, generateAltText } from './media-ai';
+import { autoTagAsset, generateAltText, NoAltTextError } from './media-ai';
 
 /**
  * Asset ingest: what happens to a file once its bytes land in storage. One durable run per file
@@ -646,9 +646,7 @@ export async function enrichAltText(
     if (err instanceof RateLimitedError) return 'budget';
     // An answer with no alt text in it (empty, or not the shape asked for) suggests nothing; the
     // rest of ingest goes on, and asking again would get the same answer at another call's cost.
-    if (err instanceof ValidationError && err.issues.some((i) => i.field === 'altText')) {
-      return 'none';
-    }
+    if (err instanceof NoAltTextError) return 'none';
     throw err;
   }
   const clean = plainLine(altText, MAX_INGEST_ALT_TEXT_CHARS);

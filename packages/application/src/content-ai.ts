@@ -9,7 +9,7 @@ import {
 import type { AIProvider, DecisionQuestion, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { decideWithBudget, generateWithBudget } from './ai-budget';
-import { conformingAnswer } from './ai-json';
+import { answerStrings, conformingAnswer } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import type { AppContext } from './context';
 import { getEntry, updateEntry } from './entries';
@@ -390,11 +390,11 @@ export async function suggestEntryTags(
     outputSchema: TAGS_SCHEMA,
   });
 
-  // An answer without the schema's shape suggests nothing, rather than failing on its fields.
-  const obj = conformingAnswer<{ existingTags: string[]; newTags: string[] }>(
-    result,
-    TAGS_SCHEMA,
-  ) ?? { existingTags: [], newTags: [] };
+  // Each list read on its own: what isn't a list of names suggests nothing, never a TypeError.
+  const obj = {
+    existingTags: answerStrings(result, 'existingTags'),
+    newTags: answerStrings(result, 'newTags'),
+  };
   const byName = new Map(existing.map((t) => [t.name.toLowerCase(), t]));
   // After the decision model found no existing tag that fits, only the new names are taken:
   // the generative model doesn't get to overrule that decision.

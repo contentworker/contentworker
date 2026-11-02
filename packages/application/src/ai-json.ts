@@ -125,6 +125,19 @@ export function conformingAnswer<T>(
   return conforms(value, named) ? (value as T) : undefined;
 }
 
+/**
+ * The strings in one list field of a model's structured answer (`field` of `result.object`): what
+ * isn't a list is no list, and what in it isn't a string is left out. Read per field, so a model
+ * that got one list right and fumbled the other still counts for the one.
+ */
+export function answerStrings(result: { readonly object?: unknown }, field: string): string[] {
+  const value =
+    typeof result.object === 'object' && result.object !== null && !Array.isArray(result.object)
+      ? (result.object as Record<string, unknown>)[field]
+      : undefined;
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
 // ---- generateJson -----------------------------------------------------------
 
 class AiTimeoutError extends Error {}

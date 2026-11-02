@@ -18,6 +18,7 @@ import { type Principal, SCOPES } from '@contentworker/domain';
 import {
   FakeAssetIngestQueue,
   FakeBlobStore,
+  FakeVideoHost,
   FixedClock,
   InMemoryContentStore,
   InMemoryVectorStore,
@@ -588,7 +589,9 @@ describe('single-asset tools (MCP), on the same use-cases, scopes and serializer
     const wired = wire(config);
     const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
     const deps: McpDeps = {
-      ctx: wired.ctx,
+      // A video host and the ingest queue, for the tools that need them; REST's reads don't.
+      ctx: { ...wired.ctx, video: new FakeVideoHost() },
+      assetIngest: new FakeAssetIngestQueue(),
       ai: wired.ai,
       rag: wired.rag,
       blob: wired.blob,
@@ -738,6 +741,9 @@ describe('single-asset tools (MCP), on the same use-cases, scopes and serializer
     for (const name of ['asset_get', 'asset_publish', 'asset_unpublish']) {
       expect((await elsewhere(name, { id })).isError, name).toBe(true);
     }
+    expect(
+      (await elsewhere('asset_create', { fileName: 'x.png', contentType: 'image/png' })).isError,
+    ).toBe(true);
   });
 
   it('no asset tool sends r2Key, the server’s storage key', async () => {
@@ -758,11 +764,28 @@ describe('single-asset tools (MCP), on the same use-cases, scopes and serializer
     await record('asset_publish', { id });
     await record('asset_unpublish', { id });
     await record('asset_create', { fileName: 'b.png', contentType: 'image/png' });
-    await record('asset_upload_start', {
-      fileName: 'c.mov',
-      contentType: 'video/quicktime',
-      size: 200 * 1024 * 1024,
+    const multipart = (await record('asset_upload_start', {
+      fileName: 'c.bin',
+      contentType: 'application/octet-stream',
+      size: 12,
+    })) as { asset: { id: string }; upload: { uploadId: string } };
+    const part = await (wired.blob as FakeBlobStore).multipart.uploadPart(
+      `${S1}/main/${multipart.asset.id}/c.bin`,
+      multipart.upload.uploadId,
+      1,
+      new Uint8Array(12),
+    );
+    await record('asset_upload_complete', {
+      id: multipart.asset.id,
+      uploadId: multipart.upload.uploadId,
+      parts: [part],
     });
+    await record('asset_reingest', { id: multipart.asset.id });
+    const video = (await record('asset_video_create', {
+      fileName: 'clip.mp4',
+      contentType: 'video/mp4',
+    })) as { asset: { id: string } };
+    await record('asset_video_refresh', { id: video.asset.id });
     const replace = (await record('asset_replace_file', {
       id,
       fileName: 'hero-2.png',

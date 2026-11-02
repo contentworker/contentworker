@@ -2,7 +2,7 @@ import { NotFoundError, type Scope, ValidationError } from '@contentworker/domai
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
-import { conformingAnswer } from './ai-json';
+import { answerStrings, conformingAnswer } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { getAsset, setAssetMetadata } from './assets';
 import type { AppContext } from './context';
@@ -11,6 +11,16 @@ import { createTag, listTags } from './taxonomy';
 function assertImage(contentType: string): void {
   if (!contentType.startsWith('image/')) {
     throw new ValidationError([{ field: 'asset', message: 'Asset is not an image' }]);
+  }
+}
+
+/**
+ * The model's answer held no alt text (empty, or not the shape asked for): a 422 like any
+ * validation failure, and its own class so ingest can tell "nothing suggested" from a real error.
+ */
+export class NoAltTextError extends ValidationError {
+  constructor() {
+    super([{ field: 'altText', message: 'Model returned no alt text' }]);
   }
 }
 
@@ -90,7 +100,7 @@ export async function generateAltText(
     answer ? answer.altText : result.object === undefined ? (result.text ?? '') : ''
   ).trim();
   if (!altText) {
-    throw new ValidationError([{ field: 'altText', message: 'Model returned no alt text' }]);
+    throw new NoAltTextError();
   }
 
   let applied = false;
@@ -180,19 +190,27 @@ export async function autoTagAsset(
     outputSchema: AUTO_TAG_SCHEMA,
   });
 
-  // An answer without the schema's shape suggests nothing (the run is still recorded and counted).
-  const answer = conformingAnswer<{ existingTags: string[]; newTags: string[] }>(
-    result,
-    AUTO_TAG_SCHEMA,
-  ) ?? { existingTags: [], newTags: [] };
+  // Each list read on its own: what isn't a list of names suggests nothing, never a TypeError (the
+  // run is still recorded and counted).
+  const answer = {
+    existingTags: answerStrings(result, 'existingTags'),
+    newTags: answerStrings(result, 'newTags'),
+  };
   const byName = new Map(existing.map((t) => [t.name.toLowerCase(), t]));
   const tagIds = answer.existingTags
     .map((name) => byName.get(name.toLowerCase())?.id)
     .filter((v): v is string => Boolean(v));
   // New names the model proposed that genuinely aren't in the vocabulary.
+  // Each name once, as first spelled (a model repeats itself): `apply` creates one tag per name.
+  const seen = new Set<string>();
   const newTags = answer.newTags
     .map((n) => n.trim())
-    .filter((n) => n && !byName.has(n.toLowerCase()));
+    .filter((n) => {
+      const key = n.toLowerCase();
+      if (!n || byName.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
   let applied = false;
   if (input.apply) {

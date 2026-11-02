@@ -9,15 +9,16 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import type { z } from 'zod';
 import { SERVER_ONLY_ASSET_FIELDS } from '../src/api/asset-response';
-import { asset } from '../src/api/docs/schemas';
+import { asset, assetVersionList } from '../src/api/docs/schemas';
 import { comparable, interfaceBody, keyPaths, parseShape, zodShape } from './interface-shape';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (path: string) => readFileSync(join(here, path), 'utf8');
-const shapeOf = (path: string) => {
+const shapeOf = (path: string, name = 'Asset') => {
   const source = read(path);
-  return parseShape(interfaceBody(source, 'Asset'), source);
+  return parseShape(interfaceBody(source, name), source);
 };
 
 /**
@@ -59,6 +60,20 @@ describe('Management Asset parity', () => {
   it('the domain Asset has the zod schema’s keys, but for server bookkeeping', () => {
     expect(keyPaths(domain).sort()).toEqual(keyPaths(zod).sort());
     expect(comparable(domain, zod)).toEqual(comparable(zod, domain));
+  });
+
+  it('a file version has the same keys in the domain (but for r2Key), the schema and the SDK', () => {
+    const items = assetVersionList.shape.items as unknown as { element: z.ZodObject };
+    const zodVersion = zodShape(items.element);
+    const sdkVersion = shapeOf('../../sdk/management/src/index.ts', 'AssetVersion');
+    const domainVersion = Object.fromEntries(
+      Object.entries(shapeOf('../../domain/src/asset/asset.ts', 'AssetVersion')).filter(
+        ([name]) => !SERVER_ONLY.includes(name),
+      ),
+    );
+    expect(keyPaths(zodVersion)).toEqual(expect.arrayContaining(['version', 'file', 'current']));
+    expect(keyPaths(sdkVersion).sort()).toEqual(keyPaths(zodVersion).sort());
+    expect(keyPaths(domainVersion).sort()).toEqual(keyPaths(zodVersion).sort());
   });
 
   it('the parser follows a named interface in the same source', () => {

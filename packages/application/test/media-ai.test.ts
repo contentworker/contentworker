@@ -143,8 +143,7 @@ describe('autoTagAsset', () => {
     // What the dev stub provider answers (a string per field), and other ways a model can miss.
     for (const answer of [
       { existingTags: 'Sample existingTags', newTags: 'Sample newTags' },
-      { existingTags: ['beach', 7], newTags: [] },
-      { existingTags: ['beach'] },
+      { existingTags: [{ name: 'beach' }, 7], newTags: null },
       ['beach'],
       'beach',
       null,
@@ -157,7 +156,19 @@ describe('autoTagAsset', () => {
     // Nothing was created or applied, and each run is still on the ledger.
     expect((await listTags(ctx, scope)).map((t) => t.name)).toEqual(['beach']);
     expect((await getAsset(ctx, scope, id)).metadata.tags).toEqual([]);
-    expect(await listAgentRuns(ctx, scope, { workflow: 'auto-tag' })).toHaveLength(6);
+    expect(await listAgentRuns(ctx, scope, { workflow: 'auto-tag' })).toHaveLength(5);
+  });
+
+  it('reads each list on its own: one fumbled list or item does not cost the other', async () => {
+    const id = await newImage(ctx, blob);
+    const beach = await createTag(ctx, scope, { name: 'beach' });
+    for (const answer of [
+      { existingTags: ['beach'] },
+      { existingTags: ['beach', 7], newTags: 3 },
+    ]) {
+      const result = await autoTagAsset(ctx, new StubAIProvider(() => answer), scope, id);
+      expect(result, JSON.stringify(answer)).toMatchObject({ tagIds: [beach.id], newTags: [] });
+    }
   });
 
   it('reads the fields it names when the answer adds others', async () => {
@@ -165,6 +176,15 @@ describe('autoTagAsset', () => {
     const beach = await createTag(ctx, scope, { name: 'beach' });
     const ai = new StubAIProvider(() => ({ existingTags: ['Beach'], newTags: [], why: 'sand' }));
     expect((await autoTagAsset(ctx, ai, scope, id)).tagIds).toEqual([beach.id]);
+  });
+
+  it('creates each suggested name once, however often the model repeats it', async () => {
+    const id = await newImage(ctx, blob);
+    const ai = new StubAIProvider(() => ({ existingTags: [], newTags: ['Dusk', 'dusk ', 'DUSK'] }));
+    const result = await autoTagAsset(ctx, ai, scope, id, { apply: true });
+    expect(result.newTags).toEqual(['Dusk']);
+    expect((await listTags(ctx, scope)).map((t) => t.name)).toEqual(['Dusk']);
+    expect((await getAsset(ctx, scope, id)).metadata.tags).toHaveLength(1);
   });
 });
 

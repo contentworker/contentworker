@@ -67,6 +67,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'agent_review_list',
   'approvals_count',
   'audit_log_list',
+  'asset_get',
   'assets_list',
   'assets_search',
   'asset_preview_list',

@@ -440,7 +440,9 @@ Every asset these routes return carries a short-lived signed `file.url` (at leas
 `?exp=…&sig=…`), never the non-expiring URL the asset stores; a hosted video keeps its playback
 URL, and none carries the server's own storage key (`r2Key`). The MCP asset tools answer the same
 way: every Management and MCP asset response goes through one serializer
-(`packages/http/src/api/asset-response.ts`).
+(`packages/http/src/api/asset-response.ts`). The environment export (`GET …/export`,
+`environment_export`) is the exception: it is a snapshot for `…/import` and clones, which copy
+the files by their keys.
 
 ### Asset collections, share links, uploads and zips
 
