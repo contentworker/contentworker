@@ -454,9 +454,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   polite live region, says where it moved. Its marker is an ink ring (`foreground`) on a paper
   halo (`background`) with an ink dot, no shadow, so one of the two stands off any picture in
   either theme, never a fixed white. Generate alt text and Suggest tags are ghost `xs` buttons led
-  by a `ComposeLoader` task icon (`write`, `asset`) in `text-ai`, still at rest and composing
-  beside "Generating…"/"Suggesting…" while the model works, the other disabled meanwhile; no
-  emoji. **Versions** (`assets/AssetVersions.tsx`)
+  by the AI mark in `text-ai` at rest (`ComposeLoader`, still), its task's icon (`write`, `asset`)
+  composing beside "Generating…"/"Suggesting…" while the model works, the other disabled
+  meanwhile; no emoji. **Versions** (`assets/AssetVersions.tsx`)
   is a list newest first: the version in mono, the file name, its size, when and by whom (a
   teammate by name when the team is readable, else "a teammate", "an API key"; never an id), and
   outline badges for Current and "Restored from v1" beside the `ok` Published stamp on the file

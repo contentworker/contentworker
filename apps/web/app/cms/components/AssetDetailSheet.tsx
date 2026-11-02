@@ -449,8 +449,9 @@ export function AssetDetailSheet(props: {
                       disabled={suggesting !== null}
                       onClick={suggestAlt}
                     >
+                      {/* The mark at rest; the task's icon composes while the model works. */}
                       <ComposeLoader
-                        icon={composeIcons.write}
+                        icon={suggesting === 'alt' ? composeIcons.write : composeIcons.aiMark}
                         playing={suggesting === 'alt'}
                         className="text-ai"
                       />
@@ -484,7 +485,7 @@ export function AssetDetailSheet(props: {
                       onClick={suggestTags}
                     >
                       <ComposeLoader
-                        icon={composeIcons.asset}
+                        icon={suggesting === 'tags' ? composeIcons.asset : composeIcons.aiMark}
                         playing={suggesting === 'tags'}
                         className="text-ai"
                       />
