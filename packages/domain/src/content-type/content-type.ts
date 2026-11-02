@@ -19,6 +19,12 @@ export interface ContentType {
   /** apiId of the field used as the entry's display title. */
   readonly displayField: string;
   readonly fields: readonly FieldDefinition[];
+  /**
+   * Where the type's entries live on the site, e.g. `/blog/{slug}` (`urlPath`). A publish that
+   * changes a slug it names redirects the old path to the new one; a preview link can be built
+   * from it too.
+   */
+  readonly urlPattern?: string;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -28,6 +34,8 @@ export interface ContentTypeDraft {
   name: string;
   displayField: string;
   fields: FieldDefinition[];
+  /** `null` or `''` clears it on a revision. */
+  urlPattern?: string | null;
 }
 
 /**
@@ -42,11 +50,13 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
     ]);
   }
   assertFieldsValid(draft.fields, draft.displayField);
+  const urlPattern = draft.urlPattern ? checkUrlPattern(draft.urlPattern, draft.fields) : undefined;
   return {
     apiId: draft.apiId,
     name: draft.name,
     displayField: draft.displayField,
     fields: [...draft.fields].sort((a, b) => a.position - b.position),
+    ...(urlPattern ? { urlPattern } : {}),
     version: 1,
     status: 'draft',
   };
@@ -55,16 +65,21 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
 /** Produces the next version of a content type from an edited field set. */
 export function reviseContentType(
   current: ContentType,
-  changes: Partial<Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields'>>,
+  changes: Partial<Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern'>>,
 ): ContentType {
   const fields = changes.fields ?? [...current.fields];
   const displayField = changes.displayField ?? current.displayField;
   assertFieldsValid(fields, displayField);
+  // Checked against the revised fields too: removing the slug a kept pattern names is refused.
+  const pattern = changes.urlPattern === undefined ? current.urlPattern : changes.urlPattern;
+  const urlPattern = pattern ? checkUrlPattern(pattern, fields) : undefined;
+  const { urlPattern: _old, ...rest } = current;
   return {
-    ...current,
+    ...rest,
     name: changes.name ?? current.name,
     displayField,
     fields: [...fields].sort((a, b) => a.position - b.position),
+    ...(urlPattern ? { urlPattern } : {}),
     version: current.version + 1,
     status: 'draft',
   };
@@ -222,4 +237,78 @@ function assertNestedFieldAllowed(f: FieldDefinition, where: string): void {
       },
     ]);
   }
+}
+
+// --- URL pattern ------------------------------------------------------------
+
+/** Longest URL pattern. */
+export const MAX_URL_PATTERN_LENGTH = 512;
+
+const URL_PLACEHOLDER = /\{([^{}]*)\}/g;
+
+/**
+ * Checks a content type's URL pattern against its fields, or throws `ValidationError`. A pattern
+ * is a site path starting with `/` (no query or fragment) whose `{…}` placeholders are `{id}` (the
+ * entry id), `{locale}`, or the apiId of one of the type's own Slug fields: slugs are the only
+ * values normalized to be safe in a URL.
+ */
+export function checkUrlPattern(input: string, fields: readonly FieldDefinition[]): string {
+  const refuse = (message: string): never => {
+    throw new ValidationError([{ field: 'urlPattern', message }]);
+  };
+  const pattern = input.trim();
+  if (!pattern.startsWith('/') || pattern.startsWith('//')) {
+    refuse('A URL pattern is a path starting with /, e.g. /blog/{slug}');
+  }
+  if (pattern.length > MAX_URL_PATTERN_LENGTH) {
+    refuse(`A URL pattern is at most ${MAX_URL_PATTERN_LENGTH} characters`);
+  }
+  if (/[\s?#[\]\\]/.test(pattern)) {
+    refuse('A URL pattern cannot hold spaces, ?, #, [, ] or \\');
+  }
+  const slugs = new Set(fields.filter((f) => f.type === 'Slug').map((f) => f.apiId));
+  if (
+    pattern.replace(URL_PLACEHOLDER, '').includes('{') ||
+    pattern.replace(URL_PLACEHOLDER, '').includes('}')
+  ) {
+    refuse('A placeholder is written {name}');
+  }
+  for (const m of pattern.matchAll(URL_PLACEHOLDER)) {
+    const name = m[1] ?? '';
+    if (name === 'id' || name === 'locale' || slugs.has(name)) continue;
+    refuse(`{${name}} is not {id}, {locale} or one of this type's Slug fields`);
+  }
+  return pattern;
+}
+
+/** The Slug fields a URL pattern names. */
+export const urlPatternSlugFields = (pattern: string): string[] =>
+  [...pattern.matchAll(URL_PLACEHOLDER)]
+    .map((m) => m[1] ?? '')
+    .filter((name) => name !== 'id' && name !== 'locale');
+
+/**
+ * An entry's path on the site in one locale, from its type's URL pattern, or null when a slug the
+ * pattern names has no value in that locale. `fields` are the entry's (locale → value per field).
+ */
+export function urlPath(
+  pattern: string,
+  entry: {
+    readonly id: string;
+    readonly fields: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  },
+  locale: string,
+): string | null {
+  let missing = false;
+  const path = pattern.replace(URL_PLACEHOLDER, (_whole, name: string) => {
+    if (name === 'id') return encodeURIComponent(entry.id);
+    if (name === 'locale') return encodeURIComponent(locale);
+    const value = entry.fields[name]?.[locale];
+    if (typeof value !== 'string' || value === '') {
+      missing = true;
+      return '';
+    }
+    return encodeURIComponent(value);
+  });
+  return missing ? null : path;
 }

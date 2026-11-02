@@ -9,7 +9,7 @@ import { ingestState } from '~/cms/lib/assets';
  * not the faded halo, which falls under it.
  */
 export const BADGE_BUTTON_FOCUS =
-  'hit-area rounded-4xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background';
+  'hit-area rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background';
 
 /**
  * What ingest found about an asset, beside its status: a possible duplicate (opening the asset it

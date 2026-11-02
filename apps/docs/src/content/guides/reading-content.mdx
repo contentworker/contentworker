@@ -137,13 +137,21 @@ hides fields, it gets events for its types only, with those fields left out. The
 stream after ten minutes, so reconnect when it closes (as `EventSource` does on its own); that is
 also when a revoked key or a changed role takes effect. Use it to refresh a page or invalidate a cache the moment content changes, instead of polling. For server-to-server notifications, use [webhooks](/guides/webhooks/).
 
+## Redirects
+
+`GET /delivery/{space}/{env}/redirects` returns the environment's enabled redirects as `{ items,
+total }`, each with `id`, `source`, `destination`, `status` and an optional `locale`; `GET
+…/redirects/resolve?path=&locale=` answers one path with `{ redirect, status, location }`, or `404`.
+contentworker serves no site, so your front end or an edge Worker applies them. See
+[Redirects](/guides/redirects/).
+
 ## Caching
 
 Delivery answers from a cache in front of the database. Your key is checked on every request,
 before the cache, so revoking a key or narrowing its role takes effect at once where it was made
 and within about a minute in other locations; keys that may see the same content share cached
 responses. A cached response is fresh for a minute and is purged
-when anything in its environment is published, unpublished or re-pointed by an alias change;
+when anything in its environment is published, unpublished, re-pointed by an alias change or has its redirects changed;
 responses carry an `ETag`, so `If-None-Match` gets a `304` when nothing changed.
 
 You don't need a long cache of your own in front of it. For static sites, rebuild on the

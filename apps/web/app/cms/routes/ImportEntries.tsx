@@ -257,7 +257,7 @@ export function ImportEntries() {
                 id="import-file"
                 type="file"
                 accept=".csv,.tsv,.json,.xml,text/csv,application/json,application/xml,text/xml"
-                className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-full file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm file:text-foreground"
+                className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm file:text-foreground"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) void chooseFile(file);

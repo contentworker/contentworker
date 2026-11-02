@@ -272,6 +272,11 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 
+A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,
+`{locale}` or its own `Slug` fields' apiIds, e.g. `/blog/{slug}`; `null` or `''` clears it; `422`
+otherwise). When set, a publish that changes a slug it names writes a redirect (see
+[Redirects](#redirects)).
+
 Saving a content type that drops a blocks variant some entry still uses, or a field (at any depth)
 some entry still holds a value for, answers `409 conflict` naming each `location: variant` or field
 location and its entries (`details.variantsInUse`, `details.fieldsInUse`); see
@@ -312,6 +317,7 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 | DELETE | `…/entries/:id/permanent`          | `content:publish` | **Irreversible** delete of a trashed entry. `?force=true` overrides the inbound-link guard                     |
 | POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft                                                               |
 | POST   | `…/entries/:id/preview-link`       | `content:write`   | Mint a shareable preview link `{ ttlHours?, previewBaseUrl? }` (default 72 h); `201 { url, token, expiresAt }` |
+| POST   | `…/embeds/resolve`                 | `content:write`   | Resolve a media URL `{ url }` into a rich-text `embed` node's data; `200 { embed, resolved }`                  |
 
 **Held to a version.** Publish, unpublish and version restore take an optional
 `?expectedVersion=N`: the entry's `currentVersion` as the caller read it. If someone has saved a
@@ -348,6 +354,16 @@ Permanent deletion is refused with **409** while _published_ entries still link 
 Those are the links delivery resolves per request, so removing the target under them would break
 live pages. Reference edges are recorded at publish
 time, so a link from an unpublished draft does not block the delete.
+
+**Embeds.** `POST …/embeds/resolve` (MCP `embed_resolve`) asks an allowed provider's oEmbed
+endpoint (YouTube, Vimeo, X, Bluesky, Mastodon, Spotify, SoundCloud) about an https URL and
+returns `{ embed, resolved }`: `embed` is the data of an `embed` rich-text node (`url`,
+`provider`, `kind`, and when the provider answered `title`, `authorName`, `thumbnail`, `width`,
+`height`, `aspectRatio`); the provider's player `html` is discarded. A URL that is not https, not
+on an allowed provider, or whose oEmbed endpoint is not a public address is refused with **422**
+before anything is fetched. A provider that errors, redirects, times out (5 s) or answers more than
+64 KiB is not an error: `resolved` is `false` and `embed` holds the URL, provider and kind alone,
+which is valid to store. See [Rich text](./domain-model.md#rich-text).
 
 ### Entries: AI and semantics
 
@@ -598,6 +614,30 @@ caller can't read. A run never exposes its starter's resolved principal, only `s
 | POST   | `…/taxonomy/tags`                 | `content:manage` | Create tag                |
 | DELETE | `…/taxonomy/tags/:id`             | `content:manage` | Delete tag                |
 
+### Redirects
+
+Redirects are delivery data: contentworker serves no site, so a front end (or an edge Worker in
+front of it) applies them. Reads need `preview:read`, writes `content:manage`; every write checks
+the whole set and answers `422` for a loop or a duplicate source (a chain is allowed). Model in
+[Domain model](./domain-model.md#redirects).
+
+| Method | Path                           | Scope            | Description                                                                                                                              |
+| ------ | ------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/redirects`                  | `preview:read`   | List: `q` (substring of source, destination or note), `limit`, `cursor`                                                                  |
+| POST   | `…/redirects`                  | `content:manage` | Create `{ source, destination, status?, locale?, enabled?, note? }` (`201`, `{ redirect, chains }`)                                      |
+| GET    | `…/redirects/:id`              | `preview:read`   | Get one                                                                                                                                  |
+| PATCH  | `…/redirects/:id`              | `content:manage` | Change any of those fields                                                                                                               |
+| DELETE | `…/redirects/:id`              | `content:manage` | Delete                                                                                                                                   |
+| GET    | `…/redirects/resolve`          | `preview:read`   | `?path=&locale=` → what Delivery answers (`{ redirect, status, location }`); `404` when nothing matches                                  |
+| GET    | `…/redirects/analysis`         | `preview:read`   | `{ duplicates, loops, chains, count, max }`                                                                                              |
+| GET    | `…/redirects/export`           | `preview:read`   | `text/csv`: `source,destination,status,locale,enabled,note`                                                                              |
+| POST   | `…/redirects/import`           | `content:manage` | `{ format: 'csv' \| 'json', data, dryRun? }`: all or nothing, at most 1,000 rows; a row whose source and locale exist updates that redirect |
+| POST   | `…/redirects/collapse-chains`  | `content:manage` | Point each chain's first redirect at where the chain ends → `{ updated }`                                                                |
+
+Every write appends `redirects.changed`. MCP: `redirects_list`, `redirects_get`,
+`redirects_create`, `redirects_update`, `redirects_delete`, `redirects_import`, `redirects_resolve`,
+`redirects_analyze`, `redirects_collapse_chains`; `model_create_content_type` takes `urlPattern`.
+
 ### Platform configuration
 
 | Method | Path                   | Scope            | Description                         |
@@ -649,6 +689,8 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 | GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets: `limit`, `cursor` (or `skip`), `kind`, `tag`, `folder` (id or `root`), `locale` → `{ items, total, nextCursor? }`. With `q`, a hybrid search of published assets only (needs `search:read` too, else 403) → `{ items, total, facets }`; a content-granted key gets an empty result with empty `facets` |
 | GET      | `/delivery/:space/:env/assets/:id`           | `delivery:read` | Get one published asset (`locale`)                                                                                                                                                                                                                                                                                            |
 | GET      | `/delivery/:space/:env/collections/:id`      | `delivery:read` | A collection's name and its **published** members in the collection's order, in the delivered asset shape (`limit`, `cursor`, `locale`; `nextCursor?`); 403 for a key with content grants. Cached under the scope's tag, purged by `asset_collection.changed` |
+| GET      | `/delivery/:space/:env/redirects`            | `delivery:read` | The environment's **enabled** redirects → `{ items, total }`, each `{ id, source, destination, status, locale? }`; cached under the scope's tag, purged by `redirects.changed` |
+| GET      | `/delivery/:space/:env/redirects/resolve`    | `delivery:read` | `?path=&locale=` → `{ redirect, status, location }`, or `404`. One request per path: to redirect every request, fetch the set once |
 | GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default**                                                                                                                                                                                                                                                                                                 |
 | GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream                                                                                                                                                                                                                                                                                                   |
 | GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Deprecated: `301` to the media URL of the next width step at or above `w`, or `rendition` (cached); `302` to a signed transform when no media origin is set                                                                                                                                                                   |

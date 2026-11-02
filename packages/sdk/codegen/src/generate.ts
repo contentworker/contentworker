@@ -95,12 +95,28 @@ export interface RichTextMark {
   type: string;
 }
 
+/** The data of an \`embed\` node: external media (a video, a post, a track) as structured
+ *  metadata, never the provider's HTML. \`url\` is an https page on an allowed provider; render a
+ *  player for \`provider\` from it, or a link card. */
+export interface EmbedData {
+  url: string;
+  provider: 'youtube' | 'vimeo' | 'x' | 'bluesky' | 'spotify' | 'soundcloud' | 'mastodon' | (string & {});
+  kind?: 'video' | 'post' | 'audio' | 'other';
+  title?: string;
+  authorName?: string;
+  thumbnail?: { url: string; width?: number; height?: number };
+  width?: number;
+  height?: number;
+  aspectRatio?: number;
+}
+
+/** A rich-text node. Reference nodes carry \`data.target\`; an \`embed\` node's data is \`EmbedData\`. */
 export interface RichTextNode {
   nodeType: string;
   content?: RichTextNode[];
   value?: string;
   marks?: RichTextMark[];
-  data?: { target?: EntryLink | AssetLink } & Record<string, unknown>;
+  data?: { target?: EntryLink | AssetLink } & Partial<EmbedData> & Record<string, unknown>;
 }
 
 export interface RichTextDocument {

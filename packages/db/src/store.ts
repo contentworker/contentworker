@@ -25,6 +25,7 @@ import {
   type Promotion,
   projectFields,
   QueryTooBroadError,
+  type Redirect,
   type ReferenceEdge,
   type Release,
   type Role,
@@ -102,6 +103,7 @@ import type {
   PublishedAssetPage,
   PublishedAssetQuery,
   PublishedEntry,
+  RedirectRepo,
   ReferenceRepo,
   ReleaseRepo,
   RoleRepo,
@@ -270,6 +272,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
         version: ct.version,
         status: ct.status,
         updatedAt: new Date(),
+        urlPattern: ct.urlPattern ?? null,
       };
       await x.write(
         db
@@ -288,6 +291,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
               version: values.version,
               status: values.status,
               updatedAt: values.updatedAt,
+              urlPattern: values.urlPattern,
             },
           }),
       );
@@ -4133,6 +4137,8 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.concepts,
   schema.tags,
   schema.entryMetadata,
+  schema.redirects,
+  schema.redirectSets,
   schema.previewTokens,
   schema.bulkJobs,
   schema.bulkJobChunks,
@@ -5526,6 +5532,185 @@ function makeWorkflowTaskRepo(x: Exec): WorkflowTaskRepo {
     },
   };
 }
+type RedirectRow = typeof schema.redirects.$inferSelect;
+const toRedirect = (r: RedirectRow): Redirect => ({
+  id: r.id,
+  source: r.source,
+  destination: r.destination,
+  status: r.status,
+  ...(r.locale ? { locale: r.locale } : {}),
+  enabled: r.enabled,
+  ...(r.note ? { note: r.note } : {}),
+  origin: r.origin,
+  ...(r.entryId ? { entryId: r.entryId } : {}),
+  createdAt: r.createdAt.toISOString(),
+  updatedAt: r.updatedAt.toISOString(),
+});
+
+function makeRedirectRepo(x: Exec): RedirectRepo {
+  const db = x.db;
+  const t = schema.redirects;
+  const sets = schema.redirectSets;
+  return {
+    async get(scope, id) {
+      const [row] = await db
+        .select()
+        .from(t)
+        .where(and(scopeFilter(t, scope), eq(t.id, id)));
+      return row ? toRedirect(row) : null;
+    },
+    async all(scope, opts = {}) {
+      const rows = await db
+        .select()
+        .from(t)
+        .where(and(scopeFilter(t, scope), opts.enabledOnly ? eq(t.enabled, true) : undefined))
+        .orderBy(asc(t.source), asc(t.id));
+      return rows.map(toRedirect);
+    },
+    async list(scope, query = {}) {
+      const limit = Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE);
+      const conds: (SQL | undefined)[] = [scopeFilter(t, scope)];
+      const q = query.q?.trim().toLowerCase();
+      if (q) {
+        conds.push(
+          sql`(instr(lower(${t.source}), ${q}) > 0 OR instr(lower(${t.destination}), ${q}) > 0 OR instr(lower(ifnull(${t.note}, '')), ${q}) > 0)`,
+        );
+      }
+      if (query.cursor) {
+        const [source, id] = decodeTextCursor(query.cursor);
+        conds.push(sql`(${t.source}, ${t.id}) > (${source}, ${id})`);
+      }
+      const rows = await db
+        .select()
+        .from(t)
+        .where(and(...conds))
+        .orderBy(asc(t.source), asc(t.id))
+        .limit(limit + 1);
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.map(toRedirect),
+        ...(rows.length > limit && last
+          ? { nextCursor: encodeTextCursor(last.source, last.id) }
+          : {}),
+      };
+    },
+    async involving(scope, paths) {
+      if (paths.length === 0) return [];
+      // The paths as one JSON parameter: one statement, however many.
+      const list = idList(paths);
+      const rows = await db
+        .select()
+        .from(t)
+        .where(
+          and(
+            scopeFilter(t, scope),
+            sql`(${t.source} IN (SELECT value FROM json_each(${list})) OR ${t.destination} IN (SELECT value FROM json_each(${list})))`,
+          ),
+        )
+        .orderBy(asc(t.source), asc(t.id));
+      return rows.map(toRedirect);
+    },
+    async state(scope) {
+      // An aggregate always answers one row, with or without a revision yet.
+      const [row] = await db
+        .select({
+          count: sql<number>`count(*)`,
+          revision: sql<number>`ifnull((SELECT ${sets.revision} FROM ${sets} WHERE ${sets.spaceId} = ${scope.spaceId} AND ${sets.environmentId} = ${scope.environmentId}), 0)`,
+        })
+        .from(t)
+        .where(scopeFilter(t, scope));
+      return { revision: Number(row?.revision ?? 0), count: Number(row?.count ?? 0) };
+    },
+    async saveMany(scope, redirects) {
+      if (redirects.length === 0) return;
+      const rows = redirects.map((r) => ({
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        id: r.id,
+        source: r.source,
+        locale: r.locale ?? '',
+        destination: r.destination,
+        status: r.status,
+        enabled: r.enabled,
+        note: r.note ?? null,
+        origin: r.origin,
+        entryId: r.entryId ?? null,
+        createdAt: new Date(r.createdAt),
+        updatedAt: new Date(r.updatedAt),
+      }));
+      await writeAll(
+        x,
+        insertChunks(t, rows, (chunk) =>
+          db
+            .insert(t)
+            .values(chunk)
+            .onConflictDoUpdate({
+              target: [t.spaceId, t.environmentId, t.id],
+              set: {
+                source: sql`excluded.source`,
+                locale: sql`excluded.locale`,
+                destination: sql`excluded.destination`,
+                status: sql`excluded.status`,
+                enabled: sql`excluded.enabled`,
+                note: sql`excluded.note`,
+                origin: sql`excluded.origin`,
+                entryId: sql`excluded.entry_id`,
+                updatedAt: sql`excluded.updated_at`,
+              },
+            }),
+        ),
+      );
+    },
+    async removeMany(scope, ids) {
+      if (ids.length === 0) return;
+      await x.write(
+        db
+          .delete(t)
+          .where(
+            and(
+              scopeFilter(t, scope),
+              sql`${t.id} IN (SELECT value FROM json_each(${idList(ids)}))`,
+            ),
+          ),
+      );
+    },
+    async advance(scope, expected) {
+      const values = {
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        revision: (expected ?? 0) + 1,
+      };
+      const target = [sets.spaceId, sets.environmentId];
+      if (expected === undefined) {
+        await x.write(
+          db
+            .insert(sets)
+            .values(values)
+            .onConflictDoUpdate({ target, set: { revision: sql`${sets.revision} + 1` } }),
+        );
+        return;
+      }
+      const upsert = db
+        .insert(sets)
+        .values(values)
+        .onConflictDoUpdate({
+          target,
+          set: { revision: expected + 1 },
+          setWhere: eq(sets.revision, expected),
+        });
+      if (x.inUnit) {
+        // Another writer moved the set since it was read: the unit commits nothing.
+        await x.write(upsert);
+        x.expectChanged(1);
+        return;
+      }
+      const changed = await upsert.returning({ revision: sets.revision });
+      if (changed.length === 0) throw new TransactionConflictError();
+    },
+  };
+}
+
 function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
   const db = x.db;
   const toConcept = (r: typeof schema.concepts.$inferSelect): Concept => ({
@@ -5847,6 +6032,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     releases: makeReleaseRepo(x),
     promotions: makePromotionRepo(x),
     taxonomy: makeTaxonomyRepo(x),
+    redirects: makeRedirectRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
@@ -5904,6 +6090,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
     taxonomy: makeTaxonomyRepo(x),
+    redirects: makeRedirectRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),
     storedSecrets: makeStoredSecretRepo(x),
@@ -5932,6 +6119,7 @@ const toContentType = (r: CtRow): ContentType => ({
   name: r.name,
   displayField: r.displayField,
   fields: r.fields,
+  ...(r.urlPattern ? { urlPattern: r.urlPattern } : {}),
   version: r.version,
   status: r.status,
 });

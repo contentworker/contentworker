@@ -60,6 +60,9 @@ describe('rich text document', () => {
       if (nodeType === 'text') return text;
       if (nodeType === 'hyperlink')
         return { nodeType, data: { uri: 'https://example.com' }, content: [text] };
+      if (nodeType === 'embed') {
+        return { nodeType, data: { url: 'https://youtu.be/dQw4w9WgXcQ', provider: 'youtube' } };
+      }
       if (nodeType.includes('asset')) return { nodeType, data: target('Asset'), content: [] };
       if (nodeType.includes('entry')) return { nodeType, data: target('Entry'), content: [] };
       return { nodeType, content: [text] };

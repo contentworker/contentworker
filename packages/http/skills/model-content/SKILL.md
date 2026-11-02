@@ -20,6 +20,10 @@ Delivery API serves only entries whose content type is published.
      at a short text field.
    - `fields` — each has `apiId`, `name`, `type`, `position`, and optionally `localized`,
      `required`, `unique`, `defaultValue`, `validations`.
+   - `urlPattern` (optional) — where the type's entries live on the site, e.g. `/blog/{slug}`;
+     placeholders are `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields
+     (`null` clears it). When a publish changes a slug it names, contentworker writes a `301` from
+     the old path to the new one, so you rarely need to create that redirect yourself.
 3. **Publish it** with `model_publish_content_type`. An unpublished change is invisible to
    delivery.
 4. **Type your code** with `model_typescript` instead of guessing field names: it returns the delivery
@@ -108,3 +112,7 @@ to action), declare one `Array` field whose `items` lists the shapes as `variant
   still store `{ "<defaultLocale>": value }`, so the write shape is the same either way.
 - Prefer `Link` over copying data between types: references stay correct when the target changes.
 - For exact rules (validations, nesting limits), `docs_read` the `domain-model` page.
+- Redirects are delivery data a front end applies: `redirects_list`, `redirects_create`,
+  `redirects_update`, `redirects_delete`, `redirects_import` (CSV or JSON; `dryRun` first),
+  `redirects_resolve` to test a path, `redirects_analyze` for loops and chains and
+  `redirects_collapse_chains`. A loop is refused; a chain is allowed. Use `docs_read` for details.

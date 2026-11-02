@@ -1,3 +1,4 @@
+import { EMBED_PROVIDERS } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { cn } from '@contentworker/ui/lib/utils';
@@ -23,6 +24,7 @@ import {
   ListOrdered,
   Minus,
   PanelTop,
+  PlaySquare,
   Quote,
   Redo2,
   SquareCode,
@@ -36,9 +38,13 @@ import { useContext, useId, useState } from 'react';
 import { EntityPicker } from '~/cms/components/EntityPicker';
 import type { PickOption } from '../EntryForm';
 import { RichTextPickersContext } from './EmbedNodeView';
+import { type EmbedResolver, embedFromUrl, insertExternalEmbed } from './external-embed';
+
+/** What the embed row accepts, read to screen readers with its field. */
+const EMBED_PROVIDER_LIST = `A link from ${EMBED_PROVIDERS.map((p) => p.name).join(', ')}.`;
 
 /** Which secondary row is open under the toolbar. */
-type PickerRow = 'link' | 'entryLink' | 'assetLink' | 'inlineEntry' | null;
+type PickerRow = 'link' | 'entryLink' | 'assetLink' | 'inlineEntry' | 'embed' | null;
 
 function ToolbarButton(props: {
   label: string;
@@ -181,11 +187,13 @@ function tableState(editor: Editor) {
   };
 }
 
-export function Toolbar(props: { editor: Editor }) {
+export function Toolbar(props: { editor: Editor; resolveEmbed?: () => EmbedResolver | undefined }) {
   const { editor } = props;
   const pickers = useContext(RichTextPickersContext);
   const [row, setRow] = useState<PickerRow>(null);
   const [href, setHref] = useState('');
+  const [embedUrl, setEmbedUrl] = useState('');
+  const embedUrlId = useId();
 
   // Re-render on selection/content changes so active states stay fresh.
   //
@@ -259,6 +267,13 @@ export function Toolbar(props: { editor: Editor }) {
     // extendMarkRange lets a collapsed cursor inside an existing link retarget it.
     chain().extendMarkRange(mark).setMark(mark, { targetId }).run();
     setRow(null);
+  };
+  // Only a URL an embed may hold enables the button; the row says which providers those are.
+  const embedAccepted = embedFromUrl(embedUrl) !== undefined;
+  const applyEmbed = () => {
+    if (!insertExternalEmbed(editor, embedUrl, props.resolveEmbed?.())) return;
+    setRow(null);
+    setEmbedUrl('');
   };
   const insertInlineEntry = (targetId: string) => {
     chain().insertContent({ type: 'embeddedEntryInline', attrs: { targetId } }).run();
@@ -401,6 +416,13 @@ export function Toolbar(props: { editor: Editor }) {
         <ToolbarButton label="Inline entry" onClick={() => toggleRow('inlineEntry')}>
           <AtSign className="size-4" />
         </ToolbarButton>
+        <ToolbarButton
+          label="Embed media"
+          active={row === 'embed'}
+          onClick={() => toggleRow('embed')}
+        >
+          <PlaySquare className="size-4" />
+        </ToolbarButton>
 
         <span className="mx-1 h-5 w-px bg-border" />
 
@@ -470,6 +492,34 @@ export function Toolbar(props: { editor: Editor }) {
           />
           <Button type="button" size="sm" onClick={applyLink}>
             Set link
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setRow(null)}>
+            Cancel
+          </Button>
+        </div>
+      )}
+      {row === 'embed' && (
+        <div className="flex items-center gap-2 border-t p-2">
+          <Input
+            id={embedUrlId}
+            className="h-8"
+            aria-label="Media URL"
+            aria-describedby={`${embedUrlId}-hint`}
+            placeholder="https://www.youtube.com/watch?v=…"
+            value={embedUrl}
+            onChange={(e) => setEmbedUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                applyEmbed();
+              }
+            }}
+          />
+          <span id={`${embedUrlId}-hint`} className="sr-only">
+            {EMBED_PROVIDER_LIST}
+          </span>
+          <Button type="button" size="sm" disabled={!embedAccepted} onClick={applyEmbed}>
+            Embed
           </Button>
           <Button type="button" size="sm" variant="ghost" onClick={() => setRow(null)}>
             Cancel

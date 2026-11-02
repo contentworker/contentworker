@@ -8,6 +8,7 @@
 import { bookmarkTracker } from './bookmark.js';
 import { CONTENT_REF_ATTRIBUTE, formatContentRef } from './content-ref.js';
 import { imageProps } from './image.js';
+import type { DeliveredRedirect, RedirectMatch } from './redirects.js';
 
 export type Fields = Record<string, unknown>;
 
@@ -437,6 +438,32 @@ export function createDeliveryClient(opts: ClientOptions) {
       return res.hits;
     },
 
+    /**
+     * Every enabled redirect, by source: the set a front end applies (contentworker serves no
+     * site). Match requests with `createRedirectHandler` or `createRedirectMatcher` from
+     * `@contentworker/sdk-core/redirects`. Delivery only.
+     */
+    async redirects(): Promise<DeliveredRedirect[]> {
+      return (await get<{ items: DeliveredRedirect[] }>('/redirects', {})).items;
+    },
+
+    /**
+     * Where a path is redirected (the request path, with or without its query), or null when
+     * nothing redirects it. One request per path: to apply redirects to every request, fetch the
+     * set once with `redirects()` instead. Delivery only.
+     */
+    async resolveRedirect(
+      path: string,
+      o: { readonly locale?: string } = {},
+    ): Promise<RedirectMatch | null> {
+      try {
+        return await get<RedirectMatch>('/redirects/resolve', { path, locale: o.locale });
+      } catch (err) {
+        if (err instanceof DeliveryError && err.status === 404) return null;
+        throw err;
+      }
+    },
+
     /** Chainable query builder for entries. */
     query: () => new EntryQueryBuilder<Fields>((q) => get('/entries', toParams(q))),
 
@@ -562,9 +589,11 @@ export {
   formatContentRef,
   parseContentRef,
 } from './content-ref.js';
+export { type EmbedCard, type EmbedData, type EmbedKind, embedCard } from './embed.js';
 export {
   type ImageProps,
   type ImagePropsOptions,
   imageProps,
   localizedText,
 } from './image.js';
+export type { DeliveredRedirect, RedirectMatch } from './redirects.js';

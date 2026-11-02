@@ -57,6 +57,10 @@ entry, a direct publish is refused with `409 publish_gated`, for everyone; only 
 workflow publishes it. A published entry emits `entry.published`, which refreshes delivery caches, updates search
 and notifies [webhooks](/guides/webhooks/).
 
+If the entry's content type has a [URL pattern](/guides/content-modeling/#url-pattern) and the
+publish changes a slug it names, the old path is redirected to the new one in the same step. See
+[Redirects](/guides/redirects/#redirect-slug-changes).
+
 To publish several entries together, use a [release](/guides/releases-and-scheduling/). To publish
 later, schedule it. To put a review in front of publishing, use a [workflow](/guides/workflows/).
 
