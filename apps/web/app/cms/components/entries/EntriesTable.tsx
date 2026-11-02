@@ -319,7 +319,7 @@ export function EntriesTable(props: EntriesTableProps) {
                       <Link
                         to={props.hrefFor(e)}
                         data-row-primary=""
-                        className={`rounded-md font-medium underline-offset-4 hover:underline focus-visible:underline ${title ? '' : 'text-muted-foreground'}`}
+                        className={`rounded-sm font-medium underline-offset-4 hover:underline focus-visible:underline ${title ? '' : 'text-muted-foreground'}`}
                       >
                         {title ?? 'Untitled entry'}
                       </Link>
@@ -480,7 +480,7 @@ function EntryRowSkeleton({ index, viewingTrash }: { index: number; viewingTrash
       </TableCell>
       <TableCell role="cell" className={`${CELL_STACK} text-right`}>
         {/* The row's Publish is hidden at rest; Restore, in the trash, always shows. */}
-        {viewingTrash ? <SkeletonPill className="h-6 w-[4.25rem] rounded-md" /> : null}
+        {viewingTrash ? <SkeletonPill className="h-6 w-[4.25rem]" /> : null}
       </TableCell>
       <TableCell role="cell" className={`${CELL_STACK} text-right`}>
         {/* The row menu's ghost button is only its icon at rest: hold its height, draw nothing. */}

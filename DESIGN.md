@@ -81,18 +81,18 @@ components:
 button-primary:
 backgroundColor: "{colors.primary}"
 textColor: "{colors.primary-foreground}"
-rounded: "{rounded.md}"
+rounded: "{rounded.full}"
 height: "2.25rem"
 padding: "0 0.75rem"
 button-outline:
 backgroundColor: "{colors.paper}"
 textColor: "{colors.ink}"
-rounded: "{rounded.md}"
+rounded: "{rounded.full}"
 height: "2.25rem"
 padding: "0 0.75rem"
 input:
 textColor: "{colors.ink}"
-rounded: "{rounded.md}"
+rounded: "{rounded.full}"
 height: "2.25rem"
 padding: "0.25rem 0.75rem"
 card:
@@ -645,7 +645,7 @@ opacity, colour and a few pixels of travel.
 **The Drawn Page Rule.** A page that is loading draws everything it already knows for real (the
 title, the intro if it's fixed, the filter bar, the column headers, a sheet's header) and stands a
 skeleton in only for the data, in the shape and size of what replaces it: text as one-line bars
-in the text's own size, badges as pills, buttons as square-cornered blocks, thumbnails as tiles, table rows built from
+in the text's own size, badges and buttons as pills, thumbnails as tiles, table rows built from
 the real row's classes so they stack the same on a phone. Nothing moves when the data lands. No
 region says "Loading…" on screen: it announces its load once to assistive technology
 (`LoadingStatus`, "Loading Author entries…") and marks itself `aria-busy`, and its skeletons are
@@ -658,22 +658,21 @@ at once. A skeleton fades in and holds still: its status line says it is loading
 ## Shapes
 
 Tight, not soft: this is a data tool. The radius base is 0.25rem on a multiplying scale, so a
-corner is a few pixels, never a bubble. Cards, dialogs, sheets, menus and tooltips are 2xl (about
-7px); tiles xl, one step inside the card that holds them. Buttons, one-line fields, selects, text
-areas, input groups and the shell's controls are md (about 3px); menu and list items md;
-checkboxes and key hints sm. A focus ring follows its control's corner. Hairlines divide rows
-inside a card; cards have no border.
+container's corner is a few pixels, never a bubble. Cards, dialogs, sheets, menus and tooltips
+are 2xl (about 7px); tiles and text areas xl (about 6px), one step inside the card that holds
+them; menu and list items md. Buttons, one-line fields, selects, badges, segmented controls and
+icon buttons are pills (`rounded-full`, never a large step of the scale standing in for one).
+Hairlines divide rows inside a card; cards have no border.
 
-**The Label Rule.** Only what labels a state is fully round: status badges, counts, the
-segmented control's track, switches and dots. Anything you press or type into is square-cornered,
-so a pill always means "this is a status", never "this is a button".
+**The Pill Rule.** Anything you press or that labels a status is fully round. Square corners are
+for code and data blocks only.
 
 ## Components
 
-- **Buttons** (`ui/button.tsx`): square-cornered (`rounded-md`). Primary is an ink fill with paper text; outline is a rule
+- **Buttons** (`ui/button.tsx`): pills. Primary is an ink fill with paper text; outline is a rule
   over a faint `input` fill; ghost fills muted on hover; link is the work blue. Every size carries
   `hit-area`.
-- **Fields** (`ui/input.tsx`, `ui/textarea.tsx`, `ui/native-select.tsx`): square-cornered (`rounded-md`) with an `input`
+- **Fields** (`ui/input.tsx`, `ui/textarea.tsx`, `ui/native-select.tsx`): pills with an `input`
   hairline over an `input` fill. Focus: the `ring` edge and halo. Invalid: the destructive edge.
 - **Segmented** (`ui/segmented.tsx`): a radio group drawn as a muted pill track; the chosen
   segment is raised on paper.

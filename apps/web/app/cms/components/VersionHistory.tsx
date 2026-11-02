@@ -132,7 +132,7 @@ export function VersionHistory(props: {
                       <SkeletonText width="4rem" />
                     </span>
                   </div>
-                  {i === 0 ? null : <SkeletonPill className="h-8 w-[5.5rem] rounded-md" />}
+                  {i === 0 ? null : <SkeletonPill className="h-8 w-[5.5rem]" />}
                 </div>
               </li>
             ))}
