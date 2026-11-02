@@ -131,6 +131,7 @@ import {
   listWorkflowVersions,
   MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
+  MAX_PAGE_LIMIT,
   MAX_PART_URLS,
   mergeEnvironments,
   moderateEntry,
@@ -251,7 +252,6 @@ import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { toHttpError } from '../api/http';
-import { MAX_PAGE_LIMIT } from '../api/query';
 import { snapshotBody, updateWebhookBody, webhookBody } from '../api/validation';
 import type { McpDeps } from './deps';
 

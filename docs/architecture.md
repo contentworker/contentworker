@@ -710,5 +710,11 @@ See [Plugins](./plugins.md#hooks).
   outbox row rides in the same D1 batch.
 - **Denormalized read models** (`entry_published`, `asset_published`) make a delivery read a
   single-row lookup.
+- **Batched Delivery reads**: the reads one step of a Delivery request needs that don't depend on
+  each other (an entry and the space config, an include level's entries, assets and renditions)
+  go through `ContentStore.delivery.read`, which the D1 store sends as one `batch()`: one round
+  trip, id lists still chunked under the 100-parameter cap. A request's `DeliveryReads`
+  (`deliveryReads(ctx)`, made per request, never kept) reads the space config, content types and
+  renditions once per scope, so GraphQL fields don't read them again.
 - **Derived indexes off D1**: search lives in Durable Object FTS5 shards, so search maintenance
   never competes with content writes for D1's single writer.

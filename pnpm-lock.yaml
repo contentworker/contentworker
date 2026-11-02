@@ -828,6 +828,9 @@ importers:
       '@contentworker/domain':
         specifier: workspace:*
         version: link:../domain
+      '@contentworker/ports':
+        specifier: workspace:*
+        version: link:../ports
       graphql:
         specifier: 'catalog:'
         version: 17.0.2

@@ -1,12 +1,8 @@
 import { defineContentType } from '@contentworker/domain';
+import type { DeliveryResolvers, ResolvedEntry } from '@contentworker/ports';
 import { graphql } from 'graphql';
 import { describe, expect, it } from 'vitest';
-import {
-  buildDeliverySchema,
-  type DeliveryContext,
-  type DeliveryResolvers,
-  type ResolvedEntry,
-} from '../src/index';
+import { buildDeliverySchema, type DeliveryContext } from '../src/index';
 
 const article = defineContentType({
   apiId: 'article',

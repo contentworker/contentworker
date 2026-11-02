@@ -1,4 +1,5 @@
 import type { ContentType, FieldDefinition } from '@contentworker/domain';
+import type { ResolvedEntry } from '@contentworker/ports';
 import {
   GraphQLList,
   type GraphQLObjectType,
@@ -7,7 +8,7 @@ import {
   printSchema,
 } from 'graphql';
 import { describe, expect, it } from 'vitest';
-import { buildDeliverySchema, type DeliveryContext, type ResolvedEntry } from '../src/index';
+import { buildDeliverySchema, type DeliveryContext } from '../src/index';
 
 const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId'>): FieldDefinition =>
   ({

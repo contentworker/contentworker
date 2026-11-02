@@ -119,7 +119,7 @@ redacted and at most 500 characters.
 ## Shared query language
 
 Delivery and Preview entry list endpoints, and GraphQL resolvers, share the query parser in
-`packages/http/src/api/query.ts`. In addition to `content_type`, `locale`, `limit`, `skip`, `since`, and
+`packages/application/src/entry-query.ts` (`entryQueryFrom`). In addition to `content_type`, `locale`, `limit`, `skip`, `since`, and
 `include`:
 
 | Parameter         | Syntax                                | Meaning                                                               |
@@ -680,7 +680,11 @@ with content grants reads no assets (lists are empty, gets are 403, embeds stay 
 `@contentworker/graphql-gen`. Cached per `(space, environment)` keyed on content-type versions.
 
 - Query via `?query=` (GET) or JSON body `{ query, variables?, operationName? }` (POST).
-- Resolvers call the same use-cases as REST with locale flattening and link resolution.
+- Resolvers call the same use-cases as REST with locale flattening and link resolution
+  (`deliveryGraphResolvers` in `@contentworker/application`, built per request with the caller's
+  principal). A request reads the space config and content types once, with the schema, and
+  reuses them in every field; each step's independent reads (an entry, one include level's links,
+  an asset with its renditions) go to D1 together, one round trip.
 - `asset(id, locale)` is a typed `Asset`: `title`, `description` and `altText` each take
   `locale` (falling back to the query's, then the space default); `url(rendition, width)` picks a
   rendition or the width step at or above `width`; `srcset { width url }`, `renditions`,
