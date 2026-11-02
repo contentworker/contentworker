@@ -199,8 +199,13 @@ matched as conflicts: an import must not silently revive something someone delet
 rules, tables, links and inline marks map to their rich-text nodes; a blank-line-separated block of
 plain text becomes paragraphs, as WordPress renders it. The reader is lenient (unclosed tags and stray
 end tags are recovered the way a browser recovers them) and keeps the text of any element it does not
-know. Images and embeds become **links to their source**, since there is no asset to point an embed at
-yet; a link is visible and fixable, where a dropped image is neither. A `<table>` becomes a `table`
+know. Media from an allowed embed provider becomes an **`embed` node** holding its page URL and
+provider (no title until someone resolves it): a provider's player `<iframe>`, a post
+`<blockquote>` (`twitter-tweet`, `bluesky-embed`, `mastodon-embed`), a WordPress `wp-block-embed`
+figure (its caption kept as a paragraph) and a provider URL alone on its line or in
+`[embed]…[/embed]`; the player markup is dropped. Images and other media become **links to their
+source**, since there is no asset to point an embed at yet; a link is visible and fixable, where a
+dropped image is neither. A `<table>` becomes a `table`
 (rows from `thead`, `tbody` and `tfoot` alike, `th` as header cells, `colspan`/`rowspan` kept); its
 caption becomes a paragraph before it, and a table with no cells or over the size limits keeps its
 text as paragraphs instead. A value that is already a rich-text document is left alone.

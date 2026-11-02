@@ -562,6 +562,7 @@ export {
   formatContentRef,
   parseContentRef,
 } from './content-ref.js';
+export { type EmbedCard, type EmbedData, type EmbedKind, embedCard } from './embed.js';
 export {
   type ImageProps,
   type ImagePropsOptions,

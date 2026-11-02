@@ -24,6 +24,7 @@ export * from './promotion';
 export * from './query/query';
 export * from './reference/references';
 export * from './release/release';
+export * from './rich-text/embed';
 export * from './rich-text/from-html';
 export * from './rich-text/rich-text';
 export * from './scheduling/agent-schedule';

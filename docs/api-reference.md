@@ -312,6 +312,7 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 | DELETE | `…/entries/:id/permanent`          | `content:publish` | **Irreversible** delete of a trashed entry. `?force=true` overrides the inbound-link guard                     |
 | POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft                                                               |
 | POST   | `…/entries/:id/preview-link`       | `content:write`   | Mint a shareable preview link `{ ttlHours?, previewBaseUrl? }` (default 72 h); `201 { url, token, expiresAt }` |
+| POST   | `…/embeds/resolve`                 | `content:write`   | Resolve a media URL `{ url }` into a rich-text `embed` node's data; `200 { embed, resolved }`                  |
 
 **Held to a version.** Publish, unpublish and version restore take an optional
 `?expectedVersion=N`: the entry's `currentVersion` as the caller read it. If someone has saved a
@@ -348,6 +349,16 @@ Permanent deletion is refused with **409** while _published_ entries still link 
 Those are the links delivery resolves per request, so removing the target under them would break
 live pages. Reference edges are recorded at publish
 time, so a link from an unpublished draft does not block the delete.
+
+**Embeds.** `POST …/embeds/resolve` (MCP `embed_resolve`) asks an allowed provider's oEmbed
+endpoint (YouTube, Vimeo, X, Bluesky, Mastodon, Spotify, SoundCloud) about an https URL and
+returns `{ embed, resolved }`: `embed` is the data of an `embed` rich-text node (`url`,
+`provider`, `kind`, and when the provider answered `title`, `authorName`, `thumbnail`, `width`,
+`height`, `aspectRatio`); the provider's player `html` is discarded. A URL that is not https, not
+on an allowed provider, or whose oEmbed endpoint is not a public address is refused with **422**
+before anything is fetched. A provider that errors, redirects, times out (5 s) or answers more than
+64 KiB is not an error: `resolved` is `false` and `embed` holds the URL, provider and kind alone,
+which is valid to store. See [Rich text](./domain-model.md#rich-text).
 
 ### Entries: AI and semantics
 

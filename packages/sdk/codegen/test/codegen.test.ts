@@ -240,6 +240,13 @@ describe('@contentworker/sdk-codegen generator', () => {
     expect(source).toContain('hero?: Localized<AssetLink>;');
   });
 
+  it("types an embed node's data as structured metadata, not markup", () => {
+    expect(source).toContain('export interface EmbedData {');
+    expect(source).toContain("kind?: 'video' | 'post' | 'audio' | 'other';");
+    expect(source).toContain('& Partial<EmbedData> &');
+    expect(source).not.toMatch(/html\??:/);
+  });
+
   it('maps unrecognized field types to unknown', () => {
     expect(edge).toContain('future?: unknown;');
   });
@@ -275,6 +282,10 @@ declare const post: BlogPostFields;
 for (const block of post.blocks ?? []) {
   if (block._type === 'hero') block.heading.toUpperCase();
   else block.target.id.toUpperCase();
+}
+// An embed node's data reads as EmbedData.
+for (const node of article.body?.content ?? []) {
+  if (node.nodeType === 'embed' && node.data?.url) node.data.url.toUpperCase();
 }
 `;
     // types: [] keeps ambient @types packages (e.g. node) out of the check —

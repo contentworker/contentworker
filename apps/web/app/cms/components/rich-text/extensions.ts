@@ -9,6 +9,7 @@ import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { EmbedNodeView, InlineEmbedNodeView, UnknownNodeView } from './EmbedNodeView';
+import { type EmbedResolver, ExternalEmbed } from './external-embed';
 
 const embedNode = (name: string) =>
   Node.create({
@@ -100,8 +101,12 @@ export const UnknownBlock = unknownNode('unknownBlock', { inline: false });
 /** Lossless carrier for stored inline nodes (entry/asset hyperlinks, inline embeds). */
 export const UnknownInline = unknownNode('unknownInline', { inline: true });
 
-/** The full extension set; also used headlessly (getSchema) by the mapper tests. */
-export function buildExtensions() {
+/**
+ * The full extension set; also used headlessly (getSchema) by the mapper tests.
+ * `resolveEmbed` is read whenever an embed is inserted, so the set stays stable
+ * while the client behind it changes.
+ */
+export function buildExtensions(opts: { resolveEmbed?: () => EmbedResolver | undefined } = {}) {
   return [
     StarterKit.configure({
       heading: { levels: [1, 2, 3] },
@@ -115,6 +120,7 @@ export function buildExtensions() {
     TableCell,
     EmbeddedEntryBlock,
     EmbeddedAssetBlock,
+    ExternalEmbed.configure({ resolver: opts.resolveEmbed ?? (() => undefined) }),
     EmbeddedEntryInline,
     EntryLink,
     AssetLink,

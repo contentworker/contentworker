@@ -35,6 +35,7 @@ export * from './context';
 export * from './delivery';
 export * from './delivery-graphql';
 export * from './delivery-reads';
+export * from './embeds';
 export * from './entries';
 export * from './entry-query';
 export * from './environment-purge';

@@ -166,6 +166,7 @@ import {
   requestAssetZip,
   requestPromotion,
   requestReindex,
+  resolveEmbed,
   resolveTask,
   restoreAsset,
   restoreAssetVersion,
@@ -317,6 +318,7 @@ import {
   releaseItemBody,
   replaceAssetFileBody,
   replaceAssetFileUploadBody,
+  resolveEmbedBody,
   revokeConnectionBody,
   roleBody,
   runAiActionBody,
@@ -1376,6 +1378,32 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);
     return c.json(await canvasToEntry(ctx, ai, scopeOf(c), body));
   });
+  // Rich text's external media: a pasted URL becomes an `embed` node's data. Scoped like a
+  // content write, since that is the only thing the answer is for.
+  app.post(
+    `${BASE}/embeds/resolve`,
+    doc('Entries', 'Resolve a media URL for a rich-text embed', {
+      body: resolveEmbedBody,
+      ok: docs.resolvedEmbed,
+      description:
+        "Asks an allowed provider's oEmbed endpoint (YouTube, Vimeo, X, Bluesky, Mastodon, " +
+        'Spotify, SoundCloud) about an https URL and returns the data of an `embed` rich-text ' +
+        "node: title, author, thumbnail and size. The provider's player HTML is discarded; " +
+        'channels render the embed themselves. A URL that is not https or not on an allowed ' +
+        'provider is refused (422). A provider that does not answer is not an error: `resolved` is ' +
+        'false and the embed holds the URL and provider alone, which is valid to store.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, resolveEmbedBody);
+      if (!deps.remoteFetcher) {
+        throw new ValidationError([
+          { field: 'url', message: 'This deployment cannot fetch embed metadata' },
+        ]);
+      }
+      return c.json(await resolveEmbed(deps.remoteFetcher, body));
+    },
+  );
   app.get(
     `${BASE}/entries/:id`,
     doc('Entries', 'Get an entry (draft state)', { ok: docs.entry }),

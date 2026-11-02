@@ -28,10 +28,14 @@
  *   the domain wouldn't accept (`isWellFormedTable`) rides through `unknownBlock`
  *   instead, since the editor's table plugin would otherwise "fix" it by
  *   inventing or dropping cells.
+ * - An `embed` (external media) maps to an `externalEmbed` atom whose `embed`
+ *   attr holds its data. Serializing keeps only the embed data keys the domain
+ *   knows, so nothing else (provider markup least of all) is ever written back.
+ *   An embed the domain wouldn't accept rides through `unknownBlock`.
  */
 
-import type { RichTextDocument, RichTextNode } from '@contentworker/domain';
-import { isRichTextDocument, isWellFormedTable } from '@contentworker/domain';
+import type { EmbedData, RichTextDocument, RichTextNode } from '@contentworker/domain';
+import { embedDataIssues, isRichTextDocument, isWellFormedTable } from '@contentworker/domain';
 
 /** Minimal ProseMirror JSON shape (matches @tiptap/core's JSONContent). */
 export interface PmNode {
@@ -189,6 +193,10 @@ function blockToPm(node: RichTextNode): PmNode {
       return { type: 'horizontalRule' };
     case 'table':
       return tableToPm(node) ?? { type: 'unknownBlock', attrs: { raw: node } };
+    case 'embed':
+      return embedDataIssues(node.data).length === 0 && !node.content?.length
+        ? { type: 'externalEmbed', attrs: { embed: embedDataOf(node.data) } }
+        : { type: 'unknownBlock', attrs: { raw: node } };
     default: {
       const container = BLOCK_CONTAINERS[node.nodeType];
       if (container) {
@@ -203,6 +211,28 @@ function blockToPm(node: RichTextNode): PmNode {
       return { type: 'unknownBlock', attrs: { raw: node } };
     }
   }
+}
+
+/** The keys an embed stores; anything else on a node or an editor attr is dropped. */
+const EMBED_KEYS = [
+  'url',
+  'provider',
+  'kind',
+  'title',
+  'authorName',
+  'thumbnail',
+  'width',
+  'height',
+  'aspectRatio',
+] as const satisfies readonly (keyof EmbedData)[];
+
+/** An embed's data with only the keys the domain defines, in a stable order. */
+export function embedDataOf(data: Readonly<Record<string, unknown>> | undefined): EmbedData {
+  const out: Record<string, unknown> = {};
+  for (const key of EMBED_KEYS) {
+    if (data?.[key] !== undefined) out[key] = data[key];
+  }
+  return out as unknown as EmbedData;
 }
 
 /** The editor's table, or `undefined` when the stored one isn't well formed. */
@@ -341,6 +371,17 @@ function pmToBlock(node: PmNode): RichTextNode[] {
       return [{ nodeType: 'hr', content: [] }];
     case 'unknownBlock':
       return node.attrs?.raw ? [node.attrs.raw as RichTextNode] : [];
+    case 'externalEmbed': {
+      const embed = node.attrs?.embed;
+      if (!embed || typeof embed !== 'object') return [];
+      return [
+        {
+          nodeType: 'embed',
+          data: { ...embedDataOf(embed as Record<string, unknown>) },
+          content: [],
+        },
+      ];
+    }
     case 'table': {
       const rows = (node.content ?? []).flatMap(pmToBlock);
       return rows.length > 0 ? [{ nodeType: 'table', data: {}, content: rows }] : [];
