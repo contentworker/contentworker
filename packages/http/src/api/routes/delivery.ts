@@ -10,12 +10,14 @@ import {
   getPublishedEntry,
   hybridSearch,
   listDeliveredAssets,
+  listDeliveredRedirects,
   listPublishedEntries,
   liveEventFor,
   MAX_PAGE_LIMIT,
   maskDeliveredFields,
   parseEntryQuery,
   parseImageTransform,
+  resolveDeliveredRedirect,
   searchDeliveredAssets,
   semanticSearch,
   transformPublishedAssetUrl,
@@ -278,6 +280,32 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
         ),
       );
     },
+  );
+
+  // Redirects are site data, not content: any delivery key reads them, content grants or not.
+  // Cached and purged like every read here (`redirects.changed`, and a publish's slug change).
+  app.get(
+    `${BASE}/redirects`,
+    describe('listRedirects'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => {
+      const items = await listDeliveredRedirects(ctx, scopeOf(c));
+      return c.json({ items, total: items.length });
+    },
+  );
+  app.get(
+    `${BASE}/redirects/resolve`,
+    describe('resolveRedirect'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) =>
+      c.json(
+        await resolveDeliveredRedirect(
+          ctx,
+          scopeOf(c),
+          c.req.query('path') ?? '',
+          c.req.query('locale') || undefined,
+        ),
+      ),
   );
 
   // Live Content API: an SSE stream of published-content changes for this scope.

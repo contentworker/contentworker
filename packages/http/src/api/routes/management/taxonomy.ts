@@ -5,29 +5,19 @@ import {
   deleteConcept,
   deleteScheme,
   deleteTag,
-  getEntryMetadata,
   listConcepts,
   listSchemes,
   listTags,
   setConceptBroader,
-  setEntryMetadata,
 } from '@contentworker/application';
 import { SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
-import {
-  broaderBody,
-  conceptBody,
-  entryMetadataBody,
-  parseBody,
-  schemeBody,
-  tagBody,
-} from '../../validation';
-import { BASE, entryAccess, scopeOf } from './shared';
+import { broaderBody, conceptBody, parseBody, schemeBody, tagBody } from '../../validation';
+import { BASE, scopeOf } from './shared';
 
 export function taxonomyRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
-  const { authorizeEntryRead } = entryAccess(ctx);
   const app = new Hono<AuthVars>();
 
   // --- taxonomy (controlled vocabulary) ----------------------------------
@@ -73,24 +63,6 @@ export function taxonomyRoutes(deps: AuthDeps): Hono<AuthVars> {
     await deleteTag(ctx, scopeOf(c), c.req.param('id'));
     return c.body(null, 204);
   });
-
-  // --- entry taxonomy associations ---------------------------------------
-  app.get(`${BASE}/entries/:id/metadata`, requireScope(SCOPES.previewRead), async (c) => {
-    await authorizeEntryRead(c, c.req.param('id'));
-    return c.json(
-      (await getEntryMetadata(ctx, scopeOf(c), c.req.param('id'))) ?? { tags: [], concepts: [] },
-    );
-  });
-  app.put(`${BASE}/entries/:id/metadata`, requireScope(SCOPES.contentWrite), async (c) =>
-    c.json(
-      await setEntryMetadata(
-        ctx,
-        scopeOf(c),
-        c.req.param('id'),
-        await parseBody(c, entryMetadataBody),
-      ),
-    ),
-  );
 
   return app;
 }

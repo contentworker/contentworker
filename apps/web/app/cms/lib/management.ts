@@ -25,6 +25,11 @@ import type {
   EntryWorkflowState,
   FilterOp,
   GraphIssue,
+  Redirect,
+  RedirectChain,
+  RedirectInput,
+  RedirectMatch,
+  RedirectSetReport,
   ReferenceEdge,
   Release,
   ReleaseItem,
@@ -557,6 +562,20 @@ export const WEBHOOK_TOPICS = [
   'content_type.published',
 ] as const;
 export type WebhookTopic = (typeof WEBHOOK_TOPICS)[number];
+
+/** A redirect write: the redirect, and the chains it now takes part in. */
+export interface RedirectWrite {
+  readonly redirect: Redirect;
+  readonly chains: readonly RedirectChain[];
+}
+
+export interface RedirectImportReport {
+  readonly dryRun: boolean;
+  readonly created: number;
+  readonly updated: number;
+  readonly unchanged: number;
+  readonly chains: readonly RedirectChain[];
+}
 
 export interface WebhookSummary {
   readonly id: string;
@@ -2179,6 +2198,52 @@ export function createManagementClient(
         `${mgmt}/entries/${encodeURIComponent(entryId)}/preview-link`,
         input ?? {},
       );
+    },
+
+    // --- settings: redirects (environment-scoped) ------------------------
+    /** One page by source; `q` searches source, destination and note. */
+    listRedirects(
+      query: { q?: string; cursor?: string; limit?: number } = {},
+    ): Promise<{ items: Redirect[]; nextCursor?: string }> {
+      const qs = new URLSearchParams();
+      if (query.q) qs.set('q', query.q);
+      if (query.cursor) qs.set('cursor', query.cursor);
+      if (query.limit) qs.set('limit', String(query.limit));
+      return req('GET', `${mgmt}/redirects${qs.size ? `?${qs}` : ''}`);
+    },
+    createRedirect(input: RedirectInput): Promise<RedirectWrite> {
+      return req('POST', `${mgmt}/redirects`, input);
+    },
+    /** Partial: fields left out keep their value; `null` clears locale or note. */
+    updateRedirect(id: string, changes: Partial<RedirectInput>): Promise<RedirectWrite> {
+      return req('PATCH', `${mgmt}/redirects/${encodeURIComponent(id)}`, changes);
+    },
+    deleteRedirect(id: string): Promise<void> {
+      return req('DELETE', `${mgmt}/redirects/${encodeURIComponent(id)}`);
+    },
+    /** All or nothing; `dryRun` reports what it would do. */
+    importRedirects(input: {
+      format: 'csv' | 'json';
+      data: string;
+      dryRun?: boolean;
+    }): Promise<RedirectImportReport> {
+      return req('POST', `${mgmt}/redirects/import`, input);
+    },
+    analyzeRedirects(): Promise<RedirectSetReport & { count: number; max: number }> {
+      return req('GET', `${mgmt}/redirects/analysis`);
+    },
+    collapseRedirectChains(): Promise<{ updated: number }> {
+      return req('POST', `${mgmt}/redirects/collapse-chains`);
+    },
+    /** What a path resolves to among the enabled redirects, or null. */
+    async resolveRedirect(path: string, locale?: string): Promise<RedirectMatch | null> {
+      const qs = new URLSearchParams({ path, ...(locale ? { locale } : {}) });
+      try {
+        return await req<RedirectMatch>('GET', `${mgmt}/redirects/resolve?${qs}`);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
     },
 
     // --- settings: webhooks (environment-scoped) -------------------------

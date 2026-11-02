@@ -12,6 +12,7 @@ import {
   assertWritableFields,
   authorizeContent,
   type EntryFields,
+  MAX_URL_PATTERN_LENGTH,
   SCOPES,
   ValidationError,
 } from '@contentworker/domain';
@@ -40,6 +41,15 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           name: z.string(),
           displayField: z.string(),
           fields: z.array(fieldSchema),
+          urlPattern: z
+            .string()
+            .max(MAX_URL_PATTERN_LENGTH)
+            .nullable()
+            .optional()
+            .describe(
+              'where its entries live on the site, e.g. /blog/{slug} ({id}, {locale} or a Slug ' +
+                'field); a publish that changes the slug redirects the old path. null clears it',
+            ),
           ...scopeArgs,
         }),
       ),
@@ -51,6 +61,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           apiId: args.apiId,
           name: args.name,
           displayField: args.displayField,
+          ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
           fields: args.fields as any,
         }),

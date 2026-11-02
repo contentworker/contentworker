@@ -56,6 +56,10 @@ export const contentType = z.object({
   name: z.string(),
   displayField: z.string(),
   fields: z.array(field),
+  urlPattern: z
+    .string()
+    .optional()
+    .describe('Where its entries live on the site, e.g. /blog/{slug}'),
   version: z.int(),
   status: z.enum(['draft', 'published']),
 });

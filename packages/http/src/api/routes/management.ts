@@ -26,6 +26,7 @@ import { contentTypesRoutes } from './management/content-types';
 import { deploymentRoutes } from './management/deployment';
 import { docsRoutes } from './management/docs';
 import { entriesRoutes } from './management/entries';
+import { entryTaxonomyRoutes } from './management/entry-taxonomy';
 import { environmentAliasesRoutes } from './management/environment-aliases';
 import { environmentMergeRoutes } from './management/environment-merge';
 import { functionsRoutes } from './management/functions';
@@ -34,6 +35,7 @@ import { oauthConnectionsRoutes } from './management/oauth-connections';
 import { pluginsRoutes } from './management/plugins';
 import { promotionsRoutes } from './management/promotions';
 import { provisioningRoutes } from './management/provisioning';
+import { redirectsRoutes } from './management/redirects';
 import { releasesRoutes } from './management/releases';
 import { rolesRoutes } from './management/roles';
 import { semanticsRoutes } from './management/semantics';
@@ -90,6 +92,8 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   collaborationRoutes,
   workflowManagementRoutes,
   taxonomyRoutes,
+  redirectsRoutes,
+  entryTaxonomyRoutes,
 ];
 
 /** Management API (CMA): authoring + publishing, gated by RBAC scopes. */

@@ -146,7 +146,8 @@ After each `contentworker-events` batch, the engine collects one `deliveryScopeT
 space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/purges.ts`):
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
 `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed` (Delivery lists a
-collection's published members), `content_type.published`, `release.published`,
+collection's published members), `redirects.changed` (Delivery serves the enabled redirects),
+`content_type.published`, `release.published`,
 `environment_alias.changed`, `environment.deleted`. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
@@ -317,6 +318,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset_collection.changed`                                                         | `collectionId` (a collection was created, renamed or deleted, or its members were added, removed or reordered; also sent for each collection a deleted asset leaves; Delivery's collection read and every share page that shows it are purged) |
 | `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the media origin reads the link's row itself; a revoke purges its cached page, now and after 90 s) |
 | `asset_zip.requested`                                                              | `jobId` (a control event: the engine starts `AssetZipWorkflow`, or fails the job when `ASSET_ZIP_WF` is unbound; no webhooks apply) |
+| `redirects.changed`                                                                | `count` (redirects written or removed by a create, update, delete, import, chain collapse or snapshot import; Delivery's `redirects` reads are purged. A publish whose slug change writes redirects does not send it: its `entry.published` purges the same responses) |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                                                                        |
 | `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                                                              |
 | `environment_alias.changed`                                                        | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias                                                                                                                                        |

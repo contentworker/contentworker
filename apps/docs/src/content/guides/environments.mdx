@@ -128,8 +128,8 @@ space-wide, and a webhook can't be scoped to an alias, only to an environment's 
 
 ## Export and import a snapshot
 
-A snapshot is portable JSON of an environment: content model, entries, taxonomy, workflows and
-asset metadata. Use it for backups, or to seed an environment elsewhere.
+A snapshot is portable JSON of an environment: content model, entries, taxonomy, workflows,
+redirects and asset metadata. Use it for backups, or to seed an environment elsewhere.
 
 - `GET …/environments/{env}/export` returns the snapshot (`environment_export`).
 - `POST …/environments/{env}/import` replays one into an empty environment (`environment_import`).

@@ -37,6 +37,7 @@ import { registerOAuthConnectionTools } from './tools/oauth-connections';
 import { registerPluginTools } from './tools/plugins';
 import { registerPromotionTools } from './tools/promotions';
 import { registerReadTools } from './tools/read';
+import { registerRedirectTools } from './tools/redirects';
 import { registerReleaseTools } from './tools/releases';
 import { registerRoleTools } from './tools/roles';
 import { DEFAULT_ENV, DEFAULT_SPACE, ok, type ToolContext } from './tools/shared';
@@ -98,6 +99,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerReleaseTools,
   registerCollaborationTools,
   registerWorkflowTools,
+  registerRedirectTools,
   registerTaxonomyTools,
   registerAgentTools,
   registerAuditLogTools,
