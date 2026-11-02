@@ -178,6 +178,29 @@ describe('Diagram contrast (docs/diagrams)', () => {
   }
 });
 
+// The One Meaning Rule: a workflow node's category colour never looks like a status.
+describe('Node categories never take a status hue', () => {
+  const hue = (c: string) => {
+    const m = /^oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)$/.exec(c);
+    return m && Number(m[2]) > 0.03 ? Number(m[3]) : null;
+  };
+  const apart = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+  for (const scheme of ['light', 'dark'] as const) {
+    it(`${scheme}: every chromatic cat-* sits 20° or more from ok, wait, bad and undo`, () => {
+      const p = palette(scheme);
+      const statuses = (['ok', 'wait', 'bad', 'undo'] as const)
+        .map((t) => hue(p[t]))
+        .filter((h): h is number => h !== null);
+      for (const cat of ['cat-trigger', 'cat-commerce', 'cat-control', 'cat-ai'] as const) {
+        const h = hue(p[cat]);
+        if (h === null) continue;
+        for (const s of statuses)
+          expect(apart(h, s), `${cat} near a status hue`).toBeGreaterThanOrEqual(20);
+      }
+    });
+  }
+});
+
 describe('the docs draw only with defined `--cw-*` names', () => {
   const docs = (rel: string) => read(`../../../apps/docs/src/${rel}`);
   const sources = [
