@@ -128,6 +128,11 @@ describe('embed_resolve (MCP), on the same use-case as POST …/embeds/resolve',
     })) as ToolResult;
     // A validation failure, not the internal-error mask a TypeError would become.
     expect(result.isError).toBe(true);
-    expect(text(result)).toBe('One or more fields are invalid');
+    expect(JSON.parse(text(result))).toMatchObject({
+      error: {
+        code: 'validation_failed',
+        issues: [{ field: 'url', message: 'This deployment cannot fetch embed metadata' }],
+      },
+    });
   });
 });
