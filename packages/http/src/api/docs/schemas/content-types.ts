@@ -60,6 +60,12 @@ export const contentType = z.object({
     .string()
     .optional()
     .describe('Where its entries live on the site, e.g. /blog/{slug}'),
+  publishedUrlPattern: z
+    .string()
+    .optional()
+    .describe(
+      'urlPattern as last published: what Delivery’s routes serve until the next publish. Read-only',
+    ),
   version: z.int(),
   status: z.enum(['draft', 'published']),
 });

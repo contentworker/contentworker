@@ -156,6 +156,8 @@ export const contentTypes = sqliteTable(
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
     /** Where the type's entries live on the site (0017_redirects). */
     urlPattern: text('url_pattern'),
+    /** `urlPattern` as last published; Delivery's routes (0020_content_type_published_url_pattern). */
+    publishedUrlPattern: text('published_url_pattern'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.apiId] })],
 );

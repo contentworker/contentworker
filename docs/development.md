@@ -301,6 +301,12 @@ admin, deployment-wide (`grants` JSON names each space). Only the links' token h
 makes a link work once, and `expired` is read from `expires_at`, never written (see
 [Auth & RBAC](./auth-and-rbac.md#invitations)). Nothing is backfilled.
 
+`0020_content_type_published_url_pattern.sql` adds `content_types.published_url_pattern`
+(nullable): the type's `url_pattern` as it was when last published, which Delivery's `…/routes`
+serves, so a revision leaves the route as it was until the next publish. It backfills it from
+`url_pattern` for every row whose `status` is `published`; a draft row gets none, so a published
+type with an unpublished revision at migration time serves no route until it is published again.
+
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
 `archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)

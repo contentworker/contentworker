@@ -142,8 +142,9 @@ const DOCS = {
       ok: deliveredRouteList,
       description:
         'Where each published content type’s entries live on the site (its `urlPattern`), for a ' +
-        'front end that routes pages from the content model. Only published types that have ' +
-        'one, by content type; a key limited to some content types sees only theirs. A ' +
+        'front end that routes pages from the content model. Every type published with one, ' +
+        'by content type, with the pattern as last published: an unpublished revision leaves ' +
+        'the route as it was. A key limited to some content types sees only theirs. A ' +
         'pattern’s placeholders are `{id}`, `{locale}` or one of the type’s Slug fields.',
     }),
   resolveRedirect: () =>

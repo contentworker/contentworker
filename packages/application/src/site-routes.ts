@@ -24,7 +24,10 @@ export interface RouteDeliveryOptions {
   readonly reads?: DeliveryReads;
 }
 
-/** Every published content type with a URL pattern, by content type. */
+/**
+ * Every content type published with a URL pattern, by content type, with the pattern as last
+ * published: a revision not yet published (a draft pattern included) leaves its route as it was.
+ */
 export async function listDeliveredRoutes(
   ctx: AppContext,
   scope: Scope,
@@ -36,9 +39,9 @@ export async function listDeliveredRoutes(
   });
   const routes: DeliveredRoute[] = [];
   for (const t of contentTypes) {
-    if (t.status !== 'published' || !t.urlPattern) continue;
+    if (!t.publishedUrlPattern) continue;
     if (opts.readable && !opts.readable(t.apiId)) continue;
-    routes.push({ contentType: t.apiId, urlPattern: t.urlPattern });
+    routes.push({ contentType: t.apiId, urlPattern: t.publishedUrlPattern });
   }
   return routes.sort((a, b) =>
     a.contentType < b.contentType ? -1 : a.contentType > b.contentType ? 1 : 0,

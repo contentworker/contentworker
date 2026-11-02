@@ -12,6 +12,7 @@ import {
   normalizeRedirectSource,
   parseCsv,
   planSlugRedirects,
+  publishedContentType,
   type Redirect,
   redirectSetError,
   redirectsFromCsv,
@@ -305,6 +306,25 @@ describe('URL patterns', () => {
     expect(() => reviseContentType(ct, { fields: [fields[0] as FieldDefinition] })).toThrow(
       ValidationError,
     );
+  });
+
+  it('becomes the published pattern only on a publish', () => {
+    const ct = defineContentType({
+      apiId: 'post',
+      name: 'Post',
+      displayField: 'title',
+      fields,
+      urlPattern: '/blog/{slug}',
+    });
+    expect(ct.publishedUrlPattern).toBeUndefined();
+    const published = publishedContentType(ct);
+    expect(published).toMatchObject({ status: 'published', publishedUrlPattern: '/blog/{slug}' });
+    const revised = reviseContentType(published, { urlPattern: '/news/{slug}' });
+    expect(revised).toMatchObject({ status: 'draft', publishedUrlPattern: '/blog/{slug}' });
+    expect(publishedContentType(revised).publishedUrlPattern).toBe('/news/{slug}');
+    const cleared = publishedContentType(reviseContentType(revised, { urlPattern: null }));
+    expect(cleared.publishedUrlPattern).toBeUndefined();
+    expect('publishedUrlPattern' in cleared).toBe(false);
   });
 
   it('builds a path per locale, or none when the slug is missing', () => {
