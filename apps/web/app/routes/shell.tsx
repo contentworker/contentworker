@@ -36,7 +36,6 @@ import {
   ChevronsUpDown,
   Ellipsis,
   type LucideIcon,
-  MessageSquareText,
   Monitor,
   Moon,
   Search,
@@ -449,7 +448,8 @@ function AssistantToggle() {
           : 'text-muted-foreground hover:bg-accent hover:text-foreground',
       )}
     >
-      <MessageSquareText className="size-4" aria-hidden="true" />
+      {/* An agent at rest is the mark in the AI tone (DESIGN.md). */}
+      <Mark className="size-4 text-ai" />
       {/* Named by its word (visible from sm), so a voice command can say it. */}
       <span className="max-sm:sr-only">Coworker</span>
     </button>
@@ -765,7 +765,7 @@ function TabBar({
   );
   const state = (active: boolean) =>
     active
-      ? 'font-medium text-foreground before:absolute before:inset-x-3 before:top-0 before:h-0.5 before:bg-brand'
+      ? 'font-medium text-foreground before:absolute before:inset-x-3 before:top-0 before:h-0.5 before:bg-brand [&>svg]:text-brand'
       : 'text-muted-foreground';
   return (
     <>

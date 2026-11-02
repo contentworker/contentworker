@@ -136,10 +136,12 @@ status.
 ### Accent
 
 - **Brand** (`brand`, purple): contentworker's accent, the colour of its mark. It marks where you
-  are and what you chose: the mark (sidebar, top bar, sign-in), the current page's tick and icon
-  (sidebar and tab bar), the current item's tick in a page's own list (Settings sections, content
-  types), the current folder's icon, the active tab's underline, focus (`ring` and the page-wide outline), checked checkboxes and switches
-  and the chosen option card, the text selection and the caret. A model's work wears it too: `ai`
+  are and what you chose: the mark (sidebar, top bar, sign-in); the current item, in one rule
+  everywhere (the sidebar, a page's own list such as Settings sections, content types and asset
+  folders): a 2px tick 1rem long on its leading edge (`tick-current`), and its icon in brand when
+  it has one (on the phone's tab bar the tick runs along the top); the active tab's underline;
+  focus (`ring` and the page-wide outline); checked checkboxes, switches and radio items and the
+  chosen option card; the text selection and the caret. A model's work wears it too: `ai`
   is the brand, so the AI loader (`ComposeLoader`), the AI stamp and agent proposals read as
   contentworker at work. Never a button fill, never a background wash. Its edge holds 3:1 and its
   words 4.5:1 on paper and muted fills in both themes; on a brand fill, words are
@@ -704,5 +706,7 @@ theme follows the system until the reader picks Light or Dark. There is no servi
 - **Don't** import the SaaS-gradient look: no gradients, glassmorphism or marketing energy.
 - **Don't** scatter sparkle icons or "AI" buttons; AI lives inside flows and, when it ships, in the
   one summonable assistant.
-- **Don't** use coloured side-stripes as accents, or solid saturated fills for status.
+- **Don't** use coloured side-stripes as accents (a card's, row's or alert's thick coloured edge), or
+  solid saturated fills for status. The current item's 2px `tick-current` marks place, not
+  emphasis, and is the one brand edge.
 - **Don't** make a person wait on motion: an action responds at once.
