@@ -13,6 +13,7 @@ import type {
   BlobStore,
   Hasher,
   ImportSource,
+  RemoteFetcher,
   WorkflowEngine,
 } from '@contentworker/ports';
 
@@ -50,6 +51,8 @@ export interface McpDeps {
   readonly blob?: BlobStore;
   /** Hands asset files to ingest; absent, asset_reingest refuses (not configured). */
   readonly assetIngest?: AssetIngestQueue;
+  /** Bounded, redirect-refusing outbound GETs (embed metadata); absent, embed_resolve refuses. */
+  readonly remoteFetcher?: RemoteFetcher;
   /** Whether people sign in through SSO (for the last-administrator rule). Absent: no SSO. */
   readonly accessPolicy?: AccessPolicy;
 }

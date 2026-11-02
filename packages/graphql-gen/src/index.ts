@@ -43,6 +43,19 @@ const JSONScalar = new GraphQLScalarType({
   serialize: (v) => v,
 });
 
+/**
+ * What a RichText field holds, since its JSON type says nothing. Clients render the tree
+ * themselves, so this is the one place a GraphQL client learns it is never HTML.
+ */
+const RICH_TEXT_DESCRIPTION =
+  'Rich text: a document tree ({ nodeType: "document", content: [...] }), never HTML. Render ' +
+  'it by nodeType. An "embed" node is external media (a video, post or track) whose data is ' +
+  '{ url, provider, kind?, title?, authorName?, thumbnail?, width?, height?, aspectRatio? }: ' +
+  "structured metadata, never the provider's player markup.";
+
+const describeField = (f: { readonly type: string }) =>
+  f.type === 'RichText' ? { description: RICH_TEXT_DESCRIPTION } : {};
+
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
@@ -93,6 +106,7 @@ function componentType(
       for (const f of nested) {
         fields[f.apiId] = {
           type: typeFor(names, `${name}${cap(f.apiId)}`, f),
+          ...describeField(f),
           // Values arrive as a plain object keyed by nested apiId, so the
           // default resolver would do — spelled out to survive a rename.
           resolve: (value) => servedValue(f, value?.[f.apiId]),
@@ -245,6 +259,7 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
     for (const f of ct.fields) {
       fields[f.apiId] = {
         type: typeFor(names, `${cap(ct.apiId)}${cap(f.apiId)}`, f),
+        ...describeField(f),
         resolve: (s) => servedValue(f, s.fields[f.apiId]),
       };
     }

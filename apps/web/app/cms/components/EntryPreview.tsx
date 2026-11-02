@@ -1,11 +1,13 @@
 import type {
   ContentType,
+  EmbedData,
   EntryFields,
   FieldDefinition,
   LocaleConfig,
   RichTextNode,
 } from '@contentworker/domain';
 import {
+  embedDataIssues,
   isRichTextDocument,
   isWellFormedTable,
   resolveLocalizedValue,
@@ -15,6 +17,7 @@ import { Badge } from '@contentworker/ui/badge';
 import { cn } from '@contentworker/ui/lib/utils';
 import type { ReactNode } from 'react';
 import type { Pickers } from './EntryForm';
+import { EmbedCard } from './rich-text/ExternalEmbedNodeView';
 
 /**
  * The entry as it stands in the form, saved or not, read as a document: the display field as its
@@ -257,6 +260,15 @@ function RichNode({ node, pickers }: { node: RichTextNode; pickers: Pickers }): 
   // a row or cell anywhere else would be invalid markup, so a malformed table
   // (and a stray row or cell) falls through to its text, below.
   if (t === 'table' && isWellFormedTable(node)) return <RichTable node={node} pickers={pickers} />;
+  // External media as the editor shows it, a card linking out; never the provider's player.
+  // Only an embed the domain accepts (an https URL on an allowed provider) gets a link.
+  if (t === 'embed' && embedDataIssues(node.data).length === 0) {
+    return (
+      <div className="my-1">
+        <EmbedCard embed={node.data as unknown as EmbedData} />
+      </div>
+    );
+  }
   if (t === 'hyperlink') {
     const uri = typeof node.data?.uri === 'string' ? node.data.uri : undefined;
     return (

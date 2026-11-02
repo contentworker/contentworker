@@ -3,10 +3,13 @@
  * of block and inline nodes. Text lives in `text` nodes carrying `marks`
  * (bold/italic/…); entries and assets are embedded or linked through nodes that
  * carry a `data.target` link, so the reference graph can be extracted from rich
- * text exactly as it is from `Link` fields.
+ * text exactly as it is from `Link` fields. External media (a video, a post, a
+ * track) is an `embed` block holding structured metadata (`./embed`), never
+ * the provider's markup.
  */
 
 import type { LinkType } from '../content-type/field';
+import { embedDataIssues } from './embed';
 
 /** Node types that embed or link another entry/asset (carry `data.target`). */
 export const REFERENCE_NODE_TYPES = [
@@ -79,6 +82,7 @@ export const RICH_TEXT_BLOCK_NODE_TYPES = [
   'list-item',
   'embedded-entry-block',
   'embedded-asset-block',
+  'embed',
   'table',
   'table-row',
   'table-header-cell',
@@ -291,6 +295,10 @@ export function validateRichText(value: unknown): string[] {
         issues.push(`${path}: hyperlink requires data.uri with an http, https, mailto or tel URI`);
       }
     }
+    if (nodeType === 'embed') {
+      for (const issue of embedDataIssues(data)) issues.push(`${path}: ${issue}`);
+      if (content?.length) issues.push(`${path}: embed holds no content`);
+    }
     if (isReferenceNodeType(nodeType)) {
       const target = data?.target as Partial<RichTextTarget> | undefined;
       if (
@@ -315,7 +323,8 @@ export function validateRichText(value: unknown): string[] {
  * Flattens a rich-text value to plain text. Text within a block is concatenated;
  * blocks are joined with blank lines. A table reads as one block, a line per row
  * with its cells separated by ` | `, so a row stays together for search and
- * embedding rather than scattering into one block per cell. Reference nodes
+ * embedding rather than scattering into one block per cell. An embed reads as
+ * its title and URL, so a post is found by what it embeds. Reference nodes
  * contribute nothing (the domain has no access to their display names).
  * Non-documents yield `''`.
  */
@@ -341,15 +350,22 @@ export function richTextToPlainText(value: unknown): string {
       .filter((cells) => cells.some(Boolean))
       .map((cells) => cells.join(' | '))
       .join('\n');
+  const embedText = (embed: RichTextNode): string => {
+    const { title, url } = embed.data ?? {};
+    const link = typeof url === 'string' ? url : '';
+    return typeof title === 'string' && title.trim() ? `${title.trim()} (${link})` : link;
+  };
   const blockTexts = (nodes: readonly RichTextNode[]): string[] => {
     const blocks: string[] = [];
     const walk = (node: RichTextNode): void => {
       const text =
         node.nodeType === 'table'
           ? tableText(node)
-          : node.nodeType === 'text' || isLeafBlock(node)
-            ? inlineText(node).trim()
-            : undefined;
+          : node.nodeType === 'embed'
+            ? embedText(node)
+            : node.nodeType === 'text' || isLeafBlock(node)
+              ? inlineText(node).trim()
+              : undefined;
       if (text === undefined) node.content?.forEach(walk);
       else if (text) blocks.push(text);
     };
