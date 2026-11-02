@@ -53,7 +53,8 @@ export const LIGHT = {
   'chart-5': 'oklch(0.269 0 0)',
   'cat-trigger': 'var(--ink)',
   'cat-commerce': 'oklch(0.45 0.07 230)',
-  'cat-control': 'oklch(0.5 0.1 62)',
+  // Neutral: an amber here read as `wait` ("waiting on a person") beside the status colours.
+  'cat-control': 'var(--muted-foreground)',
   'cat-ai': 'var(--ai)',
   sidebar: 'oklch(0.985 0 0)',
   'sidebar-foreground': 'var(--ink)',
@@ -105,7 +106,6 @@ export const DARK_OVERRIDES: Partial<Record<Token, string>> = {
   'chart-4': 'oklch(0.708 0 0)',
   'chart-5': 'oklch(0.87 0 0)',
   'cat-commerce': 'oklch(0.76 0.07 230)',
-  'cat-control': 'oklch(0.8 0.11 75)',
   sidebar: 'oklch(0.205 0 0)',
   'sidebar-accent': 'oklch(0.269 0 0)',
   sheet: 'oklch(0.17 0 0)',

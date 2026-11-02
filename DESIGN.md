@@ -550,7 +550,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   selected step's Connections list offers only targets that wouldn't close a cycle. A Loop's
   second input, `next`, is a hollow ink ring on the node's bottom edge, named under the outputs,
   and its back-edge is dashed ink labelled `next`: colour on the canvas is for status only (The
-  One Meaning Rule); node categories colour only their icon (`--cat-*`). A selected node is an ink
+  One Meaning Rule); node categories colour only their icon (`--cat-*`: triggers ink, control
+  steps the muted grey, commerce slate, AI the brand; none takes a status hue). A selected node is an ink
   edge with the focus ring, never the link blue. A workflow too wide to read whole opens framed on
   its first loop or wait, never below 0.7 zoom; Fit view (⇧1) stops at the zoom that keeps a 13px
   label at 10px. Every canvas with a loop or a wait has **Jump to**. React Flow's credit stays, at
