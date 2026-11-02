@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { SERVER_ONLY_ASSET_FIELDS } from '../src/api/asset-response';
-import { asset, assetVersionList } from '../src/api/docs/schemas';
+import { asset, assetVersionList } from '../src/api/docs/schemas/assets';
 import { comparable, interfaceBody, keyPaths, parseShape, zodShape } from './interface-shape';
 
 const here = dirname(fileURLToPath(import.meta.url));

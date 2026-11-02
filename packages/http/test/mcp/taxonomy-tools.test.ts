@@ -76,6 +76,11 @@ async function connect(deps: McpDeps, principal: Principal) {
   await server.connect(serverTransport);
   const client = new Client({ name: 'test', version: '0.0.0' });
   await client.connect(clientTransport);
+  // The tools that declare themselves reads (`readOnlyHint`), which is what keeps them unaudited.
+  const { tools } = await client.listTools();
+  const reads = new Set(
+    tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name),
+  );
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const r = (await client.callTool({ name, arguments: { space: SPACE, ...args } })) as {
       isError?: boolean;
@@ -88,7 +93,7 @@ async function connect(deps: McpDeps, principal: Principal) {
       text,
     };
   };
-  return call;
+  return Object.assign(call, { reads });
 }
 
 describe('taxonomy tools (MCP), on the HTTP routes’ use-cases', () => {
@@ -154,10 +159,10 @@ describe('taxonomy tools (MCP), on the HTTP routes’ use-cases', () => {
     expect((await call('taxonomy_create_tag', { name: 'Nope' })).isError).toBe(true);
     expect((await call('taxonomy_list_tags')).isError).toBe(false);
     for (const tool of ['taxonomy_get_tag', 'taxonomy_get_concept', 'taxonomy_list_tags']) {
-      expect(toolMutates(tool, {})).toBe(false);
+      expect(toolMutates(tool, {}, call.reads.has(tool)), tool).toBe(false);
     }
     for (const tool of ['taxonomy_update_tag', 'taxonomy_update_concept', 'taxonomy_repair']) {
-      expect(toolMutates(tool, {})).toBe(true);
+      expect(toolMutates(tool, {}, call.reads.has(tool)), tool).toBe(true);
     }
   });
 });

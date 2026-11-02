@@ -64,15 +64,11 @@ describe('OpenAPI spec + docs UI', () => {
     const imports = [...source.matchAll(/^import (?!type )[^;]*?from '([^']+)'/gms)].map(
       (m) => m[1],
     );
-    for (const banned of [
-      'zod',
-      'hono-openapi',
-      '../docs/openapi',
-      '../docs/schemas',
-      '../docs/delivery-docs',
-    ]) {
+    for (const banned of ['zod', 'hono-openapi', '../docs/openapi', '../docs/delivery-docs']) {
       expect(imports, banned).not.toContain(banned);
     }
+    // The response schemas are one file per area, so no import from that folder at all.
+    expect(imports.filter((i) => i?.startsWith('../docs/schemas'))).toEqual([]);
   });
 
   it('describes response schemas, not just paths', async () => {

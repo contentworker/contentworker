@@ -56,6 +56,12 @@ async function connect(deps: McpDeps, principal: Principal): Promise<Client> {
   return client;
 }
 
+/** Whether a tool declares itself a read (`readOnlyHint`), which is what keeps it unaudited. */
+async function declaresRead(client: Client, name: string): Promise<boolean> {
+  const { tools } = await client.listTools();
+  return tools.find((t) => t.name === name)?.annotations?.readOnlyHint === true;
+}
+
 function payload(result: { content?: { type: string; text?: string }[] }): unknown {
   return JSON.parse(result.content?.find((c) => c.type === 'text')?.text ?? 'null');
 }
@@ -88,7 +94,13 @@ describe('space export tools over MCP', () => {
       locales: { toAdd: ['de-DE', 'fr-FR'] },
       entries: { read: 11, imported: 8, invalid: 3 },
     });
-    expect(toolMutates('space_export_analyze', args())).toBe(false);
+    expect(
+      toolMutates(
+        'space_export_analyze',
+        args(),
+        await declaresRead(client, 'space_export_analyze'),
+      ),
+    ).toBe(false);
     expect(await deps.ctx.store.contentTypes.list(scope)).toEqual([]);
     expect(await deps.ctx.store.audit.list(SPACE, {})).toEqual([]);
   });
@@ -130,7 +142,9 @@ describe('space export tools over MCP', () => {
       'blogPost',
       'landing_page',
     ]);
-    expect(toolMutates('space_export_import', args())).toBe(true);
+    expect(
+      toolMutates('space_export_import', args(), await declaresRead(client, 'space_export_import')),
+    ).toBe(true);
     const trail = await deps.ctx.store.audit.list(SPACE, {});
     expect(trail.map((r) => r.action)).toContain('MCP space_export_import');
   });

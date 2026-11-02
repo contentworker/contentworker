@@ -91,7 +91,7 @@ one line with the evidence and move on.
 
 1. **Feature and implementation completeness.** Each Shipped bullet traced to a use-case in
    `packages/application`, its route in `packages/http/src/api/routes`, its MCP tool in
-   `packages/http/src/mcp/server.ts` (both surfaces, or it isn't done), the SDK method where one is
+   `packages/http/src/mcp/tools/` (both surfaces, or it isn't done), the SDK method where one is
    documented, and a test. Look for partial implementations, stubs, `throw new Error('not
    implemented')`, fake adapters reachable in production (`ALLOW_FAKE_ADAPTERS`, `AI_MODE`,
    `SEED_DEV`), dead exports, routes in the OpenAPI document with no handler (or the reverse), and

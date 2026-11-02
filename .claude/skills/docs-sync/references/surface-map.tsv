@@ -13,7 +13,7 @@
 ^packages/domain/src/workflow/nodes\.ts$	reference/nodes guides/workflows docs/domain-model.md	gen
 ^packages/domain/src/workflow/templates\.ts$	reference/workflow-templates guides/workflows	gen
 ^packages/domain/src/auth/auth\.ts$	reference/scopes guides/api-keys docs/auth-and-rbac.md	gen
-^packages/http/src/api/(routes/(management|team|workflows)\.ts|docs/)	reference/rest-api docs/api-reference.md	gen
+^packages/http/src/api/(routes/(management|team|workflows)\.ts|routes/management/|docs/)	reference/rest-api docs/api-reference.md	gen
 ^packages/http/src/api/routes/(delivery|preview)\.ts$	reference/rest-api guides/reading-content docs/api-reference.md	gen
 ^packages/design/src/tokens\.ts$	apps/docs/src/styles/brand.css apps/docs/DESIGN.md DESIGN.md	prose
 ^apps/web/app/app\.css$	packages/design/src/tokens.ts apps/docs/src/styles/brand.css DESIGN.md	prose
@@ -38,7 +38,7 @@
 ^packages/application/src/(generation|content-ai|media-ai|ai-actions|ai-budget|rag|semantics|search-index)\.ts$	guides/ai docs/ai-agents-and-search.md	prose
 ^packages/adapters/src/(ai-workers|vector-vectorize)/	guides/ai docs/ai-agents-and-search.md docs/configuration.md	prose
 ^packages/(agent-runtime/src/|application/src/agent-[a-z-]+\.ts$)	guides/ai docs/ai-agents-and-search.md	prose
-^packages/http/src/mcp/server\.ts$	guides/mcp docs/mcp.md	prose
+^packages/http/src/mcp/(server\.ts$|audit\.ts$|tools/)	guides/mcp docs/mcp.md	prose
 ^packages/http/skills/	guides/mcp docs/mcp.md	prose
 #
 # Events, webhooks, plugins:

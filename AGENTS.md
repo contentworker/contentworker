@@ -61,8 +61,9 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
   API response, MCP tool, webhook payload or model output carries content as markup.
 - **Both surfaces.** Every capability is a use-case in `@contentworker/application`, exposed
   through both the HTTP API (`packages/http/src/api/routes`) and MCP
-  (`packages/http/src/mcp/server.ts`), so an agent can never do what a human client can't, or
-  the reverse.
+  (`packages/http/src/mcp`), so an agent can never do what a human client can't, or
+  the reverse. Tools go in `mcp/tools/<area>.ts`, routes in `api/routes/management/<area>.ts`,
+  response schemas in `api/docs/schemas/<area>.ts`; a new area adds its own file.
 - **Deterministic use-cases.** IDs from `ctx.ids.newId()` (UUIDv7), time from `ctx.clock.now()`,
   and every store/use-case operation carries a `Scope` (`{ spaceId, environmentId }`).
 - **Every dependency version lives in the pnpm catalog** (`pnpm-workspace.yaml`,

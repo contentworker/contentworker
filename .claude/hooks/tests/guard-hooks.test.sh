@@ -128,7 +128,7 @@ check "AGENTS.md may name the rule" "" "$(edit_in "$root/AGENTS.md" 'not `/healt
 # ── rules-impact: path rules, once per file per session ───────────────────────
 rules_in() { jq -cn --arg s "$1" --arg f "$2" '{session_id:$s,tool_input:{file_path:$f}}' | "$hooks/rules-impact.sh"; }
 check "publishing.ts names the unit of work" "TransactionConflictError" "$(rules_in r1 "$root/packages/application/src/publishing.ts")"
-check "publishing.ts also gets both surfaces" "packages/http/src/mcp/server.ts" "$(rules_in r2 "$root/packages/application/src/publishing.ts")"
+check "publishing.ts also gets both surfaces" "packages/http/src/mcp/tools" "$(rules_in r2 "$root/packages/application/src/publishing.ts")"
 check "a second edit of the same file is quiet" "" "$(rules_in r2 "$root/packages/application/src/publishing.ts")"
 check "a wrangler config names fleet.ts" "scripts/fleet.ts" "$(rules_in r3 "$root/apps/engine/wrangler.jsonc")"
 check "the principal asks for a security review" "security-reviewer" "$(rules_in r4 "$root/packages/security/src/principal.ts")"

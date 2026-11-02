@@ -1,20 +1,15 @@
 import { z } from 'zod';
 import { doc } from './openapi';
+import { deliveredCollection } from './schemas/asset-collections';
+import { deliveredAsset, deliveredAssetPage, deliveredAssetSearchPage } from './schemas/assets';
+import { publishedEntry, publishedEntryList, searchHits } from './schemas/entries';
+import { deliveredRedirectList, deliveredRedirectMatch } from './schemas/redirects';
 import {
-  deliveredAsset,
-  deliveredAssetPage,
-  deliveredAssetSearchPage,
-  deliveredCollection,
   deliveredConcept,
   deliveredConceptList,
-  deliveredRedirectList,
-  deliveredRedirectMatch,
   deliveredTag,
   deliveredTagList,
-  publishedEntry,
-  publishedEntryList,
-  searchHits,
-} from './schemas';
+} from './schemas/taxonomy';
 
 /**
  * The Delivery routes' OpenAPI descriptions, kept apart from the routes themselves so the

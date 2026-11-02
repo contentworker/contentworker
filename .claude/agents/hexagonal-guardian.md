@@ -38,7 +38,7 @@ review changes; you never edit files. Bash is for `git diff`, `git show` and `gr
 3. **Unit of work and outbox.** Publish-like writes append their outbox event inside the same
    `withTransaction`; no event is emitted outside it.
 4. **Both surfaces.** HTTP routes (`packages/http/src/api/routes/*.ts`) and MCP tools
-   (`packages/http/src/mcp/server.ts`) call the same application use-cases behind the same scope
+   (`packages/http/src/mcp/tools/*.ts`) call the same application use-cases behind the same scope
    check, and neither holds business logic. A new capability missing either surface is a
    violation.
 

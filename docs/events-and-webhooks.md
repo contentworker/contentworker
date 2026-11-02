@@ -272,8 +272,8 @@ and no loopback, link-local or private literal address, `localhost`, `*.local` o
 (a `ValidationError`, 422). It is DNS-free, so the sender complements it by not following
 redirects.
 
-Routes and MCP tools (all scope `space:admin`; `packages/http/src/api/routes/management.ts` and
-`packages/http/src/mcp/server.ts`, on the same use-cases and body schemas). Both return the hook
+Routes and MCP tools (all scope `space:admin`; `packages/http/src/api/routes/management/webhooks.ts`
+and `packages/http/src/mcp/tools/webhooks.ts`, on the same use-cases and body schemas). Both return the hook
 without its `secret` or `headers`; the secret is the caller's own and is never echoed:
 
 | Operation  | Route                                                   | MCP tool             |
