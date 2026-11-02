@@ -49,6 +49,8 @@ Vectorize, Workers AI through AI Gateway, Images, Stream, Email Sending and Work
     `contentworker-codegen`.
 17. **[Plugins](./plugins.md)**: sandboxed write-path plugins on Worker Loader isolates:
     manifests, capabilities, hooks and distribution policy.
+18. **[Developer tooling](./developer-tooling.md)**: the `contentworker` CLI (`packages/cli`) and
+    the developer agent skills (`skills/`): design, output contract, tests and publishing.
 
 ## Conventions used in these docs
 

@@ -161,7 +161,9 @@ and press **Import**; the API and MCP follow the same order.
    (`POST …/imports/job`; follow it at `…/bulk/jobs/{id}`). Entries arrive as drafts; publish
    them with a bulk job afterwards.
 
-All three need `content:write`. To copy a whole environment instead, see
+All three need `content:write`. From a terminal or CI, `contentworker import` in the
+[command-line tool](/guides/cli/#import-a-file) runs the same steps. To copy a whole environment
+instead, see
 [Environments](/guides/environments/).
 
 ## Next steps

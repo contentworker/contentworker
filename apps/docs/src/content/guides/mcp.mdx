@@ -92,6 +92,10 @@ The server also publishes MCP skills, short task guides a client can load before
 publish entries, releases, scheduled publishing, workflow runs) and `import-content` (map, dry-run,
 run and publish an import).
 
+For a coding agent building *on* a workspace (a site, an app, a migration) rather than working in
+it, install the [agent skills](/guides/agent-skills/) instead: they drive the SDKs and the
+[command-line tool](/guides/cli/).
+
 ## Working well with agents
 
 - **Give each agent its own token**, with the narrowest scopes and a [role](/guides/api-keys/#roles)
@@ -109,3 +113,4 @@ run and publish an import).
 - [API keys and access](/guides/api-keys/) for tokens, roles and scopes.
 - [Approvals](/guides/approvals/#agent-reviews) for reviewing what an agent drafted.
 - [Permission scopes](/reference/scopes/) for what each tool needs.
+- [Command-line tool](/guides/cli/) for the same operations from a terminal or CI.

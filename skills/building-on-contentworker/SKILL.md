@@ -1,0 +1,123 @@
+---
+name: building-on-contentworker
+description: Build a website, app or service that reads and writes content in contentworker, a headless CMS. Use when choosing a contentworker SDK, reading published content (Delivery) or drafts (Preview), writing through the Management API, keeping reads consistent after a write, generating TypeScript types from the content model, rendering rich text (including embeds), or deciding how to cache.
+---
+
+# Building on contentworker
+
+contentworker serves content as typed JSON, never HTML. Your code picks an API by what it needs,
+types itself from the content model, and renders rich text from a node tree.
+
+## Pick the API and the key
+
+| You need                         | API and origin                        | Key (kind)          | SDK                                             |
+| -------------------------------- | ------------------------------------- | ------------------- | ----------------------------------------------- |
+| Published content on a live site | Delivery, `https://cdn.<workspace>`   | Delivery (`cda`)    | `@contentworker/sdk-core` (or web, vue, edge)   |
+| Drafts on a staging site         | Preview, `https://api.<workspace>`    | Preview (`cpa`)     | `@contentworker/sdk-core` with `preview: true`  |
+| Writes: create, update, publish  | Management, `https://api.<workspace>` | Management (`cma`)  | `@contentworker/sdk-management` (server only)   |
+
+Only a Delivery key may ship to a browser or app. Preview and Management keys stay on a server.
+Delivery is cached at the edge; Preview and Management are not.
+Docs: https://docs.contentworker.app/guides/sdks/ and https://docs.contentworker.app/guides/api-keys/
+
+## Read
+
+```ts
+import { createDeliveryClient } from '@contentworker/sdk-core';
+
+const client = createDeliveryClient({
+  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.CONTENTWORKER_CDA_TOKEN!,
+});
+
+const article = await client.getEntry(id, { locale: 'en-US', include: 1 });
+const latest = await client.query().contentType('article').locale('en-US').order('-sys.publishedAt').limit(10).fetch();
+```
+
+- `include` (0 to 10) embeds linked entries and assets, inside rich text too; without it a link
+  stays `{ id, linkType }`.
+- Pass `locale` to get plain values with the fallback chain applied; without it each field is
+  keyed by locale.
+- Lists return `{ items, total }` where `total` counts this page: page with `limit` (at most 100)
+  and `skip` until a page comes back short.
+- `client.search(text)` is semantic search; `client.getAsset` and `client.iterateAssets` read
+  delivered assets, and `imageProps` turns one into `<img>` attributes.
+- React: `ContentworkerProvider`, `useEntry`, `useEntries`, `Image` from `@contentworker/sdk-web`.
+  Vue: `@contentworker/sdk-vue`. Edge functions: `createEdgeClient` from `@contentworker/sdk-edge`.
+
+Filters, ordering and every parameter: https://docs.contentworker.app/guides/reading-content/
+
+## Write, and read your own writes
+
+```ts
+import { createManagementClient } from '@contentworker/sdk-management';
+
+const cma = createManagementClient({ baseUrl: 'https://api.your-workspace.contentworker.app', space: 'your-space', environment: 'main', token: process.env.CONTENTWORKER_CMA_TOKEN! });
+const { entry } = await cma.entries.create({ contentTypeApiId: 'article', fields: { title: { 'en-US': 'Hello' } } });
+await cma.entries.publish(entry.id, { expectedVersion: entry.currentVersion });
+```
+
+- Field values are keyed by field, then locale: `{ title: { 'en-US': 'Hello' } }`, even for a
+  field that isn't localized (it uses the default locale).
+- `cma.entries.update(id, fields)` saves the whole draft: send every field, or read it first.
+- Pass `expectedVersion` to `publish`: if someone saved since you read, it's a 409 and nothing
+  publishes.
+- Errors throw `ManagementError`; narrow with `isValidationError`, `isConflict`, `isNotFound`,
+  `isRateLimited`.
+- **Read-your-writes.** A read right after a write may hit a lagging read replica. The Management
+  client and a preview client echo the `x-cw-bookmark` header for you. To hand a write's freshness
+  to another client (a server action to the browser's preview client), pass `cma.bookmark` as that
+  client's `bookmark` option. Delivery never takes one: it is cached and catches up shortly after
+  a publish.
+
+## Type against the model
+
+Generate types from the live model, then type reads with them:
+
+```sh
+contentworker types --out src/generated/content-types.ts
+```
+
+```ts
+import type { ArticleFields } from './generated/content-types';
+const article = await client.getEntry<ArticleFields>(id, { locale: 'en-US' });
+```
+
+Each type gets a delivery shape (`ArticleFields`) and a management shape (`ArticleDraftFields`).
+Regenerate in CI after the model changes (the `content_type.published` webhook fires on publish).
+`contentworker-codegen` and `GET …/content-types?format=typescript` give the same output.
+
+## Render rich text
+
+A `RichText` field is a `RichTextDocument`: `{ nodeType: 'document', content: [...] }`. Render it
+by switching on `nodeType`, and render unknown types as nothing rather than failing. Never store or
+send HTML back; the API refuses anything but the node vocabulary. See
+[references/rendering-rich-text.md](references/rendering-rich-text.md) for every node type, a
+renderer and how to treat embeds (`embedCard` from `@contentworker/sdk-core` gives a safe link card).
+
+## Caching
+
+- Delivery responses are fresh for a minute, purged on publish, unpublish or an alias change, and
+  carry an `ETag`. Don't add a long cache of your own in front.
+- Static sites: rebuild on the `entry.published` webhook, or fetch only what changed with
+  `since=`. Live pages: `GET /delivery/{space}/{env}/live` streams publish events.
+- `cacheTtlMs` on a Delivery client adds a short in-memory cache per process.
+- Point production at an environment alias (`/delivery/acme/production`) so promoting a new
+  environment needs no deploy.
+
+Docs: https://docs.contentworker.app/guides/reading-content/#caching and
+https://docs.contentworker.app/guides/webhooks/
+
+## Check your setup
+
+```sh
+contentworker login --url https://api.your-workspace.contentworker.app
+contentworker doctor
+contentworker whoami --json
+```
+
+`doctor` checks sign-in, reachability, the API version and access to the space. In CI set
+`CONTENTWORKER_TOKEN` and `CONTENTWORKER_URL` instead of logging in.
+CLI reference: https://docs.contentworker.app/guides/cli/

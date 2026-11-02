@@ -100,6 +100,8 @@ export default defineConfig({
             { label: 'Webhooks', slug: 'guides/webhooks' },
             { label: 'SDKs', slug: 'guides/sdks' },
             { label: 'MCP server', slug: 'guides/mcp' },
+            { label: 'Command-line tool', slug: 'guides/cli' },
+            { label: 'Agent skills', slug: 'guides/agent-skills' },
           ],
         },
         {

@@ -44,6 +44,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
+    "@contentworker/cli": "workspace:*",
     "@contentworker/sdk-core": "workspace:*",
     "@contentworker/sdk-management": "workspace:*",
     "@contentworker/typescript-config": "workspace:*",
