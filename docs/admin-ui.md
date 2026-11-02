@@ -74,8 +74,10 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 ## Features
 
 - **Overview** (`/dashboard`): what needs attention, live activity, AI usage and throughput.
-- **Content** (`/content`): content types and their schema editor; entries per type with filters
-  (`/content/:typeId`; `/content/:typeId/new` starts a new entry);
+- **Content** (`/content`): content types and their schema editor; entries per type with filters,
+  search, sorting from the column headers, a bulk bar for publishing and unpublishing what is
+  ticked, and Load more past the first 100 (`/content/:typeId`; `/content/:typeId/new` starts a new
+  entry);
   the entry editor (TipTap rich text, components and repeaters, references, localized fields),
   version history, diff and restore, comments and tasks, metadata, AI assist; import
   (`/content/:typeId/import`) from CSV, JSON or a WordPress export, with a dry-run report before

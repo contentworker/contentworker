@@ -13,6 +13,7 @@ import {
   listDeliveredAssets,
   listDeliveredRedirects,
   listPreviewEntries,
+  listPreviewEntryPage,
   listPublishedEntries,
   publishAsset,
   publishContentType,
@@ -66,6 +67,8 @@ const MANY_LINKS = 120;
 
 let counter: CountingD1;
 let ctx: AppContext;
+/** A second page's cursor into the article list, read before the counts are taken. */
+let entryCursor = '';
 const blob = new FakeBlobStore();
 const ids = {
   heroAsset: '',
@@ -359,6 +362,21 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     'management: GET /entries?content_type=article',
     () => listPreviewEntries(ctx, scope, { contentTypeApiId: 'article' }),
   ],
+  // The admin's entries list: a page, then the next one from its cursor. The same reads as the
+  // plain list: the cursor is a WHERE on (updated_at, id), and the extra row is in the same read.
+  [
+    'preview: GET /entries?content_type=article (page)',
+    () => listPreviewEntryPage(ctx, scope, { contentTypeApiId: 'article', limit: 2 }),
+  ],
+  [
+    'preview: GET /entries?content_type=article&cursor',
+    () =>
+      listPreviewEntryPage(ctx, scope, {
+        contentTypeApiId: 'article',
+        limit: 2,
+        cursor: entryCursor,
+      }),
+  ],
   [
     'management: POST /entries',
     () =>
@@ -440,6 +458,9 @@ describe('D1 query counts', () => {
       },
     });
     ids.draft = entry.id;
+    entryCursor =
+      (await listPreviewEntryPage(ctx, scope, { contentTypeApiId: 'article', limit: 2 }))
+        .nextCursor ?? '';
     // A set with exact sources and a pattern, so a resolve walks both.
     for (let i = 0; i < 5; i++) {
       await createRedirect(ctx, scope, { source: `/old/${i}`, destination: `/new/${i}` });

@@ -202,7 +202,13 @@ export interface EntryQuery {
   /** Reference resolution depth (embeds linked entries). */
   readonly include?: number;
   readonly limit?: number;
+  /** Delivery's offset. Preview pages by `cursor` instead, and refuses it (422). */
   readonly skip?: number;
+  /**
+   * Preview only: the `nextCursor` of the previous page, with the same filters and order. It walks
+   * the list's own order; in the default order an entry edited between two pages is never skipped.
+   */
+  readonly cursor?: string;
   /** Delta cursor — only entries published after this ISO timestamp. */
   readonly since?: string;
   /** Field-level predicates (all must match). */
@@ -365,10 +371,13 @@ export function createDeliveryClient(opts: ClientOptions) {
       });
     },
 
-    /** List published entries, optionally filtered/paginated. */
+    /**
+     * List published entries (from Preview: as they are now, drafts included), optionally
+     * filtered/paginated. Preview answers `nextCursor` while another page follows.
+     */
     async listEntries<F extends Fields = Fields>(
       q: EntryQuery = {},
-    ): Promise<{ items: DeliveredEntry<F>[]; total: number }> {
+    ): Promise<{ items: DeliveredEntry<F>[]; total: number; nextCursor?: string }> {
       return get('/entries', toParams(q));
     },
 
@@ -508,6 +517,7 @@ function toParams(q: EntryQuery): Record<string, string | number | undefined> {
     include: q.include,
     limit: q.limit,
     skip: q.skip,
+    cursor: q.cursor,
     since: q.since,
   };
   for (const f of q.filters ?? []) {

@@ -162,7 +162,10 @@ You don't need a long cache of your own in front of it. For static sites, rebuil
 Preview is served from the `api.` address (uncached) and has three routes: `GET
 /preview/{space}/{env}/entries`, `…/entries/{id}` and `…/suggest`. It takes `locale`, `content_type`
 and the same filters as Delivery, but ignores `include`, so linked entries stay as references, and
-it has no assets, search, GraphQL or live routes. `…/entries/{id}` also accepts
+it has no assets, search, GraphQL or live routes. Its entries list pages with a cursor, and refuses
+`skip`: pass the response's `nextCursor` back as `cursor` (with the same filters and `order`) until
+there is none. Each entry carries `updatedAt`, and `order=-sys.updatedAt` lists the most recently
+changed first. `…/entries/{id}` also accepts
 `?preview_token=`, a shareable link token minted from the entry, in place of a bearer key. Roles and
 denied fields apply as they do on Delivery.
 

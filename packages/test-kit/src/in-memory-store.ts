@@ -170,6 +170,12 @@ export class InMemoryContentStore implements ContentStore {
   private readonly spaceConfigs = new Map<string, SpaceConfig>();
   private readonly contentTypeData = new Map<string, ContentType>();
   private readonly entryData = new Map<string, Entry>();
+  /**
+   * When each entry last changed, standing in for D1's `updated_at`: stamped from `nowMs`, and
+   * nudged a millisecond past the last stamp so write order is total even on a frozen clock.
+   */
+  private readonly entryTouched = new Map<string, string>();
+  private lastEntryTouch = 0;
   private readonly versionData = new Map<string, EntryVersion[]>();
   /** Archived versions' object keys, by `${scopeKey}::${entryId}::${version}`. */
   private readonly archivedBodies = new Map<string, string>();
@@ -263,6 +269,7 @@ export class InMemoryContentStore implements ContentStore {
       const scoped: Map<string, unknown>[] = [
         this.contentTypeData,
         this.entryData,
+        this.entryTouched,
         this.versionData,
         this.publishedData,
         this.assetData,
@@ -362,6 +369,13 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  private setEntry(scope: Scope, entry: Entry): void {
+    const key = `${scopeKey(scope)}::${entry.id}`;
+    this.entryData.set(key, entry);
+    this.lastEntryTouch = Math.max(this.nowMs(), this.lastEntryTouch + 1);
+    this.entryTouched.set(key, new Date(this.lastEntryTouch).toISOString());
+  }
+
   readonly entries: EntryRepo = {
     get: async (scope, id) => {
       const entry = this.entryData.get(`${scopeKey(scope)}::${id}`);
@@ -411,13 +425,19 @@ export class InMemoryContentStore implements ContentStore {
       const withFields: EntryWithFields[] = entries.map((entry) => {
         const versions = this.versionData.get(`${scopeKey(scope)}::${entry.id}`) ?? [];
         const current = versions.find((v) => v.version === entry.currentVersion);
-        return { entry, fields: current?.fields ?? {} };
+        const updatedAt = this.entryTouched.get(`${scopeKey(scope)}::${entry.id}`);
+        return { entry, fields: current?.fields ?? {}, ...(updatedAt ? { updatedAt } : {}) };
       });
       const filtered = runEntryQuery(
         withFields,
         query,
         (r) => r.fields,
-        (r) => ({ id: r.entry.id, contentType: r.entry.contentTypeApiId, status: r.entry.status }),
+        (r) => ({
+          id: r.entry.id,
+          contentType: r.entry.contentTypeApiId,
+          status: r.entry.status,
+          updatedAt: r.updatedAt,
+        }),
       );
       if (!query.select) return filtered;
       return filtered.map((r) => ({
@@ -441,24 +461,25 @@ export class InMemoryContentStore implements ContentStore {
       return [...groups.values()];
     },
     create: async (scope, entry, version) => {
-      this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
+      this.setEntry(scope, entry);
       this.versionData.set(`${scopeKey(scope)}::${entry.id}`, [version]);
     },
     saveVersion: async (scope, entry, version) => {
-      this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
+      this.setEntry(scope, entry);
       const key = `${scopeKey(scope)}::${entry.id}`;
       const versions = this.versionData.get(key) ?? [];
       versions.push(version);
       this.versionData.set(key, versions);
     },
     saveAggregate: async (scope, entry) => {
-      this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
+      this.setEntry(scope, entry);
     },
     saveAggregateMany: async (scope, entries) => {
-      for (const entry of entries) this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
+      for (const entry of entries) this.setEntry(scope, entry);
     },
     delete: async (scope, id) => {
       this.entryData.delete(`${scopeKey(scope)}::${id}`);
+      this.entryTouched.delete(`${scopeKey(scope)}::${id}`);
       this.versionData.delete(`${scopeKey(scope)}::${id}`);
       this.releaseClaims(scope, id);
     },
@@ -2780,6 +2801,7 @@ export class InMemoryContentStore implements ContentStore {
       this.promotionData,
       this.contentTypeData,
       this.entryData,
+      this.entryTouched,
       this.versionData,
       this.publishedData,
       this.assetData,

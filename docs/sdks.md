@@ -52,7 +52,7 @@ API:
 
 ```ts
 client.getEntry<F>(id, { locale?, include? }): Promise<DeliveredEntry<F>>
-client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: number }>
+client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: number; nextCursor? }>
 client.search(query, { topK? }): Promise<SearchHit[]>
 client.getAsset(id, { locale? }): Promise<DeliveredAsset>
 client.listAssets({ limit?, cursor?, skip?, kind?, tag?, folder?, locale? }): Promise<AssetPage>
@@ -68,7 +68,9 @@ client.clearCache(): void
 client.bookmark: string | undefined     // read-your-writes position (preview); assignable
 ```
 
-- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, since?, filters?, order?, select?, search? }`.
+- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, order?, select?, search? }`.
+  Delivery pages with `skip`; Preview (`preview: true`) pages with `cursor`, the last page's
+  `nextCursor`, and refuses `skip` (`422`).
 - `filters` use the same operators as the HTTP query language (`eq`, `ne`, `in`, `match`, etc.).
 - The fluent builder reads naturally:
   `client.query().contentType('article').locale('en-US').limit(10).fetch()`.

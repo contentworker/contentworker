@@ -300,7 +300,8 @@ function AuditLog(props: { client: ManagementClient }) {
   const load = () => void invalidate(['audit-log']);
 
   return (
-    <Card>
+    // Clipped, not hidden: a long log keeps its header under the shell's as it scrolls.
+    <Card className="overflow-clip">
       <CardHeader className="flex-row items-center justify-between gap-2">
         <div>
           <h2 className="font-heading font-medium text-base">Audit log</h2>
@@ -316,7 +317,13 @@ function AuditLog(props: { client: ManagementClient }) {
         {!loading && entries.length === 0 ? (
           <p className="text-muted-foreground text-sm">No audit entries yet.</p>
         ) : (
-          <Table edge="flush" stack="cards" caption="Audit log" aria-busy={loading || undefined}>
+          <Table
+            edge="flush"
+            stack="cards"
+            sticky
+            caption="Audit log"
+            aria-busy={loading || undefined}
+          >
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
