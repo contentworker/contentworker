@@ -4,10 +4,11 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  deliveryGraphResolvers,
+  deliveryReads,
   getDeliveredAsset,
   getEntry,
   getPublishedEntry,
-  listContentTypes,
   listDeliveredAssets,
   listPreviewEntries,
   listPublishedEntries,
@@ -15,14 +16,8 @@ import {
   publishContentType,
   publishEntry,
 } from '@contentworker/application';
-import { type FieldDefinition, resolveLocalizedValue } from '@contentworker/domain';
-import {
-  buildDeliverySchema,
-  type DeliveryContext,
-  type DeliveryResolvers,
-  type ResolvedEntry,
-} from '@contentworker/graphql-gen';
-import type { SpaceConfig } from '@contentworker/ports';
+import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
+import { buildDeliverySchema, type DeliveryContext } from '@contentworker/graphql-gen';
 import { FakeBlobStore, FixedClock } from '@contentworker/test-kit';
 import { execute, parse } from 'graphql';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -48,6 +43,8 @@ const UPDATE = 'pnpm --filter @contentworker/db test:query-counts:update';
 
 const run = crypto.randomUUID();
 const scope = { spaceId: `qc-${run}`, environmentId: 'main' };
+/** A Delivery key with no content grants: it reads every type, unmasked. */
+const reader: Principal = { spaceId: scope.spaceId, kind: 'cda', scopes: [SCOPES.deliveryRead] };
 
 const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId' | 'type'>) =>
   ({
@@ -252,51 +249,20 @@ function landingFields() {
 
 /**
  * The GraphQL Delivery request as `packages/http/src/api/routes/delivery.ts` serves it to a key
- * with no content grants: the visible content types build the schema (read on every request),
- * and the entry, collection, asset and localize resolvers call the same use-cases with the same
- * options. Keep the two in step: a resolver that reads more there must read more here.
+ * with no content grants: one request's reads build the schema (the visible content types, with
+ * the space config alongside), and the route's own resolvers (`deliveryGraphResolvers`) run on
+ * the same reads.
  */
 async function graphql(source: string): Promise<void> {
-  const types = await listContentTypes(ctx, scope);
-  const schema = buildDeliverySchema(types);
-  let config: Promise<SpaceConfig | null> | undefined;
-  const spaceConfig = () => {
-    config ??= ctx.store.spaces.getConfig(scope);
-    return config;
-  };
-  const localeOr = async (locale: string | undefined) =>
-    locale || (await spaceConfig())?.defaultLocale;
-  const resolvers: DeliveryResolvers = {
-    entry: async (contentType, id, locale) => {
-      const e = await getPublishedEntry(ctx, scope, id, {
-        locale: await localeOr(locale),
-        include: 1,
-      });
-      return e.contentType === contentType ? (e as ResolvedEntry) : null;
-    },
-    collection: async (contentType, args) =>
-      (await listPublishedEntries(
-        ctx,
-        scope,
-        { contentTypeApiId: contentType, limit: args.limit, skip: args.skip },
-        { locale: await localeOr(args.locale), include: 1 },
-      )) as ResolvedEntry[],
-    asset: async (id, locale) => ({
-      asset: await getDeliveredAsset(ctx, scope, id),
-      ...(locale ? { locale } : {}),
-    }),
-    localize: async (value, locale) => {
-      const c = await spaceConfig();
-      if (!c) return null;
-      const v = resolveLocalizedValue(value, c, locale ?? c.defaultLocale);
-      return typeof v === 'string' ? v : null;
-    },
-    search: async () => [],
-  };
+  const reads = deliveryReads(ctx);
+  const { contentTypes = [] } = await reads.read(scope, { contentTypes: true, config: true });
+  const schema = buildDeliverySchema(contentTypes);
   const result = await execute({
     schema,
     document: parse(source),
-    contextValue: { resolvers } satisfies DeliveryContext,
+    contextValue: {
+      resolvers: deliveryGraphResolvers(ctx, scope, reader, { rag: undefined, reads }),
+    } satisfies DeliveryContext,
   });
   if (result.errors?.length) throw new Error(result.errors.map((e) => e.message).join('; '));
 }

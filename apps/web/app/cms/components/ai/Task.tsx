@@ -27,7 +27,7 @@ export function Task(props: {
 }) {
   return (
     <Collapsible.Root defaultOpen={props.defaultOpen} className={cn('min-w-0', props.className)}>
-      <Collapsible.Trigger className="group flex w-full min-w-0 items-center gap-2 rounded-md text-left text-muted-foreground text-xs outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30">
+      <Collapsible.Trigger className="group flex w-full min-w-0 items-center gap-2 rounded-md text-left text-muted-foreground text-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
         <span className="min-w-0 flex-1 truncate font-medium">{props.title}</span>
         {props.meta && <span className="shrink-0 tabular-nums">{props.meta}</span>}
         <ChevronDown

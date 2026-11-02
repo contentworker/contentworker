@@ -9,6 +9,8 @@ import {
   type FieldDefinition,
   MAX_COMPONENT_DEPTH,
   nestedFieldsFor,
+  removedFields,
+  removedFieldUses,
   removedVariants,
   removedVariantUses,
   ValidationError,
@@ -364,6 +366,78 @@ describe('removing a variant', () => {
     ).toEqual(['body[section].ctas: cta']);
     expect(
       removedVariantUses(before, { body: { 'en-US': [{ _type: 'section', ctas: [] }] } }, removed),
+    ).toEqual([]);
+  });
+});
+
+describe('removing a field', () => {
+  const seo = field({
+    apiId: 'seo',
+    type: 'Component',
+    fields: [
+      field({ apiId: 'description', type: 'Text' }),
+      field({ apiId: 'noindex', type: 'Boolean' }),
+    ],
+  });
+
+  it('reports the fields a revision drops at any depth, by location', () => {
+    const before = [
+      field({ apiId: 'title', type: 'Symbol' }),
+      field({ apiId: 'teaser', type: 'Text' }),
+      seo,
+      blocksField(),
+    ];
+    const after = [
+      field({ apiId: 'title', type: 'Symbol' }),
+      { ...seo, fields: [field({ apiId: 'noindex', type: 'Boolean' })] },
+      blocksField([{ ...HERO, fields: [HERO.fields[0] as FieldDefinition] }, CTA]),
+    ];
+    expect([...removedFields(before, after)].sort()).toEqual([
+      'body[hero].image',
+      'seo.description',
+      'teaser',
+    ]);
+  });
+
+  it('leaves a removed variant to removedVariants, and its fields unlisted', () => {
+    expect([
+      ...removedFields(LANDING.fields, [
+        field({ apiId: 'title', type: 'Symbol' }),
+        blocksField([HERO]),
+      ]),
+    ]).toEqual([]);
+  });
+
+  it('reports nothing when fields are only added', () => {
+    const more = [...LANDING.fields, field({ apiId: 'kicker', type: 'Symbol' })];
+    expect(removedFields(LANDING.fields, more).size).toBe(0);
+  });
+
+  it('finds the values an entry still holds for a removed field, nested ones too', () => {
+    const before = [field({ apiId: 'teaser', type: 'Text' }), seo, blocksField()];
+    const removed = new Set(['teaser', 'seo.description', 'body[hero].image']);
+    expect(
+      removedFieldUses(
+        before,
+        {
+          teaser: { 'en-US': 'Short' },
+          seo: { 'en-US': { description: 'About', noindex: false } },
+          body: { 'en-US': [{ _type: 'hero', heading: 'Hi', image: { sys: { id: 'a1' } } }] },
+        },
+        removed,
+      ).sort(),
+    ).toEqual(['body[hero].image', 'seo.description', 'teaser']);
+  });
+
+  it('does not count an absent or null value as one held', () => {
+    const before = [field({ apiId: 'teaser', type: 'Text' }), seo];
+    const removed = new Set(['teaser', 'seo.description']);
+    expect(
+      removedFieldUses(
+        before,
+        { teaser: { 'en-US': null }, seo: { 'en-US': { noindex: true } } },
+        removed,
+      ),
     ).toEqual([]);
   });
 });

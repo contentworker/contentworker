@@ -128,7 +128,10 @@ function Line({
       ) : (
         <Icon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
       )}
-      <span className="min-w-0">{children}</span>
+      <span className="min-w-0">
+        {children}
+        {tone === 'running' ? <span className="sr-only"> (running)</span> : null}
+      </span>
     </span>
   );
   return href ? (

@@ -380,7 +380,7 @@ function TagsTab() {
                       aria-label={`Delete ${t.name}`}
                       onClick={ask}
                       disabled={busy}
-                      className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
+                      className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <Trash2 className="size-3" />
                     </button>

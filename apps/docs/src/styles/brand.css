@@ -181,7 +181,9 @@ mobile-starlight-toc a[aria-current="true"] {
 .sidebar-content a[aria-current="page"]::before {
   content: "";
   position: absolute;
-  inset-block: 0.5rem;
+  top: 50%;
+  height: 1rem;
+  translate: 0 -50%;
   inset-inline-start: 0;
   width: 2px;
   border-radius: 999px;

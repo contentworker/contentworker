@@ -911,8 +911,8 @@ export function AssetLibrary(props: { locale: string }) {
               // A Ledger board card: hover and the open button's focus tint the card muted; the
               // card's own controls sit beside the open button, never inside it.
               className={cn(
-                'relative w-full gap-2 p-2 transition-[background-color] hover:bg-muted/60 has-[[data-open-asset]:focus-visible]:bg-muted/60 has-[[data-open-asset]:focus-visible]:ring-2 has-[[data-open-asset]:focus-visible]:ring-ring/50',
-                selected.has(a.id) && 'bg-muted/60 ring-2 ring-ring/50',
+                'relative w-full gap-2 p-2 transition-[background-color] hover:bg-muted/60 has-[[data-open-asset]:focus-visible]:bg-muted/60 has-[[data-open-asset]:focus-visible]:outline-2 has-[[data-open-asset]:focus-visible]:outline-offset-2 has-[[data-open-asset]:focus-visible]:outline-brand',
+                selected.has(a.id) && 'bg-muted/60 ring-2 ring-brand',
               )}
             >
               <div className="absolute top-3 left-3 z-10 rounded-[5px] bg-background">
@@ -1001,7 +1001,7 @@ export function AssetLibrary(props: { locale: string }) {
                       type="button"
                       onClick={() => setOpen(a)}
                       aria-label={`Open “${name}”`}
-                      className="hit-area min-w-0 truncate rounded-full text-left font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+                      className="hit-area min-w-0 truncate rounded-full text-left font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       {name}
                     </button>
@@ -1122,7 +1122,7 @@ export function AssetLibrary(props: { locale: string }) {
             onDrop={onDrop}
             className={cn(
               'min-w-0 space-y-4 rounded-2xl transition-[box-shadow]',
-              dragging && 'ring-2 ring-ring/50 ring-offset-4 ring-offset-background',
+              dragging && 'ring-2 ring-foreground/30 ring-offset-4 ring-offset-background',
             )}
           >
             <AssetSearchBox value={searchText} onChange={changeSearch} />

@@ -23,7 +23,7 @@ export function CollapsibleCard(props: {
       <Card>
         <CardHeader>
           <h2 className="font-heading font-medium text-base">
-            <Collapsible.Trigger className="group flex w-full items-center justify-between gap-2 rounded-md text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+            <Collapsible.Trigger className="group flex w-full items-center justify-between gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <span className="flex items-center gap-2">{props.title}</span>
               <ChevronDown
                 aria-hidden

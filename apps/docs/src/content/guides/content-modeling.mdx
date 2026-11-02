@@ -131,6 +131,11 @@ agents. An AI agent can't save an entry a person couldn't.
 - **Adding a block type**, or an optional field to one, is safe. **Removing a block type** is
   refused while any entry (a draft, the trash or a published version) still has a block of it;
   the error lists those entries, so change or remove their blocks first.
+- **Removing a field**, at any depth (a component's field, a block type's field), is refused the
+  same way while any entry still holds a value for it: the `409` lists each field and its entries
+  (`details.fieldsInUse`). There is no override. Clear the value in those entries (save them
+  without it), publish the ones that are live so the published version drops it too, and purge any
+  in the trash; then remove the field.
 - **Renaming** a field's name is safe; its `apiId` is what code depends on, so treat that as
   permanent.
 - **Try risky changes in an environment.** Clone `main` into a `staging` environment, change the

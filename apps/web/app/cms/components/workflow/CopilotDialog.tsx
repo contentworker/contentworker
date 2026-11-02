@@ -9,6 +9,7 @@
 
 import type { WorkflowGraph } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import { ComposeLoader, composeIcons } from '@contentworker/ui/compose-loader';
 import {
   Dialog,
   DialogContent,
@@ -197,7 +198,14 @@ export function CopilotDialog({
               Cancel
             </Button>
             <Button type="button" disabled={drafting} onClick={() => void draft()}>
-              {drafting ? 'Drafting…' : 'Draft'}
+              {drafting ? (
+                <>
+                  <ComposeLoader icon={composeIcons.workflow} />
+                  Drafting…
+                </>
+              ) : (
+                'Draft'
+              )}
             </Button>
           </DialogFooter>
         )}
