@@ -60,13 +60,20 @@ client.iterateAssets(query?): AsyncGenerator<DeliveredAsset>   // every page, fo
 client.getCollection(id, { limit?, cursor?, locale? }): Promise<DeliveredCollection>  // Delivery only
 client.iterateCollection(id, { limit?, cursor?, locale? }): AsyncGenerator<DeliveredAsset>
 client.searchAssets(q, { limit?, kind?, tag?, folder?, locale? }): Promise<AssetSearchPage>  // Delivery only
-client.query(): EntryQueryBuilder<F>     // fluent builder
+client.listTags({ locale?, contentType? }): Promise<DeliveredTag[]>      // Delivery only
+client.getTag(slug, { locale?, contentType? }): Promise<DeliveredTag>
+client.listConcepts({ scheme?, locale?, contentType? }): Promise<DeliveredConcept[]>
+client.getConcept(slug, { scheme?, locale?, contentType? }): Promise<DeliveredConcept>
+client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
 client.bookmark: string | undefined     // read-your-writes position (preview); assignable
 ```
 
-- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, since?, filters?, order?, select?, search? }`.
+- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, since?, filters?, order?, select?, search?, tags? }`;
+  `tags` (slugs) sends `metadata.tags.slug[in]`, and a filter on `metadata.*` is sent unprefixed.
+- `DeliveredTag` = `{ id, slug, label, labels?, description, count, countsByContentType }`;
+  `DeliveredConcept` adds `schemeId` and `broaderId`.
 - `filters` use the same operators as the HTTP query language (`eq`, `ne`, `in`, `match`, etc.).
 - The fluent builder reads naturally:
   `client.query().contentType('article').locale('en-US').limit(10).fetch()`.
@@ -358,6 +365,10 @@ cma.assets.renditions.update(name, spec) / .delete(name)   // content:manage; up
 cma.bulkJobs.list({ limit? }) / .get(id) / .report(id) / .cancel(id)
 
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
+cma.taxonomy.tags.list() / .create({ name, slug?, description?, labels? }) / .update(id, patch) / .delete(id)   // list: each with usage
+cma.taxonomy.schemes.list() / .create({ name }) / .delete(id)
+cma.taxonomy.concepts.list({ scheme? }) / .create(input) / .update(id, patch) / .setBroader(id, broaderId) / .delete(id)
+cma.taxonomy.repair() → { slugsAssigned }   // recount published usage, fill missing slugs
 
 cma.releases.create({ title }) / .addEntry(id, { entityId }) / .removeEntry(id, entityId)
 cma.releases.list() / .get(id) / .publish(id) / .delete(id)   // list: each with itemCount

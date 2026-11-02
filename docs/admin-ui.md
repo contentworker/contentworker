@@ -104,7 +104,9 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   focal point, tags and usage. The web build's own files are served from `/_static/` (Vite's
   `build.assetsDir`, cached immutable by `public/_headers`), so nothing under `/assets` is ever a
   static file.
-- **Taxonomy** (`/taxonomy`): concept schemes, concepts, tags.
+- **Taxonomy** (`/taxonomy`): concept schemes, concepts, tags. Each term shows its slug and how
+  many published entries carry it; Edit opens a sheet (`TermEditor`) for its label, slug,
+  description and a label per other locale of the space, saving only what changed.
 - **Settings**: API keys, roles, OAuth connected apps, webhooks, functions, AI actions, app
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch
   compare/merge, the space audit log.

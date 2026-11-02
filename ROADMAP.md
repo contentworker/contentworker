@@ -49,7 +49,9 @@ Everything below is built and tested on v2.
   import and clone, served by Delivery), expiring revocable share links on the media origin
   (published assets only, optional password), multipart uploads past 100 MiB (up to 5 GiB), and zip
   downloads built by a Workflow.
-- **Taxonomy and collaboration.** Concept schemes, concepts and tags; comments, tasks, legacy
+- **Taxonomy and collaboration.** Concept schemes, concepts and tags, each with a slug, description
+  and localized labels, served on Delivery with published usage counts and filterable by slug for
+  archive pages; comments, tasks, legacy
   workflow steps, and editorial workflow graphs on Cloudflare Workflows (runs, timeline,
   approvals with separation of duties, the copilot).
 - **AI.** Generation, canvas authoring, translate, summarize, autofill, tags, governed AI

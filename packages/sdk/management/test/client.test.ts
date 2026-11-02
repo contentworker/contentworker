@@ -609,3 +609,38 @@ describe('@contentworker/sdk-management read-your-writes', () => {
     expect(junk.sent).toEqual([undefined, undefined, undefined]);
   });
 });
+
+describe('@contentworker/sdk-management taxonomy', () => {
+  it('creates, updates, lists and repairs terms on the environment’s taxonomy routes', async () => {
+    const calls: { url: string; method: string; body?: unknown }[] = [];
+    const client = createManagementClient({
+      ...base,
+      fetch: fakeFetch((url, init) => {
+        calls.push({
+          url,
+          method: init?.method ?? 'GET',
+          ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
+        });
+        return url.endsWith('/tags') && (init?.method ?? 'GET') === 'GET'
+          ? { items: [{ id: 't1', usage: { count: 2, byContentType: { article: 2 } } }] }
+          : { id: 't1', slug: 'news' };
+      }),
+    });
+    await client.taxonomy.tags.create({ name: 'News', labels: { de: 'Nachrichten' } });
+    await client.taxonomy.tags.update('t1', { slug: 'latest', description: null });
+    const [tag] = await client.taxonomy.tags.list();
+    expect(tag?.usage.count).toBe(2);
+    await client.taxonomy.concepts.update('c1', { prefLabel: 'Cats' });
+    await client.taxonomy.repair();
+    const env = 'https://cms.test/spaces/s1/environments/main';
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `POST ${env}/taxonomy/tags`,
+      `PATCH ${env}/taxonomy/tags/t1`,
+      `GET ${env}/taxonomy/tags`,
+      `PATCH ${env}/taxonomy/concepts/c1`,
+      `POST ${env}/taxonomy/repair`,
+    ]);
+    expect(calls[0]?.body).toEqual({ name: 'News', labels: { de: 'Nachrichten' } });
+    expect(calls[1]?.body).toEqual({ slug: 'latest', description: null });
+  });
+});

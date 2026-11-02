@@ -152,6 +152,8 @@ export interface SysColumns {
   readonly contentTypeApiId: SQL;
   /** Epoch-millisecond column (the engine sees it as an ISO string). */
   readonly publishedAt?: SQL;
+  /** The published snapshot's `{ tags, concepts }` JSON, for `metadata.*` membership. */
+  readonly metadata?: SQL;
 }
 
 /** The epoch ms for an ISO comparand the engine could equal, or null if none can. */
@@ -198,7 +200,25 @@ export function buildFilterPrefilter(
       // Ranges on sys columns are left to the engine (ISO-string comparison).
       continue;
     }
-    if (f.field.startsWith('metadata.')) continue;
+    if (f.field.startsWith('metadata.')) {
+      // Membership (`eq`/`in`) in the tags or concepts array: a tag archive narrows to the
+      // entries carrying the tag in SQL rather than pulling every candidate into the scan.
+      const path =
+        f.field === 'metadata.tags'
+          ? '$.tags'
+          : f.field === 'metadata.concepts'
+            ? '$.concepts'
+            : null;
+      const wanted =
+        f.op === 'eq' ? [f.value] : f.op === 'in' && Array.isArray(f.value) ? f.value : null;
+      if (sys.metadata && path && wanted && wanted.length > 0) {
+        const list = JSON.stringify(wanted.map((v) => String(v)));
+        conds.push(
+          sql`EXISTS (SELECT 1 FROM json_each(${sys.metadata}, ${path}) m WHERE m.value IN (SELECT value FROM json_each(${list})))`,
+        );
+      }
+      continue;
+    }
 
     switch (f.op) {
       case 'eq': {

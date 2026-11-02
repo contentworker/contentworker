@@ -57,7 +57,16 @@ const props = imageProps(hero, { sizes: '(min-width: 960px) 960px, 100vw', prior
 for await (const asset of client.iterateAssets({ kind: 'image' })) {
   // every published image, a page at a time
 }
+
+// An archive page: the tag, then its entries.
+const tag = await client.getTag('news', { locale: 'de-DE' }); // { label, description, count, … }
+const tagged = await client.query().contentType('article').tagged('news').limit(20).fetch();
 ```
+
+`listTags`, `getTag`, `listConcepts` and `getConcept` read the [taxonomy](/guides/reading-content/#tags-and-concepts):
+each term's slug, label in your locale, description and how many published entries carry it.
+`tagged(...slugs)` on a query (or `tags: [...]` on `listEntries`) keeps the entries carrying any
+of those tags; a filter on `metadata.concepts.slug` does the same for concepts.
 
 `getAsset`, `listAssets`, `iterateAssets`, `searchAssets`, `getCollection` and
 `iterateCollection` read [delivered assets](/guides/delivering-assets/). `imageProps` turns one
@@ -155,7 +164,9 @@ draft has moved on, the call fails with a **409** and changes nothing, so you ne
 you haven't seen.
 
 Every method maps to one Management route: content types, entries and their versions, the asset
-library, bulk jobs, releases, scheduled actions, webhooks, environments and keys. The client is
+library, bulk jobs, releases, scheduled actions, webhooks, taxonomy (`cma.taxonomy.tags`,
+`schemes`, `concepts`: create and update with a `slug`, `description` and `labels` per locale; lists
+carry each term's published `usage`), environments and keys. The client is
 exactly as powerful as its token; the server checks every call. Keep the token on a server: a
 Management key never belongs in a browser or app bundle.
 

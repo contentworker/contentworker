@@ -7,9 +7,13 @@ import {
   deliveryReads,
   getDeliveredAsset,
   getDeliveredCollection,
+  getDeliveredConcept,
+  getDeliveredTag,
   getPublishedEntry,
   hybridSearch,
   listDeliveredAssets,
+  listDeliveredConcepts,
+  listDeliveredTags,
   listPublishedEntries,
   liveEventFor,
   MAX_PAGE_LIMIT,
@@ -278,6 +282,59 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
         ),
       );
     },
+  );
+
+  // --- taxonomy: archive pages -------------------------------------------
+  // Terms with slugs, localized labels and published usage counts. Counts leave out the content
+  // types the key may not read, so they never reveal how much content of the others exists.
+  const termOpts = (c: Context<AuthVars>) => {
+    const principal = c.get('principal');
+    const locale = c.req.query('locale');
+    const contentType = c.req.query('content_type');
+    return {
+      ...(locale !== undefined ? { locale } : {}),
+      ...(contentType !== undefined ? { contentType } : {}),
+      ...(principal.contentGrants
+        ? { readable: (t: string) => canAccessContentType(principal, 'read', t) }
+        : {}),
+    };
+  };
+  const schemeOf = (c: Context<AuthVars>) => {
+    const scheme = c.req.query('scheme');
+    return scheme !== undefined ? { schemeId: scheme } : {};
+  };
+  app.get(
+    `${BASE}/taxonomy/tags`,
+    describe('listTags'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => c.json({ items: await listDeliveredTags(ctx, scopeOf(c), termOpts(c)) }),
+  );
+  app.get(
+    `${BASE}/taxonomy/tags/:slug`,
+    describe('getTag'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => c.json(await getDeliveredTag(ctx, scopeOf(c), c.req.param('slug'), termOpts(c))),
+  );
+  app.get(
+    `${BASE}/taxonomy/concepts`,
+    describe('listConcepts'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) =>
+      c.json({
+        items: await listDeliveredConcepts(ctx, scopeOf(c), { ...termOpts(c), ...schemeOf(c) }),
+      }),
+  );
+  app.get(
+    `${BASE}/taxonomy/concepts/:slug`,
+    describe('getConcept'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) =>
+      c.json(
+        await getDeliveredConcept(ctx, scopeOf(c), c.req.param('slug'), {
+          ...termOpts(c),
+          ...schemeOf(c),
+        }),
+      ),
   );
 
   // Live Content API: an SSE stream of published-content changes for this scope.

@@ -123,7 +123,7 @@ import {
   listAuditLog,
   listBulkJobs,
   listComments,
-  listConcepts,
+  listConceptsWithUsage,
   listConnectedApps,
   listContentTypes,
   listEnvironmentAliases,
@@ -137,7 +137,7 @@ import {
   listScheduledActions,
   listSchemes,
   listSpacesFor,
-  listTags,
+  listTagsWithUsage,
   listTasks,
   listVersions,
   listWebhookDeliveries,
@@ -162,6 +162,7 @@ import {
   removeFromAssetCollection,
   reopenTask,
   reorderAssetCollection,
+  repairTaxonomy,
   replaceAssetFile,
   requestAssetZip,
   requestPromotion,
@@ -209,8 +210,10 @@ import {
   updateAssetCollection,
   updateAssetFolder,
   updateAssetRendition,
+  updateConcept,
   updateEntry,
   updateRole,
+  updateTag,
   updateWebhook,
   upgradePlugin,
   upgradePluginFromUrl,
@@ -286,6 +289,7 @@ import {
   commitAssetFileBody,
   completeUploadBody,
   conceptBody,
+  conceptPatchBody,
   contentTypeBody,
   createAiActionBody,
   createApiKeyBody,
@@ -329,6 +333,7 @@ import {
   snapshotBody,
   summarizeBody,
   tagBody,
+  tagPatchBody,
   tierOnlyBody,
   transitionBody,
   translateBody,
@@ -3202,11 +3207,49 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     return c.body(null, 204);
   });
 
-  app.get(`${BASE}/taxonomy/concepts`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listConcepts(ctx, scopeOf(c), c.req.query('scheme')) }),
+  app.get(
+    `${BASE}/taxonomy/concepts`,
+    doc('Taxonomy', 'List concepts with their published usage', {
+      ok: docs.conceptList,
+      query: { scheme: 'Only this scheme’s concepts' },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) =>
+      c.json({ items: await listConceptsWithUsage(ctx, scopeOf(c), c.req.query('scheme')) }),
   );
-  app.post(`${BASE}/taxonomy/concepts`, requireScope(SCOPES.contentManage), async (c) =>
-    c.json(await createConcept(ctx, scopeOf(c), await parseBody(c, conceptBody)), 201),
+  app.post(
+    `${BASE}/taxonomy/concepts`,
+    doc('Taxonomy', 'Create a concept', {
+      status: 201,
+      body: conceptBody,
+      ok: docs.concept,
+      description:
+        'A slug is made from prefLabel when omitted (numbered past the scheme’s taken ones); a ' +
+        'slug asked for that another concept of the scheme has is refused (409). labels must be ' +
+        'locales of the space (422 otherwise).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json(await createConcept(ctx, scopeOf(c), await parseBody(c, conceptBody)), 201),
+  );
+  app.patch(
+    `${BASE}/taxonomy/concepts/:id`,
+    doc('Taxonomy', 'Change a concept’s label, slug, description or localized labels', {
+      body: conceptPatchBody,
+      ok: docs.concept,
+      description:
+        'Only the keys sent change. The slug stays when the label changes (an archive URL ' +
+        'never moves by itself); a slug another concept of the scheme has is refused (409).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(
+        await updateConcept(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, conceptPatchBody),
+        ),
+      ),
   );
   app.put(
     `${BASE}/taxonomy/concepts/:id/broader`,
@@ -3223,16 +3266,56 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     return c.body(null, 204);
   });
 
-  app.get(`${BASE}/taxonomy/tags`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listTags(ctx, scopeOf(c)) }),
+  app.get(
+    `${BASE}/taxonomy/tags`,
+    doc('Taxonomy', 'List tags with their published usage', { ok: docs.tagList }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listTagsWithUsage(ctx, scopeOf(c)) }),
   );
-  app.post(`${BASE}/taxonomy/tags`, requireScope(SCOPES.contentManage), async (c) =>
-    c.json(await createTag(ctx, scopeOf(c), await parseBody(c, tagBody)), 201),
+  app.post(
+    `${BASE}/taxonomy/tags`,
+    doc('Taxonomy', 'Create a tag', {
+      status: 201,
+      body: tagBody,
+      ok: docs.tag,
+      description:
+        'A slug is made from name when omitted (numbered past the taken ones); a slug asked for ' +
+        'that another tag has is refused (409). labels must be locales of the space (422 ' +
+        'otherwise).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json(await createTag(ctx, scopeOf(c), await parseBody(c, tagBody)), 201),
+  );
+  app.patch(
+    `${BASE}/taxonomy/tags/:id`,
+    doc('Taxonomy', 'Change a tag’s name, slug, description or localized labels', {
+      body: tagPatchBody,
+      ok: docs.tag,
+      description:
+        'Only the keys sent change. The slug stays when the name changes (an archive URL never ' +
+        'moves by itself); a slug another tag has is refused (409).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(await updateTag(ctx, scopeOf(c), c.req.param('id'), await parseBody(c, tagPatchBody))),
   );
   app.delete(`${BASE}/taxonomy/tags/:id`, requireScope(SCOPES.contentManage), async (c) => {
     await deleteTag(ctx, scopeOf(c), c.req.param('id'));
     return c.body(null, 204);
   });
+
+  app.post(
+    `${BASE}/taxonomy/repair`,
+    doc('Taxonomy', 'Recount published usage and fill missing slugs', {
+      ok: docs.taxonomyRepair,
+      description:
+        'Rebuilds the environment’s usage counts from its published entries and gives a slug ' +
+        'to any term without one. Counts are kept as entries publish, so this only matters ' +
+        'after something wrote snapshots without them; the engine runs it daily. Safe to repeat.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json(await repairTaxonomy(ctx, scopeOf(c))),
+  );
 
   // --- entry taxonomy associations ---------------------------------------
   app.get(`${BASE}/entries/:id/metadata`, requireScope(SCOPES.previewRead), async (c) => {

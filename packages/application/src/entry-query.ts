@@ -8,6 +8,8 @@
  *   - `fields.<apiId>=v`                 → equals
  *   - `fields.<apiId>[op]=v`             → op ∈ ne|in|nin|gt|gte|lt|lte|exists|match
  *   - `sys.publishedAt[gt]=<iso>`        → `sys.*` pseudo-fields
+ *   - `metadata.tags[in]=<id>,<id>`      → taxonomy associations by id (also `metadata.concepts`)
+ *   - `metadata.tags.slug=news`          → by slug (eq|ne|in|nin; also `metadata.concepts.slug`)
  *   - `order=fields.title,-sys.publishedAt`  → sort keys (`-` = descending)
  *   - `select=fields.title,fields.body`  → projection (field apiIds)
  *   - `query=foo`                        → full-text search over string fields
@@ -30,7 +32,12 @@ const OPS: ReadonlySet<string> = new Set([
   'match',
 ]);
 
-const FILTER_KEY = /^((?:fields|sys)\.[A-Za-z0-9_]+)(?:\[(\w+)\])?$/;
+/**
+ * `fields.<apiId>`, `sys.<name>`, or a taxonomy association: `metadata.tags` /
+ * `metadata.concepts` (ids) and `metadata.tags.slug` / `metadata.concepts.slug` (slugs).
+ */
+const FILTER_KEY =
+  /^((?:fields|sys)\.[A-Za-z0-9_]+|metadata\.(?:tags|concepts)(?:\.slug)?)(?:\[(\w+)\])?$/;
 
 /** Largest page a client may request; caps memory/DB work per request. */
 export const MAX_PAGE_LIMIT = 100;

@@ -110,7 +110,7 @@ names no job and no error, and each isolate reuses the answer for 30 s
 (`HEALTH_SCHEDULER_TTL_MS`). `GET /deployment/scheduler` (deployment administrators: the admin
 or MCP token; anyone else `403`) and the `scheduler_status` MCP tool return the detail:
 `{ scheduler, lastTickAt?, staleAfterSeconds, jobs: [{ job, lastRunAt, lastSuccessAt?, lastErrorAt?, lastError? }] }`,
-one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `abandoned-multipart-uploads`, `abandoned-uploads`, `expired-zips`, `event-history-prune`, `secrets-reseal`,
+one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `abandoned-multipart-uploads`, `abandoned-uploads`, `expired-zips`, `event-history-prune`, `secrets-reseal`, `taxonomy-repair`,
 `bulk-resume`, `environment-purge-resume`, `version-archive`, `agent-schedules`), the error
 redacted and at most 500 characters.
 
@@ -127,6 +127,7 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 | Field filter      | `fields.<apiId>=v`                    | Equals                                                                |
 | Field filter (op) | `fields.<apiId>[op]=v`                | `op` ∈ `ne`, `in`, `nin`, `gt`, `gte`, `lt`, `lte`, `exists`, `match` |
 | System field      | `sys.publishedAt[gt]=<iso>`           | Filter on `sys.*` pseudo-fields                                       |
+| Taxonomy          | `metadata.tags.slug=news`             | Delivery only: entries carrying a tag (`metadata.tags` by id; `metadata.concepts[.slug]` for concepts) |
 | Sort              | `order=fields.title,-sys.publishedAt` | Comma-separated; `-` prefix = descending                              |
 | Projection        | `select=fields.title,fields.body`     | Return only listed field apiIds                                       |
 | Full-text         | `query=foo`                           | FTS over string fields (published model on Delivery)                  |
@@ -596,18 +597,38 @@ caller can't read. A run never exposes its starter's resolved principal, only `s
 
 ### Taxonomy
 
-| Method | Path                              | Scope            | Description               |
-| ------ | --------------------------------- | ---------------- | ------------------------- |
-| GET    | `…/taxonomy/schemes`              | `preview:read`   | List concept schemes      |
-| POST   | `…/taxonomy/schemes`              | `content:manage` | Create scheme             |
-| DELETE | `…/taxonomy/schemes/:id`          | `content:manage` | Delete scheme             |
-| GET    | `…/taxonomy/concepts`             | `preview:read`   | List concepts (`?scheme`) |
-| POST   | `…/taxonomy/concepts`             | `content:manage` | Create concept            |
-| PUT    | `…/taxonomy/concepts/:id/broader` | `content:manage` | Set broader concept       |
-| DELETE | `…/taxonomy/concepts/:id`         | `content:manage` | Delete concept            |
-| GET    | `…/taxonomy/tags`                 | `preview:read`   | List tags                 |
-| POST   | `…/taxonomy/tags`                 | `content:manage` | Create tag                |
-| DELETE | `…/taxonomy/tags/:id`             | `content:manage` | Delete tag                |
+| Method | Path                              | Scope            | Description                                                                                                        |
+| ------ | --------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------ |
+| GET    | `…/taxonomy/schemes`              | `preview:read`   | List concept schemes                                                                                               |
+| POST   | `…/taxonomy/schemes`              | `content:manage` | Create scheme                                                                                                      |
+| DELETE | `…/taxonomy/schemes/:id`          | `content:manage` | Delete scheme                                                                                                      |
+| GET    | `…/taxonomy/concepts`             | `preview:read`   | List concepts (`?scheme`), each with `usage: { count, byContentType }`                                             |
+| POST   | `…/taxonomy/concepts`             | `content:manage` | Create concept: `{ schemeId, prefLabel, broaderId?, slug?, description?, labels? }`                                |
+| PATCH  | `…/taxonomy/concepts/:id`         | `content:manage` | Change `prefLabel`, `slug`, `description`, `labels`; only the keys sent                                            |
+| PUT    | `…/taxonomy/concepts/:id/broader` | `content:manage` | Set broader concept                                                                                                |
+| DELETE | `…/taxonomy/concepts/:id`         | `content:manage` | Delete concept (and its usage counts)                                                                              |
+| GET    | `…/taxonomy/tags`                 | `preview:read`   | List tags, each with `usage: { count, byContentType }`                                                             |
+| POST   | `…/taxonomy/tags`                 | `content:manage` | Create tag: `{ name, slug?, description?, labels? }`                                                               |
+| PATCH  | `…/taxonomy/tags/:id`             | `content:manage` | Change `name`, `slug`, `description`, `labels`; only the keys sent                                                 |
+| DELETE | `…/taxonomy/tags/:id`             | `content:manage` | Delete tag (and its usage counts)                                                                                  |
+| POST   | `…/taxonomy/repair`               | `content:manage` | Recount published usage from the published entries and give a slug to any term without one → `{ slugsAssigned }` |
+
+A term's **slug** is normalized like a Slug field (`a-z`, `0-9`, single hyphens, at most 200
+characters) and unique among the environment's tags, or within a concept's scheme (a unique index
+in D1). Omitted on create, it is made from the label and numbered past the taken ones
+(`news`, `news-2`); a label with nothing slug-worthy gives `tag` / `concept`. A slug asked for that
+another term holds is a `409`; one with no letter or digit a `422`. The slug never changes with
+the label: an archive URL moves only when a client sends a new slug. **`labels`** maps locales of
+the space to labels (another locale is a `422`) and is replaced whole; the default locale's entry
+sets `name` / `prefLabel`, the term's own label, and an empty value drops that locale. Every
+create, change and delete commits a `taxonomy.changed` event, which purges Delivery's cache for the
+scope.
+
+**Usage counts** are published entries only: how many carry the term, per content type. The D1
+store keeps them in `taxonomy_usage`, in the same batch that writes or removes the published
+snapshot (publish, republish with other tags, unpublish, trash, bulk and release publishes), so a
+read sums a few rows and never writes. `POST …/taxonomy/repair` rebuilds them from the snapshots;
+the engine runs the same repair daily (`taxonomy-repair`).
 
 ### Platform configuration
 
@@ -660,6 +681,10 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 | GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets: `limit`, `cursor` (or `skip`), `kind`, `tag`, `folder` (id or `root`), `locale` → `{ items, total, nextCursor? }`. With `q`, a hybrid search of published assets only (needs `search:read` too, else 403) → `{ items, total, facets }`; a content-granted key gets an empty result with empty `facets` |
 | GET      | `/delivery/:space/:env/assets/:id`           | `delivery:read` | Get one published asset (`locale`)                                                                                                                                                                                                                                                                                            |
 | GET      | `/delivery/:space/:env/collections/:id`      | `delivery:read` | A collection's name and its **published** members in the collection's order, in the delivered asset shape (`limit`, `cursor`, `locale`; `nextCursor?`); 403 for a key with content grants. Cached under the scope's tag, purged by `asset_collection.changed` |
+| GET      | `/delivery/:space/:env/taxonomy/tags`        | `delivery:read` | Every tag, by slug: `{ items: [{ id, slug, label, labels?, description, count, countsByContentType }] }` (`locale`, `content_type`) |
+| GET      | `/delivery/:space/:env/taxonomy/tags/:slug`  | `delivery:read` | One tag by slug (404 when none has it)                                                                                                         |
+| GET      | `/delivery/:space/:env/taxonomy/concepts`    | `delivery:read` | Every concept, by slug, with `schemeId` and `broaderId` too (`scheme`, `locale`, `content_type`)                                              |
+| GET      | `/delivery/:space/:env/taxonomy/concepts/:slug` | `delivery:read` | One concept by slug; `409` when two schemes share it and `scheme` is not given                                                              |
 | GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default**                                                                                                                                                                                                                                                                                                 |
 | GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream                                                                                                                                                                                                                                                                                                   |
 | GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Deprecated: `301` to the media URL of the next width step at or above `w`, or `rendition` (cached); `302` to a signed transform when no media origin is set                                                                                                                                                                   |
@@ -670,6 +695,19 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 
 **Search parameters:** `q` (required), `top_k`, `mode` = `hybrid` (default) | `semantic` |
 `lexical`.
+
+**Taxonomy for archive pages.** The taxonomy reads serve each term's `label` in `?locale=` (its own
+label in that locale, then its fallbacks', ending at the default locale's), or without `locale`
+the default label plus `labels` for every locale. `count` is how many **published** entries carry
+the term (of `content_type` only, when given) and `countsByContentType` the same per type; a key
+with content grants counts only the types it may read. Each read is one D1 round trip (the space
+config, the terms and their counts in one batch) and is cached under the scope's tag like every
+delivery read, purged by a publish or a `taxonomy.changed`. Entries filter by term with
+`metadata.tags` / `metadata.concepts` (ids) or `metadata.tags.slug` / `metadata.concepts.slug`
+(slugs, `eq`, `ne`, `in`, `nin`): `GET …/entries?content_type=article&metadata.tags.slug=news`. A
+slug filter resolves the slugs to ids in the same round trip as the space config; a slug no term
+has matches nothing. Membership (`eq`, `in`) is pushed into SQL, so a tag archive scans only the
+entries carrying the tag.
 
 A delivered entry is `{ id, contentType, fields, publishedAt }`; with `?locale=` fields flatten to
 that locale; with `?include=N` linked entries embed up to depth N (cycle-guarded). Links are

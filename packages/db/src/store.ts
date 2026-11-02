@@ -33,7 +33,10 @@ import {
   type Scope,
   type SpaceMember,
   type StoredAssetShareLink,
+  type Tag,
   type Task,
+  type TermKind,
+  type TermUsage,
   type UniqueClaim,
   ValidationError,
   versionGatesPublish,
@@ -143,7 +146,7 @@ import {
   sum,
 } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
-import { alias, type SQLiteTable } from 'drizzle-orm/sqlite-core';
+import { alias, type SQLiteColumn, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import {
   chunked,
   createDb,
@@ -360,9 +363,12 @@ function makeEntryRepo(
     snapshots: readonly PublishedEntry[],
   ): Promise<void> => {
     if (snapshots.length === 0) return;
-    await writeAll(
-      x,
-      insertChunks(schema.entryPublished, snapshots, (chunk) =>
+    const ids = idList(snapshots.map((s) => s.entryId));
+    // The usage counts move in the same batch: the old snapshots' terms come off before the
+    // upsert replaces them, the new ones' go on after it.
+    await writeAll(x, [
+      takeUsage(db, scope, ids),
+      ...insertChunks(schema.entryPublished, snapshots, (chunk) =>
         db
           .insert(schema.entryPublished)
           .values(chunk.map((s) => publishedRow(scope, s)))
@@ -381,13 +387,14 @@ function makeEntryRepo(
             },
           }),
       ),
-    );
+      addUsage(db, scope, ids),
+    ]);
   };
   const removePublishedMany = async (scope: Scope, entryIds: readonly string[]): Promise<void> => {
     if (entryIds.length === 0) return;
-    await writeAll(
-      x,
-      chunked(entryIds, 1, RESERVED).map((chunk) =>
+    await writeAll(x, [
+      takeUsage(db, scope, idList(entryIds)),
+      ...chunked(entryIds, 1, RESERVED).map((chunk) =>
         db
           .delete(schema.entryPublished)
           .where(
@@ -397,7 +404,7 @@ function makeEntryRepo(
             ),
           ),
       ),
-    );
+    ]);
   };
   const uniqueRows = (scope: Scope, entryId: string, claims: readonly UniqueClaim[]) =>
     claims.map((c) => ({
@@ -864,6 +871,7 @@ function makeEntryRepo(
         entryId: sql`${schema.entryPublished.entryId}`,
         contentTypeApiId: sql`${schema.entryPublished.contentTypeApiId}`,
         publishedAt: sql`${schema.entryPublished.publishedAt}`,
+        metadata: sql`${schema.entryPublished.metadata}`,
       };
       if (advanced) {
         if (query.filters?.length) {
@@ -1759,6 +1767,57 @@ function decodeTextCursor(cursor: string): [string, string] {
 
 /** A JSON array of distinct ids: one bound parameter whatever the count (read with json_each). */
 const idList = (ids: readonly string[]): string => JSON.stringify([...new Set(ids)]);
+
+// ---- Taxonomy usage counts --------------------------------------------------
+// `taxonomy_usage` holds, per term and content type, how many published entries carry the term.
+// It is maintained by SQL in the same batch as the published snapshots it counts, never by a read:
+// the statements below read `entry_published` as the batch has left it so far (a batch's
+// statements see each other's writes), so the unit-of-work rule (JS reads see committed state
+// only) never comes into it. A republish with other tags takes the old snapshot's terms off and
+// puts the new one's on; an unpublish, archive or trash takes them off.
+
+/** Per term and content type, how many of the published entries `ids` (a JSON array) carry it. */
+const publishedTermsOf = (scope: Scope, ids: string) => {
+  const p = schema.entryPublished;
+  const of = (kind: TermKind, path: string) => sql`
+    SELECT ${kind} AS kind, j.value AS term_id, ${p.contentTypeApiId} AS ct,
+      count(DISTINCT ${p.entryId}) AS n
+    FROM ${p}, json_each(${p.metadata}, ${path}) j
+    WHERE ${p.spaceId} = ${scope.spaceId} AND ${p.environmentId} = ${scope.environmentId}
+      AND ${p.entryId} IN (SELECT value FROM json_each(${ids})) AND j.type = 'text'
+    GROUP BY j.value, ${p.contentTypeApiId}`;
+  return sql`${of('tag', '$.tags')} UNION ALL ${of('concept', '$.concepts')}`;
+};
+
+/** Takes the published entries `ids` off their terms' counts (before their snapshots change). */
+const takeUsage = (db: Db, scope: Scope, ids: string): Query => {
+  const u = schema.taxonomyUsage;
+  return db
+    .update(u)
+    .set({ publishedCount: sql`max(0, ${u.publishedCount} - d.n)` })
+    .from(sql`(${publishedTermsOf(scope, ids)}) AS d`)
+    .where(
+      and(
+        scopeFilter(u, scope),
+        sql`${u.kind} = d.kind AND ${u.termId} = d.term_id AND ${u.contentTypeApiId} = d.ct`,
+      ),
+    );
+};
+
+/** Puts the published entries `ids` on their terms' counts (after their snapshots are written). */
+const addUsage = (db: Db, scope: Scope, ids: string): Query => {
+  const u = schema.taxonomyUsage;
+  // `WHERE true`: SQLite reads an upsert's ON CONFLICT after a bare SELECT … FROM as a join.
+  return db
+    .insert(u)
+    .select(
+      sql`SELECT ${scope.spaceId}, ${scope.environmentId}, d.kind, d.term_id, d.ct, d.n FROM (${publishedTermsOf(scope, ids)}) AS d WHERE true`,
+    )
+    .onConflictDoUpdate({
+      target: [u.spaceId, u.environmentId, u.kind, u.termId, u.contentTypeApiId],
+      set: { publishedCount: sql`${u.publishedCount} + excluded.published_count` },
+    });
+};
 
 function makeAssetCollectionRepo(x: Exec): AssetCollectionRepo {
   const db = x.db;
@@ -4132,6 +4191,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.conceptSchemes,
   schema.concepts,
   schema.tags,
+  schema.taxonomyUsage,
   schema.entryMetadata,
   schema.previewTokens,
   schema.bulkJobs,
@@ -5526,14 +5586,102 @@ function makeWorkflowTaskRepo(x: Exec): WorkflowTaskRepo {
     },
   };
 }
+type TagRow = typeof schema.tags.$inferSelect;
+type ConceptRow = typeof schema.concepts.$inferSelect;
+// A row older code wrote has no slug until the recount sweep gives it one: '' until then.
+const toTag = (r: TagRow): Tag => ({
+  id: r.id,
+  name: r.name,
+  slug: r.slug ?? '',
+  description: r.description,
+  labels: r.labels ?? {},
+});
+const toConcept = (r: ConceptRow): Concept => ({
+  id: r.id,
+  schemeId: r.schemeId,
+  prefLabel: r.prefLabel,
+  slug: r.slug ?? '',
+  description: r.description,
+  labels: r.labels ?? {},
+  broaderId: r.broaderId,
+});
+const toTermUsage = (r: typeof schema.taxonomyUsage.$inferSelect): TermUsage => ({
+  kind: r.kind,
+  termId: r.termId,
+  contentTypeApiId: r.contentTypeApiId,
+  count: r.publishedCount,
+});
+
+/** A scope's tags, or the ones holding one of `slugs` (any number: one JSON parameter). */
+const tagsQuery = (db: Db, scope: Scope, q: { readonly slugs?: readonly string[] }) =>
+  db
+    .select()
+    .from(schema.tags)
+    .where(
+      and(
+        scopeFilter(schema.tags, scope),
+        q.slugs
+          ? sql`${schema.tags.slug} IN (SELECT value FROM json_each(${idList(q.slugs)}))`
+          : undefined,
+      ),
+    );
+
+/** A scope's concepts, narrowed to a scheme and/or to the ones holding one of `slugs`. */
+const conceptsQuery = (
+  db: Db,
+  scope: Scope,
+  q: { readonly schemeId?: string | undefined; readonly slugs?: readonly string[] },
+) =>
+  db
+    .select()
+    .from(schema.concepts)
+    .where(
+      and(
+        scopeFilter(schema.concepts, scope),
+        q.schemeId ? eq(schema.concepts.schemeId, q.schemeId) : undefined,
+        q.slugs
+          ? sql`${schema.concepts.slug} IN (SELECT value FROM json_each(${idList(q.slugs)}))`
+          : undefined,
+      ),
+    );
+
+/**
+ * One kind's usage rows, narrowed as {@link tagsQuery} / {@link conceptsQuery} narrow the terms
+ * (by joining the term table, so a lookup by slug reads only that term's rows).
+ */
+const termUsageQuery = (
+  db: Db,
+  scope: Scope,
+  q: { readonly kind: TermKind; readonly schemeId?: string; readonly slugs?: readonly string[] },
+) => {
+  const u = schema.taxonomyUsage;
+  const t = q.kind === 'tag' ? schema.tags : schema.concepts;
+  const narrowed = q.slugs !== undefined || (q.kind === 'concept' && q.schemeId !== undefined);
+  return db
+    .select()
+    .from(u)
+    .where(
+      and(
+        scopeFilter(u, scope),
+        eq(u.kind, q.kind),
+        gt(u.publishedCount, 0),
+        narrowed
+          ? sql`${u.termId} IN (SELECT ${t.id} FROM ${t} WHERE ${t.spaceId} = ${scope.spaceId} AND ${t.environmentId} = ${scope.environmentId}${
+              q.kind === 'concept' && q.schemeId
+                ? sql` AND ${schema.concepts.schemeId} = ${q.schemeId}`
+                : sql``
+            }${q.slugs ? sql` AND ${t.slug} IN (SELECT value FROM json_each(${idList(q.slugs)}))` : sql``})`
+          : undefined,
+      ),
+    );
+};
+
 function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
   const db = x.db;
-  const toConcept = (r: typeof schema.concepts.$inferSelect): Concept => ({
-    id: r.id,
-    schemeId: r.schemeId,
-    prefLabel: r.prefLabel,
-    broaderId: r.broaderId,
-  });
+  const u = schema.taxonomyUsage;
+  /** Deletes a term's usage rows (with the term, in one batch). */
+  const dropUsage = (scope: Scope, kind: TermKind, id: string) =>
+    db.delete(u).where(and(scopeFilter(u, scope), eq(u.kind, kind), eq(u.termId, id)));
   return {
     async createScheme(scope, scheme) {
       await x.write(
@@ -5571,17 +5719,25 @@ function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
       );
     },
     async createConcept(scope, concept) {
+      const values = {
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        id: concept.id,
+        schemeId: concept.schemeId,
+        prefLabel: concept.prefLabel,
+        broaderId: concept.broaderId,
+        slug: concept.slug,
+        description: concept.description,
+        labels: { ...concept.labels },
+      };
+      const { spaceId: _s, environmentId: _e, id: _i, ...set } = values;
       await x.write(
         db
           .insert(schema.concepts)
-          .values({ spaceId: scope.spaceId, environmentId: scope.environmentId, ...concept })
+          .values(values)
           .onConflictDoUpdate({
             target: [schema.concepts.spaceId, schema.concepts.environmentId, schema.concepts.id],
-            set: {
-              schemeId: concept.schemeId,
-              prefLabel: concept.prefLabel,
-              broaderId: concept.broaderId,
-            },
+            set,
           }),
       );
     },
@@ -5593,29 +5749,38 @@ function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
       return row ? toConcept(row) : null;
     },
     async listConcepts(scope, schemeId) {
-      const conds = [scopeFilter(schema.concepts, scope)];
-      if (schemeId) conds.push(eq(schema.concepts.schemeId, schemeId));
-      const rows = await db
-        .select()
-        .from(schema.concepts)
-        .where(and(...conds));
-      return rows.map(toConcept);
+      return (await conceptsQuery(db, scope, { schemeId })).map(toConcept);
+    },
+    async findConceptsBySlug(scope, slugs, schemeId) {
+      if (slugs.length === 0) return [];
+      return (await conceptsQuery(db, scope, { schemeId, slugs })).map(toConcept);
     },
     async deleteConcept(scope, id) {
-      await x.write(
+      await writeAll(x, [
         db
           .delete(schema.concepts)
           .where(and(scopeFilter(schema.concepts, scope), eq(schema.concepts.id, id))),
-      );
+        dropUsage(scope, 'concept', id),
+      ]);
     },
     async createTag(scope, tag) {
+      const values = {
+        spaceId: scope.spaceId,
+        environmentId: scope.environmentId,
+        id: tag.id,
+        name: tag.name,
+        slug: tag.slug,
+        description: tag.description,
+        labels: { ...tag.labels },
+      };
+      const { spaceId: _s, environmentId: _e, id: _i, ...set } = values;
       await x.write(
         db
           .insert(schema.tags)
-          .values({ spaceId: scope.spaceId, environmentId: scope.environmentId, ...tag })
+          .values(values)
           .onConflictDoUpdate({
             target: [schema.tags.spaceId, schema.tags.environmentId, schema.tags.id],
-            set: { name: tag.name },
+            set,
           }),
       );
     },
@@ -5624,15 +5789,70 @@ function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
         .select()
         .from(schema.tags)
         .where(and(scopeFilter(schema.tags, scope), eq(schema.tags.id, id)));
-      return row ?? null;
+      return row ? toTag(row) : null;
     },
     async listTags(scope) {
-      return db.select().from(schema.tags).where(scopeFilter(schema.tags, scope));
+      return (await tagsQuery(db, scope, {})).map(toTag);
+    },
+    async findTagsBySlug(scope, slugs) {
+      if (slugs.length === 0) return [];
+      return (await tagsQuery(db, scope, { slugs })).map(toTag);
     },
     async deleteTag(scope, id) {
-      await x.write(
+      await writeAll(x, [
         db.delete(schema.tags).where(and(scopeFilter(schema.tags, scope), eq(schema.tags.id, id))),
-      );
+        dropUsage(scope, 'tag', id),
+      ]);
+    },
+    async slugsLike(scope, namespace, base) {
+      // `base` is a slug (letters, digits, hyphens), so LIKE needs no escaping.
+      const like = (col: SQLiteColumn) => or(eq(col, base), sql`${col} LIKE ${`${base}-%`}`);
+      if (namespace.kind === 'tag') {
+        const t = schema.tags;
+        const rows = await db
+          .select({ slug: t.slug })
+          .from(t)
+          .where(and(scopeFilter(t, scope), like(t.slug)));
+        return rows.flatMap((r) => (r.slug ? [r.slug] : []));
+      }
+      const c = schema.concepts;
+      const rows = await db
+        .select({ slug: c.slug })
+        .from(c)
+        .where(and(scopeFilter(c, scope), eq(c.schemeId, namespace.schemeId), like(c.slug)));
+      return rows.flatMap((r) => (r.slug ? [r.slug] : []));
+    },
+    async listUsage(scope, query) {
+      const rows = await db
+        .select()
+        .from(u)
+        .where(
+          and(
+            scopeFilter(u, scope),
+            eq(u.kind, query.kind),
+            gt(u.publishedCount, 0),
+            query.termIds
+              ? sql`${u.termId} IN (SELECT value FROM json_each(${idList(query.termIds)}))`
+              : undefined,
+          ),
+        );
+      return rows.map(toTermUsage);
+    },
+    async recountUsage(scope) {
+      const p = schema.entryPublished;
+      const of = (kind: TermKind, path: string) => sql`
+        SELECT ${scope.spaceId}, ${scope.environmentId}, ${kind}, j.value, ${p.contentTypeApiId},
+          count(DISTINCT ${p.entryId})
+        FROM ${p}, json_each(${p.metadata}, ${path}) j
+        WHERE ${p.spaceId} = ${scope.spaceId} AND ${p.environmentId} = ${scope.environmentId}
+          AND j.type = 'text'
+        GROUP BY j.value, ${p.contentTypeApiId}`;
+      // One batch: the counts are replaced, never seen half-rebuilt.
+      await writeAll(x, [
+        db.delete(u).where(scopeFilter(u, scope)),
+        db.insert(u).select(of('tag', '$.tags')),
+        db.insert(u).select(of('concept', '$.concepts')),
+      ]);
     },
     async getEntryMetadata(scope, entryId) {
       const [row] = await db
@@ -5800,6 +6020,21 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         const page = publishedAssetPage(db, scope, request.assetPage);
         add(page.query, (rows) => {
           result.assetPage = page.of(rows);
+        });
+      }
+      if (request.tags) {
+        add(tagsQuery(db, scope, request.tags), (rows) => {
+          result.tags = rows.map(toTag);
+        });
+      }
+      if (request.concepts) {
+        add(conceptsQuery(db, scope, request.concepts), (rows) => {
+          result.concepts = rows.map(toConcept);
+        });
+      }
+      if (request.termUsage) {
+        add(termUsageQuery(db, scope, request.termUsage), (rows) => {
+          result.termUsage = rows.map(toTermUsage);
         });
       }
 

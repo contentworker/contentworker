@@ -576,13 +576,34 @@ export const decideWorkflowTaskBody = z.object({
 export const workflowSettingsBody = z.object({ separateDuties: z.boolean() });
 export const transitionBody = z.object({ workflowId: zId, toStepId: zId });
 export const schemeBody = z.object({ name: zShort });
+/** What a tag or concept carries beside its label (see `TermFieldsInput`). */
+const termFields = {
+  slug: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('URL slug, normalized (a-z, 0-9, hyphens). Made from the label when omitted'),
+  description: z.string().max(2000).nullable().optional().describe('Plain text; null clears it'),
+  labels: z
+    .record(z.string().min(2).max(35).describe('A locale of the space'), z.string().max(256))
+    .refine((r) => Object.keys(r).length <= 100, 'At most 100 locales')
+    .optional()
+    .describe(
+      'Labels by locale (the whole set). The default locale’s sets the term’s own label; an ' +
+        'empty value removes that locale’s label',
+    ),
+};
 export const conceptBody = z.object({
   schemeId: zId,
   prefLabel: zShort,
   broaderId: zId.nullable().optional(),
+  ...termFields,
 });
+export const conceptPatchBody = z.object({ prefLabel: zShort.optional(), ...termFields });
 export const broaderBody = z.object({ broaderId: zId.nullable().optional() });
-export const tagBody = z.object({ name: zShort });
+export const tagBody = z.object({ name: zShort, ...termFields });
+export const tagPatchBody = z.object({ name: zShort.optional(), ...termFields });
 export const entryMetadataBody = z.object({
   tags: z.array(zId).max(1000).optional(),
   concepts: z.array(zId).max(1000).optional(),

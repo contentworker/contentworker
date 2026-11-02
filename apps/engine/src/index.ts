@@ -16,6 +16,7 @@ import {
   drainOutbox,
   pruneEventHistory,
   redeliverWebhook,
+  repairAllTaxonomies,
   resealSecrets,
   resumeStalledBulkJobs,
   resumeStalledEnvironmentPurges,
@@ -54,7 +55,7 @@ import {
 } from '@contentworker/platform/wire';
 import { redactCredentials } from '@contentworker/redaction';
 import { AssistantAgent } from './assistant';
-import { CRON_JOBS, finishTick, startTick, sweep } from './heartbeat';
+import { CRON_JOBS, finishTick, isTaxonomyRepairTick, startTick, sweep } from './heartbeat';
 import { runInLanes } from './lanes';
 import { newPurgePlan, planPurges, sendPurges } from './purges';
 import { AgentWorkflow } from './workflows/agent-workflow';
@@ -570,6 +571,26 @@ export default {
             }
           },
           (err) => console.error('secret reseal failed', err),
+        );
+      }
+      // Taxonomy repair, once a day (04:15 UTC): recounts every environment's published usage
+      // counts from its snapshots and gives a slug to any term older code wrote without one.
+      // The counts are kept as entries publish; this is the backstop, not the mechanism.
+      if (wired.persistent && isTaxonomyRepairTick(ctrl.scheduledTime)) {
+        await sweep(
+          tick,
+          CRON_JOBS.taxonomyRepair,
+          async () => {
+            const r = await repairAllTaxonomies(wired.ctx);
+            console.log(JSON.stringify({ msg: 'taxonomy repaired', ...r }));
+            if (r.slugsAssigned > 0) {
+              metrics.count('contentworker_taxonomy_slugs_assigned_total', r.slugsAssigned);
+            }
+            if (r.failed > 0) {
+              metrics.count('contentworker_taxonomy_repair_failed_total', r.failed);
+            }
+          },
+          (err) => console.error('taxonomy repair failed', redactCredentials(err)),
         );
       }
       // Actions first: their outbox events are then picked up by the relay

@@ -1097,10 +1097,16 @@ export const concepts = sqliteTable(
     schemeId: text('scheme_id').notNull(),
     prefLabel: text('pref_label').notNull(),
     broaderId: text('broader_id'),
+    /** Unique within the scheme. NULL only on a row older code wrote (the recount sweep fills it). */
+    slug: text('slug'),
+    description: text('description'),
+    /** Labels in the space's other locales (locale → label); `pref_label` is the default's. */
+    labels: text('labels', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
     index('concepts_by_scheme').on(t.spaceId, t.environmentId, t.schemeId),
+    uniqueIndex('concepts_by_slug').on(t.spaceId, t.environmentId, t.schemeId, t.slug),
   ],
 );
 
@@ -1111,8 +1117,37 @@ export const tags = sqliteTable(
     environmentId: text('environment_id').notNull(),
     id: text('id').notNull(),
     name: text('name').notNull(),
+    /** Unique in the environment. NULL only on a row older code wrote (the recount sweep fills it). */
+    slug: text('slug'),
+    description: text('description'),
+    /** Labels in the space's other locales (locale → label); `name` is the default's. */
+    labels: text('labels', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
   },
-  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    uniqueIndex('tags_by_slug').on(t.spaceId, t.environmentId, t.slug),
+  ],
+);
+
+/**
+ * How many published entries of each content type carry each term (`kind` is `tag` or
+ * `concept`). Kept by the store in the same batch as the published snapshots it counts.
+ */
+export const taxonomyUsage = sqliteTable(
+  'taxonomy_usage',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    kind: text('kind').$type<'tag' | 'concept'>().notNull(),
+    termId: text('term_id').notNull(),
+    contentTypeApiId: text('content_type_api_id').notNull(),
+    publishedCount: integer('published_count').notNull(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.spaceId, t.environmentId, t.kind, t.termId, t.contentTypeApiId],
+    }),
+  ],
 );
 
 export const entryMetadata = sqliteTable(

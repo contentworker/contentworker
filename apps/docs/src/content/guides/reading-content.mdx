@@ -63,6 +63,56 @@ Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>
 Entries a role-bound key can't read are left out of lists, and denied fields are removed; see
 [Roles](/guides/api-keys/#roles).
 
+## Tags and concepts
+
+Archive pages ("everything tagged *News*") read the space's taxonomy and filter entries by it.
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/taxonomy/tags/news?locale=de-DE" \
+  -H "Authorization: Bearer $CDA"
+```
+
+```json
+{
+  "id": "…",
+  "slug": "news",
+  "label": "Nachrichten",
+  "description": "What happened this week",
+  "count": 42,
+  "countsByContentType": { "article": 40, "page": 2 }
+}
+```
+
+| Request                                   | Returns                                                       |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| `…/taxonomy/tags`                         | Every tag, by slug, as `{ items }`                            |
+| `…/taxonomy/tags/{slug}`                  | One tag; `404` when no tag has the slug                       |
+| `…/taxonomy/concepts?scheme={schemeId}`   | Every concept (of one scheme), with `schemeId` and `broaderId` |
+| `…/taxonomy/concepts/{slug}?scheme={id}`  | One concept; `409` when two schemes share the slug and no `scheme` is given |
+
+`label` is in the `locale` you ask for, following the [fallback chain](/start/concepts/#locales)
+to the default locale's label; without `locale` you get the default label and `labels`, every
+locale's. `count` is how many **published** entries carry the term (drafts, unpublished and
+trashed entries don't count); `content_type=article` counts articles only. A role-bound key counts
+only the content types it may read.
+
+Then list the archive's entries by the term's slug (or its id, with `metadata.tags`):
+
+| Filter                                  | Matches                                   |
+| --------------------------------------- | ----------------------------------------- |
+| `metadata.tags.slug=news`               | entries tagged `news`                     |
+| `metadata.tags.slug[in]=news,sport`     | tagged with any of them                   |
+| `metadata.tags.slug[nin]=news`          | not tagged `news`                         |
+| `metadata.concepts.slug=cats`           | entries carrying the concept `cats`       |
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article&metadata.tags.slug=news&order=-sys.publishedAt&limit=20" \
+  -H "Authorization: Bearer $CDA"
+```
+
+A slug is unique among the environment's tags (a concept's, within its scheme), and it never
+changes when an editor renames the term: only setting a new slug moves an archive URL.
+
 ## Assets
 
 `GET /delivery/{space}/{env}/assets` and `…/assets/{id}` return published assets as

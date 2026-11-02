@@ -77,6 +77,7 @@ export * from './snapshots';
 export * from './spaces';
 export * from './tasks';
 export * from './taxonomy';
+export * from './taxonomy-delivery';
 export * from './team';
 export * from './token-crypto';
 export * from './url-safety';
