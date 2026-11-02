@@ -241,6 +241,9 @@ export interface ContentTypeEntryCounts {
 }
 
 /** Query options for the entries list (filters/order/search). */
+/** The most entries one list request returns (the API's `MAX_PAGE_LIMIT`). */
+export const ENTRY_PAGE = 100;
+
 export interface EntryListQuery {
   readonly filters?: readonly EntryFilter[];
   readonly order?: readonly EntryOrder[];
@@ -1192,16 +1195,29 @@ export function createManagementClient(
       return r.items;
     },
     /** Lists draft/current entries (Preview API), with optional field filters,
-     *  ordering, and full-text search applied server-side. */
+     *  ordering, and full-text search applied server-side. The API returns at most
+     *  `ENTRY_PAGE` a request, so a larger `limit` is read page by page with `skip`. */
     async listEntries(contentType?: string, query: EntryListQuery = {}): Promise<PreviewEntry[]> {
-      const params = entryQueryParams(query);
-      if (contentType) params.set('content_type', contentType);
-      const qs = params.toString();
-      const r = await req<{ items: PreviewEntry[] }>(
-        'GET',
-        `${preview}/entries${qs ? `?${qs}` : ''}`,
-      );
-      return r.items;
+      const page = async (q: EntryListQuery) => {
+        const params = entryQueryParams(q);
+        if (contentType) params.set('content_type', contentType);
+        const qs = params.toString();
+        const r = await req<{ items: PreviewEntry[] }>(
+          'GET',
+          `${preview}/entries${qs ? `?${qs}` : ''}`,
+        );
+        return r.items;
+      };
+      const want = query.limit;
+      if (want === undefined || want <= ENTRY_PAGE) return page(query);
+      const items: PreviewEntry[] = [];
+      for (let skip = query.skip ?? 0; items.length < want; skip += ENTRY_PAGE) {
+        const size = Math.min(ENTRY_PAGE, want - items.length);
+        const rows = await page({ ...query, skip, limit: size });
+        items.push(...rows);
+        if (rows.length < size) break;
+      }
+      return items;
     },
     /**
      * Entries matching what someone is typing, resolved server-side.
