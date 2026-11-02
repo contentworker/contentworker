@@ -14,6 +14,11 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'docs_list',
   'docs_read',
   'docs_search',
+  // Redirects: reads and dry checks; create/update/delete/import/collapse are writes.
+  'redirects_list',
+  'redirects_get',
+  'redirects_resolve',
+  'redirects_analyze',
   'model_list_content_types',
   'model_get_content_type',
   'model_entry_counts',
