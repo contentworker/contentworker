@@ -430,7 +430,7 @@ export async function prepareSnapshotImport(
   ctx: AppContext,
   target: Scope,
   snapshot: EnvironmentSnapshot,
-  options: ImportOptions = {},
+  options: ImportOptions & { readonly remoteFiles?: ReadonlyMap<string, string> } = {},
 ): Promise<PreparedSnapshotImport> {
   if (snapshot.snapshotVersion !== SNAPSHOT_VERSION) {
     throw new ValidationError([
@@ -465,12 +465,12 @@ export async function prepareSnapshotImport(
   if (problems.length > 0) throw new ValidationError(problems);
 
   const skipped: string[] = [];
-  if (snapshot.assets.length > 0) {
+  // Assets whose file the import copies from elsewhere (a space export) do bring their bytes.
+  const recordsOnly = snapshot.assets.filter((a) => !options.remoteFiles?.has(a.id)).length;
+  if (recordsOnly > 0) {
     // Named rather than silently dropped: an operator restoring content should
     // know the binaries did not travel with it.
-    skipped.push(
-      `${snapshot.assets.length} asset(s): records copied, binaries stay in the source blob store`,
-    );
+    skipped.push(`${recordsOnly} asset(s): records copied, binaries stay in the source blob store`);
   }
   const publishable = snapshot.entries.filter(
     (e) => e.status === 'published' || (e.status === 'changed' && e.publishedFields),
@@ -529,15 +529,41 @@ export async function writeSnapshotModel(
     const created = await createScheme(ctx, target, { name: scheme.name });
     taxonomyIds.set(scheme.id, created.id);
   }
+  // Slugs, descriptions and localized labels come along. A snapshot made before terms had them
+  // (or a slug the target already uses) gets one made like a new term's; labels in a locale the
+  // target space doesn't have are left behind rather than failing the import.
+  const locales = new Set((await ctx.store.spaces.getConfig(target))?.locales ?? []);
+  const termFields = (term: Partial<Pick<Tag, 'slug' | 'description' | 'labels'>>) => ({
+    ...(term.slug ? { slug: term.slug } : {}),
+    ...(term.description ? { description: term.description } : {}),
+    ...(term.labels
+      ? {
+          labels: Object.fromEntries(
+            Object.entries(term.labels).filter(([locale]) => locales.has(locale)),
+          ),
+        }
+      : {}),
+  });
   for (const concept of snapshot.taxonomy.concepts) {
-    const created = await createConcept(ctx, target, {
-      schemeId: taxonomyIds.get(concept.schemeId) ?? concept.schemeId,
-      prefLabel: concept.prefLabel,
-    });
+    const created = await createConcept(
+      ctx,
+      target,
+      {
+        schemeId: taxonomyIds.get(concept.schemeId) ?? concept.schemeId,
+        prefLabel: concept.prefLabel,
+        ...termFields(concept),
+      },
+      { slugTaken: 'renumber' },
+    );
     taxonomyIds.set(concept.id, created.id);
   }
   for (const tag of snapshot.taxonomy.tags) {
-    const created = await createTag(ctx, target, { name: tag.name });
+    const created = await createTag(
+      ctx,
+      target,
+      { name: tag.name, ...termFields(tag) },
+      { slugTaken: 'renumber' },
+    );
     taxonomyIds.set(tag.id, created.id);
   }
 

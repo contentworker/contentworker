@@ -666,6 +666,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 5.20261031.1
+      '@contentworker/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@contentworker/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
@@ -728,6 +731,33 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 24.19.2
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(jsdom@30.1.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/cli:
+    devDependencies:
+      '@contentworker/sdk-codegen':
+        specifier: workspace:*
+        version: link:../sdk/codegen
+      '@contentworker/sdk-core':
+        specifier: workspace:*
+        version: link:../sdk/core
+      '@contentworker/sdk-management':
+        specifier: workspace:*
+        version: link:../sdk/management
+      '@contentworker/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+      tsup:
+        specifier: 'catalog:'
+        version: 9.0.0(jiti@2.7.0)(postcss@8.5.32)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -929,6 +959,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 5.20261031.1
+      '@contentworker/cli':
+        specifier: workspace:*
+        version: link:../cli
       '@contentworker/sdk-core':
         specifier: workspace:*
         version: link:../sdk/core

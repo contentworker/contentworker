@@ -166,6 +166,8 @@ describe('sdk-management assets against the api', () => {
     const img = await image(cma);
     const out = await cma.assets.transformUrl(img.id, { width: 400, fit: 'crop', format: 'webp' });
     expect(out.url).toContain('w=400');
+    // From a fresh short-lived read URL, not the stored one.
+    expect(out.url).toContain('ttl=900');
     expect(out.transform).toMatchObject({ width: 400, fit: 'crop', format: 'webp' });
 
     const pdf = (await cma.assets.create({ fileName: 'b.pdf', contentType: 'application/pdf' }))
@@ -182,6 +184,28 @@ describe('sdk-management assets against the api', () => {
     expect(suggested.applied).toBe(true);
     expect(suggested.locale).toBe('en-US');
     expect((await cma.assets.get(img.id)).metadata.altText['en-US']).toBe(suggested.altText);
+  });
+
+  it('suggests tags against the stub provider without a 500, and applies nothing it lacks', async () => {
+    const cma = client();
+    const img = await image(cma);
+    // The in-memory wiring's stub answers a string where the tag lists were asked for: that is no
+    // suggestion, not a TypeError.
+    const tagged = await cma.assets.autoTag(img.id, { apply: true });
+    expect(tagged).toMatchObject({ tagIds: [], newTags: [], applied: true });
+    expect(tagged.usage).toEqual({
+      inputTokens: expect.any(Number),
+      outputTokens: expect.any(Number),
+    });
+    expect((await cma.assets.get(img.id)).metadata.tags).toEqual([]);
+  });
+
+  it('never receives the server’s storage key', async () => {
+    const cma = client();
+    const img = await image(cma);
+    expect(img).not.toHaveProperty('r2Key');
+    expect(await cma.assets.get(img.id)).not.toHaveProperty('r2Key');
+    expect(await cma.assets.publish(img.id)).not.toHaveProperty('r2Key');
   });
 
   it('answers a video create with not_configured when no video host is bound', async () => {

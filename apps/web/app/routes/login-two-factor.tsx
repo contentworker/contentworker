@@ -10,7 +10,7 @@ import {
   Throttled,
   verifySecondFactor,
 } from '~/lib/auth.server';
-import { nextPath, withNext } from '~/lib/next-path';
+import { nextPath, redirectToNext, withNext } from '~/lib/next-path';
 import type { Route } from './+types/login-two-factor';
 
 export const meta = () => [{ title: 'Two-factor sign-in · contentworker' }];
@@ -24,7 +24,7 @@ const backToSignIn = (request: Request) =>
   });
 
 export async function loader({ request }: Route.LoaderArgs) {
-  if (await principal(request)) throw redirect(nextPath(request));
+  if (await principal(request)) throw redirectToNext(nextPath(request));
   const pending = await pendingChallenge(request);
   if (!pending) throw backToSignIn(request);
   return { email: pending.email };
@@ -54,7 +54,7 @@ export async function action({ request }: Route.ActionArgs) {
   }
   const headers = new Headers();
   for (const c of cookies) headers.append('set-cookie', c);
-  return redirect(nextPath(request), { headers });
+  return redirectToNext(nextPath(request), { headers });
 }
 
 export default function LoginTwoFactor() {

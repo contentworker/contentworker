@@ -60,6 +60,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['entries', '/content/article'],
   ['new entry', '/content/article/new'],
   ['import', '/content/article/import'],
+  ['space export import', '/content/space-import'],
   ['approvals', '/approvals'],
   ['releases', '/releases'],
   ['workflows', '/workflows'],
@@ -417,6 +418,15 @@ test('the asset sheet’s tabs have no accessibility violations', async ({
   await scan(page, testInfo);
 });
 
+// The page a link opens when it no longer works: public, so it is reachable before sign-in is on.
+test('an invitation link that no longer works has no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await page.goto(`/invite/cwi_${'A'.repeat(43)}`);
+  await expect(page.getByRole('alert')).toContainText('isn’t valid');
+  await scan(page, testInfo);
+});
+
 test('the content type dialog has no accessibility violations', async ({ page }, testInfo) => {
   await openCms(page, '/content');
   await page
@@ -614,4 +624,26 @@ test('a blocks field’s editor has no accessibility violations', async ({ page,
     page.getByRole('button', { name: 'Move Call to action block 2 down' }),
   ).toBeDisabled();
   await scan(page, info);
+});
+
+// The taxonomy screen's tag table (slug, published count) and the term editor sheet with its
+// localized-label fields.
+test('the taxonomy tag table and its term editor have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  const stamp = Date.now().toString(36);
+  const created = await api(page.request, 'POST', `${MGMT}/taxonomy/tags`, {
+    name: `A11y ${stamp}`,
+    description: 'Checked by axe',
+  });
+  expect(created.ok()).toBe(true);
+  await openCms(page, '/taxonomy');
+  await page.getByRole('tab', { name: 'Tags' }).click();
+  const table = page.getByRole('table', { name: 'Tags' });
+  await expect(table.getByText(`a11y-${stamp}`)).toBeVisible();
+  await scan(page, testInfo);
+  await table.getByRole('button', { name: `Edit “A11y ${stamp}”` }).click();
+  const sheet = page.getByRole('dialog', { name: `Edit “A11y ${stamp}”` });
+  await expect(sheet.getByLabel('Slug')).toHaveValue(`a11y-${stamp}`);
+  await scan(page, testInfo, ['[role="dialog"]']);
 });

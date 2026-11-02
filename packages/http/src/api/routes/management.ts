@@ -41,6 +41,7 @@ import { rolesRoutes } from './management/roles';
 import { semanticsRoutes } from './management/semantics';
 import { shareLinksRoutes } from './management/share-links';
 import { snapshotsRoutes } from './management/snapshots';
+import { spaceExportRoutes } from './management/space-export';
 import { taxonomyRoutes } from './management/taxonomy';
 import { trashRoutes } from './management/trash';
 import { uploadsRoutes } from './management/uploads';
@@ -64,6 +65,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   oauthConnectionsRoutes,
   snapshotsRoutes,
   importsRoutes,
+  spaceExportRoutes,
   pluginsRoutes,
   rolesRoutes,
   contentTypesRoutes,

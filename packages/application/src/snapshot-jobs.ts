@@ -1,5 +1,6 @@
 import { type Asset, NotFoundError, type Scope, ValidationError } from '@contentworker/domain';
-import type { BlobStore, BulkJob, BulkJobChunk } from '@contentworker/ports';
+import type { BlobStore, BulkJob, BulkJobChunk, RemoteFetcher } from '@contentworker/ports';
+import { copyRemoteAsset, TransientCopyError } from './asset-copy';
 import { publishAsset } from './assets';
 import { type ChainedJob, persistJob } from './bulk-jobs';
 import type { AppContext } from './context';
@@ -62,6 +63,8 @@ export interface SnapshotJobConfig extends Record<string, unknown> {
 
 interface CreateChunk {
   readonly assets: readonly Asset[];
+  /** Assets whose file is copied from another system as the record is created (see `remoteFiles`). */
+  readonly remoteAssets?: readonly { readonly asset: Asset; readonly url: string }[];
   readonly entries: readonly StagedSnapshotEntry[];
 }
 
@@ -88,6 +91,12 @@ export const isSnapshotJob = (config: unknown): config is SnapshotJobConfig =>
 export interface StartSnapshotOptions extends ImportOptions {
   /** The ids the create and publish jobs take (a clone fixes them up front); otherwise new. */
   readonly jobIds?: { readonly create: string; readonly publish: string };
+  /**
+   * Asset id → the URL its file is copied from, for assets whose bytes are in another system (a
+   * space export). Set by the importer that read that file, never from a request: an uploaded
+   * snapshot names no URL the server would fetch.
+   */
+  readonly remoteFiles?: ReadonlyMap<string, string>;
 }
 
 export async function startSnapshotImport(
@@ -102,7 +111,10 @@ export async function startSnapshotImport(
   const publishing = options.publish !== false;
 
   const createItems = [
-    ...snapshot.assets.map((asset) => ({ asset })),
+    ...snapshot.assets.map((asset) => {
+      const url = options.remoteFiles?.get(asset.id);
+      return url ? { asset, url } : { asset };
+    }),
     // With the snapshot's own taxonomy ids: remapped as each entry is created (see config).
     ...snapshot.entries.map((entry) => ({ entry: stagedEntry(entry, new Map(), publishing) })),
   ];
@@ -123,10 +135,23 @@ export async function startSnapshotImport(
   // Everything is staged first, before the model is written: a failure while staging leaves the
   // target untouched (still empty, so a retry works), and no chunk can ever be claimed before its
   // work is readable. After the model, the only write left is the job itself.
-  const createChunks = await stageChunks(blob, target, jobId, createItems, itemId, (items) => ({
-    assets: items.flatMap((i) => ('asset' in i ? [i.asset] : [])),
-    entries: items.flatMap((i) => ('entry' in i ? [i.entry] : [])),
-  }));
+  const createChunks = await stageChunks(
+    blob,
+    target,
+    jobId,
+    createItems,
+    itemId,
+    (items): CreateChunk => {
+      const remoteAssets = items.flatMap((i) =>
+        'asset' in i && 'url' in i && i.url ? [{ asset: i.asset, url: i.url }] : [],
+      );
+      return {
+        assets: items.flatMap((i) => ('asset' in i && !('url' in i) ? [i.asset] : [])),
+        ...(remoteAssets.length > 0 ? { remoteAssets } : {}),
+        entries: items.flatMap((i) => ('entry' in i ? [i.entry] : [])),
+      };
+    },
+  );
   let next: ChainedJob | undefined;
   if (publishItems.length > 0) {
     const publishJobId = options.jobIds?.publish ?? ctx.ids.newId();
@@ -344,8 +369,9 @@ export interface SnapshotChunkOutcome {
 /**
  * Runs one staged chunk of a snapshot import. Each item is attempted on its own, so one bad
  * entry is a reported failure rather than a stalled chunk; every step is safe to run again
- * (see `createSnapshotEntry` and `publishSnapshotEntry`), so a chunk re-run after a crash
- * finishes the job instead of duplicating it.
+ * (see `createSnapshotEntry`, `copyRemoteAsset` and `publishSnapshotEntry`), so a chunk re-run
+ * after a crash finishes the job instead of duplicating it. A file download that may succeed
+ * later (`TransientCopyError`) fails the whole chunk instead, so it is retried.
  */
 export async function runSnapshotChunk(
   ctx: AppContext,
@@ -353,6 +379,7 @@ export async function runSnapshotChunk(
   scope: Scope,
   config: SnapshotJobConfig,
   payloadKey: string | undefined,
+  fetcher?: RemoteFetcher,
 ): Promise<SnapshotChunkOutcome> {
   if (config.phase === 'prepare') return runClonePrepare(ctx, blob, scope, config);
   if (!payloadKey) throw new Error('A snapshot import chunk is missing its staged work');
@@ -368,6 +395,7 @@ export async function runSnapshotChunk(
       await work();
       succeeded += 1;
     } catch (err) {
+      if (err instanceof TransientCopyError) throw err;
       failures.push({ id, error: err instanceof Error ? err.message : String(err) });
     }
   };
@@ -377,6 +405,15 @@ export async function runSnapshotChunk(
     const remap = (id: string) => config.taxonomyIds?.[id] ?? id;
     for (const asset of chunk.assets) {
       await attempt(asset.id, () => createSnapshotAsset(ctx, scope, asset));
+    }
+    if (chunk.remoteAssets?.length && !fetcher) {
+      // A wiring fault, not a bad file: the chunk is released for a consumer that can fetch.
+      throw new Error('This consumer has no outbound fetcher to copy asset files with');
+    }
+    for (const { asset, url } of chunk.remoteAssets ?? []) {
+      await attempt(asset.id, () =>
+        copyRemoteAsset(ctx, blob, fetcher as RemoteFetcher, scope, asset, url),
+      );
     }
     for (const entry of chunk.entries) {
       const remapped = {

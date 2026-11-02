@@ -8,6 +8,7 @@ import {
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
+import { conforms } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import type { AppContext } from './context';
 import { getEntry } from './entries';
@@ -101,6 +102,18 @@ function describeEntry(ct: ContentType, fields: EntryFields, locale: string): st
   return lines.join('\n');
 }
 
+const FINDING_SCHEMA = {
+  type: 'object',
+  properties: {
+    field: { type: 'string' },
+    severity: { type: 'string', enum: ['info', 'warning', 'error'] },
+    message: { type: 'string' },
+    suggestedAction: { type: 'string' },
+  },
+  required: ['severity', 'message', 'suggestedAction'],
+  additionalProperties: false,
+};
+
 /**
  * Agent Action: audits an entry against its content model and editorial best
  * practices, returning structured findings (gaps, inconsistencies, quality
@@ -130,17 +143,7 @@ export async function auditEntry(
       properties: {
         findings: {
           type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              field: { type: 'string' },
-              severity: { type: 'string', enum: ['info', 'warning', 'error'] },
-              message: { type: 'string' },
-              suggestedAction: { type: 'string' },
-            },
-            required: ['severity', 'message', 'suggestedAction'],
-            additionalProperties: false,
-          },
+          items: FINDING_SCHEMA,
         },
       },
       required: ['findings'],
@@ -152,7 +155,13 @@ export async function auditEntry(
   if (!obj || !Array.isArray(obj.findings)) {
     throw new ValidationError([{ field: '', message: 'Model did not return findings' }]);
   }
-  const findings = obj.findings.filter((f) => f.message && f.suggestedAction);
+  // A finding without the shape asked for (not an object, an unknown severity) is left out: it
+  // would fail on its fields, or rank as no severity at all and slip past taskSeverity.
+  const findings = (obj.findings as unknown[]).filter(
+    (f): f is AuditFinding =>
+      conforms(f, { ...FINDING_SCHEMA, additionalProperties: true }) &&
+      Boolean((f as AuditFinding).message && (f as AuditFinding).suggestedAction),
+  );
 
   const taskIds: string[] = [];
   if (input.createTasks) {

@@ -4,17 +4,20 @@ import {
   createAssetFolder,
   deleteAsset,
   deleteAssetFolder,
+  getAsset,
   getPreviewAsset,
   listAssetFolders,
   listAssets,
   listPreviewAssets,
   MAX_ASSET_MOVE,
   moveAssets,
+  publishAsset,
   reingestAsset,
   restoreAsset,
   searchAssets,
   searchDeliveredAssets,
   startAssetReindex,
+  unpublishAsset,
   updateAssetFolder,
 } from '@contentworker/application';
 import {
@@ -26,7 +29,15 @@ import {
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, scopeArgs, scopeOf, signedAssets, type ToolContext, toolSchema } from './shared';
+import {
+  ok,
+  rightsRefusal,
+  scopeArgs,
+  scopeOf,
+  signedAssets,
+  type ToolContext,
+  toolSchema,
+} from './shared';
 
 export function registerAssetTools(server: McpServer, t: ToolContext): void {
   const { deps, ctx, rag, principal, guard } = t;
@@ -149,6 +160,51 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
         ...page,
         items: await Promise.all(page.items.map((a) => signedOne(scopeOf(args), a))),
       });
+    },
+  );
+
+  server.registerTool(
+    'asset_get',
+    {
+      description:
+        'Get one asset as it stands (its draft): file (url a short-lived signed read URL; a ' +
+        'hosted video’s playback URLs in file.video), title, description, metadata, rights, ' +
+        'version, status and ingest state.',
+      inputSchema: toolSchema('asset_get', () => z.object({ id: z.string(), ...scopeArgs })),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await signedOne(scopeOf(args), await getAsset(ctx, scopeOf(args), args.id)));
+    },
+  );
+
+  server.registerTool(
+    'asset_publish',
+    {
+      description:
+        'Publish one asset: Delivery serves its current file and metadata from then on. Refused ' +
+        'before its embargo lifts (asset_embargoed, with embargoUntil) and after its rights ' +
+        'expired (asset_expired, with expiresAt), as REST refuses them; an archived asset too.',
+      inputSchema: toolSchema('asset_publish', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      return rightsRefusal(async () =>
+        ok(await signedOne(scopeOf(args), await publishAsset(ctx, scopeOf(args), args.id))),
+      );
+    },
+  );
+
+  server.registerTool(
+    'asset_unpublish',
+    {
+      description: 'Take one asset out of Delivery; it stays a draft. Refused when not published.',
+      inputSchema: toolSchema('asset_unpublish', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      return ok(await signedOne(scopeOf(args), await unpublishAsset(ctx, scopeOf(args), args.id)));
     },
   );
 

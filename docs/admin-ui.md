@@ -31,7 +31,8 @@ another origin are refused (403).
 | `/logout`                                              | Signing out is a POST (the origin check covers it); a GET asks first                                                                                                             |
 | `/login/sso`, `/login/sso/callback`, `/login/sso/link` | OpenID Connect single sign-on with the deployment's provider (`app/lib/sso.server.ts`)                                                                                           |
 | `/scim/v2/*`                                           | SCIM provisioning from the identity provider, with its own bearer token. Answered by `workers/app.ts` (`scimFetch`) before React Router, so it is not a route in `app/routes.ts` |
-| `/team`                                                | People, deployment roles (Member, Admin), SSO and SCIM settings (admins)                                                                                                         |
+| `/invite/:token`                                       | Moves the token into a cookie and redirects to `/invite`, which accepts: a password or SSO for someone new, or Accept when signed in as the invited address                      |
+| `/team`                                                | People, invitations, deployment roles (Member, Admin), SSO and SCIM settings (admins)                                                                                            |
 | `/audit`                                               | The deployment's admin audit log (`admin_audit`, hash-chained)                                                                                                                   |
 | `/account`                                             | Your password, passkeys, two-factor                                                                                                                                              |
 
@@ -74,12 +75,16 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 ## Features
 
 - **Overview** (`/dashboard`): what needs attention, live activity, AI usage and throughput.
-- **Content** (`/content`): content types and their schema editor; entries per type with filters
-  (`/content/:typeId`; `/content/:typeId/new` starts a new entry);
+- **Content** (`/content`): content types and their schema editor; entries per type with filters,
+  search, sorting from the column headers, a bulk bar for publishing and unpublishing what is
+  ticked, and Load more past the first 100 (`/content/:typeId`; `/content/:typeId/new` starts a new
+  entry);
   the entry editor (TipTap rich text, components and repeaters, references, localized fields),
   version history, diff and restore, comments and tasks, metadata, AI assist; import
   (`/content/:typeId/import`) from CSV, JSON or a WordPress export, with a dry-run report before
-  anything is written and a resumable job past 10,000 records.
+  anything is written and a resumable job past 10,000 records; a whole space export
+  (`/content/space-import`, linked from the empty content list, or the **Space export** format on
+  the import screen) into an environment with no content types, with the same report first.
 - **Coworker**: the assistant panel in the shell, open from any page; its conversation and any
   confirm card waiting for an answer survive navigation. A page's edit can go through it (the
   exact MCP tool call, no model); when the assistant is off or its socket is down, the page makes
@@ -104,7 +109,9 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   focal point, tags and usage. The web build's own files are served from `/_static/` (Vite's
   `build.assetsDir`, cached immutable by `public/_headers`), so nothing under `/assets` is ever a
   static file.
-- **Taxonomy** (`/taxonomy`): concept schemes, concepts, tags.
+- **Taxonomy** (`/taxonomy`): concept schemes, concepts, tags. Each term shows its slug and how
+  many published entries carry it; Edit opens a sheet (`TermEditor`) for its label, slug,
+  description and a label per other locale of the space, saving only what changed.
 - **Settings**: API keys, roles, OAuth connected apps, webhooks, functions, AI actions, app
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch
   compare/merge, redirects, the space audit log.

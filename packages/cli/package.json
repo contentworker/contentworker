@@ -1,0 +1,38 @@
+{
+  "name": "@contentworker/cli",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "The contentworker CLI: sign in to a deployment, keep the content model in code, read and write entries, upload assets, import files and generate types. JSON output for agents.",
+  "bin": {
+    "contentworker": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsup src/bin.ts --format esm",
+    "test": "vitest run",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@contentworker/sdk-codegen": "workspace:*",
+    "@contentworker/sdk-core": "workspace:*",
+    "@contentworker/sdk-management": "workspace:*",
+    "@contentworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

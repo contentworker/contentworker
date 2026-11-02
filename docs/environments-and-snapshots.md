@@ -37,7 +37,9 @@ What an import preserves:
 
 - **Ids.** Entries and asset records keep their ids (every table is keyed per environment), so
   links between them resolve in the target unchanged, and comparing or merging the copy against
-  its source matches entries one to one. Taxonomy ids are remapped.
+  its source matches entries one to one. Taxonomy ids are remapped; terms keep their slug,
+  description and labels (a slug the target already uses is numbered, `news-2`, and labels in a
+  locale the target space lacks are left behind).
 - **Redirects.** They keep their ids, `origin` and timestamps (`writeSnapshotRedirects`). Preflight
   checks each against the target's locales and the set as a whole (no loop, no duplicate source, at
   most `MAX_REDIRECTS`). A source the target already redirects keeps the target's, so a retry adds
@@ -162,7 +164,7 @@ Both POSTs take the same body, so analyzing and running are the same request to 
 
 ```jsonc
 {
-  "source": "csv", // or "json", "wxr"
+  "source": "csv", // or "json", "wxr" (a whole space export has its own routes, below)
   "payload": "sku,title\nA-1,Widget\n", // the file, as text
   "mapping": {
     "contentTypeApiId": "product",
@@ -249,6 +251,84 @@ happened on, and says when the file looks truncated.
 Payload size is bounded by `MAX_BODY_BYTES` (default 5 MB) on HTTP, and by the source's own 20 MB
 cap elsewhere. The synchronous run refuses a file with more than 10,000 records; past that, use the
 durable path.
+
+### Space exports (`space-export`)
+
+A whole space from the widely used JSON space export format (`contentTypes`, `entries`,
+`assets`, `locales`, `tags`, `editorInterfaces`), whose rich text is a typed node tree
+(`nodeType`, `content`, `data`, `marks`, links under `data.target.sys`). Unlike the formats above it
+carries its own content model, so there is no mapping: it imports a whole environment, like a
+snapshot, into one with **no content types**. The routes are `POST …/imports/space-export/analyze`
+(writes nothing) and `POST …/imports/space-export` (`202`), both `content:manage`; the MCP tools are
+`space_export_analyze` and `space_export_import`. Both take:
+
+```jsonc
+{
+  "payload": "{\"contentTypes\": [...], ...}", // the export file, as text
+  "publish": true, // publish what the export marks published (default)
+  "addLocales": false // add the export's locales the space lacks; needs space:admin
+}
+```
+
+The reader (`@contentworker/adapters/import-space-export`, the `SpaceExportReader` port) maps the
+whole file in one pass:
+
+| Export                                                                   | Here                                                                                             |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `Symbol`, `Text`, `RichText`                                             | the same types                                                                                   |
+| `Integer`, `Number`, `Boolean`, `Date`                                   | the same types                                                                                   |
+| `Location`                                                               | `Location` (`{ lat, lon }`)                                                                      |
+| `Object`                                                                 | `JSON`                                                                                           |
+| `Link` (`Entry` / `Asset`)                                               | `Link` with `linkType`                                                                           |
+| `Array` of `Symbol` / `Link`                                             | `Array` with `items`                                                                             |
+| `ResourceLink`, other arrays                                             | not imported, listed in `unmappedFields`                                                         |
+| validations `in`, `size`, `range`, `regexp`, `linkContentType`, `unique` | `in`, `size`, `range`, `regexp` (if `unsafeRegexReason` allows it), `linkContentTypes`, `unique` |
+| any other validation, a custom `message`                                 | listed in `unmappedValidations`                                                                  |
+| `required`, `localized`, `defaultValue`, `displayField`                  | the same (a missing display field becomes the first `Symbol`)                                    |
+| `locales` with `fallbackCode`                                            | the space's locales and `fallbacks` (added only with `addLocales`)                               |
+| `tags`, `metadata.tags`                                                  | taxonomy tags, attached to their entries                                                         |
+| assets (`fields.file` per locale)                                        | one asset each (the default locale's file), the file copied from its URL                         |
+| `editorInterfaces`, `webhooks`, `roles`                                  | not imported; help texts are counted in `warnings`                                               |
+
+A content type or field id that is not a legal apiId here (a hyphen, a leading digit) is rewritten
+(`landing-page` → `landing_page`) and named in `warnings`.
+
+**Every id is new.** Each entry and asset gets an id from `ctx.ids.newId()` before any value is
+converted, so a link to something later in the file, or a cycle, resolves like any other. Links in
+`Link` and `Array` fields and rich-text targets (`embedded-entry-block`, `embedded-asset-block`,
+`embedded-entry-inline`, `entry-hyperlink`, `asset-hyperlink`) are rewritten to the new ids. A link
+whose target isn't imported is dropped and listed in `missingLinks`: an embed goes, a hyperlink keeps
+its words.
+
+**Rich text** maps node for node: the export's node types are this platform's. A node with no
+equivalent (`embedded-resource-block`, anything newer) keeps its text, as a paragraph where a block
+stood, and is counted in `warnings`; a hyperlink to an unsafe URI keeps its text. Every converted
+document is checked with `validateRichText`. No value passes through HTML.
+
+**Entries that would fail are left out, and named.** Each converted entry is validated against the
+mapped model as a write would validate it (defaults first, `unique` values checked across the file);
+one that fails is listed in `invalidEntries` with why, and links to it are dropped. That can leave
+another entry's required link empty, so it repeats until nothing changes.
+
+**Published state.** An entry or asset whose current version is the published one
+(`version == publishedVersion + 1`) is published by the import's second job. One with newer
+unpublished changes imports as a draft (the export carries only the draft), and so does an archived
+one; both are counted in `warnings`.
+
+**Problems** stop the run as a whole (`executable: false`): a target environment with content types,
+an export whose default locale is not the space's (values of fields that aren't localized live under
+the default locale on both sides), and locales the space lacks without `addLocales`.
+
+**The run** reuses the environment import's jobs (`startSnapshotImport`): locales, the content model
+and tags are written in the request; then a create job copies each asset file and creates the assets
+and entries, and when it completes with no failures, a publish job publishes what the export had
+published. Each file URL passes `assertSafeExternalUrl`, then the outbound fetcher downloads it (GET,
+no redirects, at most `ASSET_COPY_MAX_BYTES`, 50 MiB) into the asset's own key in the blob store, and
+only then is the record written; the create job's completion sends the assets through ingest, as for
+any snapshot import. A 5xx, a 429 or a network error fails the whole chunk so the queue retries it
+(every step is safe to repeat); a 4xx, a redirect, an unsafe URL or an oversized file is that asset's
+failure in the job's report, and, as with any snapshot import, a create job with failures does not
+start publishing.
 
 ### Bigger than one request
 

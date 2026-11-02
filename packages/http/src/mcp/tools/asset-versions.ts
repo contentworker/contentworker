@@ -20,7 +20,16 @@ import {
 import { MAX_ASSET_RIGHTS_TEXT, NotConfiguredError, SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, scopeArgs, scopeOf, signedAssets, type ToolContext, toolSchema } from './shared';
+import { assetVersionResponse } from '../../api/asset-response';
+import {
+  ok,
+  rightsRefusal,
+  scopeArgs,
+  scopeOf,
+  signedAssets,
+  type ToolContext,
+  toolSchema,
+} from './shared';
 
 export function registerAssetVersionTools(server: McpServer, t: ToolContext): void {
   const { deps, ctx, ai, principal, guard } = t;
@@ -147,12 +156,9 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
       return ok({
-        items: await listAssetVersions(
-          ctx,
-          scopeOf(args),
-          args.id,
-          deps.blob ? { blob: deps.blob } : {},
-        ),
+        items: (
+          await listAssetVersions(ctx, scopeOf(args), args.id, deps.blob ? { blob: deps.blob } : {})
+        ).map(assetVersionResponse),
       });
     },
   );
@@ -208,8 +214,10 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
         ...(args.expiresAt !== undefined ? { expiresAt: args.expiresAt } : {}),
         ...(args.embargoUntil !== undefined ? { embargoUntil: args.embargoUntil } : {}),
       };
-      return ok(
-        await signedOne(scopeOf(args), await setAssetRights(ctx, scopeOf(args), args.id, rights)),
+      return rightsRefusal(async () =>
+        ok(
+          await signedOne(scopeOf(args), await setAssetRights(ctx, scopeOf(args), args.id, rights)),
+        ),
       );
     },
   );
@@ -331,8 +339,9 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      if (!deps.blob) throw new NotConfiguredError('blob', 'Transform URLs need a blob store');
       return ok(
-        await transformAssetUrl(ctx, scopeOf(args), args.id, {
+        await transformAssetUrl(ctx, deps.blob, scopeOf(args), args.id, {
           width: args.width,
           height: args.height,
           fit: args.fit,
@@ -362,14 +371,13 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(
-        await createVideoAsset(ctx, scopeOf(args), {
-          fileName: args.fileName,
-          contentType: args.contentType,
-          title: args.title,
-          maxDurationSeconds: args.maxDurationSeconds,
-        }),
-      );
+      const created = await createVideoAsset(ctx, scopeOf(args), {
+        fileName: args.fileName,
+        contentType: args.contentType,
+        title: args.title,
+        maxDurationSeconds: args.maxDurationSeconds,
+      });
+      return ok({ ...created, asset: await signedOne(scopeOf(args), created.asset) });
     },
   );
 
@@ -384,7 +392,9 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(await refreshVideoAsset(ctx, scopeOf(args), args.id));
+      return ok(
+        await signedOne(scopeOf(args), await refreshVideoAsset(ctx, scopeOf(args), args.id)),
+      );
     },
   );
 }

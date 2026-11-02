@@ -88,7 +88,7 @@ describe('the entries table while its first page loads', () => {
           busy
           viewingTrash={false}
           hrefFor={() => '/'}
-          onTogglePick={vi.fn()}
+          onPick={vi.fn()}
           onPickAll={vi.fn()}
           actions={{
             publish: vi.fn(),

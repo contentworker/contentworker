@@ -4,7 +4,7 @@ import {
   getPreviewAsset,
   getPreviewEntry,
   listPreviewAssets,
-  listPreviewEntries,
+  listPreviewEntryPage,
   parseEntryQuery,
   principalFromPreviewToken,
   SUGGEST_DEFAULT_LIMIT,
@@ -22,6 +22,7 @@ import {
   SCOPES,
   type Scope,
   scopesForKind,
+  ValidationError,
 } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -36,7 +37,7 @@ import {
 } from '../auth';
 import { doc } from '../docs/openapi';
 import { deliveredAsset, deliveredAssetPage } from '../docs/schemas/assets';
-import { publishedEntryList } from '../docs/schemas/entries';
+import { previewEntryPage } from '../docs/schemas/entries';
 import { parseDeliveredAssetQuery } from '../query';
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({
@@ -120,23 +121,59 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.get(
     `${BASE}/entries`,
     doc('Preview', 'List draft/current entries', {
-      ok: publishedEntryList,
-      query: { content_type: 'Filter by content type apiId', locale: 'Resolve one locale' },
+      ok: previewEntryPage,
+      description:
+        'One page of entries as they are now, drafts included (the trash with trashed=true). ' +
+        'Page with the response’s nextCursor (skip is refused): it walks the list’s own order ' +
+        '(order, or least recently changed first, where an entry edited between two pages is ' +
+        'never skipped).',
+      query: {
+        content_type: 'Filter by content type apiId',
+        locale: 'Resolve one locale',
+        limit: 'Page size (at most 100)',
+        cursor: 'nextCursor from the previous page, with the same filters and order',
+        order: 'Sort keys, e.g. -sys.updatedAt,fields.title',
+        query: 'Full-text search across text fields',
+        trashed: 'true lists the trash',
+      },
     }),
     principalMiddleware(deps),
     environmentMiddleware(deps),
     requireScope(SCOPES.previewRead),
     async (c) => {
-      const query = parseEntryQuery(new URL(c.req.url).searchParams);
-      assertQueryRespectsFieldRules(c.get('principal'), query);
-      const items = await listPreviewEntries(ctx, scopeOf(c), query, {
-        locale: c.req.query('locale'),
-      });
+      // A cursor walks keys, not offsets: a `skip` is refused rather than quietly ignored, so a
+      // client paging by offset hears it instead of reading the first page forever.
+      const { skip, ...query } = parseEntryQuery(new URL(c.req.url).searchParams);
+      if (skip !== undefined)
+        throw new ValidationError([
+          {
+            field: 'skip',
+            message: 'The preview list pages with cursor (its nextCursor), not skip',
+          },
+        ]);
       const principal = c.get('principal');
-      const visible = items
+      assertQueryRespectsFieldRules(principal, query);
+      const cursor = c.req.query('cursor');
+      const page = await listPreviewEntryPage(
+        ctx,
+        scopeOf(c),
+        { ...query, ...(cursor ? { cursor } : {}) },
+        {
+          locale: c.req.query('locale'),
+          ...(principal.contentGrants
+            ? { readable: (t: string) => canAccessContentType(principal, 'read', t) }
+            : {}),
+        },
+      );
+      // The grant already narrowed the query; this is the belt to that, and masks denied fields.
+      const visible = page.items
         .filter((e) => canAccessContentType(principal, 'read', e.contentType))
         .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) }));
-      return c.json({ items: visible, total: visible.length });
+      return c.json({
+        items: visible,
+        total: visible.length,
+        ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      });
     },
   );
 

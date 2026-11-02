@@ -33,6 +33,7 @@ import { registerEnvironmentAliasTools } from './tools/environment-aliases';
 import { registerEnvironmentMergeTools } from './tools/environment-merge';
 import { registerFunctionTools } from './tools/functions';
 import { registerImportTools } from './tools/imports';
+import { registerInviteTools } from './tools/invites';
 import { registerOAuthConnectionTools } from './tools/oauth-connections';
 import { registerPluginTools } from './tools/plugins';
 import { registerPromotionTools } from './tools/promotions';
@@ -42,6 +43,7 @@ import { registerReleaseTools } from './tools/releases';
 import { registerRoleTools } from './tools/roles';
 import { DEFAULT_ENV, DEFAULT_SPACE, ok, type ToolContext } from './tools/shared';
 import { registerSnapshotTools } from './tools/snapshots';
+import { registerSpaceExportTools } from './tools/space-export';
 import { registerSpaceTools } from './tools/spaces';
 import { registerTaxonomyTools } from './tools/taxonomy';
 import { registerTrashTools } from './tools/trash';
@@ -87,6 +89,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerRoleTools,
   registerPluginTools,
   registerImportTools,
+  registerSpaceExportTools,
   registerSnapshotTools,
   registerOAuthConnectionTools,
   registerWebhookTools,
@@ -107,6 +110,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerAssetCollectionTools,
   registerAssetVersionTools,
   registerEnvironmentMergeTools,
+  registerInviteTools,
   registerSpaceTools,
   registerPromotionTools,
   registerEnvironmentAliasTools,

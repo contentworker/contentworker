@@ -15,7 +15,14 @@ export const CRON_JOBS = {
   abandonedUploads: 'abandoned-uploads',
   abandonedMultipart: 'abandoned-multipart-uploads',
   expiredZips: 'expired-zips',
+  taxonomyRepair: 'taxonomy-repair',
 } as const;
+
+/** The daily taxonomy repair runs on the 04:15 UTC tick of the every-minute cron. */
+export function isTaxonomyRepairTick(scheduledTime: number): boolean {
+  const at = new Date(scheduledTime);
+  return at.getUTCHours() === 4 && at.getUTCMinutes() === 15;
+}
 
 /** A tick's heartbeat, started when the tick starts. */
 export const startTick = (ctx: AppContext) => new SchedulerTick(ctx.clock);

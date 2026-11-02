@@ -3,6 +3,7 @@ import {
   addToAssetCollection,
   auditActor,
   completeMultipartAssetUpload,
+  createAsset,
   createAssetCollection,
   createAssetRendition,
   createAssetShareLink,
@@ -42,7 +43,7 @@ import {
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { assetMetadataPatchShape } from '../../api/validation';
+import { assetMetadataPatchShape, createAssetBody } from '../../api/validation';
 import { ok, scopeArgs, scopeOf, signedAssets, type ToolContext, toolSchema } from './shared';
 
 export function registerAssetCollectionTools(server: McpServer, t: ToolContext): void {
@@ -365,6 +366,29 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
   );
 
   server.registerTool(
+    'asset_create',
+    {
+      description:
+        'Create a draft asset and get a signed PUT for its bytes (up to 100 MiB; past that, ' +
+        'asset_upload_start): PUT the file to upload.url with upload.headers, then ' +
+        'asset_publish. The URL is a short-lived capability for that one key; nothing is ' +
+        'uploaded through MCP itself.',
+      inputSchema: toolSchema('asset_create', () =>
+        z.object({ ...createAssetBody.shape, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const { space: _space, environment: _environment, folderId, ...input } = args;
+      const created = await createAsset(ctx, uploadBlob(), scopeOf(args), input, {
+        createdBy: collectionAuthor,
+        ...(folderId ? { folderId } : {}),
+      });
+      return ok({ ...created, asset: await signedOne(scopeOf(args), created.asset) });
+    },
+  );
+
+  server.registerTool(
     'asset_upload_start',
     {
       description:
@@ -443,17 +467,16 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(
-        await completeMultipartAssetUpload(
-          ctx,
-          { blob: uploadBlob(), ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
-          scopeOf(args),
-          args.id,
-          args.uploadId,
-          args.parts,
-          { by: auditActor(principal) },
-        ),
+      const asset = await completeMultipartAssetUpload(
+        ctx,
+        { blob: uploadBlob(), ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
+        scopeOf(args),
+        args.id,
+        args.uploadId,
+        args.parts,
+        { by: auditActor(principal) },
       );
+      return ok(await signedOne(scopeOf(args), asset));
     },
   );
 
@@ -641,12 +664,15 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await setAssetMetadata(ctx, scopeOf(args), args.id, {
-          altText: args.altText,
-          tags: args.tags,
-          focalPoint: args.focalPoint,
-          fields: args.fields,
-        }),
+        await signedOne(
+          scopeOf(args),
+          await setAssetMetadata(ctx, scopeOf(args), args.id, {
+            altText: args.altText,
+            tags: args.tags,
+            focalPoint: args.focalPoint,
+            fields: args.fields,
+          }),
+        ),
       );
     },
   );

@@ -1,6 +1,6 @@
-import { withReadUrl } from '@contentworker/application';
 import {
   type Asset,
+  AssetRightsError,
   type ContentAction,
   FIELD_TYPES,
   type PermissionScope,
@@ -8,6 +8,8 @@ import {
   type Scope,
 } from '@contentworker/domain';
 import { z } from 'zod';
+import { assetPageResponse, assetResponse } from '../../api/asset-response';
+import { toHttpError } from '../../api/http';
 import type { McpDeps } from '../deps';
 
 /**
@@ -151,17 +153,28 @@ export const READ_ONLY = {
 } as const;
 
 /**
- * Reads hand out a short-lived signed URL, never the stored non-expiring one (as the REST
- * routes do). Without a blob store (local fakes) there is nothing to sign with.
+ * Every asset goes out through REST's serializer: a short-lived signed URL, never the stored
+ * non-expiring one, and none of the server's own fields (r2Key). Without a blob store (local
+ * fakes) there is nothing to sign with.
  */
 export function signedAssets(deps: McpDeps) {
-  const signedOne = (s: Scope, asset: Asset) =>
-    deps.blob ? withReadUrl(deps.blob, s, asset) : Promise.resolve(asset);
-  const signedPage = async <P extends { items: Asset[] }>(s: Scope, page: P): Promise<P> => ({
-    ...page,
-    items: await Promise.all(page.items.map((a) => signedOne(s, a))),
-  });
+  const signedOne = (s: Scope, asset: Asset) => assetResponse(deps.blob, s, asset);
+  const signedPage = <P extends { items: Asset[] }>(s: Scope, page: P) =>
+    assetPageResponse(deps.blob, s, page);
   return { signedOne, signedPage };
+}
+
+/**
+ * An asset's rights refusing it (an embargo not yet lifted, rights expired) as REST's 409 body:
+ * the code and the instant that decides it, which a thrown error's message alone would drop.
+ */
+export async function rightsRefusal(run: () => Promise<ReturnType<typeof ok>>) {
+  try {
+    return await run();
+  } catch (err) {
+    if (!(err instanceof AssetRightsError)) throw err;
+    return { ...ok(toHttpError(err).body), isError: true };
+  }
 }
 
 /** What `buildServer` binds per request and every area's tools close over. */

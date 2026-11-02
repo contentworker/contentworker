@@ -217,6 +217,48 @@ export function projectFields(fields: EntryFields, select: readonly string[]): E
   return out;
 }
 
+/**
+ * A row's place in a query's order, for keyset paging: its value for each key of the order
+ * ({@link keysetOrder}), then its id, which breaks every tie.
+ */
+export interface EntryKeyset {
+  readonly values: readonly unknown[];
+  readonly id: string;
+}
+
+/** The order an entries list has when the query names none: least recently changed first. */
+export const DEFAULT_ENTRY_ORDER: readonly QueryOrder[] = [
+  { field: 'sys.updatedAt', direction: 'asc' },
+];
+
+/** The order keyset paging walks: the query's own, or the store's default when it has none. */
+export function keysetOrder(order: readonly QueryOrder[] | undefined): readonly QueryOrder[] {
+  return order?.length ? order : DEFAULT_ENTRY_ORDER;
+}
+
+/** Where `fields` + `sys` sit in {@link keysetOrder}`(order)`: what a page's next cursor holds. */
+export function entryKeysetOf(
+  order: readonly QueryOrder[] | undefined,
+  fields: EntryFields,
+  sys: Record<string, unknown>,
+  locale?: LocaleCode,
+  fallbacks?: readonly LocaleCode[],
+): EntryKeyset {
+  return {
+    values: keysetOrder(order).map((o) => resolveField(o.field, fields, sys, locale, fallbacks)),
+    id: String(sys.id ?? ''),
+  };
+}
+
+/** Compares two keysets in `order`: each key in its direction, then the ids ascending. */
+function compareKeysets(order: readonly QueryOrder[], a: EntryKeyset, b: EntryKeyset): number {
+  for (const [i, o] of order.entries()) {
+    const cmp = compareValues(a.values[i], b.values[i]);
+    if (cmp !== 0) return o.direction === 'desc' ? -cmp : cmp;
+  }
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 /** What a row must expose for {@link runEntryQuery} to filter/order it. */
 export interface EntryQueryInput {
   readonly filters?: readonly QueryFilter[];
@@ -224,6 +266,12 @@ export interface EntryQueryInput {
   readonly search?: string;
   readonly skip?: number;
   readonly limit?: number;
+  /**
+   * Keyset paging: only rows strictly after this one in {@link keysetOrder}, ties broken by id.
+   * `'start'` reads the first page in that same total order. Unset keeps the plain order (a
+   * stable sort on `order`, the rows' own order without one), so existing lists are unchanged.
+   */
+  readonly afterRow?: EntryKeyset | 'start';
   /** Locale used to resolve field values for comparison. */
   readonly locale?: LocaleCode;
   /** Ordered fallback locales (the space's default-locale chain) tried when
@@ -264,7 +312,19 @@ export function runEntryQuery<T>(
       matchesSearch(fieldsOf(r), query.search as string, query.locale, query.fallbackLocales),
     );
   }
-  if (query.order?.length) {
+  if (query.afterRow !== undefined) {
+    // A total order, so a page boundary is exact: the next page starts strictly after the
+    // last row, whatever was edited between the two reads.
+    const order = keysetOrder(query.order);
+    const keyOf = (r: T) =>
+      entryKeysetOf(order, fieldsOf(r), sysOf(r), query.locale, query.fallbackLocales);
+    const keyed = result.map((r) => ({ r, key: keyOf(r) }));
+    keyed.sort((a, b) => compareKeysets(order, a.key, b.key));
+    const after = query.afterRow;
+    result = (
+      after === 'start' ? keyed : keyed.filter((k) => compareKeysets(order, k.key, after) > 0)
+    ).map((k) => k.r);
+  } else if (query.order?.length) {
     const order = query.order;
     result.sort((a, b) => {
       for (const o of order) {

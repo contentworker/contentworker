@@ -82,17 +82,16 @@ export function uploadsRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentWrite),
     async (c) => {
       const { parts } = await parseBody(c, completeUploadBody);
-      return c.json(
-        await completeMultipartAssetUpload(
-          ctx,
-          { blob, ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
-          scopeOf(c),
-          c.req.param('id'),
-          c.req.param('uploadId'),
-          parts,
-          { by: auditActor(c.get('principal')) },
-        ),
+      const asset = await completeMultipartAssetUpload(
+        ctx,
+        { blob, ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
+        scopeOf(c),
+        c.req.param('id'),
+        c.req.param('uploadId'),
+        parts,
+        { by: auditActor(c.get('principal')) },
       );
+      return c.json(await signedOne(c, asset));
     },
   );
   app.delete(

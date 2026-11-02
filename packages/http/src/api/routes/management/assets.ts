@@ -188,11 +188,14 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         '501 when no video host is bound.',
     }),
     requireScope(SCOPES.contentWrite),
-    async (c) =>
-      c.json(
-        await createVideoAsset(ctx, scopeOf(c), await parseBody(c, createVideoAssetBody)),
-        201,
-      ),
+    async (c) => {
+      const created = await createVideoAsset(
+        ctx,
+        scopeOf(c),
+        await parseBody(c, createVideoAssetBody),
+      );
+      return c.json({ ...created, asset: await signedOne(c, created.asset) }, 201);
+    },
   );
 
   return app;

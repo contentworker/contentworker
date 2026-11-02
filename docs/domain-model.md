@@ -704,7 +704,7 @@ See [API reference](./api-reference.md) for HTTP shapes.
 | **WorkflowGraphDefinition / WorkflowVersion** | An editable workflow graph (the draft) and its immutable versions; the latest's `gatesPublish` lets only its runs publish its types. |
 | **WorkflowRun / WorkflowTask**                | A durable run pinned to one version, and the approvals, event waits and agent reviews it opens                                       |
 | **WorkflowDefinition** (legacy)               | Ordered `steps`, each gated by a scope; per-entry `EntryWorkflowState`. Kept for existing rows; `legacyStepsToGraph` converts it     |
-| **ConceptScheme / Concept / Tag**             | Controlled vocabulary and free-form tags                                                                                             |
+| **ConceptScheme / Concept / Tag**             | Controlled vocabulary and free-form tags, each term with a slug, description and localized labels (see [Taxonomy](#taxonomy))        |
 | **EntryMetadata**                             | Tags and concept associations on an entry                                                                                            |
 | **Role / ContentTypeGrant**                   | Granular RBAC (see [Auth & RBAC](./auth-and-rbac.md))                                                                                |
 | **AiAction**                                  | Configurable prompt templates runnable against entries                                                                               |
@@ -721,6 +721,28 @@ See [API reference](./api-reference.md) for HTTP shapes.
 | **SpaceMember**                               | A person on a space's team: email, linked SSO subject, role, `disabled`                                                              |
 | **PreviewToken**                              | An expiring, entry-scoped token behind a shareable preview link (stored hashed)                                                      |
 | **OAuthClient / OAuth grant**                 | A dynamically registered client (not space-scoped) and the code, device and refresh grants a person approves                         |
+
+### Taxonomy
+
+`packages/domain/src/taxonomy/taxonomy.ts`. A `ConceptScheme` is a vocabulary; a `Concept` belongs
+to one and may nest under a `broaderId` (cycles refused); a `Tag` is flat. Both kinds of term carry:
+
+- **`slug`**: normalized like a Slug field (`normalizeSlug`), unique among the environment's tags
+  or within the concept's scheme (unique indexes in D1). Made from the label when none is given
+  (`termSlug`), numbered past the taken ones (`uniqueTermSlug`: `news`, `news-2`). A slug asked
+  for that another term holds is a `ConflictError`. It never follows the label: a rename keeps it.
+- **`description`**: plain text or null.
+- **`labels`**: labels in the space's other locales. The term's own label (`Tag.name`,
+  `Concept.prefLabel`) is the default locale's, so nothing that reads the label changed.
+  `resolveTermLabel` walks the space's fallback chain to it.
+
+`EntryMetadata` (an entry's tag and concept ids) is copied into the published snapshot. **Usage**
+(`TermUsage`: per term and content type, how many published entries carry it) counts snapshots
+only: a draft's terms count once it is published and stop counting when it is unpublished or
+trashed. The store keeps it as it writes snapshots (`TaxonomyRepo.listUsage`, `recountUsage`; see
+[Consistency](./consistency.md#d1-limits-as-design-inputs)); `summarizeUsage` sums it per term,
+leaving out the content types a key may not read. Every term change emits `taxonomy.changed`.
+
 
 ## RBAC types
 

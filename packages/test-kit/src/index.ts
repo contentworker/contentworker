@@ -5,4 +5,5 @@ export * from './fakes';
 export * from './in-memory-store';
 export * from './media-fakes';
 export * from './rag-fakes';
+export * from './space-export-fixture';
 export * from './workflow-fakes';

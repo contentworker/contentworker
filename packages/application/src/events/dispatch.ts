@@ -6,6 +6,7 @@ import type {
   BlobStore,
   Cache,
   FunctionInvoker,
+  RemoteFetcher,
   SearchIndex,
   WebhookSender,
 } from '@contentworker/ports';
@@ -19,6 +20,7 @@ import type { AppContext } from '../context';
 import { runEnvironmentPurge } from '../environment-purge';
 import { invokeFunctionsForEvent } from '../functions';
 import { importChunkRunner } from '../import-jobs';
+import { deliverInviteEmail, type InviteMailDeps } from '../invites';
 import { discardStagedJob } from '../job-staging';
 import {
   extractTextByLocale,
@@ -63,6 +65,11 @@ export interface DispatchDeps {
    */
   readonly blob?: BlobStore;
   /**
+   * The outbound fetcher a space export import's chunks copy asset files with (after the URL
+   * screen). Without it those chunks are released for a consumer that has one.
+   */
+  readonly remoteFetcher?: RemoteFetcher;
+  /**
    * The media origin's published-asset gate (KV on the edge). When present, every asset event
    * brings the asset's entry in line with what is published; without it the media Worker falls
    * back to a D1 replica on every miss.
@@ -86,6 +93,11 @@ export interface DispatchDeps {
    * per batch; dispatch skips any tag already written under it.
    */
   readonly invalidatedTags?: Set<string>;
+  /**
+   * Email Sending and the token hasher, for `invite.email_due`. Absent (the deployment sends no
+   * email), the event is dropped: the inviter shares the link they were shown.
+   */
+  readonly inviteMail?: InviteMailDeps;
 }
 
 /**
@@ -119,11 +131,17 @@ export async function dispatchEvent(
   if (event.type === 'bulk.chunk_due') {
     await runBulkChunk(ctx, event, {
       assetBulkChunk: assetBulkChunkRunner(ctx),
-      ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob) } : {}),
+      ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob, deps.remoteFetcher) } : {}),
       ...(deps.assetIngest
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),
     });
+    return;
+  }
+
+  // An invitation's link is due by email. A control event, carrying no token: no webhooks apply.
+  if (event.type === 'invite.email_due') {
+    if (deps.inviteMail) await deliverInviteEmail(ctx, deps.inviteMail, event);
     return;
   }
 

@@ -4,6 +4,12 @@ import { deliveredCollection } from './schemas/asset-collections';
 import { deliveredAsset, deliveredAssetPage, deliveredAssetSearchPage } from './schemas/assets';
 import { publishedEntry, publishedEntryList, searchHits } from './schemas/entries';
 import { deliveredRedirectList, deliveredRedirectMatch } from './schemas/redirects';
+import {
+  deliveredConcept,
+  deliveredConceptList,
+  deliveredTag,
+  deliveredTagList,
+} from './schemas/taxonomy';
 
 /**
  * The Delivery routes' OpenAPI descriptions, kept apart from the routes themselves so the
@@ -30,6 +36,9 @@ const DOCS = {
         content_type: 'Filter by content type apiId',
         locale: 'Resolve fields for one locale',
         include: 'Reference resolution depth',
+        'metadata.tags.slug':
+          'Entries carrying the tag with this slug (also [in]=a,b, [ne], [nin]; ' +
+          'metadata.concepts.slug for concepts, metadata.tags / metadata.concepts for ids)',
       },
     }),
   getEntry: () =>
@@ -72,6 +81,51 @@ const DOCS = {
         limit: 'Page size',
         cursor: 'nextCursor from the previous page',
         locale: 'Resolve title, description and alt text for one locale',
+      },
+    }),
+  listTags: () =>
+    doc('Delivery', 'List tags', {
+      ok: deliveredTagList,
+      description:
+        'Every tag, by slug, with its label, description and how many published entries carry ' +
+        'it (in all, and per content type). A key limited to some content types counts only ' +
+        'those. Cached like any delivery read, and purged when a tag changes or an entry publishes.',
+      query: {
+        locale: 'Resolve labels for one locale (with the space’s fallbacks)',
+        content_type: 'Count published entries of this content type only',
+      },
+    }),
+  getTag: () =>
+    doc('Delivery', 'Get a tag by slug', {
+      ok: deliveredTag,
+      description: 'As in the list; 404 when no tag has the slug.',
+      query: {
+        locale: 'Resolve labels for one locale (with the space’s fallbacks)',
+        content_type: 'Count published entries of this content type only',
+      },
+    }),
+  listConcepts: () =>
+    doc('Delivery', 'List concepts', {
+      ok: deliveredConceptList,
+      description:
+        'Every concept (of one scheme with scheme), by slug, with its label, description, ' +
+        'parent and published usage counts, as for tags.',
+      query: {
+        scheme: 'Only this scheme’s concepts',
+        locale: 'Resolve labels for one locale (with the space’s fallbacks)',
+        content_type: 'Count published entries of this content type only',
+      },
+    }),
+  getConcept: () =>
+    doc('Delivery', 'Get a concept by slug', {
+      ok: deliveredConcept,
+      description:
+        'A slug is unique within a scheme: without scheme, a slug two schemes share is a 409. ' +
+        '404 when no concept has it.',
+      query: {
+        scheme: 'The concept’s scheme',
+        locale: 'Resolve labels for one locale (with the space’s fallbacks)',
+        content_type: 'Count published entries of this content type only',
       },
     }),
   listRedirects: () =>

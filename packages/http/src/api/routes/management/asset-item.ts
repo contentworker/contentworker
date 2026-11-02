@@ -23,6 +23,7 @@ import {
 } from '@contentworker/application';
 import { NotConfiguredError, SCOPES, ValidationError } from '@contentworker/domain';
 import { Hono } from 'hono';
+import { assetVersionResponse } from '../../asset-response';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as assetDocs from '../../docs/schemas/assets';
@@ -62,7 +63,8 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: assetDocs.asset,
     }),
     requireScope(SCOPES.contentWrite),
-    async (c) => c.json(await refreshVideoAsset(ctx, scopeOf(c), c.req.param('id'))),
+    async (c) =>
+      c.json(await signedOne(c, await refreshVideoAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${BASE}/assets/:id/reingest`,
@@ -122,9 +124,10 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Assets', 'Get a resized or re-encoded image URL', {
       ok: assetDocs.transformedImage,
       description:
-        'Built from the stored file URL, through the image service when one is bound (for ' +
-        'published images, prefer the delivered asset’s srcset and renditions). fit=crop is anchored ' +
-        'to the focal point. Images only (422 otherwise).',
+        'Built from a fresh signed read URL for the current file version (it expires with that ' +
+        'URL, 15 minutes), through the image service when one is bound (for published images, ' +
+        'prefer the delivered asset’s srcset and renditions). fit=crop is anchored to the focal ' +
+        'point. Images only (422 otherwise).',
       query: {
         w: 'Width, 1..10000',
         h: 'Height, 1..10000',
@@ -138,6 +141,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
       c.json(
         await transformAssetUrl(
           ctx,
+          blob,
           scopeOf(c),
           c.req.param('id'),
           parseImageTransform(c.req.query()),
@@ -317,7 +321,11 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.previewRead),
     async (c) =>
-      c.json({ items: await listAssetVersions(ctx, scopeOf(c), c.req.param('id'), { blob }) }),
+      c.json({
+        items: (await listAssetVersions(ctx, scopeOf(c), c.req.param('id'), { blob })).map(
+          assetVersionResponse,
+        ),
+      }),
   );
   app.post(
     `${BASE}/assets/:id/versions/:version/restore`,

@@ -1,5 +1,5 @@
 import type { AppContext } from '@contentworker/application';
-import { getEntry, withReadUrl } from '@contentworker/application';
+import { getEntry } from '@contentworker/application';
 import {
   type ApiKey,
   type Asset,
@@ -14,6 +14,7 @@ import {
 } from '@contentworker/domain';
 import type { ImportSource } from '@contentworker/ports';
 import type { Context } from 'hono';
+import { assetResponse } from '../../asset-response';
 import type { AuthDeps, AuthVars } from '../../auth';
 
 // Reads the route's scope, preferring the alias-resolved environment id stamped
@@ -123,9 +124,12 @@ export function entryAccess(ctx: AppContext) {
   return { guardEntry, authorizeEntryRead };
 }
 
-/** Reads hand out a short-lived signed URL, never the stored non-expiring one. */
+/**
+ * Every asset goes out through the one serializer (as MCP's do): a short-lived signed URL, never
+ * the stored non-expiring one, and none of the server's own fields (r2Key).
+ */
 export function assetUrls(blob: AuthDeps['blob']) {
-  const signedOne = (c: Context<AuthVars>, asset: Asset) => withReadUrl(blob, scopeOf(c), asset);
+  const signedOne = (c: Context<AuthVars>, asset: Asset) => assetResponse(blob, scopeOf(c), asset);
   const signed = (c: Context<AuthVars>, assets: readonly Asset[]) =>
     Promise.all(assets.map((a) => signedOne(c, a)));
   return { signedOne, signed };

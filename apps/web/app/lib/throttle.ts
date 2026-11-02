@@ -15,6 +15,8 @@ export const LIMITS = {
   email: 50,
   /** Guesses at a deployment's setup code (`/setup`), per place. */
   'setup-ip': 10,
+  /** Links that didn't work at `/invite/:token` (and failed accepts), per place. */
+  'invite-ip': 10,
   /** Wrong two-factor codes for one person, after a correct password. */
   'two-factor': 5,
   /** Wrong current passwords from someone already signed in (Account page re-checks). */

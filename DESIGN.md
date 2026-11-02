@@ -358,20 +358,33 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   edge inside a card, its outer columns inset 1rem; `edge="flush"` lines them up with the text of
   a padded panel.
 - **Headers** are captions, `scope="col"`. A column without a name (row actions) still gets one for
-  screen readers.
+  screen readers. A column the list sorts by is `Th sort` (`aria-sort` and an arrow beside the
+  caption); a sortable one holds a caption-styled button that sorts by it. Sort lives in the
+  headers, never in a filter panel.
+- **Rows** from md are one height (the entries list's are 44px, its cells centred on the row); a
+  row's quiet actions are ghost `xs` buttons, badge height, so they never set the row's height. A
+  ticked row (`data-state="selected"`) takes a faint brand tint and the keyboard's row
+  (`data-active`) a brand rule at its leading edge, both from `Tr`, so they read apart and
+  together.
 - **Figures** (`numeric`) are right-aligned, tabular and unbroken. Ids, API ids and keys are mono.
 - **Status** in a cell is a badge (`StatusBadge`, or `ToneBadge` for another vocabulary), never
   coloured text alone.
 - **Empty:** no rows at all is `Empty` in place of the table; a search that missed is a
-  `TableEmpty` row.
+  `TableEmpty` row, under the headers, with the way out (Clear filters) in it.
+- **More rows** come in from the foot: a `TableFoot` row with a ghost Load more, which appends the
+  next page (cursor paging) and hands focus to the first row it brought. The ticks and the
+  keyboard's place survive it; a new filter, search or sort starts again from the first page.
 - **Phones:** `stack="cards"` turns each row into a card, the first cell on its own line and the
   rest named by their `label`; `stack="rows"` leaves the row's layout to the caller (the entries
   list, whose rows lay out as a grid with their checkbox and actions). Either way the header stays
   for screen readers and the parts keep their table roles.
-- **Long lists** (`sticky`) keep the header under the shell's header; the card clips with
-  `overflow-clip`, never `overflow-hidden`.
-- **Keyboard:** the entries list moves with J/K, opens with Enter and ticks with X (`EntriesTable`);
-  the hint shows only with `fine:` from md.
+- **Long lists** (`sticky`: the entries list, the asset list, the audit logs) keep the header
+  under the shell's header; the card clips with `overflow-clip`, never `overflow-hidden`. A bar
+  held above the table (a bulk bar) sets `--sticky-above` to its height and the header sits under
+  it.
+- **Keyboard:** the entries list moves with J/K, opens with Enter and ticks with X; Shift-click
+  ticks a range (`EntriesTable`). The hint (`Kbd`, `text-2xs`) shows only with `fine:` from md,
+  and is `aria-hidden`: the table is `aria-describedby` an sr-only sentence that says the same.
 
 ## Screens
 
@@ -381,7 +394,21 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   name linked to its entries with its API id in mono under it, then its entries, drafts, changed
   entries and fields as figures, and Edit; a Draft badge only on a type whose schema isn't
   published. Below md it stacks into cards; a content type's
-  entries beside the list of types (from md); the entry editor: the title wraps; under it an action bar (status,
+  entries beside the list of types (from md): `PageHeader` with the real total ("250 entries",
+  "Showing 100 of 250 entries" while more pages wait; filtered or in the trash, what was read,
+  "100+"), then the filter bar (search, named "Search entries", and Filters, `aria-expanded`, whose
+  panel holds filters only, status values in the status words), then the table: checkbox, the
+  title linking to the editor, Status, Updated (`Ago`, the full time in its tooltip; on a phone
+  beside the status), the row's quiet Publish (ghost `xs`, shown on hover, focus, the J/K row, a
+  ticked row, and always on touch), and the ⋯ menu. Title, Status and Updated sort from their
+  headers; Updated flips between newest first and the default, least recently changed first.
+  **Ticking** anything swaps the filter bar for a bulk bar (`role="group"`, "2 selected · Publish
+  selected · Unpublish selected · Clear"), held under the shell's header, offering only what
+  applies (no Publish when every ticked entry is live as it is, no Unpublish when none is live) and
+  sending only the entries it changes. A polite sr-only line says "2 entries selected". The header
+  checkbox is mixed while some are ticked. A new order or a search leaves ticked only what it
+  still shows. Bulk changes confirm once, naming the first five entries and counting the rest
+  ("and 3 more"); what failed stays ticked and is named in an Alert. The entry editor: the title wraps; under it an action bar (status,
   version and save state, then the one primary verb for the state: Save draft for a new entry,
   Publish while anything isn't live, a disabled "Published" when live and clean) stays under the
   shell's header from md, and below md its buttons sit above the tab bar. The secondary actions

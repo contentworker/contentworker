@@ -9,6 +9,8 @@
   },
   "scripts": {
     "sync:theme": "tsx scripts/sync-theme.ts",
+    "generate": "tsx scripts/sync-theme.ts",
+    "postinstall": "tsx scripts/sync-theme.ts",
     "test": "vitest run",
     "lint": "biome check .",
     "check-types": "tsc --noEmit"

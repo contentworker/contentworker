@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 5390;
+// E2E_PORT runs a second suite beside one already on 5390 (another worktree's), with its own server.
+const PORT = Number(process.env.E2E_PORT) || 5390;
 const state = '.wrangler/e2e';
 
 /**
@@ -57,6 +58,14 @@ export default defineConfig({
       testMatch: 'login.spec.ts',
       dependencies: DEVICES,
       // Chromium: it keeps the `Secure` session cookie on http://localhost, which WebKit drops.
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // Invitations, once sign-in is on: someone joins from a link, and someone with an account
+      // signs in and accepts. Its own people, so it runs beside `oauth`.
+      name: 'invites',
+      testMatch: 'invites.spec.ts',
+      dependencies: ['auth'],
       use: { ...devices['Desktop Chrome'] },
     },
     {

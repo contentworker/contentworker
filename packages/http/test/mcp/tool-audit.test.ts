@@ -210,6 +210,12 @@ describe('MCP tool audit', () => {
     const reads = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name);
     expect(reads).toEqual(expect.arrayContaining(['entries_get', 'docs_list', 'audit_log_list']));
     expect(reads).not.toContain('entries_create');
+    // The single-asset tools: a get is a read; create, publish and unpublish are writes.
+    expect(reads).toContain('asset_get');
+    for (const tool of ['asset_create', 'asset_publish', 'asset_unpublish']) {
+      expect(reads, tool).not.toContain(tool);
+      expect(toolMutates(tool, { id: 'a1' }, false), tool).toBe(true);
+    }
   });
 
   it('classifies only tools that exist, and never a read as propose-or-apply', async () => {

@@ -144,6 +144,39 @@ describe('Team', () => {
     expect(select.value).toBe('role-admin');
   });
 
+  it('stamps only a disabled person, and says Active to a screen reader alone', async () => {
+    const team: TeamSummary = {
+      ...oneAdminKey,
+      people: [
+        ...oneAdminKey.people,
+        {
+          id: 'p-2',
+          email: 'bo@example.com',
+          name: 'Bo',
+          linked: true,
+          disabled: true,
+          role: role('viewer'),
+          admin: false,
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+      ],
+    };
+    renderTeam(fakeClient(team));
+    const ada = (await screen.findByText('Ada')).closest('tr') as HTMLElement;
+    const bo = screen.getByText('Bo').closest('tr') as HTMLElement;
+    expect(within(bo).getByText('Disabled')).toBeTruthy();
+    expect(within(ada).queryByText('Disabled')).toBeNull();
+    expect(within(ada).getByText('Active').className).toContain('sr-only');
+  });
+
+  it('says there is no one yet in place of the table, not as a row of it', async () => {
+    renderTeam(fakeClient({ ...oneAdminKey, people: [], keys: [] }));
+    expect(await screen.findByText(/No one on the team yet/)).toBeTruthy();
+    expect(screen.queryByRole('table', { name: 'People' })).toBeNull();
+    expect(screen.getByText('No API keys.')).toBeTruthy();
+    expect(screen.queryByRole('table', { name: 'API keys and their roles' })).toBeNull();
+  });
+
   it('changes a role only after an inline confirm', async () => {
     const client = fakeClient(oneAdminKey);
     renderTeam(client);

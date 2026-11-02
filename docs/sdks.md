@@ -52,7 +52,7 @@ API:
 
 ```ts
 client.getEntry<F>(id, { locale?, include? }): Promise<DeliveredEntry<F>>
-client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: number }>
+client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: number; nextCursor? }>
 client.search(query, { topK? }): Promise<SearchHit[]>
 client.getAsset(id, { locale? }): Promise<DeliveredAsset>
 client.listAssets({ limit?, cursor?, skip?, kind?, tag?, folder?, locale? }): Promise<AssetPage>
@@ -60,15 +60,24 @@ client.iterateAssets(query?): AsyncGenerator<DeliveredAsset>   // every page, fo
 client.getCollection(id, { limit?, cursor?, locale? }): Promise<DeliveredCollection>  // Delivery only
 client.iterateCollection(id, { limit?, cursor?, locale? }): AsyncGenerator<DeliveredAsset>
 client.searchAssets(q, { limit?, kind?, tag?, folder?, locale? }): Promise<AssetSearchPage>  // Delivery only
+client.listTags({ locale?, contentType? }): Promise<DeliveredTag[]>      // Delivery only
+client.getTag(slug, { locale?, contentType? }): Promise<DeliveredTag>
+client.listConcepts({ scheme?, locale?, contentType? }): Promise<DeliveredConcept[]>
+client.getConcept(slug, { scheme?, locale?, contentType? }): Promise<DeliveredConcept>
 client.redirects(): Promise<DeliveredRedirect[]>         // Delivery only: the enabled set, to apply
 client.resolveRedirect(path, { locale? }): Promise<RedirectMatch | null>  // Delivery only; null on 404
-client.query(): EntryQueryBuilder<F>     // fluent builder
+client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
 client.bookmark: string | undefined     // read-your-writes position (preview); assignable
 ```
 
-- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, since?, filters?, order?, select?, search? }`.
+- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, order?, select?, search?, tags? }`.
+  Delivery pages with `skip`; Preview (`preview: true`) pages with `cursor`, the last page's
+  `nextCursor`, and refuses `skip` (`422`).
+  `tags` (slugs) sends `metadata.tags.slug[in]`, and a filter on `metadata.*` is sent unprefixed.
+- `DeliveredTag` = `{ id, slug, label, labels?, description, count, countsByContentType }`;
+  `DeliveredConcept` adds `schemeId` and `broaderId`.
 - `filters` use the same operators as the HTTP query language (`eq`, `ne`, `in`, `match`, etc.).
 - The fluent builder reads naturally:
   `client.query().contentType('article').locale('en-US').limit(10).fetch()`.
@@ -320,7 +329,9 @@ cma.bookmark                                          // read-your-writes positi
 cma.approvals.count()                                 // what waits on a person
 
 cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
+                                                      // create on an existing apiId revises it
 
+cma.entries.list({ contentType?, locale?, limit?, skip?, order?, query? })  // Preview: drafts included
 cma.entries.create({ contentTypeApiId, fields })      // fields are locale-keyed
 cma.entries.get(id) / .update(id, fields)             // update = new draft version
 cma.entries.publish(id, { expectedVersion? }) / .unpublish(id, { expectedVersion? })
@@ -328,6 +339,9 @@ cma.entries.bulkCreate(items) / .bulkPublish(ids) / .bulkUnpublish(ids)
 cma.entries.reverseReferences(id)                     // "what links here"
 cma.entries.versions.list(id) / .get(id, v) / .diff(id, from, to)
 cma.entries.versions.restore(id, v, { expectedVersion? })
+
+// Imports (CSV, JSON, WXR) into one content type, as drafts
+cma.imports.sources() / .analyze(input) / .run(input) / .start(input)   // start = durable job
 
 // Assets: reading
 cma.assets.list(query?) → AssetPage                   // { kind, mime, tag, folder, status, sort, order, limit, cursor }
@@ -376,6 +390,10 @@ cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .updat
 cma.redirects.import({ format: 'csv' | 'json', data, dryRun? }) / .resolve(path, { locale? }) / .analyze() / .collapseChains()
 
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
+cma.taxonomy.tags.list() / .create({ name, slug?, description?, labels? }) / .update(id, patch) / .delete(id)   // list: each with usage
+cma.taxonomy.schemes.list() / .create({ name }) / .delete(id)
+cma.taxonomy.concepts.list({ scheme? }) / .create(input) / .update(id, patch) / .setBroader(id, broaderId) / .delete(id)
+cma.taxonomy.repair() → { slugsAssigned }   // recount published usage, fill missing slugs
 
 cma.releases.create({ title }) / .addEntry(id, { entityId }) / .removeEntry(id, entityId)
 cma.releases.list() / .get(id) / .publish(id) / .delete(id)   // list: each with itemCount
@@ -411,6 +429,12 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
   a publish that changes a slug write a redirect. `redirects.import` is all or nothing, and
   `redirects.resolve` answers `null` on `404`.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
+- `entries.list` reads `GET /preview/:space/:env/entries` on the same origin (the Management API
+  has no entry list): the latest saved version, drafts included, `{ items, total }` with `total`
+  counting the page. It needs `preview:read`.
+- `imports.analyze`, `run` and `start` take the same `ImportInput` (`source`, `payload`,
+  `mapping`, `sourceOptions?`, `conflicts?`); `analyze` writes nothing and is the plan the other two
+  execute. `start` returns `{ job, analysis }`; follow `job.id` with `bulkJobs.get`.
 - `publish`, `unpublish` and `versions.restore` take `{ expectedVersion }`, the `currentVersion` you
   read; if a draft was saved since, the server answers 409 and changes nothing (`?expectedVersion=`
   on the route; see [Consistency](./consistency.md#invariants)).
@@ -520,7 +544,8 @@ For each content type it emits two interfaces plus shared helpers and lookup map
 
 Pass the shape as the type argument, e.g. `client.getEntry<ArticleFields>(id, { locale })`.
 
-The generator is also importable (`generateTypes(contentTypes)`) for build-tool integration.
+The generator is also importable (`generateTypes(contentTypes)`) for build-tool integration, and
+`contentworker types` in the [CLI](./developer-tooling.md) runs it against the signed-in space.
 Generated modules are self-contained and compile clean under `strict`.
 
 ## Inline editing

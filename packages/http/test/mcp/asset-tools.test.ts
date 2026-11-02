@@ -18,6 +18,7 @@ import { type Principal, SCOPES } from '@contentworker/domain';
 import {
   FakeAssetIngestQueue,
   FakeBlobStore,
+  FakeVideoHost,
   FixedClock,
   InMemoryContentStore,
   InMemoryVectorStore,
@@ -27,8 +28,11 @@ import {
 } from '@contentworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
+import { createApp } from '../../src/api/app';
 import type { McpDeps } from '../../src/mcp/deps';
 import { buildServer } from '../../src/mcp/server';
+import { testConfig } from '../api/config';
+import { wire } from '../api/wire';
 
 const SPACE = 'space-1';
 const scope = { spaceId: SPACE, environmentId: 'main' };
@@ -563,5 +567,250 @@ describe('asset version, rights and bulk tools (MCP), with the HTTP routes’ sc
     // Refused on REST too (packages/http/test/api/sdk-management-assets.test.ts).
     expect((await call({ altText: { 'en-US': 5 } })).isError).toBe(true);
     expect((await call({ tags: ['x'.repeat(129)] })).isError).toBe(true);
+  });
+});
+
+describe('single-asset tools (MCP), on the same use-cases, scopes and serializer as REST', () => {
+  // REST and MCP over one wiring (one store, one blob store), so their answers can be compared.
+  const config = testConfig({
+    seed: {
+      spaceId: 's1',
+      environmentId: 'main',
+      defaultLocale: 'en-US',
+      locales: ['en-US'],
+      scale: 1,
+    },
+  });
+  const M = '/spaces/s1/environments/main';
+  const cma = { Authorization: 'Bearer cma', 'Content-Type': 'application/json' };
+  const S1 = 's1';
+
+  async function both() {
+    const wired = wire(config);
+    const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+    const deps: McpDeps = {
+      // A video host and the ingest queue, for the tools that need them; REST's reads don't.
+      ctx: { ...wired.ctx, video: new FakeVideoHost() },
+      assetIngest: new FakeAssetIngestQueue(),
+      ai: wired.ai,
+      rag: wired.rag,
+      blob: wired.blob,
+      hasher: { hash: (v) => createHash('sha256').update(v).digest('hex') },
+      adminToken: 'admin',
+      agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
+    };
+    const rest = async (method: string, path: string, body?: unknown) => {
+      const res = await app.request(`${M}${path}`, {
+        method,
+        headers: cma,
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+    const mcp = async (principal: Principal) => {
+      const client = await connect(deps, principal);
+      return async (name: string, args: Record<string, unknown>) => {
+        const res = await client.callTool({ name, arguments: { space: S1, ...args } });
+        // A refusal the tool shapes is JSON (REST's body); one thrown is its message.
+        const text = (res.content as { type: string; text?: string }[] | undefined)?.find(
+          (c) => c.type === 'text',
+        )?.text;
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(text ?? 'null');
+        } catch {
+          body = { message: text };
+        }
+        return { isError: res.isError === true, body };
+      };
+    };
+    const created = await rest('POST', '/assets', {
+      fileName: 'hero.png',
+      contentType: 'image/png',
+    });
+    const id = (created.body.asset as { id: string }).id;
+    return { wired, rest, mcp, id };
+  }
+
+  const s1 = (scopes: string[]): Principal => ({ spaceId: S1, kind: 'cma', scopes });
+
+  it('asset_get, asset_publish and asset_unpublish answer exactly as the routes do', async () => {
+    const { rest, mcp, id } = await both();
+    const call = await mcp(admin);
+
+    const got = await call('asset_get', { id });
+    expect(got.isError).toBe(false);
+    expect(got.body).toEqual((await rest('GET', `/assets/${id}`)).body);
+    expect((got.body.file as { url: string }).url).toMatch(/\?ttl=900$/);
+
+    const published = await call('asset_publish', { id });
+    expect(published.body).toMatchObject({ id, status: 'published' });
+    expect(published.body).toEqual((await rest('GET', `/assets/${id}`)).body);
+    // Publishing what is published is a no-op on both surfaces alike.
+    expect((await call('asset_publish', { id })).body).toEqual(
+      (await rest('POST', `/assets/${id}/published`)).body,
+    );
+
+    const unpublished = await call('asset_unpublish', { id });
+    expect(unpublished.body).toMatchObject({ id, status: 'draft' });
+    expect(unpublished.body).toEqual((await rest('GET', `/assets/${id}`)).body);
+    // Unpublishing a draft is refused on both.
+    expect((await call('asset_unpublish', { id })).isError).toBe(true);
+    expect((await rest('DELETE', `/assets/${id}/published`)).status).toBe(400);
+
+    const missing = await call('asset_get', { id: 'nope' });
+    expect(missing.isError).toBe(true);
+  });
+
+  it('asset_publish refuses an embargoed or expired asset with REST’s code and details', async () => {
+    const { rest, mcp, id } = await both();
+    const call = await mcp(admin);
+
+    await rest('PUT', `/assets/${id}/rights`, { embargoUntil: '2999-01-01T00:00:00Z' });
+    const embargoed = await call('asset_publish', { id });
+    const viaRest = await rest('POST', `/assets/${id}/published`);
+    expect(viaRest.status).toBe(409);
+    expect(embargoed.isError).toBe(true);
+    expect(embargoed.body).toEqual(viaRest.body);
+    expect(embargoed.body).toMatchObject({
+      error: { code: 'asset_embargoed', embargoUntil: '2999-01-01T00:00:00.000Z' },
+    });
+
+    await rest('PUT', `/assets/${id}/rights`, { expiresAt: '2001-01-01T00:00:00Z' });
+    const expired = await call('asset_publish', { id });
+    expect(expired.isError).toBe(true);
+    expect(expired.body).toEqual((await rest('POST', `/assets/${id}/published`)).body);
+    expect(expired.body).toMatchObject({
+      error: { code: 'asset_expired', expiresAt: '2001-01-01T00:00:00.000Z' },
+    });
+    expect((await rest('GET', `/assets/${id}`)).body.status).toBe('draft');
+  });
+
+  it('asset_create returns REST’s signed upload, and the asset it made', async () => {
+    const { rest, mcp } = await both();
+    const call = await mcp(s1([SCOPES.contentWrite, SCOPES.previewRead]));
+    const created = await call('asset_create', {
+      fileName: 'logo.svg',
+      contentType: 'image/svg+xml',
+      title: { 'en-US': 'Logo' },
+    });
+    expect(created.isError).toBe(false);
+    const viaRest = await rest('POST', '/assets', {
+      fileName: 'other.svg',
+      contentType: 'image/svg+xml',
+    });
+    expect(Object.keys(created.body).sort()).toEqual(Object.keys(viaRest.body).sort());
+    const asset = created.body.asset as { id: string; title: Record<string, string> };
+    expect(asset.title).toEqual({ 'en-US': 'Logo' });
+    expect(created.body.upload).toMatchObject({
+      url: expect.stringContaining(`/${asset.id}/logo.svg`),
+      headers: { 'content-type': 'image/svg+xml' },
+    });
+    expect((await rest('GET', `/assets/${asset.id}`)).body).toEqual(
+      (await call('asset_get', { id: asset.id })).body,
+    );
+    // The same body checks as REST.
+    expect((await call('asset_create', { fileName: '', contentType: 'image/png' })).isError).toBe(
+      true,
+    );
+  });
+
+  it('holds each tool to its route’s scope, in its own space only', async () => {
+    const { mcp, id } = await both();
+    const reader1 = await mcp(s1([SCOPES.previewRead]));
+    expect((await reader1('asset_get', { id })).isError).toBe(false);
+    for (const [name, args] of [
+      ['asset_publish', { id }],
+      ['asset_unpublish', { id }],
+      ['asset_create', { fileName: 'a.png', contentType: 'image/png' }],
+    ] as const) {
+      expect((await reader1(name, args)).isError, name).toBe(true);
+    }
+    // Writing is not publishing: content:write creates, only content:publish publishes.
+    const writer1 = await mcp(s1([SCOPES.previewRead, SCOPES.contentWrite]));
+    expect(
+      (await writer1('asset_create', { fileName: 'a.png', contentType: 'image/png' })).isError,
+    ).toBe(false);
+    expect((await writer1('asset_publish', { id })).isError).toBe(true);
+    const publisher = await mcp(s1([SCOPES.contentPublish]));
+    expect((await publisher('asset_publish', { id })).body).toMatchObject({ status: 'published' });
+    expect((await publisher('asset_get', { id })).isError).toBe(true);
+
+    // A key for another space reads and publishes nothing here.
+    const elsewhere = await mcp({ spaceId: 'other', kind: 'cma', scopes: Object.values(SCOPES) });
+    for (const name of ['asset_get', 'asset_publish', 'asset_unpublish']) {
+      expect((await elsewhere(name, { id })).isError, name).toBe(true);
+    }
+    expect(
+      (await elsewhere('asset_create', { fileName: 'x.png', contentType: 'image/png' })).isError,
+    ).toBe(true);
+  });
+
+  it('no asset tool sends r2Key, the server’s storage key', async () => {
+    const { wired, mcp, id } = await both();
+    const call = await mcp(admin);
+    const texts: [string, unknown][] = [];
+    const record = async (name: string, args: Record<string, unknown>) => {
+      const res = await call(name, args);
+      expect(res.isError, `${name}: ${JSON.stringify(res.body)}`).toBe(false);
+      texts.push([name, res.body]);
+      return res.body;
+    };
+    await record('asset_get', { id });
+    await record('assets_list', {});
+    await record('assets_search', { q: 'hero' });
+    await record('asset_set_metadata', { id, altText: { 'en-US': 'A hero' } });
+    await record('asset_set_rights', { id, credit: 'Ana' });
+    await record('asset_publish', { id });
+    await record('asset_unpublish', { id });
+    await record('asset_create', { fileName: 'b.png', contentType: 'image/png' });
+    const multipart = (await record('asset_upload_start', {
+      fileName: 'c.bin',
+      contentType: 'application/octet-stream',
+      size: 12,
+    })) as { asset: { id: string }; upload: { uploadId: string } };
+    const part = await (wired.blob as FakeBlobStore).multipart.uploadPart(
+      `${S1}/main/${multipart.asset.id}/c.bin`,
+      multipart.upload.uploadId,
+      1,
+      new Uint8Array(12),
+    );
+    await record('asset_upload_complete', {
+      id: multipart.asset.id,
+      uploadId: multipart.upload.uploadId,
+      parts: [part],
+    });
+    await record('asset_reingest', { id: multipart.asset.id });
+    const video = (await record('asset_video_create', {
+      fileName: 'clip.mp4',
+      contentType: 'video/mp4',
+    })) as { asset: { id: string } };
+    await record('asset_video_refresh', { id: video.asset.id });
+    const replace = (await record('asset_replace_file', {
+      id,
+      fileName: 'hero-2.png',
+      contentType: 'image/png',
+    })) as { commit: { version: number; fileName: string; contentType: string; attempt: string } };
+    await wired.blob.put(
+      `${S1}/main/${id}/v2/file-${replace.commit.attempt}/hero-2.png`,
+      'v2',
+      'image/png',
+    );
+    await record('asset_commit_file', { id, ...replace.commit });
+    await record('asset_versions_list', { id });
+    await wired.blob.put(`${S1}/main/${id}/hero.png`, 'v1', 'image/png');
+    await record('asset_restore_version', { id, version: 1 });
+    await record('asset_archive', { id });
+    await record('asset_restore', { id });
+    const collection = (await record('asset_collections_create', { name: 'Kit' })) as {
+      id: string;
+    };
+    await record('asset_collection_assets_add', { id: collection.id, assetIds: [id] });
+    await record('asset_collection_assets_list', { id: collection.id });
+    // The serializer had assets with a storage key to strip (the store keeps one for each).
+    expect(
+      (await wired.ctx.store.assets.get({ spaceId: S1, environmentId: 'main' }, id))?.r2Key,
+    ).toBeTruthy();
+    for (const [name, body] of texts) expect(JSON.stringify(body), name).not.toContain('r2Key');
   });
 });

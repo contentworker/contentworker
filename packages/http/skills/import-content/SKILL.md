@@ -27,6 +27,19 @@ what it will do before running it.
 6. **Publish.** Imported entries arrive as drafts. Publish them with `bulk_job_start`, which you can
    resume, cancel and report on (`bulk_job_status`, `bulk_job_report`).
 
+## A whole space export
+
+A JSON space export (`contentTypes`, `entries`, `assets`, `locales`, `tags`) brings its own
+content model, so there is nothing to map:
+
+1. `space_export_analyze` with `payload` (the file's text) into an environment with no content
+   types. Read `problems` (they block), `unmappedFields`, `unmappedValidations`, `missingLinks`
+   and `invalidEntries`. If `locales.toAdd` is not empty, a caller with `space:admin` passes
+   `addLocales: true`.
+2. `space_export_import` with the same arguments. Follow `job` with `bulk_job_status`, then
+   `publishJobId` (it starts only after `job` completes with no failures; `bulk_job_report` names
+   any asset file that could not be copied).
+
 ## Limits
 
 - A record that fails validation is skipped and reported; the rest of the run continues.
