@@ -219,8 +219,8 @@ describe('space export reader: entries and links', () => {
   it('carries entry tags by their export id', async () => {
     const space = await read();
     expect(space.tags).toEqual([
-      { id: 'featured', name: 'Featured' },
-      { id: 'engineering', name: 'Engineering' },
+      { id: 'featured', name: 'Featured', slug: '', description: null, labels: {} },
+      { id: 'engineering', name: 'Engineering', slug: '', description: null, labels: {} },
     ]);
     expect(entry(space, 'post-hello').tags).toEqual(['featured']);
     expect(entry(space, 'cat-news').tags).toEqual(['engineering']);

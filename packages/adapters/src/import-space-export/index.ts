@@ -85,7 +85,8 @@ function convertSpace(doc: Json, options: SpaceExportReadOptions): ConvertedSpac
   const tags: Tag[] = list(doc.tags).flatMap((t) => {
     const id = sysId(t);
     const name = isObject(t) ? str(t.name) : undefined;
-    return id && name ? [{ id, name }] : [];
+    // No slug: the snapshot import makes one from the name (as for a term older code wrote).
+    return id && name ? [{ id, name, slug: '', description: null, labels: {} }] : [];
   });
   const tagIds = new Set(tags.map((t) => t.id));
 
