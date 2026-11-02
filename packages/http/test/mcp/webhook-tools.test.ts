@@ -139,8 +139,18 @@ describe('webhook tools over MCP', () => {
       environment: 'prod',
     });
     expect(pinned.isError).toBe(true);
-    // MCP carries a ValidationError's message, not its field issues (REST's 422 body has those).
-    expect(JSON.stringify(pinned.content)).toContain('One or more fields are invalid');
+    // MCP carries a ValidationError's field issues, as REST's 422 body does.
+    expect(payload(pinned)).toMatchObject({
+      error: {
+        code: 'validation_failed',
+        issues: [
+          expect.objectContaining({
+            field: 'allEnvironments',
+            message: expect.stringMatching(/is an alias/),
+          }),
+        ],
+      },
+    });
 
     const scoped = payload(
       await call('webhook_create', { ...hook, environment: 'staging' }),

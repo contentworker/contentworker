@@ -160,6 +160,33 @@ describe('a blocks field over HTTP', () => {
     });
     const res = await send(`${M}/content-types`, 'POST', promoType(variants.slice(0, 1)));
     expect(res.status).toBe(409);
-    expect(JSON.stringify(await res.json())).toContain('body: cta');
+    const body = (await res.json()) as {
+      error: { message: string; details: { variantsInUse: { variant: string }[] } };
+    };
+    expect(body.error.message).toContain('body: cta');
+    expect(body.error.details.variantsInUse[0]?.variant).toBe('body: cta');
+  });
+
+  it('refuses removing a field an entry holds a value for, with 409 naming the entry', async () => {
+    const { send } = await setup();
+    const created = await send(`${M}/entries`, 'POST', {
+      contentTypeApiId: 'promo',
+      fields: {
+        title: { 'en-US': 'Has blocks' },
+        body: { 'en-US': [{ _type: 'cta', label: 'x' }] },
+      },
+    });
+    const { entry } = (await created.json()) as { entry: { id: string } };
+    const { fields, ...rest } = promoType(variants);
+    const res = await send(`${M}/content-types`, 'POST', {
+      ...rest,
+      fields: fields.filter((f) => f.apiId !== 'body'),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: { code: string; details: { fieldsInUse: { field: string; entries: string[] }[] } };
+    };
+    expect(body.error.code).toBe('conflict');
+    expect(body.error.details.fieldsInUse).toEqual([{ field: 'body', entries: [entry.id] }]);
   });
 });

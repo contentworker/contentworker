@@ -197,6 +197,84 @@ describe('promoting content between environments', () => {
     expect(p.risk.reasons).toContain('The content type "note" removes the field "body"');
   });
 
+  it('names the target entries that still hold a field the promotion removes', async () => {
+    await createEnvironment(ctx, spaceId, 'slim');
+    const slim = { spaceId, environmentId: 'slim' };
+    await seedModel(slim, note({ extra: false }));
+    const { entry: held } = await createEntry(ctx, qa, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'Kept' }, body: { 'en-US': 'Still here' } },
+    });
+    // An entry with no value for it is not named.
+    await createEntry(ctx, qa, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'Bare' } },
+    });
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'slim',
+      target: 'qa',
+      contentTypes: ['note'],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain(
+      `The content type "note" removes a field entries in the target still hold: body (entry ${held.id})`,
+    );
+  });
+
+  it('asks for approval when a block variant or a nested field would be removed', async () => {
+    const symbol = (apiId: string, position = 0) => ({
+      apiId,
+      name: apiId,
+      type: 'Symbol',
+      localized: false,
+      required: false,
+      position,
+    });
+    const page = (variants: unknown[]) =>
+      ({
+        apiId: 'page',
+        name: 'Page',
+        displayField: 'title',
+        fields: [
+          { ...symbol('title'), required: true },
+          {
+            ...symbol('body', 1),
+            type: 'Array',
+            items: { type: 'Component', variants },
+          },
+        ],
+      }) as Parameters<typeof createContentType>[2];
+    const hero = { apiId: 'hero', name: 'Hero', fields: [symbol('heading'), symbol('kicker', 1)] };
+    const cta = { apiId: 'cta', name: 'CTA', fields: [symbol('label')] };
+    await createContentType(ctx, qa, page([hero, cta]));
+    await publishContentType(ctx, qa, 'page');
+    await createContentType(ctx, staging, page([{ ...hero, fields: [symbol('heading')] }]));
+    await publishContentType(ctx, staging, 'page');
+    const { entry } = await createEntry(ctx, qa, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': 'Home' },
+        body: { 'en-US': [{ _type: 'cta', label: 'Go' }] },
+      },
+    });
+
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toEqual(
+      expect.arrayContaining([
+        'The content type "page" removes the field "body[hero].kicker"',
+        'The content type "page" removes the block variant "cta" from "body"',
+        `The content type "page" removes a block variant entries in the target still use: body: cta (entry ${entry.id})`,
+      ]),
+    );
+    // Nobody holds a kicker, so it is not named as in use.
+    expect(p.risk.reasons.join('\n')).not.toMatch(/still hold: body\[hero\]\.kicker/);
+  });
+
   it('lets a decision model ask for approval, never waive it, and fails closed when it can’t answer', async () => {
     const e = await createEntry(ctx, staging, {
       contentTypeApiId: 'note',
