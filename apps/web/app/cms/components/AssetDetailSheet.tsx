@@ -415,14 +415,19 @@ export function AssetDetailSheet(props: {
                       // the two always stands off the picture, light or dark, in either theme.
                       <span
                         data-testid="focal-marker"
-                        className="-translate-x-1/2 -translate-y-1/2 pointer-events-none absolute grid size-6 place-items-center rounded-full border-2 border-foreground shadow-sm ring-2 ring-background"
+                        className="-translate-x-1/2 -translate-y-1/2 pointer-events-none absolute grid size-6 place-items-center rounded-full border-2 border-foreground ring-2 ring-background"
                         style={{ left: `${focal.x * 100}%`, top: `${focal.y * 100}%` }}
                       >
                         <span className="size-1.5 rounded-full bg-foreground ring-1 ring-background" />
                       </span>
                     )}
                   </button>
-                  <p id="asset-focal-hint" className="text-muted-foreground text-xs">
+                  {/* Polite and live: where the point moved to is heard, in browse mode too. */}
+                  <p
+                    id="asset-focal-hint"
+                    aria-live="polite"
+                    className="text-muted-foreground text-xs"
+                  >
                     {focal
                       ? `x ${focal.x}, y ${focal.y}. Click to move it, or use the arrow keys (Shift for bigger steps).`
                       : 'Click the image, or focus it and press Enter, to set a focal point for smart cropping.'}

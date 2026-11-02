@@ -204,7 +204,9 @@ describe('acting on more assets than a page shows', () => {
     // Asked in place, and backing out keeps it running.
     fireEvent.click(within(region).getByRole('button', { name: 'Stop' }));
     const confirm = within(region).getByRole('alertdialog', { name: 'Stop this bulk job?' });
-    expect(within(confirm).getByText(/Batches already done stay published/)).toBeTruthy();
+    expect(
+      within(confirm).getByText(/Batches already done stay published, and one under way may still/),
+    ).toBeTruthy();
     expect(document.activeElement?.textContent).toBe('Keep running');
     fireEvent.click(within(confirm).getByRole('button', { name: 'Keep running' }));
     expect(client.cancelBulkJob).not.toHaveBeenCalled();
@@ -219,11 +221,14 @@ describe('acting on more assets than a page shows', () => {
     expect(within(region).getByText('Cancelled')).toBeTruthy();
     expect(
       within(region).getByText(
-        'Stopped after 1 of 2 batches: 25 of 51 assets handled; the other 26 were left as they were.',
+        'Stopped after 1 of 2 batches. A batch under way when you stopped may still finish; the library shows what changed.',
       ),
     ).toBeTruthy();
     expect(within(region).queryByRole('button', { name: 'Stop' })).toBeNull();
-    expect(within(region).getByRole('button', { name: 'Dismiss' })).toBeTruthy();
+    // Focus was on the confirm, which went with the job: it lands on Dismiss, not the page.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(region).getByRole('button', { name: 'Dismiss' })),
+    );
     // It no longer polls, and the bar is free again, the selection kept for what never ran.
     const polls = client.getBulkJob.mock.calls.length;
     await tick();
@@ -235,6 +240,33 @@ describe('acting on more assets than a page shows', () => {
         false,
       ),
     );
+  });
+
+  it('keeps a stopped job stopped when a poll that left before the stop comes back running', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    assets = many(51);
+    let answer: (j: BulkJobSummary) => void = () => {};
+    client.getBulkJob.mockImplementationOnce(
+      () => new Promise<BulkJobSummary>((resolve) => (answer = resolve)),
+    );
+    const bar = await selectAll();
+    fireEvent.click(within(bar).getByRole('button', { name: 'Publish selected' }));
+    const region = await screen.findByRole('region', { name: 'Bulk job' });
+    // A poll leaves and is still out when the stop lands.
+    await tick();
+    await waitFor(() => expect(client.getBulkJob).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(region).getByRole('button', { name: 'Stop' }));
+    fireEvent.click(within(region).getByRole('button', { name: 'Stop job' }));
+    await waitFor(() =>
+      expect(within(region).getByRole('status').textContent).toBe('Stopped: Published 25 assets'),
+    );
+    await act(async () => answer(job({ completedChunks: 1, succeeded: 25 })));
+    await tick();
+    expect(within(region).getByRole('status').textContent).toBe('Stopped: Published 25 assets');
+    expect(within(region).queryByRole('button', { name: 'Stop' })).toBeNull();
+    // The finish ran once: one toast, one more poll never started.
+    expect(screen.getAllByText('Stopped: Published 25 assets')).toHaveLength(2);
+    expect(client.getBulkJob).toHaveBeenCalledTimes(1);
   });
 
   it('says so when a stop is refused, and the job keeps running', async () => {

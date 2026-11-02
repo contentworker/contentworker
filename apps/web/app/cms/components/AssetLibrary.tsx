@@ -602,7 +602,15 @@ export function AssetLibrary(props: { locale: string }) {
     const timer = setInterval(() => {
       client
         .getBulkJob(runningJob)
-        .then((job) => setBulkJob((current) => (current ? { ...current, job } : current)))
+        // Never backwards: a poll that left before a Stop came back must not undo the stop (the
+        // card would run again, and the finish below would run twice).
+        .then((job) =>
+          setBulkJob((current) =>
+            current?.job.id === job.id && current.job.status === 'running'
+              ? { ...current, job }
+              : current,
+          ),
+        )
         .catch((e) => {
           // A refusal (the session ended, the job is gone) won't pass by itself: stop watching
           // and free the bar, rather than keep it disabled until a reload. Anything else is
@@ -640,7 +648,7 @@ export function AssetLibrary(props: { locale: string }) {
     const { action, job } = finishedJob;
     const verb = BULK_VERBS[action].done;
     setBulkBusy(false);
-    // A stopped job left some assets as they were: the selection stays, to run them again.
+    // A stopped job left some assets as they were: the selection stays, to run it again.
     if (job.failed === 0 && job.status !== 'cancelled') setSelected(new Set());
     const said = bulkSummary(verb, jobOutcome(job));
     (job.failed ? toast.error : toast.success)(

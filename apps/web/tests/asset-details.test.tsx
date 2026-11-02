@@ -126,6 +126,8 @@ describe('the asset sheet’s Details tab', () => {
     const sheet = await openDetails();
     const control = within(sheet).getByRole('button', { name: 'Focal point: not set' });
     expect(control.getAttribute('aria-describedby')).toBe('asset-focal-hint');
+    // Where the point moves is heard: the hint is a polite live region.
+    expect(sheet.querySelector('#asset-focal-hint')?.getAttribute('aria-live')).toBe('polite');
     expect(sheet.querySelector('[data-testid="focal-marker"]')).toBeNull();
 
     // Enter (a click with no pointer) sets it in the middle, not the corner.

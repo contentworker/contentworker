@@ -1,5 +1,6 @@
 import { Button } from '@contentworker/ui/button';
 import { Progress } from '@contentworker/ui/progress';
+import { useEffect, useRef } from 'react';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { type AssetBulkAction, BULK_VERBS, bulkSummary, jobOutcome } from '~/cms/lib/assets';
@@ -14,8 +15,10 @@ import type { BulkJobSummary } from '~/cms/lib/management';
  * summary line is a polite live region, so its end is heard. What failed is named beside it, by
  * the library's failures Alert, once the report is read.
  *
- * A running job can be stopped (confirmed in place: batches done stay done, the rest never run);
- * once stopped, the card says how far it got and what finished.
+ * A running job can be stopped (confirmed in place). A stop is a stop to new batches, not a
+ * rollback: batches done stay done, and one under way when it came may still finish, so the card
+ * says how far it had got and that the library shows what changed (it reloads as the job ends).
+ * When the job ends, focus that was on its Stop (now gone) moves to Dismiss.
  */
 export function AssetBulkJobProgress(props: {
   action: AssetBulkAction;
@@ -30,14 +33,21 @@ export function AssetBulkJobProgress(props: {
   const verbs = BULK_VERBS[props.action];
   const running = job.status === 'running';
   const cancelled = job.status === 'cancelled';
-  const finished = job.succeeded + job.failed;
+  const dismiss = useRef<HTMLButtonElement>(null);
+  const card = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (running) return;
+    // Its Stop (or the confirm in its place) went with the job: don't drop focus on the page.
+    const at = document.activeElement;
+    if (!at || at === document.body || card.current?.contains(at)) dismiss.current?.focus();
+  }, [running]);
   const summary = running
     ? `${verbs.doing} ${plural(job.totalItems, 'asset')}…`
     : cancelled
       ? `Stopped: ${bulkSummary(verbs.done, jobOutcome(job))}`
       : bulkSummary(verbs.done, jobOutcome(job));
   return (
-    <section aria-label="Bulk job" className="card space-y-3 p-4">
+    <section ref={card} aria-label="Bulk job" className="card space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-3">
         <p className="section-title" role="status">
           {summary}
@@ -50,7 +60,7 @@ export function AssetBulkJobProgress(props: {
         {running && props.onCancel && (
           <ConfirmButton
             message="Stop this bulk job?"
-            note={`Batches already done stay ${verbs.done.toLowerCase()}; the rest are left as they are.`}
+            note={`Batches already done stay ${verbs.done.toLowerCase()}, and one under way may still finish; the rest are left as they are.`}
             cancelLabel="Keep running"
             confirmLabel="Stop job"
             busy={props.cancelling}
@@ -72,6 +82,7 @@ export function AssetBulkJobProgress(props: {
         )}
         {!running && (
           <Button
+            ref={dismiss}
             type="button"
             size="xs"
             variant="ghost"
@@ -91,7 +102,7 @@ export function AssetBulkJobProgress(props: {
         {running
           ? `${job.completedChunks} of ${plural(job.totalChunks, 'batch', 'batches')} done; this keeps running if you close the tab.`
           : cancelled
-            ? `Stopped after ${job.completedChunks} of ${plural(job.totalChunks, 'batch', 'batches')}: ${finished} of ${plural(job.totalItems, 'asset')} handled; the other ${Math.max(0, job.totalItems - finished)} were left as they were.`
+            ? `Stopped after ${job.completedChunks} of ${plural(job.totalChunks, 'batch', 'batches')}. A batch under way when you stopped may still finish; the library shows what changed.`
             : `${plural(job.totalChunks, 'batch', 'batches')} done.`}
       </p>
     </section>
