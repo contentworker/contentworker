@@ -50,24 +50,35 @@ describe('admin ManagementClient', () => {
     expect(calls[0]?.url).toBe('/preview/s1/main/entries?content_type=article');
   });
 
-  it('reads a list longer than one API page page by page, and stops at a short page', async () => {
+  it('reads a list longer than one API page page by page, following the cursor to the end', async () => {
     const { fn, calls } = fakeFetch((url) => {
-      const skip = Number(new URL(url, 'http://x').searchParams.get('skip') ?? 0);
-      // 250 entries in all: two full pages of 100, then 50.
-      const n = Math.max(0, Math.min(100, 250 - skip));
-      return { items: Array.from({ length: n }, (_, i) => ({ id: `e${skip + i}` })) };
+      const from = Number(new URL(url, 'http://x').searchParams.get('cursor') ?? 0);
+      // 250 entries in all: two full pages of 100, then 50 with no cursor after it.
+      const n = Math.max(0, Math.min(100, 250 - from));
+      return {
+        items: Array.from({ length: n }, (_, i) => ({ id: `e${from + i}` })),
+        ...(from + n < 250 ? { nextCursor: String(from + n) } : {}),
+      };
     });
     const client = createManagementClient(conn, fn);
     const items = await client.listEntries('article', { limit: 300 });
     expect(items).toHaveLength(250);
-    expect(calls.map((c) => new URL(c.url, 'http://x').searchParams.get('skip'))).toEqual([
-      '0',
+    expect(calls.map((c) => new URL(c.url, 'http://x').searchParams.get('cursor'))).toEqual([
+      null,
       '100',
       '200',
     ]);
     expect(calls.every((c) => new URL(c.url, 'http://x').searchParams.get('limit') === '100')).toBe(
       true,
     );
+  });
+
+  it('reads one page with its cursor, and hands back the next', async () => {
+    const { fn, calls } = fakeFetch(() => ({ items: [], nextCursor: 'c2' }));
+    const client = createManagementClient(conn, fn);
+    const page = await client.listEntryPage('article', { search: 'x' }, 'c1');
+    expect(page.nextCursor).toBe('c2');
+    expect(calls[0]?.url).toBe('/preview/s1/main/entries?query=x&content_type=article&cursor=c1');
   });
 
   it('sends localized fields through on create (the form owns localization)', async () => {

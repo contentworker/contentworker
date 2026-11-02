@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PreviewEntry } from '~/cms/lib/management';
+import type { EntryListQuery, EntryPage, PreviewEntry } from '~/cms/lib/management';
 
 globalThis.ResizeObserver ??= class {
   observe() {}
@@ -14,8 +14,9 @@ globalThis.ResizeObserver ??= class {
 // jsdom has no layout, so it has no scrollIntoView; every real browser does.
 Element.prototype.scrollIntoView ??= () => {};
 
+type ListPage = (type?: string, query?: EntryListQuery, cursor?: string) => Promise<EntryPage>;
 const client = {
-  listEntries: vi.fn<(type?: string, query?: { limit?: number }) => Promise<PreviewEntry[]>>(),
+  listEntryPage: vi.fn<ListPage>(),
   contentTypeEntryCounts: vi.fn(async (): Promise<{ contentType: string; total: number }[]> => []),
   trashEntry: vi.fn(async () => {}),
   restoreEntry: vi.fn(async () => {}),
@@ -105,9 +106,9 @@ const ENTRIES = [
   entry('e-live2', 'published', 'Careers'),
 ];
 
-function setup(list?: (type?: string, query?: { limit?: number }) => Promise<PreviewEntry[]>) {
-  if (list) client.listEntries.mockImplementation(list);
-  else client.listEntries.mockResolvedValue(ENTRIES);
+function setup(list?: ListPage) {
+  if (list) client.listEntryPage.mockImplementation(list);
+  else client.listEntryPage.mockResolvedValue({ items: ENTRIES });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const outlet = { types: [article], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
   render(
@@ -307,7 +308,7 @@ describe('EntriesList optimistic status', () => {
     );
     await screen.findByRole('link', { name: 'About us' });
     // Any refetch hangs, so only the rollback can restore the badge.
-    client.listEntries.mockImplementation(() => new Promise(() => {}));
+    client.listEntryPage.mockImplementation(() => new Promise(() => {}));
 
     await rowMenu('About us', 'Unpublish');
     await waitFor(() => expect(within(rowOf('About us')).getByText('Draft')).toBeTruthy());
@@ -384,24 +385,176 @@ describe('EntriesList through the assistant', () => {
 });
 
 describe('EntriesList counts and paging', () => {
-  it("names the type's real total when the list holds one page of it, and shows more on request", async () => {
-    const page = (from: number) =>
-      Array.from({ length: 100 }, (_, i) => entry(`e${from + i}`, 'draft', `Entry ${from + i}`));
+  const page = (from: number, n = 100) =>
+    Array.from({ length: n }, (_, i) => entry(`e${from + i}`, 'draft', `Entry ${from + i}`));
+
+  it("names the type's real total, and Load more appends the next page from its cursor", async () => {
     client.contentTypeEntryCounts.mockResolvedValue([{ contentType: 'article', total: 250 }]);
-    setup(async (_type, query) => (query?.limit === 200 ? [...page(0), ...page(100)] : page(0)));
-    await screen.findByText('Showing 100 of 250 entries', {}, { timeout: FIRST_RENDER_MS });
-    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
-    await screen.findByText('Showing 200 of 250 entries');
-    expect(client.listEntries).toHaveBeenLastCalledWith(
-      'article',
-      expect.objectContaining({ limit: 200 }),
+    setup(async (_type, _query, cursor) =>
+      cursor === 'c2'
+        ? { items: page(100), nextCursor: 'c3' }
+        : { items: page(0), nextCursor: 'c2' },
     );
+    await screen.findByText('Showing 100 of 250 entries', {}, { timeout: FIRST_RENDER_MS });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select “Entry 3”' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('Showing 200 of 250 entries');
+    expect(client.listEntryPage).toHaveBeenLastCalledWith('article', expect.anything(), 'c2');
+    // The first page stays, the second follows it, and the tick survives.
+    expect(screen.getByRole('link', { name: 'Entry 0' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Entry 199' })).toBeTruthy();
+    expect(
+      screen.getByRole('checkbox', { name: 'Select “Entry 3”' }).getAttribute('aria-checked'),
+    ).toBe('true');
   });
 
-  it('counts a list shorter than a page as it is, with no Show more', async () => {
+  it('counts a list shorter than a page as it is, with no Load more', async () => {
     client.contentTypeEntryCounts.mockResolvedValue([]);
     setup();
     await screen.findByText('4 entries', {}, { timeout: FIRST_RENDER_MS });
-    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('starts again from the first page on a search, and a miss keeps the headers', async () => {
+    setup(async (_type, query) =>
+      query?.search ? { items: [] } : { items: page(0), nextCursor: 'c2' },
+    );
+    await screen.findByRole('link', { name: 'Entry 0' }, { timeout: FIRST_RENDER_MS });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search entries' }), {
+      target: { value: 'zzz' },
+    });
+    await screen.findByText('No entries match the current filters.');
+    expect(screen.getByRole('columnheader', { name: 'Title' })).toBeTruthy();
+    expect(client.listEntryPage).toHaveBeenLastCalledWith(
+      'article',
+      expect.objectContaining({ search: 'zzz' }),
+      undefined,
+    );
+  });
+});
+
+describe('EntriesList sorting from the headers', () => {
+  it('asks for the column’s order, and Updated flips newest first and back to the default', async () => {
+    setup();
+    const header = await screen.findByRole(
+      'button',
+      { name: 'Title' },
+      { timeout: FIRST_RENDER_MS },
+    );
+    fireEvent.click(header);
+    await waitFor(() =>
+      expect(client.listEntryPage).toHaveBeenLastCalledWith(
+        'article',
+        expect.objectContaining({ order: [{ field: 'title', direction: 'asc' }] }),
+        undefined,
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Updated' }));
+    await waitFor(() =>
+      expect(client.listEntryPage).toHaveBeenLastCalledWith(
+        'article',
+        expect.objectContaining({ order: [{ field: 'sys.updatedAt', direction: 'desc' }] }),
+        undefined,
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Updated' }));
+    await waitFor(() => expect(client.listEntryPage.mock.lastCall?.[1]?.order).toBeUndefined());
+  });
+});
+
+describe('EntriesList bulk bar', () => {
+  const tick = async (t: string) =>
+    fireEvent.click(
+      await screen.findByRole('checkbox', { name: `Select “${t}”` }, { timeout: FIRST_RENDER_MS }),
+    );
+
+  it('replaces the filter bar while anything is ticked, says how many, and clears', async () => {
+    setup();
+    await tick('About us');
+    const bar = screen.getByRole('group', { name: 'Selected entries' });
+    expect(within(bar).getByText('1 selected')).toBeTruthy();
+    expect(screen.queryByRole('searchbox', { name: 'Search entries' })).toBeNull();
+    expect(screen.getByText('1 entry selected')).toBeTruthy();
+    fireEvent.click(within(bar).getByRole('button', { name: 'Clear selection' }));
+    expect(screen.queryByRole('group', { name: 'Selected entries' })).toBeNull();
+    expect(screen.getByRole('searchbox', { name: 'Search entries' })).toBeTruthy();
+  });
+
+  it('offers only what applies: no Publish for live entries, no Unpublish for drafts', async () => {
+    setup();
+    await tick('About us');
+    const bar = () => screen.getByRole('group', { name: 'Selected entries' });
+    expect(within(bar()).queryByRole('button', { name: 'Publish selected' })).toBeNull();
+    expect(within(bar()).getByRole('button', { name: 'Unpublish selected' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select “About us”' }));
+    await tick('Spring launch');
+    expect(within(bar()).getByRole('button', { name: 'Publish selected' })).toBeTruthy();
+    expect(within(bar()).queryByRole('button', { name: 'Unpublish selected' })).toBeNull();
+  });
+
+  it('names the entries in the confirm, and sends only those the action changes', async () => {
+    setup();
+    for (const t of ['About us', 'Spring launch', 'Pricing page']) await tick(t);
+    fireEvent.click(screen.getByRole('button', { name: 'Publish selected' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Publish 2 entries?' });
+    expect(within(dialog).getByText('Spring launch')).toBeTruthy();
+    expect(within(dialog).getByText('Pricing page')).toBeTruthy();
+    expect(within(dialog).queryByText('About us')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish entries' }));
+    await screen.findByText('Published 2 entries');
+    expect(client.bulkEntryAction).toHaveBeenCalledWith('publish', ['e-draft', 'e-changed']);
+  });
+
+  it('counts past five names in the confirm', async () => {
+    const many = Array.from({ length: 7 }, (_, i) => entry(`d${i}`, 'draft', `Draft ${i}`));
+    setup(async () => ({ items: many }));
+    await screen.findByRole('link', { name: 'Draft 0' }, { timeout: FIRST_RENDER_MS });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all entries' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish selected' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Publish 7 entries?' });
+    expect(within(dialog).getByText('Draft 4')).toBeTruthy();
+    expect(within(dialog).queryByText('Draft 5')).toBeNull();
+    expect(within(dialog).getByText('and 2 more')).toBeTruthy();
+  });
+
+  it('keeps the entries that failed ticked, and names them', async () => {
+    client.bulkEntryAction.mockResolvedValueOnce({
+      succeeded: 1,
+      failed: 1,
+      results: [
+        { id: 'e-live', ok: true },
+        { id: 'e-live2', ok: false, error: 'Locked by a release' },
+      ],
+    } as never);
+    setup();
+    for (const t of ['About us', 'Careers']) await tick(t);
+    fireEvent.click(screen.getByRole('button', { name: 'Unpublish selected' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Unpublish 2 entries?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unpublish entries' }));
+    await screen.findByText('1 entry failed');
+    expect(screen.getByText(/Locked by a release/)).toBeTruthy();
+    const bar = screen.getByRole('group', { name: 'Selected entries' });
+    expect(within(bar).getByText('1 selected')).toBeTruthy();
+    expect(
+      screen.getByRole('checkbox', { name: 'Select “Careers”' }).getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(
+      screen.getByRole('checkbox', { name: 'Select “About us”' }).getAttribute('aria-checked'),
+    ).toBe('false');
+  });
+
+  it('leaves ticked only what a new order still shows', async () => {
+    // Sorted, the first page holds two of the four: Careers is past it.
+    setup(async (_type, query) => ({
+      items: query?.order ? ENTRIES.filter((e) => e.id !== 'e-live2') : ENTRIES,
+      ...(query?.order ? { nextCursor: 'c2' } : {}),
+    }));
+    await tick('About us');
+    await tick('Careers');
+    expect(screen.getByText('2 selected')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Title' }));
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Careers' })).toBeNull());
+    await screen.findByText('1 selected');
+    expect(screen.getByText('1 entry selected')).toBeTruthy();
   });
 });

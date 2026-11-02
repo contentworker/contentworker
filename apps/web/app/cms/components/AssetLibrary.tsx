@@ -962,7 +962,7 @@ export function AssetLibrary(props: { locale: string }) {
   );
   const list = (
     <div className="card overflow-clip">
-      <Table caption="Assets" stack="rows" className="max-md:block">
+      <Table caption="Assets" stack="rows" sticky className="max-md:block">
         <TableHead>
           <Tr>
             <Th className="w-8">

@@ -208,7 +208,15 @@ export interface PreviewEntry {
   readonly contentType: string;
   readonly status: string;
   readonly version: number;
+  /** When the entry last changed (ISO-8601); the paged list carries it. */
+  readonly updatedAt?: string;
   readonly fields: Record<string, unknown>;
+}
+
+/** One page of the entries list; pass `nextCursor` back for the next. */
+export interface EntryPage {
+  readonly items: readonly PreviewEntry[];
+  readonly nextCursor?: string;
 }
 
 export interface EntryView {
@@ -249,7 +257,6 @@ export interface EntryListQuery {
   readonly order?: readonly EntryOrder[];
   readonly search?: string;
   readonly limit?: number;
-  readonly skip?: number;
   /** List the trash instead of live entries. Trash is hidden by default. */
   readonly trashed?: boolean;
 }
@@ -276,7 +283,6 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
   }
   if (query.search) params.set('query', query.search);
   if (query.limit != null) params.set('limit', String(query.limit));
-  if (query.skip != null) params.set('skip', String(query.skip));
   if (query.trashed) params.set('trashed', 'true');
   return params;
 }
@@ -1101,6 +1107,20 @@ export function createManagementClient(
     if (!put.ok) throw new ApiError(put.status, `upload failed: ${put.status}`);
   }
 
+  /** One page of draft/current entries (Preview API), with optional field filters, ordering and
+   *  full-text search applied server-side. `cursor` is the last page's `nextCursor`. */
+  async function listEntryPage(
+    contentType?: string,
+    query: EntryListQuery = {},
+    cursor?: string,
+  ): Promise<EntryPage> {
+    const params = entryQueryParams(query);
+    if (contentType) params.set('content_type', contentType);
+    if (cursor) params.set('cursor', cursor);
+    const qs = params.toString();
+    return req<EntryPage>('GET', `${preview}/entries${qs ? `?${qs}` : ''}`);
+  }
+
   return {
     getSpaceConfig(): Promise<SpaceConfig> {
       return req('GET', `${mgmt}/space-config`);
@@ -1194,29 +1214,20 @@ export function createManagementClient(
       );
       return r.items;
     },
-    /** Lists draft/current entries (Preview API), with optional field filters,
-     *  ordering, and full-text search applied server-side. The API returns at most
-     *  `ENTRY_PAGE` a request, so a larger `limit` is read page by page with `skip`. */
+    listEntryPage,
+    /** Lists draft/current entries (Preview API). The API returns at most `ENTRY_PAGE` a
+     *  request, so a larger `limit` is read page by page, following the cursor. */
     async listEntries(contentType?: string, query: EntryListQuery = {}): Promise<PreviewEntry[]> {
-      const page = async (q: EntryListQuery) => {
-        const params = entryQueryParams(q);
-        if (contentType) params.set('content_type', contentType);
-        const qs = params.toString();
-        const r = await req<{ items: PreviewEntry[] }>(
-          'GET',
-          `${preview}/entries${qs ? `?${qs}` : ''}`,
-        );
-        return r.items;
-      };
       const want = query.limit;
-      if (want === undefined || want <= ENTRY_PAGE) return page(query);
+      if (want === undefined) return [...(await listEntryPage(contentType, query)).items];
       const items: PreviewEntry[] = [];
-      for (let skip = query.skip ?? 0; items.length < want; skip += ENTRY_PAGE) {
+      let cursor: string | undefined;
+      do {
         const size = Math.min(ENTRY_PAGE, want - items.length);
-        const rows = await page({ ...query, skip, limit: size });
-        items.push(...rows);
-        if (rows.length < size) break;
-      }
+        const page = await listEntryPage(contentType, { ...query, limit: size }, cursor);
+        items.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor && items.length < want);
       return items;
     },
     /**
