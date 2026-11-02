@@ -231,9 +231,29 @@ test.describe('on a phone', () => {
     await expect(
       page.getByRole('list', { name: `Assets in “${name}”, in order` }).getByRole('listitem'),
     ).toHaveCount(1);
-    // The collection's own surfaces: the shell's tab bar has a finding of its own (its Approvals
-    // link's name, "Approvals, 1 waiting"), outside this change, reported rather than hidden here.
-    await scan(page, testInfo, ['nav[aria-label="Collections"]', 'section[aria-labelledby]']);
+    // The whole page: the collection's surfaces and the shell's tab bar around them.
+    await scan(page, testInfo);
+  });
+
+  // The phone shell itself: the top bar, the tab bar with Approvals' count pill (its name must
+  // hold what it shows, "Approvals 1", for voice control), and the More sheet.
+  test('the shell, its tab bar and More have no accessibility violations', async ({
+    page,
+  }, testInfo) => {
+    // The global setup's agent proposal waits in Approvals (no spec decides it), so the tab shows
+    // its count.
+    await openCms(page, '/dashboard');
+    const bar = page.locator('nav[aria-label="Main"]:visible');
+    await expect(bar.getByRole('link', { name: /^Approvals, \d+ waiting$/ })).toBeVisible();
+    await expect(bar.locator('[data-approvals-count]')).toBeVisible();
+    await scan(page, testInfo);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await scan(page, testInfo);
+    await page.emulateMedia({ colorScheme: 'light' });
+    await bar.getByRole('button', { name: 'More' }).tap();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await scan(page, testInfo);
   });
 });
 
@@ -284,6 +304,48 @@ test('the asset library with ingest badges has no accessibility violations', asy
   await sheet.getByRole('button', { name: duplicateBadge }).click();
   await expect(sheet.getByRole('alertdialog')).toBeVisible();
   await scan(page, testInfo);
+});
+
+// An image's Details tab: the focal point control with its marker set, and the AI suggestion
+// buttons, in both themes (the marker's ink ring and paper halo come from the theme's tokens).
+test('an image’s Details tab, its focal point and its AI buttons have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const name = `a11y-focal-${Date.now()}.png`;
+  // A 1×1 PNG: an image the sheet offers the focal point and the AI suggestions for.
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const id = await uploadAssetBytes(request, name, png, 'image/png');
+  const focal = await api(request, 'PATCH', `${MGMT}/assets/${id}/metadata`, {
+    focalPoint: { x: 0.3, y: 0.6 },
+  });
+  expect(focal.ok(), await focal.text()).toBe(true);
+
+  await openCms(page, '/assets');
+  await page
+    .getByRole('region', { name: 'Asset library' })
+    .getByRole('button', { name: `Open “${name}”` })
+    .click();
+  const sheet = page.getByRole('dialog', { name });
+  const control = sheet.getByRole('button', { name: 'Focal point: 30% across, 60% down' });
+  await expect(control).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'Generate alt text' })).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'Suggest tags' })).toBeVisible();
+  await scan(page, testInfo);
+
+  // The keyboard moves it, and its name follows.
+  await control.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(
+    sheet.getByRole('button', { name: 'Focal point: 31% across, 60% down' }),
+  ).toBeFocused();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await scan(page, testInfo);
+  await page.emulateMedia({ colorScheme: 'light' });
 });
 
 // The asset sheet, tab by tab: a version list with an older version to restore (and its in-place

@@ -192,10 +192,16 @@ test('navigating away from unsaved edits asks before discarding', async ({ page 
   await expect(page).toHaveURL(/\/dashboard/);
 });
 
+// Through the page's own confirm, not a card in the assistant's panel. The conversation is the one
+// person's, shared by every spec running alongside: its cards (a retried attempt's card has this
+// one's title, and `.last()` can take it before the new one renders) and its rate window (30
+// calls a minute, spent by every spec's saves) change under this spec. The card path itself is
+// covered by apps/engine/test/assistant.test.ts and apps/web/tests/assistant-panel.test.tsx.
 test('bulk unpublish confirms once and surfaces per-entry failures by title', async ({
   page,
   request,
 }) => {
+  await withoutAssistant(page);
   // Two fresh drafts (unpublishing a draft fails server-side: the failure path).
   const stamp = Date.now();
   for (const n of [1, 2]) {
@@ -213,7 +219,10 @@ test('bulk unpublish confirms once and surfaces per-entry failures by title', as
       .check();
   }
   await page.getByRole('button', { name: 'Unpublish selected' }).click();
-  await confirmCard(page, 'Change these entries');
+  // Asked once, for the whole selection.
+  const confirm = page.getByRole('alertdialog', { name: 'Unpublish 2 entries?' });
+  await confirm.getByRole('button', { name: 'Unpublish entries' }).click();
+  await expect(confirm).toBeHidden();
 
   const failures = page.getByRole('alert').filter({ hasText: 'entries failed' });
   await expect(failures).toBeVisible();
@@ -391,15 +400,26 @@ test('the asset library searches: a match by name, facet chips, and back to the 
   // Waits on ingest, which a cold engine takes a while to start.
   test.setTimeout(120_000);
   const stamp = Date.now();
+  // In a folder of their own, as the ingest specs' assets are: specs upload side by side during
+  // the ingest wait below, and the library's first page (the latest 50) can't be counted on to
+  // hold this spec's assets; the folder's can.
+  const folder = `Search ${stamp}`;
+  const folderId = await seedAssetFolder(request, folder);
   // Shares no word with the search below (its stamp in base 36), so neither leg can match it.
   const other = `Ordinary ${stamp.toString(36)}`;
-  await seedAsset(request, other);
+  await seedAsset(request, other, { folderId });
 
   await openCms(page, '/assets');
   const library = page.getByRole('region', { name: 'Asset library' });
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: folder, exact: true })
+    .click();
+  await expect(page.getByRole('button', { name: `Upload to “${folder}”` })).toBeVisible();
   await expect(library.getByRole('button', { name: `Open “${other}”` })).toBeVisible();
 
-  // Uploaded through the signed PUT, which hands the file to ingest; ingest indexes it.
+  // Uploaded into the folder through the signed PUT, which hands the file to ingest; ingest
+  // indexes it.
   const wanted = `heliotrope-${stamp}.txt`;
   await page
     .getByLabel('Upload asset files')
@@ -431,13 +451,13 @@ test('the asset library searches: a match by name, facet chips, and back to the 
   );
 
   await library.getByRole('button', { name: 'Clear search' }).click();
-  // Back to the library: no facets, no search summary, the library's own list. (Not the seeded
-  // asset by name: specs running alongside add assets during the ingest wait above, which can
-  // push it past the first page.)
+  // Back to the folder's own list: no facets, no search summary, and both of its assets, the one
+  // the search left out among them.
   await expect(library.getByRole('group', { name: 'Kind' })).toHaveCount(0);
   await expect(library.getByRole('searchbox', { name: 'Search assets' })).toHaveValue('');
   await expect(library.getByText(/ for “/)).toHaveCount(0);
-  await expect(library.getByRole('button', { name: /^Open “/ }).first()).toBeVisible();
+  await expect(library.getByRole('button', { name: `Open “${other}”` })).toBeVisible();
+  await expect(library.getByRole('button', { name: `Open “${wanted}”` })).toBeVisible();
 });
 
 test('the asset library: a folder, uploads into it, a move, a bulk archive, a restore and a guarded delete', async ({

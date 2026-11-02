@@ -1360,6 +1360,11 @@ export class InMemoryContentStore implements ContentStore {
     delete: async (scope, assetId, uploadId) => {
       this.uploadData.delete(`${scopeKey(scope)}::${assetId}::${uploadId}`);
     },
+    listForAsset: async (scope, assetId) =>
+      [...this.uploadData.entries()]
+        .filter(([k]) => k.startsWith(`${scopeKey(scope)}::${assetId}::`))
+        .map(([, u]) => u)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     listStartedBefore: async (before, limit) =>
       [...this.uploadData.entries()]
         .filter(([, u]) => Date.parse(u.createdAt) < before.getTime())

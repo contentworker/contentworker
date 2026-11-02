@@ -56,7 +56,11 @@ export interface R2BucketLike {
   put(
     key: string,
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string,
-    options?: { httpMetadata?: { contentType?: string } },
+    options?: {
+      httpMetadata?: { contentType?: string };
+      /** R2's conditional write: with `if-none-match: *`, `null` (nothing stored) if the key exists. */
+      onlyIf?: Headers;
+    },
   ): Promise<unknown>;
   delete(keys: string | string[]): Promise<void>;
   /** Metadata only (R2's `head`); optional so a test stub may leave it out. */
@@ -515,12 +519,17 @@ export async function handleMediaRequest(
       }
     }
     // The stored type is the one the URL was signed for, not whatever the
-    // client sends — the signer decided what this key may hold.
+    // client sends — the signer decided what this key may hold. Create-once: a URL lives 15
+    // minutes, and once its bytes have landed (and been committed, ingested, published) nothing
+    // may write over them through it. R2 checks `If-None-Match: *` atomically with the write, so
+    // two racing PUTs can't both store. A retry of a PUT that never landed finds no object and
+    // stores; one whose first attempt did land gets 412, and its bytes are the ones stored.
     const stored = (await opts.bucket.put(key, request.body, {
       httpMetadata: { contentType },
+      onlyIf: new Headers({ 'if-none-match': '*' }),
     })) as { httpEtag?: string } | null;
-    // The stored bytes' etag: the api's upload notice names them by it, as R2's own does, so a
-    // second PUT through the same URL (new bytes) is told apart from a redelivery.
+    if (stored === null) return text(412, 'already uploaded: this URL cannot overwrite the file');
+    // The stored bytes' etag: the api's upload notice names them by it, as R2's own does.
     return new Response(null, {
       status: 200,
       ...(stored?.httpEtag ? { headers: { etag: stored.httpEtag } } : {}),

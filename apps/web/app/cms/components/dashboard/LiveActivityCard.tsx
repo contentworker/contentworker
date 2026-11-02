@@ -1,7 +1,7 @@
 import { Badge } from '@contentworker/ui/badge';
 import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
 import { Radio } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { ToneBadge } from '~/cms/components/status';
 import { useClient } from '../../lib/client-context';
@@ -12,7 +12,8 @@ import { useEntriesById } from './use-entries-by-id';
 /** "entry.published" → "Published": the event's verb, in the editor's words. */
 const eventLabel = (type: string) => humanize(type.split('.').pop() ?? type);
 
-type LiveItem = { type: string; entryId?: string; at: number };
+/** `seq` keys the row: two events can arrive in one millisecond, for no entry (an asset's). */
+type LiveItem = { seq: number; type: string; entryId?: string; at: number };
 
 /**
  * Live Content API feed: streams published-content changes over SSE (via fetch
@@ -29,6 +30,7 @@ export function LiveActivityCard(props: { entryById?: (id: string) => EntryRef |
   );
   const looked = useEntriesById(unseen);
   const [connected, setConnected] = useState(false);
+  const seq = useRef(0);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -43,7 +45,10 @@ export function LiveActivityCard(props: { entryById?: (id: string) => EntryRef |
           await client.subscribeLive((e) => {
             const data = e.data as { entryId?: string } | undefined;
             setItems((prev) =>
-              [{ type: e.type, entryId: data?.entryId, at: Date.now() }, ...prev].slice(0, 20),
+              [
+                { seq: ++seq.current, type: e.type, entryId: data?.entryId, at: Date.now() },
+                ...prev,
+              ].slice(0, 20),
             );
           }, ac.signal);
         } catch {
@@ -87,10 +92,7 @@ export function LiveActivityCard(props: { entryById?: (id: string) => EntryRef |
                 ? (props.entryById?.(it.entryId) ?? looked.refs.get(it.entryId))
                 : undefined;
               return (
-                <li
-                  key={`${it.at}:${it.entryId ?? it.type}`}
-                  className="flex min-w-0 items-center gap-2 text-sm"
-                >
+                <li key={it.seq} className="flex min-w-0 items-center gap-2 text-sm">
                   <Badge variant="outline">{eventLabel(it.type)}</Badge>
                   {ref ? (
                     <Link

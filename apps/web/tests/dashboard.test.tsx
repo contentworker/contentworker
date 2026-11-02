@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ContentType } from '@contentworker/domain';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { useEffect, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -160,6 +160,22 @@ const card = (heading: string) =>
   screen.getByRole('heading', { name: heading }).closest('[data-slot="card"]') as HTMLElement;
 
 describe('Dashboard', () => {
+  it('shows two live events that arrive in the same millisecond as two rows', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(Date, 'now').mockReturnValue(1_793_580_044_816);
+    client.subscribeLive.mockImplementationOnce(((emit: (e: { type: string }) => void) => {
+      // Two assets published at once: no entry id, one type, one clock reading.
+      emit({ type: 'asset.published' });
+      emit({ type: 'asset.published' });
+      return new Promise<void>(() => {});
+    }) as never);
+    renderDashboard();
+    const live = card('Live activity');
+    await waitFor(() => expect(within(live).getAllByRole('listitem')).toHaveLength(2));
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    vi.restoreAllMocks();
+  });
+
   it('leads with unpublished work, newest first, linked by title', async () => {
     renderDashboard();
     const work = card('Not yet published');

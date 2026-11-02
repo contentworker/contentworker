@@ -868,6 +868,8 @@ export interface AssetUploadRepo {
   get(scope: Scope, assetId: string, uploadId: string): Promise<AssetUpload | null>;
   create(scope: Scope, upload: AssetUpload): Promise<void>;
   delete(scope: Scope, assetId: string, uploadId: string): Promise<void>;
+  /** One asset's uploads in progress (a file replacement's among them), oldest first. */
+  listForAsset(scope: Scope, assetId: string): Promise<AssetUpload[]>;
   /** Uploads started before `before`, in every scope, oldest first, at most `limit`. */
   listStartedBefore(
     before: Date,

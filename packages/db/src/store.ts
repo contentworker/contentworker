@@ -2272,6 +2272,16 @@ function makeAssetUploadRepo(x: Exec): AssetUploadRepo {
     async delete(scope, assetId, uploadId) {
       await x.write(db.delete(u).where(one(scope, assetId, uploadId)));
     },
+    async listForAsset(scope, assetId) {
+      // The primary key leads with scope and asset: a prefix read. An asset has a handful at most
+      // (a new upload's, or a replacement's: starting one aborts the others), so no page.
+      const rows = await db
+        .select()
+        .from(u)
+        .where(and(scopeFilter(u, scope), eq(u.assetId, assetId)))
+        .orderBy(asc(u.createdAt));
+      return rows.map(toAssetUpload);
+    },
     async listStartedBefore(before, limit) {
       const rows = await db
         .select()

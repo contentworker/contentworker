@@ -590,6 +590,28 @@ describe('collections, share links, multipart uploads and zips', () => {
     });
   });
 
+  it('starts replacing a file in parts on the asset’s own route', async () => {
+    const { fn, calls } = fakeFetch(() => ({
+      asset: { id: 'a/1' },
+      version: 2,
+      upload: { uploadId: 'u1', partSize: 8, partCount: 2 },
+    }));
+    const started = await createManagementClient(conn, fn).startAssetFileUpload('a/1', {
+      fileName: 'cut.mov',
+      contentType: 'video/quicktime',
+      size: 12,
+    });
+    expect(started.version).toBe(2);
+    expect(calls.map((c) => `${c.init?.method} ${c.url}`)).toEqual([
+      `POST ${MGMT}/assets/a%2F1/file/uploads`,
+    ]);
+    expect(body(calls[0])).toEqual({
+      fileName: 'cut.mov',
+      contentType: 'video/quicktime',
+      size: 12,
+    });
+  });
+
   it('starts a multipart upload with a localized title, signs parts, completes and aborts', async () => {
     const { fn, calls } = fakeFetch((_url, init) =>
       init?.method === 'DELETE'

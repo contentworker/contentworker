@@ -303,8 +303,17 @@ embeds, Preview and GraphQL's `Asset` type.
   (`commitAssetFile`) checks the bytes are there (`BlobStore.head`) and, in one unit, bumps
   `assets.version`, writes the previous file to `asset_versions` and appends
   `asset.file_replaced` (`AssetRepo.replaceFile` compares the version at commit, so a second
-  commit for the same version is a `409`). A version's key is `space/env/asset/fileName` for the
-  first file and `space/env/asset/v<n>/file/fileName` after (`assetObjectKey`): never five
+  commit for the same version is a `409`). Each replace start uploads to a key of its own (the
+  commit object carries its `attempt`), so replaces started side by side never share a key: an
+  upload URL stores once and R2 completes a multipart upload unconditionally, so a shared key
+  would let one attempt refuse or overwrite another's file. The first to commit wins; a later
+  commit for that version is a `409`, never "already committed". Past 100 MiB, `POST
+  …/assets/:id/file/uploads` (`startMultipartAssetFileReplacement`) starts a multipart upload for
+  its attempt's key; completing it runs the same commit unit (`commitStoredReplacement`, which also
+  deletes the `asset_uploads` row), refuses with `409` and aborts when the version was taken
+  meanwhile, and deletes its own bytes if it loses at commit. A version's key is
+  `space/env/asset/fileName` for the first file and `space/env/asset/v<n>/file-<attempt>/fileName`
+  after (`assetObjectKey`; keys minted before attempts read `…/v<n>/file/…`): never five
   segments, which is where a version's extracted text lives (`…/v<n>/text.md`), so derived files
   are never an asset file. `assetFileKey` ignores a recorded key that isn't this asset's file key
   or names a version past the asset's own (an uncommitted upload). `POST
@@ -391,7 +400,8 @@ Migration `0016_asset_collections` adds five environment-scoped tables (mirrored
   records it in `asset_uploads`. Parts are 8 MiB, grown in whole MiB to stay within 10,000 parts.
   Each part's URL is signed with the upload id, part number and exact length. Completing needs
   parts `1..n` once each with their etags and sends the same ingest notice a finished `PUT` does.
-  Aborting discards the parts and deletes the draft while it has no bytes. The top-of-hour sweep
+  Aborting discards the parts and deletes the draft while it has no bytes (a replacement's upload,
+  whose key names a version past 1, leaves the asset alone). The top-of-hour sweep
   `sweepAbandonedMultipartUploads` (`abandoned-multipart-uploads`) aborts uploads unfinished after a
   day (at most 100 a sweep), before the draft sweep above removes their drafts; an R2 lifecycle rule
   (`abort-multipart`, bucket-wide, 2 days) is the backstop.
@@ -429,8 +439,10 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   that isn't an asset's current file (`parseAssetObjectKey` and `assetFileKey`: extracted text,
   version bodies, staged jobs, an older version) and starts the run under
   `assetIngestInstanceId(scope, assetId, version, { etag })`, so both triggers and any redelivery
-  start one run, and a second PUT of new bytes through the same signed URL starts another (the
-  signed PUT answers with the stored etag, R2's notification carries it).
+  start one run (the signed PUT answers with the stored etag, R2's notification carries it). The
+  signed PUT is create-once (`If-None-Match: *`, which R2 checks atomically with the write): a
+  second PUT through the same URL is a `412` and stores nothing, so committed or ingested bytes
+  can't be overwritten; a part URL stops working once its upload completes (`NoSuchUpload`, `404`).
   `CloudflareAssetIngestStarter` creates through `createBatch`'s object form and treats only its
   duplicate-id code (`10405`) as the run that exists; any other error retries the message. The
   `pending` mark is written only over a status that isn't `processing`, and put back to `ready` or

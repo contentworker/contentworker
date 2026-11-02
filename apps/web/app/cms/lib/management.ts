@@ -1585,7 +1585,20 @@ export function createManagementClient(
         { parts },
       );
     },
-    /** Gives the upload up: its parts are discarded, and its empty draft deleted. */
+    /**
+     * Starts replacing an asset's file in parts (past one signed PUT): the next version's
+     * multipart upload. Sign, PUT and complete it as a new asset's; completing commits it.
+     */
+    startAssetFileUpload(
+      id: string,
+      input: { fileName: string; contentType: string; size: number },
+    ): Promise<MultipartUploadStarted & { version: number }> {
+      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/file/uploads`, input);
+    },
+    /**
+     * Gives the upload up: its parts are discarded, and a new asset's empty draft deleted (a
+     * replacement's asset keeps its file).
+     */
     abortAssetUpload(assetId: string, uploadId: string): Promise<void> {
       return req(
         'DELETE',
@@ -1732,6 +1745,13 @@ export function createManagementClient(
     /** A job's failures by item; 403 for a role limited to some content types. */
     getBulkJobReport(id: string): Promise<BulkJobReport> {
       return req('GET', `${mgmt}/bulk/jobs/${encodeURIComponent(id)}/report`);
+    },
+    /**
+     * Stops a running job (content:publish): batches already done stay done, the rest never run.
+     * The job as it ended; a job already over comes back as it is.
+     */
+    cancelBulkJob(id: string): Promise<BulkJobSummary> {
+      return req('POST', `${mgmt}/bulk/jobs/${encodeURIComponent(id)}/cancel`);
     },
 
     // --- plugins (sandboxed code on the write path) ----------------------
