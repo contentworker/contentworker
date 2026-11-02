@@ -1,6 +1,7 @@
 import {
   type Asset,
   AssetInUseError,
+  ConflictError,
   NotFoundError,
   type Scope,
   ValidationError,
@@ -14,9 +15,14 @@ import type {
 } from '@contentworker/ports';
 import {
   assetFileKey,
+  assetKeyAttempt,
+  assetKeyVersion,
+  type CommitAssetFileInput,
   type CreateAssetInput,
+  commitStoredReplacement,
   createUploadDraft,
   deleteAsset,
+  prepareReplacement,
   prepareUploadDraft,
   withReadUrl,
 } from './assets';
@@ -28,6 +34,11 @@ import type { AppContext } from './context';
  * its upload, number and exact length), and completes it with the parts' etags; completing starts
  * ingest exactly as a finished single PUT does. The key is minted the same way as a single PUT's
  * ({@link prepareUploadDraft}), so it obeys the same rules.
+ *
+ * A file replacement past one PUT goes the same way ({@link startMultipartAssetFileReplacement}):
+ * its upload is for the next version's key, its attempt's own, and completing it commits that
+ * version in the same unit a single-PUT replacement's commit uses. Which kind an upload is, its key
+ * says: version 1 is a new asset's, any later one a replacement's.
  *
  * An upload left unfinished is aborted by the hourly sweep a day on ({@link
  * sweepAbandonedMultipartUploads}), and by the bucket's lifecycle rule after that; its draft goes
@@ -98,19 +109,7 @@ export async function startMultipartAssetUpload(
   input: CreateAssetInput & { readonly size: number },
   opts: { readonly createdBy?: string; readonly folderId?: string } = {},
 ): Promise<MultipartUploadStarted> {
-  // Never past what 10,000 parts of one request each (100 MiB) can carry, whatever is configured.
-  const max = Math.min(
-    ctx.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES,
-    MAX_PARTS * SINGLE_UPLOAD_MAX_BYTES,
-  );
-  if (!Number.isSafeInteger(input.size) || input.size < 1 || input.size > max) {
-    throw new ValidationError([
-      {
-        field: 'size',
-        message: `A file is 1 byte to ${max} bytes (${Math.floor(max / 2 ** 20)} MiB)`,
-      },
-    ]);
-  }
+  assertUploadSize(ctx, input.size);
   const multipart = multipartOf(blob);
   const { size, ...rest } = input;
   const { asset, key, contentType } = await prepareUploadDraft(ctx, blob, scope, rest, opts);
@@ -127,6 +126,71 @@ export async function startMultipartAssetUpload(
     createdAt: ctx.clock.now().toISOString(),
   });
   return { asset, upload: { uploadId, partSize, partCount } };
+}
+
+/** Never past what 10,000 parts of one request each (100 MiB) can carry, whatever is configured. */
+function assertUploadSize(ctx: AppContext, size: number): void {
+  const max = Math.min(
+    ctx.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES,
+    MAX_PARTS * SINGLE_UPLOAD_MAX_BYTES,
+  );
+  if (!Number.isSafeInteger(size) || size < 1 || size > max) {
+    throw new ValidationError([
+      {
+        field: 'size',
+        message: `A file is 1 byte to ${max} bytes (${Math.floor(max / 2 ** 20)} MiB)`,
+      },
+    ]);
+  }
+}
+
+export interface MultipartReplacementStarted extends MultipartUploadStarted {
+  /** The version completing the upload makes current. */
+  readonly version: number;
+}
+
+/**
+ * Starts replacing an asset's file with a multipart upload, for a file past one signed PUT: the
+ * same checks as {@link replaceAssetFile} (no hosted video, the `asset:beforeCreate` policy, the
+ * next version's key, this attempt's own), and the size cap of a new multipart upload. Then sign
+ * parts and complete as for a new asset; completing commits the version, unless another replace or
+ * restore took it first. Nothing changes before that.
+ */
+export async function startMultipartAssetFileReplacement(
+  ctx: AppContext,
+  blob: BlobStore,
+  scope: Scope,
+  id: string,
+  input: { readonly fileName: string; readonly contentType: string; readonly size: number },
+): Promise<MultipartReplacementStarted> {
+  assertUploadSize(ctx, input.size);
+  const multipart = multipartOf(blob);
+  const { asset, key, commit } = await prepareReplacement(ctx, scope, id, input);
+  const { partSize, partCount } = multipartPlan(input.size);
+  const { uploadId } = await multipart.create(key, commit.contentType);
+  await ctx.store.assetUploads.create(scope, {
+    assetId: id,
+    uploadId,
+    r2Key: key,
+    size: input.size,
+    partSize,
+    contentType: commit.contentType,
+    createdAt: ctx.clock.now().toISOString(),
+  });
+  return { asset, upload: { uploadId, partSize, partCount }, version: commit.version };
+}
+
+/** What committing a replacement upload needs, read from its key (`…/v<n>/file-<attempt>/<name>`). */
+function replacementOf(upload: AssetUpload): CommitAssetFileInput | null {
+  const version = assetKeyVersion(upload.r2Key, upload.assetId);
+  if (version === null || version <= 1) return null;
+  const attempt = assetKeyAttempt(upload.r2Key);
+  return {
+    version,
+    fileName: upload.r2Key.slice(upload.r2Key.lastIndexOf('/') + 1),
+    contentType: upload.contentType,
+    ...(attempt ? { attempt } : {}),
+  };
 }
 
 async function uploadOrThrow(
@@ -188,8 +252,9 @@ export async function signAssetUploadParts(
 
 /**
  * Completes an upload with every part's etag (parts 1..n, each once). The object then exists at
- * the asset's key, and ingest starts as it does for a finished single PUT. Returns the asset, with
- * a short-lived read URL.
+ * the asset's key, and ingest starts as it does for a finished single PUT. A replacement's upload
+ * also commits its version, in the unit a single-PUT commit uses, which forgets the upload too
+ * (ingest then starts from `asset.file_replaced`). Returns the asset, with a short-lived read URL.
  */
 export async function completeMultipartAssetUpload(
   ctx: AppContext,
@@ -198,6 +263,7 @@ export async function completeMultipartAssetUpload(
   assetId: string,
   uploadId: string,
   parts: readonly UploadedPart[],
+  opts: { readonly by?: string } = {},
 ): Promise<Asset> {
   const upload = await ctx.store.assetUploads.get(scope, assetId, uploadId);
   if (!upload) {
@@ -222,6 +288,17 @@ export async function completeMultipartAssetUpload(
   }
   const asset = await ctx.store.assets.get(scope, assetId);
   if (!asset) throw new NotFoundError('Asset', assetId);
+  const replacement = replacementOf(upload);
+  if (replacement && (asset.version ?? 1) >= replacement.version) {
+    // Another replace or restore took this version first: completing could only store bytes nobody
+    // will commit, so the upload is dropped instead.
+    await multipartOf(deps.blob).abort(upload.r2Key, uploadId);
+    await ctx.store.assetUploads.delete(scope, assetId, uploadId);
+    throw new ConflictError(
+      `Asset "${assetId}"'s file was replaced meanwhile (it is on version ${asset.version ?? 1} now); replace it again`,
+      { version: asset.version ?? 1 },
+    );
+  }
   let etag: string | undefined;
   try {
     etag = (await multipartOf(deps.blob).complete(upload.r2Key, uploadId, parts)).etag;
@@ -240,6 +317,23 @@ export async function completeMultipartAssetUpload(
         },
       ]);
     } else {
+      throw err;
+    }
+  }
+  if (replacement) {
+    try {
+      const next = await commitStoredReplacement(ctx, deps.blob, scope, asset, replacement, {
+        ...(opts.by ? { by: opts.by } : {}),
+        inUnit: (tx) => tx.assetUploads.delete(scope, assetId, uploadId),
+      });
+      return withReadUrl(deps.blob, scope, next);
+    } catch (err) {
+      // Lost the race at commit: the upload is complete, so nothing is left to resume, and its
+      // bytes, at this attempt's own key, will never be committed.
+      if (err instanceof ConflictError) {
+        await ctx.store.assetUploads.delete(scope, assetId, uploadId);
+        await deps.blob.delete(upload.r2Key);
+      }
       throw err;
     }
   }
@@ -271,6 +365,8 @@ export async function abortMultipartAssetUpload(
   const upload = await uploadOrThrow(ctx, scope, assetId, uploadId);
   await multipartOf(blob).abort(upload.r2Key, uploadId);
   await ctx.store.assetUploads.delete(scope, assetId, uploadId);
+  // A replacement's: the asset keeps the file it has.
+  if (replacementOf(upload)) return;
   const asset = await ctx.store.assets.get(scope, assetId);
   if (asset?.status !== 'draft' || asset.file.size !== undefined) return;
   if (blob.head && (await blob.head(upload.r2Key))) return;

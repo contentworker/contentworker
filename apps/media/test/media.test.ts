@@ -202,7 +202,7 @@ describe('the media Worker', () => {
       fileName: 'second take.jpg',
       contentType: 'image/jpeg',
     });
-    const key = `${u.scope.spaceId}/main/${u.asset.id}/v2/file/second take.jpg`;
+    const key = `${u.scope.spaceId}/main/${u.asset.id}/v2/file-${r.commit.attempt}/second take.jpg`;
     await blob.put(key, 'x', 'image/jpeg');
     await env.MEDIA_BUCKET.put(key, 'V2-BYTES', { httpMetadata: { contentType: 'image/jpeg' } });
     await commitAssetFile(u.ctx, blob, u.scope, u.asset.id, r.commit);

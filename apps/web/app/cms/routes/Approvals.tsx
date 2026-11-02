@@ -63,6 +63,59 @@ export function Approvals() {
   const total = taskItems.length + reviewItems.length;
   const loading = tasks.isPending || reviews.isPending;
 
+  // What is waiting comes first: a settled, empty section follows the other, so on a phone the
+  // first decision opens on the first screen.
+  const stepsSettledEmpty = !tasks.isPending && taskItems.length === 0;
+  const steps = (
+    <Section title="Workflow steps" flush>
+      {tasks.isPending ? (
+        <RowsSkeleton label="Loading workflow steps" />
+      ) : taskItems.length ? (
+        <ul className="divide-y">
+          {taskItems.map((t) => (
+            <TaskRow
+              key={t.id}
+              task={t}
+              entry={lookup.refs.get(t.entryId)}
+              resolving={lookup.resolving(t.entryId)}
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="px-5 py-4 text-muted-foreground text-sm">
+          No workflow step is waiting on a decision.
+        </p>
+      )}
+    </Section>
+  );
+  const proposals = (
+    <Section title="Agent proposals" flush>
+      {reviews.isPending ? (
+        <RowsSkeleton label="Loading agent proposals" diff />
+      ) : reviewItems.length ? (
+        <ul className="divide-y">
+          {reviewItems.map((r) => {
+            const entry = lookup.entries.get(r.entryId);
+            return (
+              <ReviewRow
+                key={r.id}
+                review={r}
+                entry={entry}
+                entryRef={lookup.refs.get(r.entryId)}
+                type={types?.find((t) => t.apiId === entry?.contentType)}
+                resolving={lookup.resolving(r.entryId)}
+              />
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="px-5 py-4 text-muted-foreground text-sm">
+          No agent proposal is waiting for review.
+        </p>
+      )}
+    </Section>
+  );
+
   return (
     <div>
       <PageHeader
@@ -81,51 +134,17 @@ export function Approvals() {
         />
       ) : (
         <div className="grid gap-6">
-          <Section title="Workflow steps" flush>
-            {tasks.isPending ? (
-              <RowsSkeleton label="Loading workflow steps" />
-            ) : taskItems.length ? (
-              <ul className="divide-y">
-                {taskItems.map((t) => (
-                  <TaskRow
-                    key={t.id}
-                    task={t}
-                    entry={lookup.refs.get(t.entryId)}
-                    resolving={lookup.resolving(t.entryId)}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p className="px-5 py-4 text-muted-foreground text-sm">
-                No workflow step is waiting on a decision.
-              </p>
-            )}
-          </Section>
-          <Section title="Agent proposals" flush>
-            {reviews.isPending ? (
-              <RowsSkeleton label="Loading agent proposals" diff />
-            ) : reviewItems.length ? (
-              <ul className="divide-y">
-                {reviewItems.map((r) => {
-                  const entry = lookup.entries.get(r.entryId);
-                  return (
-                    <ReviewRow
-                      key={r.id}
-                      review={r}
-                      entry={entry}
-                      entryRef={lookup.refs.get(r.entryId)}
-                      type={types?.find((t) => t.apiId === entry?.contentType)}
-                      resolving={lookup.resolving(r.entryId)}
-                    />
-                  );
-                })}
-              </ul>
-            ) : (
-              <p className="px-5 py-4 text-muted-foreground text-sm">
-                No agent proposal is waiting for review.
-              </p>
-            )}
-          </Section>
+          {stepsSettledEmpty ? (
+            <>
+              {proposals}
+              {steps}
+            </>
+          ) : (
+            <>
+              {steps}
+              {proposals}
+            </>
+          )}
         </div>
       )}
     </div>

@@ -334,7 +334,12 @@ export const assetFileReplacement = z.object({
     headers: z.record(z.string(), z.string()),
   }),
   commit: z
-    .object({ version: z.int(), fileName: z.string(), contentType: z.string() })
+    .object({
+      version: z.int(),
+      fileName: z.string(),
+      contentType: z.string(),
+      attempt: z.string().describe('This replace start’s own id, in its upload’s key'),
+    })
     .describe('POST this to /assets/{id}/file/commit once the bytes are uploaded'),
 });
 
@@ -550,6 +555,10 @@ export const multipartUpload = z.object({
     partSize: z.int().describe('Every part but the last has exactly this many bytes'),
     partCount: z.int(),
   }),
+});
+
+export const multipartReplacement = multipartUpload.extend({
+  version: z.int().describe('The version completing the upload makes current'),
 });
 
 export const signedParts = z.object({

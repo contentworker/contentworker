@@ -61,10 +61,18 @@ export async function inPool<T>(tasks: readonly (() => Promise<T>)[], limit: num
   return out;
 }
 
-/** Retries `attempt` with exponential backoff (500 ms, 1 s, 2 s…), never past `signal`. */
+/**
+ * Retries `attempt` with exponential backoff (500 ms, 1 s, 2 s…), never past `signal`, and never
+ * an error `retryable` says another attempt can't fix.
+ */
 export async function withRetry<T>(
   attempt: () => Promise<T>,
-  opts: { attempts: number; signal?: AbortSignal; sleep: (ms: number) => Promise<void> },
+  opts: {
+    attempts: number;
+    signal?: AbortSignal;
+    sleep: (ms: number) => Promise<void>;
+    retryable?: (err: unknown) => boolean;
+  },
 ): Promise<T> {
   let last: unknown;
   for (let i = 0; i < opts.attempts; i++) {
@@ -73,7 +81,7 @@ export async function withRetry<T>(
       return await attempt();
     } catch (err) {
       last = err;
-      if (opts.signal?.aborted) throw err;
+      if (opts.signal?.aborted || opts.retryable?.(err) === false) throw err;
       if (i < opts.attempts - 1) await opts.sleep(500 * 2 ** i);
     }
   }

@@ -145,36 +145,11 @@ export function palette(scheme: Scheme): Record<Token, string> {
 
 const mix = (a: string, pct: number, b: string) => `color-mix(in oklch, ${a} ${pct}%, ${b})`;
 
-/** The status signals and node categories the docs' components draw with, as `--ol-*`. */
-const SIGNALS: Token[] = [
-  'ok',
-  'run',
-  'wait',
-  'bad',
-  'undo',
-  'idle',
-  'ai',
-  'cat-trigger',
-  'cat-commerce',
-  'cat-control',
-  'cat-ai',
-  'card',
-  'muted',
-  'muted-foreground',
-  'rule',
-  'input',
-  'link',
-  'brand',
-  'paper',
-  'ink',
-  'sheet',
-  'sheet-grid',
-  'node',
-  'node-border',
-  'edge',
-  'edge-active',
-  'edge-idle',
-];
+/**
+ * Every Ledger token, as `--cw-<token>` resolved per scheme: the names apps/docs' brand.css and
+ * its components draw with (`--cw-foreground`, `--cw-brand`, `--cw-ok`, …).
+ */
+const CW_TOKENS = Object.keys(LIGHT).filter((t) => t !== 'radius') as Token[];
 
 function starlightBlock(scheme: Scheme): string[] {
   const p = palette(scheme);
@@ -225,7 +200,7 @@ function starlightBlock(scheme: Scheme): string[] {
     ['--sl-color-hairline-light', p.rule],
     ['--sl-color-hairline-shade', p.rule],
     ['--sl-color-backdrop-overlay', mix(p.ink, 40, 'transparent')],
-    ...SIGNALS.map((t): [string, string] => [`--ol-${t}`, p[t]]),
+    ...CW_TOKENS.map((t): [string, string] => [`--cw-${t}`, p[t]]),
   ];
   return vars.map(([k, v]) => `  ${k}: ${v};`);
 }
@@ -250,7 +225,7 @@ export function starlightThemeCss(): string {
     ':root {',
     `  --sl-font: ${FONTS.sans};`,
     `  --sl-font-mono: ${FONTS.mono};`,
-    `  --ol-radius: ${LIGHT.radius};`,
+    `  --cw-radius: ${LIGHT.radius};`,
     '}',
     '',
   ].join('\n');

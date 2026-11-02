@@ -32,6 +32,7 @@ function fakeBucket(): R2BucketLike {
     },
     async put(key, value, options) {
       const bytes = new Uint8Array(await new Response(value).arrayBuffer());
+      if (options?.onlyIf?.get('if-none-match') === '*' && objects.has(key)) return null;
       objects.set(key, { bytes, type: options?.httpMetadata?.contentType });
       // As R2: the etag names the bytes.
       return { httpEtag: `"${new TextDecoder().decode(bytes)}"` };
@@ -126,7 +127,7 @@ describe('/media routes', () => {
     expect(uploaded).toHaveLength(1);
   });
 
-  it('names each upload’s bytes by etag, so the same URL used twice is two uploads', async () => {
+  it('stores a signed PUT once: the same URL used again is 412, starts nothing and keeps the bytes', async () => {
     const bucket = fakeBucket();
     const uploaded: { key: string; etag?: string }[] = [];
     const app = mediaRoutes({
@@ -139,18 +140,19 @@ describe('/media routes', () => {
     });
     const blob = createR2BlobStore(bucket, { signer, baseUrl: 'https://w.example' });
     const { url } = await blob.getUploadUrl('s1/main/a/p.png', 'image/png');
+    const statuses: number[] = [];
     for (const body of ['one', 'two']) {
       const put = await app.request(url, {
         method: 'PUT',
         headers: { 'content-length': '3' },
         body,
       });
-      expect(put.headers.get('etag')).toBe(`"${body}"`);
+      statuses.push(put.status);
     }
-    expect(uploaded).toEqual([
-      { key: 's1/main/a/p.png', etag: '"one"' },
-      { key: 's1/main/a/p.png', etag: '"two"' },
-    ]);
+    expect(statuses).toEqual([200, 412]);
+    expect(uploaded).toEqual([{ key: 's1/main/a/p.png', etag: '"one"' }]);
+    const download = await app.request(await blob.getDownloadUrl('s1/main/a/p.png'));
+    expect(await download.text()).toBe('one');
   });
 
   it('is not mounted without a bucket', async () => {

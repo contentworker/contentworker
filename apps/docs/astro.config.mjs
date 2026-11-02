@@ -13,6 +13,8 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'contentworker',
+      // The mark in brand beside the wordmark, as in the admin's header (the dark theme's lighter brand).
+      logo: { light: './src/assets/mark-light.svg', dark: './src/assets/mark-dark.svg' },
       description:
         'contentworker is an API-first, AI-agentic headless CMS. Guides for the people who write and approve content, and reference for the developers who integrate with it.',
       // Prose lives at src/content/ (see content.config.ts). Without this Starlight skips its

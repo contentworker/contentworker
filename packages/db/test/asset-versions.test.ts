@@ -43,7 +43,7 @@ async function harness(start = '2026-01-01T00:00:00.000Z') {
   const replace = async (id: string, fileName: string) => {
     const r = await replaceAssetFile(ctx, blob, scope, id, { fileName, contentType: 'image/png' });
     await blob.put(
-      `${spaceId}/main/${id}/v${r.commit.version}/file/${fileName}`,
+      `${spaceId}/main/${id}/v${r.commit.version}/file-${r.commit.attempt}/${fileName}`,
       fileName,
       'image/png',
     );
@@ -63,11 +63,12 @@ describe('asset versions on D1', () => {
       contentHash: 'abc',
       duplicateOf: 'other',
     });
-    await h.replace(asset.id, 'hero-2.png');
+    const replaced = await h.replace(asset.id, 'hero-2.png');
     const stored = await store.assets.get(h.scope, asset.id);
+    expect(replaced.r2Key).toMatch(/\/v2\/file-[^/]+\/hero-2\.png$/);
     expect(stored).toMatchObject({
       version: 2,
-      r2Key: `${h.scope.spaceId}/main/${asset.id}/v2/file/hero-2.png`,
+      r2Key: replaced.r2Key,
       file: { fileName: 'hero-2.png', size: 'hero-2.png'.length },
     });
     expect(stored?.contentHash).toBeUndefined();

@@ -93,10 +93,17 @@ describe('asset versions over HTTP', () => {
     expect(started.status).toBe(201);
     const { upload: target, commit } = await json<{
       upload: { url: string };
-      commit: { version: number; fileName: string; contentType: string };
+      commit: { version: number; fileName: string; contentType: string; attempt: string };
     }>(started);
-    expect(commit).toEqual({ version: 2, fileName: 'hero-2.png', contentType: 'image/png' });
-    expect(target.url).toContain(`/s1/main/${asset.id}/v2/file/hero-2.png`);
+    expect(commit).toEqual({
+      version: 2,
+      fileName: 'hero-2.png',
+      contentType: 'image/png',
+      attempt: expect.any(String),
+    });
+    // This replace's own key for version 2.
+    const key = `s1/main/${asset.id}/v2/file-${commit.attempt}/hero-2.png`;
+    expect(target.url).toContain(`/${key}`);
 
     // Nothing uploaded yet: refused, and nothing changes.
     const early = await h.app.request(`${M}/assets/${asset.id}/file/commit`, {
@@ -106,7 +113,7 @@ describe('asset versions over HTTP', () => {
     });
     expect(early.status).toBe(422);
 
-    await h.blob.put(`s1/main/${asset.id}/v2/file/hero-2.png`, 'bytes', 'image/png');
+    await h.blob.put(key, 'bytes', 'image/png');
     const committed = await h.app.request(`${M}/assets/${asset.id}/file/commit`, {
       method: 'POST',
       headers: writer,

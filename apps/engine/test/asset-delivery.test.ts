@@ -290,7 +290,7 @@ describe('asset versions and rights in the engine', () => {
       fileName: 'b.png',
       contentType: 'image/png',
     });
-    const key = `${scope.spaceId}/main/${asset.id}/v2/file/b.png`;
+    const key = `${scope.spaceId}/main/${asset.id}/v2/file-${r.commit.attempt}/b.png`;
     await blob.put(key, 'b', 'image/png');
     let mark = await lastRowid();
     await commitAssetFile(ctx, blob, scope, asset.id, r.commit);

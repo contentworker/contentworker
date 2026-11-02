@@ -50,6 +50,26 @@ describe('admin ManagementClient', () => {
     expect(calls[0]?.url).toBe('/preview/s1/main/entries?content_type=article');
   });
 
+  it('reads a list longer than one API page page by page, and stops at a short page', async () => {
+    const { fn, calls } = fakeFetch((url) => {
+      const skip = Number(new URL(url, 'http://x').searchParams.get('skip') ?? 0);
+      // 250 entries in all: two full pages of 100, then 50.
+      const n = Math.max(0, Math.min(100, 250 - skip));
+      return { items: Array.from({ length: n }, (_, i) => ({ id: `e${skip + i}` })) };
+    });
+    const client = createManagementClient(conn, fn);
+    const items = await client.listEntries('article', { limit: 300 });
+    expect(items).toHaveLength(250);
+    expect(calls.map((c) => new URL(c.url, 'http://x').searchParams.get('skip'))).toEqual([
+      '0',
+      '100',
+      '200',
+    ]);
+    expect(calls.every((c) => new URL(c.url, 'http://x').searchParams.get('limit') === '100')).toBe(
+      true,
+    );
+  });
+
   it('sends localized fields through on create (the form owns localization)', async () => {
     const { fn, calls } = fakeFetch(() => ({ entry: { id: 'e1' }, fields: {} }));
     const client = createManagementClient(conn, fn);
@@ -567,6 +587,28 @@ describe('collections, share links, multipart uploads and zips', () => {
       expiresAt: '2026-11-08T00:00:00.000Z',
       allowDownload: false,
       password: 'correct horse',
+    });
+  });
+
+  it('starts replacing a file in parts on the asset’s own route', async () => {
+    const { fn, calls } = fakeFetch(() => ({
+      asset: { id: 'a/1' },
+      version: 2,
+      upload: { uploadId: 'u1', partSize: 8, partCount: 2 },
+    }));
+    const started = await createManagementClient(conn, fn).startAssetFileUpload('a/1', {
+      fileName: 'cut.mov',
+      contentType: 'video/quicktime',
+      size: 12,
+    });
+    expect(started.version).toBe(2);
+    expect(calls.map((c) => `${c.init?.method} ${c.url}`)).toEqual([
+      `POST ${MGMT}/assets/a%2F1/file/uploads`,
+    ]);
+    expect(body(calls[0])).toEqual({
+      fileName: 'cut.mov',
+      contentType: 'video/quicktime',
+      size: 12,
     });
   });
 

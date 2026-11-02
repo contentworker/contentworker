@@ -116,7 +116,29 @@ describe('R2 multipart uploads', () => {
     expect(head.size).toBe(6);
     expect(new TextDecoder().decode(objects.get(KEY))).toBe('abcdef');
     // Once completed, the upload is gone: a late part finds nothing to write into.
-    expect((await put(signed1.url, 'abcd')).status).toBe(404);
+    expect((await put(signed1.url, 'wxyz')).status).toBe(404);
+    expect(new TextDecoder().decode(objects.get(KEY))).toBe('abcdef');
+  });
+
+  it('takes a part again before completion: a retry replaces the part it retries', async () => {
+    const { bucket, objects } = fakeR2();
+    const blob = createR2BlobStore(bucket, { signer, baseUrl: 'https://api.test', now: () => NOW });
+    const multipart = blob.multipart;
+    if (!multipart) throw new Error('multipart missing');
+    const { uploadId } = await multipart.create(KEY, 'video/quicktime');
+    const { url } = await multipart.partUrl(KEY, uploadId, 1, 2);
+    const put = (body: string) =>
+      handleMediaRequest(
+        new Request(url, { method: 'PUT', body, headers: { 'content-length': '2' } }),
+        { bucket, signer, now: () => NOW },
+      );
+    expect((await put('xx')).status).toBe(200);
+    const again = await put('ab');
+    expect(again.status).toBe(200);
+    await multipart.complete(KEY, uploadId, [
+      { partNumber: 1, etag: again.headers.get('etag') ?? '' },
+    ]);
+    expect(new TextDecoder().decode(objects.get(KEY))).toBe('ab');
   });
 
   it('refuses a part of another length, a forged part number or upload, and an expired URL', async () => {

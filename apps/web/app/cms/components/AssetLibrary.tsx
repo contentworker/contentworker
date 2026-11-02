@@ -602,7 +602,15 @@ export function AssetLibrary(props: { locale: string }) {
     const timer = setInterval(() => {
       client
         .getBulkJob(runningJob)
-        .then((job) => setBulkJob((current) => (current ? { ...current, job } : current)))
+        // Never backwards: a poll that left before a Stop came back must not undo the stop (the
+        // card would run again, and the finish below would run twice).
+        .then((job) =>
+          setBulkJob((current) =>
+            current?.job.id === job.id && current.job.status === 'running'
+              ? { ...current, job }
+              : current,
+          ),
+        )
         .catch((e) => {
           // A refusal (the session ended, the job is gone) won't pass by itself: stop watching
           // and free the bar, rather than keep it disabled until a reload. Anything else is
@@ -617,6 +625,20 @@ export function AssetLibrary(props: { locale: string }) {
     }, BULK_JOB_POLL_MS);
     return () => clearInterval(timer);
   }, [runningJob, client]);
+  // Stopping it: the server's answer is the job as it ended, which ends the polling and runs the
+  // finish below (the toast, the reload, the report) as any end does.
+  const [cancellingJob, setCancellingJob] = useState(false);
+  const cancelJob = async (id: string) => {
+    setCancellingJob(true);
+    try {
+      const job = await client.cancelBulkJob(id);
+      setBulkJob((current) => (current?.job.id === id ? { ...current, job } : current));
+    } catch (e) {
+      toast.error(`The job wasn’t stopped: ${apiErrorMessage(e)}`);
+    } finally {
+      setCancellingJob(false);
+    }
+  };
   // Once it has finished: say so, keep what failed selected and name it from the job's report.
   const finishedJob = bulkJob && bulkJob.job.status !== 'running' ? bulkJob : null;
   // Once per finished job (polling stops, so the object no longer changes): the toast and the
@@ -626,8 +648,12 @@ export function AssetLibrary(props: { locale: string }) {
     const { action, job } = finishedJob;
     const verb = BULK_VERBS[action].done;
     setBulkBusy(false);
-    if (job.failed === 0) setSelected(new Set());
-    (job.failed ? toast.error : toast.success)(bulkSummary(verb, jobOutcome(job)));
+    // A stopped job left some assets as they were: the selection stays, to run it again.
+    if (job.failed === 0 && job.status !== 'cancelled') setSelected(new Set());
+    const said = bulkSummary(verb, jobOutcome(job));
+    (job.failed ? toast.error : toast.success)(
+      job.status === 'cancelled' ? `Stopped: ${said}` : said,
+    );
     void reload();
     if (job.failed === 0) return;
     client
@@ -1182,6 +1208,8 @@ export function AssetLibrary(props: { locale: string }) {
                 action={bulkJob.action}
                 job={bulkJob.job}
                 onDismiss={() => setBulkJob(null)}
+                onCancel={() => void cancelJob(bulkJob.job.id)}
+                cancelling={cancellingJob}
               />
             )}
             {zip.zip && (

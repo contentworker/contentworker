@@ -562,6 +562,10 @@ export type MultipartClient = Pick<
   | 'abortAssetUpload'
 >;
 
+/** The steps of replacing a file in parts. */
+export type ReplaceInPartsClient = Omit<MultipartClient, 'startAssetUpload'> &
+  Pick<ManagementClient, 'startAssetFileUpload'>;
+
 export interface PartsUploadOptions {
   readonly folderId?: string;
   readonly onProgress?: (progress: PartsProgress) => void;
@@ -600,10 +604,7 @@ export async function uploadInParts(
   file: File,
   opts: PartsUploadOptions = {},
 ): Promise<Asset> {
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const attempts = opts.attempts ?? 4;
-  const { signal } = opts;
-  signal?.throwIfAborted();
+  opts.signal?.throwIfAborted();
   const started = await client.startAssetUpload({
     fileName: file.name,
     contentType: file.type || 'application/octet-stream',
@@ -611,8 +612,41 @@ export async function uploadInParts(
     title: file.name,
     ...(opts.folderId ? { folderId: opts.folderId } : {}),
   });
-  const assetId = started.asset.id;
-  const { uploadId, partSize, partCount } = started.upload;
+  return sendParts(client, file, started.asset.id, started.upload, opts);
+}
+
+/**
+ * Replaces an asset's file with one past {@link SINGLE_UPLOAD_MAX_BYTES}, in parts, exactly as
+ * {@link uploadInParts} sends a new one; completing commits the next version (a 409 when another
+ * replace or restore committed first). A cancel, or a part out of attempts, aborts the upload,
+ * and the asset keeps the file it has.
+ */
+export async function replaceInParts(
+  client: ReplaceInPartsClient,
+  assetId: string,
+  file: File,
+  opts: Omit<PartsUploadOptions, 'folderId'> = {},
+): Promise<Asset> {
+  opts.signal?.throwIfAborted();
+  const started = await client.startAssetFileUpload(assetId, {
+    fileName: file.name,
+    contentType: file.type || 'application/octet-stream',
+    size: file.size,
+  });
+  return sendParts(client, file, assetId, started.upload, opts);
+}
+
+async function sendParts(
+  client: Omit<MultipartClient, 'startAssetUpload'>,
+  file: File,
+  assetId: string,
+  upload: { readonly uploadId: string; readonly partSize: number; readonly partCount: number },
+  opts: Omit<PartsUploadOptions, 'folderId'>,
+): Promise<Asset> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const attempts = opts.attempts ?? 4;
+  const { signal } = opts;
+  const { uploadId, partSize, partCount } = upload;
   const total = file.size;
   let loaded = 0;
   let partsDone = 0;
@@ -675,7 +709,7 @@ export async function uploadInParts(
     signal?.throwIfAborted();
     return await client.completeAssetUpload(assetId, uploadId, parts);
   } catch (err) {
-    // Nothing is left behind: the parts are discarded and the empty draft deleted.
+    // Nothing is left behind: the parts are discarded (and a new asset's empty draft deleted).
     await client.abortAssetUpload(assetId, uploadId).catch(() => undefined);
     throw err;
   }

@@ -31,7 +31,10 @@ function fakeBucket() {
         typeof value === 'string'
           ? new TextEncoder().encode(value)
           : new Uint8Array(await new Response(value).arrayBuffer());
+      // R2's create-once condition: nothing stored, `null` back, when the key exists.
+      if (options?.onlyIf?.get('if-none-match') === '*' && objects.has(key)) return null;
       objects.set(key, { bytes, contentType: options?.httpMetadata?.contentType });
+      return { httpEtag: `"etag-${bytes.byteLength}"` };
     },
     async delete(keys) {
       for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key);
@@ -153,6 +156,47 @@ describe('handleMediaRequest', () => {
     expect(get.headers.get('x-content-type-options')).toBe('nosniff');
     expect(get.headers.get('content-security-policy')).toContain('sandbox');
     expect(await get.text()).toBe('hello');
+  });
+
+  it('never lets a signed PUT write over bytes already stored, even through its own URL', async () => {
+    const { bucket, objects } = fakeBucket();
+    const { url } = await upload(bucket);
+    const put = (body: string) =>
+      handleMediaRequest(
+        new Request(url, {
+          method: 'PUT',
+          headers: { 'content-length': String(body.length) },
+          body,
+        }),
+        { bucket, signer, now: () => NOW },
+      );
+    const first = await put('hello');
+    expect(first.status).toBe(200);
+    expect(first.headers.get('etag')).toBe('"etag-5"');
+    // The same URL, still inside its 15 minutes, after the file was committed or ingested.
+    const second = await put('evil!!');
+    expect(second.status).toBe(412);
+    expect(new TextDecoder().decode(objects.get(KEY)?.bytes)).toBe('hello');
+  });
+
+  it('stores a retried PUT whose first attempt never landed', async () => {
+    const { bucket, objects } = fakeBucket();
+    const { url } = await upload(bucket);
+    const flaky: R2BucketLike = {
+      ...bucket,
+      async put() {
+        throw new Error('network: connection reset');
+      },
+    };
+    const request = () =>
+      new Request(url, { method: 'PUT', headers: { 'content-length': '5' }, body: 'hello' });
+    await expect(
+      handleMediaRequest(request(), { bucket: flaky, signer, now: () => NOW }),
+    ).rejects.toThrow(/connection reset/);
+    expect(objects.has(KEY)).toBe(false);
+    const retry = await handleMediaRequest(request(), { bucket, signer, now: () => NOW });
+    expect(retry.status).toBe(200);
+    expect(new TextDecoder().decode(objects.get(KEY)?.bytes)).toBe('hello');
   });
 
   it('refuses an expired upload URL', async () => {

@@ -36,7 +36,6 @@ import {
   ChevronsUpDown,
   Ellipsis,
   type LucideIcon,
-  MessageSquareText,
   Monitor,
   Moon,
   Search,
@@ -449,7 +448,8 @@ function AssistantToggle() {
           : 'text-muted-foreground hover:bg-accent hover:text-foreground',
       )}
     >
-      <MessageSquareText className="size-4" aria-hidden="true" />
+      {/* An agent at rest is the mark in the AI tone (DESIGN.md). */}
+      <Mark className="size-4 text-ai" />
       {/* Named by its word (visible from sm), so a voice command can say it. */}
       <span className="max-sm:sr-only">Coworker</span>
     </button>
@@ -571,7 +571,12 @@ function ShellFrame() {
             id="main"
             tabIndex={-1}
             aria-busy={slow || undefined}
-            className="min-w-0 flex-1 pb-[var(--tabbar-h)] outline-none md:pb-0"
+            className={cn(
+              'min-w-0 flex-1 pb-[var(--tabbar-h)] outline-none md:pb-0',
+              // The floating New entry (2.75rem, 0.75rem above the tab bar) never covers the last
+              // row's actions: the page scrolls clear of it.
+              showNav && floatsNewEntry(path, assistantOpen) && 'pb-[calc(var(--tabbar-h)+4.5rem)]',
+            )}
           >
             <Outlet />
           </main>
@@ -765,7 +770,7 @@ function TabBar({
   );
   const state = (active: boolean) =>
     active
-      ? 'font-medium text-foreground before:absolute before:inset-x-3 before:top-0 before:h-0.5 before:bg-brand'
+      ? 'font-medium text-foreground before:absolute before:inset-x-3 before:top-0 before:h-0.5 before:bg-brand [&>svg]:text-brand'
       : 'text-muted-foreground';
   return (
     <>
@@ -787,6 +792,12 @@ function TabBar({
                   className={cn(item, state(isAt(path, t)))}
                 >
                   <t.icon className="size-5" aria-hidden="true" />
+                  <span className="short:sr-only">{t.label}</span>
+                  {/* After the label in reading order, a space between (it is placed over the
+                      icon, and a flex column draws no space): the tab's visible text is then
+                      "Approvals 3", inside its name "Approvals, 3 waiting", so a voice command
+                      naming what is on screen still finds it. */}
+                  {count ? ' ' : null}
                   {count ? (
                     <span
                       aria-hidden="true"
@@ -796,7 +807,6 @@ function TabBar({
                       {approvalsCountLabel(count)}
                     </span>
                   ) : null}
-                  <span className="short:sr-only">{t.label}</span>
                 </NavLink>
               </li>
             );
@@ -1002,13 +1012,18 @@ function ShellCrumbs() {
  * New entry, in the header once the space is known: an outline on Approvals and Workflows, where
  * starting an entry isn't the page's point (cms/components/layout/NewEntry).
  */
+/**
+ * Phones: New entry floats above the tab bar on Content's lists, where it's the page's next step
+ * (not in the editor, which keeps its own actions there), and not over the assistant's sheet, where
+ * it would sit on the send button. The page leaves room for it below its last row.
+ */
+const floatsNewEntry = (path: string, covered: boolean) =>
+  !covered && /^\/content(\/[^/]+)?$/.test(path);
+
 function ShellNewEntry({ path, covered }: { path: string; covered: boolean }) {
   if (!useOptionalClient()?.ready) return null;
   const quiet = path.startsWith('/approvals') || path.startsWith('/workflows');
-  // Phones: a floating pill above the tab bar on Content's lists, where it's the page's next step
-  // (not in the editor, which keeps its own actions there). Not over the assistant's sheet, where
-  // it would sit on the send button.
-  const float = !covered && /^\/content(\/[^/]+)?$/.test(path);
+  const float = floatsNewEntry(path, covered);
   return (
     <>
       <span className="hidden md:contents">

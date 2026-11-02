@@ -448,16 +448,21 @@ describe('asset version, rights and bulk tools (MCP), with the HTTP routes’ sc
         fileName: 'hero-2.png',
         contentType: 'image/png',
       }),
-    ) as { commit: { version: number; fileName: string; contentType: string } };
+    ) as { commit: { version: number; fileName: string; contentType: string; attempt: string } };
     expect(started.commit).toEqual({
       version: 2,
       fileName: 'hero-2.png',
       contentType: 'image/png',
+      attempt: expect.any(String),
     });
     const early = await call('asset_commit_file', { id: a.id, ...started.commit });
     expect(early.isError).toBe(true);
 
-    await blob.put(`${SPACE}/main/${a.id}/v2/file/hero-2.png`, 'v2', 'image/png');
+    await blob.put(
+      `${SPACE}/main/${a.id}/v2/file-${started.commit.attempt}/hero-2.png`,
+      'v2',
+      'image/png',
+    );
     expect(payload(await call('asset_commit_file', { id: a.id, ...started.commit }))).toMatchObject(
       { version: 2, file: { fileName: 'hero-2.png' } },
     );

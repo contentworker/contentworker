@@ -30,7 +30,7 @@ import {
 import { cn } from '@contentworker/ui/lib/utils';
 import { useAgent } from 'agents/react';
 import { getToolName, isToolUIPart, type UIMessage } from 'ai';
-import { ChevronDown, MessageSquareText, MoreHorizontal, Pencil, RotateCcw, X } from 'lucide-react';
+import { ChevronDown, MoreHorizontal, Pencil, RotateCcw, X } from 'lucide-react';
 import {
   Component,
   type ReactNode,
@@ -66,6 +66,7 @@ import {
 } from '~/components/ai-elements/queue';
 import { Shimmer } from '~/components/ai-elements/shimmer';
 import { Suggestion, Suggestions } from '~/components/ai-elements/suggestion';
+import { Mark } from '~/components/mark';
 import { useMe } from '~/lib/use-me';
 import {
   type ActResult,
@@ -839,7 +840,7 @@ function FirstRun({ onAsk }: { onAsk: (text: string) => void }) {
   return (
     <Empty
       className="px-0 py-6"
-      icon={<MessageSquareText aria-hidden="true" />}
+      icon={<Mark className="text-ai" />}
       title="Ask about your content, or have it make a change."
       action={
         <Suggestions className="items-center">
