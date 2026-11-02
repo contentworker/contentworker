@@ -7,6 +7,8 @@ import {
   deliveredCollection,
   deliveredConcept,
   deliveredConceptList,
+  deliveredRedirectList,
+  deliveredRedirectMatch,
   deliveredTag,
   deliveredTagList,
   publishedEntry,
@@ -129,6 +131,27 @@ const DOCS = {
         scheme: 'The concept’s scheme',
         locale: 'Resolve labels for one locale (with the space’s fallbacks)',
         content_type: 'Count published entries of this content type only',
+      },
+    }),
+  listRedirects: () =>
+    doc('Delivery', 'List the redirects', {
+      ok: deliveredRedirectList,
+      description:
+        'Every enabled redirect, by source: the set a front end or an edge Worker applies ' +
+        'itself (contentworker serves no site). Match exact sources first, then the most ' +
+        'specific pattern, as `redirects/resolve` does; the SDKs ship that matcher.',
+    }),
+  resolveRedirect: () =>
+    doc('Delivery', 'Resolve a path against the redirects', {
+      ok: deliveredRedirectMatch,
+      description:
+        'The redirect a path takes, with its status and the location to send the reader to ' +
+        '(captures filled in; the request’s query kept when the destination has none). 404 ' +
+        'when nothing redirects it.',
+      query: {
+        path: 'The request path, with or without its query string',
+        locale:
+          'The request’s locale: its own redirects apply as well as the ones for every locale',
       },
     }),
   live: () =>

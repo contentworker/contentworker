@@ -644,3 +644,65 @@ describe('@contentworker/sdk-management taxonomy', () => {
     expect(calls[1]?.body).toEqual({ slug: 'latest', description: null });
   });
 });
+
+describe('entries.list and imports', () => {
+  it('lists entries from Preview on the same origin, mapping the query to its parameters', async () => {
+    const calls: string[] = [];
+    const cma = createManagementClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        return { items: [], total: 0 };
+      }),
+    });
+
+    await cma.entries.list({
+      contentType: 'article',
+      limit: 20,
+      skip: 40,
+      order: '-sys.updatedAt',
+    });
+    await cma.entries.list();
+    const first = new URL(calls[0] as string);
+    expect(first.origin + first.pathname).toBe('https://cms.test/preview/s1/main/entries');
+    expect(Object.fromEntries(first.searchParams)).toEqual({
+      content_type: 'article',
+      limit: '20',
+      skip: '40',
+      order: '-sys.updatedAt',
+    });
+    // No empty parameters: an absent filter is not a filter for ''.
+    expect(calls[1]).toBe('https://cms.test/preview/s1/main/entries');
+  });
+
+  it('posts the same input to analyze, run and start', async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const cma = createManagementClient({
+      ...base,
+      fetch: fakeFetch((url, init) => {
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        return url.endsWith('/sources') ? { items: [{ id: 'csv', name: 'CSV' }] } : {};
+      }),
+    });
+    const input = {
+      source: 'csv',
+      payload: 'title\nHello',
+      mapping: { contentTypeApiId: 'article', fields: { title: 'title' } },
+    };
+
+    expect(await cma.imports.sources()).toEqual([{ id: 'csv', name: 'CSV' }]);
+    await cma.imports.analyze(input);
+    await cma.imports.run(input);
+    await cma.imports.start(input);
+    const M = 'https://cms.test/spaces/s1/environments/main';
+    expect(calls.map((c) => c.url)).toEqual([
+      `${M}/imports/sources`,
+      `${M}/imports/analyze`,
+      `${M}/imports`,
+      `${M}/imports/job`,
+    ]);
+    expect(calls.slice(1).every((c) => JSON.stringify(c.body) === JSON.stringify(input))).toBe(
+      true,
+    );
+  });
+});

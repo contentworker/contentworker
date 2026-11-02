@@ -84,6 +84,7 @@ export default defineConfig({
             { label: 'Share assets with a link', slug: 'guides/share-links' },
             { label: 'Releases and scheduling', slug: 'guides/releases-and-scheduling' },
             { label: 'Environments', slug: 'guides/environments' },
+            { label: 'Redirects', slug: 'guides/redirects' },
             { label: 'Workflows', slug: 'guides/workflows' },
             { label: 'Approvals and reviews', slug: 'guides/approvals' },
             { label: 'AI features', slug: 'guides/ai' },
@@ -100,6 +101,8 @@ export default defineConfig({
             { label: 'Webhooks', slug: 'guides/webhooks' },
             { label: 'SDKs', slug: 'guides/sdks' },
             { label: 'MCP server', slug: 'guides/mcp' },
+            { label: 'Command-line tool', slug: 'guides/cli' },
+            { label: 'Agent skills', slug: 'guides/agent-skills' },
           ],
         },
         {

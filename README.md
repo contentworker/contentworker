@@ -22,7 +22,7 @@ live inside that deployment's D1.
 - **Hexagonal core.** `domain` depends on nothing; `application` depends only on `ports`;
   Cloudflare adapters (`@contentworker/adapters`, one subpath each) and the D1 store
   (`@contentworker/db`) are bound in one place, `@contentworker/platform`'s `wire.ts`.
-- **One set of use-cases, every caller.** The HTTP API, the MCP server (185 tools), the queue
+- **One set of use-cases, every caller.** The HTTP API, the MCP server (189 tools), the queue
   consumers and the agents call the _same_ application use-cases, so an AI agent can never do
   what a human API client couldn't, and every write goes through the same validation and RBAC.
 - **Structured content model.** Typed fields with validations, localization with fallback
@@ -65,6 +65,7 @@ maintainer docs live in [`docs/`](./docs) (start at [the index](./docs/README.md
 | [Development](./docs/development.md)                  | Workspace commands, local stack, testing, adding a use-case                       |
 | [Admin UI](./docs/admin-ui.md)                        | The React Router admin in `apps/web`                                              |
 | [Plugins](./docs/plugins.md)                          | Sandboxed write-path plugins on Worker Loader                                     |
+| [Developer tooling](./docs/developer-tooling.md)      | The `contentworker` CLI and the developer agent skills in `skills/`              |
 
 For coding agents, the rules every change keeps are in [`AGENTS.md`](./AGENTS.md).
 
@@ -101,6 +102,8 @@ packages/
   docs/           docs/*.md embedded for the MCP and HTTP docs tools
   design/ ui/     Ledger: design tokens and the shared components
   sdk/            core, web, vue, edge, react-native, management, codegen
+  cli/            the `contentworker` command (login, model as code, entries, import, types)
+skills/           agent skills for developers building on contentworker (SKILL.md format)
 deployments/      one registry file per customer deployment
 scripts/          fleet.ts (render configs, CI matrix, secrets), provision.sh, setup-code.sh
 ```

@@ -190,6 +190,11 @@ describe('MCP tool audit', () => {
     expect(toolMutates('environment_import', {})).toBe(true);
     expect(toolMutates('entry_audit', { id: 'e1' })).toBe(false);
     expect(toolMutates('entry_audit', { id: 'e1', createTasks: true })).toBe(true);
+    // The single-asset tools: a get is a read; create, publish and unpublish are writes.
+    expect(toolMutates('asset_get', { id: 'a1' })).toBe(false);
+    for (const tool of ['asset_create', 'asset_publish', 'asset_unpublish']) {
+      expect(toolMutates(tool, { id: 'a1' }), tool).toBe(true);
+    }
     // A tool nobody classified is audited: the trail errs toward completeness.
     expect(toolMutates('some_new_tool', {})).toBe(true);
   });

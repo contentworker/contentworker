@@ -15,7 +15,8 @@ publishing does.
 - Resolve a name to an id with `entries_suggest` (matches the display field). Do not page through
   `entries_query` looking for a title: you will miss everything past the first page.
 - Use `entries_query` for structured questions (field filters, ordering, `select` projection) and
-  `entries_get` for a full entry.
+  `entries_get` for a full entry. It returns one page (`{ items, nextCursor? }`); pass `nextCursor`
+  back as `cursor`, with the same filters and order, for the next.
 
 ## Write
 
@@ -46,6 +47,10 @@ publishing does.
 
 Prefer a release over publishing several entries one by one: a failure halfway through a sequence
 leaves the site half-updated, and a release cannot.
+
+A publish that changes a slug named by its type's `urlPattern` writes a `301` from the old path to
+the new one in the same step; check with `redirects_resolve` (path of the old URL). Manage other
+redirects with the `redirects_*` tools.
 
 ## Editorial workflows
 

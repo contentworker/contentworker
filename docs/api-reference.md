@@ -273,6 +273,11 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 
+A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,
+`{locale}` or its own `Slug` fields' apiIds, e.g. `/blog/{slug}`; `null` or `''` clears it; `422`
+otherwise). When set, a publish that changes a slug it names writes a redirect (see
+[Redirects](#redirects)).
+
 Saving a content type that drops a blocks variant some entry still uses, or a field (at any depth)
 some entry still holds a value for, answers `409 conflict` naming each `location: variant` or field
 location and its entries (`details.variantsInUse`, `details.fieldsInUse`); see
@@ -433,7 +438,7 @@ content grants gets `403`, because the report exposes entry ids across content t
 | DELETE | `…/asset-folders/:id`                    | `content:write`   | Delete an empty folder (204); 409 when it holds subfolders or assets                                                                                                                                                                                                                           |
 | PATCH  | `…/assets/:id/metadata`                  | `content:write`   | Update alt text / tags metadata                                                                                                                                                                                                                                                                |
 | GET    | `…/assets/:id/usage`                     | `preview:read`    | Reference usage                                                                                                                                                                                                                                                                                |
-| GET    | `…/assets/:id/transform`                 | `preview:read`    | Image transform URL (`w,h,fit,fm,q`; `fm=auto` → AVIF/WebP)                                                                                                                                                                                                                                    |
+| GET    | `…/assets/:id/transform`                 | `preview:read`    | Image transform URL (`w,h,fit,fm,q`; `fm=auto` → AVIF/WebP), signed from a fresh 15-minute read URL for the current file version                                                                                                                                                               |
 | POST   | `…/assets/videos`                        | `content:write`   | Create a video asset + one-time direct upload to the video host (501 without one)                                                                                                                                                                                                              |
 | POST   | `…/assets/:id/video/refresh`             | `content:write`   | Refresh a video asset's status, playback URLs and poster                                                                                                                                                                                                                                       |
 | POST   | `…/assets/:id/alt-text`                  | `content:write`   | AI alt-text generation                                                                                                                                                                                                                                                                         |
@@ -450,7 +455,11 @@ content grants gets `403`, because the report exposes entry ids across content t
 
 Every asset these routes return carries a short-lived signed `file.url` (at least 15 minutes,
 `?exp=…&sig=…`), never the non-expiring URL the asset stores; a hosted video keeps its playback
-URL. The MCP asset tools do the same.
+URL, and none carries the server's own storage key (`r2Key`). The MCP asset tools answer the same
+way: every Management and MCP asset response goes through one serializer
+(`packages/http/src/api/asset-response.ts`). The environment export (`GET …/export`,
+`environment_export`) is the exception: it is a snapshot for `…/import` and clones, which copy
+the files by their keys.
 
 ### Asset collections, share links, uploads and zips
 
@@ -630,6 +639,30 @@ snapshot (publish, republish with other tags, unpublish, trash, bulk and release
 read sums a few rows and never writes. `POST …/taxonomy/repair` rebuilds them from the snapshots;
 the engine runs the same repair daily (`taxonomy-repair`).
 
+### Redirects
+
+Redirects are delivery data: contentworker serves no site, so a front end (or an edge Worker in
+front of it) applies them. Reads need `preview:read`, writes `content:manage`; every write checks
+the whole set and answers `422` for a loop or a duplicate source (a chain is allowed). Model in
+[Domain model](./domain-model.md#redirects).
+
+| Method | Path                           | Scope            | Description                                                                                                                              |
+| ------ | ------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/redirects`                  | `preview:read`   | List: `q` (substring of source, destination or note), `limit`, `cursor`                                                                  |
+| POST   | `…/redirects`                  | `content:manage` | Create `{ source, destination, status?, locale?, enabled?, note? }` (`201`, `{ redirect, chains }`)                                      |
+| GET    | `…/redirects/:id`              | `preview:read`   | Get one                                                                                                                                  |
+| PATCH  | `…/redirects/:id`              | `content:manage` | Change any of those fields                                                                                                               |
+| DELETE | `…/redirects/:id`              | `content:manage` | Delete                                                                                                                                   |
+| GET    | `…/redirects/resolve`          | `preview:read`   | `?path=&locale=` → what Delivery answers (`{ redirect, status, location }`); `404` when nothing matches                                  |
+| GET    | `…/redirects/analysis`         | `preview:read`   | `{ duplicates, loops, chains, count, max }`                                                                                              |
+| GET    | `…/redirects/export`           | `preview:read`   | `text/csv`: `source,destination,status,locale,enabled,note`                                                                              |
+| POST   | `…/redirects/import`           | `content:manage` | `{ format: 'csv' \| 'json', data, dryRun? }`: all or nothing, at most 1,000 rows; a row whose source and locale exist updates that redirect |
+| POST   | `…/redirects/collapse-chains`  | `content:manage` | Point each chain's first redirect at where the chain ends → `{ updated }`                                                                |
+
+Every write appends `redirects.changed`. MCP: `redirects_list`, `redirects_get`,
+`redirects_create`, `redirects_update`, `redirects_delete`, `redirects_import`, `redirects_resolve`,
+`redirects_analyze`, `redirects_collapse_chains`; `model_create_content_type` takes `urlPattern`.
+
 ### Platform configuration
 
 | Method | Path                   | Scope            | Description                         |
@@ -685,6 +718,8 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 | GET      | `/delivery/:space/:env/taxonomy/tags/:slug`  | `delivery:read` | One tag by slug (404 when none has it)                                                                                                         |
 | GET      | `/delivery/:space/:env/taxonomy/concepts`    | `delivery:read` | Every concept, by slug, with `schemeId` and `broaderId` too (`scheme`, `locale`, `content_type`)                                              |
 | GET      | `/delivery/:space/:env/taxonomy/concepts/:slug` | `delivery:read` | One concept by slug; `409` when two schemes share it and `scheme` is not given                                                              |
+| GET      | `/delivery/:space/:env/redirects`            | `delivery:read` | The environment's **enabled** redirects → `{ items, total }`, each `{ id, source, destination, status, locale? }`; cached under the scope's tag, purged by `redirects.changed` |
+| GET      | `/delivery/:space/:env/redirects/resolve`    | `delivery:read` | `?path=&locale=` → `{ redirect, status, location }`, or `404`. One request per path: to redirect every request, fetch the set once |
 | GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default**                                                                                                                                                                                                                                                                                                 |
 | GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream                                                                                                                                                                                                                                                                                                   |
 | GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Deprecated: `301` to the media URL of the next width step at or above `w`, or `rendition` (cached); `302` to a signed transform when no media origin is set                                                                                                                                                                   |
@@ -778,11 +813,21 @@ Base path: `/preview/:space/:env`. Reads **draft/current** versions. Supports th
 
 | Method | Path                               | Scope          | Description                                                                                                                   |
 | ------ | ---------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/preview/:space/:env/entries`     | `preview:read` | List current entries                                                                                                          |
+| GET    | `/preview/:space/:env/entries`     | `preview:read` | One page of current entries, each with `updatedAt`: `limit` (≤ 100), `cursor` → `{ items, total, nextCursor? }`                |
 | GET    | `/preview/:space/:env/entries/:id` | `preview:read` | Get one current entry                                                                                                         |
 | GET    | `/preview/:space/:env/suggest`     | `preview:read` | Entries matching what is being typed                                                                                          |
 | GET    | `/preview/:space/:env/assets`      | `preview:read` | Current assets (drafts included, archived left out) in Delivery's shape: `limit`, `cursor`, `kind`, `tag`, `folder`, `locale` |
 | GET    | `/preview/:space/:env/assets/:id`  | `preview:read` | One current asset in Delivery's shape                                                                                         |
+
+The entries list pages with a **keyset cursor**, not `skip` (refused with `422`): pass the
+response's `nextCursor` back as `cursor`, with the same filters, search and `order`, until there is
+none. It walks the list's own order (`order`, or least recently changed first, `sys.updatedAt`
+ascending), ties broken by entry id. In the default order an entry edited between two pages is
+never skipped; under another order, an edit to a sorted field can move an entry across the
+cursor. A cursor from another order is refused (`422`). A role limited to some content types
+pages over those types only, so every page is full and no cursor points at an entry it can't
+read. `sys.updatedAt` sorts and filters like any `sys.*` field. The MCP tool `entries_query` is
+the same read, paged the same way.
 
 Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
 least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and

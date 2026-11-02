@@ -1,14 +1,30 @@
 import {
   createMediaUrlSigner,
   createR2BlobStore,
+  keyFromMediaPath,
   type R2BucketLike,
 } from '@contentworker/adapters/blob-r2';
-import type { ImagesBindingLike } from '@contentworker/adapters/images-cf';
+import {
+  createCfImageTransformer,
+  type ImagesBindingLike,
+} from '@contentworker/adapters/images-cf';
 import {
   createStreamVideoHost,
   type StreamBindingLike,
 } from '@contentworker/adapters/video-stream';
-import { type AppContext, createSpace, createVideoAsset } from '@contentworker/application';
+import {
+  type AppContext,
+  assetFileKey,
+  commitAssetFile,
+  createAsset,
+  createSpace,
+  createVideoAsset,
+  getAsset,
+  READ_URL_TTL_SECONDS,
+  replaceAssetFile,
+  setAssetMetadata,
+  transformAssetUrl,
+} from '@contentworker/application';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { mediaRoutes } from '../src/routes/media';
@@ -153,6 +169,58 @@ describe('/media routes', () => {
     expect(uploaded).toEqual([{ key: 's1/main/a/p.png', etag: '"one"' }]);
     const download = await app.request(await blob.getDownloadUrl('s1/main/a/p.png'));
     expect(await download.text()).toBe('one');
+  });
+
+  it('a draft’s Management transform is signed for its current version’s key, and expires', async () => {
+    const NOW = 1_800_000_000;
+    const bucket = fakeBucket();
+    const { images, formats } = fakeImages();
+    const c = ctx({ images: createCfImageTransformer({ signer, now: () => NOW }) });
+    const blob = createR2BlobStore(bucket, {
+      signer,
+      baseUrl: 'https://w.example',
+      now: () => NOW,
+    });
+    const app = mediaRoutes({ ctx: c, bucket, signer, images, now: () => NOW });
+    await createSpace(c, { spaceId: 's1', name: 'S', defaultLocale: 'en-US' });
+
+    // A draft whose file was replaced: its bytes are at v2's key now, not where the stored URL
+    // (signed at upload, non-expiring) points.
+    const { asset } = await createAsset(c, blob, scope, {
+      fileName: 'p.png',
+      contentType: 'image/png',
+    });
+    await blob.put(assetFileKey(scope, asset), 'v1', 'image/png');
+    const r = await replaceAssetFile(c, blob, scope, asset.id, {
+      fileName: 'q.png',
+      contentType: 'image/png',
+    });
+    await blob.put(keyFromMediaPath(new URL(r.upload.url).pathname) ?? '', 'v2', 'image/png');
+    await commitAssetFile(c, blob, scope, asset.id, r.commit);
+    await setAssetMetadata(c, scope, asset.id, { focalPoint: { x: 0.2, y: 0.8 } });
+    const v2 = await getAsset(c, scope, asset.id);
+    expect(v2.version).toBe(2);
+    const key = assetFileKey(scope, v2);
+    expect(key).toMatch(new RegExp(`/${asset.id}/v2/file-[^/]+/q\\.png$`));
+
+    const { url } = await transformAssetUrl(c, blob, scope, asset.id, { width: 100, fit: 'crop' });
+    const parsed = new URL(url);
+    expect(decodeURIComponent(parsed.pathname)).toBe(`/media/${key}`);
+    expect(Number(parsed.searchParams.get('exp'))).toBeGreaterThan(NOW);
+    expect(Number(parsed.searchParams.get('exp'))).toBeLessThanOrEqual(
+      NOW + 2 * READ_URL_TTL_SECONDS,
+    );
+    // The focal point is the crop's gravity, and the signature covers every parameter.
+    expect(parsed.searchParams.get('g')).toBe('0.2x0.8');
+    const sig = parsed.searchParams.get('sig') ?? '';
+    expect(await signer.verify('GET', key, parsed.searchParams, sig)).toBe(true);
+
+    const served = await app.request(url, { headers: { accept: 'image/webp' } });
+    expect(served.status).toBe(200);
+    expect(formats).toEqual(['image/webp']);
+    // Once its read URL has expired, so has the transform.
+    const later = mediaRoutes({ ctx: c, bucket, signer, images, now: () => NOW + 3600 });
+    expect((await later.request(url)).status).toBe(403);
   });
 
   it('is not mounted without a bucket', async () => {

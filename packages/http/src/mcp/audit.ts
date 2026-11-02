@@ -14,6 +14,11 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'docs_list',
   'docs_read',
   'docs_search',
+  // Redirects: reads and dry checks; create/update/delete/import/collapse are writes.
+  'redirects_list',
+  'redirects_get',
+  'redirects_resolve',
+  'redirects_analyze',
   // Fetches oEmbed metadata and returns it; writes nothing in the space.
   'embed_resolve',
   'model_list_content_types',
@@ -71,6 +76,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'agent_review_list',
   'approvals_count',
   'audit_log_list',
+  'asset_get',
   'assets_list',
   'assets_search',
   'asset_preview_list',

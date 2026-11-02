@@ -3,15 +3,32 @@
   "ui": "tui",
   "tasks": {
     // Writes the gitignored embeds (packages/docs/src/generated.ts from docs/*.md,
-    // packages/http/src/mcp/skills.generated.ts from packages/http/skills/**). Never
+    // packages/http/src/mcp/skills.generated.ts from packages/http/skills/**) and the
+    // themes packages/design generates from its tokens (the docs' theme.css, the
+    // diagrams' Mermaid themes). Never
     // committed, so two PRs that touch docs can't conflict on them; `pnpm install`
     // runs the same generators as postinstall, and every task that compiles,
     // bundles or tests code that imports an embed depends on this one.
     "generate": {
-      "outputs": ["src/generated.ts", "src/mcp/skills.generated.ts"]
+      "outputs": [
+        "src/generated.ts",
+        "src/mcp/skills.generated.ts",
+        "$TURBO_ROOT$/apps/docs/src/styles/theme.css",
+        "$TURBO_ROOT$/docs/diagrams/themes/ledger-*.json"
+      ]
     },
     "build": {
       "dependsOn": ["^build", "^generate", "generate"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": ["build/**", "dist/**"]
+    },
+    // The docs site's type check and its build both run the site's generators (scripts/openapi.ts
+    // writes src/generated/openapi.json; `astro sync` rewrites .astro/*.d.ts in place and renames
+    // its dependency cache under node_modules/.astro/vite-sync), and `astro build` always runs the
+    // same sync with no way to skip it. Run side by side they collide (ENOTEMPTY on the cache
+    // rename, or tsc reading a half-written file), so the build follows its own type check.
+    "@contentworker/docs-site#build": {
+      "dependsOn": ["^build", "^generate", "generate", "check-types"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["build/**", "dist/**"]
     },

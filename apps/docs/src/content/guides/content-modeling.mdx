@@ -15,12 +15,24 @@ A content type has:
 - an **`apiId`**, the stable identifier the API and SDKs use (`article`), which never changes;
 - a **name** people see (`Article`);
 - a **display field**, the field used as each entry's title in lists, pickers and search results;
-- an ordered list of **fields**.
+- an ordered list of **fields**;
+- optionally a **URL pattern**, where its entries live on your site.
 
 Creating or changing a content type makes a draft definition. Each revision bumps the type's
 `version`; publishing marks that version live for authoring and delivery and emits a
 `content_type.published` event, so integrations (generated types, caches) can react. The admin's
 content type dialog publishes as it saves.
+
+### URL pattern
+
+A URL pattern is a path starting with `/` that says where a type's entries live on your site, for
+example `/blog/{slug}`. Its placeholders are `{id}` (the entry id), `{locale}`, or the API ID of one
+of the type's own `Slug` fields; anything else is refused. In the content type dialog it is the
+**URL pattern** field; over the API and MCP it is `urlPattern` on `POST …/content-types` and
+`model_create_content_type` (`null` clears it). When a publish changes a slug the pattern names on
+an entry that was already published, contentworker writes a `301` from the old path to the new one;
+see [Redirects](/guides/redirects/#redirect-slug-changes). A revision that removes a slug a kept
+pattern names is refused.
 
 ## Field types
 
@@ -173,6 +185,9 @@ agents. An AI agent can't save an entry a person couldn't.
   in the trash; then remove the field.
 - **Renaming** a field's name is safe; its `apiId` is what code depends on, so treat that as
   permanent.
+- **Keep the model in a file.** `contentworker model export` writes it out, and `contentworker
+  model apply --dry-run` shows what a changed file would add, change and remove before anything
+  does; see the [command-line tool](/guides/cli/#the-content-model-as-code).
 - **Try risky changes in an environment.** Clone `main` into a `staging` environment, change the
   model there, point a preview at it, then merge it back. See
   [Environments](/guides/environments/).

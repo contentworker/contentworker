@@ -69,13 +69,15 @@ Deployment group (People and sign-in, Audit log) after Settings, and Account sit
 menu at the sidebar's foot (the More sheet on a phone). Settings sections are addressed as
 `/settings/:section` (default `team`, Space access): **Access** (Space access, API keys, Roles, Connected apps), **Automation**
 (Webhooks, Functions, AI actions), **Extensions** (App extensions, Plugins), **Workspace**
-(Environments, Audit log).
+(Environments, Redirects, Audit log).
 
 ## Features
 
 - **Overview** (`/dashboard`): what needs attention, live activity, AI usage and throughput.
-- **Content** (`/content`): content types and their schema editor; entries per type with filters
-  (`/content/:typeId`; `/content/:typeId/new` starts a new entry);
+- **Content** (`/content`): content types and their schema editor; entries per type with filters,
+  search, sorting from the column headers, a bulk bar for publishing and unpublishing what is
+  ticked, and Load more past the first 100 (`/content/:typeId`; `/content/:typeId/new` starts a new
+  entry);
   the entry editor (TipTap rich text, components and repeaters, references, localized fields),
   version history, diff and restore, comments and tasks, metadata, AI assist; import
   (`/content/:typeId/import`) from CSV, JSON or a WordPress export, with a dry-run report before
@@ -109,7 +111,15 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   description and a label per other locale of the space, saving only what changed.
 - **Settings**: API keys, roles, OAuth connected apps, webhooks, functions, AI actions, app
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch
-  compare/merge, the space audit log.
+  compare/merge, redirects, the space audit log.
+- **Redirects** (`/settings/redirects`, `app/cms/components/Redirects.tsx`): the environment's
+  redirect set ([Domain model](./domain-model.md#redirects)) as a list with search over source,
+  destination and note, an enable switch per row, and an add/edit dialog (source, destination,
+  status, locale, note, enabled). Import takes CSV or JSON: _Check_ runs a dry run and reports
+  what would be created, updated or left alone, then _Import_ writes it. When the set holds
+  chains an alert offers _Collapse chains_. Reading needs `preview:read`; changing anything,
+  `content:manage`. The content type dialog has a **URL pattern** field (`/blog/{slug}`), the
+  input to slug-change redirects.
 
 ### Inline-edit links
 

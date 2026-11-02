@@ -70,6 +70,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['settings: roles', '/settings/roles'],
   ['settings: webhooks', '/settings/webhooks'],
   ['settings: environments', '/settings/environments'],
+  ['settings: redirects', '/settings/redirects'],
   ['settings: ai actions', '/settings/ai-actions'],
   ['settings: functions', '/settings/functions'],
   ['settings: extensions', '/settings/extensions'],
@@ -447,6 +448,24 @@ test('the webhook dialog has no accessibility violations', async ({ page }, test
   await edit.waitFor();
   await edit.click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('the redirect and import dialogs have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/redirects');
+  await page.getByRole('button', { name: 'New redirect' }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'New redirect' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('From').fill('/a11y-old');
+  await dialog.getByLabel('To').fill('/a11y-new');
+  await scan(page, testInfo);
+  await dialog.getByRole('button', { name: 'Add redirect' }).click();
+  await expect(page.getByRole('switch', { name: 'Enabled: /a11y-old' })).toBeVisible();
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Import' }).click();
+  await expect(page.getByRole('dialog', { name: 'Import redirects' })).toBeVisible();
   await scan(page, testInfo);
 });
 

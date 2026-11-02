@@ -8,6 +8,7 @@
 import { bookmarkTracker } from './bookmark.js';
 import { CONTENT_REF_ATTRIBUTE, formatContentRef } from './content-ref.js';
 import { imageProps } from './image.js';
+import type { DeliveredRedirect, RedirectMatch } from './redirects.js';
 
 export type Fields = Record<string, unknown>;
 
@@ -205,7 +206,13 @@ export interface EntryQuery {
   /** Reference resolution depth (embeds linked entries). */
   readonly include?: number;
   readonly limit?: number;
+  /** Delivery's offset. Preview pages by `cursor` instead, and refuses it (422). */
   readonly skip?: number;
+  /**
+   * Preview only: the `nextCursor` of the previous page, with the same filters and order. It walks
+   * the list's own order; in the default order an entry edited between two pages is never skipped.
+   */
+  readonly cursor?: string;
   /** Delta cursor — only entries published after this ISO timestamp. */
   readonly since?: string;
   /** Field-level predicates (all must match). */
@@ -397,10 +404,13 @@ export function createDeliveryClient(opts: ClientOptions) {
       });
     },
 
-    /** List published entries, optionally filtered/paginated. */
+    /**
+     * List published entries (from Preview: as they are now, drafts included), optionally
+     * filtered/paginated. Preview answers `nextCursor` while another page follows.
+     */
     async listEntries<F extends Fields = Fields>(
       q: EntryQuery = {},
-    ): Promise<{ items: DeliveredEntry<F>[]; total: number }> {
+    ): Promise<{ items: DeliveredEntry<F>[]; total: number; nextCursor?: string }> {
       return get('/entries', toParams(q));
     },
 
@@ -501,6 +511,32 @@ export function createDeliveryClient(opts: ClientOptions) {
       return res.hits;
     },
 
+    /**
+     * Every enabled redirect, by source: the set a front end applies (contentworker serves no
+     * site). Match requests with `createRedirectHandler` or `createRedirectMatcher` from
+     * `@contentworker/sdk-core/redirects`. Delivery only.
+     */
+    async redirects(): Promise<DeliveredRedirect[]> {
+      return (await get<{ items: DeliveredRedirect[] }>('/redirects', {})).items;
+    },
+
+    /**
+     * Where a path is redirected (the request path, with or without its query), or null when
+     * nothing redirects it. One request per path: to apply redirects to every request, fetch the
+     * set once with `redirects()` instead. Delivery only.
+     */
+    async resolveRedirect(
+      path: string,
+      o: { readonly locale?: string } = {},
+    ): Promise<RedirectMatch | null> {
+      try {
+        return await get<RedirectMatch>('/redirects/resolve', { path, locale: o.locale });
+      } catch (err) {
+        if (err instanceof DeliveryError && err.status === 404) return null;
+        throw err;
+      }
+    },
+
     /** Chainable query builder for entries. */
     query: () => new EntryQueryBuilder<Fields>((q) => get('/entries', toParams(q))),
 
@@ -547,6 +583,7 @@ function toParams(q: EntryQuery): Record<string, string | number | undefined> {
     include: q.include,
     limit: q.limit,
     skip: q.skip,
+    cursor: q.cursor,
     since: q.since,
   };
   for (const f of q.filters ?? []) {
@@ -642,3 +679,4 @@ export {
   imageProps,
   localizedText,
 } from './image.js';
+export type { DeliveredRedirect, RedirectMatch } from './redirects.js';

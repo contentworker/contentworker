@@ -128,6 +128,7 @@ pnpm generate
 | `@contentworker/delivery`      | node                                                                                                                                              | Visibility profiles, canonical URLs, client cache headers and the purge drain                                                                                      |
 | `@contentworker/web`           | vitest, two projects: `node` (`tests/**/*.test.ts`) and `dom` (jsdom, `tests/**/*.test.tsx`); Playwright (`pnpm --filter @contentworker/web e2e`) | Auth and lib units; CMS screens; device and CMS e2e with axe in WebKit and Chromium                                                                                |
 | `packages/sdk/*`               | node (vitest)                                                                                                                                     | The Delivery and Management clients, `contentworker-codegen`                                                                                                       |
+| `@contentworker/cli`           | node (vitest), a scripted fake server                                                                                                             | The `contentworker` CLI's commands, device flow and token file, model plans, and the drift check on `skills/` ([Developer tooling](./developer-tooling.md))       |
 | `scripts/*.test.ts`            | `node --test` (`pnpm test:fleet`)                                                                                                                 | Fleet registry rendering, DO migration tags (append-only), the pnpm catalog, assistant key derivation, and a guard on names that must not appear in the repository |
 
 `@contentworker/platform` has no suite of its own: its wiring is exercised through the http, db and
@@ -226,6 +227,7 @@ read paths), 10 GB per database.
 | `comments`, `tasks`                                                                                                                               | Collaboration                                                                             |
 | `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows                                                                       |
 | `concept_schemes`, `concepts`, `tags`                                                                                                             | Taxonomy (`taxonomy_usage`, its published counts, from 0018)                              |
+| `redirects`, `redirect_sets` (`0017`)                                                                                                             | Redirects and their revision                                                              |
 | `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
 | `audit_log`                                                                                                                                       | Per-space audit trail                                                                     |
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
@@ -263,6 +265,19 @@ and indexes it (`asset_published_by_expiry`, only where set) for the engine's ex
 for the engine's hourly zip sweep) and `asset_uploads` (multipart uploads in progress, indexed by
 `created_at` for the abandoned-upload sweep). Every table is environment-scoped, and the environment purge clears it. Nothing is backfilled (see
 [Architecture](./architecture.md#collections-share-links-multipart-uploads-and-zips)).
+
+`0017_redirects.sql` adds two environment-scoped tables (the environment purge clears them) and one
+column, and backfills nothing. `redirects` holds one row per redirect (`source`, `locale`,
+`destination`, `status`, `enabled`, `note`, `origin`, `entry_id`, epoch-ms `created_at` and
+`updated_at`); `locale` is `''` for a redirect that applies to every locale, because SQLite treats
+NULLs as distinct and the unique index `redirects_by_source` on `(space_id, environment_id, source,
+locale)` must hold one redirect per source per locale. `redirects_by_destination` serves a slug
+change's read of the redirects pointing at an old path. `redirect_sets` holds one `revision` per
+environment, bumped by every write to the set: the compare-and-set that keeps two writers, each of
+which checked the set for loops and the cap, from both committing (a loser surfaces as
+`TransactionConflictError`). `content_types.url_pattern` (nullable) is a type's
+[URL pattern](./domain-model.md#content-type); existing types have none, so no slug redirects
+until someone sets one.
 
 `0018_taxonomy_slugs_counts.sql` adds `slug` (nullable), `description` (nullable) and `labels`
 (JSON, default `{}`: labels in the space's other locales) to `tags` and `concepts`, with unique

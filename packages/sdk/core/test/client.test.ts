@@ -170,6 +170,22 @@ const image: DeliveredAsset = {
   file: { url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/o/hero.jpg' },
 };
 
+describe('preview entry paging', () => {
+  it('sends the cursor and hands back the next one', async () => {
+    const calls: string[] = [];
+    const fetchImpl = fakeFetch((url) => {
+      calls.push(url);
+      return { items: [], total: 0, nextCursor: 'c2' };
+    });
+    const client = createDeliveryClient({ ...base, preview: true, fetch: fetchImpl });
+    const page = await client.listEntries({ contentType: 'article', limit: 50, cursor: 'c1' });
+    expect(page.nextCursor).toBe('c2');
+    expect(calls[0]).toBe(
+      'https://cms.test/preview/s1/main/entries?content_type=article&limit=50&cursor=c1',
+    );
+  });
+});
+
 describe('assets', () => {
   it('gets and lists assets on the delivery surface, with paging and filters', async () => {
     const calls: string[] = [];

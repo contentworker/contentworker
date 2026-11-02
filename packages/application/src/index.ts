@@ -63,6 +63,7 @@ export * from './principal-cache';
 export * from './promotion';
 export * from './publishing';
 export * from './rag';
+export * from './redirects';
 export * from './releases';
 export * from './render';
 export * from './roles';

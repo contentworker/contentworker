@@ -368,6 +368,26 @@ describe('asset ingest, under failure and limits', () => {
     expect(t.index.textOf(scope, asset.id)).toContain('mug.png');
   });
 
+  it('a model answer without the shape asked for suggests nothing, and the run finishes', async () => {
+    await createTag(t.ctx, scope, { name: 'kitchen' });
+    const asset = await t.upload('mug.png', 'image/png', 'bytes');
+    // A number where each list and sentence was asked for.
+    t.ai.respondWith = async (req) =>
+      Object.fromEntries(
+        Object.keys((req.outputSchema?.properties ?? {}) as object).map((k) => [k, 42]),
+      );
+    const out = await t.run(asset.id);
+    expect(out).toMatchObject({
+      status: 'complete',
+      value: { outcome: 'ready', altText: 'none', tags: 'none' },
+    });
+    const after = await getAsset(t.ctx, scope, asset.id);
+    expect(after).toMatchObject({ ingestStatus: 'ready', metadata: { altText: {}, tags: [] } });
+    expect(after.aiSuggestions).toBeUndefined();
+    // One call each: a malformed answer is not retried.
+    expect(t.ai.requests).toHaveLength(2);
+  });
+
   it('a store failure during enrichment still fails the run', async () => {
     const asset = await t.upload('mug.png', 'image/png', 'bytes');
     const getConfig = t.store.spaces.getConfig.bind(t.store.spaces);

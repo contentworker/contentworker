@@ -57,6 +57,10 @@ entry, a direct publish is refused with `409 publish_gated`, for everyone; only 
 workflow publishes it. A published entry emits `entry.published`, which refreshes delivery caches, updates search
 and notifies [webhooks](/guides/webhooks/).
 
+If the entry's content type has a [URL pattern](/guides/content-modeling/#url-pattern) and the
+publish changes a slug it names, the old path is redirected to the new one in the same step. See
+[Redirects](/guides/redirects/#redirect-slug-changes).
+
 To publish several entries together, use a [release](/guides/releases-and-scheduling/). To publish
 later, schedule it. To put a review in front of publishing, use a [workflow](/guides/workflows/).
 
@@ -161,7 +165,9 @@ and press **Import**; the API and MCP follow the same order.
    (`POST …/imports/job`; follow it at `…/bulk/jobs/{id}`). Entries arrive as drafts; publish
    them with a bulk job afterwards.
 
-All three need `content:write`. To copy a whole environment instead, see
+All three need `content:write`. From a terminal or CI, `contentworker import` in the
+[command-line tool](/guides/cli/#import-a-file) runs the same steps. To copy a whole environment
+instead, see
 [Environments](/guides/environments/).
 
 ## Next steps
