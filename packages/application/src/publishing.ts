@@ -20,6 +20,7 @@ import {
   type PublishGuard,
   trustedGuard,
 } from './publish-gate';
+import { slugRedirectWrites } from './redirects';
 
 /**
  * Holds a write to the version its caller saw. A confirm card, a page's button and an API client
@@ -91,6 +92,14 @@ export async function publishEntryTx(
   if (!contentType) throw new NotFoundError('ContentType', published.contentTypeApiId);
   const edges = extractReferences(published.id, found.fields, contentType);
   await assertReferentialIntegrity(tx, scope, edges);
+  // A slug its type's URL pattern names, changed since the live version: old path → new path.
+  const redirect = await slugRedirectWrites(
+    ctx,
+    tx,
+    scope,
+    [{ entryId: id, contentType, fields: found.fields }],
+    found.entry.publishedVersion !== null ? new Set([id]) : new Set(),
+  );
 
   await tx.entries.saveAggregate(scope, published);
 
@@ -110,6 +119,7 @@ export async function publishEntryTx(
   };
   await tx.entries.putPublished(scope, snapshot);
   await tx.references.replaceForEntry(scope, published.id, edges);
+  await redirect();
 
   await tx.outbox.append({
     id: ctx.ids.newId(),
@@ -290,6 +300,20 @@ export async function publishEntriesTx(
     (await tx.taxonomy.getEntryMetadataMany(scope, okIds)).map((m) => [m.entryId, m.metadata]),
   );
 
+  const redirect = await slugRedirectWrites(
+    ctx,
+    tx,
+    scope,
+    publishable.map((c) => ({
+      entryId: c.published.id,
+      contentType: types.get(c.published.contentTypeApiId) as ContentType,
+      fields: c.item.fields,
+    })),
+    new Set(
+      publishable.filter((c) => c.item.entry.publishedVersion !== null).map((c) => c.published.id),
+    ),
+  );
+
   const publishedAt = ctx.clock.now().toISOString();
   await tx.entries.saveAggregateMany(
     scope,
@@ -310,6 +334,7 @@ export async function publishEntriesTx(
     scope,
     publishable.map((c) => ({ fromEntryId: c.published.id, edges: c.edges })),
   );
+  await redirect();
   if (opts.emitPerEntryEvents !== false) {
     await tx.outbox.appendMany(
       publishable.map((c) => ({

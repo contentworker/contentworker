@@ -310,6 +310,7 @@ interface ContentType {
   name: string;
   displayField: string; // apiId of the field used as the entry's display title
   fields: readonly FieldDefinition[];
+  urlPattern?: string; // where its entries live on the site, e.g. /blog/{slug}
   version: number; // bumped on each revision
   status: 'draft' | 'published';
 }
@@ -319,7 +320,15 @@ interface ContentType {
   `displayField` must exist), returns a `ContentType` at version 1, status `draft`. Throws
   `ValidationError` / `ConflictError`.
 - `reviseContentType(current, changes)` — increments `version`, resets status to `draft`, sorts
-  fields by `position`, optionally updates `name`/`displayField`/`fields`.
+  fields by `position`, optionally updates `name`/`displayField`/`fields`/`urlPattern` (`null` or
+  `''` clears it).
+- `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
+  `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
+  `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields; anything else is a
+  `ValidationError` on `urlPattern`. A revision is checked against its revised fields, so removing a
+  slug a kept pattern names is refused. `urlPath(pattern, entry, locale)` builds an entry's path (or
+  `null` when a named slug has no value in that locale), which is also how a preview or site link
+  can be built. A pattern is what makes a slug change write a [redirect](#redirects).
 
 ## Entry aggregate & state machine
 
@@ -555,6 +564,71 @@ edges are materialized so the platform can:
   values and rich-text reference nodes), and
 - **invalidate caches** in reverse — when X changes, entries embedding X are refreshed.
 
+## Redirects
+
+`packages/domain/src/redirect/redirect.ts`. contentworker serves no site, so a redirect is
+**delivery data**: Delivery hands the set (or one path's match) to the front end, or an edge Worker
+in front of it, that answers the request. A redirect belongs to a space and environment:
+
+```ts
+interface Redirect {
+  id: string;
+  source: string; // normalized path: exact, or a pattern
+  destination: string; // a path (optional query, fragment) or an absolute https:// URL
+  status: 301 | 302 | 307 | 308; // default 301 (REDIRECT_STATUSES)
+  locale?: string; // applies only to requests in this locale
+  enabled: boolean;
+  note?: string; // at most MAX_REDIRECT_NOTE_LENGTH (500)
+  origin: 'manual' | 'import' | 'slug';
+  entryId?: string; // the entry whose slug change made it (origin 'slug')
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+- **Source.** A path starting with `/`, no query, fragment, `.`/`..` segment or whitespace;
+  percent-encoded as a request's path is, repeated and trailing slashes removed
+  (`normalizeRedirectSource`). It is exact (`/old-page`) or a pattern of whole segments:
+  `[param]` captures one segment, a trailing `[...splat]` one or more.
+- **Destination.** A path starting with `/` or an absolute `https://` URL without credentials
+  (another scheme, `//host` and a relative path are refused). It may insert the source's captures by
+  the same names, with the same kind (`normalizeRedirectDestination`).
+- **Limits.** `MAX_REDIRECTS` (10,000) per environment, since Delivery serves the set in one
+  response; `MAX_REDIRECT_IMPORT` (1,000) rows per import; `MAX_REDIRECT_LENGTH` (2048) characters
+  per source or destination. One redirect per source per locale (`redirectKey`).
+- **Matching** (`createRedirectMatcher`, `matchRedirect`). Disabled redirects never match. An exact
+  source beats any pattern; between patterns the more specific wins segment by segment (a fixed
+  segment, then `[param]`, then `[...splat]`); a tie goes to the locale's own redirect, then the
+  source, then the id. A locale's redirects apply only to requests in that locale; a request
+  without one meets only the all-locale redirects. The request's query string is appended when the
+  destination has none.
+- **Set analysis** (`analyzeRedirects`): `duplicates`, `loops` and `chains`. Every write checks the
+  set it would leave (`redirectSetError`) and refuses a loop or a duplicate source with a
+  `ValidationError` (`422`). A chain (a destination that is itself redirected) is allowed and
+  reported; `collapseRedirectChains` points each chain's first redirect at where it ends.
+- **Slug changes.** `slugMoves` compares the published fields a publish replaces with the new ones
+  for every slug the type's `urlPattern` names; `planSlugRedirects` turns the moves into writes
+  (see [Slug-change redirects](#slug-change-redirects)).
+- **CSV.** `redirectsFromCsv` / `redirectsToCsv` read and write a header row of
+  `REDIRECT_CSV_COLUMNS` (`source`, `destination`, `status`, `locale`, `enabled`, `note`; in any
+  order on import, unknown columns ignored, `source` and `destination` required).
+
+The application use-cases (`packages/application/src/redirects.ts`) check the whole set on every
+write and commit it with the set's revision (`redirect_sets`) as a compare-and-set and a
+`redirects.changed` event in one unit; a writer that loses the race reads the set again and checks
+once more (three attempts, then the `TransactionConflictError` surfaces). A publish's slug redirects advance the revision unconditionally, so a publish never fails over a concurrent redirect edit; that edit, having read the set before, checks it again.
+
+### Slug-change redirects
+
+When a type has a `urlPattern` and a publish changes a slug it names on an entry that was already
+published, `publishEntryTx` / `publishEntriesTx` (so single publish, releases and bulk publish) write
+the redirect in the same unit of work as the publish; there is no event of its own, because the
+`entry.published` already purges Delivery. The old path gets a `301` (`origin: 'slug'`, `entryId`)
+to the new one, taking over a redirect already on that source; redirects that pointed at the old
+path are repointed at the new one, so no chain forms; a redirect away from the new path is removed,
+so no loop forms. A localized slug writes a per-locale redirect. Nothing is written when the type
+has no pattern, a first publish, or when the set is at `MAX_REDIRECTS`.
+
 ## Webhooks
 
 ```ts
@@ -579,7 +653,7 @@ under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows
 `DomainEvent` (`packages/domain/src/events.ts`) is a discriminated union appended to the
 transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. The types are
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-`asset.unpublished`, `asset.deleted`, `asset.ingested`, `asset.file_replaced`, `asset.rights_changed`, `asset.expired`, `content_type.published`, `release.published`, `environment_alias.changed`,
+`asset.unpublished`, `asset.deleted`, `asset.ingested`, `asset.file_replaced`, `asset.rights_changed`, `asset.expired`, `content_type.published`, `release.published`, `redirects.changed`, `environment_alias.changed`,
 `environment.deleted`, `promotion.awaiting_approval`, `environment.promoted`, `bulk.job_completed`,
 the `workflow_run.*` end states,
 `workflow.task_opened` and `workflow.webhook`, plus control messages for background work

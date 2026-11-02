@@ -3,6 +3,7 @@ import {
   createAsset,
   createContentType,
   createEntry,
+  createRedirect,
   createSpace,
   deliveryGraphResolvers,
   deliveryReads,
@@ -10,11 +11,13 @@ import {
   getEntry,
   getPublishedEntry,
   listDeliveredAssets,
+  listDeliveredRedirects,
   listPreviewEntries,
   listPublishedEntries,
   publishAsset,
   publishContentType,
   publishEntry,
+  resolveDeliveredRedirect,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import { buildDeliverySchema, type DeliveryContext } from '@contentworker/graphql-gen';
@@ -346,6 +349,11 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     () => getDeliveredAsset(ctx, scope, ids.heroAsset, { locale: 'de' }),
   ],
   ['delivery: GET /assets', () => listDeliveredAssets(ctx, scope)],
+  ['delivery: GET /redirects', () => listDeliveredRedirects(ctx, scope)],
+  [
+    'delivery: GET /redirects/resolve',
+    () => resolveDeliveredRedirect(ctx, scope, '/blog/old-3?ref=x'),
+  ],
   ['management: GET /entries/:id', () => getEntry(ctx, scope, article(5))],
   [
     'management: GET /entries?content_type=article',
@@ -432,6 +440,11 @@ describe('D1 query counts', () => {
       },
     });
     ids.draft = entry.id;
+    // A set with exact sources and a pattern, so a resolve walks both.
+    for (let i = 0; i < 5; i++) {
+      await createRedirect(ctx, scope, { source: `/old/${i}`, destination: `/new/${i}` });
+    }
+    await createRedirect(ctx, scope, { source: '/blog/[slug]', destination: '/posts/[slug]' });
   }, 120_000);
 
   it('counts a lone statement as one round trip and a batch as one round trip', async () => {

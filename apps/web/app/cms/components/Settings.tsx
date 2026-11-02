@@ -44,6 +44,7 @@ import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader } from '~/cms/components/page';
+import { Redirects } from '~/cms/components/Redirects';
 import { StatusBadge } from '~/cms/components/status';
 import { Team } from '~/cms/components/Team';
 import { WebhookDeliveriesSheet } from '~/cms/components/WebhookDeliveriesSheet';
@@ -73,6 +74,7 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   'ai-actions': (client) => <AiActions client={client} />,
   extensions: (client) => <AppExtensions client={client} />,
   plugins: (client) => <Plugins client={client} />,
+  redirects: (client) => <Redirects client={client} />,
   environments: (client) => <Environments client={client} />,
   'audit-log': (client) => <AuditLog client={client} />,
 };

@@ -34,7 +34,7 @@ export async function updateContentType(
   ctx: AppContext,
   scope: Scope,
   apiId: string,
-  changes: Partial<Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields'>>,
+  changes: Partial<Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern'>>,
 ): Promise<ContentType> {
   const current = await ctx.store.contentTypes.get(scope, apiId);
   if (!current) throw new NotFoundError('ContentType', apiId);

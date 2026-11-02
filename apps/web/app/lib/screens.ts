@@ -73,7 +73,7 @@ export const SCREENS = {
     to: '/settings/team',
     label: 'Settings',
     summary:
-      'Spaces, environments, content types, locales, roles, API keys, webhooks and extensions.',
+      'Spaces, environments, content types, locales, roles, API keys, webhooks, redirects and extensions.',
   },
 } as const satisfies Record<string, Screen>;
 

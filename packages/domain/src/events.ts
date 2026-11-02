@@ -32,7 +32,8 @@ export type DomainEvent =
   | EnvironmentDeletedEvent
   | PromotionAwaitingApprovalEvent
   | EnvironmentPromotedEvent
-  | EnvironmentPurgeDueEvent;
+  | EnvironmentPurgeDueEvent
+  | RedirectsChangedEvent;
 
 export interface BaseEvent {
   readonly id: string;
@@ -155,6 +156,17 @@ export interface AssetRenditionsChangedEvent extends BaseEvent {
 export interface AssetCollectionChangedEvent extends BaseEvent {
   readonly type: 'asset_collection.changed';
   readonly collectionId: string;
+}
+
+/**
+ * An environment's redirects changed (written, deleted, imported or straightened). What Delivery
+ * serves for them (`GET …/redirects`, `…/redirects/resolve`) is stale. A publish whose slug change
+ * writes redirects does not announce this: its `entry.published` purges the same responses.
+ */
+export interface RedirectsChangedEvent extends BaseEvent {
+  readonly type: 'redirects.changed';
+  /** How many redirects the change wrote or removed. */
+  readonly count: number;
 }
 
 /**

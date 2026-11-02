@@ -43,6 +43,10 @@ publishing does.
 Prefer a release over publishing several entries one by one: a failure halfway through a sequence
 leaves the site half-updated, and a release cannot.
 
+A publish that changes a slug named by its type's `urlPattern` writes a `301` from the old path to
+the new one in the same step; check with `redirects_resolve` (path of the old URL). Manage other
+redirects with the `redirects_*` tools.
+
 ## Editorial workflows
 
 A workflow is a published graph (approvals, waits for events, AI checks, publish). Runs act as
