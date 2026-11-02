@@ -64,13 +64,13 @@ fontFamily: "IBM Plex Mono, ui-monospace, SF Mono, Menlo, monospace"
 fontSize: "0.75rem"
 fontWeight: 400
 rounded:
-sm: "0.15rem"
-md: "0.2rem"
-lg: "0.25rem"
-xl: "0.35rem"
-2xl: "0.45rem"
-3xl: "0.55rem"
-4xl: "0.65rem"
+sm: "0.375rem"
+md: "0.5rem"
+lg: "0.625rem"
+xl: "0.875rem"
+2xl: "1.125rem"
+3xl: "1.375rem"
+4xl: "1.625rem"
 full: "9999px"
 spacing:
 gutter-phone: "1rem"
@@ -81,18 +81,18 @@ components:
 button-primary:
 backgroundColor: "{colors.primary}"
 textColor: "{colors.primary-foreground}"
-rounded: "{rounded.full}"
+rounded: "{rounded.4xl}"
 height: "2.25rem"
 padding: "0 0.75rem"
 button-outline:
 backgroundColor: "{colors.paper}"
 textColor: "{colors.ink}"
-rounded: "{rounded.full}"
+rounded: "{rounded.4xl}"
 height: "2.25rem"
 padding: "0 0.75rem"
 input:
 textColor: "{colors.ink}"
-rounded: "{rounded.full}"
+rounded: "{rounded.4xl}"
 height: "2.25rem"
 padding: "0.25rem 0.75rem"
 card:
@@ -657,12 +657,9 @@ at once. A skeleton fades in and holds still: its status line says it is loading
 
 ## Shapes
 
-Tight, not soft: this is a data tool. The radius base is 0.25rem on a multiplying scale, so a
-container's corner is a few pixels, never a bubble. Cards, dialogs, sheets, menus and tooltips
-are 2xl (about 7px); tiles and text areas xl (about 6px), one step inside the card that holds
-them; menu and list items md. Buttons, one-line fields, selects, badges, segmented controls and
-icon buttons are pills (`rounded-full`, never a large step of the scale standing in for one).
-Hairlines divide rows inside a card; cards have no border.
+Generous and round. The radius base is 0.625rem on a multiplying scale: cards are 2xl, tiles xl,
+one-line fields 4xl, text areas xl, menus 2xl. Buttons, one-line fields, badges, segmented controls
+and icon buttons are pills. Hairlines divide rows inside a card; cards have no border.
 
 **The Pill Rule.** Anything you press or that labels a status is fully round. Square corners are
 for code and data blocks only.
