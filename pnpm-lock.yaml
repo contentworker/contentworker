@@ -447,6 +447,9 @@ importers:
       '@contentworker/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@contentworker/design':
+        specifier: workspace:*
+        version: link:../../packages/design
       '@contentworker/domain':
         specifier: workspace:*
         version: link:../../packages/domain
