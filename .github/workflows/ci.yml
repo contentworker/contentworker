@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue tests each queued PR on top of main and the PRs ahead of it, then merges it;
+  # nobody has to bring a branch up to date by hand. Like a push, it runs every job (`changes`
+  # only skips the device tests for a pull_request); the rings still run only on a push to main.
+  merge_group:
 
 # A new push to a pull request supersedes its last run; a push to main never cancels one that
 # has started. A run still waiting behind one is replaced by a newer push, which ships the same

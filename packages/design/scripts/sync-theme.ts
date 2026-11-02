@@ -4,8 +4,10 @@
  *   pnpm sync:theme
  *
  * apps/docs/src/styles/theme.css (Starlight loads it through `customCss`) and
- * docs/diagrams/themes/ledger-{light,dark}.json (mermaid-cli's `-c`) are checked in but
- * generated. tests/tokens.test.ts fails when one is stale, and a PreToolUse hook blocks hand edits.
+ * docs/diagrams/themes/ledger-{light,dark}.json (mermaid-cli's `-c`) are gitignored build
+ * outputs, so two PRs that change tokens can't conflict on them: `pnpm install` (postinstall) and
+ * turbo's `generate` task, which runs before every check-types, test, build and dev, write them.
+ * tests/tokens.test.ts fails when one is stale, and a PreToolUse hook blocks hand edits.
  */
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

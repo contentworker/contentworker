@@ -31,17 +31,22 @@ never merges, never pushes `main`, never deploys.
 2. **Is there already a PR?** `gh pr list --head <branch> --state all`. If its PR is **merged or
    closed**, pushing more commits orphans them: start a new branch from `origin/main` and
    cherry-pick instead.
-3. **Preflight.** Run the `preflight` skill. Don't ship red; if a failure isn't caused by this
+3. **Bring main in.** Other sessions merge all day, so `git fetch origin && git merge origin/main`
+   before preflight, and resolve any conflict here rather than leaving it to the PR. Keep both
+   sides' intent, never one side wholesale; a `pnpm-lock.yaml` conflict is fixed by running
+   `pnpm install` (pnpm resolves its own lockfile's markers). Generated files are gitignored, so
+   they never conflict: just regenerate.
+4. **Preflight.** Run the `preflight` skill. Don't ship red; if a failure isn't caused by this
    change, say so and ask the user.
-4. **Generated files and docs.** Run `regen` if docs, MCP skills or tokens changed. If the change
+5. **Generated files and docs.** Run `regen` if docs, MCP skills or tokens changed. If the change
    touched a documented surface and no docs, run `docs-sync` (the Stop hook will ask anyway).
-5. **Commit.** Stage only this change's files by name (never `git add -A` in a shared tree).
+6. **Commit.** Stage only this change's files by name (never `git add -A` in a shared tree).
    Message: a short imperative subject, a body saying why, then a blank line and the attribution
    trailer from the system prompt.
-6. **Push** the branch: `git push -u origin <branch>` (the `guard-bash` hook asks before anything
+7. **Push** the branch: `git push -u origin <branch>` (the `guard-bash` hook asks before anything
    that touches `main` or force-pushes).
-7. **Open the PR:** `gh pr create --head <branch> --base main --title … --body …`. The body says
+8. **Open the PR:** `gh pr create --head <branch> --base main --title … --body …`. The body says
    what changed and why, how it was verified (the preflight commands and results), any rollout
    step that must happen before merge (provisioning a resource in each deployment, a contract
    migration that follows), and ends with the PR attribution line from the system prompt.
-8. **Report** the PR URL and anything the user must do before merging. Stop there.
+9. **Report** the PR URL and anything the user must do before merging. Stop there.
