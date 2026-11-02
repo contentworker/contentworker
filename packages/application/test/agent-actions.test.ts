@@ -109,6 +109,21 @@ describe('auditEntry', () => {
     });
     expect(result.taskIds).toHaveLength(1);
   });
+
+  it('leaves out findings without the shape asked for, never a TypeError', async () => {
+    const ai = new StubAIProvider(() => ({
+      findings: [
+        null,
+        'Add a title',
+        { severity: 'critical', message: 'Unknown severity', suggestedAction: 'Ranked as none' },
+        { severity: 'warning', message: 'Too short', suggestedAction: 'Expand it', extra: 1 },
+      ],
+    }));
+    const result = await auditEntry(ctx, ai, scope, entryId, { createTasks: true });
+    // Only the well-formed warning is a finding, and only it becomes a task.
+    expect(result.findings.map((f) => f.message)).toEqual(['Too short']);
+    expect(result.taskIds).toHaveLength(1);
+  });
 });
 
 /** AgentRunner double: canned outcome per workflow, records every invocation. */

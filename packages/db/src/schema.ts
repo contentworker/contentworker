@@ -22,6 +22,8 @@ import type {
   PromotionResult,
   PromotionRisk,
   PromotionStatus,
+  RedirectOrigin,
+  RedirectStatus,
   RenditionFit,
   RenditionFormat,
   RolePreset,
@@ -152,6 +154,8 @@ export const contentTypes = sqliteTable(
     version: integer('version').notNull(),
     status: text('status').$type<'draft' | 'published'>().notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** Where the type's entries live on the site (0017_redirects). */
+    urlPattern: text('url_pattern'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.apiId] })],
 );
@@ -1137,10 +1141,16 @@ export const concepts = sqliteTable(
     schemeId: text('scheme_id').notNull(),
     prefLabel: text('pref_label').notNull(),
     broaderId: text('broader_id'),
+    /** Unique within the scheme. NULL only on a row older code wrote (the recount sweep fills it). */
+    slug: text('slug'),
+    description: text('description'),
+    /** Labels in the space's other locales (locale → label); `pref_label` is the default's. */
+    labels: text('labels', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
     index('concepts_by_scheme').on(t.spaceId, t.environmentId, t.schemeId),
+    uniqueIndex('concepts_by_slug').on(t.spaceId, t.environmentId, t.schemeId, t.slug),
   ],
 );
 
@@ -1151,8 +1161,73 @@ export const tags = sqliteTable(
     environmentId: text('environment_id').notNull(),
     id: text('id').notNull(),
     name: text('name').notNull(),
+    /** Unique in the environment. NULL only on a row older code wrote (the recount sweep fills it). */
+    slug: text('slug'),
+    description: text('description'),
+    /** Labels in the space's other locales (locale → label); `name` is the default's. */
+    labels: text('labels', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
   },
-  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    uniqueIndex('tags_by_slug').on(t.spaceId, t.environmentId, t.slug),
+  ],
+);
+
+/**
+ * How many published entries of each content type carry each term (`kind` is `tag` or
+ * `concept`). Kept by the store in the same batch as the published snapshots it counts.
+ */
+export const taxonomyUsage = sqliteTable(
+  'taxonomy_usage',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    kind: text('kind').$type<'tag' | 'concept'>().notNull(),
+    termId: text('term_id').notNull(),
+    contentTypeApiId: text('content_type_api_id').notNull(),
+    publishedCount: integer('published_count').notNull(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.spaceId, t.environmentId, t.kind, t.termId, t.contentTypeApiId],
+    }),
+  ],
+);
+
+/** Redirects, as delivery data (0017_redirects). `locale` is '' for every locale. */
+export const redirects = sqliteTable(
+  'redirects',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    source: text('source').notNull(),
+    locale: text('locale').notNull().default(''),
+    destination: text('destination').notNull(),
+    status: integer('status').$type<RedirectStatus>().notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    note: text('note'),
+    origin: text('origin').$type<RedirectOrigin>().notNull(),
+    entryId: text('entry_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    uniqueIndex('redirects_by_source').on(t.spaceId, t.environmentId, t.source, t.locale),
+    index('redirects_by_destination').on(t.spaceId, t.environmentId, t.destination),
+  ],
+);
+
+/** A redirect set's revision, the compare-and-set every write to it rides with (0017_redirects). */
+export const redirectSets = sqliteTable(
+  'redirect_sets',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    revision: integer('revision').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
 );
 
 export const entryMetadata = sqliteTable(

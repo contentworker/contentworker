@@ -32,7 +32,11 @@ function Table({
 }: React.ComponentProps<'table'> & {
   edge?: 'card' | 'flush';
   stack?: Stack;
-  /** Keep the header under the top bar while a long list scrolls (from md; the page must scroll). */
+  /**
+   * Keep the header under the top bar while a long list scrolls (from md; the page must scroll).
+   * Something else held under the top bar above the table (a bulk bar) sets `--sticky-above` to
+   * its height, and the header sits under that instead.
+   */
   sticky?: boolean;
   /** Scroll sideways inside its container when the columns don't fit, rather than the page. */
   scroll?: boolean;
@@ -50,7 +54,7 @@ function Table({
           'w-full text-sm',
           stack === 'cards' && 'table-stack',
           sticky &&
-            'md:[&>thead_th]:sticky md:[&>thead_th]:top-[var(--shell-h)] md:[&>thead_th]:z-10 md:[&>thead_th]:bg-card md:[&>thead_th]:shadow-[inset_0_-1px_var(--border)]',
+            'md:[&>thead_th]:sticky md:[&>thead_th]:top-[calc(var(--shell-h)+var(--sticky-above,0px))] md:[&>thead_th]:z-10 md:[&>thead_th]:bg-card md:[&>thead_th]:shadow-[inset_0_-1px_var(--border)]',
           className,
         )}
         {...props}
@@ -92,9 +96,24 @@ function TableFoot(props: React.ComponentProps<'tfoot'>) {
   return <tfoot data-slot="table-foot" role={stack ? 'rowgroup' : undefined} {...props} />;
 }
 
-function Tr(props: React.ComponentProps<'tr'>) {
+/**
+ * A row. A ticked one (`data-state="selected"`) takes a faint brand tint: purple is "chosen". The
+ * keyboard's row (`data-active`, J/K) is ruled in brand at its leading edge, over muted when it
+ * isn't also ticked, so the two read apart and together.
+ */
+function Tr({ className, ...props }: React.ComponentProps<'tr'>) {
   const stack = React.useContext(Stacked);
-  return <tr role={stack ? 'row' : undefined} {...props} />;
+  return (
+    <tr
+      role={stack ? 'row' : undefined}
+      className={cn(
+        'data-[state=selected]:bg-brand/8',
+        '[&[data-active]:not([data-state=selected])]:bg-muted/50 data-active:[&>td:first-child]:shadow-[inset_2px_0_var(--brand)]',
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 /**

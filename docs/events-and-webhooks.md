@@ -146,7 +146,8 @@ After each `contentworker-events` batch, the engine collects one `deliveryScopeT
 space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/purges.ts`):
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
 `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed` (Delivery lists a
-collection's published members), `content_type.published`, `release.published`,
+collection's published members), `taxonomy.changed` (Delivery serves tags and concepts),
+`redirects.changed` (Delivery serves the enabled redirects), `content_type.published`, `release.published`,
 `environment_alias.changed`, `environment.deleted`. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
@@ -207,6 +208,13 @@ older than `EVENT_RETENTION_HOURS` (default 168).
 The same tick runs `sweepAbandonedMultipartUploads` (multipart uploads unfinished after a day are
 aborted) and `sweepExpiredZips` (archives past their day are deleted with their jobs), each recorded
 in the heartbeat (`abandoned-multipart-uploads`, `expired-zips`).
+
+Once a day, on the 04:15 UTC tick, `repairAllTaxonomies` runs `repairTaxonomy` for every
+environment of every space (heartbeat job `taxonomy-repair`): it rebuilds the published usage
+counts in `taxonomy_usage` from the published snapshots and gives a slug to any tag or concept
+without one. The counts are kept as entries publish, in the same batch, so this is the backstop for
+snapshots written without them (code older than the counts, during a deploy), not the mechanism. One
+environment's failure is counted (`contentworker_taxonomy_repair_failed_total`) and the rest go on.
 
 ## Webhooks
 
@@ -316,7 +324,9 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset_renditions.changed`                                                         | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged; `scope` is the environment it was changed through, so other environments' scoped hooks don't hear it) |
 | `asset_collection.changed`                                                         | `collectionId` (a collection was created, renamed or deleted, or its members were added, removed or reordered; also sent for each collection a deleted asset leaves; Delivery's collection read and every share page that shows it are purged) |
 | `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the media origin reads the link's row itself; a revoke purges its cached page, now and after 90 s) |
+| `taxonomy.changed`                                                                 | `termKind` (`tag` or `concept`), `termId` (a tag or concept was created, changed or deleted; Delivery's taxonomy reads are purged with the scope's tag) |
 | `asset_zip.requested`                                                              | `jobId` (a control event: the engine starts `AssetZipWorkflow`, or fails the job when `ASSET_ZIP_WF` is unbound; no webhooks apply) |
+| `redirects.changed`                                                                | `count` (redirects written or removed by a create, update, delete, import, chain collapse or snapshot import; Delivery's `redirects` reads are purged. A publish whose slug change writes redirects does not send it: its `entry.published` purges the same responses) |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                                                                        |
 | `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                                                              |
 | `environment_alias.changed`                                                        | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias                                                                                                                                        |

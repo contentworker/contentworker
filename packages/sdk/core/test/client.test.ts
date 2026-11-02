@@ -170,6 +170,22 @@ const image: DeliveredAsset = {
   file: { url: 'https://media.test/s1/main/a1/v1/Q2p8kT1vXn4bR7sW0yZa3c/o/hero.jpg' },
 };
 
+describe('preview entry paging', () => {
+  it('sends the cursor and hands back the next one', async () => {
+    const calls: string[] = [];
+    const fetchImpl = fakeFetch((url) => {
+      calls.push(url);
+      return { items: [], total: 0, nextCursor: 'c2' };
+    });
+    const client = createDeliveryClient({ ...base, preview: true, fetch: fetchImpl });
+    const page = await client.listEntries({ contentType: 'article', limit: 50, cursor: 'c1' });
+    expect(page.nextCursor).toBe('c2');
+    expect(calls[0]).toBe(
+      'https://cms.test/preview/s1/main/entries?content_type=article&limit=50&cursor=c1',
+    );
+  });
+});
+
 describe('assets', () => {
   it('gets and lists assets on the delivery surface, with paging and filters', async () => {
     const calls: string[] = [];
@@ -498,5 +514,57 @@ describe('@contentworker/sdk-core read-your-writes on a relative baseUrl', () =>
     await client.listEntries();
     await client.listEntries();
     expect(sent).toEqual([undefined, BM]);
+  });
+});
+
+describe('@contentworker/sdk-core taxonomy', () => {
+  const tag = {
+    id: 't1',
+    slug: 'news',
+    label: 'Nachrichten',
+    description: null,
+    count: 3,
+    countsByContentType: { article: 3 },
+  };
+
+  it('lists and gets tags and concepts by slug', async () => {
+    const urls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        urls.push(url);
+        return url.includes('/taxonomy/tags/') || url.includes('/taxonomy/concepts/')
+          ? tag
+          : { items: [tag] };
+      }),
+    });
+    expect(await client.listTags({ locale: 'de', contentType: 'article' })).toEqual([tag]);
+    expect((await client.getTag('news')).count).toBe(3);
+    await client.listConcepts({ scheme: 'topics' });
+    await client.getConcept('a b', { scheme: 'topics' });
+    expect(urls).toEqual([
+      'https://cms.test/delivery/s1/main/taxonomy/tags?locale=de&content_type=article',
+      'https://cms.test/delivery/s1/main/taxonomy/tags/news',
+      'https://cms.test/delivery/s1/main/taxonomy/concepts?scheme=topics',
+      'https://cms.test/delivery/s1/main/taxonomy/concepts/a%20b?scheme=topics',
+    ]);
+  });
+
+  it('filters entries by tag slug, and passes metadata filters through unprefixed', async () => {
+    const urls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        urls.push(url);
+        return { items: [], total: 0 };
+      }),
+    });
+    await client.query().contentType('article').tagged('news', 'sport').fetch();
+    await client.listEntries({
+      filters: [{ field: 'metadata.concepts.slug', op: 'nin', value: ['cats'] }],
+    });
+    const first = new URL(urls[0] ?? '');
+    expect(first.searchParams.get('metadata.tags.slug[in]')).toBe('news,sport');
+    expect(new URL(urls[1] ?? '').searchParams.get('metadata.concepts.slug[nin]')).toBe('cats');
   });
 });

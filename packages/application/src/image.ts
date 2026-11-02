@@ -1,7 +1,7 @@
 import type { Scope } from '@contentworker/domain';
 import { type Asset, type FocalPoint, ValidationError } from '@contentworker/domain';
-import type { ImageFit, ImageFormat, ImageTransformSpec } from '@contentworker/ports';
-import { getAsset, getPublishedAsset } from './assets';
+import type { BlobStore, ImageFit, ImageFormat, ImageTransformSpec } from '@contentworker/ports';
+import { getAsset, getPublishedAsset, READ_URL_TTL_SECONDS, withReadUrl } from './assets';
 import type { AppContext } from './context';
 
 export type { ImageFit, ImageFormat } from '@contentworker/ports';
@@ -83,8 +83,9 @@ function resolveUrl(
   sourceUrl: string,
   transform: ImageTransform,
   focalPoint?: FocalPoint,
+  opts?: { readonly expiresInSeconds?: number },
 ): Promise<string> {
-  if (ctx.images) return ctx.images.transformUrl(sourceUrl, transform, focalPoint);
+  if (ctx.images) return ctx.images.transformUrl(sourceUrl, transform, focalPoint, opts);
   return Promise.resolve(buildImageUrl(sourceUrl, transform, focalPoint));
 }
 
@@ -94,11 +95,15 @@ export interface TransformedImage {
 }
 
 /**
- * Resolves a transform URL for an asset, honoring its stored focal point for
- * smart cropping. Validates the transform and that the asset is an image.
+ * Resolves a transform URL for an asset's draft, honoring its stored focal point for smart
+ * cropping. Validates the transform and that the asset is an image. Built, as every Management read
+ * is, from a fresh short-lived signed read URL for the current version's key ({@link withReadUrl}),
+ * never the stored URL (non-expiring, and an older version's after a replace), so the transform
+ * serves the current file and expires with that URL.
  */
 export async function transformAssetUrl(
   ctx: AppContext,
+  blob: BlobStore,
   scope: Scope,
   id: string,
   transform: ImageTransform,
@@ -108,8 +113,11 @@ export async function transformAssetUrl(
   if (!asset.file.contentType.startsWith('image/')) {
     throw new ValidationError([{ field: 'asset', message: 'Asset is not an image' }]);
   }
+  const signed = await withReadUrl(blob, scope, asset);
   return {
-    url: await resolveUrl(ctx, asset.file.url, transform, asset.metadata.focalPoint),
+    url: await resolveUrl(ctx, signed.file.url, transform, asset.metadata.focalPoint, {
+      expiresInSeconds: READ_URL_TTL_SECONDS,
+    }),
     transform,
   };
 }

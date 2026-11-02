@@ -179,6 +179,15 @@ describe('granular RBAC over HTTP', () => {
     expect(deniedGet.status).toBe(403);
   });
 
+  it('pages the preview list over readable types only: no cursor names a hidden entry', async () => {
+    // The `page` entry would end the first page in title order ("A page" < "A post").
+    const first = (await (
+      await app.request('/preview/s1/main/entries?order=fields.title&limit=1', { headers: editor })
+    ).json()) as { items: { id: string }[]; nextCursor?: string };
+    expect(first.items.map((e) => e.id)).toEqual([postId]);
+    expect(first.nextCursor).toBeUndefined();
+  });
+
   it('refuses queries that would reveal a hidden field, on every read surface', async () => {
     for (const url of [
       // A filter answers "does internalNotes match?" even though the value is masked.

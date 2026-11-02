@@ -291,7 +291,12 @@ describe('multipart uploads and zips over HTTP', () => {
     }
     const done = await send(h, 'POST', `${base}/complete`, { parts });
     expect(done.status).toBe(200);
-    expect(await json(done)).toMatchObject({ version: 2, r2Key: key, file: { size } });
+    const committed = await json<Record<string, unknown>>(done);
+    expect(committed).toMatchObject({ version: 2, file: { size } });
+    // The new version is at the upload's key; the response never names it.
+    expect(committed).not.toHaveProperty('r2Key');
+    const scope = { spaceId: 's1', environmentId: 'main' };
+    expect((await h.ctx.store.assets.get(scope, asset.id))?.r2Key).toBe(key);
     const versions = await json<{ items: { version: number; createdBy?: string }[] }>(
       await send(h, 'GET', `/assets/${asset.id}/versions`),
     );

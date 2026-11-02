@@ -29,6 +29,7 @@ import {
   type PluginSettings,
   type Promotion,
   projectFields,
+  type Redirect,
   type ReferenceEdge,
   type Release,
   type ReleaseItem,
@@ -39,6 +40,8 @@ import {
   type StoredAssetShareLink,
   type Tag,
   type Task,
+  type TermKind,
+  type TermUsage,
   type UniqueClaim,
   ValidationError,
   versionGatesPublish,
@@ -106,6 +109,7 @@ import type {
   PromotionRepo,
   PublishedAsset,
   PublishedEntry,
+  RedirectRepo,
   ReferenceRepo,
   ReleaseRepo,
   RoleRepo,
@@ -171,6 +175,12 @@ export class InMemoryContentStore implements ContentStore {
   private readonly spaceConfigs = new Map<string, SpaceConfig>();
   private readonly contentTypeData = new Map<string, ContentType>();
   private readonly entryData = new Map<string, Entry>();
+  /**
+   * When each entry last changed, standing in for D1's `updated_at`: stamped from `nowMs`, and
+   * nudged a millisecond past the last stamp so write order is total even on a frozen clock.
+   */
+  private readonly entryTouched = new Map<string, string>();
+  private lastEntryTouch = 0;
   private readonly versionData = new Map<string, EntryVersion[]>();
   /** Archived versions' object keys, by `${scopeKey}::${entryId}::${version}`. */
   private readonly archivedBodies = new Map<string, string>();
@@ -264,6 +274,7 @@ export class InMemoryContentStore implements ContentStore {
       const scoped: Map<string, unknown>[] = [
         this.contentTypeData,
         this.entryData,
+        this.entryTouched,
         this.versionData,
         this.publishedData,
         this.assetData,
@@ -296,6 +307,8 @@ export class InMemoryContentStore implements ContentStore {
         this.conceptData,
         this.tagData,
         this.entryMetadataData,
+        this.redirectData,
+        this.redirectRevisionData,
         this.aiActionData,
         this.functionData,
         this.appExtensionData,
@@ -361,6 +374,13 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  private setEntry(scope: Scope, entry: Entry): void {
+    const key = `${scopeKey(scope)}::${entry.id}`;
+    this.entryData.set(key, entry);
+    this.lastEntryTouch = Math.max(this.nowMs(), this.lastEntryTouch + 1);
+    this.entryTouched.set(key, new Date(this.lastEntryTouch).toISOString());
+  }
+
   readonly entries: EntryRepo = {
     get: async (scope, id) => {
       const entry = this.entryData.get(`${scopeKey(scope)}::${id}`);
@@ -410,13 +430,19 @@ export class InMemoryContentStore implements ContentStore {
       const withFields: EntryWithFields[] = entries.map((entry) => {
         const versions = this.versionData.get(`${scopeKey(scope)}::${entry.id}`) ?? [];
         const current = versions.find((v) => v.version === entry.currentVersion);
-        return { entry, fields: current?.fields ?? {} };
+        const updatedAt = this.entryTouched.get(`${scopeKey(scope)}::${entry.id}`);
+        return { entry, fields: current?.fields ?? {}, ...(updatedAt ? { updatedAt } : {}) };
       });
       const filtered = runEntryQuery(
         withFields,
         query,
         (r) => r.fields,
-        (r) => ({ id: r.entry.id, contentType: r.entry.contentTypeApiId, status: r.entry.status }),
+        (r) => ({
+          id: r.entry.id,
+          contentType: r.entry.contentTypeApiId,
+          status: r.entry.status,
+          updatedAt: r.updatedAt,
+        }),
       );
       if (!query.select) return filtered;
       return filtered.map((r) => ({
@@ -440,24 +466,25 @@ export class InMemoryContentStore implements ContentStore {
       return [...groups.values()];
     },
     create: async (scope, entry, version) => {
-      this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
+      this.setEntry(scope, entry);
       this.versionData.set(`${scopeKey(scope)}::${entry.id}`, [version]);
     },
     saveVersion: async (scope, entry, version) => {
-      this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
+      this.setEntry(scope, entry);
       const key = `${scopeKey(scope)}::${entry.id}`;
       const versions = this.versionData.get(key) ?? [];
       versions.push(version);
       this.versionData.set(key, versions);
     },
     saveAggregate: async (scope, entry) => {
-      this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
+      this.setEntry(scope, entry);
     },
     saveAggregateMany: async (scope, entries) => {
-      for (const entry of entries) this.entryData.set(`${scopeKey(scope)}::${entry.id}`, entry);
+      for (const entry of entries) this.setEntry(scope, entry);
     },
     delete: async (scope, id) => {
       this.entryData.delete(`${scopeKey(scope)}::${id}`);
+      this.entryTouched.delete(`${scopeKey(scope)}::${id}`);
       this.versionData.delete(`${scopeKey(scope)}::${id}`);
       this.releaseClaims(scope, id);
     },
@@ -1524,6 +1551,30 @@ export class InMemoryContentStore implements ContentStore {
           request.assetIds ? this.assets.getPublishedMany(scope, request.assetIds) : undefined,
           request.assetPage ? this.assets.listPublished(scope, request.assetPage) : undefined,
         ]);
+      const tags = request.tags
+        ? request.tags.slugs
+          ? await this.taxonomy.findTagsBySlug(scope, request.tags.slugs)
+          : await this.taxonomy.listTags(scope)
+        : undefined;
+      const concepts = request.concepts
+        ? (await this.taxonomy.listConcepts(scope, request.concepts.schemeId)).filter(
+            (c) => !request.concepts?.slugs || request.concepts.slugs.includes(c.slug),
+          )
+        : undefined;
+      let termUsage: TermUsage[] | undefined;
+      if (request.termUsage) {
+        const q = request.termUsage;
+        const narrowed = q.slugs !== undefined || (q.kind === 'concept' && q.schemeId);
+        const terms: (Tag | Concept)[] =
+          q.kind === 'tag'
+            ? await this.taxonomy.listTags(scope)
+            : await this.taxonomy.listConcepts(scope, q.schemeId);
+        const ids = terms.filter((t) => !q.slugs || q.slugs.includes(t.slug)).map((t) => t.id);
+        termUsage = await this.taxonomy.listUsage(scope, {
+          kind: q.kind,
+          ...(narrowed ? { termIds: ids } : {}),
+        });
+      }
       const result: DeliveryReadResult = {
         ...(request.config ? { config: config ?? null } : {}),
         ...(contentTypes ? { contentTypes } : {}),
@@ -1533,6 +1584,9 @@ export class InMemoryContentStore implements ContentStore {
         ...(entries ? { entries } : {}),
         ...(assets ? { assets } : {}),
         ...(assetPage ? { assetPage } : {}),
+        ...(tags ? { tags } : {}),
+        ...(concepts ? { concepts } : {}),
+        ...(termUsage ? { termUsage } : {}),
       };
       return result;
     },
@@ -2314,6 +2368,126 @@ export class InMemoryContentStore implements ContentStore {
   private readonly tagData = new Map<string, Tag>();
   private readonly entryMetadataData = new Map<string, EntryMetadata>();
 
+  /** Refuses a slug another term of the namespace holds, as D1's unique index does. */
+  private claimSlug(
+    scope: Scope,
+    kind: TermKind,
+    id: string,
+    slug: string,
+    schemeId?: string,
+  ): void {
+    const prefix = `${scopeKey(scope)}::`;
+    const terms: (Tag | Concept)[] =
+      kind === 'tag'
+        ? [...this.tagData.entries()].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v)
+        : [...this.conceptData.entries()]
+            .filter(([k, c]) => k.startsWith(prefix) && c.schemeId === schemeId)
+            .map(([, v]) => v);
+    if (slug && terms.some((t) => t.id !== id && t.slug === slug)) {
+      throw new ConflictError('A unique value is already taken');
+    }
+  }
+
+  /**
+   * Usage counts computed from the published snapshots on every read: the oracle the D1 store's
+   * maintained counts are checked against.
+   */
+  private usageOf(scope: Scope, kind: TermKind): TermUsage[] {
+    const prefix = `${scopeKey(scope)}::`;
+    const counts = new Map<string, TermUsage>();
+    for (const [k, p] of this.publishedData) {
+      if (!k.startsWith(prefix) || !p.metadata) continue;
+      const ids = kind === 'tag' ? p.metadata.tags : p.metadata.concepts;
+      for (const termId of new Set(ids)) {
+        const key = `${termId}::${p.contentTypeApiId}`;
+        const was = counts.get(key)?.count ?? 0;
+        counts.set(key, { kind, termId, contentTypeApiId: p.contentTypeApiId, count: was + 1 });
+      }
+    }
+    return [...counts.values()];
+  }
+
+  /** `space::env::id` → redirect. */
+  private readonly redirectData = new Map<string, Redirect>();
+  /** `space::env` → the set's revision. */
+  private readonly redirectRevisionData = new Map<string, number>();
+
+  private redirectsOf(scope: Scope): Redirect[] {
+    const prefix = `${scopeKey(scope)}::`;
+    // Code-unit order, as SQLite's BINARY collation orders the D1 store's sources.
+    return [...this.redirectData.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v)
+      .sort((a, b) =>
+        a.source < b.source ? -1 : a.source > b.source ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+      );
+  }
+
+  readonly redirects: RedirectRepo = {
+    get: async (scope, id) => this.redirectData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    all: async (scope, opts = {}) =>
+      this.redirectsOf(scope).filter((r) => !opts.enabledOnly || r.enabled),
+    list: async (scope, query = {}) => {
+      const q = query.q?.trim().toLowerCase();
+      const all = this.redirectsOf(scope).filter(
+        (r) =>
+          !q ||
+          r.source.toLowerCase().includes(q) ||
+          r.destination.toLowerCase().includes(q) ||
+          (r.note ?? '').toLowerCase().includes(q),
+      );
+      let start = 0;
+      if (query.cursor) {
+        const [source, id] = JSON.parse(query.cursor) as [string, string];
+        start = all.findIndex((r) => r.source > source || (r.source === source && r.id > id));
+        if (start < 0) start = all.length;
+      }
+      const limit = Math.min(Math.max(1, query.limit ?? 100), 1000);
+      const page = all.slice(start, start + limit);
+      const last = page.at(-1);
+      return {
+        items: page,
+        ...(all.length > start + limit && last
+          ? { nextCursor: JSON.stringify([last.source, last.id]) }
+          : {}),
+      };
+    },
+    involving: async (scope, paths) =>
+      this.redirectsOf(scope).filter(
+        (r) => paths.includes(r.source) || paths.includes(r.destination),
+      ),
+    state: async (scope) => ({
+      revision: this.redirectRevisionData.get(scopeKey(scope)) ?? 0,
+      count: this.redirectsOf(scope).length,
+    }),
+    saveMany: async (scope, redirects) => {
+      // As the D1 store's unique index: one redirect per source per locale.
+      const held = new Map(
+        this.redirectsOf(scope).map((r) => [`${r.locale ?? ''}\u0000${r.source}`, r.id]),
+      );
+      for (const r of redirects) {
+        const key = `${r.locale ?? ''}\u0000${r.source}`;
+        const other = held.get(key);
+        if (other !== undefined && other !== r.id) {
+          throw new ConflictError('A unique value is already taken');
+        }
+        for (const [k, id] of held) if (id === r.id) held.delete(k);
+        held.set(key, r.id);
+      }
+      for (const r of redirects) this.redirectData.set(`${scopeKey(scope)}::${r.id}`, r);
+    },
+    removeMany: async (scope, ids) => {
+      for (const id of ids) this.redirectData.delete(`${scopeKey(scope)}::${id}`);
+    },
+    advance: async (scope, expected) => {
+      const key = scopeKey(scope);
+      // As the D1 store's compare-and-set: another writer moved the set since it was read.
+      const current = this.redirectRevisionData.get(key) ?? 0;
+      if (expected !== undefined && current !== expected) throw new TransactionConflictError();
+      this.redirectRevisionData.set(key, current + 1);
+    },
+  };
+
   readonly taxonomy: TaxonomyRepo = {
     createScheme: async (scope, scheme) => {
       this.schemeData.set(`${scopeKey(scope)}::${scheme.id}`, scheme);
@@ -2327,6 +2501,7 @@ export class InMemoryContentStore implements ContentStore {
       this.schemeData.delete(`${scopeKey(scope)}::${id}`);
     },
     createConcept: async (scope, concept) => {
+      this.claimSlug(scope, 'concept', concept.id, concept.slug, concept.schemeId);
       this.conceptData.set(`${scopeKey(scope)}::${concept.id}`, concept);
     },
     getConcept: async (scope, id) => this.conceptData.get(`${scopeKey(scope)}::${id}`) ?? null,
@@ -2337,10 +2512,13 @@ export class InMemoryContentStore implements ContentStore {
         .map(([, v]) => v)
         .filter((c) => !schemeId || c.schemeId === schemeId);
     },
+    findConceptsBySlug: async (scope, slugs, schemeId) =>
+      (await this.taxonomy.listConcepts(scope, schemeId)).filter((c) => slugs.includes(c.slug)),
     deleteConcept: async (scope, id) => {
       this.conceptData.delete(`${scopeKey(scope)}::${id}`);
     },
     createTag: async (scope, tag) => {
+      this.claimSlug(scope, 'tag', tag.id, tag.slug);
       this.tagData.set(`${scopeKey(scope)}::${tag.id}`, tag);
     },
     getTag: async (scope, id) => this.tagData.get(`${scopeKey(scope)}::${id}`) ?? null,
@@ -2348,9 +2526,26 @@ export class InMemoryContentStore implements ContentStore {
       const prefix = `${scopeKey(scope)}::`;
       return [...this.tagData.entries()].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
     },
+    findTagsBySlug: async (scope, slugs) =>
+      (await this.taxonomy.listTags(scope)).filter((t) => slugs.includes(t.slug)),
     deleteTag: async (scope, id) => {
       this.tagData.delete(`${scopeKey(scope)}::${id}`);
     },
+    slugsLike: async (scope, namespace, base) => {
+      const terms: (Tag | Concept)[] =
+        namespace.kind === 'tag'
+          ? await this.taxonomy.listTags(scope)
+          : await this.taxonomy.listConcepts(scope, namespace.schemeId);
+      return terms
+        .map((t) => t.slug)
+        .filter((slug) => slug === base || slug.startsWith(`${base}-`));
+    },
+    listUsage: async (scope, query) =>
+      this.usageOf(scope, query.kind).filter(
+        (u) => !query.termIds || query.termIds.includes(u.termId),
+      ),
+    // Computed on read, so there is nothing to rebuild.
+    recountUsage: async () => {},
     getEntryMetadata: async (scope, entryId) =>
       this.entryMetadataData.get(`${scopeKey(scope)}::${entryId}`) ?? null,
     getEntryMetadataMany: async (scope, entryIds) =>
@@ -2734,6 +2929,7 @@ export class InMemoryContentStore implements ContentStore {
       this.memberData,
       this.contentTypeData,
       this.entryData,
+      this.entryTouched,
       this.versionData,
       this.publishedData,
       this.assetData,
@@ -2756,6 +2952,8 @@ export class InMemoryContentStore implements ContentStore {
       this.workflowNodeRunData,
       this.workflowTimelineData,
       this.workflowTaskData,
+      this.redirectData,
+      this.redirectRevisionData,
     ] as Map<string, unknown>[];
   }
 
@@ -2790,6 +2988,7 @@ export class InMemoryContentStore implements ContentStore {
         references: this.references,
         releases: this.releases,
         taxonomy: this.taxonomy,
+        redirects: this.redirects,
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,

@@ -131,6 +131,10 @@ export const TAGS: { name: string; description: string }[] = [
     name: 'Releases & scheduling',
     description: 'Grouped releases and scheduled publish/unpublish actions.',
   },
+  {
+    name: 'Redirects',
+    description: 'Redirects as delivery data: paths and patterns a front end applies.',
+  },
   { name: 'Webhooks', description: 'Signed event webhooks and delivery logs.' },
   { name: 'Functions', description: 'User-defined HTTP functions invoked on domain events.' },
   { name: 'Apps', description: 'App extensions (custom field editors, sidebars).' },
@@ -158,7 +162,7 @@ const TAG_GROUPS = [
   { name: 'Authoring', tags: ['Entries', 'Versions', 'Assets', 'Comments & tasks', 'Workflows'] },
   {
     name: 'Publishing & automation',
-    tags: ['Releases & scheduling', 'Webhooks', 'Functions', 'Apps'],
+    tags: ['Releases & scheduling', 'Redirects', 'Webhooks', 'Functions', 'Apps'],
   },
   { name: 'AI', tags: ['AI & agents'] },
   { name: 'Reference', tags: ['Guides'] },
@@ -188,6 +192,7 @@ const TAG_RULES: [RegExp, string][] = [
   [/\/(ai-actions|agent-runs)/, 'AI & agents'],
   [/\/audit(-log)?$/, 'Audit'],
   [/\/(releases|scheduled-actions)/, 'Releases & scheduling'],
+  [/\/redirects/, 'Redirects'],
   [/\/webhooks/, 'Webhooks'],
   [/\/functions/, 'Functions'],
   [/\/app-extensions/, 'Apps'],

@@ -9,9 +9,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import { ListFilter, Search, X } from 'lucide-react';
-import { useState } from 'react';
-import type { EntryFilter, EntryListQuery, EntryOrder } from '../lib/management';
+import { ListFilter, Plus, Search, X } from 'lucide-react';
+import { useId, useState } from 'react';
+import { statusLabel } from '../lib/format';
+import type { EntryFilter, EntryListQuery } from '../lib/management';
 
 /** Operators offered per field category — narrows the menu to what makes sense. */
 const OPS_BY_CATEGORY = {
@@ -136,7 +137,7 @@ function ValueInput(props: {
         <SelectContent>
           {ENTRY_STATUSES.map((s) => (
             <SelectItem key={s} value={s}>
-              {s}
+              {statusLabel(s)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -171,9 +172,9 @@ function ValueInput(props: {
 }
 
 /**
- * Filter/sort/search toolbar for the entries list. Holds no query state of its
- * own beyond panel visibility — the parent owns the `EntryListQuery` so it can
- * drive the fetch and reflect the active-filter count.
+ * Filter and search toolbar for the entries list (the table sorts from its own headers). Holds
+ * no query state of its own beyond panel visibility — the parent owns the `EntryListQuery` so it
+ * can drive the fetch and reflect the active-filter count.
  */
 export function EntryFilterBar(props: {
   type: ContentType;
@@ -182,9 +183,9 @@ export function EntryFilterBar(props: {
 }) {
   const { type, value, onChange } = props;
   const [open, setOpen] = useState(false);
+  const panelId = useId();
   const options = fieldOptions(type);
   const filters = value.filters ?? [];
-  const order = value.order?.[0];
 
   const optionFor = (field: string) => options.find((o) => o.field === field) ?? STATUS_OPTION;
 
@@ -204,25 +205,38 @@ export function EntryFilterBar(props: {
   const removeFilter = (i: number) =>
     onChange({ ...value, filters: filters.filter((_, j) => j !== i) });
 
-  const setOrder = (next: EntryOrder | undefined) =>
-    onChange({ ...value, order: next ? [next] : undefined });
-
-  const activeCount = filters.length + (value.search ? 1 : 0) + (order ? 1 : 0);
+  const activeCount = filters.length + (value.search ? 1 : 0);
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 sm:max-w-xs">
-          <Search className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground" />
+          <Search
+            aria-hidden="true"
+            className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground"
+          />
           <Input
+            type="search"
+            aria-label="Search entries"
+            enterKeyHint="search"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             className="h-9 pl-8"
             placeholder="Search text fields…"
             value={value.search ?? ''}
             onChange={(e) => onChange({ ...value, search: e.target.value || undefined })}
           />
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen((o) => !o)}>
-          <ListFilter className="size-4" />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-expanded={open}
+          aria-controls={open ? panelId : undefined}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <ListFilter aria-hidden="true" className="size-4" />
           Filters
           {activeCount > 0 && (
             <Badge variant="secondary" className="ml-1">
@@ -235,17 +249,18 @@ export function EntryFilterBar(props: {
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => onChange({})}
+            // Filters and search only: the sort and the trash view aren't filters.
+            onClick={() => onChange({ ...value, filters: undefined, search: undefined })}
             className="text-muted-foreground"
           >
-            <X className="size-4" />
+            <X aria-hidden="true" className="size-4" />
             Clear
           </Button>
         )}
       </div>
 
       {open && (
-        <div className="card space-y-3 p-3">
+        <div id={panelId} className="card space-y-3 p-3">
           {filters.length === 0 && (
             <p className="text-muted-foreground text-sm">No filters. Add one to narrow the list.</p>
           )}
@@ -315,46 +330,9 @@ export function EntryFilterBar(props: {
 
           <div className="flex flex-wrap items-center gap-2 border-t pt-3">
             <Button type="button" variant="outline" size="sm" onClick={addFilter}>
-              + Add filter
+              <Plus aria-hidden="true" />
+              Add filter
             </Button>
-            <div className="ml-auto flex items-center gap-2">
-              <span className="text-muted-foreground text-sm">Sort by</span>
-              <Select
-                value={order?.field ?? 'none'}
-                onValueChange={(field) =>
-                  setOrder(
-                    field === 'none' ? undefined : { field, direction: order?.direction ?? 'asc' },
-                  )
-                }
-              >
-                <SelectTrigger aria-label="Sort field" className="h-8 w-[160px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Default</SelectItem>
-                  {options.map((o) => (
-                    <SelectItem key={o.field} value={o.field}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={order?.direction ?? 'asc'}
-                disabled={!order}
-                onValueChange={(direction) =>
-                  order && setOrder({ ...order, direction: direction as 'asc' | 'desc' })
-                }
-              >
-                <SelectTrigger aria-label="Sort direction" className="h-8 w-[120px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="asc">Ascending</SelectItem>
-                  <SelectItem value="desc">Descending</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </div>
         </div>
       )}

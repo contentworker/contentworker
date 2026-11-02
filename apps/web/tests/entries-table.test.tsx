@@ -39,6 +39,7 @@ const entry = (id: string, status: string, title?: string): PreviewEntry => ({
   contentType: 'article',
   status,
   version: 1,
+  updatedAt: '2026-10-01T09:30:00.000Z',
   fields: title === undefined ? {} : { title: { 'en-US': title } },
 });
 
@@ -70,17 +71,24 @@ function renderTable(over: Partial<Parameters<typeof EntriesTable>[0]> = {}) {
     busy: false,
     viewingTrash: false,
     hrefFor: (e: PreviewEntry) => `/content/article/${e.id}`,
-    onTogglePick: vi.fn(),
+    onPick: vi.fn(),
     onPickAll: vi.fn(),
     actions: actions(),
     ...over,
   };
-  render(
+  const view = render(
     <MemoryRouter>
       <EntriesTable {...props} />
     </MemoryRouter>,
   );
-  return props;
+  return Object.assign(props, {
+    rerender: (next: Partial<Parameters<typeof EntriesTable>[0]>) =>
+      view.rerender(
+        <MemoryRouter>
+          <EntriesTable {...props} {...next} />
+        </MemoryRouter>,
+      ),
+  });
 }
 
 // Radix menus open on pointerdown (left button, no modifiers).
@@ -113,10 +121,46 @@ describe('EntriesTable rows', () => {
     const props = renderTable();
     const rows = screen.getAllByRole('row').slice(1);
     // Every row has the same number of cells, so columns never shift.
-    for (const row of rows) expect(within(row).getAllByRole('cell')).toHaveLength(5);
+    for (const row of rows) expect(within(row).getAllByRole('cell')).toHaveLength(6);
     expect(screen.getAllByRole('button', { name: /^Publish / })).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'Publish “Pricing page”' }));
     expect(props.actions.publish).toHaveBeenCalledWith(ENTRIES[1]);
+  });
+
+  it('keeps the row Publish quiet: a ghost at badge height, shown on hover, focus, J/K, a tick or touch', () => {
+    renderTable();
+    const publish = screen.getByRole('button', { name: 'Publish “Spring launch”' });
+    expect(publish.className).toContain('h-6');
+    for (const shown of [
+      'group-hover/row:opacity-100',
+      'group-focus-within/row:opacity-100',
+      'group-data-active/row:opacity-100',
+      'group-data-[state=selected]/row:opacity-100',
+      'touch:opacity-100',
+    ])
+      expect(publish.className).toContain(shown);
+  });
+
+  it('shows when each entry changed, the full time in its tooltip', () => {
+    renderTable();
+    const row = screen.getByRole('link', { name: 'Spring launch' }).closest('[role="row"]');
+    const time = (row as HTMLElement).querySelector('time');
+    expect(time?.getAttribute('dateTime')).toBe('2026-10-01T09:30:00.000Z');
+    expect(time?.getAttribute('title')).toBeTruthy();
+  });
+
+  it('marks a ticked row selected', () => {
+    renderTable({ picked: new Set(['e-live']) });
+    const row = screen.getByRole('link', { name: 'About us' }).closest('[role="row"]');
+    expect(row?.getAttribute('data-state')).toBe('selected');
+  });
+
+  it('says why there are no rows in a row under the headers', () => {
+    renderTable({ entries: [], empty: 'No entries match the current filters.' });
+    expect(screen.getByRole('columnheader', { name: 'Headline' })).toBeTruthy();
+    expect(
+      screen.getByRole('cell', { name: 'No entries match the current filters.' }),
+    ).toBeTruthy();
   });
 
   it('puts the rest in a per-row menu with Move to trash last', () => {
@@ -162,7 +206,14 @@ describe('EntriesTable keyboard', () => {
     press('ArrowUp');
     expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Spring launch' }));
     press('x');
-    expect(props.onTogglePick).toHaveBeenCalledWith('e-draft');
+    expect(props.onPick).toHaveBeenCalledWith(['e-draft'], true);
+  });
+
+  it('tells a screen reader the keys, from the table itself', () => {
+    renderTable();
+    const table = screen.getByRole('table');
+    const describedBy = table.getAttribute('aria-describedby');
+    expect(document.getElementById(describedBy ?? '')?.textContent).toMatch(/J or K/);
   });
 
   it('ignores keys with a modifier held', () => {
@@ -186,5 +237,71 @@ describe('EntriesTable keyboard', () => {
     expect(shouldIgnoreShortcut(new KeyboardEvent('keydown', { key: 'j' }))).toBe(true);
     dialog.remove();
     expect(shouldIgnoreShortcut(new KeyboardEvent('keydown', { key: 'j' }))).toBe(false);
+  });
+});
+
+describe('EntriesTable sorting from its headers', () => {
+  it('sorts Title, Status and Updated from their headers, the sorted one aria-sorted', () => {
+    const onSort = vi.fn();
+    const props = renderTable({ onSort });
+    // No order is least recently changed first: Updated, ascending.
+    expect(screen.getByRole('columnheader', { name: 'Updated' }).getAttribute('aria-sort')).toBe(
+      'ascending',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Headline' }));
+    expect(onSort).toHaveBeenLastCalledWith('title');
+    fireEvent.click(screen.getByRole('button', { name: 'Status' }));
+    expect(onSort).toHaveBeenLastCalledWith('sys.status');
+    fireEvent.click(screen.getByRole('button', { name: 'Updated' }));
+    expect(onSort).toHaveBeenLastCalledWith('sys.updatedAt');
+
+    props.rerender({ order: { field: 'title', direction: 'desc' } });
+    expect(screen.getByRole('columnheader', { name: 'Headline' }).getAttribute('aria-sort')).toBe(
+      'descending',
+    );
+    expect(
+      screen.getByRole('columnheader', { name: 'Updated' }).getAttribute('aria-sort'),
+    ).toBeNull();
+  });
+
+  it('keeps plain captions when the list can’t sort', () => {
+    renderTable();
+    expect(screen.queryByRole('button', { name: 'Headline' })).toBeNull();
+  });
+});
+
+describe('EntriesTable selection', () => {
+  it('ticks one, then a shift-click ticks the range between', () => {
+    const props = renderTable();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select “Spring launch”' }));
+    expect(props.onPick).toHaveBeenLastCalledWith(['e-draft'], true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select “About us”' }), {
+      shiftKey: true,
+    });
+    expect(props.onPick).toHaveBeenLastCalledWith(['e-draft', 'e-changed', 'e-live'], true);
+  });
+
+  it('draws the header box from the whole selection: some is mixed, all is ticked', () => {
+    const props = renderTable({ picked: new Set(['e-live']) });
+    const all = () => screen.getByRole('checkbox', { name: 'Select all entries' });
+    expect(all().getAttribute('aria-checked')).toBe('mixed');
+    fireEvent.click(all());
+    expect(props.onPickAll).toHaveBeenLastCalledWith(true);
+    props.rerender({ picked: new Set(ENTRIES.map((e) => e.id)) });
+    expect(all().getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(all());
+    expect(props.onPickAll).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('EntriesTable Load more', () => {
+  it('sits in the foot, and hands focus to the first row it brought', () => {
+    const onLoadMore = vi.fn();
+    const props = renderTable({ entries: ENTRIES.slice(0, 2), onLoadMore });
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(onLoadMore).toHaveBeenCalledOnce();
+    props.rerender({ entries: ENTRIES, onLoadMore: undefined });
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'About us' }));
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
 });

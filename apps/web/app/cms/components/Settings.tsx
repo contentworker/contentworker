@@ -44,6 +44,7 @@ import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader } from '~/cms/components/page';
+import { Redirects } from '~/cms/components/Redirects';
 import { StatusBadge } from '~/cms/components/status';
 import { Team } from '~/cms/components/Team';
 import { WebhookDeliveriesSheet } from '~/cms/components/WebhookDeliveriesSheet';
@@ -73,6 +74,7 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   'ai-actions': (client) => <AiActions client={client} />,
   extensions: (client) => <AppExtensions client={client} />,
   plugins: (client) => <Plugins client={client} />,
+  redirects: (client) => <Redirects client={client} />,
   environments: (client) => <Environments client={client} />,
   'audit-log': (client) => <AuditLog client={client} />,
 };
@@ -298,7 +300,8 @@ function AuditLog(props: { client: ManagementClient }) {
   const load = () => void invalidate(['audit-log']);
 
   return (
-    <Card>
+    // Clipped, not hidden: a long log keeps its header under the shell's as it scrolls.
+    <Card className="overflow-clip">
       <CardHeader className="flex-row items-center justify-between gap-2">
         <div>
           <h2 className="font-heading font-medium text-base">Audit log</h2>
@@ -314,7 +317,13 @@ function AuditLog(props: { client: ManagementClient }) {
         {!loading && entries.length === 0 ? (
           <p className="text-muted-foreground text-sm">No audit entries yet.</p>
         ) : (
-          <Table edge="flush" stack="cards" caption="Audit log" aria-busy={loading || undefined}>
+          <Table
+            edge="flush"
+            stack="cards"
+            sticky
+            caption="Audit log"
+            aria-busy={loading || undefined}
+          >
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>

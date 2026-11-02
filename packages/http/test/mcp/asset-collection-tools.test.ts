@@ -150,7 +150,7 @@ describe('collection, share, upload and zip tools (MCP), on the HTTP routes’ u
         contentType: 'application/octet-stream',
         size: 12,
       })
-    ).body as { asset: { id: string; r2Key: string }; upload: { uploadId: string } };
+    ).body as { asset: { id: string }; upload: { uploadId: string } };
     const signed = (
       await call('asset_upload_parts', {
         id: started.asset.id,

@@ -5,6 +5,7 @@ import {
   addEntryToRelease,
   addToAssetCollection,
   analyzeImport,
+  analyzeRedirectSet,
   applyEntryTags,
   approvePluginCapabilities,
   approvePromotion,
@@ -22,6 +23,7 @@ import {
   cancelWorkflowRun,
   canvasToEntry,
   cloneEnvironment,
+  collapseRedirects,
   commitAssetFile,
   compareEnvironments,
   completeMultipartAssetUpload,
@@ -30,6 +32,7 @@ import {
   createAgentSchedule,
   createAIAction,
   createAppExtension,
+  createAsset,
   createAssetCollection,
   createAssetFolder,
   createAssetRendition,
@@ -39,6 +42,7 @@ import {
   createEntry,
   createFunction,
   createInvite,
+  createRedirect,
   createRelease,
   createRole,
   createScheme,
@@ -58,6 +62,7 @@ import {
   deleteEnvironment,
   deleteEnvironmentAlias,
   deleteFunction,
+  deleteRedirect,
   deleteRole,
   deleteWebhook,
   deliverWorkflowEvent,
@@ -71,6 +76,7 @@ import {
   findDuplicates,
   generateAltText,
   getAgentReview,
+  getAsset,
   getAssetCollection,
   getAssetShareLink,
   getAssetUsage,
@@ -78,11 +84,14 @@ import {
   getBulkJob,
   getBulkJobReport,
   getContentType,
+  getDeliveredConcept,
+  getDeliveredTag,
   getInvite,
   getPluginSettings,
   getPreviewAsset,
   getPreviewEntry,
   getPromotion,
+  getRedirect,
   getRelease,
   getSchedulerStatus,
   getVersion,
@@ -91,6 +100,7 @@ import {
   getWorkflowSettings,
   getWorkflowVersion,
   hybridSearch,
+  importRedirects,
   importSnapshot,
   listAgentReviews,
   listAgentSchedules,
@@ -107,7 +117,7 @@ import {
   listAuditLog,
   listBulkJobs,
   listComments,
-  listConcepts,
+  listConceptsWithUsage,
   listConnectedApps,
   listContentTypes,
   listEnvironmentAliases,
@@ -116,12 +126,14 @@ import {
   listPlugins,
   listPreviewAssets,
   listPreviewEntries,
+  listPreviewEntryPage,
   listPromotions,
+  listRedirects,
   listReleases,
   listRolePresets,
   listRoles,
   listSpacesFor,
-  listTags,
+  listTagsWithUsage,
   listTasks,
   listTeam,
   listVersions,
@@ -139,6 +151,7 @@ import {
   mergeEnvironments,
   moderateEntry,
   moveAssets,
+  publishAsset,
   publishContentType,
   publishEntry,
   publishRelease,
@@ -150,6 +163,7 @@ import {
   relatedEntries,
   removeFromAssetCollection,
   reorderAssetCollection,
+  repairTaxonomy,
   replaceAssetFile,
   requestAssetZip,
   requestPromotion,
@@ -157,6 +171,7 @@ import {
   resendInvite,
   resolveEmbed,
   resolveEnvironment,
+  resolveRedirect,
   resolveTask,
   resolveWritableEnvironment,
   restoreAsset,
@@ -196,17 +211,20 @@ import {
   transitionEntry,
   translateEntry,
   trashEntry,
+  unpublishAsset,
   unpublishEntry,
   updateAgentSchedule,
   updateAssetCollection,
   updateAssetFolder,
   updateAssetRendition,
+  updateConcept,
   updateEntry,
+  updateRedirect,
   updateRole,
+  updateTag,
   updateWebhook,
   validateWorkflowGraph,
   visibleSearchHits,
-  withReadUrl,
   workflowRunView,
 } from '@contentworker/application';
 import { listDocs, readDoc, searchDocs } from '@contentworker/docs';
@@ -214,6 +232,7 @@ import {
   ASSET_KINDS,
   type Asset,
   AssetInUseError,
+  AssetRightsError,
   assertQueryRespectsFieldRules,
   assertWritableFields,
   authorize,
@@ -233,7 +252,11 @@ import {
   MAX_INVITE_GRANTS,
   MAX_PROMOTION_CONTENT_TYPES,
   MAX_PROMOTION_ENTRIES,
+  MAX_REDIRECT_IMPORT,
+  MAX_REDIRECT_LENGTH,
+  MAX_REDIRECT_NOTE_LENGTH,
   MAX_SHARE_PASSWORD,
+  MAX_URL_PATTERN_LENGTH,
   MAX_ZIP_ASSETS,
   maskDeniedFields,
   NotConfiguredError,
@@ -259,9 +282,11 @@ import { createSpaceWithStarter, STARTERS } from '@contentworker/seed';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
+import { assetPageResponse, assetResponse, assetVersionResponse } from '../api/asset-response';
 import { toHttpError } from '../api/http';
 import {
   assetMetadataPatchShape,
+  createAssetBody,
   snapshotBody,
   updateWebhookBody,
   webhookBody,
@@ -677,12 +702,17 @@ export function buildServer(
     {
       description:
         'List entries (current/draft versions) with optional field-level filters, ' +
-        'ordering, projection, and full-text search.',
+        'ordering, projection, and full-text search. Returns one page; pass nextCursor back ' +
+        'as cursor, with the same filters and order, for the next.',
       inputSchema: toolSchema('entries_query', () =>
         z.object({
           contentType: z.string().optional(),
-          limit: z.number().int().positive().optional(),
-          skip: z.number().int().nonnegative().optional(),
+          limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+          cursor: z.string().optional().describe('nextCursor from the previous page'),
+          skip: z
+            .number()
+            .optional()
+            .describe('Not supported: this list pages with cursor. Refused when set.'),
           locale: z.string().optional(),
           filters: z
             .array(
@@ -704,6 +734,11 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      // An agent paging by offset hears so, rather than reading the first page forever.
+      if (args.skip !== undefined)
+        throw new ValidationError([
+          { field: 'skip', message: 'entries_query pages with cursor (its nextCursor), not skip' },
+        ]);
       assertQueryRespectsFieldRules(principal, {
         contentTypeApiId: args.contentType,
         filters: args.filters,
@@ -711,22 +746,30 @@ export function buildServer(
         select: args.select,
         search: args.search,
       });
-      const items = await listPreviewEntries(ctx, scopeOf(args), {
-        contentTypeApiId: args.contentType,
-        limit: args.limit,
-        skip: args.skip,
-        locale: args.locale,
-        filters: args.filters,
-        order: args.order,
-        select: args.select,
-        search: args.search,
-      });
+      const page = await listPreviewEntryPage(
+        ctx,
+        scopeOf(args),
+        {
+          contentTypeApiId: args.contentType,
+          limit: args.limit,
+          locale: args.locale,
+          filters: args.filters,
+          order: args.order,
+          select: args.select,
+          search: args.search,
+          ...(args.cursor ? { cursor: args.cursor } : {}),
+        },
+        principal.contentGrants
+          ? { readable: (t) => canAccessContentType(principal, 'read', t) }
+          : {},
+      );
       // Granular RBAC: drop entries of ungranted types, mask denied fields.
-      return ok(
-        items
+      return ok({
+        items: page.items
           .filter((e) => canAccessContentType(principal, 'read', e.contentType))
           .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) })),
-      );
+        ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      });
     },
   );
 
@@ -2022,6 +2065,15 @@ export function buildServer(
           name: z.string(),
           displayField: z.string(),
           fields: z.array(fieldSchema),
+          urlPattern: z
+            .string()
+            .max(MAX_URL_PATTERN_LENGTH)
+            .nullable()
+            .optional()
+            .describe(
+              'where its entries live on the site, e.g. /blog/{slug} ({id}, {locale} or a Slug ' +
+                'field); a publish that changes the slug redirects the old path. null clears it',
+            ),
           ...scopeArgs,
         }),
       ),
@@ -2033,6 +2085,7 @@ export function buildServer(
           apiId: args.apiId,
           name: args.name,
           displayField: args.displayField,
+          ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
           fields: args.fields as any,
         }),
@@ -2970,30 +3023,284 @@ export function buildServer(
     },
   );
 
+  // --- redirects ---------------------------------------------------------
+  const redirectArgs = {
+    source: z
+      .string()
+      .max(MAX_REDIRECT_LENGTH)
+      .describe('A path: /old, /blog/[slug] (one segment), /docs/[...rest] (one or more, last)'),
+    destination: z
+      .string()
+      .max(MAX_REDIRECT_LENGTH)
+      .describe('A path (may have ?query#fragment) or an https:// URL; [slug]/[...rest] insert'),
+    status: z
+      .union([z.literal(301), z.literal(302), z.literal(307), z.literal(308)])
+      .optional()
+      .describe('default 301'),
+    locale: z.string().nullable().optional().describe('one locale only; null for every locale'),
+    enabled: z.boolean().optional(),
+    note: z.string().max(MAX_REDIRECT_NOTE_LENGTH).nullable().optional(),
+  };
+
+  server.registerTool(
+    'redirects_list',
+    {
+      description:
+        "List an environment's redirects by source (paged), optionally searching source, " +
+        'destination and note.',
+      inputSchema: toolSchema('redirects_list', () =>
+        z.object({
+          q: z.string().max(256).optional(),
+          limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+          cursor: z.string().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(
+        await listRedirects(ctx, scopeOf(args), {
+          ...(args.q ? { q: args.q } : {}),
+          ...(args.limit !== undefined ? { limit: args.limit } : {}),
+          ...(args.cursor ? { cursor: args.cursor } : {}),
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'redirects_get',
+    {
+      description: 'Get one redirect by id.',
+      inputSchema: toolSchema('redirects_get', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await getRedirect(ctx, scopeOf(args), args.id));
+    },
+  );
+
+  server.registerTool(
+    'redirects_create',
+    {
+      description:
+        'Create a redirect. Refused when the source is already redirected for that locale, ' +
+        'when it would close a loop, or past the cap; a chain it makes is allowed and returned ' +
+        'in `chains` (redirects_collapse_chains straightens them).',
+      inputSchema: toolSchema('redirects_create', () =>
+        z.object({ ...redirectArgs, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      const { space: _s, environment: _e, ...input } = args;
+      return ok(await createRedirect(ctx, scopeOf(args), input));
+    },
+  );
+
+  server.registerTool(
+    'redirects_update',
+    {
+      description:
+        'Change a redirect (e.g. enabled: false to switch it off). Fields left out keep their ' +
+        'value; null clears locale or note.',
+      inputSchema: toolSchema('redirects_update', () =>
+        z.object({ id: z.string(), ...z.object(redirectArgs).partial().shape, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      const { space: _s, environment: _e, id, ...patch } = args;
+      return ok(await updateRedirect(ctx, scopeOf(args), id, patch));
+    },
+  );
+
+  server.registerTool(
+    'redirects_delete',
+    {
+      description: 'Delete a redirect.',
+      inputSchema: toolSchema('redirects_delete', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      await deleteRedirect(ctx, scopeOf(args), args.id);
+      return ok({ deleted: args.id });
+    },
+  );
+
+  server.registerTool(
+    'redirects_import',
+    {
+      description:
+        `Import up to ${MAX_REDIRECT_IMPORT} redirects from CSV (header: source, destination, ` +
+        'status, locale, enabled, note) or a JSON array, all or nothing. A source already ' +
+        'redirected is updated. dryRun reports without writing.',
+      inputSchema: toolSchema('redirects_import', () =>
+        z.object({
+          format: z.enum(['csv', 'json']),
+          data: z.string().max(1_000_000).describe('the CSV text, or the JSON array as text'),
+          dryRun: z.boolean().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(
+        await importRedirects(ctx, scopeOf(args), {
+          format: args.format,
+          data: args.data,
+          ...(args.dryRun !== undefined ? { dryRun: args.dryRun } : {}),
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'redirects_resolve',
+    {
+      description:
+        'Resolve a request path against the enabled redirects: the redirect, its status and the ' +
+        'location (captures filled in), or null. What Delivery answers a front end.',
+      inputSchema: toolSchema('redirects_resolve', () =>
+        z.object({ path: z.string().max(4096), locale: z.string().optional(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await resolveRedirect(ctx, scopeOf(args), args.path, args.locale));
+    },
+  );
+
+  server.registerTool(
+    'redirects_analyze',
+    {
+      description:
+        'Check the whole redirect set: loops, chains (with where each ends) and duplicate sources.',
+      inputSchema: toolSchema('redirects_analyze', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await analyzeRedirectSet(ctx, scopeOf(args)));
+    },
+  );
+
+  server.registerTool(
+    'redirects_collapse_chains',
+    {
+      description: 'Point every redirect that ends a chain straight at where its chain ends.',
+      inputSchema: toolSchema('redirects_collapse_chains', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(await collapseRedirects(ctx, scopeOf(args)));
+    },
+  );
+
   // --- taxonomy ----------------------------------------------------------
+  // What a tag or concept carries beside its label (the HTTP bodies' fields).
+  const termArgs = {
+    slug: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe('URL slug (a-z, 0-9, hyphens); made from the label when omitted on create'),
+    description: z.string().max(2000).nullable().optional().describe('Plain text; null clears'),
+    labels: z
+      .record(z.string(), z.string().max(256))
+      .optional()
+      .describe(
+        'Labels by locale (the whole set; each a locale of the space). The default locale’s ' +
+          'sets the term’s own label; an empty value removes that locale’s label',
+      ),
+  };
+  const termFieldsOf = (args: {
+    slug?: string | undefined;
+    description?: string | null | undefined;
+    labels?: Record<string, string> | undefined;
+  }) => ({
+    ...(args.slug !== undefined ? { slug: args.slug } : {}),
+    ...(args.description !== undefined ? { description: args.description } : {}),
+    ...(args.labels !== undefined ? { labels: args.labels } : {}),
+  });
+  const termLookupArgs = {
+    slug: z.string().min(1).max(200),
+    locale: z.string().optional().describe('Resolve the label for one locale (with fallbacks)'),
+    contentType: z.string().optional().describe('Count published entries of this type only'),
+  };
+
   server.registerTool(
     'taxonomy_list_tags',
     {
-      description: 'List the flat tags defined in a space/environment.',
+      description:
+        'List the flat tags defined in a space/environment, each with its slug, description, ' +
+        'localized labels and published usage (how many published entries carry it, in all and ' +
+        'per content type).',
       inputSchema: toolSchema('taxonomy_list_tags', () => z.object(scopeArgs)),
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
-      return ok(await listTags(ctx, scopeOf(args)));
+      return ok(await listTagsWithUsage(ctx, scopeOf(args)));
+    },
+  );
+
+  server.registerTool(
+    'taxonomy_get_tag',
+    {
+      description:
+        'Get a tag by its slug, as Delivery serves it: label (resolved for locale), description ' +
+        'and published usage counts.',
+      inputSchema: toolSchema('taxonomy_get_tag', () =>
+        z.object({ ...termLookupArgs, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(
+        await getDeliveredTag(ctx, scopeOf(args), args.slug, {
+          ...(args.locale !== undefined ? { locale: args.locale } : {}),
+          ...(args.contentType !== undefined ? { contentType: args.contentType } : {}),
+        }),
+      );
     },
   );
 
   server.registerTool(
     'taxonomy_create_tag',
     {
-      description: 'Create a flat tag.',
+      description:
+        'Create a flat tag. Its slug is made from the name unless given (a given slug another ' +
+        'tag has is a conflict).',
       inputSchema: toolSchema('taxonomy_create_tag', () =>
-        z.object({ name: z.string(), ...scopeArgs }),
+        z.object({ name: z.string(), ...termArgs, ...scopeArgs }),
       ),
     },
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
-      return ok(await createTag(ctx, scopeOf(args), { name: args.name }));
+      return ok(await createTag(ctx, scopeOf(args), { name: args.name, ...termFieldsOf(args) }));
+    },
+  );
+
+  server.registerTool(
+    'taxonomy_update_tag',
+    {
+      description:
+        'Change a tag’s name, slug, description or localized labels; only the arguments given ' +
+        'change. The slug stays when the name changes.',
+      inputSchema: toolSchema('taxonomy_update_tag', () =>
+        z.object({ id: z.string(), name: z.string().optional(), ...termArgs, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(
+        await updateTag(ctx, scopeOf(args), args.id, {
+          ...(args.name !== undefined ? { name: args.name } : {}),
+          ...termFieldsOf(args),
+        }),
+      );
     },
   );
 
@@ -3014,26 +3321,53 @@ export function buildServer(
   server.registerTool(
     'taxonomy_list_concepts',
     {
-      description: 'List concepts, optionally limited to one scheme.',
+      description:
+        'List concepts, optionally limited to one scheme, each with its slug, description, ' +
+        'localized labels and published usage counts.',
       inputSchema: toolSchema('taxonomy_list_concepts', () =>
         z.object({ scheme: z.string().optional(), ...scopeArgs }),
       ),
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
-      return ok(await listConcepts(ctx, scopeOf(args), args.scheme));
+      return ok(await listConceptsWithUsage(ctx, scopeOf(args), args.scheme));
+    },
+  );
+
+  server.registerTool(
+    'taxonomy_get_concept',
+    {
+      description:
+        'Get a concept by its slug, as Delivery serves it. A slug is unique within a scheme: ' +
+        'pass scheme when two schemes share it.',
+      inputSchema: toolSchema('taxonomy_get_concept', () =>
+        z.object({ ...termLookupArgs, scheme: z.string().optional(), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(
+        await getDeliveredConcept(ctx, scopeOf(args), args.slug, {
+          ...(args.scheme !== undefined ? { schemeId: args.scheme } : {}),
+          ...(args.locale !== undefined ? { locale: args.locale } : {}),
+          ...(args.contentType !== undefined ? { contentType: args.contentType } : {}),
+        }),
+      );
     },
   );
 
   server.registerTool(
     'taxonomy_create_concept',
     {
-      description: 'Create a concept within a scheme, optionally nested under a broader concept.',
+      description:
+        'Create a concept within a scheme, optionally nested under a broader concept. Its slug ' +
+        'is made from prefLabel unless given (unique within the scheme).',
       inputSchema: toolSchema('taxonomy_create_concept', () =>
         z.object({
           schemeId: z.string(),
           prefLabel: z.string(),
           broaderId: z.string().optional(),
+          ...termArgs,
           ...scopeArgs,
         }),
       ),
@@ -3045,8 +3379,45 @@ export function buildServer(
           schemeId: args.schemeId,
           prefLabel: args.prefLabel,
           broaderId: args.broaderId,
+          ...termFieldsOf(args),
         }),
       );
+    },
+  );
+
+  server.registerTool(
+    'taxonomy_update_concept',
+    {
+      description:
+        'Change a concept’s prefLabel, slug, description or localized labels; only the ' +
+        'arguments given change. The slug stays when the label changes.',
+      inputSchema: toolSchema('taxonomy_update_concept', () =>
+        z.object({ id: z.string(), prefLabel: z.string().optional(), ...termArgs, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(
+        await updateConcept(ctx, scopeOf(args), args.id, {
+          ...(args.prefLabel !== undefined ? { prefLabel: args.prefLabel } : {}),
+          ...termFieldsOf(args),
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'taxonomy_repair',
+    {
+      description:
+        'Recount the environment’s published usage counts from its published entries and give ' +
+        'a slug to any term without one. Counts are kept as entries publish; the engine runs ' +
+        'this daily. Safe to repeat.',
+      inputSchema: toolSchema('taxonomy_repair', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(await repairTaxonomy(ctx, scopeOf(args)));
     },
   );
 
@@ -3322,14 +3693,12 @@ export function buildServer(
   // --- assets / media intelligence ---------------------------------------
   const emptyFacets = { kind: {}, tag: {}, folder: {} };
   const assetSearch = deps.assetSearch ?? assetSearchDeps(rag);
-  // Reads hand out a short-lived signed URL, never the stored non-expiring one (as the REST
-  // routes do). Without a blob store (local fakes) there is nothing to sign with.
-  const signedOne = (s: Scope, asset: Asset) =>
-    deps.blob ? withReadUrl(deps.blob, s, asset) : Promise.resolve(asset);
-  const signedPage = async <P extends { items: Asset[] }>(s: Scope, page: P): Promise<P> => ({
-    ...page,
-    items: await Promise.all(page.items.map((a) => signedOne(s, a))),
-  });
+  // Every asset goes out through REST's serializer: a short-lived signed URL, never the stored
+  // non-expiring one, and none of the server's own fields (r2Key). Without a blob store (local
+  // fakes) there is nothing to sign with.
+  const signedOne = (s: Scope, asset: Asset) => assetResponse(deps.blob, s, asset);
+  const signedPage = <P extends { items: Asset[] }>(s: Scope, page: P) =>
+    assetPageResponse(deps.blob, s, page);
   server.registerTool(
     'assets_list',
     {
@@ -3443,6 +3812,61 @@ export function buildServer(
         ...page,
         items: await Promise.all(page.items.map((a) => signedOne(scopeOf(args), a))),
       });
+    },
+  );
+
+  // An asset's rights refusing it (an embargo not yet lifted, rights expired) as REST's 409 body:
+  // the code and the instant that decides it, which a thrown error's message alone would drop.
+  const rightsRefusal = async (run: () => Promise<ReturnType<typeof ok>>) => {
+    try {
+      return await run();
+    } catch (err) {
+      if (!(err instanceof AssetRightsError)) throw err;
+      return { ...ok(toHttpError(err).body), isError: true };
+    }
+  };
+
+  server.registerTool(
+    'asset_get',
+    {
+      description:
+        'Get one asset as it stands (its draft): file (url a short-lived signed read URL; a ' +
+        'hosted video’s playback URLs in file.video), title, description, metadata, rights, ' +
+        'version, status and ingest state.',
+      inputSchema: toolSchema('asset_get', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await signedOne(scopeOf(args), await getAsset(ctx, scopeOf(args), args.id)));
+    },
+  );
+
+  server.registerTool(
+    'asset_publish',
+    {
+      description:
+        'Publish one asset: Delivery serves its current file and metadata from then on. Refused ' +
+        'before its embargo lifts (asset_embargoed, with embargoUntil) and after its rights ' +
+        'expired (asset_expired, with expiresAt), as REST refuses them; an archived asset too.',
+      inputSchema: toolSchema('asset_publish', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      return rightsRefusal(async () =>
+        ok(await signedOne(scopeOf(args), await publishAsset(ctx, scopeOf(args), args.id))),
+      );
+    },
+  );
+
+  server.registerTool(
+    'asset_unpublish',
+    {
+      description: 'Take one asset out of Delivery; it stays a draft. Refused when not published.',
+      inputSchema: toolSchema('asset_unpublish', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      return ok(await signedOne(scopeOf(args), await unpublishAsset(ctx, scopeOf(args), args.id)));
     },
   );
 
@@ -4037,6 +4461,29 @@ export function buildServer(
   );
 
   server.registerTool(
+    'asset_create',
+    {
+      description:
+        'Create a draft asset and get a signed PUT for its bytes (up to 100 MiB; past that, ' +
+        'asset_upload_start): PUT the file to upload.url with upload.headers, then ' +
+        'asset_publish. The URL is a short-lived capability for that one key; nothing is ' +
+        'uploaded through MCP itself.',
+      inputSchema: toolSchema('asset_create', () =>
+        z.object({ ...createAssetBody.shape, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const { space: _space, environment: _environment, folderId, ...input } = args;
+      const created = await createAsset(ctx, uploadBlob(), scopeOf(args), input, {
+        createdBy: collectionAuthor,
+        ...(folderId ? { folderId } : {}),
+      });
+      return ok({ ...created, asset: await signedOne(scopeOf(args), created.asset) });
+    },
+  );
+
+  server.registerTool(
     'asset_upload_start',
     {
       description:
@@ -4114,17 +4561,16 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(
-        await completeMultipartAssetUpload(
-          ctx,
-          { blob: uploadBlob(), ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
-          scopeOf(args),
-          args.id,
-          args.uploadId,
-          args.parts,
-          { by: auditActor(principal) },
-        ),
+      const asset = await completeMultipartAssetUpload(
+        ctx,
+        { blob: uploadBlob(), ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
+        scopeOf(args),
+        args.id,
+        args.uploadId,
+        args.parts,
+        { by: auditActor(principal) },
       );
+      return ok(await signedOne(scopeOf(args), asset));
     },
   );
 
@@ -4309,12 +4755,15 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await setAssetMetadata(ctx, scopeOf(args), args.id, {
-          altText: args.altText,
-          tags: args.tags,
-          focalPoint: args.focalPoint,
-          fields: args.fields,
-        }),
+        await signedOne(
+          scopeOf(args),
+          await setAssetMetadata(ctx, scopeOf(args), args.id, {
+            altText: args.altText,
+            tags: args.tags,
+            focalPoint: args.focalPoint,
+            fields: args.fields,
+          }),
+        ),
       );
     },
   );
@@ -4440,12 +4889,9 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
       return ok({
-        items: await listAssetVersions(
-          ctx,
-          scopeOf(args),
-          args.id,
-          deps.blob ? { blob: deps.blob } : {},
-        ),
+        items: (
+          await listAssetVersions(ctx, scopeOf(args), args.id, deps.blob ? { blob: deps.blob } : {})
+        ).map(assetVersionResponse),
       });
     },
   );
@@ -4501,8 +4947,10 @@ export function buildServer(
         ...(args.expiresAt !== undefined ? { expiresAt: args.expiresAt } : {}),
         ...(args.embargoUntil !== undefined ? { embargoUntil: args.embargoUntil } : {}),
       };
-      return ok(
-        await signedOne(scopeOf(args), await setAssetRights(ctx, scopeOf(args), args.id, rights)),
+      return rightsRefusal(async () =>
+        ok(
+          await signedOne(scopeOf(args), await setAssetRights(ctx, scopeOf(args), args.id, rights)),
+        ),
       );
     },
   );
@@ -4622,8 +5070,9 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      if (!deps.blob) throw new NotConfiguredError('blob', 'Transform URLs need a blob store');
       return ok(
-        await transformAssetUrl(ctx, scopeOf(args), args.id, {
+        await transformAssetUrl(ctx, deps.blob, scopeOf(args), args.id, {
           width: args.width,
           height: args.height,
           fit: args.fit,
@@ -4653,14 +5102,13 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(
-        await createVideoAsset(ctx, scopeOf(args), {
-          fileName: args.fileName,
-          contentType: args.contentType,
-          title: args.title,
-          maxDurationSeconds: args.maxDurationSeconds,
-        }),
-      );
+      const created = await createVideoAsset(ctx, scopeOf(args), {
+        fileName: args.fileName,
+        contentType: args.contentType,
+        title: args.title,
+        maxDurationSeconds: args.maxDurationSeconds,
+      });
+      return ok({ ...created, asset: await signedOne(scopeOf(args), created.asset) });
     },
   );
 
@@ -4675,7 +5123,9 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(await refreshVideoAsset(ctx, scopeOf(args), args.id));
+      return ok(
+        await signedOne(scopeOf(args), await refreshVideoAsset(ctx, scopeOf(args), args.id)),
+      );
     },
   );
 

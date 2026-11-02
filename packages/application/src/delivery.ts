@@ -25,6 +25,7 @@ import {
 } from './context';
 import { type DeliveryReads, deliveryReads } from './delivery-reads';
 import { cacheTag, contentTypeTag, epochTag } from './events/dispatch';
+import { hasSlugFilters, resolveSlugFilters, slugFilterSlugs } from './taxonomy-delivery';
 
 export interface RenderOptions {
   /** When set, fields are flattened to this locale with fallback. */
@@ -368,11 +369,22 @@ function isCacheableListQuery(query: EntryQuery): boolean {
 export async function listPublishedEntries(
   ctx: AppContext,
   scope: Scope,
-  query: EntryQuery = {},
+  requested: EntryQuery = {},
   opts: RenderOptions = {},
 ): Promise<DeliveredEntry[]> {
   const reads = opts.reads ?? deliveryReads(ctx);
-  const config = spaceConfig(scope, (await reads.read(scope, { config: true })).config);
+  // A filter on a term's slug reads the terms it names alongside the config (same round trip),
+  // and becomes a filter on their ids before anything else (the list cache key included) sees it.
+  const slugs = hasSlugFilters(requested) ? slugFilterSlugs(requested) : null;
+  const first = await reads.read(scope, {
+    config: true,
+    ...(slugs?.tags.length ? { tags: { slugs: slugs.tags } } : {}),
+    ...(slugs?.concepts.length ? { concepts: { slugs: slugs.concepts } } : {}),
+  });
+  const config = spaceConfig(scope, first.config);
+  const query = slugs
+    ? resolveSlugFilters(requested, { tags: first.tags ?? [], concepts: first.concepts ?? [] })
+    : requested;
   // Filtering/ordering/search compare against a single resolved locale; default
   // to the requested locale, then the space default.
   const locale = query.locale ?? opts.locale ?? config.defaultLocale;

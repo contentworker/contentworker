@@ -1,5 +1,4 @@
-import type { Concept } from '@contentworker/domain';
-import { Badge } from '@contentworker/ui/badge';
+import type { Concept, Tag } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@contentworker/ui/card';
 import { Input } from '@contentworker/ui/input';
@@ -11,24 +10,61 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
+import {
+  Table,
+  TableBody,
+  Td as TableCell,
+  Th as TableHead,
+  TableHead as TableHeader,
+  Tr as TableRow,
+} from '@contentworker/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
-import { Hash, Tags, Trash2 } from 'lucide-react';
+import { Hash, Pencil, Tags, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmButton, InlineConfirm } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader } from '~/cms/components/page';
+import { type EditableTerm, type TermChanges, TermEditor } from '~/cms/components/TermEditor';
 import { useClient } from '../lib/client-context';
-import { useInvalidate, useScopedQuery } from '../lib/queries';
+import type { WithUsage } from '../lib/management';
+import { useInvalidate, useScopedQuery, useSpaceConfigQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
 const NONE = '__none__';
 
-/** Taxonomy admin: concept schemes + hierarchical concepts, and flat tags (P14). */
+/** The space's locales, for the localized labels; the connection's alone until config loads. */
+function useLocales(): { locales: readonly string[]; defaultLocale: string } {
+  const config = useSpaceConfigQuery().data;
+  return config
+    ? { locales: config.locales, defaultLocale: config.defaultLocale }
+    : { locales: [], defaultLocale: '' };
+}
+
+/** "3 published", the figure an archive page shows; the sheet names the content types. */
+const publishedCount = (n: number) => `${n} published`;
+
+const tagTerm = (t: WithUsage<Tag>): EditableTerm => ({
+  label: t.name,
+  slug: t.slug,
+  description: t.description,
+  labels: t.labels,
+  usage: t.usage,
+});
+
+const conceptTerm = (c: WithUsage<Concept>): EditableTerm => ({
+  label: c.prefLabel,
+  slug: c.slug,
+  description: c.description,
+  labels: c.labels,
+  usage: c.usage,
+});
+
+/** Taxonomy admin: concept schemes + hierarchical concepts, and flat tags. */
 export function Taxonomy() {
   return (
     <div className="space-y-4">
       <PageHeader
         title="Taxonomy"
-        subtitle="Controlled vocabulary: hierarchical concept schemes and flat tags."
+        subtitle="Controlled vocabulary: hierarchical concept schemes and flat tags, each with the slug its archive page uses and how many published entries carry it."
       />
       <Tabs defaultValue="concepts">
         <TabsList>
@@ -61,13 +97,13 @@ function narrowerNote(concepts: readonly Concept[], id: string): string {
 }
 
 /** Orders concepts as a depth-first tree and annotates each with its depth. */
-function asTree(concepts: Concept[]): { concept: Concept; depth: number }[] {
-  const byParent = new Map<string | null, Concept[]>();
+function asTree<C extends Concept>(concepts: C[]): { concept: C; depth: number }[] {
+  const byParent = new Map<string | null, C[]>();
   for (const c of concepts) {
     const key = c.broaderId ?? null;
     byParent.set(key, [...(byParent.get(key) ?? []), c]);
   }
-  const out: { concept: Concept; depth: number }[] = [];
+  const out: { concept: C; depth: number }[] = [];
   const walk = (parent: string | null, depth: number) => {
     for (const c of byParent.get(parent) ?? []) {
       out.push({ concept: c, depth });
@@ -88,6 +124,9 @@ function ConceptsTab() {
   const [broaderId, setBroaderId] = useState<string>(NONE);
   // The scheme or concept whose delete is awaiting an inline "are you sure?".
   const [confirming, setConfirming] = useState<string | null>(null);
+  // The concept open in the editor sheet.
+  const [editing, setEditing] = useState<string | null>(null);
+  const { locales, defaultLocale } = useLocales();
 
   const schemes = useScopedQuery(['schemes'], () => client.listSchemes()).data ?? [];
   // Default to the first scheme until the user picks one explicitly. The pick
@@ -131,6 +170,15 @@ function ConceptsTab() {
       });
       setLabel('');
       setBroaderId(NONE);
+      await invalidate(['concepts', schemeId]);
+    });
+
+  const saveConcept = (id: string, changes: TermChanges) =>
+    run(async () => {
+      const { label: prefLabel, ...fields } = changes;
+      await client.updateConcept(id, { ...(prefLabel ? { prefLabel } : {}), ...fields });
+      toast.success('Concept saved');
+      setEditing(null);
       await invalidate(['concepts', schemeId]);
     });
 
@@ -273,10 +321,28 @@ function ConceptsTab() {
                       className="group flex flex-wrap items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50"
                       style={{ paddingLeft: `${depth * 1.5 + 0.5}rem` }}
                     >
-                      <span className="text-sm">
+                      <span className="min-w-0 flex-1 text-sm">
                         {depth > 0 && <span className="text-muted-foreground">↳ </span>}
-                        {concept.prefLabel}
+                        {concept.prefLabel}{' '}
+                        <span className="font-mono text-muted-foreground text-xs">
+                          {concept.slug}
+                        </span>
                       </span>
+                      <span className="text-muted-foreground text-xs tabular-nums">
+                        {publishedCount(concept.usage.count)}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        id={`concept-edit-${concept.id}`}
+                        aria-label={`Edit “${concept.prefLabel}”`}
+                        onClick={() => setEditing(concept.id)}
+                        disabled={busy}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
                       <Button
                         type="button"
                         variant="ghost"
@@ -321,6 +387,18 @@ function ConceptsTab() {
           )}
         </CardContent>
       </Card>
+      <TermEditor
+        kind="concept"
+        term={(() => {
+          const c = concepts.find((x) => x.id === editing);
+          return c ? conceptTerm(c) : null;
+        })()}
+        locales={locales}
+        defaultLocale={defaultLocale}
+        busy={busy}
+        onSave={(changes) => editing && void saveConcept(editing, changes)}
+        onOpenChange={(open) => !open && setEditing(null)}
+      />
     </div>
   );
 }
@@ -330,6 +408,9 @@ function TagsTab() {
   const toast = useToast();
   const invalidate = useInvalidate();
   const [name, setName] = useState('');
+  // The tag open in the editor sheet.
+  const [editing, setEditing] = useState<string | null>(null);
+  const { locales, defaultLocale } = useLocales();
 
   const tags = useScopedQuery(['tags'], () => client.listTags()).data ?? [];
 
@@ -340,12 +421,23 @@ function TagsTab() {
       await invalidate(['tags']);
     });
 
+  const save = (id: string, changes: TermChanges) =>
+    run(async () => {
+      const { label, ...fields } = changes;
+      await client.updateTag(id, { ...(label ? { name: label } : {}), ...fields });
+      toast.success('Tag saved');
+      setEditing(null);
+      await invalidate(['tags']);
+    });
+
   const remove = (id: string) =>
     run(async () => {
       await client.deleteTag(id);
       toast.success('Tag deleted');
       await invalidate(['tags']);
     });
+
+  const open = tags.find((t) => t.id === editing);
 
   return (
     <Card>
@@ -354,7 +446,12 @@ function TagsTab() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex gap-2 sm:max-w-sm">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="New tag" />
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New tag"
+            aria-label="New tag"
+          />
           <Button type="button" disabled={!name.trim() || busy} onClick={add}>
             Add tag
           </Button>
@@ -362,35 +459,87 @@ function TagsTab() {
         {tags.length === 0 ? (
           <EmptyState icon={Tags} title="No tags yet" description="Add a tag to label entries." />
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {tags.map((t) => (
-              <ConfirmButton
-                key={t.id}
-                message={`Delete the tag “${t.name}”?`}
-                note="This can’t be undone."
-                confirmLabel="Delete tag"
-                busy={busy}
-                onConfirm={() => void remove(t.id)}
-              >
-                {(ask) => (
-                  <Badge variant="secondary" className="gap-1.5 py-1">
-                    {t.name}
-                    <button
-                      type="button"
-                      aria-label={`Delete ${t.name}`}
-                      onClick={ask}
-                      disabled={busy}
-                      className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
-                  </Badge>
-                )}
-              </ConfirmButton>
-            ))}
-          </div>
+          <Table stack="cards" caption="Tags">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Tag</TableHead>
+                <TableHead>Slug</TableHead>
+                <TableHead numeric>Published</TableHead>
+                <TableHead className="w-24">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {[...tags]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell>
+                      <span className="font-medium">{t.name}</span>
+                      {t.description ? (
+                        <div className="max-w-measure text-muted-foreground text-xs">
+                          {t.description}
+                        </div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell label="Slug" className="font-mono text-xs">
+                      {t.slug}
+                    </TableCell>
+                    <TableCell label="Published entries" numeric>
+                      {t.usage.count}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-7"
+                          aria-label={`Edit “${t.name}”`}
+                          onClick={() => setEditing(t.id)}
+                          disabled={busy}
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                        <ConfirmButton
+                          message={`Delete the tag “${t.name}”?`}
+                          note="This can’t be undone."
+                          confirmLabel="Delete tag"
+                          busy={busy}
+                          onConfirm={() => void remove(t.id)}
+                        >
+                          {(ask) => (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-7"
+                              aria-label={`Delete ${t.name}`}
+                              onClick={ask}
+                              disabled={busy}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          )}
+                        </ConfirmButton>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
         )}
       </CardContent>
+      <TermEditor
+        kind="tag"
+        term={open ? tagTerm(open) : null}
+        locales={locales}
+        defaultLocale={defaultLocale}
+        busy={busy}
+        onSave={(changes) => editing && void save(editing, changes)}
+        onOpenChange={(o) => !o && setEditing(null)}
+      />
     </Card>
   );
 }

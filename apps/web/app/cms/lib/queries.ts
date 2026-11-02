@@ -1,4 +1,9 @@
-import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useClient } from './client-context';
 import type { EntryListQuery } from './management';
@@ -21,6 +26,9 @@ export function useQueryKeys() {
       entriesRoot: [...scope, 'entries'] as const,
       entries: (typeId: string | undefined, query: EntryListQuery) =>
         [...scope, 'entries', typeId ?? 'all', query] as const,
+      /** A type's entries list, a page at a time (`useEntryPagesQuery`). */
+      entryPages: (typeId: string | undefined, query: EntryListQuery) =>
+        [...scope, 'entries', typeId ?? 'all', query, 'pages'] as const,
       /** Prefix for every entry detail — status/version change on publish, so
        * mutations must invalidate this alongside `entriesRoot`. */
       entryRoot: [...scope, 'entry'] as const,
@@ -99,16 +107,22 @@ export function useSpaceConfigQuery() {
   });
 }
 
-export function useEntriesQuery(typeId: string | undefined, query: EntryListQuery) {
+/**
+ * A type's entries, read a page at a time and walked on with each page's cursor: `fetchNextPage`
+ * appends the next. A refetch (after an edit) reads every page shown again, from the first.
+ */
+export function useEntryPagesQuery(typeId: string | undefined, query: EntryListQuery) {
   const { client } = useClient();
   const keys = useQueryKeys();
-  return useQuery({
-    queryKey: keys.entries(typeId, query),
-    queryFn: () => client.listEntries(typeId, query),
+  return useInfiniteQuery({
+    queryKey: keys.entryPages(typeId, query),
+    queryFn: ({ pageParam }) => client.listEntryPage(typeId, query, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor,
     enabled: !!typeId,
-    // Keep the previous page visible while a filter change refetches — but only
-    // within the same content type; another type's rows must never be shown
-    // (or mutated) under this type's header. Index 3 is the key's typeId slot.
+    // Keep the previous list visible while a filter change refetches — but only within the same
+    // content type; another type's rows must never be shown (or mutated) under this type's
+    // header. Index 3 is the key's typeId slot.
     placeholderData: (prev, prevQuery) =>
       prevQuery?.queryKey[3] === (typeId ?? 'all') ? prev : undefined,
   });

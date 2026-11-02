@@ -19,6 +19,7 @@ export type DomainEvent =
   | AssetExpiredEvent
   | AssetRenditionsChangedEvent
   | AssetCollectionChangedEvent
+  | TaxonomyChangedEvent
   | AssetShareLinkChangedEvent
   | AssetZipRequestedEvent
   | SearchReindexRequestedEvent
@@ -33,7 +34,8 @@ export type DomainEvent =
   | PromotionAwaitingApprovalEvent
   | EnvironmentPromotedEvent
   | EnvironmentPurgeDueEvent
-  | InviteEmailDueEvent;
+  | InviteEmailDueEvent
+  | RedirectsChangedEvent;
 
 export interface BaseEvent {
   readonly id: string;
@@ -156,6 +158,27 @@ export interface AssetRenditionsChangedEvent extends BaseEvent {
 export interface AssetCollectionChangedEvent extends BaseEvent {
   readonly type: 'asset_collection.changed';
   readonly collectionId: string;
+}
+
+/**
+ * A tag or concept was created, changed (label, slug, description, localized labels, parent) or
+ * deleted. Delivery's taxonomy reads are stale.
+ */
+export interface TaxonomyChangedEvent extends BaseEvent {
+  readonly type: 'taxonomy.changed';
+  readonly termKind: 'tag' | 'concept';
+  readonly termId: string;
+}
+
+/**
+ * An environment's redirects changed (written, deleted, imported or straightened). What Delivery
+ * serves for them (`GET …/redirects`, `…/redirects/resolve`) is stale. A publish whose slug change
+ * writes redirects does not announce this: its `entry.published` purges the same responses.
+ */
+export interface RedirectsChangedEvent extends BaseEvent {
+  readonly type: 'redirects.changed';
+  /** How many redirects the change wrote or removed. */
+  readonly count: number;
 }
 
 /**

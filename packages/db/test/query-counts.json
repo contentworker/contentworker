@@ -17,9 +17,17 @@
   "delivery: GET /assets/:id": { "statements": 2, "roundTrips": 1 },
   "delivery: GET /assets/:id?locale=de": { "statements": 3, "roundTrips": 1 },
   "delivery: GET /assets": { "statements": 2, "roundTrips": 1 },
+  "delivery: GET /taxonomy/tags": { "statements": 3, "roundTrips": 1 },
+  "delivery: GET /taxonomy/tags/:slug?locale=de": { "statements": 3, "roundTrips": 1 },
+  "delivery: GET /taxonomy/concepts": { "statements": 3, "roundTrips": 1 },
+  "delivery: GET /entries?metadata.tags.slug=red": { "statements": 3, "roundTrips": 2 },
+  "delivery: GET /redirects": { "statements": 1, "roundTrips": 1 },
+  "delivery: GET /redirects/resolve": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries/:id": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries?content_type=article": { "statements": 2, "roundTrips": 2 },
+  "preview: GET /entries?content_type=article (page)": { "statements": 2, "roundTrips": 2 },
+  "preview: GET /entries?content_type=article&cursor": { "statements": 2, "roundTrips": 2 },
   "management: POST /entries": { "statements": 4, "roundTrips": 3 },
   "management: POST /entries (blocks)": { "statements": 4, "roundTrips": 3 },
-  "management: POST /entries/:id/published": { "statements": 10, "roundTrips": 6 }
+  "management: POST /entries/:id/published": { "statements": 12, "roundTrips": 6 }
 }

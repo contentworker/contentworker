@@ -1,20 +1,31 @@
 import {
   type AppContext,
   createAsset,
+  createConcept,
   createContentType,
   createEntry,
+  createRedirect,
+  createScheme,
   createSpace,
+  createTag,
   deliveryGraphResolvers,
   deliveryReads,
   getDeliveredAsset,
+  getDeliveredTag,
   getEntry,
   getPublishedEntry,
   listDeliveredAssets,
+  listDeliveredConcepts,
+  listDeliveredRedirects,
+  listDeliveredTags,
   listPreviewEntries,
+  listPreviewEntryPage,
   listPublishedEntries,
   publishAsset,
   publishContentType,
   publishEntry,
+  resolveDeliveredRedirect,
+  setEntryMetadata,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import { buildDeliverySchema, type DeliveryContext } from '@contentworker/graphql-gen';
@@ -63,6 +74,8 @@ const MANY_LINKS = 120;
 
 let counter: CountingD1;
 let ctx: AppContext;
+/** A second page's cursor into the article list, read before the counts are taken. */
+let entryCursor = '';
 const blob = new FakeBlobStore();
 const ids = {
   heroAsset: '',
@@ -72,6 +85,8 @@ const ids = {
   landing: '',
   /** Left a draft, so the publish request has one to publish. */
   draft: '',
+  tag: '',
+  concept: '',
 };
 
 /** One model with every kind of link Delivery resolves: Link, Array of Link, rich text. */
@@ -183,6 +198,11 @@ async function seed(): Promise<void> {
     ids.authors.push(entry.id);
   }
 
+  // A tag and a concept on every other article, so the taxonomy reads have counts to sum.
+  ids.tag = (await createTag(ctx, scope, { name: 'Red', labels: { de: 'Rot' } })).id;
+  const scheme = await createScheme(ctx, scope, { name: 'Topics' });
+  ids.concept = (await createConcept(ctx, scope, { schemeId: scheme.id, prefLabel: 'Guides' })).id;
+
   // Each article links an author, the hero, the two articles before it, and embeds its author
   // in the body: include=2 walks article → article → author.
   for (let i = 0; i < 12; i++) {
@@ -211,6 +231,9 @@ async function seed(): Promise<void> {
         },
       },
     });
+    if (i % 2 === 0) {
+      await setEntryMetadata(ctx, scope, entry.id, { tags: [ids.tag], concepts: [ids.concept] });
+    }
     await publishEntry(ctx, scope, entry.id);
     ids.articles.push(entry.id);
   }
@@ -346,10 +369,44 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     () => getDeliveredAsset(ctx, scope, ids.heroAsset, { locale: 'de' }),
   ],
   ['delivery: GET /assets', () => listDeliveredAssets(ctx, scope)],
+  ['delivery: GET /taxonomy/tags', () => listDeliveredTags(ctx, scope)],
+  [
+    'delivery: GET /taxonomy/tags/:slug?locale=de',
+    () => getDeliveredTag(ctx, scope, 'red', { locale: 'de' }),
+  ],
+  ['delivery: GET /taxonomy/concepts', () => listDeliveredConcepts(ctx, scope)],
+  [
+    'delivery: GET /entries?metadata.tags.slug=red',
+    () =>
+      listPublishedEntries(ctx, scope, {
+        contentTypeApiId: 'article',
+        filters: [{ field: 'metadata.tags.slug', op: 'eq', value: 'red' }],
+      }),
+  ],
+  ['delivery: GET /redirects', () => listDeliveredRedirects(ctx, scope)],
+  [
+    'delivery: GET /redirects/resolve',
+    () => resolveDeliveredRedirect(ctx, scope, '/blog/old-3?ref=x'),
+  ],
   ['management: GET /entries/:id', () => getEntry(ctx, scope, article(5))],
   [
     'management: GET /entries?content_type=article',
     () => listPreviewEntries(ctx, scope, { contentTypeApiId: 'article' }),
+  ],
+  // The admin's entries list: a page, then the next one from its cursor. The same reads as the
+  // plain list: the cursor is a WHERE on (updated_at, id), and the extra row is in the same read.
+  [
+    'preview: GET /entries?content_type=article (page)',
+    () => listPreviewEntryPage(ctx, scope, { contentTypeApiId: 'article', limit: 2 }),
+  ],
+  [
+    'preview: GET /entries?content_type=article&cursor',
+    () =>
+      listPreviewEntryPage(ctx, scope, {
+        contentTypeApiId: 'article',
+        limit: 2,
+        cursor: entryCursor,
+      }),
   ],
   [
     'management: POST /entries',
@@ -432,6 +489,14 @@ describe('D1 query counts', () => {
       },
     });
     ids.draft = entry.id;
+    entryCursor =
+      (await listPreviewEntryPage(ctx, scope, { contentTypeApiId: 'article', limit: 2 }))
+        .nextCursor ?? '';
+    // A set with exact sources and a pattern, so a resolve walks both.
+    for (let i = 0; i < 5; i++) {
+      await createRedirect(ctx, scope, { source: `/old/${i}`, destination: `/new/${i}` });
+    }
+    await createRedirect(ctx, scope, { source: '/blog/[slug]', destination: '/posts/[slug]' });
   }, 120_000);
 
   it('counts a lone statement as one round trip and a batch as one round trip', async () => {

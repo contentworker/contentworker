@@ -20,6 +20,7 @@ import type {
   DomainEvent,
   Entry,
   EntryFields,
+  EntryKeyset,
   EntryMetadata,
   EntryStatus,
   EntryVersion,
@@ -39,6 +40,7 @@ import type {
   PublishGate,
   QueryFilter,
   QueryOrder,
+  Redirect,
   ReferenceEdge,
   Release,
   ReleaseItem,
@@ -49,6 +51,8 @@ import type {
   StoredAssetShareLink,
   Tag,
   Task,
+  TermKind,
+  TermUsage,
   UniqueClaim,
   Webhook,
   WebhookDelivery,
@@ -131,6 +135,7 @@ export interface ContentStore {
   readonly workflowRuns: WorkflowRunRepo;
   readonly workflowTasks: WorkflowTaskRepo;
   readonly taxonomy: TaxonomyRepo;
+  readonly redirects: RedirectRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
   readonly functions: FunctionRepo;
@@ -230,16 +235,48 @@ export interface TaxonomyRepo {
   getScheme(scope: Scope, id: string): Promise<ConceptScheme | null>;
   deleteScheme(scope: Scope, id: string): Promise<void>;
   // Concepts (hierarchical terms within a scheme).
+  /**
+   * Creates or replaces a concept. A slug another concept of the scheme holds is refused with
+   * `ConflictError` (at commit, inside a unit of work).
+   */
   createConcept(scope: Scope, concept: Concept): Promise<void>;
   getConcept(scope: Scope, id: string): Promise<Concept | null>;
   /** All concepts, or just those in `schemeId` when given. */
   listConcepts(scope: Scope, schemeId?: string): Promise<Concept[]>;
+  /** The concepts holding any of `slugs` (in `schemeId`, or in any scheme). */
+  findConceptsBySlug(scope: Scope, slugs: readonly string[], schemeId?: string): Promise<Concept[]>;
+  /** Deletes a concept and its usage counts. */
   deleteConcept(scope: Scope, id: string): Promise<void>;
   // Tags (flat labels).
+  /** Creates or replaces a tag. A slug another tag holds is refused with `ConflictError`. */
   createTag(scope: Scope, tag: Tag): Promise<void>;
   getTag(scope: Scope, id: string): Promise<Tag | null>;
   listTags(scope: Scope): Promise<Tag[]>;
+  /** The tags holding any of `slugs`. */
+  findTagsBySlug(scope: Scope, slugs: readonly string[]): Promise<Tag[]>;
+  /** Deletes a tag and its usage counts. */
   deleteTag(scope: Scope, id: string): Promise<void>;
+  /**
+   * The slugs in a namespace (the environment's tags, or one scheme's concepts) that are `base`
+   * or `base-<anything>`: what a generated slug must step around.
+   */
+  slugsLike(
+    scope: Scope,
+    namespace: { readonly kind: 'tag' } | { readonly kind: 'concept'; readonly schemeId: string },
+    base: string,
+  ): Promise<string[]>;
+  // Published usage counts.
+  /**
+   * How many published entries carry each term, per content type (rows above zero only). The
+   * store keeps these as it writes published snapshots (`entries.putPublishedMany`,
+   * `removePublishedMany`), in the same unit of work, so a read never computes them.
+   */
+  listUsage(
+    scope: Scope,
+    query: { readonly kind: TermKind; readonly termIds?: readonly string[] },
+  ): Promise<TermUsage[]>;
+  /** Rebuilds the scope's usage counts from its published snapshots (the repair sweep). */
+  recountUsage(scope: Scope): Promise<void>;
   // Per-entry associations.
   getEntryMetadata(scope: Scope, entryId: string): Promise<EntryMetadata | null>;
   /** Batch read of entry associations; entries without metadata are absent. */
@@ -248,6 +285,51 @@ export interface TaxonomyRepo {
     entryIds: readonly string[],
   ): Promise<{ entryId: string; metadata: EntryMetadata }[]>;
   setEntryMetadata(scope: Scope, entryId: string, metadata: EntryMetadata): Promise<void>;
+}
+
+/** A page of an environment's redirects, by source. */
+export interface RedirectPage {
+  readonly items: Redirect[];
+  readonly nextCursor?: string;
+}
+
+export interface RedirectQuery {
+  /** Matches the source, destination or note (case-insensitive substring). */
+  readonly q?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** Where an environment's redirect set stands: what a write checks it still holds at commit. */
+export interface RedirectSetState {
+  /** Bumped by every write to the set; 0 before the first. */
+  readonly revision: number;
+  readonly count: number;
+}
+
+/**
+ * An environment's redirects. Every write to the set rides with {@link RedirectRepo.advance} in
+ * one unit, so two writers that each checked the set (for loops, the cap) can't both commit: the
+ * second fails at commit with `TransactionConflictError` and checks again.
+ */
+export interface RedirectRepo {
+  get(scope: Scope, id: string): Promise<Redirect | null>;
+  /** The whole set (at most `MAX_REDIRECTS`), by source then id; `enabledOnly` for Delivery. */
+  all(scope: Scope, opts?: { readonly enabledOnly?: boolean }): Promise<Redirect[]>;
+  list(scope: Scope, query?: RedirectQuery): Promise<RedirectPage>;
+  /** Redirects whose source or destination is one of `paths` (a slug change's two paths). */
+  involving(scope: Scope, paths: readonly string[]): Promise<Redirect[]>;
+  state(scope: Scope): Promise<RedirectSetState>;
+  /** Inserts or replaces each by id. A source held by another redirect is a `ConflictError`. */
+  saveMany(scope: Scope, redirects: readonly Redirect[]): Promise<void>;
+  removeMany(scope: Scope, ids: readonly string[]): Promise<void>;
+  /**
+   * Moves the set from revision `expected` to the next. Inside a unit a set written since
+   * `expected` was read fails the commit (`TransactionConflictError`); outside one it throws.
+   * Without `expected` it moves on unconditionally: a publish's slug change, which must not fail
+   * over a concurrent edit to the set, still makes that edit check the set again.
+   */
+  advance(scope: Scope, expected?: number): Promise<void>;
 }
 
 export interface CommentRepo {
@@ -1178,6 +1260,8 @@ export interface ContentStoreTx {
   readonly references: ReferenceRepo;
   readonly releases: ReleaseRepo;
   readonly taxonomy: TaxonomyRepo;
+  /** A publish's slug change writes redirects with the publish. */
+  readonly redirects: RedirectRepo;
   readonly bulkJobs: BulkJobRepo;
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;
@@ -1371,6 +1455,16 @@ export interface DeliveryReadRequest {
   readonly assetIds?: readonly string[];
   /** A page of published assets. */
   readonly assetPage?: PublishedAssetQuery;
+  /** The scope's tags; with `slugs`, only those holding one. */
+  readonly tags?: { readonly slugs?: readonly string[] };
+  /** The scope's concepts, narrowed to a scheme and/or to the ones holding one of `slugs`. */
+  readonly concepts?: { readonly schemeId?: string; readonly slugs?: readonly string[] };
+  /** Published usage counts of one kind of term, narrowed as `tags` / `concepts` are. */
+  readonly termUsage?: {
+    readonly kind: TermKind;
+    readonly schemeId?: string;
+    readonly slugs?: readonly string[];
+  };
 }
 
 /**
@@ -1389,6 +1483,9 @@ export interface DeliveryReadResult {
   /** Missing ids are absent, order unspecified. */
   readonly assets?: PublishedAsset[];
   readonly assetPage?: PublishedAssetPage;
+  readonly tags?: Tag[];
+  readonly concepts?: Concept[];
+  readonly termUsage?: TermUsage[];
 }
 
 /** Delivery's reads, batched. Read-only: it never writes, so it is safe on a replica session. */
@@ -1494,6 +1591,8 @@ export interface ArchivableVersion {
 export interface EntryWithFields {
   readonly entry: Entry;
   readonly fields: EntryFields;
+  /** When the entry last changed (ISO-8601), as the store stamps it. Set by `list`. */
+  readonly updatedAt?: string;
 }
 
 /** How many entries of one content type are in one status (a row of {@link EntryRepo.countByStatus}). */
@@ -1546,6 +1645,13 @@ export interface EntryQuery {
    * schedules' delta windows).
    */
   readonly after?: { readonly publishedAt: string; readonly entryId: string };
+  /**
+   * Keyset cursor in the list's own order (`order`, or `sys.updatedAt` ascending without one),
+   * ties broken by entry id: only entries strictly after this row. `'start'` reads the first
+   * page in that same total order. Honoured by `list` (the draft path), where `sys.updatedAt`
+   * is the entry's `updatedAt`; build it with `entryKeysetOf`.
+   */
+  readonly afterRow?: EntryKeyset | 'start';
   /** Field-level predicates (all must match). `field` is a field apiId or `sys.*`. */
   readonly filters?: readonly QueryFilter[];
   /** Sort keys, applied in order. */

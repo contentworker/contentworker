@@ -3,6 +3,7 @@ import {
   type AssetCollection,
   type AssetFolder,
   AssetRightsError,
+  analyzeRedirects,
   applyDefaults,
   assetCollectionDescription,
   assetCollectionName,
@@ -11,13 +12,18 @@ import {
   type Concept,
   type ConceptScheme,
   type ContentType,
+  checkRedirect,
   type EntryFields,
   type EntryMetadata,
   extractReferences,
   type FieldIssue,
   MAX_ASSET_FOLDER_DEPTH,
   MAX_COLLECTION_ITEMS,
+  MAX_REDIRECTS,
   NotFoundError,
+  type Redirect,
+  redirectKey,
+  redirectSetError,
   type Scope,
   type Tag,
   ValidationError,
@@ -99,6 +105,8 @@ export interface EnvironmentSnapshot {
    * already holds.
    */
   readonly assetCollections?: readonly SnapshotCollection[];
+  /** The environment's redirects. Absent in snapshots written before redirects. */
+  readonly redirects?: readonly Redirect[];
   readonly taxonomy: {
     readonly schemes: readonly ConceptScheme[];
     readonly concepts: readonly Concept[];
@@ -191,6 +199,7 @@ export async function exportSnapshot(
     assets: await allAssets(ctx, scope),
     assetFolders: await ctx.store.assetFolders.list(scope),
     assetCollections: await exportCollections(ctx, scope),
+    redirects: await ctx.store.redirects.all(scope),
     taxonomy: {
       schemes: await ctx.store.taxonomy.listSchemes(scope),
       concepts: await ctx.store.taxonomy.listConcepts(scope),
@@ -501,6 +510,7 @@ export async function writeSnapshotModel(
       name: ct.name,
       displayField: ct.displayField,
       fields: [...ct.fields],
+      ...(ct.urlPattern ? { urlPattern: ct.urlPattern } : {}),
     });
     if (ct.status === 'published') await publishContentType(ctx, target, ct.apiId);
   }
@@ -511,21 +521,49 @@ export async function writeSnapshotModel(
   // the target already holds.
   await writeSnapshotCollections(ctx, target, snapshot);
 
+  await writeSnapshotRedirects(ctx, target, snapshot.redirects ?? []);
+
   // Taxonomy before entries, so entry metadata has something to point at.
   const taxonomyIds = new Map<string, string>();
   for (const scheme of snapshot.taxonomy.schemes) {
     const created = await createScheme(ctx, target, { name: scheme.name });
     taxonomyIds.set(scheme.id, created.id);
   }
+  // Slugs, descriptions and localized labels come along. A snapshot made before terms had them
+  // (or a slug the target already uses) gets one made like a new term's; labels in a locale the
+  // target space doesn't have are left behind rather than failing the import.
+  const locales = new Set((await ctx.store.spaces.getConfig(target))?.locales ?? []);
+  const termFields = (term: Partial<Pick<Tag, 'slug' | 'description' | 'labels'>>) => ({
+    ...(term.slug ? { slug: term.slug } : {}),
+    ...(term.description ? { description: term.description } : {}),
+    ...(term.labels
+      ? {
+          labels: Object.fromEntries(
+            Object.entries(term.labels).filter(([locale]) => locales.has(locale)),
+          ),
+        }
+      : {}),
+  });
   for (const concept of snapshot.taxonomy.concepts) {
-    const created = await createConcept(ctx, target, {
-      schemeId: taxonomyIds.get(concept.schemeId) ?? concept.schemeId,
-      prefLabel: concept.prefLabel,
-    });
+    const created = await createConcept(
+      ctx,
+      target,
+      {
+        schemeId: taxonomyIds.get(concept.schemeId) ?? concept.schemeId,
+        prefLabel: concept.prefLabel,
+        ...termFields(concept),
+      },
+      { slugTaken: 'renumber' },
+    );
     taxonomyIds.set(concept.id, created.id);
   }
   for (const tag of snapshot.taxonomy.tags) {
-    const created = await createTag(ctx, target, { name: tag.name });
+    const created = await createTag(
+      ctx,
+      target,
+      { name: tag.name, ...termFields(tag) },
+      { slugTaken: 'renumber' },
+    );
     taxonomyIds.set(tag.id, created.id);
   }
 
@@ -637,6 +675,54 @@ async function writeSnapshotCollections(
         .slice(0, MAX_COLLECTION_ITEMS),
     );
   }
+}
+
+/**
+ * Writes the snapshot's redirects with their ids, in one unit with the set's compare-and-set
+ * (`preflight` has checked each, and the set). A source the target already redirects (a retried
+ * import, or a redirect made there since) keeps the target's.
+ */
+async function writeSnapshotRedirects(
+  ctx: AppContext,
+  target: Scope,
+  redirects: readonly Redirect[],
+): Promise<void> {
+  if (redirects.length === 0) return;
+  const [held, state] = await Promise.all([
+    ctx.store.redirects.all(target),
+    ctx.store.redirects.state(target),
+  ]);
+  const config = await ctx.store.spaces.getConfig(target);
+  const at = ctx.clock.now().toISOString();
+  // Rebuilt from the checked fields: a snapshot is anyone's JSON.
+  const restored = redirects.map((r): Redirect => {
+    const valid = (t: unknown) => typeof t === 'string' && !Number.isNaN(Date.parse(t));
+    return {
+      id: typeof r.id === 'string' && r.id ? r.id : ctx.ids.newId(),
+      ...checkRedirect(r, config?.locales),
+      origin: r.origin === 'slug' || r.origin === 'manual' ? r.origin : 'import',
+      ...(typeof r.entryId === 'string' ? { entryId: r.entryId } : {}),
+      createdAt: valid(r.createdAt) ? new Date(r.createdAt).toISOString() : at,
+      updatedAt: valid(r.updatedAt) ? new Date(r.updatedAt).toISOString() : at,
+    };
+  });
+  const taken = new Set(held.map(redirectKey));
+  const ids = new Set(held.map((r) => r.id));
+  const adding = restored
+    .filter((r) => !taken.has(redirectKey(r)) && !ids.has(r.id))
+    .slice(0, Math.max(0, MAX_REDIRECTS - held.length));
+  if (adding.length === 0) return;
+  await ctx.store.withTransaction(async (tx) => {
+    await tx.redirects.saveMany(target, adding);
+    await tx.redirects.advance(target, state.revision);
+    await tx.outbox.append({
+      id: ctx.ids.newId(),
+      type: 'redirects.changed',
+      scope: target,
+      occurredAt: ctx.clock.now().toISOString(),
+      count: adding.length,
+    });
+  });
 }
 
 /**
@@ -783,6 +869,33 @@ function preflight(
       });
     }
   }
+
+  // Redirects are written with the model too: each must hold today, and the set as a whole.
+  const redirects = snapshot.redirects ?? [];
+  if (redirects.length > MAX_REDIRECTS) {
+    issues.push({ field: 'redirects', message: `At most ${MAX_REDIRECTS} redirects` });
+  }
+  for (const r of redirects) {
+    try {
+      if (typeof r?.source !== 'string' || typeof r.destination !== 'string') {
+        throw new ValidationError([
+          { field: 'source', message: 'a source and a destination are required' },
+        ]);
+      }
+      const fields = checkRedirect(r, vctx.locales);
+      if (fields.source !== r.source) {
+        throw new ValidationError([{ field: 'source', message: `${r.source} is not normalized` }]);
+      }
+    } catch (err) {
+      if (!(err instanceof ValidationError)) throw err;
+      issues.push({
+        field: 'redirects',
+        message: `Redirect ${String(r?.id)}: ${err.issues[0]?.message ?? err.message}`,
+      });
+    }
+  }
+  const setError = redirectSetError(analyzeRedirects(redirects));
+  for (const issue of setError?.issues ?? []) issues.push({ ...issue, field: 'redirects' });
 
   const add = (entryId: string, issue: FieldIssue) =>
     issues.push({ ...issue, message: `Entry ${entryId}: ${issue.message}` });
