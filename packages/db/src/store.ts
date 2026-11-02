@@ -278,6 +278,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
         status: ct.status,
         updatedAt: new Date(),
         urlPattern: ct.urlPattern ?? null,
+        publishedUrlPattern: ct.publishedUrlPattern ?? null,
       };
       await x.write(
         db
@@ -297,6 +298,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
               status: values.status,
               updatedAt: values.updatedAt,
               urlPattern: values.urlPattern,
+              publishedUrlPattern: values.publishedUrlPattern,
             },
           }),
       );
@@ -6497,6 +6499,7 @@ const toContentType = (r: CtRow): ContentType => ({
   displayField: r.displayField,
   fields: r.fields,
   ...(r.urlPattern ? { urlPattern: r.urlPattern } : {}),
+  ...(r.publishedUrlPattern ? { publishedUrlPattern: r.publishedUrlPattern } : {}),
   version: r.version,
   status: r.status,
 });

@@ -530,8 +530,9 @@ export function createDeliveryClient(opts: ClientOptions) {
 
     /**
      * Where each published content type's entries live on the site (its `urlPattern`, e.g.
-     * `/blog/{slug}`), by content type: route pages from the content model instead of
-     * hard-coding them. A key limited to some content types gets only theirs. Delivery only.
+     * `/blog/{slug}`, as last published), by content type: route pages from the content model
+     * instead of hard-coding them. A key limited to some content types gets only theirs.
+     * Delivery only.
      */
     async routes(): Promise<DeliveredRoute[]> {
       return (await get<{ items: DeliveredRoute[] }>('/routes', {})).items;

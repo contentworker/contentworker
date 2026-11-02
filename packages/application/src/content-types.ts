@@ -5,6 +5,7 @@ import {
   defineContentType,
   type EntryFields,
   NotFoundError,
+  publishedContentType,
   removedFields,
   removedFieldUses,
   removedVariants,
@@ -231,7 +232,7 @@ export async function publishContentType(
   return ctx.store.withTransaction(async (tx) => {
     const current = await tx.contentTypes.get(scope, apiId);
     if (!current) throw new NotFoundError('ContentType', apiId);
-    const published: ContentType = { ...current, status: 'published' };
+    const published: ContentType = publishedContentType(current);
     await tx.contentTypes.save(scope, published);
     await tx.outbox.append({
       id: ctx.ids.newId(),

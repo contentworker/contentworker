@@ -32,7 +32,8 @@ of the type's own `Slug` fields; anything else is refused. In the content type d
 `model_create_content_type` (`null` clears it). When a publish changes a slug the pattern names on
 an entry that was already published, contentworker writes a `301` from the old path to the new one;
 see [Redirects](/guides/redirects/#redirect-slug-changes). A revision that removes a slug a kept
-pattern names is refused.
+pattern names is refused. Delivery serves each published type's pattern as a
+[route](/guides/reading-content/#routes); a changed pattern reaches it when you publish the type.
 
 ## Field types
 

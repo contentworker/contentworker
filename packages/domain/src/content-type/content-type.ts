@@ -25,6 +25,12 @@ export interface ContentType {
    * from it too.
    */
   readonly urlPattern?: string;
+  /**
+   * `urlPattern` as it was when the type was last published, absent when it had none then (or was
+   * never published). A revision keeps it, so Delivery's routes stay on the published pattern
+   * while the type has unpublished changes; only a publish moves it.
+   */
+  readonly publishedUrlPattern?: string;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -82,6 +88,16 @@ export function reviseContentType(
     ...(urlPattern ? { urlPattern } : {}),
     version: current.version + 1,
     status: 'draft',
+  };
+}
+
+/** The type as published: its current URL pattern becomes the published one (or none). */
+export function publishedContentType(current: ContentType): ContentType {
+  const { publishedUrlPattern: _old, ...rest } = current;
+  return {
+    ...rest,
+    ...(current.urlPattern ? { publishedUrlPattern: current.urlPattern } : {}),
+    status: 'published',
   };
 }
 

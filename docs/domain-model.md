@@ -340,6 +340,7 @@ interface ContentType {
   displayField: string; // apiId of the field used as the entry's display title
   fields: readonly FieldDefinition[];
   urlPattern?: string; // where its entries live on the site, e.g. /blog/{slug}
+  publishedUrlPattern?: string; // urlPattern as last published: Delivery's routes
   version: number; // bumped on each revision
   status: 'draft' | 'published';
 }
@@ -350,7 +351,10 @@ interface ContentType {
   `ValidationError` / `ConflictError`.
 - `reviseContentType(current, changes)` — increments `version`, resets status to `draft`, sorts
   fields by `position`, optionally updates `name`/`displayField`/`fields`/`urlPattern` (`null` or
-  `''` clears it).
+  `''` clears it). It keeps `publishedUrlPattern`.
+- `publishedContentType(current)` — status `published`, and `publishedUrlPattern` set to the
+  current `urlPattern` (removed when there is none). Only a publish moves it, so Delivery's
+  `…/routes` (`listDeliveredRoutes`) serves the published pattern while a revision is unpublished.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
   `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields; anything else is a

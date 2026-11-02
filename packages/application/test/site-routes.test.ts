@@ -75,17 +75,33 @@ describe('listDeliveredRoutes', () => {
     ]);
   });
 
-  it('serves a type once it is published, and drops one whose revision is not yet', async () => {
+  it('keeps the published route through a revision, and moves it only on a publish', async () => {
     await defineType('article', '/blog/{slug}');
+    const blog = [{ contentType: 'article', urlPattern: '/blog/{slug}' }];
+    // An unpublished revision, of the pattern or of anything else, leaves the route alone.
     await updateContentType(ctx, scope, 'article', { urlPattern: '/news/{slug}' });
-    expect(await listDeliveredRoutes(ctx, scope)).toEqual([]);
+    expect(await listDeliveredRoutes(ctx, scope)).toEqual(blog);
+    await updateContentType(ctx, scope, 'article', { name: 'Articles' });
+    expect(await listDeliveredRoutes(ctx, scope)).toEqual(blog);
     await publishContentType(ctx, scope, 'article');
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([
       { contentType: 'article', urlPattern: '/news/{slug}' },
     ]);
+    // Clearing the pattern is a revision too: the route goes only with the publish.
     await updateContentType(ctx, scope, 'article', { urlPattern: null });
+    expect(await listDeliveredRoutes(ctx, scope)).toHaveLength(1);
     await publishContentType(ctx, scope, 'article');
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([]);
+  });
+
+  it('serves a pattern added to a published type only once it is published', async () => {
+    await defineType('event', undefined);
+    await updateContentType(ctx, scope, 'event', { urlPattern: '/events/{slug}' });
+    expect(await listDeliveredRoutes(ctx, scope)).toEqual([]);
+    await publishContentType(ctx, scope, 'event');
+    expect(await listDeliveredRoutes(ctx, scope)).toEqual([
+      { contentType: 'event', urlPattern: '/events/{slug}' },
+    ]);
   });
 
   it('leaves out the types the caller may not read', async () => {

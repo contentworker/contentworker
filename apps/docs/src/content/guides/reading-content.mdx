@@ -210,10 +210,12 @@ your site, so a front end can route pages from the content model instead of hard
 }
 ```
 
-Only published content types that have a URL pattern are listed, sorted by `contentType`. A
+Each content type published with a URL pattern is listed, sorted by `contentType`, with the
+pattern as it was last published: editing a type, its pattern included, changes its route only
+when you publish the type again, and clearing the pattern removes the route on that publish. A
 pattern's placeholders are `{id}`, `{locale}` or one of the type's Slug fields (see
 [Content modeling](/guides/content-modeling/)). A key whose role limits it to some content types
-sees only their routes. A type with an unpublished revision drops out until it is published again.
+sees only their routes.
 
 ## Caching
 
