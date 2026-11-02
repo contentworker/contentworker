@@ -1,5 +1,11 @@
 import { type Scope, ValidationError } from '@contentworker/domain';
-import type { BlobStore, BulkJob, BulkJobChunk, ImportSource } from '@contentworker/ports';
+import type {
+  BlobStore,
+  BulkJob,
+  BulkJobChunk,
+  ImportSource,
+  RemoteFetcher,
+} from '@contentworker/ports';
 import { persistJob } from './bulk-jobs';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
@@ -208,12 +214,20 @@ export async function discardImportChunk(blob: BlobStore, payloadKey: string): P
  *
  * Bundles the blob store a consumer already has with the work of writing and
  * then discarding a chunk's staged records, so wiring is one call rather than
- * a shape to remember.
+ * a shape to remember. `fetcher` copies the asset files a space export import
+ * brings; without it those chunks wait for a consumer that has one.
  */
-export function importChunkRunner(ctx: AppContext, blob: BlobStore) {
+export function importChunkRunner(ctx: AppContext, blob: BlobStore, fetcher?: RemoteFetcher) {
   return async (scope: Scope, job: BulkJob, chunk: BulkJobChunk) => {
     if (isSnapshotJob(job.config)) {
-      const outcome = await runSnapshotChunk(ctx, blob, scope, job.config, chunk.payloadKey);
+      const outcome = await runSnapshotChunk(
+        ctx,
+        blob,
+        scope,
+        job.config,
+        chunk.payloadKey,
+        fetcher,
+      );
       if (chunk.payloadKey) await discardImportChunk(blob, chunk.payloadKey);
       return outcome;
     }

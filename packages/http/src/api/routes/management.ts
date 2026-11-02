@@ -7,6 +7,7 @@ import {
   agentUsage,
   analyzeImport,
   analyzeRedirectSet,
+  analyzeSpaceExport,
   applyEntryTags,
   approvePluginCapabilities,
   approvePromotion,
@@ -207,6 +208,7 @@ import {
   startMultipartAssetFileReplacement,
   startMultipartAssetUpload,
   startSnapshotImport,
+  startSpaceExportImport,
   suggestEntryTags,
   summarizeEntry,
   transformAssetUrl,
@@ -346,6 +348,7 @@ import {
   setAliasBody,
   shareLinkBody,
   snapshotBody,
+  spaceExportImportBody,
   summarizeBody,
   tagBody,
   tagPatchBody,
@@ -1043,6 +1046,75 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         { ...(body.conflicts ? { conflicts: body.conflicts } : {}) },
       );
       return c.json(started, 202);
+    },
+  );
+
+  // --- importing a whole space from the JSON space export format -------------
+  // Environment-wide, like a snapshot import (it writes the content model), so the same scope.
+  // Analyze reports; the second call writes the model and runs the rest as jobs.
+  const spaceExport = (
+    c: Context<AuthVars>,
+    body: { payload: string; publish?: boolean; addLocales?: boolean },
+  ) => {
+    if (!deps.spaceExportReader) {
+      throw new ValidationError([
+        { field: 'payload', message: 'This deployment cannot read space exports' },
+      ]);
+    }
+    // Adding locales changes the space for every environment: a space admin's call.
+    if (body.addLocales)
+      authorize(c.get('principal'), SCOPES.spaceAdmin, c.req.param('space') as string);
+    return {
+      reader: deps.spaceExportReader,
+      input: {
+        payload: body.payload,
+        ...(body.publish !== undefined ? { publish: body.publish } : {}),
+        ...(body.addLocales ? { addLocales: true } : {}),
+      },
+    };
+  };
+  app.post(
+    `${BASE}/imports/space-export/analyze`,
+    doc('Spaces & environments', 'Analyze a space export without writing', {
+      body: spaceExportImportBody,
+      description:
+        'Reads a JSON space export (`contentTypes`, `entries`, `assets`, `locales`, `tags`) and ' +
+        'reports what importing it here would do: counts, the fields and validations with no ' +
+        'equivalent, links whose target is not coming along, entries that would fail validation, ' +
+        'and `problems` that stop the import as a whole (`executable: false`). Writes nothing. ' +
+        '`addLocales` (needs `space:admin`) lets the import add the locales the space lacks.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      const { reader, input } = spaceExport(c, await parseBody(c, spaceExportImportBody));
+      return c.json(await analyzeSpaceExport(ctx, scopeOf(c), reader, input));
+    },
+  );
+  app.post(
+    `${BASE}/imports/space-export`,
+    doc('Spaces & environments', 'Import a space export', {
+      body: spaceExportImportBody,
+      status: 202,
+      description:
+        'Requires an environment with no content types. Checks everything the analysis does, ' +
+        'then adds locales (with `addLocales`), writes the content model and tags, and starts a ' +
+        'job (202: `{ report, job, publishJobId }`) that copies each asset file from its URL ' +
+        'into storage and creates the assets and entries with new ids, every link remapped. ' +
+        'When it completes with no failures, `publishJobId` publishes what the export marks ' +
+        "published (unless `publish: false`). Follow both at this environment's `bulk/jobs/:id`.",
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      const { reader, input } = spaceExport(c, await parseBody(c, spaceExportImportBody));
+      if (!blob) {
+        throw new ValidationError([
+          {
+            field: 'payload',
+            message: 'This deployment has no object storage to stage an import in',
+          },
+        ]);
+      }
+      return c.json(await startSpaceExportImport(ctx, blob, scopeOf(c), reader, input), 202);
     },
   );
 

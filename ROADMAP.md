@@ -35,7 +35,8 @@ Everything below is built and tested on v2.
 - **Publishing.** Releases (atomic multi-entry publish), scheduled actions, bulk actions as
   resumable jobs, branch compare and merge, environment promotion with a risk check and approval,
   environment snapshots (export, plus import and clone as resumable jobs; a clone's export and
-  checks run in the engine too), CSV, JSON and WordPress import.
+  checks run in the engine too), CSV, JSON and WordPress import, and whole-space import from the
+  JSON space export format (model, locales, tags, entries with links remapped, asset files copied).
 - **Assets.** Signed R2 uploads, Images transforms, Stream video, localized alt text and focal
   point, AI alt text and auto-tagging, asset usage; a library with folders, filters and keyset
   paging, bulk moves, archive and restore, and delete refused while entries link to an asset.

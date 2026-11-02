@@ -6,6 +6,7 @@ import type {
   BlobStore,
   Cache,
   FunctionInvoker,
+  RemoteFetcher,
   SearchIndex,
   WebhookSender,
 } from '@contentworker/ports';
@@ -63,6 +64,11 @@ export interface DispatchDeps {
    * import chunks claimable rather than reporting an import that did not run.
    */
   readonly blob?: BlobStore;
+  /**
+   * The outbound fetcher a space export import's chunks copy asset files with (after the URL
+   * screen). Without it those chunks are released for a consumer that has one.
+   */
+  readonly remoteFetcher?: RemoteFetcher;
   /**
    * The media origin's published-asset gate (KV on the edge). When present, every asset event
    * brings the asset's entry in line with what is published; without it the media Worker falls
@@ -125,7 +131,7 @@ export async function dispatchEvent(
   if (event.type === 'bulk.chunk_due') {
     await runBulkChunk(ctx, event, {
       assetBulkChunk: assetBulkChunkRunner(ctx),
-      ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob) } : {}),
+      ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob, deps.remoteFetcher) } : {}),
       ...(deps.assetIngest
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),

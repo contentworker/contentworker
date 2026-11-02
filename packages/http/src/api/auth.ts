@@ -39,6 +39,7 @@ import type {
   Hasher,
   ImportSource,
   RemoteFetcher,
+  SpaceExportReader,
   WorkflowEngine,
 } from '@contentworker/ports';
 import {
@@ -91,6 +92,8 @@ export interface AuthDeps {
   readonly bus: EventBus;
   /** Readers for external content formats, by source id. */
   readonly importSources?: Readonly<Record<string, ImportSource>>;
+  /** Reads the JSON space export format. Absent: those import routes answer 400. */
+  readonly spaceExportReader?: SpaceExportReader;
   /** Downloads plugin packages. Absent means install-from-URL is unavailable. */
   readonly remoteFetcher?: RemoteFetcher;
   /** Deployment policy for where plugin packages may come from. */

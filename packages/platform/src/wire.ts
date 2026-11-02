@@ -17,6 +17,7 @@ import { createKvCache } from '@contentworker/adapters/cache-kv';
 import { createCfEmailSender } from '@contentworker/adapters/email-cf';
 import { createRemoteFetcher, createWebhookSender } from '@contentworker/adapters/http-effects';
 import { createCfImageProbe, createCfImageTransformer } from '@contentworker/adapters/images-cf';
+import { createSpaceExportReader } from '@contentworker/adapters/import-space-export';
 import { createWorkerLoaderRuntime } from '@contentworker/adapters/plugins-cf-loader';
 import { createAssetIngestQueue, createCfQueueProducer } from '@contentworker/adapters/queue-cf';
 import { createKvDevVectorStore } from '@contentworker/adapters/vector-kv-dev';
@@ -66,6 +67,7 @@ import type {
   Queue as QueuePort,
   RemoteFetcher,
   SecretSealer,
+  SpaceExportReader,
   TextExtractor,
   VectorStore,
   WorkflowEngine,
@@ -136,8 +138,11 @@ export interface EdgeWired {
   readonly workflowEngine?: WorkflowEngine;
   /** The AI, email and webhook ports workflow nodes use (and cancel's compensations). */
   readonly workflowNodes: WorkflowNodeDeps;
-  /** Bounded, redirect-refusing outbound GETs, for callers outside the HTTP app (MCP's embed_resolve). */
+  /** Bounded, redirect-refusing outbound GETs, for callers outside the HTTP app (MCP's embed_resolve,
+   *  the engine's copies of a space export's asset files). */
   readonly remoteFetcher: RemoteFetcher;
+  /** Reads the JSON space export format, for MCP's space export tools. A pure parser. */
+  readonly spaceExportReader: SpaceExportReader;
   /** True when backed by D1 vs the in-memory demo store. */
   readonly persistent: boolean;
   /**
@@ -292,6 +297,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     assetSearch: assetSearchDeps(rag, { embed: Boolean(env.EMBEDDINGS_PROVIDER) }),
     ...(workflowEngine ? { workflowEngine } : {}),
     remoteFetcher: createRemoteFetcher(),
+    spaceExportReader: createSpaceExportReader(),
     workflowNodes: {
       ai,
       decisions,

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Cloudflare implementations of the ports: Workers AI, Vectorize, R2, KV cache and asset gate, Queues, Images, Stream, Email, Worker Loader plugins, HTTP effects (webhooks/functions), structured import parsers. One subpath per adapter so each Worker bundles only what it binds.",
+  "description": "Cloudflare implementations of the ports: Workers AI, Vectorize, R2, KV cache and asset gate, Queues, Images, Stream, Email, Worker Loader plugins, HTTP effects (webhooks/functions), structured import parsers, the space export reader. One subpath per adapter so each Worker bundles only what it binds.",
   "exports": {
     "./ai-workers": "./src/ai-workers/index.ts",
     "./asset-gate-kv": "./src/asset-gate-kv/index.ts",
@@ -12,6 +12,7 @@
     "./email-cf": "./src/email-cf/index.ts",
     "./http-effects": "./src/http-effects/index.ts",
     "./images-cf": "./src/images-cf/index.ts",
+    "./import-space-export": "./src/import-space-export/index.ts",
     "./import-structured": "./src/import-structured/index.ts",
     "./plugins-cf-loader": "./src/plugins-cf-loader/index.ts",
     "./queue-cf": "./src/queue-cf/index.ts",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
+    "@contentworker/test-kit": "workspace:*",
     "@contentworker/typescript-config": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:",

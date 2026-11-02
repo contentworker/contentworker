@@ -50,6 +50,8 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'plugin_get_settings',
   'import_sources',
   'import_analyze',
+  // Reads the export and reports; space_export_import is the write.
+  'space_export_analyze',
   'environment_export',
   'environments_compare',
   'environment_aliases_list',

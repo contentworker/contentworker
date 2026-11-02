@@ -24,6 +24,9 @@ export default [
       // browser, scoped to the space / environment / locale chosen in the header.
       route('content', 'routes/content.tsx', { id: 'content-layout' }, [
         index('routes/content-types.tsx', { id: 'content' }),
+        // A whole space export, before any content type exists. A hyphen can't be in an apiId, so
+        // this never shadows a content type's entries.
+        route('space-import', 'routes/content-import.tsx', { id: 'content-space-import' }),
         route(':typeId', 'routes/content-entries.tsx', { id: 'content-type' }),
         route(':typeId/new', 'routes/content-entry.tsx', { id: 'content-new' }),
         route(':typeId/import', 'routes/content-import.tsx', { id: 'content-import' }),

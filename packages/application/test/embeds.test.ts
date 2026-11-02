@@ -31,6 +31,9 @@ function fakeFetcher(
       if (typeof answer === 'function') answer();
       return { status: 200, body: '', ...(answer as Partial<RemoteDocument>) };
     },
+    async getBytes() {
+      throw new Error('resolveEmbed reads text only');
+    },
   };
 }
 

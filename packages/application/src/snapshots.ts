@@ -430,7 +430,7 @@ export async function prepareSnapshotImport(
   ctx: AppContext,
   target: Scope,
   snapshot: EnvironmentSnapshot,
-  options: ImportOptions = {},
+  options: ImportOptions & { readonly remoteFiles?: ReadonlyMap<string, string> } = {},
 ): Promise<PreparedSnapshotImport> {
   if (snapshot.snapshotVersion !== SNAPSHOT_VERSION) {
     throw new ValidationError([
@@ -465,12 +465,12 @@ export async function prepareSnapshotImport(
   if (problems.length > 0) throw new ValidationError(problems);
 
   const skipped: string[] = [];
-  if (snapshot.assets.length > 0) {
+  // Assets whose file the import copies from elsewhere (a space export) do bring their bytes.
+  const recordsOnly = snapshot.assets.filter((a) => !options.remoteFiles?.has(a.id)).length;
+  if (recordsOnly > 0) {
     // Named rather than silently dropped: an operator restoring content should
     // know the binaries did not travel with it.
-    skipped.push(
-      `${snapshot.assets.length} asset(s): records copied, binaries stay in the source blob store`,
-    );
+    skipped.push(`${recordsOnly} asset(s): records copied, binaries stay in the source blob store`);
   }
   const publishable = snapshot.entries.filter(
     (e) => e.status === 'published' || (e.status === 'changed' && e.publishedFields),

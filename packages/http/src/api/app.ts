@@ -1,4 +1,5 @@
 import { createRemoteFetcher } from '@contentworker/adapters/http-effects';
+import { createSpaceExportReader } from '@contentworker/adapters/import-space-export';
 import { structuredImportSources } from '@contentworker/adapters/import-structured';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
@@ -152,6 +153,7 @@ export function createApp(
     // Pure parsers with nothing to configure, so they are always available;
     // a source that needed credentials or a network would be env-gated here.
     importSources: structuredImportSources(),
+    spaceExportReader: createSpaceExportReader(),
     // Downloading a plugin package is a fetch like any other, bounded and
     // redirect-refusing; the policy that decides *whether* is config, not code.
     remoteFetcher: createRemoteFetcher(),

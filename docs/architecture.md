@@ -581,21 +581,22 @@ way state changes: the HTTP API, MCP, and the queue consumers all call them.
 
 One subpath per adapter, each implementing a port against one binding:
 
-| Subpath             | Port(s)                                  | Technology                                                                                                                           |
-| ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `ai-workers`        | `AIProvider`, `EmbeddingsProvider`       | Workers AI, through AI Gateway when configured                                                                                       |
-| `asset-gate-kv`     | `AssetGate`                              | Workers KV (the media Worker's gate)                                                                                                 |
-| `blob-r2`           | `BlobStore`, media URL signer            | R2 binding + signed `/media/*` route                                                                                                 |
-| `cache-kv`          | `Cache`                                  | Workers KV, tag-versioned                                                                                                            |
-| `queue-cf`          | `Queue`                                  | Cloudflare Queues producer                                                                                                           |
-| `vector-vectorize`  | `VectorStore`                            | Vectorize                                                                                                                            |
-| `vector-kv-dev`     | `VectorStore`                            | Local-dev only (`VECTOR_STORE=kv`): brute-force cosine over KV, shared by the Workers of a dev session; counts as the fake `vectors` |
-| `images-cf`         | image transformer                        | Cloudflare Images binding                                                                                                            |
-| `video-stream`      | video host                               | Cloudflare Stream binding                                                                                                            |
-| `email-cf`          | `EmailSender`                            | Email Sending (`send_email`)                                                                                                         |
-| `plugins-cf-loader` | plugin runtime                           | Worker Loader isolates                                                                                                               |
-| `http-effects`      | `WebhookSender`, function invoker, fetch | `fetch`                                                                                                                              |
-| `import-structured` | import sources                           | CSV / JSON / WordPress parsers                                                                                                       |
+| Subpath               | Port(s)                                  | Technology                                                                                                                           |
+| --------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ai-workers`          | `AIProvider`, `EmbeddingsProvider`       | Workers AI, through AI Gateway when configured                                                                                       |
+| `asset-gate-kv`       | `AssetGate`                              | Workers KV (the media Worker's gate)                                                                                                 |
+| `blob-r2`             | `BlobStore`, media URL signer            | R2 binding + signed `/media/*` route                                                                                                 |
+| `cache-kv`            | `Cache`                                  | Workers KV, tag-versioned                                                                                                            |
+| `queue-cf`            | `Queue`                                  | Cloudflare Queues producer                                                                                                           |
+| `vector-vectorize`    | `VectorStore`                            | Vectorize                                                                                                                            |
+| `vector-kv-dev`       | `VectorStore`                            | Local-dev only (`VECTOR_STORE=kv`): brute-force cosine over KV, shared by the Workers of a dev session; counts as the fake `vectors` |
+| `images-cf`           | image transformer                        | Cloudflare Images binding                                                                                                            |
+| `video-stream`        | video host                               | Cloudflare Stream binding                                                                                                            |
+| `email-cf`            | `EmailSender`                            | Email Sending (`send_email`)                                                                                                         |
+| `plugins-cf-loader`   | plugin runtime                           | Worker Loader isolates                                                                                                               |
+| `http-effects`        | `WebhookSender`, function invoker, fetch | `fetch`                                                                                                                              |
+| `import-structured`   | import sources                           | CSV / JSON / WordPress parsers                                                                                                       |
+| `import-space-export` | `SpaceExportReader`                      | The JSON space export format: model, locales, tags, entries (links remapped), assets                                                 |
 
 ### `packages/platform`: wiring
 

@@ -150,6 +150,8 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     // Import chunks stage their records here rather than carrying entry ids;
     // without it they stay claimable instead of running.
     blob: wired.blob,
+    // A space export import's chunks copy asset files through it (URLs screened first).
+    remoteFetcher: wired.remoteFetcher,
     // The media origin's gate: written and removed here, from asset events, and nowhere else.
     ...(wired.assetGate ? { assetGate: wired.assetGate } : {}),
     // Asset search: re-indexed on publish, removed on delete. Embeds under the same rule as rag.

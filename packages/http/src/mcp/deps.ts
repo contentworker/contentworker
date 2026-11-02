@@ -14,6 +14,7 @@ import type {
   Hasher,
   ImportSource,
   RemoteFetcher,
+  SpaceExportReader,
   WorkflowEngine,
 } from '@contentworker/ports';
 
@@ -42,6 +43,8 @@ export interface McpDeps {
   readonly moderateBeforePublish?: boolean;
   /** Readers for external content formats, by source id. */
   readonly importSources?: Readonly<Record<string, ImportSource>>;
+  /** Reads the JSON space export format. Absent: the space export tools refuse. */
+  readonly spaceExportReader?: SpaceExportReader;
   /** Starts/signals/cancels editorial workflow runs; absent → run tools refuse (not configured). */
   readonly workflowEngine?: WorkflowEngine;
   /** AI, email and webhook ports for workflow node compensations (cancel). */

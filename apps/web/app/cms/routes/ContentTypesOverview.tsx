@@ -86,7 +86,11 @@ export function ContentTypesOverview() {
         </div>
       ) : types.length === 0 ? (
         <Empty icon={<Shapes />} title="No content types yet" className="card">
-          A content type defines the fields its entries have. Make one to start writing content.
+          A content type defines the fields its entries have. Make one to start writing content, or{' '}
+          <Link to="/content/space-import" className="underline underline-offset-4">
+            import a space export
+          </Link>{' '}
+          with its model, entries and assets.
         </Empty>
       ) : (
         <div className="card overflow-clip">
