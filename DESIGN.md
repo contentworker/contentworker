@@ -231,13 +231,13 @@ alike are held to `max-w-measure` (55ch), not a hand-written `max-w-[…ch]`.
 
 Tailwind's default breakpoints, read as devices:
 
-| Width                     | Typically                 | What changes                                                                                                                         |
-| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| below `sm` (640px)        | iPhone upright            | Header shows the mark, the scope pill and Search as icons                                                                            |
-| below `md` (768px)        | phones, either way up     | Bottom tab bar, no sidebar; tables stack into cards; the content-type list leaves the Content pages (their overview lists the types) |
-| `md` to `lg` (768–1023px) | iPad upright              | The sidebar is an icon rail beside the page and opens over it                                                                        |
-| `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the entry editor's side pane beside the form; the assistant as a column               |
-| `xl` and up (1280px)      | desktop                   | The space, environment and locale switchers sit in the header; the full sidebar and the assistant's column side by side              |
+| Width                     | Typically                 | What changes                                                                                                                                                                      |
+| ------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| below `sm` (640px)        | iPhone upright            | Header shows the mark, and Search and Coworker as icons; the scope (space, environment, locale) opens from More                                                                   |
+| below `md` (768px)        | phones, either way up     | Bottom tab bar, no sidebar; tables stack into cards; the content-type list leaves the Content pages (their overview lists the types)                                              |
+| `md` to `lg` (768–1023px) | iPad upright              | The sidebar is an icon rail beside the page and opens over it                                                                                                                     |
+| `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the space, environment and locale switchers in the header; the entry editor's side pane beside the form; the assistant as a column |
+| `xl` and up (1280px)      | desktop                   | The full sidebar and the assistant's column side by side                                                                                                                          |
 
 Size and hint by what is pointing, not by width: `touch:` is a coarse pointer (a finger), `fine:` a
 mouse or trackpad. `short:` is a phone on its side (landscape, under 32rem tall, under 64rem wide).
