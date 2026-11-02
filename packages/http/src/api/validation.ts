@@ -484,6 +484,10 @@ export const createVideoAssetBody = z.object({
   description: zLocalized.optional(),
   maxDurationSeconds: z.int().positive().optional(),
 });
+/** A media URL to resolve into an `embed` node's data; the domain decides which URLs are allowed. */
+export const resolveEmbedBody = z.object({
+  url: z.string().min(1).max(2048).describe('https URL of the media page (a video, post or track)'),
+});
 /**
  * An asset metadata patch: the keys sent change, the rest are kept. One shape for the REST body
  * and MCP's `asset_set_metadata`, so neither surface takes what the other refuses. Unknown keys

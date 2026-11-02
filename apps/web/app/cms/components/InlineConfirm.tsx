@@ -154,7 +154,7 @@ export interface ConfirmButtonProps {
   readonly cancelLabel?: string;
   /** Names the act: "Delete role", not "OK". */
   readonly confirmLabel: string;
-  /** `destructive` (default) uses the tinted red button; `default` the ink pill. */
+  /** `destructive` (default) uses the tinted red button; `default` the ink button. */
   readonly tone?: 'destructive' | 'default';
   /** Disables the confirming button (e.g. while another request is in flight). */
   readonly busy?: boolean;

@@ -18,6 +18,7 @@ import type {
   ConceptScheme,
   ContentType,
   ContentTypeDraft,
+  EmbedData,
   EntryFields,
   EntryMetadata,
   EntryVersion,
@@ -1991,6 +1992,14 @@ export function createManagementClient(
       input: { tagIds?: string[]; newTags?: string[] },
     ): Promise<{ tagIds: string[]; createdTags: { id: string; name: string }[] }> {
       return req('POST', `${mgmt}/entries/${encodeURIComponent(id)}/apply-tags`, input);
+    },
+    /**
+     * The structured metadata (title, author, thumbnail, size) of an external media URL on an
+     * allowed provider, from its oEmbed answer; `resolved` is false when the provider didn't
+     * answer and the embed holds what its URL says. A URL that may not be embedded is a 422.
+     */
+    resolveEmbed(url: string): Promise<{ embed: EmbedData; resolved: boolean }> {
+      return req('POST', `${mgmt}/embeds/resolve`, { url });
     },
     /** Suggests alt text for an image; `apply` writes it to the asset metadata. */
     generateAltText(

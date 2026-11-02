@@ -27,6 +27,10 @@ publishing does.
 - A `RichText` value is a node tree under `{ "nodeType": "document", "content": [...] }`. A table
   is `table` → `table-row`s → `table-header-cell` or `table-cell` → blocks, each with
   `"data": {}`; put a cell's text in a `paragraph`, never directly in the cell.
+- To embed a video, post or track (YouTube, Vimeo, X, Bluesky, Mastodon, Spotify, SoundCloud),
+  call `embed_resolve` with its https URL and put the returned `embed` in the document as
+  `{ "nodeType": "embed", "data": <embed>, "content": [] }`. Never write the provider's HTML or an
+  `<iframe>` into rich text; it is refused. If `resolved` is false, the embed is still valid.
 - Validation errors come back with the field that failed. Fix the value; do not retry unchanged.
 
 ## Publish

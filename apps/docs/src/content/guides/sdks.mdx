@@ -65,6 +65,13 @@ into `<img>` attributes (the width ladder as `srcset`, alt text, the focal point
 colour as `style`), and `assetUrl` and `srcset` give single values; see
 [build an image component](/guides/delivering-assets/#build-an-image-component).
 
+A rich-text `embed` node (a video, post or track) carries structured metadata, never the
+provider's HTML, so your front end decides how it looks. `embedCard(node)` returns a safe default,
+a link card: `{ href, title, provider, providerName, kind, authorName?, thumbnail? }`, with an
+https `href` and a lazy, referrer-free thumbnail, or `undefined` for any other node. For a player,
+build it yourself from `provider` and `url` (an `<iframe>` of the provider's player, sized by
+`aspectRatio`). See [rich text](/guides/content-modeling/#rich-text).
+
 The client takes the same filters, ordering and projection as the
 [Delivery API](/guides/reading-content/), throws `DeliveryError` on a failed request (with the
 `status`, the API's error `code` and the parsed `body`), and can keep a short in-memory cache

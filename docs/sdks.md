@@ -90,6 +90,12 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   `width` (the largest past it, the original without a ladder), or the original; `srcset(asset)`
   returns `"url 320w, url 640w, …"` (empty without a ladder). Neither adds a query parameter, so
   signed and immutable URLs stay intact.
+- `embedCard(node)` turns a rich-text `embed` node into a link card `{ href, title, provider,
+  providerName, kind, authorName?, thumbnail? }` (`thumbnail` is `<img>` attributes: `src`,
+  `width?`, `height?`, `alt: ''`, lazy, `referrerPolicy: 'no-referrer'`), or `undefined` for any
+  other node or a non-https URL. The title falls back to the URL without its scheme; an unknown
+  provider is named by its id. It is the safe default; a front end that wants a player builds it
+  from `provider` and `url` (`packages/sdk/core/src/embed.ts`).
 - `imageProps(asset, { sizes?, width?, rendition?, locale?, priority? })` (also on the client)
   returns the `<img>` attributes `{ src, srcSet?, sizes?, width?, height?, alt, loading,
   decoding, fetchPriority?, style: { objectPosition?, backgroundColor? } }`, or `undefined` for
@@ -505,7 +511,9 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   code blocks, tables, hyperlinks, embeds — see the domain model doc) and skip unrecognized
   `nodeType`s defensively; writes are validated against the vocabulary, but it can grow without an
   SDK change. With `include`, a reference node's `data.target` is the embedded entry or asset,
-  or still a `{ id, linkType }` stub when the target is unpublished or past the depth.
+  or still a `{ id, linkType }` stub when the target is unpublished or past the depth. An
+  `embed` node's `data` is typed `EmbedData` (`{ url, provider, kind?, title?, authorName?,
+  thumbnail?, width?, height?, aspectRatio? }`), structured metadata, never markup.
 - `<Name>DraftFields` — Management shape (locale-keyed: `Localized<T>`), usable with
   `@contentworker/sdk-management`.
 - `ContentTypeApiId` (union of apiIds), `FieldsByContentType`, and `DraftFieldsByContentType`.

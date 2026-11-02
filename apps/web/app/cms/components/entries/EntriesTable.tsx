@@ -219,7 +219,7 @@ export function EntriesTable(props: EntriesTableProps) {
                       <Link
                         to={props.hrefFor(e)}
                         data-row-primary=""
-                        className={`rounded-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring ${title ? '' : 'text-muted-foreground'}`}
+                        className={`rounded-md font-medium underline-offset-4 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring ${title ? '' : 'text-muted-foreground'}`}
                       >
                         {title ?? 'Untitled entry'}
                       </Link>
@@ -338,7 +338,9 @@ function EntryRowSkeleton({ index, viewingTrash }: { index: number; viewingTrash
         <SkeletonPill className={index % 3 === 1 ? 'w-[5.5rem]' : 'w-[4.5rem]'} />
       </TableCell>
       <TableCell role="cell" className={`${CELL_STACK} max-md:text-right`}>
-        {viewingTrash || index % 2 === 0 ? <SkeletonPill className="h-8 w-[4.75rem]" /> : null}
+        {viewingTrash || index % 2 === 0 ? (
+          <SkeletonPill className="h-8 w-[4.75rem] rounded-md" />
+        ) : null}
       </TableCell>
       <TableCell role="cell" className={`${CELL_STACK} text-right`}>
         {/* The row menu's ghost button is only its icon at rest: hold its height, draw nothing. */}

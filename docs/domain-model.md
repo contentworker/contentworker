@@ -161,7 +161,7 @@ A `RichText` value is a document tree (`packages/domain/src/rich-text/rich-text.
 `marks`; reference nodes carry a `data.target` link so the reference graph can be extracted from
 rich text exactly as from `Link` fields (`extractRichTextTargets`). `richTextToPlainText`
 flattens a document for search/embedding; a table reads as one block, a line per row with its
-cells separated by `|`.
+cells separated by `|`, and an `embed` as `Title (url)` (its URL alone when it has no title).
 
 The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`):
 
@@ -174,6 +174,12 @@ The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`
 - **References** (`REFERENCE_NODE_TYPES`, each with `data.target: { id, linkType }`) —
   `embedded-entry-block`, `embedded-asset-block`, `embedded-entry-inline`, `entry-hyperlink`,
   `asset-hyperlink`.
+- **External media** — `embed`, a block with no `content` whose `data` is structured metadata
+  (`EmbedData`, `packages/domain/src/rich-text/embed.ts`): `url` (an https page on an allowed
+  provider) and `provider` are required; `kind` (`video` | `post` | `audio` | `other`), `title`,
+  `authorName`, `thumbnail: { url, width?, height? }`, `width`, `height` and `aspectRatio` are
+  optional. The provider's oEmbed `html` is never stored or delivered: channels build their own
+  player or link card from the data.
 - **Marks** — `bold`, `italic`, `underline`, `code`, `strikethrough`.
 
 `validateRichText` runs on every write (API, MCP, editor, import, AI) and refuses:
@@ -182,6 +188,13 @@ The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`
   `nodeType`, so a type they cannot know is refused rather than delivered;
 - a `text` node without a string `value`, a reference node without a well-formed `data.target`,
   and a node whose `data` is not an object or whose `content` is not an array;
+- an `embed` whose `data.url` is not https or not on an allowed provider (`EMBED_PROVIDERS`:
+  YouTube, Vimeo, X, Bluesky, Spotify, SoundCloud, and Mastodon matched by URL shape on any
+  instance), whose `data.provider` is not the one that URL belongs to, whose metadata is
+  malformed, that holds `content`, or whose `data` carries any other key (an `html` snippet
+  included); Mastodon accepts any public domain with a post's URL shape (never a named provider's
+  host), so a `mastodon` embed vouches for its shape, not its origin: channels should frame only
+  instances they trust;
 - a `hyperlink` whose `data.uri` is missing or unsafe. `safeLinkUri` allows `http`, `https`,
   `mailto` and `tel`, plus relative and fragment URIs; it reads the scheme the way a browser does
   (ignoring embedded whitespace and control characters) and refuses an undecoded entity before
@@ -198,6 +211,22 @@ The node vocabulary (`RICH_TEXT_BLOCK_NODE_TYPES`, `RICH_TEXT_INLINE_NODE_TYPES`
 Beyond tables, which node may hold which (for example blocks inside inline nodes) is not yet
 constrained. The admin editor carries a table it can't draw as a grid (`isWellFormedTable`)
 through unchanged.
+
+`resolveEmbed` (`POST …/embeds/resolve`, MCP `embed_resolve`, `content:write`) fills an embed's
+metadata: it matches the URL to its provider, screens the provider's oEmbed endpoint with
+`assertSafeExternalUrl` (a Mastodon URL names its own host), fetches it through the
+`RemoteFetcher` port (64 KiB, 5 s, no redirects) and keeps only the `EmbedData` fields
+(`embedFromOEmbed`). A provider that fails to answer gives `resolved: false` and an embed of the
+URL, provider and kind alone, which is valid to store. The admin editor calls it when a provider
+URL is pasted; imports do not (`richTextFromHtml` makes the bare node), so an imported embed has
+no title until someone resolves it.
+
+`richTextFromHtml` reads a provider's player `<iframe>` (YouTube, Vimeo, Spotify, SoundCloud,
+Bluesky and Mastodon players map back to the page URL), a post `<blockquote>`
+(`twitter-tweet`, `bluesky-embed`, `mastodon-embed`), a WordPress `wp-block-embed` figure (its
+caption stays as a paragraph after it), and a provider URL alone on its line or in `[embed]…[/embed]`
+(WordPress's classic editor) as an `embed` node. A player inside a paragraph is lifted out, splitting
+the paragraph. Media from any other host stays a link to its source, as before.
 
 In Delivery, `?include=` resolves rich-text references like `Link` fields: each reference node's
 `data.target` becomes the embedded entry or asset (the node and its `nodeType` stay), and a

@@ -315,7 +315,7 @@ function ScopeChip() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="hit-area flex h-7 min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-input px-2.5 text-muted-foreground text-xs hover:text-foreground touch:h-9 touch:px-3"
+        className="hit-area flex h-7 min-w-0 max-w-[70%] items-center gap-1 rounded-md border border-input px-2.5 text-muted-foreground text-xs hover:text-foreground touch:h-9 touch:px-3"
         aria-label={`Asking about: ${current}`}
       >
         <span className="truncate">{current}</span>
@@ -751,7 +751,7 @@ function WaitingBar({ pending }: { pending: Waiting[] }) {
     <button
       type="button"
       onClick={show}
-      className="mx-3 mt-2 flex min-h-9 items-center gap-2 rounded-full border border-wait/30 bg-wait/10 px-3 text-left text-xs hover:bg-wait/15"
+      className="mx-3 mt-2 flex min-h-9 items-center gap-2 rounded-md border border-wait/30 bg-wait/10 px-3 text-left text-xs hover:bg-wait/15"
     >
       <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-wait" />
       <span className="min-w-0 flex-1 truncate">

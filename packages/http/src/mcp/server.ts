@@ -158,6 +158,7 @@ import {
   requestAssetZip,
   requestPromotion,
   requestReindex,
+  resolveEmbed,
   resolveEnvironment,
   resolveRedirect,
   resolveTask,
@@ -943,6 +944,30 @@ export function buildServer(
           tier: args.tier,
         }),
       );
+    },
+  );
+
+  // Rich text's external media. The same use-case and scope as POST …/embeds/resolve.
+  server.registerTool(
+    'embed_resolve',
+    {
+      description:
+        "Resolve a media URL (YouTube, Vimeo, X, Bluesky, Mastodon, Spotify, SoundCloud) into the data of a rich-text `embed` node: { url, provider, kind, title?, authorName?, thumbnail?, width?, height?, aspectRatio? }. Put it in a document as { nodeType: 'embed', data, content: [] }. Never store the provider's HTML: rich text holds this structured data, and channels render their own player. A non-https or non-allowed URL is refused; resolved=false means the provider did not answer and the embed holds url/provider/kind only, which is still valid.",
+      inputSchema: toolSchema('embed_resolve', () =>
+        z.object({
+          url: z.string().max(2048).describe('https URL of the video, post or track'),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      if (!deps.remoteFetcher) {
+        throw new ValidationError([
+          { field: 'url', message: 'This deployment cannot fetch embed metadata' },
+        ]);
+      }
+      return ok(await resolveEmbed(deps.remoteFetcher, { url: args.url }));
     },
   );
 

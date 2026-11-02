@@ -64,6 +64,7 @@ import type {
   MediaPathSigner,
   PasswordHasher,
   Queue as QueuePort,
+  RemoteFetcher,
   SecretSealer,
   TextExtractor,
   VectorStore,
@@ -135,6 +136,8 @@ export interface EdgeWired {
   readonly workflowEngine?: WorkflowEngine;
   /** The AI, email and webhook ports workflow nodes use (and cancel's compensations). */
   readonly workflowNodes: WorkflowNodeDeps;
+  /** Bounded, redirect-refusing outbound GETs, for callers outside the HTTP app (MCP's embed_resolve). */
+  readonly remoteFetcher: RemoteFetcher;
   /** True when backed by D1 vs the in-memory demo store. */
   readonly persistent: boolean;
   /**
@@ -288,6 +291,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     rag,
     assetSearch: assetSearchDeps(rag, { embed: Boolean(env.EMBEDDINGS_PROVIDER) }),
     ...(workflowEngine ? { workflowEngine } : {}),
+    remoteFetcher: createRemoteFetcher(),
     workflowNodes: {
       ai,
       decisions,
