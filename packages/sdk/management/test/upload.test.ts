@@ -9,8 +9,10 @@ function api(
   opts: {
     failures?: Record<number, number>;
     partSize?: number;
-    /** The single PUT's answers, in order (then 200). */
-    singlePut?: number[];
+    /** The single PUT's answers, in order (then 200); `'drop'` rejects, as a lost connection does. */
+    singlePut?: (number | 'drop')[];
+    /** Every part PUT answers this status. */
+    partStatus?: number;
     /** The complete call's status (default 200). */
     complete?: number;
   } = {},
@@ -77,7 +79,12 @@ function api(
       });
     }
     if (method === 'PUT' && !url.includes('part=') && opts.singlePut?.length) {
-      return new Response(null, { status: opts.singlePut.shift() });
+      const next = opts.singlePut.shift();
+      if (next === 'drop') throw new TypeError('fetch failed: connection reset');
+      return new Response(null, { status: next });
+    }
+    if (method === 'PUT' && url.includes('part=') && opts.partStatus) {
+      return new Response('gone', { status: opts.partStatus });
     }
     if (method === 'PUT') {
       const n = Number(new URL(url).searchParams.get('part') ?? '1');
@@ -177,6 +184,19 @@ describe('assets.upload and replaceFile: a single PUT stores once', () => {
     expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2);
   });
 
+  it('counts a 412 as stored after an attempt whose answer never came (the fetch rejected)', async () => {
+    const { fetchImpl, calls } = api({ singlePut: ['drop', 412] });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    const next = await client.assets.replaceFile(
+      'a9',
+      { fileName: 'b.png', contentType: 'image/png', body: new Uint8Array(10) },
+      { sleep: async () => {} },
+    );
+    expect(next).toMatchObject({ id: 'a9', version: 3 });
+    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2);
+    expect(calls.at(-1)?.url).toBe(`${M}/assets/a9/file/commit`);
+  });
+
   it('never takes a 412 on the first attempt for success: the key held bytes already', async () => {
     const { fetchImpl } = api({ singlePut: [412] });
     const client = createManagementClient({ ...base, fetch: fetchImpl });
@@ -233,6 +253,24 @@ describe('assets.replaceFile', () => {
     expect(calls.some((c) => c.url === `${M}/assets/a9/uploads/u9/complete`)).toBe(true);
     expect(calls.some((c) => c.url.endsWith('/file/commit'))).toBe(false);
     expect(progress.at(-1)).toBe(total);
+  });
+
+  it('does not retry a part whose upload is gone (404), and aborts', async () => {
+    const { fetchImpl, calls } = api({ partSize: 40 * 1024 * 1024, partStatus: 404 });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    await expect(
+      client.assets.replaceFile(
+        'a9',
+        {
+          fileName: 'b.mov',
+          contentType: 'video/quicktime',
+          body: new Uint8Array(SINGLE_UPLOAD_MAX_BYTES + 1),
+        },
+        { sleep: async () => {}, concurrency: 1 },
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(true);
   });
 
   it('does not retry a refused completion (a 409 lost race), and aborts the upload', async () => {

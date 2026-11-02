@@ -681,8 +681,10 @@ export function createManagementClient(opts: ManagementClientOptions) {
       uploadOpts.onProgress?.({ loaded: 0, total, partsDone: 0, partCount: 1 });
       let attempt = 0;
       await retry(async () => {
-        const res = await putBytes(target.url, sliceOf(body, 0, total), target.headers);
+        // Counted before the PUT: an attempt whose answer never came (the connection dropped
+        // after R2 stored the bytes) rejects here, and its retry's 412 is those bytes.
         const retried = attempt++ > 0;
+        const res = await putBytes(target.url, sliceOf(body, 0, total), target.headers);
         if (res.ok || (retried && res.status === 412)) return;
         // On the first attempt, 412 means the key held bytes before this upload: no retry helps.
         if (res.status === 412) throw new ManagementError(412, `Upload refused: ${target.url}`);
@@ -710,6 +712,9 @@ export function createManagementClient(opts: ManagementClientOptions) {
               signed.url,
               sliceOf(body, (n - 1) * partSize, signed.length),
             );
+            // 404: the upload is gone (aborted, or completed); signing the part again can't help.
+            if (res.status === 404)
+              throw new ManagementError(404, `Upload gone: PUT ${signed.url}`);
             if (!res.ok) throw failed(res, signed.url);
             const tag = res.headers.get('etag');
             if (!tag) throw new Error(`part ${n} came back without an ETag`);
