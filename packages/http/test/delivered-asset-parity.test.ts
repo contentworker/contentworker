@@ -6,6 +6,8 @@
  * their inline objects.
  */
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
@@ -110,7 +112,8 @@ function comparable(a: Shape, b: Shape): Shape {
   return out;
 }
 
-const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+const here = dirname(fileURLToPath(import.meta.url));
+const read = (path: string) => readFileSync(join(here, path), 'utf8');
 
 const definitions = {
   zod: zodShape(deliveredAsset),
