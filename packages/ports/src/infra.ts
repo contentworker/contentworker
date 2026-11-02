@@ -321,6 +321,14 @@ export interface RemoteFetcher {
     url: string,
     options: { readonly maxBytes: number; readonly timeoutMs?: number },
   ): Promise<RemoteDocument>;
+  /**
+   * The same request for a binary body (an asset file an import copies), under the same rules:
+   * no redirects, the size cap enforced on what arrives.
+   */
+  getBytes(
+    url: string,
+    options: { readonly maxBytes: number; readonly timeoutMs?: number },
+  ): Promise<RemoteFile>;
 }
 
 export interface RemoteDocument {
@@ -328,6 +336,13 @@ export interface RemoteDocument {
   readonly contentType?: string;
   /** Response body as text. Empty when the status is not 2xx. */
   readonly body: string;
+}
+
+export interface RemoteFile {
+  readonly status: number;
+  readonly contentType?: string;
+  /** Response body. Empty when the status is not 2xx. */
+  readonly bytes: Uint8Array;
 }
 
 /** One outbound email. */

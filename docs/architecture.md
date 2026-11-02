@@ -513,7 +513,7 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
 | Store                             | Holds                                                                                                                                                                                                                                                                              |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **D1** (`DB`, primary + replicas) | Everything authoritative: spaces, environments, aliases, content types, entries and versions, published read models, assets, releases, schedules, taxonomy, workflows, roles, team, API keys, OAuth, webhooks, the outbox, audit; plus the web app's auth tables (`0002_auth.sql`) |
-| **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle), zip downloads (`zips/`, 2-day lifecycle) and in-progress multipart uploads (aborted by a bucket-wide 2-day rule)                                                                                                                                                                 |
+| **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle), zip downloads (`zips/`, 2-day lifecycle) and in-progress multipart uploads (aborted by a bucket-wide 2-day rule)                                               |
 | **KV** (`KV_CACHE`)               | Tag-versioned delivery cache, the authenticated-principal cache, and the media gate (shared by api, engine, delivery and media)                                                                                                                                                    |
 | **DO SQLite**                     | Search shards, live hubs, AI budgets, auth-failure counters                                                                                                                                                                                                                        |
 | **Vectorize**                     | Embeddings (768 dims, cosine), metadata-indexed on `spaceId` and `environmentId`                                                                                                                                                                                                   |
@@ -580,21 +580,22 @@ way state changes: the HTTP API, MCP, and the queue consumers all call them.
 
 One subpath per adapter, each implementing a port against one binding:
 
-| Subpath             | Port(s)                                  | Technology                                                                                                                           |
-| ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `ai-workers`        | `AIProvider`, `EmbeddingsProvider`       | Workers AI, through AI Gateway when configured                                                                                       |
-| `asset-gate-kv`     | `AssetGate`                              | Workers KV (the media Worker's gate)                                                                                                 |
-| `blob-r2`           | `BlobStore`, media URL signer            | R2 binding + signed `/media/*` route                                                                                                 |
-| `cache-kv`          | `Cache`                                  | Workers KV, tag-versioned                                                                                                            |
-| `queue-cf`          | `Queue`                                  | Cloudflare Queues producer                                                                                                           |
-| `vector-vectorize`  | `VectorStore`                            | Vectorize                                                                                                                            |
-| `vector-kv-dev`     | `VectorStore`                            | Local-dev only (`VECTOR_STORE=kv`): brute-force cosine over KV, shared by the Workers of a dev session; counts as the fake `vectors` |
-| `images-cf`         | image transformer                        | Cloudflare Images binding                                                                                                            |
-| `video-stream`      | video host                               | Cloudflare Stream binding                                                                                                            |
-| `email-cf`          | `EmailSender`                            | Email Sending (`send_email`)                                                                                                         |
-| `plugins-cf-loader` | plugin runtime                           | Worker Loader isolates                                                                                                               |
-| `http-effects`      | `WebhookSender`, function invoker, fetch | `fetch`                                                                                                                              |
-| `import-structured` | import sources                           | CSV / JSON / WordPress parsers                                                                                                       |
+| Subpath               | Port(s)                                  | Technology                                                                                                                           |
+| --------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ai-workers`          | `AIProvider`, `EmbeddingsProvider`       | Workers AI, through AI Gateway when configured                                                                                       |
+| `asset-gate-kv`       | `AssetGate`                              | Workers KV (the media Worker's gate)                                                                                                 |
+| `blob-r2`             | `BlobStore`, media URL signer            | R2 binding + signed `/media/*` route                                                                                                 |
+| `cache-kv`            | `Cache`                                  | Workers KV, tag-versioned                                                                                                            |
+| `queue-cf`            | `Queue`                                  | Cloudflare Queues producer                                                                                                           |
+| `vector-vectorize`    | `VectorStore`                            | Vectorize                                                                                                                            |
+| `vector-kv-dev`       | `VectorStore`                            | Local-dev only (`VECTOR_STORE=kv`): brute-force cosine over KV, shared by the Workers of a dev session; counts as the fake `vectors` |
+| `images-cf`           | image transformer                        | Cloudflare Images binding                                                                                                            |
+| `video-stream`        | video host                               | Cloudflare Stream binding                                                                                                            |
+| `email-cf`            | `EmailSender`                            | Email Sending (`send_email`)                                                                                                         |
+| `plugins-cf-loader`   | plugin runtime                           | Worker Loader isolates                                                                                                               |
+| `http-effects`        | `WebhookSender`, function invoker, fetch | `fetch`                                                                                                                              |
+| `import-structured`   | import sources                           | CSV / JSON / WordPress parsers                                                                                                       |
+| `import-space-export` | `SpaceExportReader`                      | The JSON space export format: model, locales, tags, entries (links remapped), assets                                                 |
 
 ### `packages/platform`: wiring
 

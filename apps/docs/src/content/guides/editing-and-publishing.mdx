@@ -164,6 +164,34 @@ and press **Import**; the API and MCP follow the same order.
 All three need `content:write`. To copy a whole environment instead, see
 [Environments](/guides/environments/).
 
+### Import a space export
+
+A JSON space export (the format with `contentTypes`, `entries`, `assets`, `locales` and `tags`,
+whose rich text is a node tree) brings a whole space at once: its content model, locales with their
+fallbacks, tags, entries and assets. It imports into an environment with **no content types yet**.
+In the admin, open **Content** in an empty environment and choose **import a space export**, or pick
+the **Space export** format on any import screen.
+
+1. **Check.** The report (`POST …/imports/space-export/analyze`, `space_export_analyze`) counts
+   what would be imported and lists what wouldn't: fields with no equivalent here (a resource
+   link), validations editors here wouldn't be held to (asset size, date ranges, allowed rich-text
+   nodes), links whose target isn't in the file, and entries that would fail validation (a missing
+   required field, a repeated unique value), each with why. It writes nothing.
+2. **Run.** `POST …/imports/space-export` (`space_export_import`) writes the model and tags, then
+   runs a job that copies each asset's file from its URL into this space's storage and creates the
+   assets and entries, then a second job that publishes what the export had published. Follow both
+   at `…/bulk/jobs/{id}`.
+
+Every entry and asset gets a new id, and every link, rich-text embed and entry hyperlink points at
+it, including links forward in the file and cycles. A link to something not imported is dropped (a
+hyperlink keeps its text). Rich-text nodes map one to one; a node with no equivalent keeps its text
+as a paragraph. An entry published with newer unpublished changes imports as a draft, since the
+export only carries the draft.
+
+Both need `content:manage`. If the export has locales this space lacks, the report says so; a space
+admin can set `addLocales` (the **Add the export's locales** box) to add them with their fallbacks.
+The export's default locale must be the space's.
+
 ## Next steps
 
 - [Releases and scheduling](/guides/releases-and-scheduling/): publish many entries as one, or later.

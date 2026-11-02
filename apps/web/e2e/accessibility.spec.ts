@@ -60,6 +60,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['entries', '/content/article'],
   ['new entry', '/content/article/new'],
   ['import', '/content/article/import'],
+  ['space export import', '/content/space-import'],
   ['approvals', '/approvals'],
   ['releases', '/releases'],
   ['workflows', '/workflows'],

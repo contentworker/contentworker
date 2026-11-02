@@ -79,7 +79,9 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   the entry editor (TipTap rich text, components and repeaters, references, localized fields),
   version history, diff and restore, comments and tasks, metadata, AI assist; import
   (`/content/:typeId/import`) from CSV, JSON or a WordPress export, with a dry-run report before
-  anything is written and a resumable job past 10,000 records.
+  anything is written and a resumable job past 10,000 records; a whole space export
+  (`/content/space-import`, linked from the empty content list, or the **Space export** format on
+  the import screen) into an environment with no content types, with the same report first.
 - **Coworker**: the assistant panel in the shell, open from any page; its conversation and any
   confirm card waiting for an answer survive navigation. A page's edit can go through it (the
   exact MCP tool call, no model); when the assistant is off or its socket is down, the page makes

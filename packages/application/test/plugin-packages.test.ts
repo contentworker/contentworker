@@ -66,6 +66,9 @@ function fakeFetcher(
       if (url.endsWith('.json')) return { status: 200, body: JSON.stringify(pkg) };
       return { status: 200, body: over.bundle ?? BUNDLE };
     },
+    async getBytes() {
+      throw new Error('plugin packages are read as text');
+    },
   };
 }
 

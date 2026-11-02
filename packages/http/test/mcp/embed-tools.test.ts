@@ -38,6 +38,9 @@ function fetcher(): RemoteFetcher & { calls: string[] } {
         }),
       };
     },
+    async getBytes() {
+      throw new Error('embed_resolve reads text only');
+    },
   };
 }
 

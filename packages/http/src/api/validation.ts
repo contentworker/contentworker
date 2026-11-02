@@ -191,6 +191,12 @@ export const importBody = z.object({
   sourceOptions: z.record(z.string().max(64), z.unknown()).optional(),
   conflicts: z.enum(['skip', 'update', 'fail']).optional(),
 });
+export const spaceExportImportBody = z.object({
+  // The export file's text; bounded by the app's own body limit long before this.
+  payload: z.string().min(1).max(20_000_000),
+  publish: z.boolean().optional(),
+  addLocales: z.boolean().optional(),
+});
 export const createPatBody = z.object({
   name: zShort,
   scopes: z.array(z.string().max(64)).min(1).max(64),

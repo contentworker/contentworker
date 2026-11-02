@@ -21,6 +21,7 @@ import {
 } from '@contentworker/ui/table';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import { ImportJobProgress } from '~/cms/components/import-job-progress';
 import { PageHeader } from '~/cms/components/page';
 import { RequiredMark } from '~/cms/components/required-mark';
 import { useClient } from '../lib/client-context';
@@ -32,6 +33,10 @@ import {
 } from '../lib/management';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
+import { SpaceExportImport } from './SpaceExportImport';
+
+/** A whole space (model, entries, assets), not records for one content type: its own flow. */
+const SPACE_EXPORT = 'space-export';
 
 /** Source ids by file extension; the picker still lets you override. */
 const SOURCE_BY_EXTENSION: Record<string, string> = {
@@ -132,11 +137,15 @@ export function ImportEntries() {
   const chooseFile = async (file: File) => {
     const text = await file.text();
     const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-    const detected = SOURCE_BY_EXTENSION[extension] ?? source;
+    // A space export is JSON too: once chosen, a .json file stays one.
+    const detected =
+      source === SPACE_EXPORT && extension === 'json'
+        ? SPACE_EXPORT
+        : (SOURCE_BY_EXTENSION[extension] ?? source);
     setSource(detected);
     setPayload(text);
     setFileName(file.name);
-    await readColumns(text, detected, postType);
+    if (detected !== SPACE_EXPORT) await readColumns(text, detected, postType);
   };
 
   /**
@@ -155,6 +164,13 @@ export function ImportEntries() {
   /** A different format reads the same bytes differently, so the columns are asked for again. */
   const chooseSource = async (next: string) => {
     setSource(next);
+    if (next === SPACE_EXPORT) {
+      // Nothing to map: the export carries its own model.
+      setColumns(undefined);
+      setMapping({});
+      setAnalysis(undefined);
+      return;
+    }
     if (payload) await readColumns(payload, next, postType);
   };
 
@@ -225,6 +241,22 @@ export function ImportEntries() {
   // this guard is true on the first render and false on the next — returning
   // above the hooks would change how many run between renders, which React
   // treats as a crash rather than a re-render.
+  // `/content/space-import`: no content type yet, which is the point of importing a whole space.
+  if (!typeId) {
+    return (
+      <div className="max-w-3xl space-y-4">
+        <PageHeader
+          title="Import a space export"
+          description="Nothing is written until you say so — the report is the run, without the commit."
+        >
+          <Button type="button" variant="outline" onClick={() => navigate('/content')}>
+            Cancel
+          </Button>
+        </PageHeader>
+        <SpaceExportImport onDone={() => navigate('/content')} />
+      </div>
+    );
+  }
   if (!contentType) return <p className="text-muted-foreground text-sm">Unknown content type.</p>;
 
   const mappable = mappableFields(contentType);
@@ -245,8 +277,8 @@ export function ImportEntries() {
         <CardHeader>
           <h2 className="font-heading text-base font-medium">1. Choose a file</h2>
           <p className="text-sm text-muted-foreground">
-            A spreadsheet exported as CSV, a JSON array, or a WordPress export. The server reads it
-            and tells you what columns it found.
+            A spreadsheet exported as CSV, a JSON array, a WordPress export, or a whole space
+            export. The server reads it and tells you what it found.
           </p>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -264,7 +296,7 @@ export function ImportEntries() {
                 }}
               />
             </div>
-            <div className="w-32 space-y-1">
+            <div className="w-36 space-y-1">
               <Label htmlFor="import-source">Format</Label>
               <Select value={source} onValueChange={(next) => void chooseSource(next)}>
                 <SelectTrigger id="import-source" size="sm" className="w-full">
@@ -274,6 +306,7 @@ export function ImportEntries() {
                   <SelectItem value="csv">CSV</SelectItem>
                   <SelectItem value="json">JSON</SelectItem>
                   <SelectItem value="wxr">WordPress</SelectItem>
+                  <SelectItem value={SPACE_EXPORT}>Space export</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -318,7 +351,15 @@ export function ImportEntries() {
         </CardContent>
       </Card>
 
-      {columns && (
+      {source === SPACE_EXPORT && payload !== undefined && (
+        <SpaceExportImport
+          payload={payload}
+          fileName={fileName}
+          onDone={() => navigate('/content')}
+        />
+      )}
+
+      {columns && source !== SPACE_EXPORT && (
         <Card>
           <CardHeader>
             <h2 className="font-heading text-base font-medium">2. Match the columns</h2>
@@ -444,71 +485,14 @@ export function ImportEntries() {
         </Alert>
       )}
 
-      {job && <JobProgress job={job} onDone={() => navigate(`/content/${contentType.apiId}`)} />}
+      {job && (
+        <ImportJobProgress job={job} onDone={() => navigate(`/content/${contentType.apiId}`)} />
+      )}
 
       {analysis && !job && (
         <AnalysisReport analysis={analysis} busy={busy} onRun={() => void execute()} />
       )}
     </div>
-  );
-}
-
-/**
- * A running import job.
- *
- * Chunks, not records, because chunks are what actually complete — reporting
- * a record count that only moves 200 at a time would look stuck between jumps.
- * Failures are shown as they accumulate rather than saved for the end: an
- * import that is failing every record should be cancellable before it finishes.
- */
-function JobProgress(props: { job: BulkJobSummary; onDone: () => void }) {
-  const { job } = props;
-  const done = job.status !== 'running';
-  const percent = job.totalChunks === 0 ? 100 : (job.completedChunks / job.totalChunks) * 100;
-
-  return (
-    <Card>
-      <CardHeader>
-        <h2 className="font-heading text-base font-medium">
-          {done ? 'Import finished' : 'Importing…'}
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          {done
-            ? `${job.succeeded} imported, ${job.failed} failed.`
-            : `${job.completedChunks} of ${job.totalChunks} batches — this keeps running if you close the tab.`}
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* <progress>, not a div wearing role="progressbar": the element is
-            already the thing, and browsers announce its value without being
-            told how. */}
-        <progress
-          className="h-2 w-full overflow-hidden rounded-full"
-          aria-label="Import progress"
-          value={job.completedChunks}
-          max={Math.max(1, job.totalChunks)}
-        >
-          {Math.round(percent)}%
-        </progress>
-
-        {job.failed > 0 && (
-          <Alert variant="destructive">
-            <AlertTitle>
-              {job.failed} {job.failed === 1 ? 'record' : 'records'} failed
-            </AlertTitle>
-            <AlertDescription>
-              The job report lists each one. The rest were imported.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {done && (
-          <Button type="button" onClick={props.onDone}>
-            Done
-          </Button>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 

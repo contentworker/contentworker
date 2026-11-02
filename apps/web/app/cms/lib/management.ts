@@ -789,6 +789,50 @@ export interface ImportResult {
   readonly failed: readonly { externalId: string; message: string }[];
 }
 
+/** The body both space export calls take: the export file, and what to do with it. */
+export interface SpaceExportRequest {
+  readonly payload: string;
+  readonly publish?: boolean;
+  /** Add the export's locales this space lacks (space admins only). */
+  readonly addLocales?: boolean;
+}
+
+/** What importing a space export would do (and, once started, what it is doing). */
+export interface SpaceExportReport {
+  readonly dryRun: boolean;
+  readonly executable: boolean;
+  /** What stops the import as a whole. */
+  readonly problems: readonly string[];
+  readonly locales: {
+    readonly default: string;
+    readonly declared: readonly { readonly code: string; readonly fallback: string | null }[];
+    readonly toAdd: readonly string[];
+  };
+  readonly contentTypes: number;
+  readonly tags: number;
+  readonly entries: {
+    readonly read: number;
+    readonly imported: number;
+    readonly published: number;
+    readonly invalid: number;
+  };
+  readonly assets: { readonly read: number; readonly imported: number; readonly published: number };
+  readonly unmappedFields: readonly string[];
+  readonly unmappedValidations: readonly string[];
+  readonly warnings: readonly string[];
+  readonly missingLinks: readonly {
+    readonly entry: string;
+    readonly field: string;
+    readonly linkType: 'Entry' | 'Asset';
+    readonly target: string;
+  }[];
+  readonly missingLinkCount: number;
+  readonly invalidEntries: readonly {
+    readonly entry: string;
+    readonly messages: readonly string[];
+  }[];
+}
+
 /** What a package at a URL turns out to be, once the server verified it. */
 export interface InspectedPluginPackage {
   readonly manifest: PluginManifestInput;
@@ -1750,6 +1794,18 @@ export function createManagementClient(
     /** Starts the same import as a resumable job, for files too big for one request. */
     startImportJob(input: ImportRequest): Promise<{ job: BulkJobSummary }> {
       return req('POST', `${mgmt}/imports/job`, input);
+    },
+    /** Reports what importing a space export into this environment would do. Writes nothing. */
+    analyzeSpaceExport(input: SpaceExportRequest): Promise<SpaceExportReport> {
+      return req('POST', `${mgmt}/imports/space-export/analyze`, input);
+    },
+    /** Writes the model and starts the jobs that create and then publish everything else. */
+    startSpaceExportImport(input: SpaceExportRequest): Promise<{
+      report: SpaceExportReport;
+      job: BulkJobSummary | null;
+      publishJobId: string | null;
+    }> {
+      return req('POST', `${mgmt}/imports/space-export`, input);
     },
     getBulkJob(id: string): Promise<BulkJobSummary> {
       return req('GET', `${mgmt}/bulk/jobs/${encodeURIComponent(id)}`);

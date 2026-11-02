@@ -103,6 +103,8 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       accessPolicy: WEB_SIGN_IN,
       // Bounded and redirect-refusing, as the HTTP API's: embed_resolve fetches with it.
       remoteFetcher: wired.remoteFetcher,
+      // The space export tools read with it, as the HTTP API's routes do.
+      spaceExportReader: wired.spaceExportReader,
       signalReview: env.AGENT_WF
         ? (review, decision) => sendReviewDecision(env.AGENT_WF as Workflow, review.id, decision)
         : undefined,
