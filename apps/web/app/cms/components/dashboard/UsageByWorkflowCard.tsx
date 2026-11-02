@@ -39,7 +39,7 @@ export function UsageByWorkflowCard(props: { runs: readonly AgentRun[]; days?: n
       <CardContent>
         {rows.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-6 text-center text-sm text-muted-foreground">
-            <Mark className="size-6" />
+            <Mark className="size-6 text-ai" />
             No agent runs in the last {days} days.
           </div>
         ) : (

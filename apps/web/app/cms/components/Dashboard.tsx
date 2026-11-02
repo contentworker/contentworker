@@ -253,7 +253,7 @@ export function Dashboard() {
 
         <Section id="agent-runs" title="Recent agent runs" flush={runs.length > 0}>
           {runs.length === 0 ? (
-            <Empty icon={<Mark />} title="No agent runs yet">
+            <Empty icon={<Mark className="text-ai" />} title="No agent runs yet">
               Enable AGENTS_ENRICH on the worker and runs will appear here as content is published.
             </Empty>
           ) : (

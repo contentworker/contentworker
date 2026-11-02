@@ -1,4 +1,5 @@
 import { Button } from '@contentworker/ui/button';
+import { ComposeLoader, composeSequences } from '@contentworker/ui/compose-loader';
 import {
   Dialog,
   DialogContent,
@@ -101,6 +102,9 @@ export function CanvasDialog(props: {
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
+          <p className="sr-only" aria-live="polite">
+            {busy ? 'Mapping the text to fields.' : ''}
+          </p>
 
           <DialogFooter>
             <Button
@@ -112,7 +116,14 @@ export function CanvasDialog(props: {
               Cancel
             </Button>
             <Button type="submit" disabled={busy || !prose.trim()}>
-              {busy ? 'Mapping…' : 'Map to fields'}
+              {busy ? (
+                <>
+                  <ComposeLoader icon={composeSequences.drafting} />
+                  Mapping…
+                </>
+              ) : (
+                'Map to fields'
+              )}
             </Button>
           </DialogFooter>
         </form>

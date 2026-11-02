@@ -401,7 +401,7 @@ export function AssetCollectionView(props: {
                     data-open-asset=""
                     onClick={() => props.onOpenAsset(a)}
                     aria-label={`Open “${name}”`}
-                    className="hit-area min-w-0 flex-1 truncate rounded-full text-left font-medium text-sm outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+                    className="hit-area min-w-0 flex-1 truncate rounded-full text-left font-medium text-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {name}
                   </button>
