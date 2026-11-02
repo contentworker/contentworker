@@ -141,6 +141,8 @@ export interface ContentStore {
   readonly outbox: OutboxRepo;
   /** Raw access to sealed secret columns, for the reseal sweep only. */
   readonly storedSecrets: StoredSecretRepo;
+  /** Delivery's independent reads, sent together (one D1 round trip). */
+  readonly delivery: DeliveryReadRepo;
 }
 
 /**
@@ -1295,6 +1297,53 @@ export interface SpaceConfig {
 export interface Environment {
   readonly id: string;
   readonly name: string;
+}
+
+/**
+ * The reads one step of a Delivery request needs, none depending on another's answer: asked for
+ * together so the D1 store sends them as one `batch()` (one round trip) instead of one statement
+ * at a time. Every part is optional; ask only for what the step needs.
+ */
+export interface DeliveryReadRequest {
+  /** The space's configuration (locales, fallbacks). */
+  readonly config?: boolean;
+  /** Every content type in the scope. */
+  readonly contentTypes?: boolean;
+  /** The space's rendition presets. */
+  readonly renditions?: boolean;
+  /** One published entry. */
+  readonly entryId?: string;
+  /** One published asset. */
+  readonly assetId?: string;
+  /** Published entries by id (any number: split under the parameter cap). */
+  readonly entryIds?: readonly string[];
+  /** Published assets by id (any number: split under the parameter cap). */
+  readonly assetIds?: readonly string[];
+  /** A page of published assets. */
+  readonly assetPage?: PublishedAssetQuery;
+}
+
+/**
+ * What a {@link DeliveryReadRequest} read: each part is present exactly when it was asked for,
+ * with the same answer its own repo method gives (`spaces.getConfig`, `entries.getPublished`,
+ * `assets.getPublishedMany`, …).
+ */
+export interface DeliveryReadResult {
+  readonly config?: SpaceConfig | null;
+  readonly contentTypes?: ContentType[];
+  readonly renditions?: AssetRendition[];
+  readonly entry?: PublishedEntry | null;
+  readonly asset?: PublishedAsset | null;
+  /** Missing ids are absent, order unspecified. */
+  readonly entries?: PublishedEntry[];
+  /** Missing ids are absent, order unspecified. */
+  readonly assets?: PublishedAsset[];
+  readonly assetPage?: PublishedAssetPage;
+}
+
+/** Delivery's reads, batched. Read-only: it never writes, so it is safe on a replica session. */
+export interface DeliveryReadRepo {
+  read(scope: Scope, request: DeliveryReadRequest): Promise<DeliveryReadResult>;
 }
 
 /** A repointable pointer to a target environment, used for blue/green serving. */
