@@ -10,12 +10,17 @@
  * an unknown element contributes its text, never nothing.
  *
  * What does not map is converted to something visible rather than lost.
- * Images and embeds become links to their source, because there is no asset to
- * point a node at yet, and a link is something an editor can see and fix.
+ * Images and unknown media become links to their source, because there is no
+ * asset to point a node at yet, and a link is something an editor can see and
+ * fix. Media from an allowed embed provider (a YouTube iframe, a tweet's
+ * blockquote, a WordPress embed block, a bare URL on its own line) becomes an
+ * `embed` node holding only its URL and provider: the player markup is
+ * discarded, and metadata is the import's or the editor's to resolve later.
  *
  * Pure and DOM-free: the domain runs on Node and in a Worker alike.
  */
 
+import { MAX_EMBED_URL_LENGTH, matchEmbedProvider, parseAbsoluteUrl } from './embed';
 import {
   MAX_TABLE_COLUMNS,
   MAX_TABLE_ROWS,
@@ -344,35 +349,66 @@ function blocks(nodes: readonly HtmlNode[], autop: boolean): RichTextNode[] {
     pending = [];
   };
 
-  for (const node of nodes) {
+  nodes.forEach((node, at) => {
     if (typeof node === 'string') {
       if (!autop) {
         pending.push(textNode(node, []));
-        continue;
+        return;
       }
-      node.split(/\n[ \t\r\f]*\n/).forEach((part, index) => {
+      const parts = node.split(/\n[ \t\r\f]*\n/);
+      parts.forEach((part, index) => {
         if (index > 0) flush();
+        // WordPress embeds a provider URL that stands on its own, as its own
+        // paragraph: nothing before it in this paragraph, nothing after it.
+        const alone =
+          (index > 0 || !paragraphOf(pending)) &&
+          (index < parts.length - 1 || standsAlone(nodes[at + 1]));
+        const standalone = alone ? embedFromUrlLine(part) : undefined;
+        if (standalone) {
+          flush();
+          out.push(standalone);
+          return;
+        }
         part.split('\n').forEach((line, n) => {
           if (n > 0) pending.push({ nodeType: 'hard-break', data: {}, content: [] });
           pending.push(textNode(line, []));
         });
       });
-      continue;
+      return;
     }
-    if (DROPPED.has(node.tag)) continue;
+    if (DROPPED.has(node.tag)) return;
     if (!BLOCK.has(node.tag)) {
-      pending.push(...inline(node, []));
-      continue;
+      const embed = embedOf(node);
+      if (embed) {
+        flush();
+        out.push(embed);
+      } else {
+        pending.push(...inline(node, []));
+      }
+      return;
     }
     flush();
     out.push(...block(node));
-  }
+  });
   flush();
   return out;
 }
 
+/** Whether what follows a line of text leaves it standing alone: nothing, or a block. */
+function standsAlone(next: HtmlNode | undefined): boolean {
+  return next === undefined || (typeof next !== 'string' && BLOCK.has(next.tag));
+}
+
 function block(element: HtmlElement): RichTextNode[] {
   const { tag } = element;
+  const embed = embedOf(element);
+  if (embed) {
+    // A WordPress embed figure's caption is prose, and stays as prose after it.
+    const caption = element.children.filter(
+      (c): c is HtmlElement => typeof c !== 'string' && c.tag === 'figcaption',
+    );
+    return [embed, ...caption.flatMap((c) => blocks(c.children, false))];
+  }
   const heading = HEADINGS[tag];
   if (heading) return withInline(heading, element);
   switch (tag) {
@@ -492,9 +528,156 @@ function spans(cell: HtmlElement): Record<string, number> {
   return data;
 }
 
+/**
+ * A block of inline content. An embeddable player inside it (`<p><iframe>`, as
+ * editors commonly store one) is lifted out as an `embed` block of its own,
+ * splitting the text around it, because an embed is a block and cannot sit in
+ * a line of text.
+ */
 function withInline(nodeType: string, element: HtmlElement): RichTextNode[] {
-  const content = tidy(element.children.flatMap((n) => inline(n, [])));
-  return content.length ? [{ nodeType, data: {}, content }] : [];
+  const out: RichTextNode[] = [];
+  let run: RichTextNode[] = [];
+  const flush = () => {
+    const content = tidy(run);
+    if (content.length) out.push({ nodeType, data: {}, content });
+    run = [];
+  };
+  for (const child of element.children) {
+    const embed = typeof child === 'string' ? undefined : embedOf(child);
+    if (embed) {
+      flush();
+      out.push(embed);
+    } else {
+      run.push(...inline(child, []));
+    }
+  }
+  flush();
+  return out;
+}
+
+// --- embeds ------------------------------------------------------------------
+
+/** Blockquote classes the providers' embed snippets use for a post. */
+const POST_BLOCKQUOTE_CLASSES = ['twitter-tweet', 'bluesky-embed', 'mastodon-embed'];
+
+/**
+ * An `embed` node for an element, when it is media from an allowed provider:
+ * a player `<iframe>`, a provider's post `<blockquote>`, or a WordPress
+ * `wp-block-embed` figure. Everything else, unknown providers included, is
+ * left to the usual reading (an unknown player stays a link to its source).
+ */
+function embedOf(element: HtmlElement): RichTextNode | undefined {
+  const classes = (element.attributes.class ?? '').split(/\s+/);
+  if (element.tag === 'iframe') return embedNode(pageUrlOfPlayer(element.attributes.src));
+  if (element.tag === 'blockquote' && classes.some((c) => POST_BLOCKQUOTE_CLASSES.includes(c))) {
+    const bluesky = /^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/]+)$/.exec(
+      element.attributes['data-bluesky-uri'] ?? '',
+    );
+    const candidates = [
+      ...(bluesky ? [`https://bsky.app/profile/${bluesky[1]}/post/${bluesky[2]}`] : []),
+      pageUrlOfPlayer(element.attributes['data-embed-url']),
+      // A tweet's status link comes last, after any links in the post's text.
+      ...hrefsIn(element).reverse(),
+    ];
+    for (const candidate of candidates) {
+      const embed = embedNode(candidate);
+      if (embed && matchEmbedProvider(String(embed.data?.url))?.provider.kind === 'post') {
+        return embed;
+      }
+    }
+    return undefined;
+  }
+  if (element.tag === 'figure' && classes.includes('wp-block-embed')) {
+    // The block's markup holds the URL as the wrapper's text; a rendered page
+    // may have swapped in the provider's player or a link instead.
+    const wrapper = element.children.find(
+      (c): c is HtmlElement =>
+        typeof c !== 'string' && (c.attributes.class ?? '').includes('wp-block-embed__wrapper'),
+    );
+    const iframe = findElement(element, 'iframe');
+    return (
+      embedNode(wrapper ? textContent(wrapper).trim() : undefined) ??
+      embedNode(pageUrlOfPlayer(iframe?.attributes.src)) ??
+      hrefsIn(element)
+        .map(embedNode)
+        .find((e) => e !== undefined)
+    );
+  }
+  return undefined;
+}
+
+/** A `[embed]URL[/embed]` shortcode or a bare URL, alone on its line, as an embed. */
+function embedFromUrlLine(line: string): RichTextNode | undefined {
+  // Trimmed and length-gated first: the pattern's whitespace runs, unanchored by a
+  // trim, backtrack quadratically over a long run of spaces in hostile input.
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.length > MAX_EMBED_URL_LENGTH + 64) return undefined;
+  const url =
+    /^(?:\[embed[^\]]{0,64}\])?\s{0,8}(https?:\/\/[^\s<>"[\]]+)\s{0,8}(?:\[\/embed\])?$/i.exec(
+      trimmed,
+    )?.[1];
+  return embedNode(url);
+}
+
+/**
+ * The embed node for a URL on an allowed provider, holding only what the URL
+ * says (url, provider, kind). An old post's `http://` or protocol-relative
+ * `//` link to a provider is read as the https page it now is.
+ */
+function embedNode(raw: string | undefined): RichTextNode | undefined {
+  if (!raw) return undefined;
+  const upgraded = raw.trim().replace(/^(?:http:)?\/\//i, 'https://');
+  const match = matchEmbedProvider(upgraded);
+  if (!match) return undefined;
+  return {
+    nodeType: 'embed',
+    data: { url: match.url.href, provider: match.provider.id, kind: match.provider.kind },
+    content: [],
+  };
+}
+
+/**
+ * The page a provider's player URL shows, where the two differ: an embed
+ * stores the page (what a reader would share), not the player.
+ */
+function pageUrlOfPlayer(src: string | undefined): string | undefined {
+  if (!src) return undefined;
+  const raw = src.trim().replace(/^(?:http:)?\/\//i, 'https://');
+  const url = parseAbsoluteUrl(raw);
+  if (!url) return undefined;
+  const host = url.hostname;
+  const path = url.pathname;
+  const youtube = /^\/embed\/([\w-]{11})/.exec(path);
+  if (youtube && /^(?:www\.)?youtube(?:-nocookie)?\.com$/.test(host)) {
+    return `https://www.youtube.com/watch?v=${youtube[1]}`;
+  }
+  const vimeo = /^\/video\/(\d+)/.exec(path);
+  if (vimeo && host === 'player.vimeo.com') return `https://vimeo.com/${vimeo[1]}`;
+  if (host === 'open.spotify.com') return `https://open.spotify.com${path.replace(/^\/embed/, '')}`;
+  if (host === 'w.soundcloud.com') return url.searchParams.get('url') ?? undefined;
+  const bluesky = /^\/embed\/([^/]+)\/app\.bsky\.feed\.post\/([^/]+)/.exec(path);
+  if (bluesky && host === 'embed.bsky.app') {
+    return `https://bsky.app/profile/${bluesky[1]}/post/${bluesky[2]}`;
+  }
+  // A Mastodon post's player is the post's own URL with `/embed` after it.
+  if (/^\/@[^/]+\/\d+\/embed$/.test(path)) return `https://${host}${path.slice(0, -6)}`;
+  return raw;
+}
+
+function hrefsIn(node: HtmlNode): string[] {
+  if (typeof node === 'string') return [];
+  const own = node.tag === 'a' && node.attributes.href ? [node.attributes.href] : [];
+  return [...own, ...node.children.flatMap(hrefsIn)];
+}
+
+function findElement(node: HtmlNode, tag: string): HtmlElement | undefined {
+  if (typeof node === 'string') return undefined;
+  if (node.tag === tag) return node;
+  for (const child of node.children) {
+    const found = findElement(child, tag);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /**

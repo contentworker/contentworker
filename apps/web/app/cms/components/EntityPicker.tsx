@@ -159,7 +159,7 @@ export function EntityPicker(props: {
             aria-invalid={props.invalid || undefined}
             aria-describedby={props.errorId}
             className={cn(
-              'h-8 w-full min-w-0 rounded-2xl border border-transparent bg-input/50 py-1 pr-14 pl-2.5 text-sm transition-[color,box-shadow] duration-200 outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30',
+              'h-8 w-full min-w-0 rounded-2xl border border-transparent bg-input/50 py-1 pr-14 pl-2.5 text-sm transition-[color,box-shadow] duration-200 outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring',
               props.invalid && 'border-destructive focus-visible:ring-destructive/30',
             )}
             placeholder={props.placeholder ?? 'Search…'}
@@ -182,7 +182,7 @@ export function EntityPicker(props: {
               <button
                 type="button"
                 aria-label="Clear selection"
-                className="rounded-2xl p-0.5 text-muted-foreground hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:outline-none"
+                className="rounded-2xl p-0.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 onClick={() => onChange(undefined)}
               >
                 <X className="size-3.5" />

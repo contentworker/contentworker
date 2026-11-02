@@ -9,6 +9,7 @@ import {
   type LocalizedValue,
   variantOf,
 } from '@contentworker/domain';
+import type { DeliveryResolvers, ResolvedAsset, ResolvedEntry } from '@contentworker/ports';
 import {
   GraphQLBoolean,
   type GraphQLFieldConfigMap,
@@ -24,56 +25,6 @@ import {
   GraphQLString,
   GraphQLUnionType,
 } from 'graphql';
-
-/** An entry rendered (locale-flattened, links resolved) by the resolvers. */
-export interface ResolvedEntry {
-  readonly id: string;
-  readonly contentType: string;
-  readonly fields: Record<string, unknown>;
-  readonly publishedAt: string;
-}
-
-export interface SearchHit {
-  readonly entryId: string;
-  readonly score: number;
-  readonly snippet: string;
-}
-
-/** Data access the generated schema needs — bound to a space/environment. */
-export interface DeliveryResolvers {
-  entry(contentType: string, id: string, locale?: string): Promise<ResolvedEntry | null>;
-  collection(
-    contentType: string,
-    args: {
-      locale?: string;
-      limit?: number;
-      skip?: number;
-      /** Field-level predicates keyed `fields.x[op]` (see Delivery query syntax). */
-      where?: Record<string, unknown>;
-      /** Sort keys, e.g. `["fields.title", "-sys.publishedAt"]`. */
-      order?: readonly string[];
-      /** Full-text search over string fields. */
-      search?: string;
-    },
-  ): Promise<ResolvedEntry[]>;
-  asset(id: string, locale?: string): Promise<ResolvedAsset | null>;
-  /**
-   * One locale's text (with the space's fallbacks; its default locale when none is named), as
-   * the Asset type's `title`, `description` and `altText` read it.
-   */
-  localize(value: LocalizedValue, locale?: string): Promise<string | null>;
-  search(query: string, topK?: number): Promise<SearchHit[]>;
-}
-
-/**
- * A published asset for the `Asset` type: delivered with its text per locale (each field takes
- * its own `locale` argument, falling back to the query's).
- */
-export interface ResolvedAsset {
-  readonly asset: DeliveredAsset;
-  /** The `asset(locale:)` the query asked for. */
-  readonly locale?: string;
-}
 
 /**
  * Per-request execution context — pass as `contextValue` to graphql execute().
@@ -91,6 +42,19 @@ const JSONScalar = new GraphQLScalarType({
   description: 'Arbitrary JSON value (rich text, JSON, location, or resolved link).',
   serialize: (v) => v,
 });
+
+/**
+ * What a RichText field holds, since its JSON type says nothing. Clients render the tree
+ * themselves, so this is the one place a GraphQL client learns it is never HTML.
+ */
+const RICH_TEXT_DESCRIPTION =
+  'Rich text: a document tree ({ nodeType: "document", content: [...] }), never HTML. Render ' +
+  'it by nodeType. An "embed" node is external media (a video, post or track) whose data is ' +
+  '{ url, provider, kind?, title?, authorName?, thumbnail?, width?, height?, aspectRatio? }: ' +
+  "structured metadata, never the provider's player markup.";
+
+const describeField = (f: { readonly type: string }) =>
+  f.type === 'RichText' ? { description: RICH_TEXT_DESCRIPTION } : {};
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -142,6 +106,7 @@ function componentType(
       for (const f of nested) {
         fields[f.apiId] = {
           type: typeFor(names, `${name}${cap(f.apiId)}`, f),
+          ...describeField(f),
           // Values arrive as a plain object keyed by nested apiId, so the
           // default resolver would do — spelled out to survive a rename.
           resolve: (value) => servedValue(f, value?.[f.apiId]),
@@ -294,6 +259,7 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
     for (const f of ct.fields) {
       fields[f.apiId] = {
         type: typeFor(names, `${cap(ct.apiId)}${cap(f.apiId)}`, f),
+        ...describeField(f),
         resolve: (s) => servedValue(f, s.fields[f.apiId]),
       };
     }

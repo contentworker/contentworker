@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import type { DeliveredAsset, DomainEvent, LocaleConfig } from '@contentworker/domain';
+import type {
+  AssetRendition,
+  DeliveredAsset,
+  DomainEvent,
+  LocaleConfig,
+} from '@contentworker/domain';
 import {
   canAccessContentType,
   deniedFieldsFor,
@@ -12,12 +17,13 @@ import {
   type Scope,
 } from '@contentworker/domain';
 import type { EntryQuery, PublishedAsset, PublishedEntry, SpaceConfig } from '@contentworker/ports';
-import { assetProjectionContext, projectPublishedAsset } from './asset-delivery';
+import { projectionContextOf, projectPublishedAsset } from './asset-delivery';
 import {
   type AppContext,
   DEFAULT_DELIVERY_CACHE_TTL_SECONDS,
   DEFAULT_DELIVERY_LIST_TTL_SECONDS,
 } from './context';
+import { type DeliveryReads, deliveryReads } from './delivery-reads';
 import { cacheTag, contentTypeTag, epochTag } from './events/dispatch';
 
 export interface RenderOptions {
@@ -25,6 +31,11 @@ export interface RenderOptions {
   readonly locale?: string;
   /** Reference resolution depth (0 = none). Bounded by MAX_INCLUDE. */
   readonly include?: number;
+  /**
+   * The request's reads, when it has some already: a GraphQL request that read the space config
+   * for its schema passes them, so rendering doesn't read it again (see {@link DeliveryReads}).
+   */
+  readonly reads?: DeliveryReads;
 }
 
 /** A delivered entry as returned to channels. Link fields may be embedded. */
@@ -39,8 +50,7 @@ export interface DeliveredEntry {
 
 const MAX_INCLUDE = 5;
 
-async function spaceConfig(ctx: AppContext, scope: Scope): Promise<SpaceConfig> {
-  const config = await ctx.store.spaces.getConfig(scope);
+function spaceConfig(scope: Scope, config: SpaceConfig | null | undefined): SpaceConfig {
   if (!config) throw new NotFoundError('Space', scope.spaceId);
   return config;
 }
@@ -105,20 +115,27 @@ function collectLinkIds(snapshot: PublishedEntry, entryIds: Set<string>, assetId
 
 /**
  * Breadth-first batched prefetch of everything `render` can embed from `roots`
- * within `depth` levels: ONE `getPublishedMany` per repo per level (≤ depth
- * entry queries + depth asset queries per call) instead of one point read per
- * link. Fetching all locales' links is a slight superset of what a
- * locale-flattened render embeds — over-fetch, never under.
+ * within `depth` levels: ONE read per level (entries and assets together, one
+ * round trip) instead of one point read per link. Fetching all locales' links
+ * is a slight superset of what a locale-flattened render embeds — over-fetch,
+ * never under.
+ *
+ * The rendition presets embedded assets are projected with ride along with the
+ * first level that asks for an asset, rather than costing a round trip of their
+ * own after the walk (read once per request, see {@link DeliveryReads}).
  */
 async function prefetchLinked(
   ctx: AppContext,
   scope: Scope,
   roots: readonly PublishedEntry[],
   depth: number,
-  locale: string | undefined,
+  opts: RenderOptions,
+  reads: DeliveryReads,
+  config: SpaceConfig,
 ): Promise<Prefetched> {
   const entries = new Map<string, PublishedEntry>(roots.map((r) => [r.entryId, r]));
   const assets = new Map<string, PublishedAsset>();
+  let renditions: readonly AssetRendition[] = [];
   let frontier: readonly PublishedEntry[] = roots;
   for (let level = 0; level < depth && frontier.length > 0; level++) {
     const entryIds = new Set<string>();
@@ -126,24 +143,18 @@ async function prefetchLinked(
     for (const snapshot of frontier) collectLinkIds(snapshot, entryIds, assetIds);
     const newEntryIds = [...entryIds].filter((id) => !entries.has(id));
     const newAssetIds = [...assetIds].filter((id) => !assets.has(id));
-    const [fetchedEntries, fetchedAssets] = await Promise.all([
-      newEntryIds.length > 0
-        ? ctx.store.entries.getPublishedMany(scope, newEntryIds)
-        : ([] as PublishedEntry[]),
-      newAssetIds.length > 0
-        ? ctx.store.assets.getPublishedMany(scope, newAssetIds)
-        : ([] as PublishedAsset[]),
-    ]);
+    if (newEntryIds.length === 0 && newAssetIds.length === 0) break;
+    const fetched = await reads.read(scope, {
+      ...(newEntryIds.length > 0 ? { entryIds: newEntryIds } : {}),
+      ...(newAssetIds.length > 0 ? { assetIds: newAssetIds, renditions: true } : {}),
+    });
+    for (const a of fetched.assets ?? []) assets.set(a.assetId, a);
+    if (fetched.renditions) renditions = fetched.renditions;
+    const fetchedEntries = fetched.entries ?? [];
     for (const e of fetchedEntries) entries.set(e.entryId, e);
-    for (const a of fetchedAssets) assets.set(a.assetId, a);
     frontier = fetchedEntries;
   }
-  // The renditions (and locale settings) embedded assets are projected with: read only when an
-  // asset is embedded, once for the whole render.
-  const pc =
-    assets.size > 0
-      ? await assetProjectionContext(ctx, scope, locale !== undefined ? { locale } : {})
-      : { renditions: [] };
+  const pc = projectionContextOf(scope, renditions, opts.locale, config);
   return {
     entries,
     assets,
@@ -252,11 +263,14 @@ export async function getPublishedEntry(
     if (hit) return JSON.parse(hit) as DeliveredEntry;
   }
 
-  const snapshot = await ctx.store.entries.getPublished(scope, id);
+  // The snapshot and the space config: one round trip.
+  const reads = opts.reads ?? deliveryReads(ctx);
+  const read = await reads.read(scope, { entryId: id, config: true });
+  const snapshot = read.entry;
   if (!snapshot) throw new NotFoundError('PublishedEntry', id);
-  const config = await spaceConfig(ctx, scope);
+  const config = spaceConfig(scope, read.config);
   const collected = new Set<string>();
-  const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts.locale);
+  const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts, reads, config);
   const result = render(scope, snapshot, config, opts, depth, new Set([id]), collected, fetched);
 
   if (ctx.cache) {
@@ -357,7 +371,8 @@ export async function listPublishedEntries(
   query: EntryQuery = {},
   opts: RenderOptions = {},
 ): Promise<DeliveredEntry[]> {
-  const config = await spaceConfig(ctx, scope);
+  const reads = opts.reads ?? deliveryReads(ctx);
+  const config = spaceConfig(scope, (await reads.read(scope, { config: true })).config);
   // Filtering/ordering/search compare against a single resolved locale; default
   // to the requested locale, then the space default.
   const locale = query.locale ?? opts.locale ?? config.defaultLocale;
@@ -379,7 +394,7 @@ export async function listPublishedEntries(
   });
   // One shared prefetch across all rows: N rows × M links costs one batched
   // read per depth level, not N×M point reads.
-  const fetched = await prefetchLinked(ctx, scope, rows, depth, opts.locale);
+  const fetched = await prefetchLinked(ctx, scope, rows, depth, opts, reads, config);
   const result = rows.map((s) =>
     render(scope, s, config, opts, depth, new Set([s.entryId]), new Set(), fetched),
   );

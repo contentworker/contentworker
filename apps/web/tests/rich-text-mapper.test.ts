@@ -556,3 +556,82 @@ describe('mapper normalization of API-authored shapes', () => {
     expect(toDocument(toTiptap(value))).toEqual(value);
   });
 });
+
+describe('external embeds', () => {
+  const embed = (data: Record<string, unknown>): RichTextNode => ({
+    nodeType: 'embed',
+    data,
+    content: [],
+  });
+  const full = {
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    provider: 'youtube',
+    kind: 'video',
+    title: 'A video',
+    authorName: 'Someone',
+    thumbnail: { url: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg', width: 480, height: 360 },
+    width: 200,
+    height: 113,
+    aspectRatio: 1.7699,
+  };
+
+  it('maps an embed to an externalEmbed atom holding its data, and back unchanged', () => {
+    const value = doc([embed(full)]);
+    const pm = toTiptap(value);
+    expect(pm.content?.[0]).toEqual({ type: 'externalEmbed', attrs: { embed: full } });
+    expect(toDocument(pm)).toEqual(value);
+  });
+
+  it('round-trips an embed with only url and provider', () => {
+    const value = doc([embed({ url: 'https://vimeo.com/76979871', provider: 'vimeo' })]);
+    expect(toDocument(toTiptap(value))).toEqual(value);
+  });
+
+  it('carries an embed the domain would refuse through unknownBlock, verbatim', () => {
+    const bad = embed({
+      url: 'https://vimeo.com/76979871',
+      provider: 'vimeo',
+      html: '<iframe src="https://player.vimeo.com/video/76979871"></iframe>',
+    });
+    const pm = toTiptap(doc([bad]));
+    expect(pm.content?.[0]).toEqual({ type: 'unknownBlock', attrs: { raw: bad } });
+    expect(toDocument(pm)).toEqual(doc([bad]));
+    const offList = embed({ url: 'https://example.com/v/1', provider: 'example' });
+    expect(toTiptap(doc([offList])).content?.[0]?.type).toBe('unknownBlock');
+  });
+
+  it('writes back only the keys an embed stores, whatever the editor attrs hold', () => {
+    const pm: PmNode = {
+      type: 'doc',
+      content: [
+        {
+          type: 'externalEmbed',
+          attrs: {
+            embed: {
+              url: 'https://x.com/jack/status/20',
+              provider: 'x',
+              html: '<blockquote>',
+              foo: 1,
+            },
+          },
+        },
+      ],
+    };
+    expect(toDocument(pm)).toEqual(
+      doc([embed({ url: 'https://x.com/jack/status/20', provider: 'x' })]),
+    );
+  });
+
+  // A list item's editor content is `paragraph block*`, so the embed follows its first paragraph.
+  it('is schema-legal at the top level and inside a list item', () => {
+    const schema = getSchema(buildExtensions());
+    const value = doc([
+      embed(full),
+      {
+        nodeType: 'unordered-list',
+        content: [{ nodeType: 'list-item', content: [paragraph(text('i')), embed(full)] }],
+      },
+    ]);
+    expect(() => schema.nodeFromJSON(toTiptap(value)).check()).not.toThrow();
+  });
+});

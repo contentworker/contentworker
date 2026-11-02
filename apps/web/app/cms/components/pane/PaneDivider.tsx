@@ -115,7 +115,7 @@ export function PaneDivider({
         aria-hidden
         className={cn(
           'pointer-events-none absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 bg-ring/0 transition-[background-color] duration-150 ease-out motion-reduce:transition-none',
-          'group-hover/divider:bg-ring/40 group-focus-visible/divider:bg-ring group-data-[dragging]/divider:bg-ring/70',
+          'group-hover/divider:bg-foreground/25 group-focus-visible/divider:bg-ring group-data-[dragging]/divider:bg-foreground/40',
         )}
       />
     </div>

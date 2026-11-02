@@ -12,6 +12,7 @@ function shape(node: RichTextNode): unknown {
     const marks = (node.marks ?? []).map((m) => m.type);
     return marks.length ? { text: node.value, marks } : node.value;
   }
+  if (node.nodeType === 'embed') return { embed: node.data?.url, provider: node.data?.provider };
   const uri = node.data?.uri;
   return {
     [node.nodeType]: (node.content ?? []).map(shape),
@@ -337,5 +338,132 @@ describe('reading HTML as rich text', () => {
   it('produces an empty document from nothing', () => {
     expect(richTextFromHtml('')).toEqual({ nodeType: 'document', data: {}, content: [] });
     expect(richTextFromHtml('  <p> </p> ').content).toEqual([]);
+  });
+});
+
+describe('reading provider embeds as embed nodes', () => {
+  const youtube = { embed: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', provider: 'youtube' };
+
+  it('reads a provider player iframe as an embed of its page, discarding the player', () => {
+    expect(
+      read(
+        '<iframe width="560" height="315" src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?si=x" allowfullscreen></iframe>',
+      ),
+    ).toEqual([youtube]);
+    expect(read('<iframe src="//player.vimeo.com/video/76979871?h=abc"></iframe>')).toEqual([
+      { embed: 'https://vimeo.com/76979871', provider: 'vimeo' },
+    ]);
+    expect(
+      read('<iframe src="https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC"></iframe>'),
+    ).toEqual([
+      { embed: 'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC', provider: 'spotify' },
+    ]);
+    expect(
+      read(
+        '<iframe src="https://w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fforss%2Fflickermood&auto_play=false"></iframe>',
+      ),
+    ).toEqual([{ embed: 'https://soundcloud.com/forss/flickermood', provider: 'soundcloud' }]);
+    expect(
+      read('<iframe src="https://mastodon.social/@Gargron/109554287435185383/embed"></iframe>'),
+    ).toEqual([
+      { embed: 'https://mastodon.social/@Gargron/109554287435185383', provider: 'mastodon' },
+    ]);
+  });
+
+  it('lifts a player out of the paragraph it sits in, keeping the text around it', () => {
+    expect(
+      read('<p>Before <iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe> after</p>'),
+    ).toEqual([{ paragraph: ['Before'] }, youtube, { paragraph: ['after'] }]);
+  });
+
+  it('keeps an iframe from a provider that is not allowed as a link to it', () => {
+    expect(read('<iframe src="https://evil.example/player/1"></iframe>')).toEqual([
+      {
+        paragraph: [
+          { hyperlink: ['https://evil.example/player/1'], uri: 'https://evil.example/player/1' },
+        ],
+      },
+    ]);
+  });
+
+  it("reads a provider's post blockquote as an embed of the post", () => {
+    expect(
+      read(
+        '<blockquote class="twitter-tweet"><p lang="en">just setting up my <a href="https://twitter.com/hashtag/x">#x</a></p>&mdash; jack (@jack) <a href="https://twitter.com/jack/status/20?ref_src=twsrc">March 21, 2006</a></blockquote><script async src="https://platform.twitter.com/widgets.js"></script>',
+      ),
+    ).toEqual([{ embed: 'https://twitter.com/jack/status/20?ref_src=twsrc', provider: 'x' }]);
+    expect(
+      read(
+        '<blockquote class="bluesky-embed" data-bluesky-uri="at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3l6oveex3ii2l"><p>Hello</p></blockquote>',
+      ),
+    ).toEqual([
+      {
+        embed: 'https://bsky.app/profile/did:plc:z72i7hdynmk6r22z27h6tvur/post/3l6oveex3ii2l',
+        provider: 'bluesky',
+      },
+    ]);
+  });
+
+  it('keeps an ordinary blockquote, or a post quote with no post link, as a quote', () => {
+    expect(read('<blockquote class="twitter-tweet"><p>No link</p></blockquote>')).toEqual([
+      { blockquote: [{ paragraph: ['No link'] }] },
+    ]);
+  });
+
+  it('reads a WordPress embed block, keeping its caption as prose', () => {
+    const wxr = `<!-- wp:embed {"url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ","type":"video","providerNameSlug":"youtube"} -->
+<figure class="wp-block-embed is-type-video is-provider-youtube wp-block-embed-youtube"><div class="wp-block-embed__wrapper">
+https://www.youtube.com/watch?v=dQw4w9WgXcQ
+</div><figcaption class="wp-element-caption">The video</figcaption></figure>
+<!-- /wp:embed -->`;
+    expect(read(wxr)).toEqual([youtube, { paragraph: ['The video'] }]);
+  });
+
+  it('reads a WordPress embed block for a provider that is not allowed as its text', () => {
+    const html =
+      '<figure class="wp-block-embed"><div class="wp-block-embed__wrapper">https://example.com/v/1</div></figure>';
+    expect(read(html)).toEqual([{ paragraph: ['https://example.com/v/1'] }]);
+  });
+
+  it("reads a provider URL alone on its line, or in [embed], as WordPress's classic editor embeds it", () => {
+    expect(
+      read(
+        'Intro\n\nhttp://youtu.be/dQw4w9WgXcQ\n\n[embed]https://vimeo.com/76979871[/embed]\n\nSee https://youtu.be/dQw4w9WgXcQ inline.',
+      ),
+    ).toEqual([
+      { paragraph: ['Intro'] },
+      { embed: 'https://youtu.be/dQw4w9WgXcQ', provider: 'youtube' },
+      { embed: 'https://vimeo.com/76979871', provider: 'vimeo' },
+      { paragraph: ['See https://youtu.be/dQw4w9WgXcQ inline.'] },
+    ]);
+    // Text before it in the same paragraph means it is part of a sentence.
+    expect(read('<b>Watch</b> https://youtu.be/dQw4w9WgXcQ')).toEqual([
+      { paragraph: [{ text: 'Watch', marks: ['bold'] }, ' https://youtu.be/dQw4w9WgXcQ'] },
+    ]);
+  });
+
+  it('reads a long run of whitespace in linear time (no backtracking blow-up)', () => {
+    const started = performance.now();
+    expect(read(`${' '.repeat(200_000)}x`)).toEqual([{ paragraph: ['x'] }]);
+    expect(read(`https://a${' '.repeat(200_000)}x`)).toHaveLength(1);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('produces embeds the validator accepts, with nothing but url, provider and kind', () => {
+    const value = richTextFromHtml(
+      '<p><iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="YouTube video player"></iframe></p>',
+    );
+    expect(validateRichText(value)).toEqual([]);
+    expect(value.content).toEqual([
+      {
+        nodeType: 'embed',
+        data: {
+          url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+          provider: 'youtube',
+          kind: 'video',
+        },
+        content: [],
+      },
+    ]);
   });
 });

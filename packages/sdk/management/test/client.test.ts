@@ -301,10 +301,10 @@ describe('@contentworker/sdk-management client', () => {
     });
     const client = createManagementClient({ ...base, fetch: fetchImpl });
 
-    await client.assets.setMetadata('a1', { alt: 'x' });
+    await client.assets.setMetadata('a1', { altText: { 'en-US': 'x' } });
     expect(calls[0]?.init?.method).toBe('PATCH');
     expect(calls[0]?.url).toBe('https://cms.test/spaces/s1/environments/main/assets/a1/metadata');
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ alt: 'x' });
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ altText: { 'en-US': 'x' } });
   });
 
   it('creates and cancels a scheduled action, parsing the canceled action from DELETE', async () => {

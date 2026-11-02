@@ -47,10 +47,45 @@ holds it). A field can carry a **default value** that new entries start with.
 ### Rich text
 
 A `RichText` value is a document of nodes: paragraphs, headings, lists, quotes, code blocks, rules,
-tables, links, and embedded entries and assets. Every write is checked against that vocabulary,
-whoever makes it: an unknown node type is refused, a link must point at an `http`, `https`,
-`mailto` or `tel` address (or a relative one), and a document may be at most 512 KiB and 64 levels
-deep.
+tables, links, embedded entries and assets, and external media embeds. Every write is checked
+against that vocabulary, whoever makes it: an unknown node type is refused, a link must point at an
+`http`, `https`, `mailto` or `tel` address (or a relative one), and a document may be at most
+512 KiB and 64 levels deep.
+
+An **embed** holds a video, a post or a track from an allowed provider: YouTube, Vimeo, X, Bluesky,
+Mastodon, Spotify or SoundCloud. It is an `embed` node whose `data` is structured metadata, never the
+provider's player HTML:
+
+```json
+{
+  "nodeType": "embed",
+  "data": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "provider": "youtube",
+    "kind": "video",
+    "title": "Never Gonna Give You Up",
+    "authorName": "Rick Astley",
+    "thumbnail": { "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg", "width": 480, "height": 360 },
+    "width": 200,
+    "height": 113,
+    "aspectRatio": 1.7699
+  },
+  "content": []
+}
+```
+
+Only `url` (https) and `provider` are required. Paste a provider URL into the rich-text editor and it
+becomes an embed with a preview card; the editor fills the rest by calling
+`POST /spaces/<space>/environments/<env>/embeds/resolve` (the `embed_resolve` MCP tool), which asks
+the provider's oEmbed endpoint and returns only these fields. A URL that isn't https or isn't on an
+allowed provider is refused. Imported HTML keeps provider players, tweet blockquotes and WordPress
+embed blocks as embeds, with the URL and provider only.
+
+Your front end decides how an embed looks: a player built from `provider` and `url` (for example
+`https://www.youtube-nocookie.com/embed/<id>` in an `<iframe>` sized by `aspectRatio`), or the safe
+default, a link card with the thumbnail and title, which `embedCard` in `@contentworker/sdk-core`
+builds for you. A `mastodon` embed's host is whatever instance the author named, so don't frame it
+in a player unless that instance is on your own list; the link card is always safe.
 
 ### Components and repeaters
 
@@ -131,6 +166,11 @@ agents. An AI agent can't save an entry a person couldn't.
 - **Adding a block type**, or an optional field to one, is safe. **Removing a block type** is
   refused while any entry (a draft, the trash or a published version) still has a block of it;
   the error lists those entries, so change or remove their blocks first.
+- **Removing a field**, at any depth (a component's field, a block type's field), is refused the
+  same way while any entry still holds a value for it: the `409` lists each field and its entries
+  (`details.fieldsInUse`). There is no override. Clear the value in those entries (save them
+  without it), publish the ones that are live so the published version drops it too, and purge any
+  in the trash; then remove the field.
 - **Renaming** a field's name is safe; its `apiId` is what code depends on, so treat that as
   permanent.
 - **Try risky changes in an environment.** Clone `main` into a `staging` environment, change the

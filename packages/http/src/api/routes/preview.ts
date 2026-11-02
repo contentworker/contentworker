@@ -1,9 +1,11 @@
 import {
   authenticate,
+  clampCount,
   getPreviewAsset,
   getPreviewEntry,
   listPreviewAssets,
   listPreviewEntryPage,
+  parseEntryQuery,
   principalFromPreviewToken,
   SUGGEST_DEFAULT_LIMIT,
   SUGGEST_MAX_LIMIT,
@@ -35,7 +37,7 @@ import {
 } from '../auth';
 import { doc } from '../docs/openapi';
 import { deliveredAsset, deliveredAssetPage, previewEntryPage } from '../docs/schemas';
-import { clampCount, parseDeliveredAssetQuery, parseEntryQuery } from '../query';
+import { parseDeliveredAssetQuery } from '../query';
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({
   spaceId: c.req.param('space') as string,

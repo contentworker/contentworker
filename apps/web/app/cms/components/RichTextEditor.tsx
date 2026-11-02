@@ -1,10 +1,12 @@
 import type { RichTextDocument } from '@contentworker/domain';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useOptionalClient } from '~/cms/lib/client-context';
 import { toDocument, toTiptap } from '~/cms/lib/rich-text-mapper';
 import type { Pickers } from './EntryForm';
 import { RichTextPickersContext } from './rich-text/EmbedNodeView';
 import { buildExtensions } from './rich-text/extensions';
+import type { EmbedResolver } from './rich-text/external-embed';
 import { Toolbar } from './rich-text/Toolbar';
 
 /**
@@ -26,13 +28,24 @@ export function RichTextEditor(props: {
   // setContent feedback loop).
   const lastEmitted = useRef(props.value as RichTextDocument | undefined);
 
+  // Embeds resolve their metadata through the api for the current space and
+  // environment; outside the CMS (no client) they go in with what the URL says.
+  const client = useOptionalClient()?.client;
+  const resolveEmbed = useRef<EmbedResolver | undefined>(undefined);
+  resolveEmbed.current = client
+    ? (url) => client.resolveEmbed(url).then((r) => r.embed)
+    : undefined;
+
   // useEditor compares options by REFERENCE each render and calls
   // editor.setOptions() when anything differs. Fresh extensions/content/
   // editorProps objects per render would trigger that on every keystroke
   // (each edit re-renders the parent form), and the resulting view churn can
   // swallow in-flight selection keystrokes. Keep every non-handler option
   // referentially stable; `content` only matters at creation anyway.
-  const extensions = useMemo(() => buildExtensions(), []);
+  const extensions = useMemo(
+    () => buildExtensions({ resolveEmbed: () => resolveEmbed.current }),
+    [],
+  );
   const [initialContent] = useState(() => toTiptap(props.value));
   const editorProps = useMemo(
     () => ({
@@ -74,7 +87,7 @@ export function RichTextEditor(props: {
   return (
     <RichTextPickersContext.Provider value={props.pickers}>
       <div className="rounded-lg border bg-card" id={props.id}>
-        {editor && <Toolbar editor={editor} />}
+        {editor && <Toolbar editor={editor} resolveEmbed={() => resolveEmbed.current} />}
         <EditorContent editor={editor} />
       </div>
     </RichTextPickersContext.Provider>

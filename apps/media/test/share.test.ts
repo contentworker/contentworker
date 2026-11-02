@@ -87,6 +87,10 @@ describe('share links on the media origin', () => {
     expect(html).not.toContain('secret.png');
     // No download links unless the link allows them.
     expect(html).not.toContain('?download');
+    // Ledger in both schemes, focus in the brand accent, and no contentworker mark.
+    expect(html).toContain('@media (prefers-color-scheme:dark)');
+    expect(html).toContain('outline:2px solid var(--brand)');
+    expect(html).not.toContain('<svg');
     const json = await SELF.fetch(`${s.url}?format=json`);
     const body = (await json.json()) as { files: { assetId: string; href: string }[] };
     expect(body.files.map((f) => f.assetId)).toEqual([s.pdf.id, s.image.id]);

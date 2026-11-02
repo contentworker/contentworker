@@ -438,7 +438,25 @@ export const createVideoAssetBody = z.object({
   description: zLocalized.optional(),
   maxDurationSeconds: z.int().positive().optional(),
 });
-export const assetMetadataBody = z.object({}).loose(); // partial patch; domain applies known keys
+/** A media URL to resolve into an `embed` node's data; the domain decides which URLs are allowed. */
+export const resolveEmbedBody = z.object({
+  url: z.string().min(1).max(2048).describe('https URL of the media page (a video, post or track)'),
+});
+/**
+ * An asset metadata patch: the keys sent change, the rest are kept. One shape for the REST body
+ * and MCP's `asset_set_metadata`, so neither surface takes what the other refuses. Unknown keys
+ * are stripped.
+ */
+export const assetMetadataPatchShape = {
+  altText: z.record(zLocale, z.string()).optional().describe('Alt text per locale'),
+  tags: z.array(zId).optional().describe('Taxonomy tag ids (the whole set)'),
+  focalPoint: z
+    .object({ x: z.number(), y: z.number() })
+    .optional()
+    .describe('0..1 on each axis; crops are anchored here'),
+  fields: z.record(z.string(), z.unknown()).optional().describe('Free-form custom values'),
+};
+export const assetMetadataBody = z.object(assetMetadataPatchShape);
 export const altTextBody = z.object({
   locale: zLocale.optional(),
   context: zText.optional(),

@@ -208,6 +208,23 @@ describe('assets.upload and replaceFile: a single PUT stores once', () => {
       ),
     ).rejects.toMatchObject({ status: 412 });
   });
+
+  it('keeps the signature out of an upload error message', async () => {
+    for (const singlePut of [[412], [403, 403, 403, 403]]) {
+      const { fetchImpl } = api({ singlePut });
+      const client = createManagementClient({ ...base, fetch: fetchImpl });
+      const err = await client.assets
+        .replaceFile(
+          'a9',
+          { fileName: 'b.png', contentType: 'image/png', body: new Uint8Array(10) },
+          { sleep: async () => {} },
+        )
+        .catch((e: Error) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('/media/v3');
+      expect((err as Error).message).not.toContain('sig=');
+    }
+  });
 });
 
 describe('assets.replaceFile', () => {

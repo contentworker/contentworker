@@ -64,8 +64,8 @@ function SkeletonText({
 }
 
 /**
- * Anything you press or that labels a status is a pill (The Pill Rule), and so is its skeleton:
- * a badge by default (h-5), a small button with `className="h-8 w-20"`.
+ * What labels a status is a pill (The Label Rule), and so is its skeleton: a badge by default
+ * (h-5). A button's stand-in adds its size and `rounded-md`, e.g. `className="h-8 w-20 rounded-md"`.
  */
 function SkeletonPill({ className, ...props }: React.ComponentProps<'span'>) {
   return (

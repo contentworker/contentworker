@@ -447,6 +447,9 @@ importers:
       '@contentworker/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@contentworker/design':
+        specifier: workspace:*
+        version: link:../../packages/design
       '@contentworker/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -828,6 +831,9 @@ importers:
       '@contentworker/domain':
         specifier: workspace:*
         version: link:../domain
+      '@contentworker/ports':
+        specifier: workspace:*
+        version: link:../ports
       graphql:
         specifier: 'catalog:'
         version: 17.0.2
@@ -926,6 +932,9 @@ importers:
       '@contentworker/sdk-core':
         specifier: workspace:*
         version: link:../sdk/core
+      '@contentworker/sdk-management':
+        specifier: workspace:*
+        version: link:../sdk/management
       '@contentworker/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config

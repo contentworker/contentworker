@@ -79,6 +79,8 @@ import type {
   ContentStore,
   ContentStoreTx,
   ContentTypeRepo,
+  DeliveryReadRepo,
+  DeliveryReadResult,
   DeploymentSettingsRepo,
   EntryQuery,
   EntryRepo,
@@ -1516,6 +1518,41 @@ export class InMemoryContentStore implements ContentStore {
         }
       }
       return deleted;
+    },
+  };
+
+  /**
+   * Delivery's batched reads, answered by the repos each part names: the same answers the D1
+   * store's single batch gives, so a use-case reads the same either way.
+   */
+  readonly delivery: DeliveryReadRepo = {
+    read: async (scope, request) => {
+      const [config, contentTypes, renditions, entry, asset, entries, assets, assetPage] =
+        await Promise.all([
+          request.config ? this.spaces.getConfig(scope) : undefined,
+          request.contentTypes ? this.contentTypes.list(scope) : undefined,
+          request.renditions ? this.assetRenditions.list(scope) : undefined,
+          request.entryId !== undefined
+            ? this.entries.getPublished(scope, request.entryId)
+            : undefined,
+          request.assetId !== undefined
+            ? this.assets.getPublished(scope, request.assetId)
+            : undefined,
+          request.entryIds ? this.entries.getPublishedMany(scope, request.entryIds) : undefined,
+          request.assetIds ? this.assets.getPublishedMany(scope, request.assetIds) : undefined,
+          request.assetPage ? this.assets.listPublished(scope, request.assetPage) : undefined,
+        ]);
+      const result: DeliveryReadResult = {
+        ...(request.config ? { config: config ?? null } : {}),
+        ...(contentTypes ? { contentTypes } : {}),
+        ...(renditions ? { renditions } : {}),
+        ...(request.entryId !== undefined ? { entry: entry ?? null } : {}),
+        ...(request.assetId !== undefined ? { asset: asset ?? null } : {}),
+        ...(entries ? { entries } : {}),
+        ...(assets ? { assets } : {}),
+        ...(assetPage ? { assetPage } : {}),
+      };
+      return result;
     },
   };
 

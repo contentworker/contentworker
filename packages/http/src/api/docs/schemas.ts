@@ -13,6 +13,12 @@ export const errorResponse = z
     error: z.object({
       code: z.string().describe('Machine-readable error code'),
       message: z.string(),
+      details: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(
+          'What a 409 conflicts with, when it says: e.g. `variantsInUse` / `fieldsInUse`, each location with the entries still holding it',
+        ),
     }),
   })
   .describe('Error envelope');
@@ -41,7 +47,7 @@ export const field = z.object({
   type: z
     .string()
     .describe(
-      'Field type: Symbol, Slug, Text, RichText, Integer, Number, Boolean, Date, Location, JSON, Link, Component or Array',
+      'Field type: Symbol, Slug, Text, RichText, Integer, Number, Boolean, Date, Location, JSON, Link, Component or Array. RichText values are a document tree (`nodeType`/`content`), never HTML; external media is an `embed` node holding structured data',
     ),
   localized: z.boolean(),
   required: z.boolean(),
@@ -155,21 +161,47 @@ export const assetPlaceholder = z
   })
   .describe('What to show while a raster image loads, computed by ingest');
 
+export const assetVideo = z
+  .object({
+    provider: z.string().describe('The video host that owns the bytes, e.g. stream'),
+    videoId: z.string().describe('The host’s id for the video'),
+    status: z.enum(['pending', 'processing', 'ready', 'error']),
+    hlsUrl: z.string().optional(),
+    dashUrl: z.string().optional(),
+    thumbnailUrl: z.string().optional().describe('Poster frame'),
+    durationSeconds: z.number().optional(),
+    errorReason: z.string().optional().describe('Why processing failed, while status is error'),
+  })
+  .describe('A video hosted by the video service: it plays from these URLs, not file.url');
+
+export const assetFile = z.object({
+  url: z.string().describe('A short-lived signed read URL'),
+  fileName: z.string(),
+  contentType: z.string().describe('MIME type'),
+  size: z.int().optional(),
+  width: z.int().optional(),
+  height: z.int().optional(),
+  placeholder: assetPlaceholder.optional().describe('Absent until ingest has computed one'),
+  video: assetVideo.optional().describe('Present on a hosted video'),
+});
+
+export const assetMetadata = z.object({
+  altText: z.record(z.string(), z.unknown()).describe('Alt text per locale'),
+  tags: z.array(z.string()).describe('Taxonomy tag ids'),
+  focalPoint: z
+    .object({ x: z.number(), y: z.number() })
+    .optional()
+    .describe('0..1 on each axis; crops are anchored here'),
+  fields: z.record(z.string(), z.unknown()).optional().describe('Free-form custom values'),
+});
+
 export const asset = z.object({
   id: z.uuid(),
   status: z.enum(['draft', 'published', 'archived']),
-  file: z.object({
-    url: z.string(),
-    fileName: z.string(),
-    contentType: z.string().describe('MIME type'),
-    size: z.int().optional(),
-    width: z.int().optional(),
-    height: z.int().optional(),
-    placeholder: assetPlaceholder.optional().describe('Absent until ingest has computed one'),
-  }),
+  file: assetFile,
   title: z.record(z.string(), z.unknown()),
   description: z.record(z.string(), z.unknown()),
-  metadata: z.record(z.string(), z.unknown()),
+  metadata: assetMetadata,
   folderId: z.string().optional().describe('The folder it is filed in; absent at the root'),
   version: z.int().optional(),
   createdAt: z.iso.datetime().optional(),
@@ -221,7 +253,7 @@ export const assetReindex = z.object({
   job: z
     .looseObject({ id: z.string(), status: z.string(), totalItems: z.int() })
     .optional()
-    .describe('The bulk job (GET /bulk-jobs/{id}); absent when there was nothing to do'),
+    .describe('The bulk job (GET /bulk/jobs/{id}); absent when there was nothing to do'),
   running: z
     .literal(true)
     .optional()
@@ -330,6 +362,37 @@ export const assetUsage = z.object({
   ),
 });
 
+const imageTransform = z.object({
+  width: z.int().optional(),
+  height: z.int().optional(),
+  fit: z.enum(['clip', 'crop', 'fill', 'max', 'scale']).optional(),
+  format: z.enum(['auto', 'jpg', 'png', 'webp', 'avif']).optional(),
+  quality: z.int().optional(),
+});
+
+export const transformedImage = z.object({
+  url: z.string().describe('The transformed image'),
+  transform: imageTransform.describe('The transform it applies'),
+});
+
+const aiUsage = z
+  .object({ inputTokens: z.int(), outputTokens: z.int() })
+  .describe('Tokens the model run used');
+
+export const altTextResult = z.object({
+  altText: z.string(),
+  locale: z.string(),
+  applied: z.boolean().describe('Saved on the asset’s metadata (apply: true)'),
+  usage: aiUsage,
+});
+
+export const autoTagResult = z.object({
+  tagIds: z.array(z.string()).describe('Existing tags the model chose'),
+  newTags: z.array(z.string()).describe('New tag names it suggests'),
+  applied: z.boolean().describe('Created and set on the asset (apply: true)'),
+  usage: aiUsage,
+});
+
 export const uploadTicket = z.object({
   asset,
   upload: z.object({
@@ -362,7 +425,7 @@ export const assetVersionList = z.object({
   items: z.array(
     z.object({
       version: z.int(),
-      file: asset.shape.file.describe('file.url is a short-lived signed read URL'),
+      file: assetFile.describe('file.url is a short-lived signed read URL'),
       contentHash: z.string().optional(),
       createdAt: z.iso.datetime().optional().describe('When this file became the asset’s'),
       createdBy: z.string().optional(),
@@ -615,3 +678,31 @@ export const assetZip = z.object({
 });
 
 export const assetZipList = z.object({ items: z.array(assetZip) });
+
+/** An `embed` rich-text node's `data`: structured metadata, never the provider's markup. */
+export const embedData = z
+  .object({
+    url: z.string().describe('https page URL on an allowed provider'),
+    provider: z
+      .string()
+      .describe('Allowed provider id: youtube, vimeo, x, bluesky, spotify, soundcloud or mastodon'),
+    kind: z.enum(['video', 'post', 'audio', 'other']).optional(),
+    title: z.string().optional(),
+    authorName: z.string().optional(),
+    thumbnail: z
+      .object({ url: z.string(), width: z.int().optional(), height: z.int().optional() })
+      .optional(),
+    width: z.int().optional().describe("Provider's suggested player width, CSS pixels"),
+    height: z.int().optional(),
+    aspectRatio: z.number().optional().describe('width / height'),
+  })
+  .describe('Data of an `embed` rich-text node');
+
+export const resolvedEmbed = z.object({
+  embed: embedData,
+  resolved: z
+    .boolean()
+    .describe(
+      'Whether the provider answered with metadata; when false, `embed` holds only url, provider and kind (still valid to store)',
+    ),
+});

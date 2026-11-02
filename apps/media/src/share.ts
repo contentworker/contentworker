@@ -14,6 +14,7 @@
  * published file's own cached URL, so a shared file costs no second copy in the cache.
  */
 import { openShareLink, sharedAssetFile, sharedAssets } from '@contentworker/application';
+import { palette, type Scheme } from '@contentworker/design/tokens';
 import {
   type LocalizedValue,
   parseShareLinkPath,
@@ -123,6 +124,50 @@ const html = (s: string) =>
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
   );
 
+/**
+ * The share page wears Ledger (the admin's tokens, light and dark) but not the contentworker mark:
+ * whoever opens a link is the deployment's contact, not ours. Brand marks only focus here.
+ */
+const PAGE_CSS = (() => {
+  const vars = (scheme: Scheme) => {
+    const p = palette(scheme);
+    return (
+      [
+        'background',
+        'foreground',
+        'muted-foreground',
+        'card',
+        'rule',
+        'input',
+        'link',
+        'brand',
+        'destructive',
+        'primary',
+        'primary-foreground',
+      ] as const
+    )
+      .map((t) => `--${t}:${p[t]}`)
+      .join(';');
+  };
+  return `:root{color-scheme:light dark;${vars('light')}}
+@media (prefers-color-scheme:dark){:root{${vars('dark')}}}
+:root{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5;background:var(--background);color:var(--foreground)}
+body{margin:0 auto;max-width:56rem;padding:2.5rem 1rem}
+h1{font-size:1.5rem;font-weight:600;letter-spacing:-.01em;margin:0 0 .25rem}
+ul{list-style:none;padding:0;display:grid;gap:1rem;grid-template-columns:repeat(auto-fill,minmax(14rem,1fr))}
+li{background:var(--card);border:1px solid var(--rule);border-radius:.75rem;padding:.75rem}
+img{display:block;max-width:100%;height:auto;border-radius:.375rem;margin-bottom:.5rem}
+a{color:var(--link);text-underline-offset:3px}
+a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+::selection{background:color-mix(in oklch,var(--brand) 22%,transparent)}
+.meta{font-size:.875rem;color:var(--muted-foreground)}
+label{display:block;margin:.75rem 0 .25rem;font-size:.875rem;font-weight:500}
+input,button{font:inherit;padding:.5rem .75rem;border-radius:.5rem}
+input{background:transparent;color:inherit;border:1px solid var(--input)}
+button{margin-top:.75rem;border:0;background:var(--primary);color:var(--primary-foreground);font-weight:500;cursor:pointer}
+[role=alert]{color:var(--destructive)}`;
+})();
+
 function page(status: number, title: string, body: string, extra: Record<string, string> = {}) {
   const doc = `<!doctype html>
 <html lang="en">
@@ -130,20 +175,7 @@ function page(status: number, title: string, body: string, extra: Record<string,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${html(title)}</title>
-<style>
-:root{color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.5}
-body{margin:0 auto;max-width:56rem;padding:1.5rem 1rem}
-h1{font-size:1.5rem;margin:0 0 .25rem}
-ul{list-style:none;padding:0;display:grid;gap:1rem;grid-template-columns:repeat(auto-fill,minmax(14rem,1fr))}
-li{border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:.5rem;padding:.75rem}
-img{display:block;max-width:100%;height:auto;border-radius:.25rem;margin-bottom:.5rem}
-a{color:LinkText}
-a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid Highlight;outline-offset:2px}
-.meta{font-size:.875rem;opacity:.8}
-label{display:block;margin:.75rem 0 .25rem}
-input,button{font:inherit;padding:.5rem .75rem}
-[role=alert]{color:#b42318}
-</style>
+<style>${PAGE_CSS}</style>
 </head>
 <body>
 <main>

@@ -135,6 +135,28 @@ describe('Ledger contrast (PRODUCT.md: text 4.5:1 in both themes)', () => {
   }
 });
 
+/** The tint a status stamp lays under its words, read from the admin's stamp. */
+const stampTint = (() => {
+  const m = /color-mix\(in oklch, \$\{color\} (\d+)%, transparent\)/.exec(
+    read('../../../apps/web/app/components/status.tsx'),
+  );
+  if (!m) throw new Error('status.tsx has no color-mix stamp tint');
+  return Number(m[1]) / 100;
+})();
+
+/** The brand tint a checked option card (packages/ui field.tsx) paints, light and dark. */
+const optionTint = (() => {
+  const field = read('../../ui/src/field.tsx');
+  const pct = (prefix: string) => {
+    const m = new RegExp(`(?:^|\\s)${prefix}has-data-checked:bg-brand/(\\d+)(?:\\s|'|$)`).exec(
+      field,
+    );
+    if (!m) throw new Error(`field.tsx has no ${prefix}has-data-checked:bg-brand/N`);
+    return Number(m[1]) / 100;
+  };
+  return { light: pct(''), dark: pct('dark:') };
+})();
+
 describe('Ledger contrast: the brand accent (DESIGN.md Accent)', () => {
   for (const scheme of ['light', 'dark'] as const) {
     const p = palette(scheme);
@@ -150,6 +172,21 @@ describe('Ledger contrast: the brand accent (DESIGN.md Accent)', () => {
     it(`${scheme}: words and checks on a brand fill hold 4.5:1`, () => {
       expect(contrast(srgb(p['brand-foreground']), brand)).toBeGreaterThanOrEqual(4.5);
     });
+    // The AI stamp ("AI suggestion", an agent's run): brand words on the stamp's own brand tint.
+    for (const ground of ['paper', 'card', 'muted', 'sidebar-accent'] as const) {
+      it(`${scheme}: the AI stamp's words on its tint over ${ground} hold 4.5:1`, () => {
+        const fill = over(brand, stampTint, srgb(p[ground]));
+        expect(contrast(brand, fill)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+    // The chosen option card: a field's words, body and muted, on its brand tint.
+    for (const ground of ['paper', 'card', 'muted'] as const) {
+      it(`${scheme}: words on the chosen option card over ${ground} hold 4.5:1`, () => {
+        const fill = over(brand, optionTint[scheme], srgb(p[ground]));
+        expect(contrast(srgb(p.foreground), fill)).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(srgb(p['muted-foreground']), fill)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
   }
 });
 

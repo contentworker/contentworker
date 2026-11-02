@@ -65,6 +65,13 @@ into `<img>` attributes (the width ladder as `srcset`, alt text, the focal point
 colour as `style`), and `assetUrl` and `srcset` give single values; see
 [build an image component](/guides/delivering-assets/#build-an-image-component).
 
+A rich-text `embed` node (a video, post or track) carries structured metadata, never the
+provider's HTML, so your front end decides how it looks. `embedCard(node)` returns a safe default,
+a link card: `{ href, title, provider, providerName, kind, authorName?, thumbnail? }`, with an
+https `href` and a lazy, referrer-free thumbnail, or `undefined` for any other node. For a player,
+build it yourself from `provider` and `url` (an `<iframe>` of the provider's player, sized by
+`aspectRatio`). See [rich text](/guides/content-modeling/#rich-text).
+
 The client takes the same filters, ordering and projection as the
 [Delivery API](/guides/reading-content/), throws `DeliveryError` on a failed request (with the
 `status`, the API's error `code` and the parsed `body`), and can keep a short in-memory cache
@@ -147,20 +154,68 @@ await cma.entries.publish(entry.id, { expectedVersion: entry.currentVersion });
 draft has moved on, the call fails with a **409** and changes nothing, so you never publish text
 you haven't seen.
 
-Every method maps to one Management route: content types, entries and their versions, assets
-(with direct uploads, file replacement and versions, rights, and bulk jobs, collections, share links
-and zip downloads), releases, scheduled actions, webhooks, environments and keys. The client is
-exactly as powerful as its token; the server checks every call. Failures throw `ManagementError`
-with the `status` and the error `body`; see [errors](/reference/rest-api/#errors). Keep the token on
-a server: a Management key never belongs in a browser or app bundle.
+Every method maps to one Management route: content types, entries and their versions, the asset
+library, bulk jobs, releases, scheduled actions, webhooks, environments and keys. The client is
+exactly as powerful as its token; the server checks every call. Keep the token on a server: a
+Management key never belongs in a browser or app bundle.
 
-`cma.assets.upload({ fileName, contentType, body }, { onProgress, concurrency })` uploads a file of any size as a new draft:
-one signed upload up to 100 MiB, a multipart upload above it. It retries each part on its own,
-sends `concurrency` parts at once (default 4) and calls `onProgress` after each part; a failed or aborted
-upload is aborted on the server too. `cma.assets.replaceFile(id, { fileName, contentType, body })`
-replaces an asset's file the same way, whatever its size, and returns the asset at its new version. `cma.assets.collections`, `cma.assets.shareLinks` and
-`cma.assets.zips` wrap the collection, share-link and zip routes, and a Delivery client reads a
-collection's published assets with `client.getCollection(id, { limit, cursor, locale })`.
+### Assets
+
+```ts
+// Any size: one signed upload up to 100 MiB, a multipart upload above it.
+const asset = await cma.assets.upload(
+  { fileName: file.name, contentType: file.type, body: file, folderId },
+  { onProgress: ({ loaded, total }) => setProgress(loaded / total) },
+);
+await cma.assets.setMetadata(asset.id, { altText: { 'en-US': 'A cup of coffee' } });
+await cma.assets.publish(asset.id);
+
+for await (const a of cma.assets.iterate({ kind: 'image', status: 'all' })) {
+  // every image in the library, fetched a page at a time
+}
+```
+
+`upload` retries each part on its own, sends `concurrency` parts at once (default 4) and calls
+`onProgress` after each; a failed or aborted upload (`signal`) is aborted on the server too. A
+signed upload stores its file once: if a retry is answered `412`, an earlier attempt's bytes
+landed and only its answer was lost, so the upload counts as stored; a `412` on the first attempt
+throws. `cma.assets.replaceFile(id, { fileName, contentType, body })` replaces a file the same way,
+whatever its size, and returns the asset at its new version; `startReplace` and `commitFile` are
+its single-upload steps one at a time, and `uploads` the multipart ones.
+
+The `Asset` type is complete: `file` (with `placeholder`, and `video` with `status` and the
+playback URLs on a hosted video), `metadata` (`altText`, `tags`, `focalPoint`, `fields`), `rights`,
+`version`, `ingestStatus`, `duplicateOf` and `aiSuggestions`. Beyond reading and editing, the
+`assets` namespace has `versions` and `restoreVersion`, `setRights`, `usage`,
+`transformUrl(id, { width, fit, format })`, `generateAltText(id, { apply })` and
+`autoTag(id, { apply })`, `videos.create` and `videos.refresh`, `bulk` (follow it with
+`cma.bulkJobs.get`, and stop it with `cma.bulkJobs.cancel`, which lets a running batch finish and
+undoes nothing), and the `folders`, `collections`, `shareLinks`, `zips` and `renditions`
+namespaces. `iterate`, `collections.iterate` and `collections.iterateAssets` follow `nextCursor` as
+the loop reads. A Delivery client reads a collection's published assets with
+`client.getCollection(id, { limit, cursor, locale })`.
+
+### Errors
+
+A failed call throws `ManagementError` with the `status`, the API's error `code`, the parsed
+`error` object and the raw `body` ([error codes](/reference/rest-api/#errors)). Guards narrow it to
+the details a code carries:
+
+```ts
+import { isAssetInUse, isAssetRightsError } from '@contentworker/sdk-management';
+
+try {
+  await cma.assets.publish(id);
+} catch (err) {
+  if (isAssetRightsError(err) && err.error.code === 'asset_embargoed') {
+    showMessage(`Embargoed until ${err.error.embargoUntil}`);
+  } else throw err;
+}
+```
+
+`isAssetInUse` (a delete refused while entries link to the asset: `error.usage` and
+`error.total`), `isAssetRightsError` (`embargoUntil` or `expiresAt`), `isValidationError`
+(`error.issues`), `isConflict`, `isNotFound` and `isRateLimited`.
 
 ### Reading your own writes
 

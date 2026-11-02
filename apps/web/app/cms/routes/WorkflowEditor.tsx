@@ -415,7 +415,7 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
             />
             {/* The content types the trigger covers: one control instead of a row of toggles. */}
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex h-8 max-w-72 items-center gap-1.5 rounded-4xl border border-input bg-input/30 px-3 text-xs hover:bg-input/50">
+              <DropdownMenuTrigger className="inline-flex h-8 max-w-72 items-center gap-1.5 rounded-md border border-input bg-input/30 px-3 text-xs hover:bg-input/50">
                 <span className="text-muted-foreground">Covers:</span>
                 <span className="truncate">
                   {flow.contentTypes.length
@@ -876,7 +876,7 @@ function CheckItem({
       asChild
       variant={tone === 'bad' ? 'muted' : 'default'}
       size="xs"
-      className="relative flex-nowrap items-start hover:bg-muted touch:py-3 has-focus-visible:ring-[3px] has-focus-visible:ring-ring/50"
+      className="relative flex-nowrap items-start hover:bg-muted touch:py-3 has-focus-visible:ring-2 has-focus-visible:ring-ring"
     >
       <li>
         <ItemMedia variant="icon" className={tone === 'bad' ? 'text-bad' : 'text-wait'}>

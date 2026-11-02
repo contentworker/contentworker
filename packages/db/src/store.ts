@@ -80,6 +80,8 @@ import type {
   ContentStore,
   ContentStoreTx,
   ContentTypeRepo,
+  DeliveryReadRepo,
+  DeliveryReadResult,
   DeploymentSettingsRepo,
   EntryQuery,
   EntryRepo,
@@ -97,6 +99,8 @@ import type {
   PreviewTokenRepo,
   PromotionRepo,
   PublishedAsset,
+  PublishedAssetPage,
+  PublishedAssetQuery,
   PublishedEntry,
   ReferenceRepo,
   ReleaseRepo,
@@ -253,11 +257,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
       return row ? toContentType(row) : null;
     },
     async list(scope) {
-      const rows = await db
-        .select()
-        .from(schema.contentTypes)
-        .where(scopeFilter(schema.contentTypes, scope));
-      return rows.map(toContentType);
+      return (await contentTypesQuery(db, scope)).map(toContentType);
     },
     async save(scope, ct) {
       const values = {
@@ -844,27 +844,13 @@ function makeEntryRepo(
     },
     removePublishedMany,
     async getPublished(scope, id) {
-      const [row] = await db
-        .select()
-        .from(schema.entryPublished)
-        .where(
-          and(scopeFilter(schema.entryPublished, scope), eq(schema.entryPublished.entryId, id)),
-        );
+      const [row] = await publishedEntriesQuery(db, scope, [id]);
       return row ? toPublished(row) : null;
     },
     async getPublishedMany(scope, ids) {
       const rows = await selectChunked(
         ids,
-        (chunk) =>
-          db
-            .select()
-            .from(schema.entryPublished)
-            .where(
-              and(
-                scopeFilter(schema.entryPublished, scope),
-                inArray(schema.entryPublished.entryId, chunk),
-              ),
-            ),
+        (chunk) => publishedEntriesQuery(db, scope, chunk),
         1,
         RESERVED,
       );
@@ -1562,64 +1548,63 @@ function makeAssetRepo(x: Exec): AssetRepo {
       );
     },
     async getPublished(scope, id) {
-      const [row] = await db
-        .select()
-        .from(schema.assetPublished)
-        .where(
-          and(scopeFilter(schema.assetPublished, scope), eq(schema.assetPublished.assetId, id)),
-        );
+      const [row] = await publishedAssetsQuery(db, scope, [id]);
       return row ? toPublishedAsset(row) : null;
     },
     async getPublishedMany(scope, ids) {
       const rows = await selectChunked(
         ids,
-        (chunk) =>
-          db
-            .select()
-            .from(schema.assetPublished)
-            .where(
-              and(
-                scopeFilter(schema.assetPublished, scope),
-                inArray(schema.assetPublished.assetId, chunk),
-              ),
-            ),
+        (chunk) => publishedAssetsQuery(db, scope, chunk),
         1,
         RESERVED,
       );
       return rows.map(toPublishedAsset);
     },
     async listPublished(scope, query) {
-      const p = schema.assetPublished;
-      const a = schema.assets;
-      const filters = query.filters ?? {};
-      const limit = Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE);
-      const conds: (SQL | undefined)[] = [scopeFilter(p, scope)];
-      if (filters.kind) conds.push(eq(p.kind, filters.kind));
-      if (filters.tag) {
-        conds.push(
-          sql`EXISTS (SELECT 1 FROM json_each(${p.metadata}, '$.tags') WHERE value = ${filters.tag})`,
-        );
-      }
-      // Filing is the library's, not part of what was published: read it live off the asset row,
-      // so moving a published asset moves it in Delivery's listing too.
-      if (filters.folderId !== undefined) {
-        conds.push(
-          filters.folderId === null
-            ? sql`EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${p.spaceId} AND ${a.environmentId} = ${p.environmentId} AND ${a.id} = ${p.assetId} AND ${a.folderId} IS NULL)`
-            : sql`EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${p.spaceId} AND ${a.environmentId} = ${p.environmentId} AND ${a.id} = ${p.assetId} AND ${a.folderId} = ${filters.folderId})`,
-        );
-      }
-      if (query.cursor) {
-        const [value, id] = decodeAssetCursor(query.cursor);
-        conds.push(sql`(${p.publishedAt}, ${p.assetId}) > (${value}, ${id})`);
-      }
-      const rows = await db
-        .select()
-        .from(p)
-        .where(and(...conds))
-        .orderBy(asc(p.publishedAt), asc(p.assetId))
-        .limit(limit + 1)
-        .offset(query.cursor ? 0 : Math.max(0, query.skip ?? 0));
+      const page = publishedAssetPage(db, scope, query);
+      return page.of(await page.query);
+    },
+  };
+}
+
+/**
+ * Published assets in publish order, filtered and paged: the statement and how to read its rows,
+ * apart, so `delivery.read` can send it in a batch.
+ */
+function publishedAssetPage(db: Db, scope: Scope, query: PublishedAssetQuery) {
+  const p = schema.assetPublished;
+  const a = schema.assets;
+  const filters = query.filters ?? {};
+  const limit = Math.min(Math.max(1, query.limit ?? 100), MAX_ASSET_PAGE);
+  const conds: (SQL | undefined)[] = [scopeFilter(p, scope)];
+  if (filters.kind) conds.push(eq(p.kind, filters.kind));
+  if (filters.tag) {
+    conds.push(
+      sql`EXISTS (SELECT 1 FROM json_each(${p.metadata}, '$.tags') WHERE value = ${filters.tag})`,
+    );
+  }
+  // Filing is the library's, not part of what was published: read it live off the asset row,
+  // so moving a published asset moves it in Delivery's listing too.
+  if (filters.folderId !== undefined) {
+    conds.push(
+      filters.folderId === null
+        ? sql`EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${p.spaceId} AND ${a.environmentId} = ${p.environmentId} AND ${a.id} = ${p.assetId} AND ${a.folderId} IS NULL)`
+        : sql`EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${p.spaceId} AND ${a.environmentId} = ${p.environmentId} AND ${a.id} = ${p.assetId} AND ${a.folderId} = ${filters.folderId})`,
+    );
+  }
+  if (query.cursor) {
+    const [value, id] = decodeAssetCursor(query.cursor);
+    conds.push(sql`(${p.publishedAt}, ${p.assetId}) > (${value}, ${id})`);
+  }
+  return {
+    query: db
+      .select()
+      .from(p)
+      .where(and(...conds))
+      .orderBy(asc(p.publishedAt), asc(p.assetId))
+      .limit(limit + 1)
+      .offset(query.cursor ? 0 : Math.max(0, query.skip ?? 0)),
+    of(rows: PubAssetRow[]): PublishedAssetPage {
       const page = rows.slice(0, limit);
       const last = page.at(-1);
       return {
@@ -1639,12 +1624,7 @@ function makeAssetRenditionRepo(x: Exec): AssetRenditionRepo {
     and(eq(t.spaceId, scope.spaceId), eq(t.name, name));
   return {
     async list(scope) {
-      const rows = await db
-        .select()
-        .from(t)
-        .where(eq(t.spaceId, scope.spaceId))
-        .orderBy(asc(t.name));
-      return rows.map(toAssetRendition);
+      return (await renditionsQuery(db, scope)).map(toAssetRendition);
     },
     async get(scope, name) {
       const [row] = await db.select().from(t).where(byName(scope, name));
@@ -3881,10 +3861,7 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
   const db = x.db;
   return {
     async getConfig(scope) {
-      const [row] = await db
-        .select()
-        .from(schema.spaces)
-        .where(eq(schema.spaces.id, scope.spaceId));
+      const [row] = await spaceConfigQuery(db, scope);
       if (!row) return null;
       return toSpaceConfig(row);
     },
@@ -5736,6 +5713,133 @@ function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
   };
 }
 
+// ---- Delivery's reads -------------------------------------------------------
+// One statement per read, shared by the repo methods and `delivery.read`, so a batched read and
+// a lone one run the same SQL.
+
+const spaceConfigQuery = (db: Db, scope: Scope) =>
+  db.select().from(schema.spaces).where(eq(schema.spaces.id, scope.spaceId));
+
+const contentTypesQuery = (db: Db, scope: Scope) =>
+  db.select().from(schema.contentTypes).where(scopeFilter(schema.contentTypes, scope));
+
+/** Rendition presets are the space's, not an environment's. */
+const renditionsQuery = (db: Db, scope: Scope) =>
+  db
+    .select()
+    .from(schema.assetRenditions)
+    .where(eq(schema.assetRenditions.spaceId, scope.spaceId))
+    .orderBy(asc(schema.assetRenditions.name));
+
+/** At most `100 - RESERVED` ids: callers chunk. */
+const publishedEntriesQuery = (db: Db, scope: Scope, ids: readonly string[]) =>
+  db
+    .select()
+    .from(schema.entryPublished)
+    .where(
+      and(
+        scopeFilter(schema.entryPublished, scope),
+        ids.length === 1
+          ? eq(schema.entryPublished.entryId, ids[0] as string)
+          : inArray(schema.entryPublished.entryId, [...ids]),
+      ),
+    );
+
+/** At most `100 - RESERVED` ids: callers chunk. */
+const publishedAssetsQuery = (db: Db, scope: Scope, ids: readonly string[]) =>
+  db
+    .select()
+    .from(schema.assetPublished)
+    .where(
+      and(
+        scopeFilter(schema.assetPublished, scope),
+        ids.length === 1
+          ? eq(schema.assetPublished.assetId, ids[0] as string)
+          : inArray(schema.assetPublished.assetId, [...ids]),
+      ),
+    );
+
+/**
+ * Sends every read a Delivery step asked for as ONE `db.batch()`: one round trip, however many
+ * statements (id lists still split under the 100-parameter cap, each chunk its own statement in
+ * the same batch). Only reads, so the batch's implicit transaction changes nothing but latency,
+ * and it runs on whatever the store was built over (a read-replica session included).
+ */
+function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
+  const db = x.db;
+  return {
+    async read(scope, request) {
+      const queries: Query[] = [];
+      const settle: ((rows: never[]) => void)[] = [];
+      const add = <R>(query: PromiseLike<R[]>, take: (rows: R[]) => void) => {
+        queries.push(query as unknown as Query);
+        settle.push(take as (rows: never[]) => void);
+      };
+      const result: { -readonly [K in keyof DeliveryReadResult]: DeliveryReadResult[K] } = {};
+
+      if (request.config) {
+        add(spaceConfigQuery(db, scope), ([row]) => {
+          result.config = row ? toSpaceConfig(row) : null;
+        });
+      }
+      if (request.contentTypes) {
+        add(contentTypesQuery(db, scope), (rows) => {
+          result.contentTypes = rows.map(toContentType);
+        });
+      }
+      if (request.renditions) {
+        add(renditionsQuery(db, scope), (rows) => {
+          result.renditions = rows.map(toAssetRendition);
+        });
+      }
+      if (request.entryId !== undefined) {
+        add(publishedEntriesQuery(db, scope, [request.entryId]), ([row]) => {
+          result.entry = row ? toPublished(row) : null;
+        });
+      }
+      if (request.assetId !== undefined) {
+        add(publishedAssetsQuery(db, scope, [request.assetId]), ([row]) => {
+          result.asset = row ? toPublishedAsset(row) : null;
+        });
+      }
+      if (request.entryIds) {
+        const entries: PublishedEntry[] = [];
+        result.entries = entries;
+        for (const chunk of chunked(request.entryIds, 1, RESERVED)) {
+          add(publishedEntriesQuery(db, scope, chunk), (rows) => {
+            entries.push(...rows.map(toPublished));
+          });
+        }
+      }
+      if (request.assetIds) {
+        const assets: PublishedAsset[] = [];
+        result.assets = assets;
+        for (const chunk of chunked(request.assetIds, 1, RESERVED)) {
+          add(publishedAssetsQuery(db, scope, chunk), (rows) => {
+            assets.push(...rows.map(toPublishedAsset));
+          });
+        }
+      }
+      if (request.assetPage) {
+        const page = publishedAssetPage(db, scope, request.assetPage);
+        add(page.query, (rows) => {
+          result.assetPage = page.of(rows);
+        });
+      }
+
+      if (queries.length === 0) return result;
+      const rows =
+        queries.length === 1
+          ? [await (queries[0] as unknown as PromiseLike<unknown[]>)]
+          : ((await db.batch(queries as unknown as [Query, ...Query[]])) as unknown[][]);
+      settle.forEach((take, i) => {
+        take((rows[i] ?? []) as never[]);
+      });
+      return result;
+    },
+  };
+}
+
 export interface D1StoreOptions {
   /**
    * Max candidate rows a field-level query (or the built-in text search) may pull into memory
@@ -5827,6 +5931,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),
     storedSecrets: makeStoredSecretRepo(x),
+    delivery: makeDeliveryReadRepo(x),
     /**
      * One unit of work per call: `fn`'s writes are buffered and committed as a single D1 batch
      * once it returns; if it throws, nothing is sent. See `ContentStore.withTransaction`.

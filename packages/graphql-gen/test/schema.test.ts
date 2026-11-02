@@ -1,12 +1,8 @@
 import { defineContentType } from '@contentworker/domain';
-import { graphql } from 'graphql';
+import type { DeliveryResolvers, ResolvedEntry } from '@contentworker/ports';
+import { type GraphQLObjectType, graphql } from 'graphql';
 import { describe, expect, it } from 'vitest';
-import {
-  buildDeliverySchema,
-  type DeliveryContext,
-  type DeliveryResolvers,
-  type ResolvedEntry,
-} from '../src/index';
+import { buildDeliverySchema, type DeliveryContext } from '../src/index';
 
 const article = defineContentType({
   apiId: 'article',
@@ -37,6 +33,14 @@ const article = defineContentType({
       required: false,
       position: 2,
       linkType: 'Asset',
+    },
+    {
+      apiId: 'body',
+      name: 'Body',
+      type: 'RichText',
+      localized: false,
+      required: false,
+      position: 3,
     },
   ],
 });
@@ -75,6 +79,15 @@ describe('@contentworker/graphql-gen', () => {
     expect(a.wordCount).toBe(42);
     // Link field arrives as resolved JSON (the embedded asset).
     expect((a.hero as { id: string }).id).toBe('a1');
+  });
+
+  it('describes a rich-text field as a document tree with structured embeds, never HTML', () => {
+    const type = schema.getType('Article') as GraphQLObjectType;
+    const description = type.getFields().body?.description ?? '';
+    expect(description).toMatch(/document tree/);
+    expect(description).toMatch(/never HTML/);
+    expect(description).toMatch(/"embed" node/);
+    expect(type.getFields().title?.description).toBeUndefined();
   });
 
   it('exposes a collection root and a search root', async () => {

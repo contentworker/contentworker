@@ -15,6 +15,8 @@ import {
   type PromotionResult,
   type PromotionRisk,
   type PromotionStatus,
+  removedFields,
+  removedVariants,
   SCOPES,
   type Scope,
   ValidationError,
@@ -25,7 +27,7 @@ import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
 import { auditActor } from './audit';
 import { compareEnvironments } from './branching';
-import { publishContentType } from './content-types';
+import { describeRemovedInUse, publishContentType, removedContentInUse } from './content-types';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
 import { loadPublishGuard } from './publish-gate';
@@ -39,7 +41,8 @@ import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
  * Requesting pins what to copy: each entry by version (what is live in the source goes live in the
  * target, a draft goes as a draft), and each content type by apiId. The risk check runs then:
  * rules that always require approval (the target is `main` or an alias points at it; a content
- * type would lose a field, change a field's type, or make one required), and, with a decision
+ * type would lose a field at any depth or a block variant, change a field's type, or make one
+ * required; the target's entries still hold a field or variant it loses), and, with a decision
  * model, its view of the change, which can only add a requirement, never remove one. A
  * promotion that needs no approval is applied at once; one that does waits as
  * `awaiting_approval` for someone other than the requester.
@@ -445,10 +448,28 @@ async function assessPromotion(
     const incoming = new Map(ct.fields.map((f) => [f.apiId, f]));
     for (const f of current.fields) {
       const next = incoming.get(f.apiId);
-      if (!next) changes.push(`removes the field "${f.apiId}"`);
-      else if (next.type !== f.type)
-        changes.push(`changes "${f.apiId}" from ${f.type} to ${next.type}`);
+      if (!next) continue;
+      if (next.type !== f.type) changes.push(`changes "${f.apiId}" from ${f.type} to ${next.type}`);
       else if (next.required && !f.required) changes.push(`makes "${f.apiId}" required`);
+    }
+    // Removals at any depth, then whether the target's entries still hold what is removed: the
+    // apply would refuse those (`updateContentType`), so the approver sees which entries first.
+    for (const at of removedFields(current.fields, ct.fields)) {
+      changes.push(`removes the field "${at}"`);
+    }
+    for (const [at, variants] of removedVariants(current.fields, ct.fields)) {
+      for (const v of variants) changes.push(`removes the block variant "${v}" from "${at}"`);
+    }
+    const inUse = await removedContentInUse(ctx, target, current, ct);
+    for (const { field, entries } of inUse.fieldsInUse) {
+      changes.push(
+        `removes a field entries in the target still hold: ${describeRemovedInUse(field, entries)}`,
+      );
+    }
+    for (const { variant, entries } of inUse.variantsInUse) {
+      changes.push(
+        `removes a block variant entries in the target still use: ${describeRemovedInUse(variant, entries)}`,
+      );
     }
     if (changes.length) {
       typeChanges[ct.apiId] = changes;

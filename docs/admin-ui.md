@@ -45,7 +45,9 @@ The CMS screens (`app/cms`) call the Management API in the browser with TanStack
 (`app/cms/lib/management.ts`) on the same origin: `/spaces/...`, `/preview/...`, `/delivery/...`,
 `/mcp`, `/media/...`. The web Worker's gateway forwards those to the api with a signed
 `x-cw-principal` (60 s, bound to the path) in place of the session cookie, and passes the
-`x-cw-bookmark` read-your-writes header both ways. See
+`x-cw-bookmark` read-your-writes header both ways. The admin keeps the newest bookmark it has seen
+(`rememberBookmark`: D1 bookmarks sort as strings, so an older reply arriving late never moves it
+back, and a value not shaped like a D1 bookmark is ignored), as the SDKs do. See
 [Architecture](./architecture.md#appsweb-the-admin-and-the-gateway) and
 [Auth & RBAC](./auth-and-rbac.md#the-web-principal).
 

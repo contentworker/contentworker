@@ -260,7 +260,7 @@ export function EntryFilterBar(props: {
       </div>
 
       {open && (
-        <div id={panelId} className="space-y-3 rounded-lg border bg-card p-3">
+        <div id={panelId} className="card space-y-3 p-3">
           {filters.length === 0 && (
             <p className="text-muted-foreground text-sm">No filters. Add one to narrow the list.</p>
           )}

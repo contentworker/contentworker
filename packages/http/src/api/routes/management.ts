@@ -21,6 +21,7 @@ import {
   cancelBulkJob,
   cancelScheduledAction,
   canvasToEntry,
+  clampCount,
   cloneEnvironment,
   commitAssetFile,
   compareEnvironments,
@@ -142,6 +143,7 @@ import {
   listWebhookDeliveries,
   listWebhooks,
   listWorkflows,
+  MAX_PAGE_LIMIT,
   mergeEnvironments,
   moderateEntry,
   moveAssets,
@@ -164,6 +166,7 @@ import {
   requestAssetZip,
   requestPromotion,
   requestReindex,
+  resolveEmbed,
   resolveTask,
   restoreAsset,
   restoreAssetVersion,
@@ -252,7 +255,7 @@ import {
 } from '../auth';
 import { doc } from '../docs/openapi';
 import * as docs from '../docs/schemas';
-import { clampCount, MAX_PAGE_LIMIT, parseAssetListQuery, parseAssetSearchQuery } from '../query';
+import { parseAssetListQuery, parseAssetSearchQuery } from '../query';
 import {
   agentScheduleBody,
   agentSchedulePatchBody,
@@ -315,6 +318,7 @@ import {
   releaseItemBody,
   replaceAssetFileBody,
   replaceAssetFileUploadBody,
+  resolveEmbedBody,
   revokeConnectionBody,
   roleBody,
   runAiActionBody,
@@ -1374,6 +1378,32 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);
     return c.json(await canvasToEntry(ctx, ai, scopeOf(c), body));
   });
+  // Rich text's external media: a pasted URL becomes an `embed` node's data. Scoped like a
+  // content write, since that is the only thing the answer is for.
+  app.post(
+    `${BASE}/embeds/resolve`,
+    doc('Entries', 'Resolve a media URL for a rich-text embed', {
+      body: resolveEmbedBody,
+      ok: docs.resolvedEmbed,
+      description:
+        "Asks an allowed provider's oEmbed endpoint (YouTube, Vimeo, X, Bluesky, Mastodon, " +
+        'Spotify, SoundCloud) about an https URL and returns the data of an `embed` rich-text ' +
+        "node: title, author, thumbnail and size. The provider's player HTML is discarded; " +
+        'channels render the embed themselves. A URL that is not https or not on an allowed ' +
+        'provider is refused (422). A provider that does not answer is not an error: `resolved` is ' +
+        'false and the embed holds the URL and provider alone, which is valid to store.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, resolveEmbedBody);
+      if (!deps.remoteFetcher) {
+        throw new ValidationError([
+          { field: 'url', message: 'This deployment cannot fetch embed metadata' },
+        ]);
+      }
+      return c.json(await resolveEmbed(deps.remoteFetcher, body));
+    },
+  );
   app.get(
     `${BASE}/entries/:id`,
     doc('Entries', 'Get an entry (draft state)', { ok: docs.entry }),
@@ -1895,7 +1925,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: docs.assetReindex,
       status: 202,
       description:
-        'A resumable bulk job (follow it at /bulk-jobs/{id}) that re-runs ingest — hash, ' +
+        'A resumable bulk job (follow it at /bulk/jobs/{id}) that re-runs ingest — hash, ' +
         'duplicates, dimensions, alt text and tags where empty, text extraction, search index — ' +
         'on assets never ingested (uploaded before ingest) or whose ingest failed; all: true ' +
         'takes every asset with a file. Hosted videos are left out. While a reindex is running ' +
@@ -2353,8 +2383,16 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     },
   );
 
-  app.get(`${BASE}/assets/:id`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json(await signedOne(c, await getAsset(ctx, scopeOf(c), c.req.param('id')))),
+  app.get(
+    `${BASE}/assets/:id`,
+    doc('Assets', 'Get an asset', {
+      ok: docs.asset,
+      description:
+        'Its draft state, with file.url a short-lived signed read URL (a hosted video’s ' +
+        'playback URLs are in file.video).',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await signedOne(c, await getAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${BASE}/assets/:id/video/refresh`,
@@ -2383,53 +2421,133 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json(await signedOne(c, asset), 202);
     },
   );
-  app.patch(`${BASE}/assets/:id/metadata`, requireScope(SCOPES.contentWrite), async (c) =>
-    c.json(
-      await signedOne(
-        c,
-        await setAssetMetadata(
+  app.patch(
+    `${BASE}/assets/:id/metadata`,
+    doc('Assets', "Edit an asset's metadata", {
+      body: assetMetadataBody,
+      ok: docs.asset,
+      description:
+        'Only the keys sent change: altText (per locale), tags (tag ids), focalPoint (x and y, ' +
+        'each 0..1) and fields. A value the save changes stops being an AI suggestion; one sent ' +
+        'back unchanged stays one. This edits the ' +
+        'draft; publish again to carry it into Delivery.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) =>
+      c.json(
+        await signedOne(
+          c,
+          await setAssetMetadata(
+            ctx,
+            scopeOf(c),
+            c.req.param('id'),
+            await parseBody(c, assetMetadataBody),
+          ),
+        ),
+      ),
+  );
+  app.get(
+    `${BASE}/assets/:id/usage`,
+    doc('Assets', 'List the entries that link to an asset', {
+      ok: docs.assetUsage,
+      description: 'Each entry field that links to it, from the reverse-reference index.',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await getAssetUsage(ctx, scopeOf(c), c.req.param('id')) }),
+  );
+  app.get(
+    `${BASE}/assets/:id/transform`,
+    doc('Assets', 'Get a resized or re-encoded image URL', {
+      ok: docs.transformedImage,
+      description:
+        'Built from the stored file URL, through the image service when one is bound (for ' +
+        'published images, prefer the delivered asset’s srcset and renditions). fit=crop is anchored ' +
+        'to the focal point. Images only (422 otherwise).',
+      query: {
+        w: 'Width, 1..10000',
+        h: 'Height, 1..10000',
+        fit: 'clip | crop | fill | max | scale',
+        fm: 'auto | jpg | png | webp | avif',
+        q: 'Quality, 1..100',
+      },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) =>
+      c.json(
+        await transformAssetUrl(
           ctx,
           scopeOf(c),
           c.req.param('id'),
-          await parseBody(c, assetMetadataBody),
+          parseImageTransform(c.req.query()),
         ),
       ),
-    ),
   );
-  app.get(`${BASE}/assets/:id/usage`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await getAssetUsage(ctx, scopeOf(c), c.req.param('id')) }),
-  );
-  app.get(`${BASE}/assets/:id/transform`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json(
-      await transformAssetUrl(
-        ctx,
-        scopeOf(c),
-        c.req.param('id'),
-        parseImageTransform(c.req.query()),
+  // Tagged with the other model-backed operations, as the inventory classified them before.
+  app.post(
+    `${BASE}/assets/:id/alt-text`,
+    doc('AI & agents', 'Suggest alt text for an image asset', {
+      body: altTextBody,
+      ok: docs.altTextResult,
+      description:
+        'From the file name, title, description and context (not the pixels). apply: true saves ' +
+        'it on the metadata as well. Counted against the space’s AI budget (429 once spent); 422 ' +
+        'for an asset that is not an image.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) =>
+      c.json(
+        await generateAltText(
+          ctx,
+          ai,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, altTextBody),
+        ),
       ),
-    ),
   );
-  app.post(`${BASE}/assets/:id/alt-text`, requireScope(SCOPES.contentWrite), async (c) =>
-    c.json(
-      await generateAltText(
-        ctx,
-        ai,
-        scopeOf(c),
-        c.req.param('id'),
-        await parseBody(c, altTextBody),
+  app.post(
+    `${BASE}/assets/:id/auto-tag`,
+    doc('AI & agents', 'Suggest tags for an image asset', {
+      body: tierOnlyBody,
+      ok: docs.autoTagResult,
+      description:
+        'Existing tags the model chose (tagIds) and new names it suggests (newTags). apply: true ' +
+        'creates the new tags and sets them all on the asset. Counted against the AI budget; 422 ' +
+        'for an asset that is not an image.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) =>
+      c.json(
+        await autoTagAsset(
+          ctx,
+          ai,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, tierOnlyBody),
+        ),
       ),
-    ),
   );
-  app.post(`${BASE}/assets/:id/auto-tag`, requireScope(SCOPES.contentWrite), async (c) =>
-    c.json(
-      await autoTagAsset(ctx, ai, scopeOf(c), c.req.param('id'), await parseBody(c, tierOnlyBody)),
-    ),
+  app.post(
+    `${BASE}/assets/:id/published`,
+    doc('Assets', 'Publish an asset', {
+      ok: docs.asset,
+      description:
+        'Delivery serves its current file and metadata from then on. 409 asset_embargoed before ' +
+        'its embargo lifts (error.embargoUntil) and asset_expired after its rights expired ' +
+        '(error.expiresAt); 400 for an archived asset.',
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) => c.json(await signedOne(c, await publishAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
-  app.post(`${BASE}/assets/:id/published`, requireScope(SCOPES.contentPublish), async (c) =>
-    c.json(await signedOne(c, await publishAsset(ctx, scopeOf(c), c.req.param('id')))),
-  );
-  app.delete(`${BASE}/assets/:id/published`, requireScope(SCOPES.contentPublish), async (c) =>
-    c.json(await signedOne(c, await unpublishAsset(ctx, scopeOf(c), c.req.param('id')))),
+  app.delete(
+    `${BASE}/assets/:id/published`,
+    doc('Assets', 'Unpublish an asset', {
+      ok: docs.asset,
+      description: 'Takes it out of Delivery; it stays a draft. 400 when it is not published.',
+    }),
+    requireScope(SCOPES.contentPublish),
+    async (c) =>
+      c.json(await signedOne(c, await unpublishAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${BASE}/assets/:id/archive`,
