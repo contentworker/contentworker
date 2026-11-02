@@ -81,13 +81,24 @@ export function imageProps(
   }
 
   if (opts.rendition !== undefined) {
-    const named = safeUrl(asset.renditions[opts.rendition]);
+    // Own keys only: a `rendition` of `constructor` or `__proto__` must not reach the prototype.
+    const named = Object.hasOwn(asset.renditions, opts.rendition)
+      ? safeUrl(asset.renditions[opts.rendition])
+      : undefined;
     // A rendition's own size isn't in the payload (it may crop to another aspect), so it gets no
     // `width`/`height` here: the caller who chose it knows them.
     if (named) return { src: named, ...common };
   }
 
-  const ladder = asset.srcset.filter((s) => safeUrl(s.url) !== undefined && !/\s/.test(s.url));
+  // A step whose width isn't a positive integer, or whose URL has whitespace or ends in a comma,
+  // would split or add a candidate in the `srcset` string: leave it out.
+  const ladder = asset.srcset.filter(
+    (s) =>
+      Number.isInteger(s.width) &&
+      s.width > 0 &&
+      safeUrl(s.url) !== undefined &&
+      !/\s|,$/.test(s.url),
+  );
   const src = safeUrl(pickStep(ladder, opts.width) ?? asset.url);
   if (!src) return undefined;
   if (ladder.length === 0) return { src, ...size, ...common };
@@ -162,7 +173,7 @@ function percent(n: number): string {
 
 /** The URL when it's http(s) or relative (local dev's api-signed URLs are root-relative). */
 function safeUrl(url: string | undefined): string | undefined {
-  if (!url) return undefined;
+  if (typeof url !== 'string' || !url) return undefined;
   // Browsers drop tabs, newlines and leading spaces from a URL, so check what they'd parse.
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are the point.
   const parsed = url.replace(/[\u0000-\u0020]/g, '');

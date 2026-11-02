@@ -117,7 +117,11 @@ export function assetUrl(
   asset: Pick<DeliveredAsset, 'url' | 'renditions' | 'srcset'>,
   opts: { readonly rendition?: string; readonly width?: number } = {},
 ): string | undefined {
-  if (opts.rendition !== undefined) return asset.renditions[opts.rendition];
+  if (opts.rendition !== undefined) {
+    return Object.hasOwn(asset.renditions, opts.rendition)
+      ? asset.renditions[opts.rendition]
+      : undefined;
+  }
   if (opts.width !== undefined) {
     const width = opts.width;
     const step =
@@ -211,7 +215,8 @@ export interface EntryQuery {
 }
 
 /**
- * A failed request. `code` is the API's machine-readable error code (`not_found`,
+ * A failed request. `message` and `body` hold the server's text: render them as text, never HTML.
+ * `code` is the API's machine-readable error code (`not_found`,
  * `validation_failed`, …) when the body names one, and `body` the parsed JSON body (`undefined`
  * when it wasn't JSON). The delivery gateway's own refusals (`401`, `429`) carry no code.
  */
@@ -245,7 +250,7 @@ async function deliveryError(res: Response, url: string): Promise<DeliveryError>
   const code = (error as { code?: unknown } | undefined)?.code;
   return new DeliveryError(
     res.status,
-    `Delivery request failed: ${res.status} ${url}${detail ? ` (${detail})` : ''}`,
+    `Delivery request failed: ${res.status} ${url}${detail ? ` (${detail.slice(0, 200)})` : ''}`,
     typeof code === 'string' ? code : undefined,
     body,
   );

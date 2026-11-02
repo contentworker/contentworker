@@ -23,7 +23,11 @@ type Shape = Record<string, Key>;
 /** The body of `export interface DeliveredAsset { … }` in a TypeScript source. */
 function interfaceBody(source: string): string {
   const start = source.indexOf('export interface DeliveredAsset {');
-  if (start < 0) throw new Error('no DeliveredAsset interface');
+  if (start < 0) {
+    throw new Error(
+      'no `export interface DeliveredAsset {` found: if it became a type alias or extends another, update this test to read the new shape',
+    );
+  }
   const open = source.indexOf('{', start);
   return source.slice(open, matchingBrace(source, open) + 1);
 }

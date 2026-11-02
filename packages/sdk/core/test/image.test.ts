@@ -132,6 +132,26 @@ describe('imageProps', () => {
     );
   });
 
+  it('ignores a rendition name that is a prototype key, not an own one', () => {
+    for (const rendition of ['__proto__', 'constructor', 'toString']) {
+      expect(imageProps(image, { rendition })?.srcSet).toContain('320w');
+    }
+  });
+
+  it('leaves out ladder steps that would split or add a srcset candidate', () => {
+    const props = imageProps({
+      ...image,
+      srcset: [
+        { width: '1w, https://other.test/x.jpg 2000' as unknown as number, url: `${base}/w1.jpg` },
+        { width: 0, url: `${base}/w0.jpg` },
+        { width: 640, url: `${base}/w640/hero.jpg,` },
+        { width: 960, url: 42 as unknown as string },
+        { width: 960, url: `${base}/w960/hero.jpg?fm=auto` },
+      ],
+    });
+    expect(props?.srcSet).toBe(`${base}/w960/hero.jpg?fm=auto 960w`);
+  });
+
   it('shows a hosted video’s thumbnail, and nothing for audio, documents or a bare video', () => {
     const video = {
       ...image,

@@ -101,6 +101,23 @@ describe('@contentworker/sdk-core delivery client', () => {
     expect(err.message).toContain('(rate limited)');
   });
 
+  it('caps the server message it puts into DeliveryError.message', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch(() =>
+        Response.json({ error: { code: 'x', message: 'm'.repeat(5000) } }, { status: 400 }),
+      ),
+    });
+    const err = (await client.getEntry('e1').catch((e: unknown) => e)) as DeliveryError;
+    expect(err.message).toContain(`(${'m'.repeat(200)})`);
+    expect(err.message).not.toContain('m'.repeat(201));
+  });
+
+  it('assetUrl ignores a rendition name that is a prototype key', () => {
+    expect(assetUrl(image, { rendition: 'constructor' })).toBeUndefined();
+    expect(assetUrl(image, { rendition: '__proto__' })).toBeUndefined();
+  });
+
   it('leaves code and body undefined when the error body is not JSON', async () => {
     const client = createDeliveryClient({
       ...base,
