@@ -271,7 +271,8 @@ import {
 ## `@contentworker/sdk-management` — Management (CMA) client
 
 Zero-dependency client for the Management API: content types, entries (draft → publish →
-version history), assets, releases, scheduled actions, webhooks, and space administration.
+version history), the asset library, releases, scheduled actions, webhooks, and space
+administration.
 Authenticate with a CMA key or the admin token — the server enforces RBAC scopes per
 operation, so the client is only as powerful as its token.
 
@@ -289,11 +290,13 @@ const cma = createManagementClient({
 });
 ```
 
-The surface is namespaced; every method maps 1:1 onto a Management route:
+The surface is namespaced; every method maps 1:1 onto a Management route (`opts` on `upload`
+and `replaceFile` is `UploadOptions`: `onProgress`, `concurrency`, `attempts`, `signal`):
 
 ```ts
 cma.me()                                              // principal probe (/auth/me)
 cma.bookmark                                          // read-your-writes position; assignable
+cma.approvals.count()                                 // what waits on a person
 
 cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
 
@@ -305,16 +308,48 @@ cma.entries.reverseReferences(id)                     // "what links here"
 cma.entries.versions.list(id) / .get(id, v) / .diff(id, from, to)
 cma.entries.versions.restore(id, v, { expectedVersion? })
 
-cma.assets.create({ fileName, contentType })          // → { asset, upload } (presigned PUT)
-cma.assets.list(query) / .get(id) / .search({ q, kind?, tag?, folder?, status?, limit? }) / .setMetadata(id, patch) / .usage(id) / .archive(id) / .restore(id) / .delete(id) / .move(ids, folderId) / .reingest(id) / .reindex({ all? })
-cma.assets.folders.list() / .create({ name, parentId }) / .update(id, changes) / .delete(id)
-cma.assets.publish(id) / .unpublish(id)
-cma.assets.replaceFile(id, { fileName, contentType, body }, opts?) // any size: one PUT + commit, or parts past 100 MiB → the asset at its new version
-cma.assets.startReplace(id, { fileName, contentType }) // → { asset, upload, commit }; PUT, then .commitFile(id, commit)
-cma.assets.uploads.startReplace(id, { fileName, contentType, size }) // multipart replace; uploads.complete commits it
-cma.assets.versions(id) / .restoreVersion(id, version) / .setRights(id, rights)
-cma.assets.bulk({ action: 'move' | 'tag' | 'publish' | 'unpublish' | 'archive', ids, … }) // → BulkJob
-cma.bulkJobs.list() / .get(id) / .report(id) / .cancel(id)
+// Assets: reading
+cma.assets.list(query?) → AssetPage                   // { kind, mime, tag, folder, status, sort, order, limit, cursor }
+cma.assets.iterate(query?) → AsyncGenerator<Asset>    // follows nextCursor as the loop reads
+cma.assets.get(id) / .search({ q, kind?, tag?, folder?, status?, limit? }) / .usage(id) → AssetLink[]
+cma.assets.versions(id) → AssetVersion[]              // newest first, file.url signed
+cma.assets.transformUrl(id, { width?, height?, fit?, format?, quality? }) → { url, transform }
+
+// Assets: uploading and replacing
+cma.assets.upload({ fileName, contentType, body, title?, description?, folderId? }, opts?) → Asset
+cma.assets.create({ fileName, contentType, … }) → { asset, upload }   // one signed PUT, by hand
+cma.assets.replaceFile(id, { fileName, contentType, body }, opts?) → Asset   // any size; the new version
+cma.assets.startReplace(id, { fileName, contentType }) → { asset, upload, commit }
+cma.assets.commitFile(id, commit) → Asset
+cma.assets.restoreVersion(id, version) → Asset
+cma.assets.uploads.start({ fileName, contentType, size, … }) / .startReplace(id, { fileName, contentType, size })
+cma.assets.uploads.signParts(assetId, uploadId, partNumbers) / .complete(assetId, uploadId, parts) / .abort(assetId, uploadId)
+cma.assets.videos.create({ fileName, contentType, title?, description?, maxDurationSeconds? }) → { asset, upload }
+cma.assets.videos.refresh(id) → Asset                 // poll until file.video.status is ready
+
+// Assets: editing and publishing
+cma.assets.setMetadata(id, { altText?, tags?, focalPoint?, fields? }) → Asset
+cma.assets.generateAltText(id, { locale?, context?, apply?, tier? }) → { altText, locale, applied, usage }
+cma.assets.autoTag(id, { apply?, tier? }) → { tagIds, newTags, applied, usage }
+cma.assets.setRights(id, { license?, credit?, expiresAt?, embargoUntil? }) → Asset   // content:publish
+cma.assets.publish(id) / .unpublish(id) / .archive(id) / .restore(id) → Asset
+cma.assets.delete(id)                                 // 409 asset_in_use while linked
+cma.assets.move(ids, folderId | null) → { moved }
+cma.assets.reingest(id) / .reindex({ all? })
+cma.assets.bulk({ action: 'move' | 'tag' | 'publish' | 'unpublish' | 'archive', ids, … }) → BulkJob
+
+// Assets: organizing and sharing
+cma.assets.folders.list() / .create({ name, parentId? }) / .update(id, { name?, parentId? }) / .delete(id)
+cma.assets.collections.list({ limit?, cursor? }) / .iterate({ limit? }) / .get(id) / .create({ name, description? })
+cma.assets.collections.update(id, { name?, description? }) / .delete(id)
+cma.assets.collections.assets(id, query?) / .iterateAssets(id, query?)   // members, in order
+cma.assets.collections.add(id, assetIds) / .remove(id, assetIds) / .reorder(id, assetIds)
+cma.assets.shareLinks.list({ targetType?, targetId?, includeInactive? }) / .get(id) / .create(input) / .revoke(id)
+cma.assets.zips.create({ assetIds, name? } | { collectionId, name? }) / .get(id) / .list()
+cma.assets.renditions.list() / .get(name) / .create({ name, width?, height?, fit?, format?, quality? })
+cma.assets.renditions.update(name, spec) / .delete(name)   // content:manage; update replaces the preset
+
+cma.bulkJobs.list({ limit? }) / .get(id) / .report(id) / .cancel(id)
 
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
 
@@ -331,16 +366,62 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
 
 - Entry `fields` use the Management shape: field apiId → locale → value
   (e.g. `{ title: { 'en-US': 'Hello' } }`).
-- `assets.create` returns a presigned upload target: PUT the bytes to `upload.url` with
-  `upload.headers`, then `assets.publish(id)` to make it deliverable.
+- `Asset` is fully typed: `file` (`AssetFile`: `url`, `fileName`, `contentType`, `size`, `width`,
+  `height`, `placeholder`, and `video` with `status`, `hlsUrl`, `dashUrl`, `thumbnailUrl`,
+  `durationSeconds`, `errorReason` on a hosted video), `metadata` (`altText`, `tags`, `focalPoint`,
+  `fields`), `rights`, `version`, `ingestStatus`, `duplicateOf`, `aiSuggestions`, `folderId`. A
+  test in `packages/http` holds it to the API's schema.
+- `assets.upload` and `replaceFile` take any size: one signed PUT up to 100 MiB, a multipart upload
+  above it with each part retried on its own and progress after each; a failed or aborted
+  multipart upload is aborted on the server too. A signed PUT stores once, so a second PUT through
+  it is a `412`: on a retry the SDK counts that as stored (an earlier attempt's bytes landed and its
+  answer was lost); on a first attempt it throws a `ManagementError` with status 412.
+- `assets.startReplace` + `commitFile` is the single-PUT replace one step at a time; past 100 MiB,
+  `uploads.startReplace` and `uploads.complete` (which commits). A replace another commit beat is a
+  `409`.
+- `iterate`, `collections.iterate` and `collections.iterateAssets` fetch a page (`limit`) at a time
+  as the loop reads; break out and no further page is fetched. Share links and zips aren't paged.
+- `bulkJobs.cancel` stops a job taking new work: chunks not started are skipped, one already running
+  finishes, and nothing done is rolled back. Cancelling a finished job returns it unchanged.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
 - `publish`, `unpublish` and `versions.restore` take `{ expectedVersion }`, the `currentVersion` you
   read; if a draft was saved since, the server answers 409 and changes nothing (`?expectedVersion=`
   on the route; see [Consistency](./consistency.md#invariants)).
 - `spaces.create` takes the deployment's admin token (a space's own keys are refused);
   `starter: 'sample'` installs the sample content before it returns.
-- Failed requests throw `ManagementError` with `status` and the parsed error `body`.
 - A read after the client's own write sees it: see [Read-your-writes](#read-your-writes).
+
+### Errors
+
+A failed request throws `ManagementError` with `status`, the API's error `code`, the parsed
+`error` object (`code`, `message` and the details a code carries) and the raw `body`. Guards
+narrow it to the bodies a client branches on:
+
+```ts
+import { isAssetInUse, isAssetRightsError, isValidationError } from '@contentworker/sdk-management';
+
+try {
+  await cma.assets.delete(id);
+} catch (err) {
+  if (isAssetInUse(err)) {
+    // err.error.usage: the first 50 links, each with contentTypeApiId and entryTitle
+    // err.error.total: every link, counted
+  } else throw err;
+}
+```
+
+| Guard                | `code`                              | Details on `err.error`                                   |
+| -------------------- | ----------------------------------- | -------------------------------------------------------- |
+| `isAssetInUse`       | `asset_in_use` (409)                | `usage`, `total`                                         |
+| `isAssetRightsError` | `asset_embargoed`, `asset_expired` (409) | `embargoUntil` or `expiresAt`, by `code`            |
+| `isValidationError`  | `validation_failed` (422)           | `issues`: `{ field, locale?, message }[]`                 |
+| `isConflict`         | `conflict` (409)                    |                                                          |
+| `isNotFound`         | `not_found` (404)                   |                                                          |
+| `isRateLimited`      | `rate_limited` (429)                |                                                          |
+
+`code` is read from `{ error: { code } }` and from the flat `{ code }` of a refusal made before a
+route runs (the 413, a request-rate 429). The full list is in the
+[REST API reference](https://docs.contentworker.app/reference/rest-api/#errors).
 
 ## Read-your-writes
 

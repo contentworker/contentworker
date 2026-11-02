@@ -438,7 +438,15 @@ export const createVideoAssetBody = z.object({
   description: zLocalized.optional(),
   maxDurationSeconds: z.int().positive().optional(),
 });
-export const assetMetadataBody = z.object({}).loose(); // partial patch; domain applies known keys
+/** A partial metadata patch, typed as MCP's `asset_set_metadata` is; unknown keys are ignored. */
+export const assetMetadataBody = z
+  .object({
+    altText: zLocalized.optional().describe('Alt text per locale'),
+    tags: z.array(zId).optional().describe('Taxonomy tag ids (the whole set)'),
+    focalPoint: z.object({ x: z.number(), y: z.number() }).optional().describe('0..1 on each axis'),
+    fields: z.record(z.string(), z.unknown()).optional().describe('Free-form custom values'),
+  })
+  .loose();
 export const altTextBody = z.object({
   locale: zLocale.optional(),
   context: zText.optional(),

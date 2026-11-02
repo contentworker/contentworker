@@ -926,6 +926,9 @@ importers:
       '@contentworker/sdk-core':
         specifier: workspace:*
         version: link:../sdk/core
+      '@contentworker/sdk-management':
+        specifier: workspace:*
+        version: link:../sdk/management
       '@contentworker/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config

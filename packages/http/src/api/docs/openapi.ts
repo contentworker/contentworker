@@ -118,7 +118,13 @@ export const TAGS: { name: string; description: string }[] = [
   { name: 'Taxonomy', description: 'Tags, concepts, and concept schemes (SKOS-style).' },
   { name: 'Entries', description: 'Authoring: drafts, publishing, bulk operations, metadata.' },
   { name: 'Versions', description: 'Append-only entry version history, diff, and restore.' },
-  { name: 'Assets', description: 'Media: presigned direct uploads, publishing, transforms.' },
+  {
+    name: 'Assets',
+    description:
+      'The asset library: direct and multipart uploads, hosted video, metadata, rights and ' +
+      'embargoes, file versions, folders, collections, bulk jobs, zip downloads, share links, ' +
+      'rendition presets and transforms.',
+  },
   { name: 'Comments & tasks', description: 'Editorial collaboration on entries.' },
   { name: 'Workflows', description: 'Editorial workflow definitions and entry transitions.' },
   {
