@@ -12,6 +12,8 @@ import type {
   DomainEvent,
   EntryFields,
   FieldDefinition,
+  InviteGrant,
+  InviteRole,
   LocalizedValue,
   PluginManifest,
   PluginSettingValue,
@@ -25,6 +27,7 @@ import type {
   RenditionFit,
   RenditionFormat,
   RolePreset,
+  StoredInviteStatus,
   WorkflowGraph,
   WorkflowGraphDefinition,
   WorkflowRun,
@@ -602,6 +605,43 @@ export const spaceMembers = sqliteTable(
   (t) => [
     primaryKey({ columns: [t.spaceId, t.id] }),
     uniqueIndex('space_members_email').on(t.spaceId, t.email),
+  ],
+);
+
+// Invitations to the admin (0019), deployment-wide. Only the links' token hashes are stored;
+// `version` is the compare-and-set that makes a link work once; `expired` is read, never written.
+export const memberInvites = sqliteTable(
+  'member_invites',
+  {
+    id: text('id').primaryKey(),
+    email: text('email').notNull(),
+    role: text('role').$type<InviteRole>().notNull(),
+    grants: text('grants', { mode: 'json' }).$type<InviteGrant[]>().notNull().default(sql`'[]'`),
+    tokenHash: text('token_hash').notNull(),
+    emailTokenHash: text('email_token_hash'),
+    status: text('status').$type<StoredInviteStatus>().notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    version: integer('version').notNull(),
+    invitedByKind: text('invited_by_kind').notNull(),
+    invitedById: text('invited_by_id').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+    sentAt: integer('sent_at', { mode: 'timestamp_ms' }).notNull(),
+    sendCount: integer('send_count').notNull().default(1),
+    emailedAt: integer('emailed_at', { mode: 'timestamp_ms' }),
+    acceptedAt: integer('accepted_at', { mode: 'timestamp_ms' }),
+    acceptedBy: text('accepted_by'),
+    revokedAt: integer('revoked_at', { mode: 'timestamp_ms' }),
+    revokedByKind: text('revoked_by_kind'),
+    revokedById: text('revoked_by_id'),
+  },
+  (t) => [
+    uniqueIndex('member_invites_token').on(t.tokenHash),
+    uniqueIndex('member_invites_email_token')
+      .on(t.emailTokenHash)
+      .where(sql`${t.emailTokenHash} IS NOT NULL`),
+    index('member_invites_by_status').on(t.status, t.createdAt),
+    index('member_invites_by_email').on(t.email, t.status),
   ],
 );
 

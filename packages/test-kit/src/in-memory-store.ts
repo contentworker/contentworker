@@ -22,6 +22,8 @@ import {
   type EntryVersion,
   type EntryWorkflowState,
   type InstalledPlugin,
+  inviteStatus,
+  type MemberInvite,
   matchesTopic,
   type OAuthClient,
   type PluginSettings,
@@ -92,6 +94,7 @@ import type {
   EnvironmentAlias,
   FunctionDefinition,
   FunctionRepo,
+  InviteRepo,
   MemberRepo,
   OAuthClientRepo,
   OAuthGrantRecord,
@@ -1725,6 +1728,40 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  private readonly inviteData = new Map<string, MemberInvite>();
+
+  readonly invites: InviteRepo = {
+    create: async (invite) => {
+      if (this.inviteData.has(invite.id)) throw new Error(`Invite ${invite.id} exists`);
+      this.inviteData.set(invite.id, invite);
+    },
+    get: async (id) => this.inviteData.get(id) ?? null,
+    findByTokenHash: async (hash) =>
+      [...this.inviteData.values()].find(
+        (i) => i.tokenHash === hash || i.emailTokenHash === hash,
+      ) ?? null,
+    list: async ({ now, status, email, limit }) =>
+      [...this.inviteData.values()]
+        .filter((i) => status === undefined || inviteStatus(i, now) === status)
+        .filter((i) => email === undefined || i.email === email)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+        .slice(0, Math.min(Math.max(limit ?? 100, 1), 500)),
+    // As the D1 store's guard: a version changed since the caller read it loses the race.
+    replace: async (invite, expectedVersion) => {
+      if (this.inviteData.get(invite.id)?.version !== expectedVersion) {
+        throw new TransactionConflictError();
+      }
+      this.inviteData.set(invite.id, invite);
+    },
+    recordEmailToken: async (id, version, emailTokenHash, emailedAt) => {
+      const current = this.inviteData.get(id);
+      if (!current || current.version !== version || current.status !== 'pending') return false;
+      const { emailedAt: _was, ...rest } = current;
+      this.inviteData.set(id, { ...rest, emailTokenHash, ...(emailedAt ? { emailedAt } : {}) });
+      return true;
+    },
+  };
+
   private readonly settingData = new Map<string, StoredSetting>();
 
   readonly settings: DeploymentSettingsRepo = {
@@ -2888,6 +2925,8 @@ export class InMemoryContentStore implements ContentStore {
   private txCollections(): Map<string, unknown>[] {
     return [
       this.promotionData,
+      this.inviteData,
+      this.memberData,
       this.contentTypeData,
       this.entryData,
       this.entryTouched,
@@ -2956,6 +2995,8 @@ export class InMemoryContentStore implements ContentStore {
         workflowGraphs: this.workflowGraphs,
         outbox: this.outbox,
         promotions: this.promotions,
+        invites: this.invites,
+        members: this.members,
       });
     } catch (err) {
       for (const [m, entries] of snapshot) {

@@ -139,7 +139,9 @@ The web e2e harness starts its own dev server on port 5390 with a fresh local D1
 `.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings, and unseeded: the tests
 create what they need; the first-run spec sees a deployment with no spaces by filtering
 `GET /spaces` to the space it creates, since the database is shared), so it coexists with a
-`pnpm dev` session. Install browsers once with
+`pnpm dev` session. `E2E_PORT` picks another port, for a second suite (another worktree's)
+beside one already on 5390: outside CI the harness reuses whatever answers on its port, and a
+server from another checkout has another database. Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
 ### D1 query counts
@@ -221,7 +223,7 @@ read paths), 10 GB per database.
 | `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values`                                                           | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
 | `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                               |
 | `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                   |
-| `api_keys`, `roles`, `space_members`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings`                                    | Access                                                                                    |
+| `api_keys`, `roles`, `space_members`, `member_invites`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings`                  | Access                                                                                    |
 | `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins`, `plugin_settings`, `plugin_kv`                                        | Integrations (`plugin_kv`: a plugin's `kv:storage`, per environment)                      |
 | `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks`                                                                  | Publishing at scale                                                                       |
 | `comments`, `tasks`                                                                                                                               | Collaboration                                                                             |
@@ -290,6 +292,12 @@ label (lowercase ASCII letters and digits, every other run one hyphen, at most 2
 and gives the others their id's tail) and counts usage from the existing published snapshots. A
 NULL slug is what code older than the migration writes; the daily `taxonomy-repair` sweep gives
 it one (see [Domain model](./domain-model.md#taxonomy)).
+
+`0019_member_invites.sql` adds `member_invites` and touches no existing table: invitations to the
+admin, deployment-wide (`grants` JSON names each space). Only the links' token hashes are stored
+(`token_hash`, `email_token_hash`, each uniquely indexed); `version` is the compare-and-set that
+makes a link work once, and `expired` is read from `expires_at`, never written (see
+[Auth & RBAC](./auth-and-rbac.md#invitations)). Nothing is backfilled.
 
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,

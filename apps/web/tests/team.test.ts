@@ -48,6 +48,9 @@ vi.mock('~/lib/env.server', () => ({
   api: () => ({ fetch: apiFetch }),
 }));
 vi.mock('~/lib/audit.server', () => ({ audit, clientIp: () => '203.0.113.7' }));
+/** An invitation's role as the api reads it by id; rejects or answers null like the real one. */
+const inviteRole = vi.fn<(me: Principal, id: string) => Promise<'member' | 'admin' | null>>();
+vi.mock('~/lib/invites.server', () => ({ inviteRole }));
 
 const { endAccess } = await import('~/lib/access.server');
 const { needsStepUp, resetPassword, setDisabled, setRole } = await import('~/lib/team.server');
@@ -200,6 +203,31 @@ describe('which Team page changes ask for a step-up', () => {
       expect(await needsStepUp(intent, form({ intent }))).toBe(false);
     expect(await needsStepUp('add-user', form({ role: 'member' }))).toBe(false);
     expect(await needsStepUp('add-user', form({ role: 'admin' }))).toBe(true);
+  });
+
+  it('asks before inviting an admin, not a member', async () => {
+    expect(await needsStepUp('invite', form({ role: 'admin' }), admin)).toBe(true);
+    expect(await needsStepUp('invite', form({ role: 'member' }), admin)).toBe(false);
+  });
+
+  it('asks before resending unless the api says the invitation is a member’s', async () => {
+    const resend = form({ intent: 'invite-resend', id: 'inv-1' });
+    inviteRole.mockResolvedValueOnce('member');
+    expect(await needsStepUp('invite-resend', resend, admin)).toBe(false);
+    expect(inviteRole).toHaveBeenLastCalledWith(admin, 'inv-1');
+    inviteRole.mockResolvedValueOnce('admin');
+    expect(await needsStepUp('invite-resend', resend, admin)).toBe(true);
+    // Not found (an admin's invitation pushed off any page, or gone): ask.
+    inviteRole.mockResolvedValueOnce(null);
+    expect(await needsStepUp('invite-resend', resend, admin)).toBe(true);
+    // The lookup failing outright: ask, never wave it through.
+    inviteRole.mockRejectedValueOnce(new Error('api down'));
+    await expect(needsStepUp('invite-resend', resend, admin)).resolves.toBe(true);
+    // A form claiming a member's role changes nothing: the api's answer decides.
+    inviteRole.mockResolvedValueOnce('admin');
+    expect(await needsStepUp('invite-resend', form({ id: 'inv-1', role: 'member' }), admin)).toBe(
+      true,
+    );
   });
 
   it('asks before making someone an admin, not when they already are one', async () => {

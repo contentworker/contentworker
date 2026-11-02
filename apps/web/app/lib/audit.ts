@@ -27,6 +27,7 @@ export const AUDIT_ACTIONS = {
   'auth.sso_linked': 'Linked a sign-in from the identity provider',
   'auth.reauthenticated': 'Confirmed with single sign-on for a step-up',
   'auth.step_up_failed': 'Sensitive change refused: step-up not confirmed',
+  'auth.invite_failed': 'Invitation link refused',
   'team.first_admin': 'Created the first admin',
   'team.recovery_admin': 'Recovered admin access with a setup code',
   'team.setup_refused': 'Setup refused: wrong setup code',
@@ -40,6 +41,10 @@ export const AUDIT_ACTIONS = {
   'team.two_factor_requirement': 'Changed who needs two-factor sign-in',
   'team.sso_settings': 'Changed single sign-on settings',
   'team.scim_roles': 'Changed which groups give which role',
+  'team.invite_created': 'Invited a person',
+  'team.invite_resent': 'Sent a new invitation link',
+  'team.invite_revoked': 'Revoked an invitation',
+  'team.invite_accepted': 'Accepted an invitation',
   'scim.token_created': 'Created the SCIM token',
   'scim.token_revoked': 'Revoked the SCIM token',
 } as const;
@@ -88,6 +93,8 @@ export function describeEvent(e: AuditEvent): string {
   if (d.method === 'sso') parts.push('with single sign-on');
   if (d.via === 'sso') parts.push('by single sign-on');
   if (d.via === 'scim') parts.push('by SCIM provisioning');
+  if (d.via === 'invite') parts.push('by accepting an invitation');
+  if (typeof d.space === 'string') parts.push(`space ${d.space}`);
   if (typeof d.kept === 'string') parts.push(`kept: ${d.kept}`);
   if (e.action === 'team.user_disabled' && typeof d.sessions === 'number')
     parts.push(`${d.sessions} sessions ended`);

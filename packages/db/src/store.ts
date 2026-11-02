@@ -19,6 +19,7 @@ import {
   type EntryMetadata,
   type EntryVersion,
   type InstalledPlugin,
+  type MemberInvite,
   matchesTopic,
   type OAuthClient,
   type PluginSettings,
@@ -92,6 +93,7 @@ import type {
   EntryWithFields,
   FunctionDefinition,
   FunctionRepo,
+  InviteRepo,
   MemberRepo,
   OAuthClientRepo,
   OAuthGrantRecord,
@@ -3395,6 +3397,119 @@ function makeAuthRepo(x: Exec): AuthRepo {
   };
 }
 
+type InviteRow = typeof schema.memberInvites.$inferSelect;
+const toInvite = (r: InviteRow): MemberInvite => ({
+  id: r.id,
+  email: r.email,
+  role: r.role,
+  grants: r.grants,
+  tokenHash: r.tokenHash,
+  ...(r.emailTokenHash ? { emailTokenHash: r.emailTokenHash } : {}),
+  status: r.status,
+  expiresAt: r.expiresAt.toISOString(),
+  version: r.version,
+  invitedBy: { kind: r.invitedByKind, id: r.invitedById },
+  createdAt: r.createdAt.toISOString(),
+  updatedAt: r.updatedAt.toISOString(),
+  sentAt: r.sentAt.toISOString(),
+  sendCount: r.sendCount,
+  ...(r.emailedAt ? { emailedAt: r.emailedAt.toISOString() } : {}),
+  ...(r.acceptedAt ? { acceptedAt: r.acceptedAt.toISOString() } : {}),
+  ...(r.acceptedBy ? { acceptedBy: r.acceptedBy } : {}),
+  ...(r.revokedAt ? { revokedAt: r.revokedAt.toISOString() } : {}),
+  ...(r.revokedByKind && r.revokedById
+    ? { revokedBy: { kind: r.revokedByKind, id: r.revokedById } }
+    : {}),
+});
+
+const inviteValues = (i: MemberInvite) => ({
+  id: i.id,
+  email: i.email,
+  role: i.role,
+  grants: [...i.grants],
+  tokenHash: i.tokenHash,
+  emailTokenHash: i.emailTokenHash ?? null,
+  status: i.status,
+  expiresAt: new Date(i.expiresAt),
+  version: i.version,
+  invitedByKind: i.invitedBy.kind,
+  invitedById: i.invitedBy.id,
+  createdAt: new Date(i.createdAt),
+  updatedAt: new Date(i.updatedAt),
+  sentAt: new Date(i.sentAt),
+  sendCount: i.sendCount,
+  emailedAt: i.emailedAt ? new Date(i.emailedAt) : null,
+  acceptedAt: i.acceptedAt ? new Date(i.acceptedAt) : null,
+  acceptedBy: i.acceptedBy ?? null,
+  revokedAt: i.revokedAt ? new Date(i.revokedAt) : null,
+  revokedByKind: i.revokedBy?.kind ?? null,
+  revokedById: i.revokedBy?.id ?? null,
+});
+
+function makeInviteRepo(x: Exec): InviteRepo {
+  const db = x.db;
+  const t = schema.memberInvites;
+  return {
+    async create(invite) {
+      await x.write(db.insert(t).values(inviteValues(invite)));
+    },
+    async get(id) {
+      const [row] = await db.select().from(t).where(eq(t.id, id));
+      return row ? toInvite(row) : null;
+    },
+    async findByTokenHash(tokenHash) {
+      const [row] = await db
+        .select()
+        .from(t)
+        .where(or(eq(t.tokenHash, tokenHash), eq(t.emailTokenHash, tokenHash)))
+        .limit(1);
+      return row ? toInvite(row) : null;
+    },
+    async list({ now, status, email, limit }) {
+      const stored = status === undefined ? undefined : status === 'expired' ? 'pending' : status;
+      const rows = await db
+        .select()
+        .from(t)
+        .where(
+          and(
+            stored ? eq(t.status, stored) : undefined,
+            status === 'pending' ? gt(t.expiresAt, now) : undefined,
+            status === 'expired' ? lte(t.expiresAt, now) : undefined,
+            email ? eq(t.email, email) : undefined,
+          ),
+        )
+        .orderBy(desc(t.createdAt), desc(t.id))
+        .limit(Math.min(Math.max(limit ?? 100, 1), 500));
+      return rows.map(toInvite);
+    },
+    async replace(invite, expectedVersion) {
+      const { id: _id, createdAt: _created, ...set } = inviteValues(invite);
+      const update = db
+        .update(t)
+        .set(set)
+        .where(and(eq(t.id, invite.id), eq(t.version, expectedVersion)));
+      if (x.inUnit) {
+        // Another change since the caller read it (a resend, a revoke, a second accept) leaves
+        // the row at another version: the guard aborts the whole unit at commit.
+        await x.write(update);
+        x.expectChanged(1);
+        return;
+      }
+      const changed = await update.returning({ id: t.id });
+      if (changed.length !== 1) throw new TransactionConflictError();
+    },
+    async recordEmailToken(id, version, emailTokenHash, emailedAt) {
+      directOnly(x, 'invites.recordEmailToken');
+      const changed = await db
+        .update(t)
+        .set({ emailTokenHash, emailedAt: emailedAt ? new Date(emailedAt) : null })
+        .where(and(eq(t.id, id), eq(t.version, version), eq(t.status, 'pending')))
+        .returning({ id: t.id });
+      return changed.length === 1;
+    },
+  };
+}
+
 function makeMemberRepo(x: Exec): MemberRepo {
   const db = x.db;
   const m = schema.spaceMembers;
@@ -6297,6 +6412,8 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     workflowTasks: makeWorkflowTaskRepo(x),
     workflowGraphs: { listPublishGates: makeWorkflowGraphRepo(x).listPublishGates },
     outbox: makeOutboxRepo(x),
+    invites: makeInviteRepo(x),
+    members: makeMemberRepo(x),
   };
 }
 
@@ -6324,6 +6441,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     auth: makeAuthRepo(x),
     roles: makeRoleRepo(x),
     members: makeMemberRepo(x),
+    invites: makeInviteRepo(x),
     settings: makeDeploymentSettingsRepo(x),
     schedulerJobs: makeSchedulerJobRepo(x),
     agentRuns: makeAgentRunRepo(x),
