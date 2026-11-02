@@ -82,3 +82,4 @@
 ^packages/(domain/src/asset/collection|application/src/(asset-collections|asset-shares|asset-uploads|asset-zip|zip))\.ts$	guides/media guides/share-links guides/delivering-assets docs/architecture.md docs/domain-model.md docs/api-reference.md	prose
 ^\.github/workflows/deploy\.yml$	docs/backup-and-restore.md docs/deployment.md	prose
 ^packages/(domain/src/redirect/|application/src/redirects\.ts$|sdk/core/src/redirects\.ts$|db/migrations/0017_redirects\.sql$)	guides/redirects docs/domain-model.md docs/api-reference.md	prose
+^packages/sdk/(core/src/webhooks\.ts|rich-text/src/)	guides/your-own-frontend guides/webhooks guides/sdks docs/sdks.md	prose

@@ -140,8 +140,10 @@ Each delivery carries three headers:
 | `x-contentworker-timestamp`  | The event's `occurredAt`                           |
 | `x-contentworker-signature`  | `sha256=` and the hex HMAC-SHA256 of `timestamp.body` with your secret |
 
-Compute the HMAC over the timestamp, a `.`, and the raw request body exactly as received (before
-parsing it), and compare in constant time. A retry is the same event with its original
+`verifyWebhook(request, secret)` from `@contentworker/sdk-core/webhooks` does this for you and
+returns the parsed event, or `null` (in browsers, Workers, Node, Deno and Bun). To do it
+yourself: compute the HMAC over the timestamp, a `.`, and the raw request body exactly as received
+(before parsing it), and compare in constant time. A retry is the same event with its original
 `occurredAt` and signature, so a freshness window rejects retries that arrive later than the
 window (the example below uses five minutes). Widen it to cover your retry tolerance, or rely on
 deduplicating by event `id`.

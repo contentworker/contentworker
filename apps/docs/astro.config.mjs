@@ -96,6 +96,7 @@ export default defineConfig({
           items: [
             { label: 'API keys and access', slug: 'guides/api-keys' },
             { label: 'Team and roles', slug: 'guides/team-and-roles' },
+            { label: 'Build your own frontend', slug: 'guides/your-own-frontend' },
             { label: 'Reading content', slug: 'guides/reading-content' },
             { label: 'Delivering assets', slug: 'guides/delivering-assets' },
             { label: 'Webhooks', slug: 'guides/webhooks' },

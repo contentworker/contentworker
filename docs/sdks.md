@@ -267,6 +267,19 @@ client locale (no locale nesting). It asks for no `include`, so an asset field i
 `{ id, linkType: 'Asset' }`; fetch the asset with `sdk-core`'s `getAsset` (and render it with
 `imageProps`) where a device shows images.
 
+## `@contentworker/sdk-core/webhooks` — verify a webhook delivery
+
+```ts
+import { verifyWebhook } from '@contentworker/sdk-core/webhooks';
+
+const event = await verifyWebhook(request, secret); // the event, or null
+```
+
+It checks `x-contentworker-signature` (HMAC-SHA256 of `<timestamp>.<raw body>`) in constant time
+with Web Crypto and rejects timestamps outside a window (default 5 minutes, `toleranceMs`).
+`verifyWebhookSignature({ body, timestamp, signature, secret })` takes the parts, for frameworks
+that parse the request first.
+
 ## `@contentworker/sdk-rich-text` — render rich text anywhere
 
 Rich text is delivered as a `RichTextDocument` tree, never as HTML. Every channel renders it

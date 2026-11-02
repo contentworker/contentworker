@@ -1,0 +1,96 @@
+---
+title: Build your own frontend
+description: The three things any frontend needs to show ContentWorker content — read it, render its rich text, refresh on publish — in any framework.
+---
+
+ContentWorker serves content, not pages, so your site can be built with anything: Next.js, Astro,
+Remix, SvelteKit, a Worker, or plain HTML generated at build time. A frontend needs three things,
+each a few lines with two small packages.
+
+```sh
+npm install @contentworker/sdk-core @contentworker/sdk-rich-text
+```
+
+## 1. Read content
+
+Create a Content Delivery API key (**Settings → API keys**, scope `delivery:read`), keep it on the
+server, and read published entries:
+
+```ts
+import { createDeliveryClient } from '@contentworker/sdk-core';
+
+const client = createDeliveryClient({
+  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.CONTENTWORKER_CDA_TOKEN!,
+});
+
+// The page for a URL: find the entry by its slug.
+const { items } = await client
+  .query()
+  .contentType('page')
+  .where('slug', 'about')
+  .locale('en-US')
+  .include(2)
+  .limit(1)
+  .fetch();
+const page = items[0]; // undefined → render your 404
+```
+
+`include` embeds linked entries and assets, so one request returns a page with its sections,
+images and references. Delivery responses are cached at the edge and carry an `ETag`. See
+[reading content](/guides/reading-content/) for filters, ordering, locales and pagination.
+
+## 2. Render rich text
+
+Rich text arrives as a document tree, never as HTML, so each channel renders it for itself.
+`toHtml` does it safely: all text is escaped and only http, https, mailto, tel and relative links
+are emitted.
+
+```ts
+import { toHtml } from '@contentworker/sdk-rich-text';
+
+const html = toHtml(page.fields.body, {
+  // Links to other entries: map an entry to its URL on your site.
+  entryHref: (target) => `/${target.fields?.slug}`,
+  // Entries embedded in the text (a call to action, a product): your components.
+  renderEntry: (target) => renderMyBlock(target),
+});
+```
+
+Embedded images come out sized and lazy, with the delivered `srcset`. Override how any node
+renders with `nodes: { paragraph: (node, next) => … }`. For React or Vue, render the same tree
+with your own components, or use `toHtml` for the body. `toMarkdown`, `toPlainText` and `excerpt`
+cover feeds, agents, search and meta descriptions.
+
+## 3. Refresh on publish
+
+If your site caches pages (a CDN, static generation, incremental rebuilds), add a
+[webhook](/guides/webhooks/) for `entry.published`, `entry.unpublished` and `asset.*`, and
+verify each delivery before acting on it:
+
+```ts
+import { verifyWebhook } from '@contentworker/sdk-core/webhooks';
+
+export async function POST(request: Request) {
+  const event = await verifyWebhook(request, process.env.CONTENTWORKER_WEBHOOK_SECRET!);
+  if (!event) return new Response('Invalid signature', { status: 401 });
+  // event.type, event.entryId / event.assetId: purge or rebuild what used it.
+  return new Response('ok');
+}
+```
+
+A site that renders on every request and doesn't cache needs no webhook.
+
+## That's all you need
+
+Everything else is optional and works the same in any stack:
+
+| When you want                          | Use                                                                  |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| Drafts on your site                    | A Preview key and `preview: true` ([SDKs](/guides/sdks/))            |
+| Responsive images and art direction    | `imageProps` ([delivering assets](/guides/delivering-assets/))       |
+| The CMS's redirects, slug changes too  | `@contentworker/sdk-core/redirects` ([redirects](/guides/redirects/)) |
+| Typed entry fields                     | `@contentworker/sdk-codegen` ([SDKs](/guides/sdks/))                 |
+| Live updates without polling           | The live stream ([reading content](/guides/reading-content/))        |
