@@ -25,6 +25,19 @@ omitted. Request bodies are capped at 32 MiB, which fits the importers' 20 MB pa
 JSON escaping. The SDK answers internal failures with a bare 500, so the Worker logs them through
 the handler's `onerror`.
 
+**Errors and audit, once for every tool.** `buildServer` wraps `registerTool`, so every tool's
+handler runs through one path. A failure that isn't a domain error becomes `Internal server
+error` (`toolFailure`). A `ValidationError` is returned, not thrown, as an `isError` result whose
+text is REST's 422 body (`toHttpError`): `{ "error": { "code": "validation_failed", "message",
+"issues": [{ "field", "locale"?, "message" }] } }`, so an agent sees each field path
+(`body[0].heading`). A successful call that changes something is recorded in the audit trail
+(`auditToolCall`, `packages/http/src/mcp/audit.ts`) with the shape REST's `auditMiddleware` uses:
+the actor (`auditActor`), action `MCP <tool>`, the space, the resolved environment when the tool
+takes one, `targetId` from `id` / `apiId` / `alias`, status 200. A tool is a write unless it is in
+`READ_ONLY_TOOLS`; a propose-or-apply tool is audited only when it applies (`apply: true`,
+`createTasks: true`, no `dryRun`). Reads never write (one writer per database), and a failed audit
+write never fails the call.
+
 **Per-request cost.** Each request builds a server bound to the caller's principal, so building it
 has to be cheap. Every tool's Zod input schema, and its JSON Schema conversion, is built once per
 isolate and shared (`toolSchema` in `packages/http/src/mcp/server.ts`). Building a server takes about

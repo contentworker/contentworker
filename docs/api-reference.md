@@ -177,7 +177,10 @@ check first.
    entry a draft too (`result.gated`) rather than failing the rest.
 2. **The risk check.** The rules come first. Approval is required when:
    - the target is `main`, or an alias points at it;
-   - a promoted content type would remove a field, change a field's type, or make one required.
+   - a promoted content type would remove a field (at any depth) or a block variant, change a
+     field's type, or make one required;
+   - the target's entries still hold a field or a block variant it removes (each named with its
+     entries; applying it would be refused with `409` until they are cleared).
 
    Then the decision model (Clef) answers `review`, `breaking` and `risk` over a summary of the
    change. It can only add a requirement, at `review` ≥ 0.5 or `risk` Significant or above, never
@@ -269,8 +272,9 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 
-Saving a content type that drops a blocks variant some entry still uses answers `409 conflict`
-naming each `location: variant` and its entries (`details.variantsInUse`); see
+Saving a content type that drops a blocks variant some entry still uses, or a field (at any depth)
+some entry still holds a value for, answers `409 conflict` naming each `location: variant` or field
+location and its entries (`details.variantsInUse`, `details.fieldsInUse`); see
 [domain-model.md](domain-model.md#blocks).
 
 #### Types from the live model
@@ -788,7 +792,7 @@ run before routing (the last two rows).
 | `NotFoundError`                                                      | 404        | `not_found`         |                                                 |
 | `ValidationError`                                                    | 422        | `validation_failed` | `issues` (the `FieldIssue[]`)                   |
 | `HookRejectedError`                                                  | 422        | `hook_rejected`     |                                                 |
-| `ConflictError`, `TransactionConflictError`                          | 409        | `conflict`          |                                                 |
+| `ConflictError`, `TransactionConflictError`                          | 409        | `conflict`          | `details`, when the conflict carries them       |
 | `LastAdminError`                                                     | 409        | `last_admin`        |                                                 |
 | `PublishGatedError`                                                  | 409        | `publish_gated`     | `entries`: each `entryId` and its `workflows`   |
 | `DomainError` code `unauthorized`                                    | 401        | `unauthorized`      |                                                 |

@@ -13,6 +13,12 @@ export const errorResponse = z
     error: z.object({
       code: z.string().describe('Machine-readable error code'),
       message: z.string(),
+      details: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(
+          'What a 409 conflicts with, when it says: e.g. `variantsInUse` / `fieldsInUse`, each location with the entries still holding it',
+        ),
     }),
   })
   .describe('Error envelope');

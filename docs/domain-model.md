@@ -125,6 +125,12 @@ repeater is unchanged: its elements carry neither key.
   and the published snapshots in keyset pages of 100 by entry id, only when a variant is removed,
   and names each `location: variant` with the entries using it (`details.variantsInUse`). Adding a
   variant, or an optional field to one, is always allowed.
+- **Removing a field**, at any depth, is refused the same way while any entry still holds a
+  value for it (anything but absent or `null`): `removedFields` / `removedFieldUses` name each
+  location (`seo.description`, `body[hero].image`) with its entries (`details.fieldsInUse`). One
+  scan (`removedContentInUse` in `packages/application/src/content-types.ts`) serves both checks
+  and the promotion risk check. There is no override, as for variants: clear the values, publish
+  the entries whose published snapshot holds them, purge them from the trash, then remove it.
 
 **GraphQL** gives a blocks field a union named like a component in that place (`LandingPageBody`)
 with one object type per variant (`LandingPageBodyHero`), each exposing `_type`, `_key` and the
@@ -626,7 +632,7 @@ All extend `DomainError` (`{ code, message, details? }`) and carry a stable, cli
 | ------------------------------------- | ------------------- | ---- | ---------------------------------------------------------------- |
 | `NotFoundError(resource, id)`         | `not_found`         | 404  | Resource missing                                                 |
 | `ValidationError(issues)`             | `validation_failed` | 422  | Carries `issues: FieldIssue[]`                                   |
-| `ConflictError(message, details?)`    | `conflict`          | 409  | Uniqueness or identity violation (e.g. duplicate apiId)          |
+| `ConflictError(message, details?)`    | `conflict`          | 409  | Uniqueness or identity violation (e.g. duplicate apiId); `details` on the wire |
 | `TransactionConflictError` (ports)    | `conflict`          | 409  | A compare-and-set lost inside a unit of work; nothing committed  |
 | `LastAdminError`                      | `last_admin`        | 409  | Would leave the space with no active administrator               |
 | `PublishGatedError(entries)`          | `publish_gated`     | 409  | A publish of an entry a gated workflow covers, outside its runs  |

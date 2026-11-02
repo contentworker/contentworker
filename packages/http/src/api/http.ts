@@ -24,7 +24,20 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
       body: { error: { code: err.code, message: err.message, issues: err.issues } },
     };
   }
-  if (err instanceof ConflictError) return { status: 409, body: errBody(err) };
+  // A conflict's details say what it conflicts with (the entries still using a removed field or
+  // variant, the run already active), so a client can act on them without parsing the message.
+  if (err instanceof ConflictError) {
+    return {
+      status: 409,
+      body: {
+        error: {
+          code: err.code,
+          message: err.message,
+          ...(err.details !== undefined ? { details: err.details } : {}),
+        },
+      },
+    };
+  }
   // Still linked from entries: the links come back, so a client can show or clear them.
   if (err instanceof AssetInUseError) {
     return {
