@@ -64,6 +64,19 @@ export const contentType = z.object({
   status: z.enum(['draft', 'published']),
 });
 
+/** A published content type's place on the site, as Delivery serves it (`GET …/routes`). */
+export const deliveredRoute = z.object({
+  contentType: z.string().describe('Content type apiId'),
+  urlPattern: z
+    .string()
+    .describe('Where its entries live, e.g. /blog/{slug}: {id}, {locale} or a Slug field apiId'),
+});
+
+export const deliveredRouteList = z.object({
+  items: z.array(deliveredRoute),
+  total: z.int(),
+});
+
 export const contentTypeEntryCounts = z.object({
   items: z.array(
     z.object({

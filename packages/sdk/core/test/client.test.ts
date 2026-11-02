@@ -137,6 +137,28 @@ describe('@contentworker/sdk-core delivery client', () => {
     expect(hits[0]?.entryId).toBe('e1');
     expect(calls[0]?.url).toContain('/search?q=database&top_k=3');
   });
+
+  it('reads the site routes and unwraps the items', async () => {
+    const routes = [
+      { contentType: 'article', urlPattern: '/blog/{slug}' },
+      { contentType: 'page', urlPattern: '/{slug}' },
+    ];
+    const fetchImpl = fakeFetch((url, init) => {
+      calls.push({ url, init });
+      return { items: routes, total: 2 };
+    });
+    const client = createDeliveryClient({ ...base, fetch: fetchImpl });
+    expect(await client.routes()).toEqual(routes);
+    expect(calls[0]?.url).toBe('https://cms.test/delivery/s1/main/routes');
+    expect(new Headers(calls[0]?.init?.headers).get('authorization')).toBe('Bearer cda-tok');
+  });
+
+  it('surfaces a refused routes read as a DeliveryError', async () => {
+    const fetchImpl = fakeFetch(() => new Response('Unauthorized', { status: 401 }));
+    const client = createDeliveryClient({ ...base, fetch: fetchImpl });
+    await expect(client.routes()).rejects.toMatchObject({ status: 401 });
+    await expect(client.routes()).rejects.toBeInstanceOf(DeliveryError);
+  });
 });
 
 const image: DeliveredAsset = {

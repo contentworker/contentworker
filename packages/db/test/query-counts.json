@@ -23,6 +23,7 @@
   "delivery: GET /entries?metadata.tags.slug=red": { "statements": 3, "roundTrips": 2 },
   "delivery: GET /redirects": { "statements": 1, "roundTrips": 1 },
   "delivery: GET /redirects/resolve": { "statements": 1, "roundTrips": 1 },
+  "delivery: GET /routes": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries/:id": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries?content_type=article": { "statements": 2, "roundTrips": 2 },
   "preview: GET /entries?content_type=article (page)": { "statements": 2, "roundTrips": 2 },

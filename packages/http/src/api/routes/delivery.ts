@@ -14,6 +14,7 @@ import {
   listDeliveredAssets,
   listDeliveredConcepts,
   listDeliveredRedirects,
+  listDeliveredRoutes,
   listDeliveredTags,
   listPublishedEntries,
   liveEventFor,
@@ -362,6 +363,25 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
           c.req.query('locale') || undefined,
         ),
       ),
+  );
+  // Where each published type's entries live on the site, for a front end that routes pages from
+  // the model. Unlike redirects these are content: a key limited to some types sees only theirs.
+  // Cached and purged like every read here (`content_type.published`).
+  app.get(
+    `${BASE}/routes`,
+    describe('listRoutes'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => {
+      const principal = c.get('principal');
+      const items = await listDeliveredRoutes(
+        ctx,
+        scopeOf(c),
+        principal.contentGrants
+          ? { readable: (t: string) => canAccessContentType(principal, 'read', t) }
+          : {},
+      );
+      return c.json({ items, total: items.length });
+    },
   );
 
   // Live Content API: an SSE stream of published-content changes for this scope.
