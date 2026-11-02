@@ -415,7 +415,7 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
             />
             {/* The content types the trigger covers: one control instead of a row of toggles. */}
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex h-8 max-w-72 items-center gap-1.5 rounded-4xl border border-input bg-input/30 px-3 text-xs hover:bg-input/50">
+              <DropdownMenuTrigger className="inline-flex h-8 max-w-72 items-center gap-1.5 rounded-md border border-input bg-input/30 px-3 text-xs hover:bg-input/50">
                 <span className="text-muted-foreground">Covers:</span>
                 <span className="truncate">
                   {flow.contentTypes.length

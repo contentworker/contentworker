@@ -199,5 +199,5 @@
 :root {
   --sl-font: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --sl-font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --cw-radius: 0.625rem;
+  --cw-radius: 0.25rem;
 }

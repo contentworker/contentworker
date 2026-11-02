@@ -441,7 +441,7 @@ function AssistantToggle() {
       aria-keyshortcuts="Meta+J Control+J"
       title={open ? `Close Coworker (${shortcut})` : `Ask Coworker (${shortcut})`}
       className={cn(
-        'hit-area flex h-8 items-center gap-2 rounded-4xl border px-3 text-ui',
+        'hit-area flex h-8 items-center gap-2 rounded-md border px-3 text-ui',
         tint,
         open
           ? 'border-foreground/25 bg-accent font-medium text-foreground'
@@ -547,7 +547,7 @@ function ShellFrame() {
                     aria-label={`${shortWho(me)}, account menu`}
                     title={who(me)}
                     className={cn(
-                      'hit-area hidden h-8 items-center gap-2 rounded-4xl border px-3 text-ui text-muted-foreground hover:bg-accent hover:text-foreground md:flex data-[state=open]:bg-accent data-[state=open]:text-foreground',
+                      'hit-area hidden h-8 items-center gap-2 rounded-md border px-3 text-ui text-muted-foreground hover:bg-accent hover:text-foreground md:flex data-[state=open]:bg-accent data-[state=open]:text-foreground',
                       tint,
                     )}
                   >
@@ -987,7 +987,7 @@ function SearchButton() {
       title={`Search pages, entries and commands (${mod}K)`}
       aria-keyshortcuts="Meta+K Control+K"
       className={cn(
-        'hit-area flex h-8 items-center gap-2 rounded-4xl border px-3 text-muted-foreground text-ui hover:bg-accent hover:text-foreground',
+        'hit-area flex h-8 items-center gap-2 rounded-md border px-3 text-muted-foreground text-ui hover:bg-accent hover:text-foreground',
         tint,
       )}
     >

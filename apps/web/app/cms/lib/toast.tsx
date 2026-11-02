@@ -143,7 +143,7 @@ export function ToastProvider(props: { children: React.ReactNode }) {
             {t.action && (
               <button
                 type="button"
-                className="hit-area h-7 shrink-0 rounded-4xl px-2.5 font-medium text-foreground outline-none transition-[background-color] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                className="hit-area h-7 shrink-0 rounded-md px-2.5 font-medium text-foreground outline-none transition-[background-color] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => {
                   const action = t.action;
                   dismiss(t.id);
@@ -155,7 +155,7 @@ export function ToastProvider(props: { children: React.ReactNode }) {
             )}
             <button
               type="button"
-              className="hit-area flex size-6 items-center justify-center rounded-full text-lg leading-none text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="hit-area flex size-6 items-center justify-center rounded-md text-lg leading-none text-muted-foreground hover:bg-muted hover:text-foreground"
               aria-label="Dismiss"
               onClick={() => dismiss(t.id)}
             >
