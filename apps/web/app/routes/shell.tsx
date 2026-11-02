@@ -787,6 +787,12 @@ function TabBar({
                   className={cn(item, state(isAt(path, t)))}
                 >
                   <t.icon className="size-5" aria-hidden="true" />
+                  <span className="short:sr-only">{t.label}</span>
+                  {/* After the label in reading order, a space between (it is placed over the
+                      icon, and a flex column draws no space): the tab's visible text is then
+                      "Approvals 3", inside its name "Approvals, 3 waiting", so a voice command
+                      naming what is on screen still finds it. */}
+                  {count ? ' ' : null}
                   {count ? (
                     <span
                       aria-hidden="true"
@@ -796,7 +802,6 @@ function TabBar({
                       {approvalsCountLabel(count)}
                     </span>
                   ) : null}
-                  <span className="short:sr-only">{t.label}</span>
                 </NavLink>
               </li>
             );

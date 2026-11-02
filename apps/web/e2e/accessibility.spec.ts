@@ -231,9 +231,29 @@ test.describe('on a phone', () => {
     await expect(
       page.getByRole('list', { name: `Assets in “${name}”, in order` }).getByRole('listitem'),
     ).toHaveCount(1);
-    // The collection's own surfaces: the shell's tab bar has a finding of its own (its Approvals
-    // link's name, "Approvals, 1 waiting"), outside this change, reported rather than hidden here.
-    await scan(page, testInfo, ['nav[aria-label="Collections"]', 'section[aria-labelledby]']);
+    // The whole page: the collection's surfaces and the shell's tab bar around them.
+    await scan(page, testInfo);
+  });
+
+  // The phone shell itself: the top bar, the tab bar with Approvals' count pill (its name must
+  // hold what it shows, "Approvals 1", for voice control), and the More sheet.
+  test('the shell, its tab bar and More have no accessibility violations', async ({
+    page,
+  }, testInfo) => {
+    // The global setup's agent proposal waits in Approvals (no spec decides it), so the tab shows
+    // its count.
+    await openCms(page, '/dashboard');
+    const bar = page.locator('nav[aria-label="Main"]:visible');
+    await expect(bar.getByRole('link', { name: /^Approvals, \d+ waiting$/ })).toBeVisible();
+    await expect(bar.locator('[data-approvals-count]')).toBeVisible();
+    await scan(page, testInfo);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await scan(page, testInfo);
+    await page.emulateMedia({ colorScheme: 'light' });
+    await bar.getByRole('button', { name: 'More' }).tap();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await scan(page, testInfo);
   });
 });
 
