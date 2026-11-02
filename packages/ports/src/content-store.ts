@@ -49,6 +49,8 @@ import type {
   StoredAssetShareLink,
   Tag,
   Task,
+  TermKind,
+  TermUsage,
   UniqueClaim,
   Webhook,
   WebhookDelivery,
@@ -229,16 +231,48 @@ export interface TaxonomyRepo {
   getScheme(scope: Scope, id: string): Promise<ConceptScheme | null>;
   deleteScheme(scope: Scope, id: string): Promise<void>;
   // Concepts (hierarchical terms within a scheme).
+  /**
+   * Creates or replaces a concept. A slug another concept of the scheme holds is refused with
+   * `ConflictError` (at commit, inside a unit of work).
+   */
   createConcept(scope: Scope, concept: Concept): Promise<void>;
   getConcept(scope: Scope, id: string): Promise<Concept | null>;
   /** All concepts, or just those in `schemeId` when given. */
   listConcepts(scope: Scope, schemeId?: string): Promise<Concept[]>;
+  /** The concepts holding any of `slugs` (in `schemeId`, or in any scheme). */
+  findConceptsBySlug(scope: Scope, slugs: readonly string[], schemeId?: string): Promise<Concept[]>;
+  /** Deletes a concept and its usage counts. */
   deleteConcept(scope: Scope, id: string): Promise<void>;
   // Tags (flat labels).
+  /** Creates or replaces a tag. A slug another tag holds is refused with `ConflictError`. */
   createTag(scope: Scope, tag: Tag): Promise<void>;
   getTag(scope: Scope, id: string): Promise<Tag | null>;
   listTags(scope: Scope): Promise<Tag[]>;
+  /** The tags holding any of `slugs`. */
+  findTagsBySlug(scope: Scope, slugs: readonly string[]): Promise<Tag[]>;
+  /** Deletes a tag and its usage counts. */
   deleteTag(scope: Scope, id: string): Promise<void>;
+  /**
+   * The slugs in a namespace (the environment's tags, or one scheme's concepts) that are `base`
+   * or `base-<anything>`: what a generated slug must step around.
+   */
+  slugsLike(
+    scope: Scope,
+    namespace: { readonly kind: 'tag' } | { readonly kind: 'concept'; readonly schemeId: string },
+    base: string,
+  ): Promise<string[]>;
+  // Published usage counts.
+  /**
+   * How many published entries carry each term, per content type (rows above zero only). The
+   * store keeps these as it writes published snapshots (`entries.putPublishedMany`,
+   * `removePublishedMany`), in the same unit of work, so a read never computes them.
+   */
+  listUsage(
+    scope: Scope,
+    query: { readonly kind: TermKind; readonly termIds?: readonly string[] },
+  ): Promise<TermUsage[]>;
+  /** Rebuilds the scope's usage counts from its published snapshots (the repair sweep). */
+  recountUsage(scope: Scope): Promise<void>;
   // Per-entry associations.
   getEntryMetadata(scope: Scope, entryId: string): Promise<EntryMetadata | null>;
   /** Batch read of entry associations; entries without metadata are absent. */
@@ -1371,6 +1405,16 @@ export interface DeliveryReadRequest {
   readonly assetIds?: readonly string[];
   /** A page of published assets. */
   readonly assetPage?: PublishedAssetQuery;
+  /** The scope's tags; with `slugs`, only those holding one. */
+  readonly tags?: { readonly slugs?: readonly string[] };
+  /** The scope's concepts, narrowed to a scheme and/or to the ones holding one of `slugs`. */
+  readonly concepts?: { readonly schemeId?: string; readonly slugs?: readonly string[] };
+  /** Published usage counts of one kind of term, narrowed as `tags` / `concepts` are. */
+  readonly termUsage?: {
+    readonly kind: TermKind;
+    readonly schemeId?: string;
+    readonly slugs?: readonly string[];
+  };
 }
 
 /**
@@ -1389,6 +1433,9 @@ export interface DeliveryReadResult {
   /** Missing ids are absent, order unspecified. */
   readonly assets?: PublishedAsset[];
   readonly assetPage?: PublishedAssetPage;
+  readonly tags?: Tag[];
+  readonly concepts?: Concept[];
+  readonly termUsage?: TermUsage[];
 }
 
 /** Delivery's reads, batched. Read-only: it never writes, so it is safe on a replica session. */

@@ -38,6 +38,8 @@ import {
   type StoredAssetShareLink,
   type Tag,
   type Task,
+  type TermKind,
+  type TermUsage,
   type UniqueClaim,
   ValidationError,
   versionGatesPublish,
@@ -1546,6 +1548,30 @@ export class InMemoryContentStore implements ContentStore {
           request.assetIds ? this.assets.getPublishedMany(scope, request.assetIds) : undefined,
           request.assetPage ? this.assets.listPublished(scope, request.assetPage) : undefined,
         ]);
+      const tags = request.tags
+        ? request.tags.slugs
+          ? await this.taxonomy.findTagsBySlug(scope, request.tags.slugs)
+          : await this.taxonomy.listTags(scope)
+        : undefined;
+      const concepts = request.concepts
+        ? (await this.taxonomy.listConcepts(scope, request.concepts.schemeId)).filter(
+            (c) => !request.concepts?.slugs || request.concepts.slugs.includes(c.slug),
+          )
+        : undefined;
+      let termUsage: TermUsage[] | undefined;
+      if (request.termUsage) {
+        const q = request.termUsage;
+        const narrowed = q.slugs !== undefined || (q.kind === 'concept' && q.schemeId);
+        const terms: (Tag | Concept)[] =
+          q.kind === 'tag'
+            ? await this.taxonomy.listTags(scope)
+            : await this.taxonomy.listConcepts(scope, q.schemeId);
+        const ids = terms.filter((t) => !q.slugs || q.slugs.includes(t.slug)).map((t) => t.id);
+        termUsage = await this.taxonomy.listUsage(scope, {
+          kind: q.kind,
+          ...(narrowed ? { termIds: ids } : {}),
+        });
+      }
       const result: DeliveryReadResult = {
         ...(request.config ? { config: config ?? null } : {}),
         ...(contentTypes ? { contentTypes } : {}),
@@ -1555,6 +1581,9 @@ export class InMemoryContentStore implements ContentStore {
         ...(entries ? { entries } : {}),
         ...(assets ? { assets } : {}),
         ...(assetPage ? { assetPage } : {}),
+        ...(tags ? { tags } : {}),
+        ...(concepts ? { concepts } : {}),
+        ...(termUsage ? { termUsage } : {}),
       };
       return result;
     },
@@ -2302,6 +2331,45 @@ export class InMemoryContentStore implements ContentStore {
   private readonly tagData = new Map<string, Tag>();
   private readonly entryMetadataData = new Map<string, EntryMetadata>();
 
+  /** Refuses a slug another term of the namespace holds, as D1's unique index does. */
+  private claimSlug(
+    scope: Scope,
+    kind: TermKind,
+    id: string,
+    slug: string,
+    schemeId?: string,
+  ): void {
+    const prefix = `${scopeKey(scope)}::`;
+    const terms: (Tag | Concept)[] =
+      kind === 'tag'
+        ? [...this.tagData.entries()].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v)
+        : [...this.conceptData.entries()]
+            .filter(([k, c]) => k.startsWith(prefix) && c.schemeId === schemeId)
+            .map(([, v]) => v);
+    if (slug && terms.some((t) => t.id !== id && t.slug === slug)) {
+      throw new ConflictError('A unique value is already taken');
+    }
+  }
+
+  /**
+   * Usage counts computed from the published snapshots on every read: the oracle the D1 store's
+   * maintained counts are checked against.
+   */
+  private usageOf(scope: Scope, kind: TermKind): TermUsage[] {
+    const prefix = `${scopeKey(scope)}::`;
+    const counts = new Map<string, TermUsage>();
+    for (const [k, p] of this.publishedData) {
+      if (!k.startsWith(prefix) || !p.metadata) continue;
+      const ids = kind === 'tag' ? p.metadata.tags : p.metadata.concepts;
+      for (const termId of new Set(ids)) {
+        const key = `${termId}::${p.contentTypeApiId}`;
+        const was = counts.get(key)?.count ?? 0;
+        counts.set(key, { kind, termId, contentTypeApiId: p.contentTypeApiId, count: was + 1 });
+      }
+    }
+    return [...counts.values()];
+  }
+
   /** `space::env::id` → redirect. */
   private readonly redirectData = new Map<string, Redirect>();
   /** `space::env` → the set's revision. */
@@ -2396,6 +2464,7 @@ export class InMemoryContentStore implements ContentStore {
       this.schemeData.delete(`${scopeKey(scope)}::${id}`);
     },
     createConcept: async (scope, concept) => {
+      this.claimSlug(scope, 'concept', concept.id, concept.slug, concept.schemeId);
       this.conceptData.set(`${scopeKey(scope)}::${concept.id}`, concept);
     },
     getConcept: async (scope, id) => this.conceptData.get(`${scopeKey(scope)}::${id}`) ?? null,
@@ -2406,10 +2475,13 @@ export class InMemoryContentStore implements ContentStore {
         .map(([, v]) => v)
         .filter((c) => !schemeId || c.schemeId === schemeId);
     },
+    findConceptsBySlug: async (scope, slugs, schemeId) =>
+      (await this.taxonomy.listConcepts(scope, schemeId)).filter((c) => slugs.includes(c.slug)),
     deleteConcept: async (scope, id) => {
       this.conceptData.delete(`${scopeKey(scope)}::${id}`);
     },
     createTag: async (scope, tag) => {
+      this.claimSlug(scope, 'tag', tag.id, tag.slug);
       this.tagData.set(`${scopeKey(scope)}::${tag.id}`, tag);
     },
     getTag: async (scope, id) => this.tagData.get(`${scopeKey(scope)}::${id}`) ?? null,
@@ -2417,9 +2489,26 @@ export class InMemoryContentStore implements ContentStore {
       const prefix = `${scopeKey(scope)}::`;
       return [...this.tagData.entries()].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
     },
+    findTagsBySlug: async (scope, slugs) =>
+      (await this.taxonomy.listTags(scope)).filter((t) => slugs.includes(t.slug)),
     deleteTag: async (scope, id) => {
       this.tagData.delete(`${scopeKey(scope)}::${id}`);
     },
+    slugsLike: async (scope, namespace, base) => {
+      const terms: (Tag | Concept)[] =
+        namespace.kind === 'tag'
+          ? await this.taxonomy.listTags(scope)
+          : await this.taxonomy.listConcepts(scope, namespace.schemeId);
+      return terms
+        .map((t) => t.slug)
+        .filter((slug) => slug === base || slug.startsWith(`${base}-`));
+    },
+    listUsage: async (scope, query) =>
+      this.usageOf(scope, query.kind).filter(
+        (u) => !query.termIds || query.termIds.includes(u.termId),
+      ),
+    // Computed on read, so there is nothing to rebuild.
+    recountUsage: async () => {},
     getEntryMetadata: async (scope, entryId) =>
       this.entryMetadataData.get(`${scopeKey(scope)}::${entryId}`) ?? null,
     getEntryMetadataMany: async (scope, entryIds) =>

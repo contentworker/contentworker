@@ -371,6 +371,48 @@ export interface CreateAssetInput {
 }
 
 /** A named, ordered set of assets; an asset may be in any number of them. */
+/** How many published entries carry a term: in all, and per content type. */
+export interface TermUsage {
+  readonly count: number;
+  readonly byContentType: Readonly<Record<string, number>>;
+}
+
+/** What a tag or concept carries beside its label. */
+export interface TermFields {
+  /** URL slug, normalized; made from the label when omitted on create, kept when it changes. */
+  readonly slug?: string;
+  /** Plain text; `null` clears it. */
+  readonly description?: string | null;
+  /** Labels by locale (the whole set). The default locale's sets the term's own label. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+export interface Tag {
+  readonly id: string;
+  /** The default-locale label. */
+  readonly name: string;
+  readonly slug: string;
+  readonly description: string | null;
+  /** Labels in the space's other locales. */
+  readonly labels: Readonly<Record<string, string>>;
+}
+
+export interface ConceptScheme {
+  readonly id: string;
+  readonly name: string;
+}
+
+export interface Concept {
+  readonly id: string;
+  readonly schemeId: string;
+  /** The default-locale label. */
+  readonly prefLabel: string;
+  readonly broaderId: string | null;
+  readonly slug: string;
+  readonly description: string | null;
+  readonly labels: Readonly<Record<string, string>>;
+}
+
 export interface AssetCollection {
   readonly id: string;
   readonly name: string;
@@ -1517,6 +1559,49 @@ export function createManagementClient(opts: ManagementClientOptions) {
         /** Only an empty folder; one with subfolders or assets is a 409. */
         delete: (id: string) => del<void>(`${envBase}/asset-folders/${e(id)}`),
       },
+    },
+
+    /**
+     * The environment's controlled vocabulary: flat tags, and concept schemes holding
+     * hierarchical concepts. Lists carry each term's published usage (`usage`).
+     */
+    taxonomy: {
+      tags: {
+        list: () =>
+          items(get<{ items: (Tag & { usage: TermUsage })[] }>(`${envBase}/taxonomy/tags`)),
+        create: (input: { name: string } & TermFields) =>
+          post<Tag>(`${envBase}/taxonomy/tags`, input),
+        update: (id: string, input: { name?: string } & TermFields) =>
+          patch<Tag>(`${envBase}/taxonomy/tags/${e(id)}`, input),
+        delete: (id: string) => del<void>(`${envBase}/taxonomy/tags/${e(id)}`),
+      },
+      schemes: {
+        list: () => items(get<{ items: ConceptScheme[] }>(`${envBase}/taxonomy/schemes`)),
+        create: (input: { name: string }) =>
+          post<ConceptScheme>(`${envBase}/taxonomy/schemes`, input),
+        delete: (id: string) => del<void>(`${envBase}/taxonomy/schemes/${e(id)}`),
+      },
+      concepts: {
+        list: (o: { scheme?: string } = {}) =>
+          items(
+            get<{ items: (Concept & { usage: TermUsage })[] }>(`${envBase}/taxonomy/concepts`, {
+              scheme: o.scheme,
+            }),
+          ),
+        create: (
+          input: { schemeId: string; prefLabel: string; broaderId?: string | null } & TermFields,
+        ) => post<Concept>(`${envBase}/taxonomy/concepts`, input),
+        update: (id: string, input: { prefLabel?: string } & TermFields) =>
+          patch<Concept>(`${envBase}/taxonomy/concepts/${e(id)}`, input),
+        setBroader: (id: string, broaderId: string | null) =>
+          put<Concept>(`${envBase}/taxonomy/concepts/${e(id)}/broader`, { broaderId }),
+        delete: (id: string) => del<void>(`${envBase}/taxonomy/concepts/${e(id)}`),
+      },
+      /**
+       * Recounts published usage from the published entries and gives a slug to any term without
+       * one. The counts are kept as entries publish; this is the repair, safe to repeat.
+       */
+      repair: () => post<{ slugsAssigned: number }>(`${envBase}/taxonomy/repair`),
     },
 
     /** Durable bulk jobs (asset bulk actions, entry bulk publishing, imports), newest first. */

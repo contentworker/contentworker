@@ -60,17 +60,24 @@ client.iterateAssets(query?): AsyncGenerator<DeliveredAsset>   // every page, fo
 client.getCollection(id, { limit?, cursor?, locale? }): Promise<DeliveredCollection>  // Delivery only
 client.iterateCollection(id, { limit?, cursor?, locale? }): AsyncGenerator<DeliveredAsset>
 client.searchAssets(q, { limit?, kind?, tag?, folder?, locale? }): Promise<AssetSearchPage>  // Delivery only
+client.listTags({ locale?, contentType? }): Promise<DeliveredTag[]>      // Delivery only
+client.getTag(slug, { locale?, contentType? }): Promise<DeliveredTag>
+client.listConcepts({ scheme?, locale?, contentType? }): Promise<DeliveredConcept[]>
+client.getConcept(slug, { scheme?, locale?, contentType? }): Promise<DeliveredConcept>
 client.redirects(): Promise<DeliveredRedirect[]>         // Delivery only: the enabled set, to apply
 client.resolveRedirect(path, { locale? }): Promise<RedirectMatch | null>  // Delivery only; null on 404
-client.query(): EntryQueryBuilder<F>     // fluent builder
+client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
 client.bookmark: string | undefined     // read-your-writes position (preview); assignable
 ```
 
-- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, order?, select?, search? }`.
+- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, order?, select?, search?, tags? }`.
   Delivery pages with `skip`; Preview (`preview: true`) pages with `cursor`, the last page's
   `nextCursor`, and refuses `skip` (`422`).
+  `tags` (slugs) sends `metadata.tags.slug[in]`, and a filter on `metadata.*` is sent unprefixed.
+- `DeliveredTag` = `{ id, slug, label, labels?, description, count, countsByContentType }`;
+  `DeliveredConcept` adds `schemeId` and `broaderId`.
 - `filters` use the same operators as the HTTP query language (`eq`, `ne`, `in`, `match`, etc.).
 - The fluent builder reads naturally:
   `client.query().contentType('article').locale('en-US').limit(10).fetch()`.
@@ -383,6 +390,10 @@ cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .updat
 cma.redirects.import({ format: 'csv' | 'json', data, dryRun? }) / .resolve(path, { locale? }) / .analyze() / .collapseChains()
 
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
+cma.taxonomy.tags.list() / .create({ name, slug?, description?, labels? }) / .update(id, patch) / .delete(id)   // list: each with usage
+cma.taxonomy.schemes.list() / .create({ name }) / .delete(id)
+cma.taxonomy.concepts.list({ scheme? }) / .create(input) / .update(id, patch) / .setBroader(id, broaderId) / .delete(id)
+cma.taxonomy.repair() → { slugsAssigned }   // recount published usage, fill missing slugs
 
 cma.releases.create({ title }) / .addEntry(id, { entityId }) / .removeEntry(id, entityId)
 cma.releases.list() / .get(id) / .publish(id) / .delete(id)   // list: each with itemCount

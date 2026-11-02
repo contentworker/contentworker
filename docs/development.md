@@ -226,7 +226,7 @@ read paths), 10 GB per database.
 | `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks`                                                                  | Publishing at scale                                                                       |
 | `comments`, `tasks`                                                                                                                               | Collaboration                                                                             |
 | `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows                                                                       |
-| `concept_schemes`, `concepts`, `tags`                                                                                                             | Taxonomy                                                                                  |
+| `concept_schemes`, `concepts`, `tags`                                                                                                             | Taxonomy (`taxonomy_usage`, its published counts, from 0018)                              |
 | `redirects`, `redirect_sets` (`0017`)                                                                                                             | Redirects and their revision                                                              |
 | `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
 | `audit_log`                                                                                                                                       | Per-space audit trail                                                                     |
@@ -278,6 +278,18 @@ which checked the set for loops and the cap, from both committing (a loser surfa
 `TransactionConflictError`). `content_types.url_pattern` (nullable) is a type's
 [URL pattern](./domain-model.md#content-type); existing types have none, so no slug redirects
 until someone sets one.
+
+`0018_taxonomy_slugs_counts.sql` adds `slug` (nullable), `description` (nullable) and `labels`
+(JSON, default `{}`: labels in the space's other locales) to `tags` and `concepts`, with unique
+indexes `tags_by_slug` (`space_id`, `environment_id`, `slug`) and `concepts_by_slug` (the same plus
+`scheme_id`); and the table `taxonomy_usage` (`kind` `tag` or `concept`, `term_id`,
+`content_type_api_id`, `published_count`; primary key `(space_id, environment_id, kind, term_id,
+content_type_api_id)`), environment-scoped. It backfills a slug for every existing term from its
+label (lowercase ASCII letters and digits, every other run one hyphen, at most 200 characters,
+`tag` / `concept` when nothing survives; a slug two terms of a namespace share keeps the first by id
+and gives the others their id's tail) and counts usage from the existing published snapshots. A
+NULL slug is what code older than the migration writes; the daily `taxonomy-repair` sweep gives
+it one (see [Domain model](./domain-model.md#taxonomy)).
 
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,

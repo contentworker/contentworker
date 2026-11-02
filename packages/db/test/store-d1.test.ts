@@ -81,8 +81,20 @@ describe('withTransaction (unit of work)', () => {
   it('commits every write at once and writes nothing when fn throws', async () => {
     const [a, b] = [`tag-${uid()}`, `tag-${uid()}`];
     await store.withTransaction(async (tx) => {
-      await tx.taxonomy.createTag(scope, { id: a, name: 'A' });
-      await tx.taxonomy.createTag(scope, { id: b, name: 'B' });
+      await tx.taxonomy.createTag(scope, {
+        id: a,
+        name: 'A',
+        slug: 'a',
+        description: null,
+        labels: {},
+      });
+      await tx.taxonomy.createTag(scope, {
+        id: b,
+        name: 'B',
+        slug: 'b',
+        description: null,
+        labels: {},
+      });
       // Reads inside the unit see committed state only.
       expect(await tx.taxonomy.getTag(scope, a)).toBeNull();
     });
@@ -92,7 +104,13 @@ describe('withTransaction (unit of work)', () => {
     const c = `tag-${uid()}`;
     await expect(
       store.withTransaction(async (tx) => {
-        await tx.taxonomy.createTag(scope, { id: c, name: 'C' });
+        await tx.taxonomy.createTag(scope, {
+          id: c,
+          name: 'C',
+          slug: 'c',
+          description: null,
+          labels: {},
+        });
         throw new Error('boom');
       }),
     ).rejects.toThrow('boom');
@@ -494,7 +512,13 @@ describe('deleting an environment', () => {
   it('deletes nothing for an environment that is not being purged', async () => {
     const live = { spaceId, environmentId: `live-${uid().slice(0, 8)}` };
     await createEnvironment(ctx, spaceId, live.environmentId);
-    await store.taxonomy.createTag(live, { id: `tag-${uid()}`, name: 'Stays' });
+    await store.taxonomy.createTag(live, {
+      id: `tag-${uid()}`,
+      name: 'Stays',
+      slug: 'stays',
+      description: null,
+      labels: {},
+    });
     // A late step for a finished purge, or one for an id now in use again, must not touch it.
     expect(
       await store.spaces.purgeEnvironmentStep(spaceId, live.environmentId, 500, clock.now()),
@@ -580,7 +604,13 @@ describe('deleting an environment', () => {
       contentTypeApiId: 'article',
       fields: { title: { 'en-US': 'Also going' } },
     });
-    await store.taxonomy.createTag(doomed, { id: `tag-${uid()}`, name: 'Doomed' });
+    await store.taxonomy.createTag(doomed, {
+      id: `tag-${uid()}`,
+      name: 'Doomed',
+      slug: 'doomed',
+      description: null,
+      labels: {},
+    });
     // A plugin's kv:storage keys belong to the environment; the same plugin's keys elsewhere stay.
     const kvOpts = { maxKeys: 10, at: clock.now() };
     await store.pluginStorage.put(doomed, 'com.example.kv', 'cursor', '1', kvOpts);

@@ -37,7 +37,9 @@ What an import preserves:
 
 - **Ids.** Entries and asset records keep their ids (every table is keyed per environment), so
   links between them resolve in the target unchanged, and comparing or merging the copy against
-  its source matches entries one to one. Taxonomy ids are remapped.
+  its source matches entries one to one. Taxonomy ids are remapped; terms keep their slug,
+  description and labels (a slug the target already uses is numbered, `news-2`, and labels in a
+  locale the target space lacks are left behind).
 - **Redirects.** They keep their ids, `origin` and timestamps (`writeSnapshotRedirects`). Preflight
   checks each against the target's locales and the set as a whole (no loop, no duplicate source, at
   most `MAX_REDIRECTS`). A source the target already redirects keeps the target's, so a retry adds

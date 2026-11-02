@@ -39,6 +39,7 @@ import type {
   ScheduledEntityType,
   Tag,
   Task,
+  TermUsageSummary,
   WorkflowDefinition,
   WorkflowGraph,
   WorkflowGraphChanges,
@@ -324,6 +325,18 @@ export interface EnvironmentAlias {
   readonly alias: string;
   readonly targetEnvironmentId: string;
   readonly updatedAt: string;
+}
+
+/** A tag or concept with how many published entries carry it, in all and per content type. */
+export type WithUsage<T> = T & { readonly usage: TermUsageSummary };
+
+/** What a tag or concept carries beside its label. */
+export interface TermFields {
+  readonly slug?: string;
+  /** Plain text; `null` clears it. */
+  readonly description?: string | null;
+  /** Labels by locale (the whole set); the default locale's sets the term's own label. */
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 /** Space configuration — drives the localization tabs in the editor. */
@@ -2581,17 +2594,20 @@ export function createManagementClient(
     },
 
     // --- taxonomy: concepts (hierarchical) -------------------------------
-    async listConcepts(schemeId?: string): Promise<Concept[]> {
+    /** Concepts with their published usage (how many published entries carry each). */
+    async listConcepts(schemeId?: string): Promise<WithUsage<Concept>[]> {
       const qs = schemeId ? `?scheme=${encodeURIComponent(schemeId)}` : '';
-      const r = await req<{ items: Concept[] }>('GET', `${mgmt}/taxonomy/concepts${qs}`);
+      const r = await req<{ items: WithUsage<Concept>[] }>('GET', `${mgmt}/taxonomy/concepts${qs}`);
       return r.items;
     },
-    createConcept(input: {
-      schemeId: string;
-      prefLabel: string;
-      broaderId?: string | null;
-    }): Promise<Concept> {
+    createConcept(
+      input: { schemeId: string; prefLabel: string; broaderId?: string | null } & TermFields,
+    ): Promise<Concept> {
       return req('POST', `${mgmt}/taxonomy/concepts`, input);
+    },
+    /** Only the keys sent change; the slug stays when the label changes. */
+    updateConcept(id: string, input: { prefLabel?: string } & TermFields): Promise<Concept> {
+      return req('PATCH', `${mgmt}/taxonomy/concepts/${encodeURIComponent(id)}`, input);
     },
     setConceptBroader(id: string, broaderId: string | null): Promise<Concept> {
       return req('PUT', `${mgmt}/taxonomy/concepts/${encodeURIComponent(id)}/broader`, {
@@ -2603,12 +2619,17 @@ export function createManagementClient(
     },
 
     // --- taxonomy: tags --------------------------------------------------
-    async listTags(): Promise<Tag[]> {
-      const r = await req<{ items: Tag[] }>('GET', `${mgmt}/taxonomy/tags`);
+    /** Tags with their published usage (how many published entries carry each). */
+    async listTags(): Promise<WithUsage<Tag>[]> {
+      const r = await req<{ items: WithUsage<Tag>[] }>('GET', `${mgmt}/taxonomy/tags`);
       return r.items;
     },
-    createTag(input: { name: string }): Promise<Tag> {
+    createTag(input: { name: string } & TermFields): Promise<Tag> {
       return req('POST', `${mgmt}/taxonomy/tags`, input);
+    },
+    /** Only the keys sent change; the slug stays when the name changes. */
+    updateTag(id: string, input: { name?: string } & TermFields): Promise<Tag> {
+      return req('PATCH', `${mgmt}/taxonomy/tags/${encodeURIComponent(id)}`, input);
     },
     deleteTag(id: string): Promise<void> {
       return req('DELETE', `${mgmt}/taxonomy/tags/${encodeURIComponent(id)}`);

@@ -145,7 +145,7 @@ bind them by `script_name`) and handles:
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
   `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed`,
-  `redirects.changed`, `content_type.published`, `release.published`,
+  `taxonomy.changed`, `redirects.changed`, `content_type.published`, `release.published`,
   `environment_alias.changed`, `environment.deleted`; `asset.ingested` only when `published`;
   `asset_renditions.changed` purges every environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
   and send the media Worker's tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`):
@@ -155,8 +155,9 @@ bind them by `script_name`) and handles:
   the restart of deleted-environment purges that stopped progressing, agent schedules
   (`AGENTS_SCHEDULES=true`), retention, the abandoned-upload sweep (see
   [Asset ingest](#asset-ingest-and-search)), the abandoned multipart-upload sweep and the expired-zip
-  sweep (see [Collections, share links, multipart uploads and zips](#collections-share-links-multipart-uploads-and-zips)) at the top of each hour, and the daily
-  secret reseal at 03:30 UTC. Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
+  sweep (see [Collections, share links, multipart uploads and zips](#collections-share-links-multipart-uploads-and-zips)) at the top of each hour, the daily
+  secret reseal at 03:30 UTC, and the daily taxonomy repair at 04:15 UTC (`repairAllTaxonomies`:
+  recounts each environment's published usage counts and fills missing term slugs). Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
   failure is logged and recorded, and never skips the rest of the tick. At the end of the tick one
   D1 batch writes the heartbeat (`scheduler_jobs`: each sweep's last run, success and redacted
   error, plus the `tick` row); a failed write is logged and the next tick writes again. The api's

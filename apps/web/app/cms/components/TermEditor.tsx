@@ -1,0 +1,218 @@
+import type { TermUsageSummary } from '@contentworker/domain';
+import { Button } from '@contentworker/ui/button';
+import { Input } from '@contentworker/ui/input';
+import { Label } from '@contentworker/ui/label';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@contentworker/ui/sheet';
+import { Textarea } from '@contentworker/ui/textarea';
+import { useId, useState } from 'react';
+import { useMedia } from '~/cms/lib/device';
+import type { TermFields } from '~/cms/lib/management';
+
+/** A tag or concept as the editor shows it: its own label is the default locale's. */
+export interface EditableTerm {
+  readonly label: string;
+  readonly slug: string;
+  readonly description: string | null;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly usage: TermUsageSummary;
+}
+
+/** What Save sends: the label, and only the term fields that changed. */
+export type TermChanges = { label?: string } & TermFields;
+
+/** What changed between the term as loaded and the form. */
+export function termChanges(
+  term: EditableTerm,
+  form: { label: string; slug: string; description: string; labels: Record<string, string> },
+): TermChanges {
+  const out: { -readonly [K in keyof TermChanges]: TermChanges[K] } = {};
+  if (form.label.trim() !== term.label) out.label = form.label.trim();
+  if (form.slug.trim() !== term.slug) out.slug = form.slug.trim();
+  if (form.description.trim() !== (term.description ?? '')) {
+    out.description = form.description.trim() || null;
+  }
+  const labels = Object.fromEntries(
+    Object.entries(form.labels)
+      .map(([locale, label]) => [locale, label.trim()] as const)
+      .filter(([, label]) => label),
+  );
+  const same =
+    Object.keys(labels).length === Object.keys(term.labels).length &&
+    Object.entries(labels).every(([locale, label]) => term.labels[locale] === label);
+  if (!same) out.labels = labels;
+  return out;
+}
+
+/**
+ * Edits a tag's or concept's label, slug, description and its labels in the space's other
+ * locales, in a sheet from the side (from the bottom on a phone). It says how many published
+ * entries carry the term, and that the slug, which archive URLs use, stays when the label changes.
+ */
+export function TermEditor({
+  kind,
+  term,
+  locales,
+  defaultLocale,
+  busy,
+  onSave,
+  onOpenChange,
+}: {
+  kind: 'tag' | 'concept';
+  /** The term being edited, or null when the sheet is closed. */
+  term: EditableTerm | null;
+  /** The space's locales; the default's label is the term's own. */
+  locales: readonly string[];
+  defaultLocale: string;
+  busy: boolean;
+  onSave: (changes: TermChanges) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const phone = useMedia('(max-width: 639px)');
+  return (
+    <Sheet open={term !== null} onOpenChange={onOpenChange}>
+      <SheetContent side={phone ? 'bottom' : 'right'} className="gap-0 overflow-y-auto sm:max-w-md">
+        <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
+          <SheetTitle className="font-semibold text-base tracking-title">
+            {term ? `Edit “${term.label}”` : 'Edit'}
+          </SheetTitle>
+          <SheetDescription className="text-xs">
+            {term ? usageLine(term.usage) : null}
+          </SheetDescription>
+        </SheetHeader>
+        {term ? (
+          // Keyed by the term, so opening another starts from its values.
+          <TermForm
+            key={`${term.slug}:${term.label}`}
+            kind={kind}
+            term={term}
+            locales={locales}
+            defaultLocale={defaultLocale}
+            busy={busy}
+            onSave={onSave}
+            onCancel={() => onOpenChange(false)}
+          />
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/** "Carried by 3 published entries: 2 Article, 1 Page", or that none carries it yet. */
+export function usageLine(usage: TermUsageSummary): string {
+  if (usage.count === 0) return 'No published entry carries it yet.';
+  const by = Object.entries(usage.byContentType)
+    .map(([type, n]) => `${n} ${type}`)
+    .join(', ');
+  return `Carried by ${usage.count} published ${usage.count === 1 ? 'entry' : 'entries'}: ${by}.`;
+}
+
+function TermForm({
+  kind,
+  term,
+  locales,
+  defaultLocale,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  kind: 'tag' | 'concept';
+  term: EditableTerm;
+  locales: readonly string[];
+  defaultLocale: string;
+  busy: boolean;
+  onSave: (changes: TermChanges) => void;
+  onCancel: () => void;
+}) {
+  const id = useId();
+  const [label, setLabel] = useState(term.label);
+  const [slug, setSlug] = useState(term.slug);
+  const [description, setDescription] = useState(term.description ?? '');
+  const [labels, setLabels] = useState<Record<string, string>>({ ...term.labels });
+  const others = locales.filter((l) => l !== defaultLocale);
+  const changes = termChanges(term, { label, slug, description, labels });
+  const changed = Object.keys(changes).length > 0;
+
+  return (
+    <form
+      className="space-y-4 p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (changed && label.trim()) onSave(changes);
+      }}
+    >
+      <div className="space-y-1.5">
+        <Label htmlFor={`${id}-label`}>
+          {kind === 'tag' ? 'Name' : 'Preferred label'}{' '}
+          <span className="font-mono text-muted-foreground text-xs">{defaultLocale}</span>
+        </Label>
+        <Input
+          id={`${id}-label`}
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          required
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`${id}-slug`}>Slug</Label>
+        <Input
+          id={`${id}-slug`}
+          className="font-mono"
+          value={slug}
+          onChange={(e) => setSlug(e.target.value)}
+          aria-describedby={`${id}-slug-hint`}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        <p id={`${id}-slug-hint`} className="max-w-measure text-muted-foreground text-xs">
+          Archive pages find the {kind} by it. It stays when the {kind === 'tag' ? 'name' : 'label'}{' '}
+          changes; changing it moves those pages.
+        </p>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`${id}-description`}>Description</Label>
+        <Textarea
+          id={`${id}-description`}
+          value={description}
+          rows={3}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </div>
+      {others.length > 0 ? (
+        <fieldset className="space-y-3">
+          <legend className="caption mb-2 text-muted-foreground">Labels in other locales</legend>
+          {others.map((locale) => (
+            <div key={locale} className="space-y-1.5">
+              <Label htmlFor={`${id}-label-${locale}`} className="font-mono">
+                {locale}
+              </Label>
+              <Input
+                id={`${id}-label-${locale}`}
+                value={labels[locale] ?? ''}
+                placeholder={label}
+                onChange={(e) => setLabels((l) => ({ ...l, [locale]: e.target.value }))}
+              />
+            </div>
+          ))}
+          <p className="max-w-measure text-muted-foreground text-xs">
+            Left empty, a locale shows its fallback’s label, then the {defaultLocale} one.
+          </p>
+        </fieldset>
+      ) : null}
+      <div className="flex gap-2">
+        <Button type="submit" disabled={!changed || !label.trim() || busy}>
+          Save {kind}
+        </Button>
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}

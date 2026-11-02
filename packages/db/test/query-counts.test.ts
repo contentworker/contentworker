@@ -1,17 +1,23 @@
 import {
   type AppContext,
   createAsset,
+  createConcept,
   createContentType,
   createEntry,
   createRedirect,
+  createScheme,
   createSpace,
+  createTag,
   deliveryGraphResolvers,
   deliveryReads,
   getDeliveredAsset,
+  getDeliveredTag,
   getEntry,
   getPublishedEntry,
   listDeliveredAssets,
+  listDeliveredConcepts,
   listDeliveredRedirects,
+  listDeliveredTags,
   listPreviewEntries,
   listPreviewEntryPage,
   listPublishedEntries,
@@ -19,6 +25,7 @@ import {
   publishContentType,
   publishEntry,
   resolveDeliveredRedirect,
+  setEntryMetadata,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import { buildDeliverySchema, type DeliveryContext } from '@contentworker/graphql-gen';
@@ -78,6 +85,8 @@ const ids = {
   landing: '',
   /** Left a draft, so the publish request has one to publish. */
   draft: '',
+  tag: '',
+  concept: '',
 };
 
 /** One model with every kind of link Delivery resolves: Link, Array of Link, rich text. */
@@ -189,6 +198,11 @@ async function seed(): Promise<void> {
     ids.authors.push(entry.id);
   }
 
+  // A tag and a concept on every other article, so the taxonomy reads have counts to sum.
+  ids.tag = (await createTag(ctx, scope, { name: 'Red', labels: { de: 'Rot' } })).id;
+  const scheme = await createScheme(ctx, scope, { name: 'Topics' });
+  ids.concept = (await createConcept(ctx, scope, { schemeId: scheme.id, prefLabel: 'Guides' })).id;
+
   // Each article links an author, the hero, the two articles before it, and embeds its author
   // in the body: include=2 walks article → article → author.
   for (let i = 0; i < 12; i++) {
@@ -217,6 +231,9 @@ async function seed(): Promise<void> {
         },
       },
     });
+    if (i % 2 === 0) {
+      await setEntryMetadata(ctx, scope, entry.id, { tags: [ids.tag], concepts: [ids.concept] });
+    }
     await publishEntry(ctx, scope, entry.id);
     ids.articles.push(entry.id);
   }
@@ -352,6 +369,20 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     () => getDeliveredAsset(ctx, scope, ids.heroAsset, { locale: 'de' }),
   ],
   ['delivery: GET /assets', () => listDeliveredAssets(ctx, scope)],
+  ['delivery: GET /taxonomy/tags', () => listDeliveredTags(ctx, scope)],
+  [
+    'delivery: GET /taxonomy/tags/:slug?locale=de',
+    () => getDeliveredTag(ctx, scope, 'red', { locale: 'de' }),
+  ],
+  ['delivery: GET /taxonomy/concepts', () => listDeliveredConcepts(ctx, scope)],
+  [
+    'delivery: GET /entries?metadata.tags.slug=red',
+    () =>
+      listPublishedEntries(ctx, scope, {
+        contentTypeApiId: 'article',
+        filters: [{ field: 'metadata.tags.slug', op: 'eq', value: 'red' }],
+      }),
+  ],
   ['delivery: GET /redirects', () => listDeliveredRedirects(ctx, scope)],
   [
     'delivery: GET /redirects/resolve',

@@ -615,3 +615,25 @@ test('a blocks field’s editor has no accessibility violations', async ({ page,
   ).toBeDisabled();
   await scan(page, info);
 });
+
+// The taxonomy screen's tag table (slug, published count) and the term editor sheet with its
+// localized-label fields.
+test('the taxonomy tag table and its term editor have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  const stamp = Date.now().toString(36);
+  const created = await api(page.request, 'POST', `${MGMT}/taxonomy/tags`, {
+    name: `A11y ${stamp}`,
+    description: 'Checked by axe',
+  });
+  expect(created.ok()).toBe(true);
+  await openCms(page, '/taxonomy');
+  await page.getByRole('tab', { name: 'Tags' }).click();
+  const table = page.getByRole('table', { name: 'Tags' });
+  await expect(table.getByText(`a11y-${stamp}`)).toBeVisible();
+  await scan(page, testInfo);
+  await table.getByRole('button', { name: `Edit “A11y ${stamp}”` }).click();
+  const sheet = page.getByRole('dialog', { name: `Edit “A11y ${stamp}”` });
+  await expect(sheet.getByLabel('Slug')).toHaveValue(`a11y-${stamp}`);
+  await scan(page, testInfo, ['[role="dialog"]']);
+});

@@ -19,6 +19,7 @@ export type DomainEvent =
   | AssetExpiredEvent
   | AssetRenditionsChangedEvent
   | AssetCollectionChangedEvent
+  | TaxonomyChangedEvent
   | AssetShareLinkChangedEvent
   | AssetZipRequestedEvent
   | SearchReindexRequestedEvent
@@ -156,6 +157,16 @@ export interface AssetRenditionsChangedEvent extends BaseEvent {
 export interface AssetCollectionChangedEvent extends BaseEvent {
   readonly type: 'asset_collection.changed';
   readonly collectionId: string;
+}
+
+/**
+ * A tag or concept was created, changed (label, slug, description, localized labels, parent) or
+ * deleted. Delivery's taxonomy reads are stale.
+ */
+export interface TaxonomyChangedEvent extends BaseEvent {
+  readonly type: 'taxonomy.changed';
+  readonly termKind: 'tag' | 'concept';
+  readonly termId: string;
 }
 
 /**

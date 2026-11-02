@@ -63,6 +63,14 @@ through the gateway. Read replication is turned on per database by `scripts/prov
 - **One writer per database.** No per-request writes on read paths; bulk, import and reindex
   work goes through queues in chunks; the lexical search index lives in `SearchShardDO`
   (its own SQLite per shard), not in D1.
+  Derived counts are kept on the write side instead: taxonomy usage (`taxonomy_usage`, how many
+  published entries of each content type carry each tag and concept) moves in the same batch as
+  the published snapshot (`putPublishedMany` takes the old snapshot's terms off before the upsert
+  and puts the new one's on after it, SQL over `entry_published` that sees the batch's own earlier
+  statements; `removePublishedMany` takes them off before the delete). A Delivery taxonomy read
+  then sums a handful of rows in the round trip that reads the space config. The daily
+  `taxonomy-repair` sweep rebuilds them from the snapshots, the backstop for snapshots older code
+  wrote without them.
 - **10 GB per database.** Asset bytes, import staging, plugin bundles and dead letters live in
   R2; retention prunes relayed outbox rows and webhook deliveries hourly
   (`EVENT_RETENTION_HOURS`, default 168), and the same tick sweeps drafts whose upload never

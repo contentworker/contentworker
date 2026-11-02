@@ -189,7 +189,11 @@ export type FilterOp =
   | 'exists'
   | 'match';
 
-/** A single field predicate. `field` is a field apiId or a `sys.*` pseudo-field. */
+/**
+ * A single field predicate. `field` is a field apiId, a `sys.*` pseudo-field, or a taxonomy
+ * association: `metadata.tags` / `metadata.concepts` (ids) or `metadata.tags.slug` /
+ * `metadata.concepts.slug` (slugs; `eq`, `ne`, `in`, `nin`).
+ */
 export interface EntryFilter {
   readonly field: string;
   readonly op?: FilterOp;
@@ -219,6 +223,35 @@ export interface EntryQuery {
   readonly select?: readonly string[];
   /** Full-text search over string fields. */
   readonly search?: string;
+  /** Only entries carrying a tag with one of these slugs (an archive page). */
+  readonly tags?: readonly string[];
+}
+
+/** A tag as Delivery serves it, for archive pages. */
+export interface DeliveredTag {
+  readonly id: string;
+  readonly slug: string;
+  /** In the requested locale (with the space's fallbacks), or the default locale's. */
+  readonly label: string;
+  /** Every locale's label, the default's included; only when no locale was requested. */
+  readonly labels?: Readonly<Record<string, string>>;
+  readonly description: string | null;
+  /** Published entries carrying it (of `contentType` only, when one was asked for). */
+  readonly count: number;
+  readonly countsByContentType: Readonly<Record<string, number>>;
+}
+
+/** A concept as Delivery serves it: a tag's shape, plus its scheme and parent. */
+export interface DeliveredConcept extends DeliveredTag {
+  readonly schemeId: string;
+  readonly broaderId: string | null;
+}
+
+export interface TermQuery {
+  /** Resolve labels for one locale. */
+  readonly locale?: string;
+  /** Count published entries of this content type only. */
+  readonly contentType?: string;
 }
 
 /**
@@ -381,6 +414,37 @@ export function createDeliveryClient(opts: ClientOptions) {
       return get('/entries', toParams(q));
     },
 
+    /** Every tag, by slug, with its label, description and published-entry counts (Delivery). */
+    async listTags(q: TermQuery = {}): Promise<DeliveredTag[]> {
+      const res = await get<{ items: DeliveredTag[] }>('/taxonomy/tags', termParams(q));
+      return res.items;
+    },
+
+    /** One tag by slug, for an archive page's heading (a 404 `DeliveryError` when none has it). */
+    async getTag(slug: string, q: TermQuery = {}): Promise<DeliveredTag> {
+      return get<DeliveredTag>(`/taxonomy/tags/${encodeURIComponent(slug)}`, termParams(q));
+    },
+
+    /** Every concept (of one scheme, with `scheme`), by slug, with its counts (Delivery). */
+    async listConcepts(q: TermQuery & { scheme?: string } = {}): Promise<DeliveredConcept[]> {
+      const res = await get<{ items: DeliveredConcept[] }>('/taxonomy/concepts', {
+        ...termParams(q),
+        scheme: q.scheme,
+      });
+      return res.items;
+    },
+
+    /** One concept by slug; pass `scheme` when two schemes share the slug (a 409 otherwise). */
+    async getConcept(
+      slug: string,
+      q: TermQuery & { scheme?: string } = {},
+    ): Promise<DeliveredConcept> {
+      return get<DeliveredConcept>(`/taxonomy/concepts/${encodeURIComponent(slug)}`, {
+        ...termParams(q),
+        scheme: q.scheme,
+      });
+    },
+
     /** Fetch a single published asset by id (from Preview: as it is now, drafts included). */
     async getAsset(id: string, o: { locale?: string } = {}): Promise<DeliveredAsset> {
       return get<DeliveredAsset>(`/assets/${encodeURIComponent(id)}`, { locale: o.locale });
@@ -510,6 +574,8 @@ export function createDeliveryClient(opts: ClientOptions) {
   };
 }
 
+const termParams = (q: TermQuery) => ({ locale: q.locale, content_type: q.contentType });
+
 function toParams(q: EntryQuery): Record<string, string | number | undefined> {
   const params: Record<string, string | number | undefined> = {
     content_type: q.contentType,
@@ -521,12 +587,14 @@ function toParams(q: EntryQuery): Record<string, string | number | undefined> {
     since: q.since,
   };
   for (const f of q.filters ?? []) {
-    const path = f.field.startsWith('sys.') ? f.field : `fields.${f.field}`;
+    const path =
+      f.field.startsWith('sys.') || f.field.startsWith('metadata.') ? f.field : `fields.${f.field}`;
     const op = f.op ?? 'eq';
     const key = op === 'eq' ? path : `${path}[${op}]`;
     const value = Array.isArray(f.value) ? f.value.join(',') : String(f.value ?? '');
     params[key] = value;
   }
+  if (q.tags?.length) params['metadata.tags.slug[in]'] = q.tags.join(',');
   if (q.order?.length) params.order = q.order.join(',');
   if (q.select?.length) params.select = q.select.join(',');
   if (q.search) params.query = q.search;
@@ -568,6 +636,11 @@ export class EntryQueryBuilder<F extends Fields> {
         ? { field, op: rest[0] as FilterOp, value: rest[1] }
         : { field, op: 'eq', value: rest[0] };
     this.q = { ...this.q, filters: [...(this.q.filters ?? []), filter] };
+    return this;
+  }
+  /** Only entries carrying a tag with one of these slugs: `.tagged('news')`. */
+  tagged(...slugs: string[]): this {
+    this.q = { ...this.q, tags: [...(this.q.tags ?? []), ...slugs] };
     return this;
   }
   /** Set sort keys, e.g. `.order('fields.title', '-sys.publishedAt')`. */
