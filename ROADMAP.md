@@ -78,7 +78,7 @@ Everything below is built and tested on v2.
   rationed from a queue. Reads use D1 read-replica sessions.
 - **Read-your-writes.** The api returns the D1 Sessions bookmark in `x-cw-bookmark`; a client that
   sends it back reads at least that fresh.
-- **SDKs.** `@contentworker/sdk-core`, `sdk-web`, `sdk-vue`, `sdk-edge`, `sdk-react-native`,
+- **SDKs.** `@contentworker/sdk-core`, `sdk-web`, `sdk-vue`, `sdk-edge`, `sdk-rich-text`, `sdk-react-native`,
   `sdk-management` and `sdk-codegen`.
 - **Operations.** The fleet registry and renderer, idempotent provisioning, CI ring deploys
   (engine → media → api → delivery → web) with a D1 Time Travel bookmark before each migration, smoke and

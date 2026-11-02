@@ -46,6 +46,8 @@ const latest = await client.query().contentType('article').locale('en-US').order
   delivered assets, and `imageProps` turns one into `<img>` attributes.
 - React: `ContentworkerProvider`, `useEntry`, `useEntries`, `Image` from `@contentworker/sdk-web`.
   Vue: `@contentworker/sdk-vue`. Edge functions: `createEdgeClient` from `@contentworker/sdk-edge`.
+- Rich text is a document tree, never HTML: render it with `toHtml` / `toMarkdown` from
+  `@contentworker/sdk-rich-text` (escaped, safe links, `entryHref` and `renderEntry` hooks).
 
 Filters, ordering and every parameter: https://docs.contentworker.app/guides/reading-content/
 
