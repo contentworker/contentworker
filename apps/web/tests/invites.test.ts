@@ -45,7 +45,11 @@ const fakeDb = {
   }),
   insert: () => ({
     values: async (row: Person) => {
-      if (insertFails || people.some((p) => p.email === row.email)) throw new Error('UNIQUE');
+      // As drizzle's: the failed statement's parameters, password hash included, in the message.
+      if (insertFails || people.some((p) => p.email === row.email))
+        throw new Error(
+          `Failed query: insert into "users" params: ${row.id},${row.email},${row.passwordHash} | UNIQUE constraint failed: users.email`,
+        );
       people.push(row);
     },
   }),
@@ -97,8 +101,15 @@ vi.mock('~/lib/auth.server', () => ({
 let ssoOnly = false;
 vi.mock('~/lib/settings.server', () => ({ ssoOnlyInEffect: async () => ssoOnly }));
 
-const { acceptSignedIn, createInvite, InviteError, joinWithPassword, joinWithSso, readInvite } =
-  await import('~/lib/invites.server');
+const {
+  acceptSignedIn,
+  createInvite,
+  InviteError,
+  inviteRole,
+  joinWithPassword,
+  joinWithSso,
+  readInvite,
+} = await import('~/lib/invites.server');
 const { INVITE_INVALID, INVITE_NOT_ACCEPTED } = await import('~/lib/invites');
 
 const TOKEN = `cwi_${'a'.repeat(43)}`;
@@ -217,13 +228,12 @@ describe('accepting an invitation', () => {
       joinWithPassword(req(), TOKEN, { name: '', password: 'a long passphrase here' }),
     ).rejects.toThrow(INVITE_NOT_ACCEPTED);
     expect(people).toHaveLength(1);
-    expect(audit).toHaveBeenCalledWith(
-      expect.any(Request),
-      'auth.invite_failed',
-      expect.objectContaining({
-        detail: expect.objectContaining({ reason: 'account not created after accepting' }),
-      }),
-    );
+    expect(audit).toHaveBeenCalledWith(expect.any(Request), 'auth.invite_failed', {
+      target: 'grace@example.com',
+      detail: { reason: 'account not created after accepting', constraint: 'users_email' },
+    });
+    // The error (and the password hash in it) is never recorded.
+    expect(JSON.stringify(audit.mock.calls)).not.toMatch(/pbkdf2|Failed query/);
   });
 
   it('is throttled per address, before asking the api anything', async () => {
@@ -335,6 +345,25 @@ describe('managing invitations', () => {
     expectTokenNowhere();
   });
 
+  it('reads an invitation’s role by id, and knows none when it can’t be read', async () => {
+    const me = { kind: 'user' as const, id: 'usr_ada', name: 'Ada', role: 'admin' as const };
+    answers['/deployment/invites/inv-9'] = () => ({
+      status: 200,
+      body: { ...preview().invite, id: 'inv-9', role: 'admin' },
+    });
+    expect(await inviteRole(me, 'inv-9')).toBe('admin');
+    expect(calls.at(-1)).toMatchObject({
+      path: '/deployment/invites/inv-9',
+      by: { id: 'usr_ada' },
+    });
+    // Gone, refused, or the api down: no role, which callers read as "ask first".
+    expect(await inviteRole(me, 'inv-404')).toBeNull();
+    answers['/deployment/invites/inv-9'] = () => {
+      throw new Error('binding down');
+    };
+    expect(await inviteRole(me, 'inv-9')).toBeNull();
+  });
+
   it('passes the api’s refusal on', async () => {
     answers['/deployment/invites'] = () => ({
       status: 403,
@@ -349,15 +378,24 @@ describe('managing invitations', () => {
 });
 
 describe('the invitation page’s inputs', async () => {
-  const { inviteTokenIn, isInviteToken, openInvites } = await import('~/lib/invites');
+  const { forgetInviteToken, inviteTokenFrom, isInviteToken, keepInviteToken, openInvites } =
+    await import('~/lib/invites');
   const { crossOrigin } = await import('~/lib/origin');
   const { describeEvent } = await import('~/lib/audit');
 
-  it('recognises only a well-formed token, and only on the invitation page', () => {
-    expect(inviteTokenIn(`/invite/${TOKEN}`)).toBe(TOKEN);
-    expect(inviteTokenIn(`/invite/${TOKEN}x`)).toBeNull();
-    expect(inviteTokenIn(`/team?next=/invite/${TOKEN}`)).toBeNull();
-    expect(isInviteToken('cwi_short')).toBe(false);
+  it('keeps the token in path-scoped, HttpOnly cookies, never in a URL it builds', () => {
+    const set = keepInviteToken(TOKEN);
+    expect(set).toEqual([
+      `cw_invite=${TOKEN}; Path=/invite; HttpOnly; Secure; SameSite=Lax; Max-Age=3600`,
+      `cw_invite=${TOKEN}; Path=/login/sso/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=3600`,
+    ]);
+    for (const c of forgetInviteToken()) expect(c).toMatch(/^cw_invite=; Path=\S+; .*Max-Age=0$/);
+    const carrying = (cookie: string) =>
+      new Request('https://acme.contentworker.app/invite', { headers: { cookie } });
+    expect(inviteTokenFrom(carrying(`theme=dark; cw_invite=${TOKEN}`))).toBe(TOKEN);
+    expect(inviteTokenFrom(carrying('cw_invite=cwi_short'))).toBeNull();
+    expect(inviteTokenFrom(new Request('https://acme.contentworker.app/invite'))).toBeNull();
+    expect(isInviteToken(`${TOKEN}x`)).toBe(false);
   });
 
   it('refuses a cross-site accept, as every form here (the Worker checks before the route)', () => {

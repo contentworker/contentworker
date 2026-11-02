@@ -12,7 +12,8 @@ export default [
   // A new deployment's first admin, from its one-time setup code (lib/setup.server.ts).
   route('setup', 'routes/setup.tsx'),
   // Accepting an invitation to the team (lib/invites.server.ts): public, the link is the credential.
-  route('invite/:token', 'routes/invite.tsx'),
+  // `/invite/<token>` moves the token into a cookie and redirects to `/invite`.
+  route('invite/:token?', 'routes/invite.tsx'),
   layout('routes/shell.tsx', [
     // An error boundary inside the shell, so a refused or missing page keeps the app around it.
     layout('routes/in-app.tsx', [

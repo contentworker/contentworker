@@ -33,7 +33,6 @@ import { openInvites } from '~/lib/invites';
 import {
   createInvite,
   InviteError,
-  inviteRole,
   listInvites,
   resendInvite,
   revokeInvite,
@@ -131,12 +130,7 @@ export async function action({ request }: Route.ActionArgs) {
       });
       return redirect('/team', { headers: { 'set-cookie': await startSession(request, id) } });
     }
-    // A new link to an admin's seat asks as inviting one does; the invitation's role is the api's.
-    const resendsAdmin =
-      me.kind === 'user' &&
-      str('intent') === 'invite-resend' &&
-      (await inviteRole(me, str('id'))) === 'admin';
-    if (me.kind === 'user' && (resendsAdmin || (await needsStepUp(str('intent'), f)))) {
+    if (me.kind === 'user' && (await needsStepUp(str('intent'), f, me))) {
       const failed = await stepUp(request, me, { code: str('code'), password: str('password') });
       if (failed) {
         await audit(request, 'auth.step_up_failed', {

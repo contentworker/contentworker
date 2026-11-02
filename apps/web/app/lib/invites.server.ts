@@ -151,10 +151,22 @@ export async function revokeInvite(request: Request, me: Principal, id: string) 
   return r.value;
 }
 
-/** An invitation's deployment role, read from the api (a step-up decides on it, not the form). */
+/**
+ * An invitation's deployment role, read by id from the api: what a step-up decides on, never the
+ * form. Null when it can't be read (gone, refused, the api down): callers treat that as needing a
+ * step-up.
+ */
 export async function inviteRole(me: Principal, id: string): Promise<Role | null> {
-  const all = await listInvites(me).catch(() => []);
-  return all.find((i) => i.id === id)?.role ?? null;
+  try {
+    const r = await call<Invite>(
+      signed(me),
+      'GET',
+      `/deployment/invites/${encodeURIComponent(id)}`,
+    );
+    return r.ok && (r.value.role === 'member' || r.value.role === 'admin') ? r.value.role : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── The /invite/:token page ──
@@ -278,10 +290,18 @@ async function join(
         createdAt: Date.now(),
       });
   } catch (err) {
-    // The link is spent and nobody was made (an account for the address appeared meanwhile).
+    // The link is spent and nobody was made (an account for the address appeared meanwhile). The
+    // error itself is never recorded: drizzle's carries the statement's parameters, the password
+    // hash among them. Only whether it was the address being taken.
+    const taken = /UNIQUE constraint failed: users\.email/.test(
+      `${err} ${(err as { cause?: unknown })?.cause ?? ''}`,
+    );
     await audit(request, 'auth.invite_failed', {
       target: email,
-      detail: { reason: 'account not created after accepting', error: String(err).slice(0, 200) },
+      detail: {
+        reason: 'account not created after accepting',
+        constraint: taken ? 'users_email' : 'other',
+      },
     });
     throw new InviteError(INVITE_NOT_ACCEPTED);
   }

@@ -6,11 +6,13 @@
  *
  * `lookup` and `accept` are the web app's sign-up handshake: it calls them as the deployment, for
  * someone holding a link at `/invite/:token`, after its own throttling. The token rides in the
- * body, never a path or query, so it stays out of request logs.
+ * body, never a path or query, so the api's own request logs don't carry it (the web Worker moves
+ * it out of its URL on the first request, see `routes/invite.tsx`).
  */
 import {
   acceptInvite,
   createInvite,
+  getInvite,
   listInvites,
   previewInvite,
   resendInvite,
@@ -81,7 +83,8 @@ export function inviteRoutes(deps: AuthDeps): Hono<AuthVars> {
         'spaces. Returns the link (`url`, and its `token`) once: it is stored only as a hash. ' +
         'When the deployment sends email, the link is also emailed. The link works once, for ' +
         '1–30 days (7 by default). Deployment administrators only, and only for what they hold ' +
-        'themselves (403 otherwise); 409 while the address has a pending invitation.',
+        'themselves (403 otherwise); an `admin` invitation only from a person signed in to the ' +
+        'admin, never a root token. 409 while the address has a pending invitation.',
     }),
     async (c) => {
       const body = await parseBody(c, createInviteBody);
@@ -117,6 +120,14 @@ export function inviteRoutes(deps: AuthDeps): Hono<AuthVars> {
       const { token, person } = await parseBody(c, acceptInviteBody);
       return c.json(await acceptInvite(ctx, hasher, c.get('principal'), token, person));
     },
+  );
+
+  app.get(
+    '/deployment/invites/:id',
+    doc('Auth', 'Read one invitation', {
+      description: 'Its role, grants and status. Deployment administrators only; never a token.',
+    }),
+    async (c) => c.json(await getInvite(ctx, c.get('principal'), c.req.param('id'))),
   );
 
   app.post(

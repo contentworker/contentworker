@@ -1,7 +1,7 @@
 import { redirect } from 'react-router';
 import { audit } from '~/lib/audit.server';
 import { principal, recordReauth, startSession, Throttled } from '~/lib/auth.server';
-import { inviteTokenIn } from '~/lib/invites';
+import { forgetInviteToken, INVITE_PATH, inviteTokenFrom } from '~/lib/invites';
 import { InviteError, joinWithSso } from '~/lib/invites.server';
 import {
   clearSsoCookie,
@@ -37,12 +37,14 @@ export async function loader({ request }: Route.LoaderArgs) {
     }
     // Back from accepting an invitation: someone with no account yet joins from it, when the
     // provider vouches for the invited address. Anyone who has one signs in and accepts on the page.
-    const invited = inviteTokenIn(next);
+    // The token comes in its cookie (scoped to this path too), never in `next`.
+    const invited = next === INVITE_PATH ? inviteTokenFrom(request) : null;
     if (invited) {
       try {
         const id = await joinWithSso(request, identity, invited);
         if (id) {
           headers.append('set-cookie', await startSession(request, id));
+          for (const c of forgetInviteToken()) headers.append('set-cookie', c);
           return redirect('/?joined=1', { headers });
         }
       } catch (err) {

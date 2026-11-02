@@ -17,6 +17,7 @@ import { audit } from './audit.server';
 import { forgetUserCount, reauthenticate } from './auth.server';
 import { db, passwordPepper } from './env.server';
 import { newId } from './ids';
+import { inviteRole } from './invites.server';
 import { isRole, type Principal, type Role, sessionIdleMs } from './roles';
 import { describeAgent, sessionRef } from './sessions';
 
@@ -316,8 +317,8 @@ export async function endOtherSessions(
 
 /**
  * Changes that hand out access or lower the bar for it ask who is at the keyboard first
- * (`stepUp`): making a SCIM token, making someone an admin (directly, by inviting them as one, or
- * by mapping a group to Admin), enabling an admin, resetting someone's password or two-factor
+ * (`stepUp`): making a SCIM token, making someone an admin (directly, by inviting them as one or
+ * resending such an invitation, or by mapping a group to Admin), enabling an admin, resetting someone's password or two-factor
  * sign-in, and the single sign-on and two-factor settings. Open local dev (no one
  * signed in) has no one to ask.
  */
@@ -329,8 +330,13 @@ const STEPPED_UP = new Set([
   'two-factor-requirement',
 ]);
 
-export async function needsStepUp(intent: string, f: FormData): Promise<boolean> {
+export async function needsStepUp(intent: string, f: FormData, me?: Principal): Promise<boolean> {
   if (STEPPED_UP.has(intent)) return true;
+  // A new link to an invitation is a new credential for its role, read from the api by id. Only a
+  // positively member invitation goes without: an admin one, or one that can't be read (gone, the
+  // api down), asks first.
+  if (intent === 'invite-resend')
+    return !me || (await inviteRole(me, String(f.get('id') ?? '')).catch(() => null)) !== 'member';
   // A group mapped to Admin makes each of its members one at once.
   if (intent === 'scim-roles')
     return [...f.entries()].some(([k, v]) => k.startsWith('role:') && v === 'admin');

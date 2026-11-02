@@ -78,6 +78,7 @@ import {
   getBulkJob,
   getBulkJobReport,
   getContentType,
+  getInvite,
   getPluginSettings,
   getPreviewAsset,
   getPreviewEntry,
@@ -4748,6 +4749,15 @@ export function buildServer(
   );
 
   server.registerTool(
+    'invite_get',
+    {
+      description: 'Read one invitation (its role, grants and status). Never includes a token.',
+      inputSchema: toolSchema('invite_get', () => z.object({ id: z.string() })),
+    },
+    async (args) => ok(await getInvite(ctx, principal, args.id)),
+  );
+
+  server.registerTool(
     'invite_create',
     {
       description:
@@ -4755,7 +4765,8 @@ export function buildServer(
         'roles in spaces (a role id or preset name: viewer, approver, editor, manager, admin). ' +
         'Returns the link once (`url`, `token`): hand it to the person; it is also emailed when ' +
         'the deployment sends email. It works once, for 1–30 days (7 by default). Deployment ' +
-        'administrators only, and only for roles you hold yourself.',
+        'administrators only, and only for roles you hold yourself; the admin role only from a ' +
+        'person signed in to the admin, never a root token.',
       inputSchema: toolSchema('invite_create', () =>
         z.object({
           email: z.string().min(3).max(320),

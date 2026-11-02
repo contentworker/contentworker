@@ -110,12 +110,30 @@ describe('MCP invitation tools', () => {
     expect(JSON.stringify(res.content)).toMatch(/you don't hold it/);
   });
 
+  it('reads one by id, and refuses an admin invitation from the root MCP token', async () => {
+    const client = await connect(deps, admin);
+    const issued = payload(
+      await client.callTool({ name: 'invite_create', arguments: { email: 'g@example.com' } }),
+    ) as { invite: { id: string } };
+    const one = payload(
+      await client.callTool({ name: 'invite_get', arguments: { id: issued.invite.id } }),
+    ) as { role: string };
+    expect(one.role).toBe('member');
+    const rooted = await client.callTool({
+      name: 'invite_create',
+      arguments: { email: 'boss@example.com', role: 'admin' },
+    });
+    expect(rooted.isError).toBe(true);
+    expect(JSON.stringify(rooted.content)).toMatch(/signed in to the admin/);
+  });
+
   it('offers no tool that redeems a link', async () => {
     const client = await connect(deps, admin);
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).filter((n) => n.includes('invite'));
     expect(names.sort()).toEqual([
       'invite_create',
+      'invite_get',
       'invite_resend',
       'invite_revoke',
       'invites_list',

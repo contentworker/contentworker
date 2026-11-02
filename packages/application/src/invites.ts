@@ -151,7 +151,12 @@ function emailDue(ctx: AppContext, invite: MemberInvite, origin: string): Invite
   };
 }
 
-/** One audit row per space the invitation grants a role in (failures never fail the action). */
+/**
+ * Records an invitation action. Always one structured log line (`invite_audit`, which Logpush
+ * carries like the admin's `audit_event` lines), since the api has no deployment-wide audit log
+ * and an invitation may grant no space; then one `audit_log` row per space it grants a role in.
+ * Failures never fail the action. Never the token or its hash.
+ */
 async function auditInvite(
   ctx: AppContext,
   actor: string,
@@ -161,6 +166,18 @@ async function auditInvite(
 ): Promise<void> {
   const at = ctx.clock.now().toISOString();
   const spaces = [...new Set(invite.grants.map((g) => g.spaceId))];
+  console.log(
+    JSON.stringify({
+      type: 'invite_audit',
+      at,
+      action,
+      actor,
+      inviteId: invite.id,
+      email: invite.email,
+      role: invite.role,
+      spaces,
+    }),
+  );
   for (const spaceId of spaces) {
     const entry: AuditEntry = {
       id: ctx.ids.newId(),
@@ -280,6 +297,16 @@ async function existing(ctx: AppContext, id: string): Promise<MemberInvite> {
   const invite = await ctx.store.invites.get(id);
   if (!invite) throw new NotFoundError('Invite', id);
   return invite;
+}
+
+/** One invitation by id (what a step-up decides on: its role, as stored). */
+export async function getInvite(
+  ctx: AppContext,
+  principal: Principal,
+  id: string,
+): Promise<InviteView> {
+  authorizeInviter(principal);
+  return inviteView(await existing(ctx, id), ctx.clock.now());
 }
 
 /**

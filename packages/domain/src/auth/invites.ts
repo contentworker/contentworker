@@ -122,7 +122,7 @@ function grantCovers(held: ContentTypeGrant, granted: ContentTypeGrant): boolean
 
 /**
  * An inviter can't hand out more than they hold. Inviting someone as a deployment `admin` needs
- * deployment-wide `space:admin`; a space role needs `space:admin` in that space, every scope the
+ * deployment-wide `space:admin` and a person (not a root token); a space role needs `space:admin` in that space, every scope the
  * role carries, and (for an inviter whose own access is limited per content type) content grants
  * at least as wide as the role's. Throws `ForbiddenError` naming what is missing.
  */
@@ -135,7 +135,16 @@ export function assertCanGrant(
     readonly contentGrants: readonly ContentTypeGrant[];
   }[],
 ): void {
-  if (role === 'admin') authorize(principal, SCOPES.spaceAdmin, '*');
+  if (role === 'admin') {
+    authorize(principal, SCOPES.spaceAdmin, '*');
+    // Only a person signed in to the admin (who answered a step-up for it) hands out an admin's
+    // seat: the root tokens can't, so every admin made this way is someone's named act.
+    if (principal.kind !== 'user' || !principal.subject) {
+      throw new InviteEscalationError(
+        'Only an admin signed in to the admin can invite someone as an admin',
+      );
+    }
+  }
   for (const g of grants) {
     authorize(principal, SCOPES.spaceAdmin, g.spaceId);
     for (const scope of g.scopes) {

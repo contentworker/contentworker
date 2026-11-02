@@ -5,8 +5,11 @@
  * (`invites.server.ts`); every way it can fail reads the same, and failures are throttled per
  * address like sign-in. Public: it is how someone with no account gets one.
  *
- * The token is in the path, so the page is never cached and sends no referrer; after accepting,
- * the browser is sent on to a page without it.
+ * The link is `/invite/<token>`. Its first request moves the token into a cookie scoped to this
+ * page (and the SSO callback) and redirects to `/invite`, so the token is in no later URL: not the
+ * form posts, not sign-in's `?next=/invite`, not single sign-on's round trip (`lib/invites.ts`).
+ * The forms post as whole documents (`reloadDocument`): a `/invite.data` fetch is outside the
+ * cookie's path. The page is never cached and sends no referrer.
  */
 
 import { Button } from '@contentworker/ui/button';
@@ -14,7 +17,14 @@ import { Input } from '@contentworker/ui/input';
 import { data, Form, redirect, useActionData, useLoaderData, useNavigation } from 'react-router';
 import { Mark } from '~/components/mark';
 import { principal, startSession, Throttled } from '~/lib/auth.server';
-import { INVITE_INVALID, isInviteToken } from '~/lib/invites';
+import {
+  forgetInviteToken,
+  INVITE_INVALID,
+  inviteTokenFrom,
+  isInviteToken,
+  keepInviteToken,
+  withCookies,
+} from '~/lib/invites';
 import {
   acceptSignedIn,
   checkThrottle,
@@ -44,8 +54,13 @@ const throttled = (err: Throttled) =>
   );
 
 export async function loader({ request, params }: Route.LoaderArgs) {
-  const token = params.token;
-  if (!isInviteToken(token)) return { state: 'invalid' as const };
+  // The link itself: keep the token in its cookie and drop it from the address.
+  if (params.token !== undefined) {
+    if (!isInviteToken(params.token)) return { state: 'invalid' as const };
+    throw redirect('/invite', { headers: withCookies(keepInviteToken(params.token)) });
+  }
+  const token = inviteTokenFrom(request);
+  if (!token) return { state: 'invalid' as const };
   try {
     await checkThrottle(request);
   } catch (err) {
@@ -57,7 +72,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const me = await principal(request);
   return {
     state: 'open' as const,
-    path: `/invite/${token}`,
     invite: found.page,
     me: me?.kind === 'user' ? { email: me.email ?? '' } : null,
     sso: !!ssoConfig(),
@@ -65,16 +79,16 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   };
 }
 
-export async function action({ request, params }: Route.ActionArgs) {
-  const token = params.token;
-  if (!isInviteToken(token)) return data({ error: INVITE_INVALID }, { status: 400 });
+export async function action({ request }: Route.ActionArgs) {
+  const token = inviteTokenFrom(request);
+  if (!token) return data({ error: INVITE_INVALID }, { status: 400 });
   const f = await request.formData();
   try {
     if (f.get('intent') === 'accept') {
       const me = await principal(request);
-      if (!me) throw redirect(`/login?next=${encodeURIComponent(`/invite/${token}`)}`);
+      if (!me) throw redirect('/login?next=%2Finvite');
       await acceptSignedIn(request, me, token);
-      return redirect('/?joined=1');
+      return redirect('/?joined=1', { headers: withCookies(forgetInviteToken()) });
     }
     const id = await joinWithPassword(request, token, {
       name: String(f.get('name') ?? ''),
@@ -82,9 +96,9 @@ export async function action({ request, params }: Route.ActionArgs) {
     });
     // On to their Account page, where a passkey can be added (and two-factor sign-in set up, if
     // their role needs it: the session sends them there until it is).
-    return redirect('/account?welcome=1', {
-      headers: { 'set-cookie': await startSession(request, id) },
-    });
+    const headers = withCookies(forgetInviteToken());
+    headers.append('set-cookie', await startSession(request, id));
+    return redirect('/account?welcome=1', { headers });
   } catch (err) {
     if (err instanceof Throttled) return throttled(err);
     if (err instanceof InviteError) return data({ error: err.message }, { status: err.status });
@@ -124,8 +138,9 @@ type OpenProps = Extract<Awaited<ReturnType<typeof loader>>, { state: 'open' }> 
   busy: boolean;
 };
 
-function Open({ path, invite, me, sso, ssoOnly, error, busy }: OpenProps) {
-  const next = encodeURIComponent(path);
+function Open({ invite, me, sso, ssoOnly, error, busy }: OpenProps) {
+  // Back here after signing in: the token waits in its cookie, never in `next`.
+  const next = encodeURIComponent('/invite');
   // UTC on both sides, so the server's render and the browser's agree.
   const expires = new Date(invite.expiresAt).toLocaleDateString('en', {
     dateStyle: 'long',
@@ -156,7 +171,7 @@ function Open({ path, invite, me, sso, ssoOnly, error, busy }: OpenProps) {
 
       {me ? (
         me.email === invite.email ? (
-          <Form method="post" className="mt-5">
+          <Form method="post" reloadDocument className="mt-5">
             <input type="hidden" name="intent" value="accept" />
             {errorLine}
             <Button type="submit" className="w-full" disabled={busy}>
@@ -179,7 +194,7 @@ function Open({ path, invite, me, sso, ssoOnly, error, busy }: OpenProps) {
           {ssoOnly ? (
             errorLine
           ) : (
-            <Form method="post" className={sso ? 'mt-4' : 'mt-5'}>
+            <Form method="post" reloadDocument className={sso ? 'mt-4' : 'mt-5'}>
               {sso ? (
                 <p className="mb-2 text-center text-muted-foreground text-xs">
                   or create a password

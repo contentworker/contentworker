@@ -15,7 +15,7 @@ import {
   RecordingEmailSender,
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AppContext,
   acceptInvite,
@@ -25,6 +25,7 @@ import {
   createRole,
   createSpace,
   deliverInviteEmail,
+  getInvite,
   isInviteToken,
   listInvites,
   previewInvite,
@@ -136,6 +137,54 @@ describe('invitations', () => {
     await expect(
       invite({ role: 'admin', grants: [{ space: 'blog', role: custom.id }] }, blogAdmin),
     ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it('lets only a person invite an admin, never a root token', async () => {
+    const rootToken: Principal = { spaceId: '*', kind: 'admin', scopes: Object.values(SCOPES) };
+    await expect(invite({ role: 'admin', grants: [] }, rootToken)).rejects.toThrow(
+      /signed in to the admin/,
+    );
+    // A member invitation from a root token is still fine, and a person may invite an admin.
+    await expect(invite({ grants: [] }, rootToken)).resolves.toBeTruthy();
+    await expect(
+      invite({ email: 'ada2@example.com', role: 'admin', grants: [] }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('reads one invitation by id, for deployment admins only', async () => {
+    const issued = await invite();
+    expect((await getInvite(ctx, deploymentAdmin, issued.invite.id)).role).toBe('member');
+    const key: Principal = { spaceId: 'blog', kind: 'cma', scopes: scopesForKind('cma') };
+    await expect(getInvite(ctx, key, issued.invite.id)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(getInvite(ctx, deploymentAdmin, 'nope')).rejects.toThrow(/not found/);
+  });
+
+  describe('the audit line every action writes', () => {
+    let lines: Record<string, unknown>[];
+    beforeEach(() => {
+      lines = [];
+      vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+        if (typeof line === 'string' && line.includes('invite_audit')) lines.push(JSON.parse(line));
+      });
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it('is written even for an invitation that grants no space, and never carries the token', async () => {
+      const rootToken: Principal = { spaceId: '*', kind: 'admin', scopes: Object.values(SCOPES) };
+      const issued = await invite({ grants: [] }, rootToken);
+      const again = await resendInvite(ctx, hasher, rootToken, issued.invite.id);
+      await revokeInvite(ctx, rootToken, issued.invite.id);
+      expect(lines.map((l) => [l.action, l.actor, l.inviteId])).toEqual([
+        ['invite.created', 'admin-token', issued.invite.id],
+        ['invite.resent', 'admin-token', issued.invite.id],
+        ['invite.revoked', 'admin-token', issued.invite.id],
+      ]);
+      expect(lines[0]).toMatchObject({ role: 'member', spaces: [], email: 'grace@example.com' });
+      const text = JSON.stringify(lines);
+      expect(text).not.toContain(issued.token);
+      expect(text).not.toContain(again.token);
+      expect(text).not.toContain(hasher.hash(issued.token));
+    });
   });
 
   it('validates the address, role, spaces and expiry, and refuses a second pending invitation', async () => {

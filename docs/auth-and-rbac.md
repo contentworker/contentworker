@@ -247,10 +247,12 @@ spaces (`grants`: a role id or preset per space).
 - **Who.** Managing invitations takes `space:admin` across the deployment (`authorizeInviter`:
   `authorize(…, '*')`), so a deployment admin signed in to the admin or the root tokens; a space's
   own keys and its team's administrators are refused. The inviter can't grant more than they hold
-  (`assertCanGrant`): an `admin` invitation needs deployment-wide `space:admin`, and each space
+  (`assertCanGrant`): an `admin` invitation needs deployment-wide `space:admin` from a person
+  (`kind: 'user'`), never a root token, and each space
   role's scopes (and, for an inviter limited per content type, its content grants) must be within
-  theirs. A resend checks again, as the resender. In the admin, inviting an admin (or resending an
-  admin's invitation) asks for a step-up first.
+  theirs. A resend checks again, as the resender. In the admin, inviting an admin asks for a
+  step-up first, and so does a resend unless the api, read by id (`GET /deployment/invites/:id`),
+  says the invitation is a member's: an admin's, one it can't find, or a failed lookup asks.
 - **The link is a credential.** Its token (`cwi_` + 32 random bytes) is returned once, to the
   inviter, as `/invite/<token>` on the admin's origin (`OAUTH_ISSUER`). Only its SHA-256 with
   `TOKEN_PEPPER` is stored, as for API keys; after the indexed lookup, the hash is compared again
@@ -271,7 +273,11 @@ spaces (`grants`: a role id or preset per space).
   `invalid_invite`.
 - **Accepting** (`/invite/:token`, `apps/web/app/lib/invites.server.ts`). Public, throttled per
   address (`invite-ip`, ten failures in 15 minutes) and protected from cross-site posts like every
-  form (`origin.ts`); the page is `no-store` with `Referrer-Policy: no-referrer`. A new person
+  form (`origin.ts`); the page is `no-store` with `Referrer-Policy: no-referrer`. The link's first
+  request moves the token into an HttpOnly, Secure, SameSite=Lax cookie (`cw_invite`, an hour,
+  set twice: `Path=/invite` and `Path=/login/sso/callback`) and redirects to `/invite`, so the
+  token is in no later URL (Workers Logs records each request's): the forms post whole documents
+  to `/invite`, and sign-in and single sign-on come back to `?next=/invite`. A new person
   either sets a password (refused while web SSO-only is on) or continues with single sign-on, which
   joins them when the provider vouches for the invited address. The link is redeemed **before** the
   `users` row is written, under the id it is about to get, so a failure in between fails closed: the
@@ -280,15 +286,19 @@ spaces (`grants`: a role id or preset per space).
   role) and an `admin` invitation raises a member to admin. Two-factor sign-in, where their role
   needs it, is due on their first session as for anyone. An inviter who has since been disabled,
   removed or made a member no longer vouches: their pending invitations stop working.
-- **Audit.** Creating, resending, revoking and accepting are recorded in each granted space's
-  `audit_log` (`invite.created`, …), whichever surface did it, and the admin's actions and every
-  accept or refused link in `admin_audit` (`team.invite_*`, `auth.invite_failed`). No token is
-  logged or audited.
+- **Audit.** Every create, resend, revoke and accept, whichever surface did it, writes one
+  structured log line (`{"type":"invite_audit",…}`: action, actor, invitation id, address, role,
+  spaces), which Logpush carries like the admin's `audit_event` lines: the api has no
+  deployment-wide audit log, and an invitation may grant no space. It is also recorded in each
+  granted space's `audit_log` (`invite.created`, …), and the admin's actions and every accept or
+  refused link in `admin_audit` (`team.invite_*`, `auth.invite_failed`, with a fixed reason, never
+  an error's text). No token or token hash is logged or audited.
 
 | Route (`/deployment/invites`) | MCP tool        | Does                                              |
 | ----------------------------- | --------------- | ------------------------------------------------- |
 | `GET ?status=`                | `invites_list`  | Invitations, newest first (never a token)         |
-| `POST`                        | `invite_create` | Invite; the link comes back once (201)            |
+| `GET /{id}`                   | `invite_get`    | One invitation: its role, grants and status       |
+| `POST`                        | `invite_create` | Invite; the link comes back once (201). `admin` only from a person, not a root token |
 | `POST /{id}/resend`           | `invite_resend` | A new link and expiry; the old ones stop working  |
 | `POST /{id}/revoke`           | `invite_revoke` | End it (an accepted one can't be: 400)            |
 | `POST /lookup`, `POST /accept` | none           | The web app's sign-up handshake                   |

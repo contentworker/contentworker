@@ -39,8 +39,8 @@ manages accounts, single sign-on, SCIM provisioning and the audit log, and admin
   account with a password (and can add a passkey after) or continue with single sign-on, and join
   with exactly what you chose. If their email already has an account, they sign in and accept it
   there. Pending invitations are listed on the page: **Resend** sends a new link (the old one stops
-  working) and **Revoke** ends one. Inviting someone as an Admin asks you to confirm who you are
-  first, and you can only give roles you hold yourself.
+  working) and **Revoke** ends one. Inviting someone as an Admin, or sending a new link for an Admin's
+  invitation, asks you to confirm who you are first, and you can only give roles you hold yourself.
 - **Sign-in methods.** A password, a passkey, or your organization's **single sign-on** (OpenID
   Connect) when the workspace has an identity provider configured. Two-factor sign-in with an
   authenticator app can be required.
@@ -53,9 +53,10 @@ manages accounts, single sign-on, SCIM provisioning and the audit log, and admin
   removes their passkeys. Your space's own API keys are not a person's and keep working.
 
 Over the API, invitations live at `/deployment/invites` (workspace Admins and the admin token
-only): `GET` lists them, `POST` creates one and returns its link once, and
-`POST /deployment/invites/{id}/resend` and `/revoke` act on one. The MCP server has
-`invites_list`, `invite_create`, `invite_resend` and `invite_revoke`. A link that no longer works
+only): `GET` lists them, `GET /deployment/invites/{id}` reads one, `POST` creates one and returns
+its link once, and `POST /deployment/invites/{id}/resend` and `/revoke` act on one. Inviting
+someone as an Admin is only for an Admin signed in to the admin, never the admin token. The MCP
+server has `invites_list`, `invite_get`, `invite_create`, `invite_resend` and `invite_revoke`. A link that no longer works
 (used, revoked, expired or resent) always gets the same answer, so it says nothing about why.
 
 ## Space access

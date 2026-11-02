@@ -146,6 +146,21 @@ describe('invitations over HTTP', () => {
     expect(team.people.find((p) => p.email === 'grace@example.com')?.role?.preset).toBe('editor');
   });
 
+  it('reads one by id, and refuses an admin invitation from the root token', async () => {
+    const issued = await create();
+    const one = await app.request(`/deployment/invites/${issued.invite.id}`, { headers: admin });
+    expect(one.status).toBe(200);
+    const text = await one.text();
+    expect(JSON.parse(text)).toMatchObject({ id: issued.invite.id, role: 'member' });
+    expect(text).not.toContain(issued.token);
+    expect((await app.request('/deployment/invites/nope', { headers: admin })).status).toBe(404);
+    expect(
+      (await app.request(`/deployment/invites/${issued.invite.id}`, { headers: spaceKey })).status,
+    ).toBe(403);
+    const rooted = await post('/deployment/invites', { email: 'boss@example.com', role: 'admin' });
+    expect(rooted.status).toBe(403);
+  });
+
   it('validates the body', async () => {
     expect((await post('/deployment/invites', { email: 'nope' })).status).toBe(422);
     expect(

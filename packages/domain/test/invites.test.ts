@@ -26,6 +26,13 @@ describe('what an inviter may grant', () => {
     expect(() => assertCanGrant(admin, 'admin', [grant([SCOPES.spaceAdmin])])).not.toThrow();
   });
 
+  it('refuses an admin’s seat from anything but a person', () => {
+    const root: Principal = { spaceId: '*', kind: 'admin', scopes: scopesForKind('cma') };
+    expect(() => assertCanGrant(root, 'admin', [])).toThrow(/signed in to the admin/);
+    expect(() => assertCanGrant(root, 'member', [grant([SCOPES.spaceAdmin])])).not.toThrow();
+    expect(() => assertCanGrant({ ...admin, subject: undefined }, 'admin', [])).toThrow();
+  });
+
   it('refuses a scope the inviter lacks, a space they don’t administer, and deployment admin from one space', () => {
     const narrow = { ...admin, scopes: [SCOPES.spaceAdmin] };
     expect(() => assertCanGrant(narrow, 'member', [grant([SCOPES.contentWrite])])).toThrow(
