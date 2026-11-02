@@ -94,3 +94,24 @@ Everything below is built and tested on v2.
   today) and identical bodies can share an object.
 - [ ] **Required plugins.** A per-plugin `required` flag so a plugin whose refusal is load-bearing
   blocks the write when it throws or times out, instead of being skipped.
+- [ ] **Extension runtime: apps as packages.** Grow sandboxed plugins into installable packages
+  that bring their own operations, workflow nodes, content types and admin UI, so integrations
+  ship as packages on the runtime rather than in core. Seven PRs, each usable on its own:
+  1. **Asset scopes.** `assets:read` and `assets:write`, implied by `preview:read` and
+     `content:write` when scopes resolve, so no stored key, role or token changes.
+  2. **Manifest v2 and operations.** Schema validation, the approval screen, sync operations, and
+     REST, OpenAPI and MCP generated from one manifest.
+  3. **Content models from packages.** Managed and seeded types with an owner, install and upgrade
+     with a compatibility check; uninstall leaves every entry in place.
+  4. **Workflow nodes.** App node types (`app:<package>/<node>`), the `poll` result, `external`
+     waits with callbacks, a per-app limiter Durable Object, compensations.
+  5. **Host interface.** `content.resolve` projections, the asset calls (signed URLs, upload
+     targets, import or replace from a URL), `asset.created`, event subscriptions.
+  6. **Dogfood.** The in-house HTML renderer and a social campaigns package, built only on steps
+     1–5 with no change to core.
+  7. **Adobe packages.** PDF Services first, then Express once beta access is confirmed and it
+     accepts R2-signed URLs.
+
+  Open before step 2: package operations in MCP without one tool per operation per install, a
+  deployment-level install for per-company credentials, and the 2 s sync cap against provider
+  token exchanges.
