@@ -303,14 +303,17 @@ embeds, Preview and GraphQL's `Asset` type.
   (`commitAssetFile`) checks the bytes are there (`BlobStore.head`) and, in one unit, bumps
   `assets.version`, writes the previous file to `asset_versions` and appends
   `asset.file_replaced` (`AssetRepo.replaceFile` compares the version at commit, so a second
-  commit for the same version is a `409`). The latest start wins (`clearPendingReplacements`):
-  starting a replace aborts any replacement still uploading in parts and deletes uncommitted bytes
-  at the next version's key, since an upload URL never writes over a stored object. Past 100 MiB,
-  `POST …/assets/:id/file/uploads` (`startMultipartAssetFileReplacement`) starts a multipart
-  upload for that key; completing it runs the same commit unit (`commitStoredReplacement`, which
-  also deletes the `asset_uploads` row) and refuses with `409`, aborting the upload, when the
-  version was taken meanwhile, since R2 completes unconditionally. A version's key is `space/env/asset/fileName` for the
-  first file and `space/env/asset/v<n>/file/fileName` after (`assetObjectKey`): never five
+  commit for the same version is a `409`). Each replace start uploads to a key of its own (the
+  commit object carries its `attempt`), so replaces started side by side never share a key: an
+  upload URL stores once and R2 completes a multipart upload unconditionally, so a shared key
+  would let one attempt refuse or overwrite another's file. The first to commit wins; a later
+  commit for that version is a `409`, never "already committed". Past 100 MiB, `POST
+  …/assets/:id/file/uploads` (`startMultipartAssetFileReplacement`) starts a multipart upload for
+  its attempt's key; completing it runs the same commit unit (`commitStoredReplacement`, which also
+  deletes the `asset_uploads` row), refuses with `409` and aborts when the version was taken
+  meanwhile, and deletes its own bytes if it loses at commit. A version's key is
+  `space/env/asset/fileName` for the first file and `space/env/asset/v<n>/file-<attempt>/fileName`
+  after (`assetObjectKey`; keys minted before attempts read `…/v<n>/file/…`): never five
   segments, which is where a version's extracted text lives (`…/v<n>/text.md`), so derived files
   are never an asset file. `assetFileKey` ignores a recorded key that isn't this asset's file key
   or names a version past the asset's own (an uncommitted upload). `POST

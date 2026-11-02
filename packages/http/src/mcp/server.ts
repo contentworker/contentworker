@@ -4302,8 +4302,8 @@ export function buildServer(
         'Start replacing an asset’s file with a multipart upload, for a file past 100 MiB (up ' +
         'to the deployment’s cap). Then asset_upload_parts for part URLs, PUT each part ' +
         '(exactly its length), and asset_upload_complete with every part’s ETag: completing ' +
-        'commits the new version. asset_upload_abort gives up and keeps the file. Starting any ' +
-        'replace supersedes one still uploading.',
+        'commits the new version (refused if another replace or restore committed first). ' +
+        'asset_upload_abort gives up and keeps the file.',
       inputSchema: toolSchema('asset_replace_file_upload', () =>
         z.object({
           id: z.string(),
@@ -4341,6 +4341,7 @@ export function buildServer(
           version: z.int().min(2),
           fileName: z.string().min(1).max(1024),
           contentType: z.string().min(1).max(256),
+          attempt: z.string().min(1).max(64).optional().describe('commit.attempt, unchanged'),
           ...scopeArgs,
         }),
       ),
@@ -4352,7 +4353,12 @@ export function buildServer(
         fileBlob(),
         scopeOf(args),
         args.id,
-        { version: args.version, fileName: args.fileName, contentType: args.contentType },
+        {
+          version: args.version,
+          fileName: args.fileName,
+          contentType: args.contentType,
+          ...(args.attempt ? { attempt: args.attempt } : {}),
+        },
         { by: actor },
       );
       return ok(await signedOne(scopeOf(args), asset));

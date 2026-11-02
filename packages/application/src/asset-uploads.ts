@@ -15,10 +15,10 @@ import type {
 } from '@contentworker/ports';
 import {
   assetFileKey,
+  assetKeyAttempt,
   assetKeyVersion,
   type CommitAssetFileInput,
   type CreateAssetInput,
-  clearPendingReplacements,
   commitStoredReplacement,
   createUploadDraft,
   deleteAsset,
@@ -36,9 +36,9 @@ import type { AppContext } from './context';
  * ({@link prepareUploadDraft}), so it obeys the same rules.
  *
  * A file replacement past one PUT goes the same way ({@link startMultipartAssetFileReplacement}):
- * its upload is for the next version's key, and completing it commits that version in the same
- * unit a single-PUT replacement's commit uses. Which kind an upload is, its key says: version 1 is
- * a new asset's, any later one a replacement's.
+ * its upload is for the next version's key, its attempt's own, and completing it commits that
+ * version in the same unit a single-PUT replacement's commit uses. Which kind an upload is, its key
+ * says: version 1 is a new asset's, any later one a replacement's.
  *
  * An upload left unfinished is aborted by the hourly sweep a day on ({@link
  * sweepAbandonedMultipartUploads}), and by the bucket's lifecycle rule after that; its draft goes
@@ -152,9 +152,9 @@ export interface MultipartReplacementStarted extends MultipartUploadStarted {
 /**
  * Starts replacing an asset's file with a multipart upload, for a file past one signed PUT: the
  * same checks as {@link replaceAssetFile} (no hosted video, the `asset:beforeCreate` policy, the
- * next version's key), the size cap of a new multipart upload, and the same "latest start wins"
- * rule (any replacement still pending is superseded). Then sign parts and complete as for a new
- * asset; completing commits the version. Nothing changes before that.
+ * next version's key, this attempt's own), and the size cap of a new multipart upload. Then sign
+ * parts and complete as for a new asset; completing commits the version, unless another replace or
+ * restore took it first. Nothing changes before that.
  */
 export async function startMultipartAssetFileReplacement(
   ctx: AppContext,
@@ -166,7 +166,6 @@ export async function startMultipartAssetFileReplacement(
   assertUploadSize(ctx, input.size);
   const multipart = multipartOf(blob);
   const { asset, key, commit } = await prepareReplacement(ctx, scope, id, input);
-  await clearPendingReplacements(ctx, blob, scope, id, key);
   const { partSize, partCount } = multipartPlan(input.size);
   const { uploadId } = await multipart.create(key, commit.contentType);
   await ctx.store.assetUploads.create(scope, {
@@ -181,14 +180,16 @@ export async function startMultipartAssetFileReplacement(
   return { asset, upload: { uploadId, partSize, partCount }, version: commit.version };
 }
 
-/** What committing a replacement upload needs, read from its key (`…/v<n>/file/<name>`). */
+/** What committing a replacement upload needs, read from its key (`…/v<n>/file-<attempt>/<name>`). */
 function replacementOf(upload: AssetUpload): CommitAssetFileInput | null {
   const version = assetKeyVersion(upload.r2Key, upload.assetId);
   if (version === null || version <= 1) return null;
+  const attempt = assetKeyAttempt(upload.r2Key);
   return {
     version,
     fileName: upload.r2Key.slice(upload.r2Key.lastIndexOf('/') + 1),
     contentType: upload.contentType,
+    ...(attempt ? { attempt } : {}),
   };
 }
 
@@ -289,8 +290,8 @@ export async function completeMultipartAssetUpload(
   if (!asset) throw new NotFoundError('Asset', assetId);
   const replacement = replacementOf(upload);
   if (replacement && (asset.version ?? 1) >= replacement.version) {
-    // Another replace or restore took this version first. Completing would write these bytes over
-    // a committed file (R2 completes unconditionally), so the upload is dropped instead.
+    // Another replace or restore took this version first: completing could only store bytes nobody
+    // will commit, so the upload is dropped instead.
     await multipartOf(deps.blob).abort(upload.r2Key, uploadId);
     await ctx.store.assetUploads.delete(scope, assetId, uploadId);
     throw new ConflictError(
@@ -306,13 +307,6 @@ export async function completeMultipartAssetUpload(
     const there = await deps.blob.head?.(upload.r2Key);
     if (there?.size === upload.size) {
       etag = there.etag;
-    } else if (replacement && NO_SUCH_UPLOAD.test(String(err))) {
-      // Aborted when a newer replace of this file started: that one wins.
-      await ctx.store.assetUploads.delete(scope, assetId, uploadId);
-      throw new ConflictError(
-        `A newer replace of asset "${assetId}"'s file started since this upload; replace it again`,
-        { version: asset.version ?? 1 },
-      );
     } else if (PART_ERROR.test(String(err))) {
       // A part never uploaded, an etag that isn't its part's, or uneven parts: R2 keeps the
       // upload, so the client can upload the part again and retry.
@@ -334,9 +328,12 @@ export async function completeMultipartAssetUpload(
       });
       return withReadUrl(deps.blob, scope, next);
     } catch (err) {
-      // Lost the race at commit: the upload is complete, so nothing is left to resume.
-      if (err instanceof ConflictError)
+      // Lost the race at commit: the upload is complete, so nothing is left to resume, and its
+      // bytes, at this attempt's own key, will never be committed.
+      if (err instanceof ConflictError) {
         await ctx.store.assetUploads.delete(scope, assetId, uploadId);
+        await deps.blob.delete(upload.r2Key);
+      }
       throw err;
     }
   }
@@ -350,9 +347,6 @@ export async function completeMultipartAssetUpload(
   }
   return withReadUrl(deps.blob, scope, asset);
 }
-
-/** R2's answer for an upload that was completed or aborted. */
-const NO_SUCH_UPLOAD = /NoSuchUpload|10024|no multipart upload|does not exist/i;
 
 /** R2's refusals that name a part (InvalidPart, EntityTooSmall, NoSuchUpload): the client's to fix. */
 const PART_ERROR = /InvalidPart|EntityTooSmall|NoSuchUpload|1002[45]|10011|10048|same size|part/i;

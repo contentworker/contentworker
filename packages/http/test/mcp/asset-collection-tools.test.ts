@@ -219,8 +219,10 @@ describe('collection, share, upload and zip tools (MCP), on the HTTP routes’ u
       })
     ).body as { version: number; upload: { uploadId: string } };
     expect(started.version).toBe(2);
+    const key = blob.uploadsInProgress.get(started.upload.uploadId)?.key ?? '';
+    expect(key).toMatch(new RegExp(`^${SPACE}/main/${a.id}/v2/file-[^/]+/b\\.png$`));
     const part = await blob.multipart.uploadPart(
-      `${SPACE}/main/${a.id}/v2/file/b.png`,
+      key,
       started.upload.uploadId,
       1,
       new Uint8Array(12),

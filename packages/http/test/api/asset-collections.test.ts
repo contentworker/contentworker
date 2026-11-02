@@ -254,7 +254,7 @@ describe('multipart uploads and zips over HTTP', () => {
     expect((await send(h, 'GET', `/assets/${again.asset.id}`)).status).toBe(404);
   });
 
-  it('replaces a file in parts: completing commits the version, needs content:write, and a superseded one is 409', async () => {
+  it('replaces a file in parts: completing commits the version, needs content:write, and one whose version was taken is 409', async () => {
     const h = makeApp();
     const asset = await upload(h, 'hero.png');
     await h.blob.put(`s1/main/${asset.id}/hero.png`, 'v1', 'image/png');
@@ -275,7 +275,9 @@ describe('multipart uploads and zips over HTTP', () => {
     const signed = await json<{ parts: { partNumber: number; length: number }[] }>(
       await send(h, 'POST', `${base}/parts`, { partNumbers: [1, 2] }),
     );
-    const key = `s1/main/${asset.id}/v2/file/hero-large.png`;
+    // The upload's own key for version 2.
+    const key = h.blob.uploadsInProgress.get(started.upload.uploadId)?.key ?? '';
+    expect(key).toMatch(new RegExp(`^s1/main/${asset.id}/v2/file-[^/]+/hero-large\\.png$`));
     const parts = [];
     for (const p of signed.parts) {
       parts.push(
@@ -295,15 +297,16 @@ describe('multipart uploads and zips over HTTP', () => {
     );
     expect(versions.items.map((v) => v.version)).toEqual([2, 1]);
 
-    // Two replaces in parts: the second start supersedes the first, whose completion is 409.
-    const first = await json<{ upload: { uploadId: string } }>(
+    // A replace in parts started from v1 completes after v2 was committed: 409, nothing changes.
+    await send(h, 'POST', `/assets/${asset.id}/versions/1/restore`);
+    const stale = await json<{ upload: { uploadId: string } }>(
       await send(h, 'POST', `/assets/${asset.id}/file/uploads`, body),
     );
-    await send(h, 'POST', `/assets/${asset.id}/file/uploads`, body);
+    await send(h, 'POST', `/assets/${asset.id}/versions/2/restore`);
     const late = await send(
       h,
       'POST',
-      `/assets/${asset.id}/uploads/${first.upload.uploadId}/complete`,
+      `/assets/${asset.id}/uploads/${stale.upload.uploadId}/complete`,
       {
         parts: [
           { partNumber: 1, etag: 'e' },

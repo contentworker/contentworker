@@ -12,6 +12,7 @@ import {
   type AppContext,
   abortMultipartAssetUpload,
   assetFileKey,
+  assetObjectKey,
   commitAssetFile,
   completeMultipartAssetUpload,
   createAsset,
@@ -215,7 +216,7 @@ describe('replacing a file in parts', () => {
     await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
   });
 
-  /** A published-able asset with its first file stored. */
+  /** An asset with its first file stored. */
   async function asset() {
     const created = await createAsset(ctx, blob, scope, {
       fileName: 'film.mov',
@@ -223,6 +224,19 @@ describe('replacing a file in parts', () => {
     });
     await blob.put(assetFileKey(scope, created.asset), 'v1', 'video/quicktime');
     return created.asset;
+  }
+
+  /** Starts a replacement in parts and returns it with the key its parts go to. */
+  async function start(id: string, fileName = 'cut.mov', size = big) {
+    const started = await startMultipartAssetFileReplacement(ctx, blob, scope, id, {
+      fileName,
+      contentType: 'video/quicktime',
+      size,
+    });
+    const row = (await store.assetUploads.listForAsset(scope, id)).find(
+      (u) => u.uploadId === started.upload.uploadId,
+    );
+    return { ...started, key: row?.r2Key ?? '' };
   }
 
   /** Uploads every part the way a client does, and returns their etags. */
@@ -241,19 +255,26 @@ describe('replacing a file in parts', () => {
     return out;
   }
 
+  /** A single-PUT replace: started, its bytes stored at its own key. */
+  async function single(id: string, fileName: string, bytes: string) {
+    const r = await replaceAssetFile(ctx, blob, scope, id, {
+      fileName,
+      contentType: 'video/quicktime',
+    });
+    const key = assetObjectKey(scope, id, r.commit.fileName, r.commit.version, r.commit.attempt);
+    await blob.put(key, bytes, 'video/quicktime');
+    return { ...r, key };
+  }
+
   const big = 2 * DEFAULT_PART_BYTES + 7;
-  const nextKey = (id: string, version: number, name = 'cut.mov') =>
-    `shop/main/${id}/v${version}/file/${name}`;
 
   it('uploads the next version in parts and commits it on completion, in the version-bump unit', async () => {
     const a = await asset();
-    const started = await startMultipartAssetFileReplacement(ctx, blob, scope, a.id, {
-      fileName: '../cut.mov',
-      contentType: 'video/quicktime',
-      size: big,
-    });
+    const started = await start(a.id, '../cut.mov');
     expect(started.version).toBe(2);
     expect(started.upload.partCount).toBe(3);
+    // The attempt's own key for version 2.
+    expect(started.key).toMatch(new RegExp(`^shop/main/${a.id}/v2/file-[^/]+/cut\\.mov$`));
     // Nothing changes until it completes.
     expect((await store.assets.get(scope, a.id))?.version ?? 1).toBe(1);
     const { parts } = await signAssetUploadParts(
@@ -267,7 +288,7 @@ describe('replacing a file in parts', () => {
     expect(parts.map((p) => p.length)).toEqual([DEFAULT_PART_BYTES, DEFAULT_PART_BYTES, 7]);
     const ingest = new FakeAssetIngestQueue();
     const uploaded = await sendParts(
-      nextKey(a.id, 2),
+      started.key,
       started.upload.uploadId,
       big,
       started.upload.partSize,
@@ -282,7 +303,7 @@ describe('replacing a file in parts', () => {
       { by: 'ann' },
     );
     expect(done.version).toBe(2);
-    expect(done.r2Key).toBe(nextKey(a.id, 2));
+    expect(done.r2Key).toBe(started.key);
     expect(done.file).toMatchObject({ fileName: 'cut.mov', size: big });
     // Ingest starts from the commit's event, not a second notice.
     expect(ingest.created).toEqual([]);
@@ -305,7 +326,7 @@ describe('replacing a file in parts', () => {
     expect(store.allEvents().filter((e) => e.type === 'asset.file_replaced')).toHaveLength(1);
   });
 
-  it('refuses a hosted video, a size past the cap, and a type the space refuses, as a single replace does', async () => {
+  it('refuses a size past the cap and a missing asset, as a single replace does', async () => {
     const a = await asset();
     await expect(
       startMultipartAssetFileReplacement({ ...ctx, maxUploadBytes: 10 * MiB }, blob, scope, a.id, {
@@ -324,87 +345,83 @@ describe('replacing a file in parts', () => {
     expect(blob.uploadsInProgress.size).toBe(0);
   });
 
-  it('lets the latest replace win: a newer start aborts the one in progress', async () => {
+  it('gives every replace of one version its own key, even with the same file name', async () => {
     const a = await asset();
-    const first = await startMultipartAssetFileReplacement(ctx, blob, scope, a.id, {
-      fileName: 'cut.mov',
-      contentType: 'video/quicktime',
-      size: big,
-    });
-    const firstParts = await sendParts(
-      nextKey(a.id, 2),
-      first.upload.uploadId,
-      big,
-      first.upload.partSize,
+    const first = await single(a.id, 'cut.mov', 'first');
+    const second = await single(a.id, 'cut.mov', 'second');
+    const parts = await start(a.id, 'cut.mov');
+    expect(new Set([first.key, second.key, parts.key]).size).toBe(3);
+    expect(first.commit.version).toBe(second.commit.version);
+    // Nothing either start did touched the other's bytes.
+    expect(new TextDecoder().decode(blob.bytes(first.key) ?? undefined)).toBe('first');
+    expect(new TextDecoder().decode(blob.bytes(second.key) ?? undefined)).toBe('second');
+  });
+
+  it('first commit wins: a later commit of another attempt for that version is 409, never a false success', async () => {
+    const a = await asset();
+    const mine = await single(a.id, 'cut.mov', 'mine');
+    const theirs = await single(a.id, 'cut.mov', 'theirs');
+    const committed = await commitAssetFile(ctx, blob, scope, a.id, theirs.commit);
+    expect(committed.r2Key).toBe(theirs.key);
+    // Same version, same name: before attempts this read as "already committed" and answered 200.
+    await expect(commitAssetFile(ctx, blob, scope, a.id, mine.commit)).rejects.toBeInstanceOf(
+      ConflictError,
     );
-    // A single-PUT replace starts meanwhile: the multipart upload is superseded.
-    const single = await replaceAssetFile(ctx, blob, scope, a.id, {
-      fileName: 'other.mov',
-      contentType: 'video/quicktime',
-    });
-    expect(blob.aborted).toEqual([first.upload.uploadId]);
-    await blob.put(nextKey(a.id, 2, 'other.mov'), 'small', 'video/quicktime');
-    await commitAssetFile(ctx, blob, scope, a.id, single.commit);
-    // The superseded upload's completion is told so (409), and changes nothing.
+    // The winner's own retry still finds its work done.
+    expect((await commitAssetFile(ctx, blob, scope, a.id, theirs.commit)).r2Key).toBe(theirs.key);
+    expect(new TextDecoder().decode(blob.bytes(theirs.key) ?? undefined)).toBe('theirs');
+  });
+
+  it('a replacement in parts completing after another committed its version is 409, writes over nothing, and leaves no bytes', async () => {
+    const a = await asset();
+    const parts = await start(a.id, 'cut.mov');
+    const uploaded = await sendParts(parts.key, parts.upload.uploadId, big, parts.upload.partSize);
+    const other = await single(a.id, 'cut.mov', 'other');
+    await commitAssetFile(ctx, blob, scope, a.id, other.commit);
     await expect(
-      completeMultipartAssetUpload(ctx, { blob }, scope, a.id, first.upload.uploadId, firstParts),
+      completeMultipartAssetUpload(ctx, { blob }, scope, a.id, parts.upload.uploadId, uploaded),
     ).rejects.toBeInstanceOf(ConflictError);
+    expect(blob.aborted).toContain(parts.upload.uploadId);
+    expect(blob.bytes(parts.key)).toBeNull();
+    expect(new TextDecoder().decode(blob.bytes(other.key) ?? undefined)).toBe('other');
     expect(await store.assetUploads.listForAsset(scope, a.id)).toEqual([]);
-    expect((await store.assets.get(scope, a.id))?.r2Key).toBe(nextKey(a.id, 2, 'other.mov'));
-    expect(blob.bytes(nextKey(a.id, 2))).toBeNull();
+    expect((await store.assets.get(scope, a.id))?.r2Key).toBe(other.key);
   });
 
-  it('tells a superseded upload so, even before the newer replace commits', async () => {
+  it('a commit lost after the parts completed deletes this attempt’s bytes, and only them', async () => {
     const a = await asset();
-    const first = await startMultipartAssetFileReplacement(ctx, blob, scope, a.id, {
-      fileName: 'cut.mov',
-      contentType: 'video/quicktime',
-      size: big,
-    });
-    const parts = await sendParts(
-      nextKey(a.id, 2),
-      first.upload.uploadId,
-      big,
-      first.upload.partSize,
-    );
-    await startMultipartAssetFileReplacement(ctx, blob, scope, a.id, {
-      fileName: 'cut.mov',
-      contentType: 'video/quicktime',
-      size: big,
-    });
+    const parts = await start(a.id, 'cut.mov');
+    const uploaded = await sendParts(parts.key, parts.upload.uploadId, big, parts.upload.partSize);
+    const other = await single(a.id, 'cut.mov', 'other');
+    // The other replace commits between the version check and the commit unit.
+    const realGet = store.assets.get.bind(store.assets);
+    let reads = 0;
+    store.assets.get = async (s, id) => {
+      const found = await realGet(s, id);
+      if (id === a.id && ++reads === 1) await commitAssetFile(ctx, blob, scope, a.id, other.commit);
+      return found;
+    };
     await expect(
-      completeMultipartAssetUpload(ctx, { blob }, scope, a.id, first.upload.uploadId, parts),
-    ).rejects.toThrow(/newer replace/);
-    expect((await store.assets.get(scope, a.id))?.version ?? 1).toBe(1);
-    expect(await store.assetUploads.listForAsset(scope, a.id)).toHaveLength(1);
+      completeMultipartAssetUpload(ctx, { blob }, scope, a.id, parts.upload.uploadId, uploaded),
+    ).rejects.toBeInstanceOf(ConflictError);
+    store.assets.get = realGet;
+    expect(blob.bytes(parts.key)).toBeNull();
+    expect(new TextDecoder().decode(blob.bytes(other.key) ?? undefined)).toBe('other');
+    expect(await store.assetUploads.listForAsset(scope, a.id)).toEqual([]);
   });
 
-  it('never completes over a version committed meanwhile (a restore took it): 409, upload dropped', async () => {
+  it('never completes over a version a restore took meanwhile: 409, upload dropped', async () => {
     const a = await asset();
-    // v2 by a single replace, so there is a version to restore.
-    const r = await replaceAssetFile(ctx, blob, scope, a.id, {
-      fileName: 'b.mov',
-      contentType: 'video/quicktime',
-    });
-    await blob.put(nextKey(a.id, 2, 'b.mov'), 'v2', 'video/quicktime');
-    await commitAssetFile(ctx, blob, scope, a.id, r.commit);
-    const started = await startMultipartAssetFileReplacement(ctx, blob, scope, a.id, {
-      fileName: 'cut.mov',
-      contentType: 'video/quicktime',
-      size: big,
-    });
-    const parts = await sendParts(
-      nextKey(a.id, 3),
-      started.upload.uploadId,
-      big,
-      started.upload.partSize,
-    );
+    const v2 = await single(a.id, 'b.mov', 'v2');
+    await commitAssetFile(ctx, blob, scope, a.id, v2.commit);
+    const parts = await start(a.id, 'cut.mov');
+    const uploaded = await sendParts(parts.key, parts.upload.uploadId, big, parts.upload.partSize);
     await restoreAssetVersion(ctx, blob, scope, a.id, 1);
     await expect(
-      completeMultipartAssetUpload(ctx, { blob }, scope, a.id, started.upload.uploadId, parts),
+      completeMultipartAssetUpload(ctx, { blob }, scope, a.id, parts.upload.uploadId, uploaded),
     ).rejects.toBeInstanceOf(ConflictError);
-    expect(blob.aborted).toContain(started.upload.uploadId);
-    expect(blob.bytes(nextKey(a.id, 3))).toBeNull();
+    expect(blob.aborted).toContain(parts.upload.uploadId);
+    expect(blob.bytes(parts.key)).toBeNull();
     expect(await store.assetUploads.listForAsset(scope, a.id)).toEqual([]);
     expect((await store.assets.get(scope, a.id))?.version).toBe(3);
   });
@@ -414,47 +431,29 @@ describe('replacing a file in parts', () => {
       fileName: 'film.mov',
       contentType: 'video/quicktime',
     });
-    const started = await startMultipartAssetFileReplacement(ctx, blob, scope, created.asset.id, {
-      fileName: 'cut.mov',
-      contentType: 'video/quicktime',
-      size: big,
-    });
+    const started = await start(created.asset.id);
     await abortMultipartAssetUpload(ctx, blob, scope, created.asset.id, started.upload.uploadId);
     expect(blob.aborted).toEqual([started.upload.uploadId]);
     expect(await store.assets.get(scope, created.asset.id)).not.toBeNull();
   });
 
-  it('a single replace started again clears the bytes an uncommitted one left, so its PUT can land', async () => {
+  it('refuses a commit whose attempt is not one a key can hold', async () => {
     const a = await asset();
-    const first = await replaceAssetFile(ctx, blob, scope, a.id, {
-      fileName: 'cut.mov',
-      contentType: 'video/quicktime',
-    });
-    await blob.put(nextKey(a.id, 2), 'never committed', 'video/quicktime');
-    const second = await replaceAssetFile(ctx, blob, scope, a.id, {
-      fileName: 'cut.mov',
-      contentType: 'video/quicktime',
-    });
-    expect(second.commit).toEqual(first.commit);
-    expect(blob.bytes(nextKey(a.id, 2))).toBeNull();
-    // The asset's own file is never touched.
-    expect(blob.bytes(assetFileKey(scope, a))).not.toBeNull();
+    const r = await single(a.id, 'cut.mov', 'x');
+    await expect(
+      commitAssetFile(ctx, blob, scope, a.id, { ...r.commit, attempt: '../other' }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
-  it('keeps another scope out of a replacement upload', async () => {
+  it('keeps another scope out of a replacement upload, and the sweep aborts one left behind', async () => {
     const a = await asset();
-    const started = await startMultipartAssetFileReplacement(ctx, blob, scope, a.id, {
-      fileName: 'cut.mov',
-      contentType: 'video/quicktime',
-      size: big,
-    });
+    const started = await start(a.id);
     const other = { spaceId: 'shop', environmentId: 'staging' };
     await expect(
       completeMultipartAssetUpload(ctx, { blob }, other, a.id, started.upload.uploadId, []),
     ).rejects.toBeInstanceOf(NotFoundError);
     expect(await store.assetUploads.listForAsset(other, a.id)).toEqual([]);
     clock.advance(ABANDONED_MULTIPART_TTL_MS + 1);
-    // The abandoned-upload sweep aborts a replacement's upload as it does a new asset's.
     expect(await sweepAbandonedMultipartUploads(ctx, blob)).toEqual({ aborted: 1, failed: 0 });
     expect((await store.assets.get(scope, a.id))?.version ?? 1).toBe(1);
   });

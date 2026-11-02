@@ -313,6 +313,12 @@ export const commitAssetFileBody = z.object({
   version: z.int().min(2).describe('commit.version from the replace response'),
   fileName: z.string().min(1).max(1024),
   contentType: z.string().min(1).max(256),
+  attempt: z
+    .string()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe('commit.attempt from the replace response: the upload’s own key'),
 });
 const rightsText = z.string().max(MAX_ASSET_RIGHTS_TEXT).nullable().optional();
 const rightsInstant = z

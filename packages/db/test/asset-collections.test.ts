@@ -318,7 +318,8 @@ describe('replacing a file in parts on D1', () => {
       started.upload.uploadId,
     ]);
     expect(await store.assetUploads.listForAsset(staging, a.id)).toEqual([]);
-    const key = `${spaceId}/main/${a.id}/v2/file/big.png`;
+    const key = (await store.assetUploads.listForAsset(scope, a.id))[0]?.r2Key ?? '';
+    expect(key).toMatch(new RegExp(`^${spaceId}/main/${a.id}/v2/file-[^/]+/big\\.png$`));
     const part = await blob.multipart.uploadPart(
       key,
       started.upload.uploadId,

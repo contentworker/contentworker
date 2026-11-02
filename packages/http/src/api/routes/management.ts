@@ -2273,7 +2273,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'Name parts 1..n, each once, with its ETag. Ingest then starts. For a replacement ' +
         '(…/file/uploads), completing commits the new version; 409 when another replace or ' +
-        'restore took that version, or a newer replace started since.',
+        'restore took that version first (the upload is dropped).',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
@@ -2485,8 +2485,9 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'For a replacement past one signed PUT (100 MiB). Sign part URLs at ' +
         '/assets/{id}/uploads/{uploadId}/parts, PUT each part, then complete it there: that ' +
-        'commits the new version. Abort to give up (the asset keeps its file). Starting any ' +
-        'replace supersedes one still uploading. 422 past the deployment’s cap.',
+        'commits the new version. Abort to give up (the asset keeps its file). Replaces started ' +
+        'side by side each upload to their own key: the first to commit wins, the others get ' +
+        '409. 422 past the deployment’s cap.',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
