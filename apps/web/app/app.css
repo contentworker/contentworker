@@ -9,10 +9,10 @@
 /* Streamdown (components/ai-elements) renders markdown with Tailwind classes of its own. */
 @source "../node_modules/streamdown/dist/*.js";
 
-/* Ledger, on shadcn's base-luma preset: neutral greys with no tint, Inter, generous radii and pill
-   controls (buttons and one-line fields are fully round). One accent, the brand purple of the mark
-   (where you are, what you chose, focus, and a model's work); one blue for links and work in
-   progress; and signal colours reserved for order and step status. Green means "succeeded" and
+/* Ledger, on shadcn's base-luma preset: neutral greys with no tint, Inter, tight radii,
+   square-cornered controls (only status labels are fully round). One accent, the brand purple of
+   the mark (where you are, what you chose, focus, and a model's work); one blue for links and
+   work in progress; and signal colours reserved for order and step status. Green means "succeeded" and
    nothing else; it is never the brand. Light is the default; dark is chosen with the theme switch. */
 
 /* Dark tokens follow `data-theme` on <html> (set before paint by root.tsx), not the OS directly. */
@@ -118,7 +118,7 @@
   --muted-foreground: oklch(0.52 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  /* Deeper than the preset's 0.577 so the destructive pill's words hold 4.5:1 on their own tint
+  /* Deeper than the preset's 0.577 so the destructive button's words hold 4.5:1 on their own tint
      over a tile (an inline confirm), at rest and on hover; the preset's red read 3.76:1. */
   --destructive: oklch(0.48 0.185 27.325);
   --destructive-foreground: oklch(0.985 0 0);

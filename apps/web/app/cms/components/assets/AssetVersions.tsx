@@ -294,7 +294,7 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
                   }
                   onCancel={() => setConfirm(null)}
                 >
-                  {/* The ink pill: nothing is lost, the current file stays in the list. */}
+                  {/* The ink button: nothing is lost, the current file stays in the list. */}
                   <Button
                     type="button"
                     size="sm"

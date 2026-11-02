@@ -975,7 +975,7 @@ export function AssetLibrary(props: { locale: string }) {
                       type="button"
                       onClick={() => setOpen(a)}
                       aria-label={`Open “${name}”`}
-                      className="hit-area min-w-0 truncate rounded-full text-left font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+                      className="hit-area min-w-0 truncate rounded-sm text-left font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
                     >
                       {name}
                     </button>

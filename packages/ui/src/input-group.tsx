@@ -6,13 +6,13 @@ import { Input } from './input';
 import { cn } from './lib/utils';
 import { Textarea } from './textarea';
 
-/** A field with controls inside it: the preset's filled pill, or a rounded box once it wraps. */
+/** A field with controls inside it: the filled box, square-cornered like every field. */
 function InputGroup({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="input-group"
       className={cn(
-        'group/input-group relative flex h-9 w-full min-w-0 items-center rounded-full border border-transparent bg-input/50 transition-[color,box-shadow,background-color] outline-none has-data-[align=block-end]:rounded-full has-data-[align=block-start]:rounded-full has-[[data-slot=input-group-control]:focus-visible]:border-ring has-[[data-slot=input-group-control]:focus-visible]:ring-3 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/30 has-[[data-slot][aria-invalid=true]]:border-destructive has-[[data-slot][aria-invalid=true]]:ring-3 has-[[data-slot][aria-invalid=true]]:ring-destructive/20 has-[textarea]:rounded-2xl has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto dark:has-[[data-slot][aria-invalid=true]]:ring-destructive/40 has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-1.5 has-[>[data-align=inline-start]]:[&>input]:pl-1.5',
+        'group/input-group relative flex h-9 w-full min-w-0 items-center rounded-md border border-transparent bg-input/50 transition-[color,box-shadow,background-color] outline-none has-data-[align=block-end]:rounded-md has-data-[align=block-start]:rounded-md has-[[data-slot=input-group-control]:focus-visible]:border-ring has-[[data-slot=input-group-control]:focus-visible]:ring-3 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/30 has-[[data-slot][aria-invalid=true]]:border-destructive has-[[data-slot][aria-invalid=true]]:ring-3 has-[[data-slot][aria-invalid=true]]:ring-destructive/20 has-[textarea]:rounded-2xl has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto dark:has-[[data-slot][aria-invalid=true]]:ring-destructive/40 has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-1.5 has-[>[data-align=inline-start]]:[&>input]:pl-1.5',
         className,
       )}
       {...props}
@@ -62,12 +62,12 @@ function InputGroupAddon({
   );
 }
 
-const inputGroupButtonVariants = cva('flex items-center gap-2 rounded-full text-sm shadow-none', {
+const inputGroupButtonVariants = cva('flex items-center gap-2 rounded-sm text-sm shadow-none', {
   variants: {
     size: {
-      xs: "h-6 gap-1 rounded-xl px-1.5 [&>svg:not([class*='size-'])]:size-3.5",
+      xs: "h-6 gap-1 rounded-sm px-1.5 [&>svg:not([class*='size-'])]:size-3.5",
       sm: '',
-      'icon-xs': 'size-6 rounded-xl p-0 has-[>svg]:p-0',
+      'icon-xs': 'size-6 rounded-sm p-0 has-[>svg]:p-0',
       'icon-sm': 'size-8 p-0 has-[>svg]:p-0',
     },
   },
