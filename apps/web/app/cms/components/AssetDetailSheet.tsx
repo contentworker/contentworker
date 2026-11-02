@@ -307,7 +307,7 @@ export function AssetDetailSheet(props: {
                   cancelLabel="Keep editing"
                   onCancel={() => setConfirmOpen(null)}
                 >
-                  {/* The ink button: nothing stored is deleted, only this form's unsaved values. */}
+                  {/* The ink pill: nothing stored is deleted, only this form's unsaved values. */}
                   <Button
                     type="button"
                     size="sm"

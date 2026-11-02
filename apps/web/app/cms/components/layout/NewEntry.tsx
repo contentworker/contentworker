@@ -16,8 +16,8 @@ import { useContentTypesQuery } from '../../lib/queries';
  * content type's pages it is a link straight to that type's new entry; anywhere else it opens a
  * menu of the space's content types (or says there are none yet, with the way to make one).
  *
- * `look`: `header` is the header's button (ink, or an outline on Approvals and Workflows, where
- * deciding and building come first); `float` is a phone's floating button above the tab bar.
+ * `look`: `header` is the header's pill (ink, or an outline on Approvals and Workflows, where
+ * deciding and building come first); `float` is a phone's floating pill above the tab bar.
  */
 export function NewEntry({ look, quiet }: { look: 'header' | 'float'; quiet?: boolean }) {
   const { pathname } = useLocation();
@@ -28,12 +28,12 @@ export function NewEntry({ look, quiet }: { look: 'header' | 'float'; quiet?: bo
   const className =
     look === 'header'
       ? cn(
-          'hit-area inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 font-medium text-ui transition-[color,background-color,border-color]',
+          'hit-area inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-3 font-medium text-ui transition-[color,background-color,border-color]',
           quiet
             ? 'border border-input bg-input/30 text-foreground hover:bg-input/50'
             : 'bg-primary text-primary-foreground hover:bg-primary/90',
         )
-      : 'fixed right-[max(1rem,var(--safe-right))] bottom-[calc(var(--tabbar-h)+0.75rem)] z-30 inline-flex h-11 items-center gap-1.5 rounded-md bg-primary pr-4.5 pl-4 font-medium text-primary-foreground text-sm shadow-float md:hidden';
+      : 'fixed right-[max(1rem,var(--safe-right))] bottom-[calc(var(--tabbar-h)+0.75rem)] z-30 inline-flex h-11 items-center gap-1.5 rounded-full bg-primary pr-4.5 pl-4 font-medium text-primary-foreground text-sm shadow-float md:hidden';
   const icon = <Plus className={look === 'header' ? 'size-3.5' : 'size-4'} aria-hidden="true" />;
   const float = look === 'float' ? { 'data-float-action': '' } : {};
 
