@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { asset } from '../src/api/docs/schemas';
+import { asset } from '../src/api/docs/schemas/assets';
 import { comparable, interfaceBody, keyPaths, parseShape, zodShape } from './interface-shape';
 
 const here = dirname(fileURLToPath(import.meta.url));

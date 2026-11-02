@@ -36,7 +36,8 @@ Shared code lives in packages, never in another app:
 - `packages/platform`: env (`EdgeEnv`), config, `wireEdge` (`src/wire.ts`, the composition
   root), ids, metrics, queue messages, DO classes (`src/do/`) and Workflow clients.
 - `packages/http`: the Hono surface: routes (`src/api/routes/`), auth, OpenAPI, MCP
-  (`src/mcp/server.ts`) and the embedded MCP skills (`skills/`).
+  (`src/mcp/server.ts`, its tools one file per area in `src/mcp/tools/`) and the embedded MCP
+  skills (`skills/`). Management routes are one file per area in `src/api/routes/management/`.
 - `packages/test-kit` (in-memory store and fakes), `packages/security` (signed principal, roles),
   `packages/agent-runtime`, `packages/sdk/*` (public clients), `packages/design` + `packages/ui`
   (the "Ledger" design system).

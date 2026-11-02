@@ -1,0 +1,109 @@
+import {
+  duplicateEntry,
+  getEntry,
+  getReverseReferences,
+  purgeEntry,
+  restoreEntry,
+  trashEntry,
+  updateEntry,
+} from '@contentworker/application';
+import { assertWritableFields, authorizeContent, SCOPES } from '@contentworker/domain';
+import { Hono } from 'hono';
+import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
+import { doc } from '../../docs/openapi';
+import * as entryDocs from '../../docs/schemas/entries';
+import { parseBody, updateEntryBody } from '../../validation';
+import { BASE, entryAccess, scopeOf } from './shared';
+
+export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
+  const { ctx, blob } = deps;
+  const { guardEntry, authorizeEntryRead } = entryAccess(ctx);
+  const app = new Hono<AuthVars>();
+
+  // --- trash lifecycle ----------------------------------------------------
+  // Two deliberate steps: DELETE moves to the trash (recoverable), and only a
+  // trashed entry can be permanently deleted.
+  app.delete(
+    `${BASE}/entries/:id`,
+    doc('Entries', 'Move an entry to the trash', {
+      status: 200,
+      description:
+        'Unpublishes the entry first when it is live, so delivery stops serving it. ' +
+        'Idempotent. Restore it, or delete it permanently, from the trash.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      await guardEntry(c, c.req.param('id'), 'write');
+      return c.json(await trashEntry(ctx, scopeOf(c), c.req.param('id')));
+    },
+  );
+  app.post(
+    `${BASE}/entries/:id/restore`,
+    doc('Entries', 'Restore an entry from the trash', {
+      description: 'Comes back as a draft; re-publishing is a separate action.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      await guardEntry(c, c.req.param('id'), 'write');
+      return c.json(await restoreEntry(ctx, scopeOf(c), c.req.param('id')));
+    },
+  );
+  app.delete(
+    `${BASE}/entries/:id/permanent`,
+    doc('Entries', 'Permanently delete a trashed entry', {
+      status: 204,
+      description:
+        'Irreversible. Refuses with 409 while published entries still link to it, ' +
+        'unless ?force=true. Requires content:publish, not merely content:write.',
+    }),
+    // A harder gate than trashing: this is the only unrecoverable entry action.
+    requireScope(SCOPES.contentPublish),
+    async (c) => {
+      await guardEntry(c, c.req.param('id'), 'publish');
+      await purgeEntry(ctx, scopeOf(c), c.req.param('id'), {
+        force: c.req.query('force') === 'true',
+        ...(blob ? { blob } : {}),
+      });
+      return c.body(null, 204);
+    },
+  );
+  app.post(
+    `${BASE}/entries/:id/duplicate`,
+    doc('Entries', 'Duplicate an entry', {
+      ok: entryDocs.createdEntry,
+      status: 201,
+      description: 'Copies fields and taxonomy metadata into a new draft.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      await guardEntry(c, c.req.param('id'), 'read');
+      const created = await duplicateEntry(ctx, scopeOf(c), c.req.param('id'));
+      // Writing a copy is a write of that content type, not just a read.
+      authorizeContent(c.get('principal'), 'write', created.entry.contentTypeApiId);
+      return c.json(created, 201);
+    },
+  );
+
+  // "What links here": entries/assets that reference this entry.
+  app.get(`${BASE}/entries/:id/reverse-references`, requireScope(SCOPES.previewRead), async (c) => {
+    await authorizeEntryRead(c, c.req.param('id'));
+    return c.json({ items: await getReverseReferences(ctx, scopeOf(c), c.req.param('id')) });
+  });
+  app.put(
+    `${BASE}/entries/:id`,
+    doc('Entries', 'Save a new draft version', { body: updateEntryBody, ok: entryDocs.entry }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, updateEntryBody);
+      const principal = c.get('principal');
+      if (principal.contentGrants) {
+        const { entry } = await getEntry(ctx, scopeOf(c), c.req.param('id'));
+        authorizeContent(principal, 'write', entry.contentTypeApiId);
+        assertWritableFields(principal, entry.contentTypeApiId, body.fields ?? {});
+      }
+      return c.json(await updateEntry(ctx, scopeOf(c), c.req.param('id'), body.fields));
+    },
+  );
+
+  return app;
+}

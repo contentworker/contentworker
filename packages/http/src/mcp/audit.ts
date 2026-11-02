@@ -8,93 +8,20 @@ import type { Principal } from '@contentworker/domain';
  * action is `MCP <tool>` where REST's is `<METHOD> <route>`.
  *
  * Reads never write here (one writer per database: no per-request writes on read paths). A tool
- * is a write unless it is listed below, so a new tool is audited until someone decides otherwise.
+ * is a read when it declares so itself, with the MCP annotation `readOnlyHint: true` beside its
+ * schema; anything else is a write, so a new tool is audited until someone decides otherwise.
  */
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
-  'docs_list',
-  'docs_read',
-  'docs_search',
-  // Fetches oEmbed metadata and returns it; writes nothing in the space.
-  'embed_resolve',
-  'model_list_content_types',
-  'model_get_content_type',
-  'model_entry_counts',
-  'model_typescript',
-  'entries_suggest',
-  'entries_query',
-  'entries_get',
-  'entries_list_trashed',
-  'entries_list_versions',
-  'entries_diff_versions',
-  'content_search',
-  'content_semantic_search',
-  'content_related',
-  'content_duplicates',
-  'search_index_health',
-  'scheduler_status',
-  'generate_draft',
-  'entry_from_canvas',
-  'bulk_job_status',
-  'bulk_job_report',
-  'roles_list',
-  'role_presets_list',
-  'team_list',
-  'plugins_list',
-  'plugin_get_settings',
-  'import_sources',
-  'import_analyze',
-  'environment_export',
-  'environments_compare',
-  'environment_aliases_list',
-  'oauth_connections_list',
-  'webhooks_list',
-  'webhook_deliveries',
-  'functions_list',
-  'app_extensions_list',
-  'ai_actions_list',
-  'releases_list',
-  'releases_get',
-  'comments_list',
-  'tasks_list',
-  'workflow_list',
-  'workflow_versions',
-  'workflow_validate',
-  'workflow_copilot',
-  'workflow_run_list',
-  'workflow_run_get',
-  'workflow_task_list',
-  'taxonomy_list_tags',
-  'taxonomy_list_concepts',
-  'agent_schedule_list',
-  'agent_review_list',
-  'approvals_count',
-  'audit_log_list',
-  'assets_list',
-  'assets_search',
-  'asset_preview_list',
-  'asset_preview_get',
-  'asset_folders_list',
-  'asset_collections_list',
-  'asset_collections_get',
-  'asset_collection_assets_list',
-  'share_links_list',
-  'share_link_get',
-  'asset_zip_get',
-  'asset_zips_list',
-  'asset_renditions_list',
-  'asset_versions_list',
-  'asset_usage',
-  'asset_transform_url',
-  'asset_upload_parts',
-  'spaces_list',
-  'promotion_list',
-  'promotion_get',
-]);
+export function declaresReadOnly(config: unknown): boolean {
+  return (
+    (config as { annotations?: { readOnlyHint?: unknown } } | undefined)?.annotations
+      ?.readOnlyHint === true
+  );
+}
 
 type Args = Record<string, unknown>;
 
 /** Tools that write only when asked to; otherwise they return a proposal or a report. */
-const WRITES_WHEN: Readonly<Record<string, (args: Args) => boolean>> = {
+export const WRITES_WHEN: Readonly<Record<string, (args: Args) => boolean>> = {
   entry_translate: (a) => a.apply === true,
   entry_summarize: (a) => a.apply === true,
   entry_autofill_field: (a) => a.apply === true,
@@ -107,9 +34,12 @@ const WRITES_WHEN: Readonly<Record<string, (args: Args) => boolean>> = {
   environment_clone: (a) => a.dryRun !== true,
 };
 
-/** Whether a call to `tool` with `args` changes anything, and so belongs in the audit trail. */
-export function toolMutates(tool: string, args: Args): boolean {
-  if (READ_ONLY_TOOLS.has(tool)) return false;
+/**
+ * Whether a call to `tool` with `args` changes anything, and so belongs in the audit trail.
+ * `readOnly` is the tool's own `readOnlyHint` (`declaresReadOnly`).
+ */
+export function toolMutates(tool: string, args: Args, readOnly: boolean): boolean {
+  if (readOnly) return false;
   return WRITES_WHEN[tool]?.(args) ?? true;
 }
 
@@ -127,6 +57,8 @@ export interface ToolAuditInput {
   readonly args: Args;
   /** The arguments the tool's schema declares, to tell a defaulted scope from no scope. */
   readonly declared: ReadonlySet<string>;
+  /** The tool declares `readOnlyHint: true`: a read, never audited. */
+  readonly readOnly: boolean;
   readonly principal: Principal;
   readonly defaultSpace: string;
   readonly defaultEnvironment: string;
@@ -140,7 +72,7 @@ export interface ToolAuditInput {
  */
 export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Promise<void> {
   const { tool, args, declared } = input;
-  if (!toolMutates(tool, args)) return;
+  if (!toolMutates(tool, args, input.readOnly)) return;
   const spaceId = declared.has('space')
     ? (str(args.space) ?? input.defaultSpace)
     : str(args.spaceId);

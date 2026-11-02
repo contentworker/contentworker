@@ -35,7 +35,8 @@ import {
   throttleAuth,
 } from '../auth';
 import { doc } from '../docs/openapi';
-import { deliveredAsset, deliveredAssetPage, publishedEntryList } from '../docs/schemas';
+import { deliveredAsset, deliveredAssetPage } from '../docs/schemas/assets';
+import { publishedEntryList } from '../docs/schemas/entries';
 import { parseDeliveredAssetQuery } from '../query';
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({

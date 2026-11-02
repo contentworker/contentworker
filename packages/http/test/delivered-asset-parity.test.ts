@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import { describe, expect, it } from 'vitest';
-import { deliveredAsset } from '../src/api/docs/schemas';
+import { deliveredAsset } from '../src/api/docs/schemas/assets';
 import { comparable, interfaceBody, parseShape, zodShape } from './interface-shape';
 
 const here = dirname(fileURLToPath(import.meta.url));

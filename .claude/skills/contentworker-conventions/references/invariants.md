@@ -29,15 +29,21 @@ adapters per request. The `hexagonal-guardian` agent reviews the rest.
 ## Both surfaces
 
 **Rule.** Every capability is a use-case in `@contentworker/application`, exposed through both
-the HTTP API (`packages/http/src/api/routes/*.ts`) and MCP (`packages/http/src/mcp/server.ts`),
-each behind the same authorization.
+the HTTP API (`packages/http/src/api/routes/`, management routes one file per area in
+`routes/management/<area>.ts`) and MCP (one file per area in `packages/http/src/mcp/tools/<area>.ts`,
+registered by `server.ts`), each behind the same authorization.
 
 **Why.** An AI agent must never be able to do what a human API client can't (or skip a check a
-client goes through), and the reverse.
+client goes through), and the reverse. One file per area keeps two PRs that each add a capability
+out of each other's way: neither appends to a shared file, import block or list. A new area adds
+its own file and one line in `management.ts`'s `AREAS` or `server.ts`'s `TOOL_AREAS`.
 
 **Check.** For a new export in `packages/application/src`, grep its name in
-`packages/http/src/api/routes` and `packages/http/src/mcp/server.ts`; both must call it. Tests:
-`packages/http/test/api/` and `packages/http/test/mcp/`.
+`packages/http/src/api/routes` and `packages/http/src/mcp/tools`; both must call it. A tool
+that changes nothing declares `annotations: { readOnlyHint: true }`: the audit trail reads that
+annotation, so a missing one only over-audits, and a wrong one hides a write
+(`packages/http/test/mcp/tool-audit.test.ts`). Tests: `packages/http/test/api/` and
+`packages/http/test/mcp/`.
 
 ## Scope and determinism
 

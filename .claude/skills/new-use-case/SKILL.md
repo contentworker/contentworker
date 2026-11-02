@@ -38,13 +38,21 @@ every capability is one application use-case exposed through **both** surfaces. 
    test in `packages/db/test/`. A schema change is a migration: `d1-migration` skill.
 
 5. **Both surfaces** in `packages/http`:
-   - Route in `packages/http/src/api/routes/{management,delivery,preview,team,workflows}.ts`:
-     `requireScope(<scope>)` against the route's `:space`, `parseBody` with a zod schema, call the
-     use-case, serialize. Thin; no business logic. No trailing-z paths.
+   - Route in its area's file, `packages/http/src/api/routes/management/<area>.ts` (or
+     `routes/{delivery,preview,team,workflows}.ts`): `requireScope(<scope>)` against the route's
+     `:space`, `parseBody` with a zod schema, call the use-case, serialize. Thin; no business
+     logic. No trailing-z paths. A new area adds its own file and one line in `management.ts`'s
+     `AREAS` (mount order is match order); import only the use-cases the file uses.
    - Describe it with `doc(tag, summary, { body, ok, … })` (`packages/http/src/api/docs/openapi.ts`),
      passing the **same** zod schema the handler parses with, so the OpenAPI document and the docs
-     site's REST reference stay true.
-   - MCP tool in `packages/http/src/mcp/server.ts` calling the _same_ use-case with the same scope.
+     site's REST reference stay true. Response schemas live in
+     `packages/http/src/api/docs/schemas/<area>.ts`; import them from that file
+     (`import * as assetDocs from '../../docs/schemas/assets'`), never through a barrel.
+   - MCP tool in its area's file, `packages/http/src/mcp/tools/<area>.ts` (`register<Area>Tools(server, t)`,
+     closing over the `ToolContext` `t`), calling the _same_ use-case with the same scope. A new
+     area adds its own file and one line in `server.ts`'s `TOOL_AREAS`. A tool that changes
+     nothing declares `annotations: { readOnlyHint: true }` (or `READ_ONLY` from `tools/shared.ts`):
+     that is what exempts it from the audit trail; every other tool is audited.
    - Tests: `packages/http/test/api/` and `packages/http/test/mcp/`.
    - A new scope goes in `SCOPES` (`packages/domain/src/auth/auth.ts`); the docs scope reference
      renders from it.

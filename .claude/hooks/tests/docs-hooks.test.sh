@@ -30,6 +30,8 @@ check "map lookup is exact" "" "$(printf 'packages/domain/src/workflow/nodes.tsx
 check "a migration names the schema reference" "docs/development.md" "$(edit s7 "$root/packages/db/migrations/0001_init.sql")"
 check "app.css edit names the design tokens" "packages/design/src/tokens.ts" "$(edit s8 "$root/apps/web/app/app.css")"
 check "the MCP server names the MCP guide" "apps/docs/src/content/guides/mcp.mdx" "$(edit s9 "$root/packages/http/src/mcp/server.ts")"
+check "a management area's routes name the REST reference" "apps/docs/src/content/reference/rest-api.mdx" "$(edit s11 "$root/packages/http/src/api/routes/management/assets.ts")"
+check "an area's MCP tools name the MCP guide" "apps/docs/src/content/guides/mcp.mdx" "$(edit s12 "$root/packages/http/src/mcp/tools/assets.ts")"
 check "a wrangler config names the configuration page" "docs/configuration.md" "$(edit s10 "$root/apps/engine/wrangler.jsonc")"
 
 # ── block-generated: generated files are denied, everything else allowed ─────

@@ -6,8 +6,9 @@ scopes and validation as the HTTP API.
 The MCP server is served by the api Worker, at **`/mcp`** (`https://api.<domain>/mcp`, and on the
 admin origin through the web gateway).
 It is a **stateless streamable-HTTP** server built on the v2 TypeScript SDK
-(`@modelcontextprotocol/server`): tools are defined in `packages/http/src/mcp/server.ts`, and one
-shared handler (`packages/http/src/mcp/http.ts`, `createHandler`) serves both protocol eras:
+(`@modelcontextprotocol/server`): tools are defined one file per area in
+`packages/http/src/mcp/tools/` and registered by `buildServer` (`packages/http/src/mcp/server.ts`),
+and one shared handler (`packages/http/src/mcp/http.ts`, `createHandler`) serves both protocol eras:
 
 - **2026-07-28** clients send self-contained requests with no `initialize` handshake. A fresh
   client makes its first call in two requests instead of four, and it caches `tools/list` for
@@ -33,14 +34,15 @@ text is REST's 422 body (`toHttpError`): `{ "error": { "code": "validation_faile
 (`body[0].heading`). A successful call that changes something is recorded in the audit trail
 (`auditToolCall`, `packages/http/src/mcp/audit.ts`) with the shape REST's `auditMiddleware` uses:
 the actor (`auditActor`), action `MCP <tool>`, the space, the resolved environment when the tool
-takes one, `targetId` from `id` / `apiId` / `alias`, status 200. A tool is a write unless it is in
-`READ_ONLY_TOOLS`; a propose-or-apply tool is audited only when it applies (`apply: true`,
+takes one, `targetId` from `id` / `apiId` / `alias`, status 200. A tool is a write unless it
+declares itself a read, with the annotation `readOnlyHint: true` beside its schema; a
+propose-or-apply tool is audited only when it applies (`apply: true`,
 `createTasks: true`, no `dryRun`). Reads never write (one writer per database), and a failed audit
 write never fails the call.
 
 **Per-request cost.** Each request builds a server bound to the caller's principal, so building it
 has to be cheap. Every tool's Zod input schema, and its JSON Schema conversion, is built once per
-isolate and shared (`toolSchema` in `packages/http/src/mcp/server.ts`). Building a server takes about
+isolate and shared (`toolSchema` in `packages/http/src/mcp/tools/shared.ts`). Building a server takes about
 0.1 ms; without the cache it took about 2 ms, and every `tools/list` added another millisecond. As
 a consequence, **a tool's input schema must never depend on the principal or deps**;
 authorization belongs in the handler. `preloadSchemas()` runs at module scope, so the SDK's own
@@ -58,9 +60,11 @@ an ordinary API key — so an agent can still never exceed the scopes the approv
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 ## Tools
 
-The server exposes **185 tools**, one per major Management/Delivery capability (the canonical list
-is the `registerTool` calls in `packages/http/src/mcp/server.ts`). Each calls `authorize` before
-delegating to the same use-case as the HTTP route.
+The server exposes **186 tools**, one per major Management/Delivery capability (the canonical list
+is the `registerTool` calls in `packages/http/src/mcp/tools/<area>.ts`, registered in `TOOL_AREAS`
+order). Each calls `authorize` before delegating to the same use-case as the HTTP route. Every
+tool that changes nothing carries `readOnlyHint: true`, which is also what keeps it out of the
+audit trail.
 
 | Area          | Tools                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -96,8 +100,8 @@ space-wide with `allEnvironments: true`.
 jobs; `environment_delete` is irreversible, refuses `main` and any environment an alias points at,
 and needs `confirm` to repeat the environment id ([Backup & restore](./backup-and-restore.md)).
 
-The workflow tools declare MCP tool annotations (`readOnlyHint` on reads, validate and the
-copilot; `destructiveHint` on `workflow_run_cancel`; `idempotentHint` where a repeat changes
+The workflow tools declare the full set of MCP tool annotations (`readOnlyHint` on reads, validate
+and the copilot; `destructiveHint` on `workflow_run_cancel`; `idempotentHint` where a repeat changes
 nothing), and run the same use-cases and scope checks as the `…/workflows`, `…/workflow-runs` and
 `…/workflow-tasks` routes.
 

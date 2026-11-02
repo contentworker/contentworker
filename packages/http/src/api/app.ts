@@ -17,7 +17,7 @@ import type { AuthDeps, AuthRateLimit } from './auth';
 import { createApiHasher } from './auth';
 import { describeDelivery } from './docs/delivery-docs';
 import { doc, mountDocs } from './docs/openapi';
-import { health, ready } from './docs/schemas';
+import { health, ready } from './docs/schemas/health';
 import { onError } from './http';
 import { oauthEnabled, oauthRoutes } from './oauth/routes';
 import {

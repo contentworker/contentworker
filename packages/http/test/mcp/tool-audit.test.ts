@@ -19,7 +19,7 @@ import {
 } from '@contentworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { READ_ONLY_TOOLS, toolMutates } from '../../src/mcp/audit';
+import { toolMutates, WRITES_WHEN } from '../../src/mcp/audit';
 import type { McpDeps } from '../../src/mcp/deps';
 import { buildServer } from '../../src/mcp/server';
 
@@ -184,21 +184,39 @@ describe('MCP tool audit', () => {
   });
 
   it('audits a propose-or-apply tool only when it applies', () => {
-    expect(toolMutates('entry_translate', { id: 'e1', targetLocale: 'de' })).toBe(false);
-    expect(toolMutates('entry_translate', { id: 'e1', apply: true })).toBe(true);
-    expect(toolMutates('environment_import', { dryRun: true })).toBe(false);
-    expect(toolMutates('environment_import', {})).toBe(true);
-    expect(toolMutates('entry_audit', { id: 'e1' })).toBe(false);
-    expect(toolMutates('entry_audit', { id: 'e1', createTasks: true })).toBe(true);
+    expect(toolMutates('entry_translate', { id: 'e1', targetLocale: 'de' }, false)).toBe(false);
+    expect(toolMutates('entry_translate', { id: 'e1', apply: true }, false)).toBe(true);
+    expect(toolMutates('environment_import', { dryRun: true }, false)).toBe(false);
+    expect(toolMutates('environment_import', {}, false)).toBe(true);
+    expect(toolMutates('entry_audit', { id: 'e1' }, false)).toBe(false);
+    expect(toolMutates('entry_audit', { id: 'e1', createTasks: true }, false)).toBe(true);
     // A tool nobody classified is audited: the trail errs toward completeness.
-    expect(toolMutates('some_new_tool', {})).toBe(true);
+    expect(toolMutates('some_new_tool', {}, false)).toBe(true);
   });
 
-  it('classifies only tools that exist, and every tool annotated read-only as a read', async () => {
+  it('exempts exactly the tools that declare readOnlyHint, and audits every other', async () => {
     const { tools } = await client.listTools();
-    const names = new Set(tools.map((t) => t.name));
-    expect([...READ_ONLY_TOOLS].filter((t) => !names.has(t))).toEqual([]);
-    const annotatedReads = tools.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name);
-    expect(annotatedReads.filter((t) => !READ_ONLY_TOOLS.has(t))).toEqual([]);
+    for (const tool of tools) {
+      const read = tool.annotations?.readOnlyHint === true;
+      // A read is exempt whatever it is called with; a write is audited by default.
+      expect(toolMutates(tool.name, { apply: true, createTasks: true }, read), tool.name).toBe(
+        !read,
+      );
+      if (!read && !(tool.name in WRITES_WHEN)) {
+        expect(toolMutates(tool.name, {}, read), tool.name).toBe(true);
+      }
+    }
+    // The reads are a real set, not an annotation nobody declares.
+    const reads = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name);
+    expect(reads).toEqual(expect.arrayContaining(['entries_get', 'docs_list', 'audit_log_list']));
+    expect(reads).not.toContain('entries_create');
+  });
+
+  it('classifies only tools that exist, and never a read as propose-or-apply', async () => {
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t]));
+    const conditional = Object.keys(WRITES_WHEN);
+    expect(conditional.filter((t) => !byName.has(t))).toEqual([]);
+    expect(conditional.filter((t) => byName.get(t)?.annotations?.readOnlyHint)).toEqual([]);
   });
 });

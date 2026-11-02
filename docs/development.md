@@ -187,8 +187,10 @@ workerd-only code, and the unit of work) are in `AGENTS.md`; see also
    test-kit in-memory store, and add a contract test in `packages/db/test/`.
 4. Test it in `packages/application/test/<capability>.test.ts` with `@contentworker/test-kit`
    fakes. Name tests for the capability, never for a roadmap phase.
-5. Expose it on **both** surfaces: an HTTP route in `packages/http/src/api/routes/*` (with its
-   OpenAPI doc) and an MCP tool in `packages/http/src/mcp/server.ts`; or an event handler in
+5. Expose it on **both** surfaces: an HTTP route in its area's file,
+   `packages/http/src/api/routes/management/<area>.ts` (with its OpenAPI doc, response schemas in
+   `packages/http/src/api/docs/schemas/<area>.ts`), and an MCP tool in
+   `packages/http/src/mcp/tools/<area>.ts`; a new area adds its own file. Or an event handler in
    `consumeEvent` when it is reactive.
 
 ## Changing the database schema

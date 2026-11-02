@@ -24,7 +24,7 @@ maintainer docs in `docs/`.
 3. **Coverage, the other direction.** Walk the source surfaces in
    `.claude/skills/docs-sync/references/surface-map.tsv` and ask what a reader would need that no
    page says: a new route in `packages/http/src/api/routes`, a new MCP tool in
-   `packages/http/src/mcp/server.ts`, a new table in `packages/db/migrations`, a new binding or var
+   `packages/http/src/mcp/tools/`, a new table in `packages/db/migrations`, a new binding or var
    in an `apps/*/wrangler.jsonc` or `EdgeEnv`, a new registry field in `scripts/fleet.ts`. Also check
    for source files that should be in the map but aren't.
 4. **Repo docs.** Compare `README.md`, `AGENTS.md` (the rules) and `ROADMAP.md` with the docs; they
