@@ -300,7 +300,8 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   bar's Approvals tab (a `wait` dot on the rail): the shell's one call for attention. It counts
   the inbox's own two lists (`cms/lib/approvals.ts`), so deciding an item updates it; it also
   refreshes every minute while the tab is visible. The link's name carries it for screen readers
-  ("Approvals, 3 waiting"). Approvals is behind the `approvals` feature (`cms/lib/features.tsx`,
+  ("Approvals, 3 waiting"); on the tab the pill follows the label in reading order (it is drawn
+  over the icon), so the visible "Approvals 3" sits inside that name for voice control. Approvals is behind the `approvals` feature (`cms/lib/features.tsx`,
   on): off, it leaves the sidebar, the tab bar, the palette, the shortcuts list and its G-letter.
 - **Main** pads its foot by `--tabbar-h` and lays every page in `Body` (the page width and
   gutters). Never hard-code the bar heights.
@@ -442,14 +443,22 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   (Share, outline, under its title) in tabs (`Tabs`, the row scrolling rather than squeezing a word
   on a phone): **Details** (a
   hosted video's status, the focal point, alt text and tags; Save metadata, the footer's one
-  button, shows on this tab only), **Versions**, **Usage** (the entries using it), **Renditions**
+  button, shows on this tab only). The focal point is one control for pointer and keyboard: click
+  to place it, or Enter (the middle) and the arrow keys (1%, 10% with Shift); its name says where
+  it is ("Focal point: 30% across, 60% down"). Its marker is an ink ring (`foreground`) on a paper
+  halo (`background`) with an ink dot, so one of the two stands off any picture in either theme,
+  never a fixed white. Generate alt text and Suggest tags are ghost `xs` buttons led by the AI
+  mark in `text-ai` (`ComposeLoader` at rest, composing "Generating…"/"Suggesting…" while the
+  model works, the other disabled meanwhile); no emoji, **Versions**, **Usage** (the entries using it), **Renditions**
   (the transform preview; a non-image says it is delivered as uploaded) and **Rights**; what
   ingest found sits above the tabs, in sight from any. **Versions** (`assets/AssetVersions.tsx`)
   is a list newest first: the version in mono, the file name, its size, when and by whom (a
   teammate by name when the team is readable, else "a teammate", "an API key"; never an id), and
   outline badges for Current and "Restored from v1" beside the `ok` Published stamp on the file
   Delivery serves. Replace file (outline, a file picker) says "Uploading “x”…" in a status line
-  while the signed PUT and commit run, then a toast names the new version; a failure is a
+  while the signed PUT and commit run (past 100 MiB the file goes in parts: a `Progress` of bytes
+  stored with the upload queue's "120 MB of 400 MB · 3 of 50 parts" under it, and a ghost Cancel
+  upload that gives the upload up and keeps the current file), then a toast names the new version; a failure is a
   destructive Alert in place, and a lost race (another replace committed first) says so and
   reloads the list. A hosted video's Replace file is disabled, its reason written under it. Each
   older version has a ghost Restore that asks in place ("Restore version 1?", ink pill, since
@@ -490,7 +499,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   51 assets; 2 failed"), the job's status stamp (a `wait` "Finished with failures" when any
   failed, never a green done), the upload queue's `Progress` of batches (batches are what
   complete) and "this keeps running if you close the tab"; the bar is disabled while it runs,
-  and freed with a toast if the job can no longer be followed (a refused poll).
+  and freed with a toast if the job can no longer be followed (a refused poll). A ghost Stop asks
+  in place ("Stop this bulk job?", Keep running focused, destructive "Stop job"); stopped, the
+  line reads "Stopped: Published 25 assets", the stamp is Cancelled, "Stopped after 1 of 2
+  batches: 25 of 51 assets handled; the other 26 were left as they were" sits under the bar, and
+  the selection stays for what never ran. A zip has no stop (the server can't cancel one).
   When it ends the failures are read from the job's report and named in the same Alert by the
   asset's title or file name (the library's name for one a failed batch left unnamed), still
   selected; a role that can't read the report gets the count

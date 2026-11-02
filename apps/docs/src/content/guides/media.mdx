@@ -38,7 +38,7 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/published
   -H "Authorization: Bearer $CMA"
 ```
 
-Send every header in `upload.headers` with the `PUT`. A new asset is a draft until you publish
+Send every header in `upload.headers` with the `PUT`. An upload URL stores its file once: a second `PUT` through it, even within its 15 minutes, is a `412` and changes nothing (a retry of an upload that never arrived still stores). A new asset is a draft until you publish
 it, and `DELETE …/assets/{id}/published` unpublishes it. Title and description are localized maps
 set at creation, and an optional `folderId` files the asset in a folder. MCP creates an asset with
 `asset_upload_start` (below); it can also list, file, archive and delete assets, replace their
@@ -95,7 +95,8 @@ Click an asset in **Assets** to open its details. The metadata is:
 | `fields`      | Free-form custom values                                                    |
 
 In the admin, set **Alt text** for the current locale, click the image to place the **Focal
-point**, choose **Tags**, and press **Save metadata**. Over the API:
+point** (or focus the image, press Enter, and move the point with the arrow keys; Shift moves it
+further), choose **Tags**, and press **Save metadata**. Over the API:
 
 ```sh
 curl -s -X PATCH "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/metadata" \
@@ -108,7 +109,7 @@ carry it into delivery. The MCP tool is `asset_set_metadata`.
 
 ### Generate alt text and tags with AI
 
-For images, **✨ Generate** beside **Alt text** and **✨ Auto-tag** beside **Tags** return
+For images, **Generate alt text** beside **Alt text** and **Suggest tags** beside **Tags** return
 suggestions you review before saving (`POST …/assets/{id}/alt-text` and `…/auto-tag`; the MCP
 tools are `asset_generate_alt_text` and `asset_auto_tag`). Both work from the file name, title and
 description (and a `context` hint for alt text), not from the image itself, so give the asset a
@@ -265,10 +266,18 @@ curl -s "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/file/commit" \
 ```
 
 The commit is refused with `422` if nothing was uploaded, and `409` if someone else replaced the
-file first. A published asset keeps delivering the file it was published with until you publish
+file first. Starting a replace supersedes one started earlier and not committed.
+
+A replacement past 100 MiB goes in parts, as a [large upload](#upload-a-large-file) does: `POST
+…/assets/{id}/file/uploads` with `fileName`, `contentType` and `size` returns `{ asset, version,
+upload: { uploadId, partSize, partCount } }`; sign, `PUT` and complete the parts at
+`…/assets/{id}/uploads/{uploadId}/…`, and completing commits the new version (no separate commit;
+`409` if another replace or restore took that version first). Aborting keeps the asset's file. In
+the admin, **Replace file** does this by itself for a large file, showing the bytes stored and a
+**Cancel upload**. A published asset keeps delivering the file it was published with until you publish
 it again; then the new file goes out under new URLs and the old ones stop. `GET
 …/assets/{id}/versions` lists the versions, and `POST …/assets/{id}/versions/{n}/restore` restores
-one (`content:write`). The MCP tools are `asset_replace_file`, `asset_commit_file`,
+one (`content:write`). The MCP tools are `asset_replace_file`, `asset_replace_file_upload`, `asset_commit_file`,
 `asset_versions_list` and `asset_restore_version`.
 
 ## Rights, expiry and embargo

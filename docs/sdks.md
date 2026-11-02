@@ -268,7 +268,9 @@ cma.assets.create({ fileName, contentType })          // → { asset, upload } (
 cma.assets.list(query) / .get(id) / .search({ q, kind?, tag?, folder?, status?, limit? }) / .setMetadata(id, patch) / .usage(id) / .archive(id) / .restore(id) / .delete(id) / .move(ids, folderId) / .reingest(id) / .reindex({ all? })
 cma.assets.folders.list() / .create({ name, parentId }) / .update(id, changes) / .delete(id)
 cma.assets.publish(id) / .unpublish(id)
-cma.assets.replaceFile(id, { fileName, contentType })  // → { asset, upload, commit }; PUT, then .commitFile(id, commit)
+cma.assets.replaceFile(id, { fileName, contentType, body }, opts?) // any size: one PUT + commit, or parts past 100 MiB → the asset at its new version
+cma.assets.startReplace(id, { fileName, contentType }) // → { asset, upload, commit }; PUT, then .commitFile(id, commit)
+cma.assets.uploads.startReplace(id, { fileName, contentType, size }) // multipart replace; uploads.complete commits it
 cma.assets.versions(id) / .restoreVersion(id, version) / .setRights(id, rights)
 cma.assets.bulk({ action: 'move' | 'tag' | 'publish' | 'unpublish' | 'archive', ids, … }) // → BulkJob
 cma.bulkJobs.list() / .get(id) / .report(id) / .cancel(id)

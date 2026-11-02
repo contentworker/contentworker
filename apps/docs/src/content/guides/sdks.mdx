@@ -143,7 +143,8 @@ a server: a Management key never belongs in a browser or app bundle.
 `cma.assets.upload({ fileName, contentType, body }, { onProgress, concurrency })` uploads a file of any size as a new draft:
 one signed upload up to 100 MiB, a multipart upload above it. It retries each part on its own,
 sends `concurrency` parts at once (default 4) and calls `onProgress` after each part; a failed or aborted
-upload is aborted on the server too. `cma.assets.collections`, `cma.assets.shareLinks` and
+upload is aborted on the server too. `cma.assets.replaceFile(id, { fileName, contentType, body })`
+replaces an asset's file the same way, whatever its size, and returns the asset at its new version. `cma.assets.collections`, `cma.assets.shareLinks` and
 `cma.assets.zips` wrap the collection, share-link and zip routes, and a Delivery client reads a
 collection's published assets with `client.getCollection(id, { limit, cursor, locale })`.
 
