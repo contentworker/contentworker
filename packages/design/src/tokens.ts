@@ -166,8 +166,9 @@ function starlightBlock(scheme: Scheme): string[] {
     ['--sl-color-gray-5', p.rule],
     ['--sl-color-gray-6', p.muted],
     ['--sl-color-gray-7', p.secondary],
-    // The brand accent: focus, the current page marker, buttons and selection. Links keep the
-    // work blue (`--sl-color-text-accent`), as in the admin.
+    // The brand accent: focus, the current page marker and selection, never a button fill
+    // (brand.css keeps primary buttons ink). Links keep the work blue (`--sl-color-text-accent`),
+    // as in the admin.
     ['--sl-color-accent', p.brand],
     ['--sl-color-accent-high', mix(p.brand, 72, p.ink)],
     ['--sl-color-accent-low', mix(p.brand, 14, p.paper)],

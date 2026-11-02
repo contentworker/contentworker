@@ -994,7 +994,7 @@
     @apply mt-1;
   }
   .rich-text-editor .selectedCell {
-    background-color: color-mix(in oklch, var(--link) 12%, transparent);
+    background-color: color-mix(in oklch, var(--brand) 22%, transparent);
   }
   .rich-text-editor p.is-editor-empty:first-child::before {
     content: attr(data-placeholder);
