@@ -46,7 +46,7 @@ export interface ImageSource {
  *
  * ```tsx
  * const source = imageSource(asset, { width: 320, dpr: PixelRatio.get() });
- * {source && <Image source={source} alt={localizedText(asset.altText) ?? ''} />}
+ * {source && <Image source={source} alt={imageProps(asset)?.alt ?? ''} />}
  * ```
  */
 export function imageSource(

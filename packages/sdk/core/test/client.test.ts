@@ -291,6 +291,18 @@ describe('assets', () => {
     expect(seen).toHaveLength(2);
   });
 
+  it('treats a starting cursor that comes back as a repeat, without yielding its page twice', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch(() => ({ items: [image], total: 1, nextCursor: 'c' })),
+    });
+    const seen: string[] = [];
+    await expect(async () => {
+      for await (const asset of client.iterateAssets({ cursor: 'c' })) seen.push(asset.id);
+    }).rejects.toThrow(/cursor c twice/);
+    expect(seen).toHaveLength(1);
+  });
+
   it('iterates a collection’s members across pages, in its order', async () => {
     const calls: string[] = [];
     const client = createDeliveryClient({

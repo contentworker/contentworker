@@ -41,7 +41,8 @@ describe('<Image>', () => {
     const img = render(createElement(Image, { asset, width: 400, locale: 'de-DE' }));
     expect(img?.getAttribute('src')).toBe(asset.srcset[1]?.url);
     expect(img?.getAttribute('srcset')).toBe(
-      `${base}/w320/hero.jpg?fm=auto 320w, ${base}/w640/hero.jpg?fm=auto 640w`,
+      // The image (1000px) is wider than the ladder's last step, so the original tops it.
+      `${base}/w320/hero.jpg?fm=auto 320w, ${base}/w640/hero.jpg?fm=auto 640w, ${base}/o/hero.jpg 1000w`,
     );
     expect(img?.getAttribute('sizes')).toBe('(max-width: 400px) 100vw, 400px');
     expect([img?.getAttribute('width'), img?.getAttribute('height')]).toEqual(['400', '200']);

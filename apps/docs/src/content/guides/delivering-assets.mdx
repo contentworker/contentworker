@@ -248,7 +248,7 @@ attributes of an `<img>`; `<Image>` (React, `@contentworker/sdk-web`), `<CwImage
 | ----------- | --------------------------------------------------------------------------------------------------- |
 | `sizes`     | The `sizes` attribute. Default `(max-width: {width}px) 100vw, {width}px` with `width`, else `100vw` |
 | `width`     | The width it renders at: `src` is the ladder step at or above it, and `width`/`height` scale to it  |
-| `rendition` | Serve that rendition as the only `src` (no `srcset`, no `height`); ignored if the space lacks it   |
+| `rendition` | Serve that rendition as the only `src`: no `srcset`, and only `width` if you gave one; ignored if the space lacks it |
 | `locale`    | The locale to take alt text from when the asset was fetched without `?locale=`                     |
 | `priority`  | For the image that paints first: `loading="eager"` and `fetchpriority="high"` instead of lazy      |
 
@@ -258,7 +258,8 @@ thumbnail. A hosted video gives its `video.thumbnailUrl` as `src`. Every URL is 
 returned, never one it built or extended; a URL that isn't `http(s)` or relative is dropped.
 
 **`srcset` and `sizes`, or `<picture>`.** The width ladder is one image at several widths, which
-is what `srcset` with `w` descriptors is for: the browser takes `sizes` (how wide the image is in
+is what `srcset` with `w` descriptors is for (an image wider than the ladder's last step below its
+own width gets its original as the top candidate): the browser takes `sizes` (how wide the image is in
 your layout), multiplies by the screen's density and fetches the smallest step that covers it.
 The steps already negotiate AVIF or WebP (`?fm=auto`), so `<picture>` with `type` sources adds
 nothing for format. Use `<picture>` for art direction, a different crop at a breakpoint: a
@@ -278,8 +279,9 @@ don't, to stay free of dependencies.
 
 **Alt text.** `alt` is the asset's alt text, else its title, else empty. Empty marks the image
 decorative, so screen readers skip it: write alt text for any image that carries meaning. With a
-`locale`, only that locale's text is used; without one, an asset fetched without `?locale=` gives
-its first locale's. An `alt` you pass to the components wins.
+`locale`, only that locale's text is used. Without one, an asset fetched without `?locale=` gives
+the first non-empty value in its map, which may be another language: fetch with `?locale=` or pass
+`locale`. An `alt` you pass to the components wins.
 
 ```tsx
 // React
@@ -314,11 +316,11 @@ const { data } = useAsset(() => props.id, { locale: 'en-US' });
 ```tsx
 // React Native
 import { Image, PixelRatio } from 'react-native';
-import { imageSource, localizedText } from '@contentworker/sdk-react-native';
+import { imageProps, imageSource } from '@contentworker/sdk-react-native';
 
 const source = imageSource(asset, { width: 320, dpr: PixelRatio.get() });
 // { uri: the step for 320 × dpr, width: 320, height: from the aspect ratio }
-{source && <Image source={source} alt={localizedText(asset.altText) ?? ''} />}
+{source && <Image source={source} alt={imageProps(asset)?.alt ?? ''} />}
 ```
 
 `imageSource(asset, { width, dpr, rendition })` gives the rendition, else the ladder step at or

@@ -85,9 +85,9 @@ export function imageProps(
     const named = Object.hasOwn(asset.renditions, opts.rendition)
       ? safeUrl(asset.renditions[opts.rendition])
       : undefined;
-    // A rendition's own size isn't in the payload (it may crop to another aspect), so it gets no
-    // `width`/`height` here: the caller who chose it knows them.
-    if (named) return { src: named, ...common };
+    // A rendition's own size isn't in the payload (it may crop to another aspect), so it keeps
+    // only the target `width`, never a `height` from the original's aspect ratio.
+    if (named) return { src: named, ...(opts.width ? { width: opts.width } : {}), ...common };
   }
 
   // A step whose width isn't a positive integer, or whose URL has whitespace or ends in a comma,
@@ -99,6 +99,13 @@ export function imageProps(
       safeUrl(s.url) !== undefined &&
       !/\s|,$/.test(s.url),
   );
+  // The ladder stops at the last step below the image's own width (a 1900px image tops out at
+  // 1280), so the original, a payload URL too, is the candidate past it.
+  const top = ladder[ladder.length - 1];
+  const original = safeUrl(asset.url);
+  if (top && original && !/\s|,$/.test(original) && asset.width && asset.width > top.width) {
+    ladder.push({ width: asset.width, url: original });
+  }
   const src = safeUrl(pickStep(ladder, opts.width) ?? asset.url);
   if (!src) return undefined;
   if (ladder.length === 0) return { src, ...size, ...common };

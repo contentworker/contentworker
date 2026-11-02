@@ -9,13 +9,14 @@ npm install @contentworker/sdk-react-native
 
 ```tsx
 import { Image, PixelRatio } from 'react-native';
-import { imageSource, localizedText } from '@contentworker/sdk-react-native';
+import { imageProps, imageSource } from '@contentworker/sdk-react-native';
 
 // The width step at or above 320 × the screen's density, sized 320 dp wide with the image's
 // aspect ratio; a hosted video gives its thumbnail, a document undefined.
 const source = imageSource(asset, { width: 320, dpr: PixelRatio.get() });
 {
-  source && <Image source={source} alt={localizedText(asset.altText) ?? ''} />;
+  // alt: the alt text, else the title, else '' (decorative), as on the web.
+  source && <Image source={source} alt={imageProps(asset)?.alt ?? ''} />;
 }
 ```
 

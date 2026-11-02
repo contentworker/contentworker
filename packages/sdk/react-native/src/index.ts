@@ -3,6 +3,7 @@ export {
   assetUrl,
   createDeliveryClient,
   DeliveryError,
+  imageProps,
   localizedText,
   srcset,
 } from '@contentworker/sdk-core';

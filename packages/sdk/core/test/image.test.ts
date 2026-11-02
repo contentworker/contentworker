@@ -10,8 +10,9 @@ const image: DeliveredAsset = {
   focalPoint: { x: 0.5, y: 0.25 },
   contentType: 'image/jpeg',
   size: 1000,
-  width: 1000,
-  height: 600,
+  // As wide as the last ladder step, so the ladder is complete (see "past the ladder" below).
+  width: 960,
+  height: 576,
   kind: 'image',
   url: `${base}/o/hero.jpg`,
   renditions: { thumb: `${base}/r-thumb/hero.jpg` },
@@ -30,8 +31,8 @@ describe('imageProps', () => {
       src: image.url,
       srcSet: `${base}/w320/hero.jpg?fm=auto 320w, ${base}/w640/hero.jpg?fm=auto 640w, ${base}/w960/hero.jpg?fm=auto 960w`,
       sizes: '100vw',
-      width: 1000,
-      height: 600,
+      width: 960,
+      height: 576,
       alt: 'A hill',
       loading: 'lazy',
       decoding: 'async',
@@ -48,11 +49,22 @@ describe('imageProps', () => {
     expect(imageProps(image, { width: 500, sizes: '50vw' })?.sizes).toBe('50vw');
   });
 
+  it('offers the original past the ladder when the image is wider than its last step', () => {
+    const wide = { ...image, width: 1900, height: 1000 };
+    const props = imageProps(wide, { width: 1600 });
+    expect(props?.srcSet?.endsWith(`, ${image.url} 1900w`)).toBe(true);
+    expect(props?.src).toBe(image.url);
+    // At or under the last step's width the ladder is complete.
+    expect(imageProps({ ...image, width: 960 })?.srcSet).not.toContain(image.url);
+  });
+
   it('serves a rendition the asset has as the one src, and ignores one it lacks', () => {
     const named = imageProps(image, { rendition: 'thumb' });
     expect(named?.src).toBe(image.renditions.thumb);
     expect(named?.srcSet).toBeUndefined();
     expect(named?.width).toBeUndefined();
+    expect(imageProps(image, { rendition: 'thumb', width: 200 })).toMatchObject({ width: 200 });
+    expect(imageProps(image, { rendition: 'thumb', width: 200 })).not.toHaveProperty('height');
     expect(imageProps(image, { rendition: 'nope' })?.srcSet).toContain('320w');
   });
 

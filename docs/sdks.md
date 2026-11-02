@@ -79,7 +79,7 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
 - `iterateAssets(query)` and `iterateCollection(id, opts)` are `async` generators: each fetches a
   page (`limit`) when the loop needs the next item and follows `nextCursor` to the last page, so
   `break` stops fetching. A `skip` applies to the first page only, and a cursor the server
-  repeats throws rather than looping.
+  repeats (the starting `cursor` included) throws a plain `Error` rather than looping.
 - `getAsset` / `listAssets` read `/assets` (or `/preview/…/assets` with `preview: true`) and return
   the delivered asset shape (see [API reference](./api-reference.md#delivery-api-cda));
   `AssetPage` is `{ items, total, nextCursor? }`, and a `cursor` wins over `skip`.
@@ -94,7 +94,9 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   an asset with no image (audio, documents, a video without `video.thumbnailUrl`, which is a
   video's `src`). `srcSet` is the ladder with `sizes` (default `(max-width: Wpx) 100vw, Wpx` with
   `width`, else `100vw`); `src` is the step at or above `width`, else `url`; `width`/`height` are
-  the asset's, scaled to `width`; a found `rendition` is the only `src`, with no size. `alt` is
+  the asset's, scaled to `width`; a found `rendition` is the only `src`, with only the target
+  `width`. When the image is wider than the ladder's last step (the ladder stops below its own width), the original `url` is the top
+  `srcSet` candidate. `alt` is
   `localizedText(altText, locale)`, else the title, else `''` (decorative); `localizedText`
   takes a flattened string, the `locale` key of a map, or without a `locale` the map's first
   non-empty value. `objectPosition` is the focal point in percent, clamped to 0–100;
@@ -263,7 +265,8 @@ import {
 - `imageSource(asset, { width?, dpr?, rendition? })` is an `<Image source>`: `{ uri, width?,
   height? }`, the same URL `imageUrl` picks (through `imageProps`, so a hosted video gives its thumbnail
   and audio or a document gives `undefined`) with `width` and, from the aspect ratio, `height` in
-  dp (no `height` for a rendition, which may crop). `localizedText(asset.altText)` gives its alt.
+  dp (no `height` for a rendition, which may crop). `imageProps(asset)?.alt` (re-exported) gives
+  its alt, with the same title fallback as the web.
 
 ## `@contentworker/sdk-management` — Management (CMA) client
 

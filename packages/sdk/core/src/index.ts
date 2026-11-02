@@ -303,7 +303,7 @@ export function createDeliveryClient(opts: ClientOptions) {
     first: string | undefined,
     page: (cursor: string | undefined) => Promise<{ items: DeliveredAsset[]; nextCursor?: string }>,
   ): AsyncGenerator<DeliveredAsset, void, undefined> {
-    const seen = new Set<string>();
+    const seen = new Set<string>(first ? [first] : []);
     let cursor = first;
     for (;;) {
       const res = await page(cursor);

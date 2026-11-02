@@ -30,7 +30,7 @@ embedded asset goes straight into its `imageProps`:
 import { imageProps } from '@contentworker/sdk-core';
 
 const hero = article.fields.hero;
-const props = 'url' in hero ? imageProps(hero, { sizes: '100vw' }) : undefined;
+const props = hero && 'url' in hero ? imageProps(hero, { sizes: '100vw' }) : undefined;
 ```
 
 **Local development.** A local stack has no media origin, so an embedded asset has an empty
