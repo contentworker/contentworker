@@ -14,10 +14,14 @@
     "./redirects": {
       "types": "./src/redirects.ts",
       "default": "./src/redirects.ts"
+    },
+    "./webhooks": {
+      "types": "./src/webhooks.ts",
+      "default": "./src/webhooks.ts"
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/inline-edit.ts src/redirects.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
+    "build": "tsup src/index.ts src/inline-edit.ts src/redirects.ts src/webhooks.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
     "test": "vitest run",
     "check-types": "tsc --noEmit",
     "lint": "biome check ."
