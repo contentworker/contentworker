@@ -645,6 +645,10 @@ export function buildServer(
           contentType: z.string().optional(),
           limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
           cursor: z.string().optional().describe('nextCursor from the previous page'),
+          skip: z
+            .number()
+            .optional()
+            .describe('Not supported: this list pages with cursor. Refused when set.'),
           locale: z.string().optional(),
           filters: z
             .array(
@@ -666,6 +670,11 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      // An agent paging by offset hears so, rather than reading the first page forever.
+      if (args.skip !== undefined)
+        throw new ValidationError([
+          { field: 'skip', message: 'entries_query pages with cursor (its nextCursor), not skip' },
+        ]);
       assertQueryRespectsFieldRules(principal, {
         contentTypeApiId: args.contentType,
         filters: args.filters,
@@ -673,16 +682,23 @@ export function buildServer(
         select: args.select,
         search: args.search,
       });
-      const page = await listPreviewEntryPage(ctx, scopeOf(args), {
-        contentTypeApiId: args.contentType,
-        limit: args.limit,
-        locale: args.locale,
-        filters: args.filters,
-        order: args.order,
-        select: args.select,
-        search: args.search,
-        ...(args.cursor ? { cursor: args.cursor } : {}),
-      });
+      const page = await listPreviewEntryPage(
+        ctx,
+        scopeOf(args),
+        {
+          contentTypeApiId: args.contentType,
+          limit: args.limit,
+          locale: args.locale,
+          filters: args.filters,
+          order: args.order,
+          select: args.select,
+          search: args.search,
+          ...(args.cursor ? { cursor: args.cursor } : {}),
+        },
+        principal.contentGrants
+          ? { readable: (t) => canAccessContentType(principal, 'read', t) }
+          : {},
+      );
       // Granular RBAC: drop entries of ungranted types, mask denied fields.
       return ok({
         items: page.items

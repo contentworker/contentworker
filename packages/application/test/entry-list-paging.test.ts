@@ -148,6 +148,67 @@ describe('preview entry list paging', () => {
     ).rejects.toBeInstanceOf(ValidationError);
   });
 
+  it('narrows a restricted caller in the query: no page ends on, no cursor carries, a hidden entry', async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'secret',
+      name: 'Secret',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+      ],
+    });
+    await publishContentType(ctx, scope, 'secret');
+    const hidden = new Set<string>();
+    for (let i = 0; i < 6; i++) {
+      await create(ctx, `a${i}`);
+      const { entry } = await createEntry(ctx, scope, {
+        contentTypeApiId: 'secret',
+        fields: { title: { 'en-US': `a${i} hidden` } },
+      });
+      hidden.add(entry.id);
+    }
+    const readable = (t: string) => t === 'article';
+    const seen: ListedPreviewEntry[] = [];
+    const cursors: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await listPreviewEntryPage(
+        ctx,
+        scope,
+        { order: [{ field: 'title', direction: 'asc' }], limit: 2, ...(cursor ? { cursor } : {}) },
+        { readable },
+      );
+      seen.push(...page.items);
+      cursor = page.nextCursor;
+      if (cursor) cursors.push(cursor);
+    } while (cursor);
+    expect(seen.map(titleOf)).toEqual(['a0', 'a1', 'a2', 'a3', 'a4', 'a5']);
+    const decoded = cursors.map((c) =>
+      decodeURIComponent(atob(c.replace(/-/g, '+').replace(/_/g, '/'))),
+    );
+    for (const d of decoded) {
+      expect(d).not.toContain('hidden');
+      for (const id of hidden) expect(d).not.toContain(id);
+    }
+    // A type the caller can't read, asked for by name, is an empty page.
+    expect(
+      await listPreviewEntryPage(ctx, scope, { contentTypeApiId: 'secret' }, { readable }),
+    ).toEqual({ items: [] });
+  });
+
+  it('issues URL-safe cursors', async () => {
+    for (let i = 0; i < 40; i++) await create(ctx, `Ünïcødé ${'?'.repeat(i % 7)} ${i}`);
+    const pages = await walk(ctx, { order: [{ field: 'title', direction: 'asc' }], limit: 1 });
+    expect(pages.flat()).toHaveLength(40);
+  });
+
   it("never lists another environment's entries", async () => {
     await seedType(ctx, other);
     await create(ctx, 'here');

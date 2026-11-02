@@ -137,4 +137,13 @@ describe('entries_query over MCP', () => {
     });
     expect(res.isError).toBe(true);
   });
+
+  it('refuses skip rather than reading the first page again', async () => {
+    const client = await connect(deps, READER);
+    const res = await client.callTool({
+      name: 'entries_query',
+      arguments: { space: SPACE, contentType: 'note', skip: 2 },
+    });
+    expect(res.isError).toBe(true);
+  });
 });

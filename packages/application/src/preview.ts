@@ -92,15 +92,16 @@ export const PREVIEW_ENTRY_PAGE_MAX = 100;
 const orderSignature = (order: readonly QueryOrder[]) =>
   order.map((o) => `${o.direction === 'desc' ? '-' : ''}${o.field}`).join(',');
 
+// base64url, so a cursor pasted into a URL unencoded survives (`+` would arrive as a space).
 function encodeEntryCursor(order: readonly QueryOrder[], key: EntryKeyset): string {
   const json = JSON.stringify([orderSignature(order), key.values, key.id]);
-  return btoa(encodeURIComponent(json)).replace(/=+$/, '');
+  return btoa(encodeURIComponent(json)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 function decodeEntryCursor(order: readonly QueryOrder[], cursor: string): EntryKeyset {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(decodeURIComponent(atob(cursor)));
+    parsed = JSON.parse(decodeURIComponent(atob(cursor.replace(/-/g, '+').replace(/_/g, '/'))));
   } catch {
     // Falls through to the refusal.
   }
@@ -121,9 +122,14 @@ function decodeEntryCursor(order: readonly QueryOrder[], cursor: string): EntryK
 
 /**
  * One page of the Preview list, walked with a keyset cursor in the list's own order (`order`,
- * or least recently changed first), so paging on never skips or repeats an entry that was
- * edited between two reads, as an offset would. Same reads as {@link listPreviewEntries}: one
- * row past the page says whether another follows.
+ * or least recently changed first). In the default order an entry edited between two reads is
+ * never skipped, as it would be by an offset; under another order, an edit to a sorted field can
+ * move an entry across the cursor. Same reads as {@link listPreviewEntries}: one row past the
+ * page says whether another follows.
+ *
+ * `readable` is the caller's content-type grant. Its types are filtered in the query itself
+ * (one more read, of the content types), so a page never ends on, and a cursor never carries the
+ * values of, an entry the caller may not see.
  */
 export async function listPreviewEntryPage(
   ctx: AppContext,
@@ -131,9 +137,22 @@ export async function listPreviewEntryPage(
   query: Omit<EntryQuery, 'afterRow' | 'afterEntryId' | 'after' | 'skip'> & {
     readonly cursor?: string;
   } = {},
-  opts: RenderOptions = {},
+  opts: RenderOptions & { readonly readable?: (contentType: string) => boolean } = {},
 ): Promise<PreviewEntryPage> {
   const { cursor, select, ...rest } = query;
+  let filters = rest.filters;
+  if (opts.readable) {
+    const readable = opts.readable;
+    if (rest.contentTypeApiId !== undefined) {
+      if (!readable(rest.contentTypeApiId)) return { items: [] };
+    } else {
+      const types = (await ctx.store.contentTypes.list(scope)).map((t) => t.apiId);
+      const allowed = types.filter(readable);
+      if (allowed.length === 0) return { items: [] };
+      if (allowed.length < types.length)
+        filters = [...(filters ?? []), { field: 'sys.contentType', op: 'in', value: allowed }];
+    }
+  }
   const order = keysetOrder(rest.order);
   const afterRow = cursor ? decodeEntryCursor(order, cursor) : 'start';
   const limit = Math.min(Math.max(1, rest.limit ?? PREVIEW_ENTRY_PAGE_MAX), PREVIEW_ENTRY_PAGE_MAX);
@@ -146,6 +165,7 @@ export async function listPreviewEntryPage(
   );
   const rows = await ctx.store.entries.list(scope, {
     ...rest,
+    ...(filters ? { filters } : {}),
     ...(select ? { select: [...new Set([...select, ...ordered])] } : {}),
     limit: limit + 1,
     afterRow,

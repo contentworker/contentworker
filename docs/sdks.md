@@ -68,7 +68,7 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
 
 - `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, order?, select?, search? }`.
   Delivery pages with `skip`; Preview (`preview: true`) pages with `cursor`, the last page's
-  `nextCursor`, and ignores `skip`.
+  `nextCursor`, and refuses `skip` (`422`).
 - `filters` use the same operators as the HTTP query language (`eq`, `ne`, `in`, `match`, etc.).
 - The fluent builder reads naturally:
   `client.query().contentType('article').locale('en-US').limit(10).fetch()`.

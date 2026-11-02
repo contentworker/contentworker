@@ -197,12 +197,11 @@ test('navigating away from unsaved edits asks before discarding', async ({ page 
 // one's title, and `.last()` can take it before the new one renders) and its rate window (30
 // calls a minute, spent by every spec's saves) change under this spec. The card path itself is
 // covered by apps/engine/test/assistant.test.ts and apps/web/tests/assistant-panel.test.tsx.
-test('bulk unpublish confirms once and surfaces per-entry failures by title', async ({
+test('the bulk bar offers what applies to the ticked drafts and names them in its confirm', async ({
   page,
   request,
 }) => {
   await withoutAssistant(page);
-  // Two fresh drafts (unpublishing a draft fails server-side: the failure path).
   const stamp = Date.now();
   for (const n of [1, 2]) {
     const res = await api(request, 'POST', `${MGMT}/entries`, {
@@ -218,18 +217,20 @@ test('bulk unpublish confirms once and surfaces per-entry failures by title', as
       .getByRole('checkbox')
       .check();
   }
-  await page.getByRole('button', { name: 'Unpublish selected' }).click();
-  // Asked once, for the whole selection.
-  const confirm = page.getByRole('alertdialog', { name: 'Unpublish 2 entries?' });
-  await confirm.getByRole('button', { name: 'Unpublish entries' }).click();
+  // Ticking swaps the filter bar for the bulk bar; drafts can be published, not unpublished.
+  const bar = page.getByRole('group', { name: 'Selected entries' });
+  await expect(bar.getByText('2 selected')).toBeVisible();
+  await expect(page.getByRole('searchbox', { name: 'Search entries' })).toBeHidden();
+  await expect(bar.getByRole('button', { name: 'Unpublish selected' })).toHaveCount(0);
+  await bar.getByRole('button', { name: 'Publish selected' }).click();
+  // Asked once, for the whole selection, by name.
+  const confirm = page.getByRole('alertdialog', { name: 'Publish 2 entries?' });
+  await expect(confirm.getByText(`Bulk ${stamp} 1`)).toBeVisible();
+  await expect(confirm.getByText(`Bulk ${stamp} 2`)).toBeVisible();
+  await confirm.getByRole('button', { name: 'Keep as is' }).click();
   await expect(confirm).toBeHidden();
-
-  const failures = page.getByRole('alert').filter({ hasText: 'entries failed' });
-  await expect(failures).toBeVisible();
-  await expect(failures.getByText(`Bulk ${stamp} 1`)).toBeVisible();
-  await expect(failures.getByText(`Bulk ${stamp} 2`)).toBeVisible();
-  await failures.getByRole('button', { name: 'Dismiss' }).click();
-  await expect(page.getByText('2 entries failed')).not.toBeVisible();
+  await bar.getByRole('button', { name: 'Clear selection' }).click();
+  await expect(page.getByRole('searchbox', { name: 'Search entries' })).toBeVisible();
 });
 
 test('trashes an entry, restores it, then deletes it permanently', async ({ page, request }) => {

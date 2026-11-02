@@ -117,4 +117,9 @@ describe('GET /preview/.../entries paging', () => {
     );
     expect(res.status).toBe(422);
   });
+
+  it('refuses skip, so a client paging by offset hears it (422)', async () => {
+    const res = await app.request(`${P}/entries?content_type=note&skip=100`, { headers: cpa });
+    expect(res.status).toBe(422);
+  });
 });

@@ -201,11 +201,11 @@ export interface EntryQuery {
   /** Reference resolution depth (embeds linked entries). */
   readonly include?: number;
   readonly limit?: number;
-  /** Delivery's offset. Preview pages by `cursor` instead, and ignores it. */
+  /** Delivery's offset. Preview pages by `cursor` instead, and refuses it (422). */
   readonly skip?: number;
   /**
    * Preview only: the `nextCursor` of the previous page, with the same filters and order. It walks
-   * the list's own order, so an entry edited between two pages is never skipped.
+   * the list's own order; in the default order an entry edited between two pages is never skipped.
    */
   readonly cursor?: string;
   /** Delta cursor — only entries published after this ISO timestamp. */
