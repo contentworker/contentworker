@@ -1,8 +1,15 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
+import { snapshotBody } from '../../src/api/validation';
+import {
+  drainImportJobs,
+  SNAPSHOT_ENVELOPE,
+  sections,
+  seedEverySection,
+} from '../snapshot-round-trip';
 import { testConfig } from './config';
-import { wire } from './wire';
+import { type InMemoryWired, wire } from './wire';
 
 const config: ApiConfig = testConfig({
   role: 'all',
@@ -23,9 +30,11 @@ const MAIN = '/spaces/s1/environments/main';
 const COPY = '/spaces/s1/environments/copy';
 
 let app: ReturnType<typeof createApp>;
+let wired: InMemoryWired;
 
 beforeEach(async () => {
-  const { ctx, rag, blob, ai } = wire(config);
+  wired = wire(config);
+  const { ctx, rag, blob, ai } = wired;
   app = createApp(ctx, config, rag, blob, ai);
   await app.request(`${MAIN}/content-types`, {
     method: 'POST',
@@ -135,5 +144,35 @@ describe('environment clone and import over HTTP', () => {
     expect(res.status).toBe(202);
     const folders = await (await app.request(`${COPY}/asset-folders`, { headers: admin })).json();
     expect(folders).toMatchObject({ items: [{ id: folder.id, name: 'Brand', path: folder.path }] });
+  });
+
+  it('round-trips every section an export writes through the import envelope', async () => {
+    await app.request('/spaces/s1/environments', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ id: 'full' }),
+    });
+    const full = { spaceId: 's1', environmentId: 'full' };
+    await seedEverySection(wired.ctx, wired.blob, full);
+    const exported = await (
+      await app.request('/spaces/s1/environments/full/export', { headers: admin })
+    ).json();
+    // The envelope names every key an export writes: zod drops a key it doesn't know, silently.
+    const keys = Object.keys(exported as object).sort();
+    expect(keys).toEqual([...Object.keys(sections(exported)), ...SNAPSHOT_ENVELOPE].sort());
+    expect(Object.keys(snapshotBody.shape).sort()).toEqual(keys);
+    const before = sections(exported);
+    for (const section of Object.values({ ...before, ...before.taxonomy, taxonomy: [1] }))
+      expect(section.length).toBeGreaterThan(0);
+
+    const res = await app.request(`${COPY}/import`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify(exported),
+    });
+    expect(res.status).toBe(202);
+    await drainImportJobs(wired.ctx, wired.blob);
+    const copied = await (await app.request(`${COPY}/export`, { headers: admin })).json();
+    expect(sections(copied)).toEqual(before);
   });
 });
