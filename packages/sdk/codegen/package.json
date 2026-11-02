@@ -1,17 +1,28 @@
 {
   "name": "@contentworker/sdk-codegen",
   "version": "0.1.0",
+  "homepage": "https://docs.contentworker.app/guides/sdks/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/contentworker/contentworker",
+    "directory": "packages/sdk/codegen"
+  },
   "license": "Apache-2.0",
   "type": "module",
-  "bin": {
-    "contentworker-codegen": "./dist/bin.js"
-  },
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     }
   },
+  "bin": {
+    "contentworker-codegen": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup src/index.ts src/bin.ts --format esm && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
     "test": "vitest run",
@@ -24,5 +35,18 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    },
+    "bin": {
+      "contentworker-codegen": "./dist/bin.js"
+    }
   }
 }

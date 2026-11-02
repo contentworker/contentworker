@@ -199,6 +199,26 @@ then only the new).
 
 All Cloudflare calls retry up to three times; each step is idempotent.
 
+## Releasing the SDKs
+
+The public SDKs (`packages/sdk/*`) ship to npm, apart from the deploys:
+
+- `.github/workflows/sdk-packages.yml` (pull requests that touch `packages/sdk/`): `node
+  scripts/sdk-packages.ts pack` builds and packs every SDK, then `check` installs the tarballs
+  into an empty project and loads every export (ESM and CJS) and the codegen binary. That is
+  what a user installs: `pnpm pack` applies each package's `publishConfig` (exports and bin
+  pointing at `dist/`) and rewrites `workspace:` and `catalog:` versions.
+- `.github/workflows/sdk-release.yml` (a pushed tag `sdk-v<version>`): checks that the tag
+  matches the SDKs' shared version, runs the SDKs' lint, type-check and tests, packs and loads
+  them, then publishes each package npm doesn't already have at that version, with npm trusted
+  publishing (OIDC, no stored token) and a provenance attestation. It runs in the `npm`
+  environment; add required reviewers there to approve each release.
+
+To release: bump `version` in every `packages/sdk/*/package.json` together (one version,
+checked by `scripts/sdk-packages.test.ts`), merge, then push `sdk-v<version>`. Each package's
+npm settings name this repo and `sdk-release.yml` as its trusted publisher; a package's very
+first publish may have to be done by an owner of the npm org before that can be set.
+
 ## Migrations
 
 CI applies the hand-written migrations in `packages/db/migrations/` to each deployment's D1 with

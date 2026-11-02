@@ -36,3 +36,4 @@ packages/http/src/mcp/skills.generated.ts
 apps/docs/src/styles/theme.css
 docs/diagrams/themes/ledger-light.json
 docs/diagrams/themes/ledger-dark.json
+.sdk-packages/
