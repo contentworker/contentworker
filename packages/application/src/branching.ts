@@ -43,6 +43,7 @@ const ctShape = (ct: ContentType) => ({
   name: ct.name,
   displayField: ct.displayField,
   fields: ct.fields,
+  urlPattern: ct.urlPattern,
   status: ct.status,
 });
 

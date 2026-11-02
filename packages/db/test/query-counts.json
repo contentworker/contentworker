@@ -17,6 +17,8 @@
   "delivery: GET /assets/:id": { "statements": 2, "roundTrips": 1 },
   "delivery: GET /assets/:id?locale=de": { "statements": 3, "roundTrips": 1 },
   "delivery: GET /assets": { "statements": 2, "roundTrips": 1 },
+  "delivery: GET /redirects": { "statements": 1, "roundTrips": 1 },
+  "delivery: GET /redirects/resolve": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries/:id": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries?content_type=article": { "statements": 2, "roundTrips": 2 },
   "management: POST /entries": { "statements": 4, "roundTrips": 3 },

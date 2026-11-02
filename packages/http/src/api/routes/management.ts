@@ -6,6 +6,7 @@ import {
   addToAssetCollection,
   agentUsage,
   analyzeImport,
+  analyzeRedirectSet,
   applyEntryTags,
   approvePluginCapabilities,
   approvePromotion,
@@ -23,6 +24,7 @@ import {
   canvasToEntry,
   clampCount,
   cloneEnvironment,
+  collapseRedirects,
   commitAssetFile,
   compareEnvironments,
   completeMultipartAssetUpload,
@@ -43,6 +45,7 @@ import {
   createFunction,
   createPersonalAccessToken,
   createPreviewLink,
+  createRedirect,
   createRelease,
   createRole,
   createScheme,
@@ -63,6 +66,7 @@ import {
   deleteEnvironment,
   deleteEnvironmentAlias,
   deleteFunction,
+  deleteRedirect,
   deleteRelease,
   deleteRole,
   deleteScheme,
@@ -75,6 +79,7 @@ import {
   duplicateEntry,
   type EnvironmentSnapshot,
   executeImport,
+  exportRedirectsCsv,
   exportSnapshot,
   findDuplicates,
   generateAltText,
@@ -95,6 +100,7 @@ import {
   getPlugin,
   getPluginSettings,
   getPromotion,
+  getRedirect,
   getRelease,
   getReverseReferences,
   getRole,
@@ -102,6 +108,7 @@ import {
   getSpaceConfig,
   getVersion,
   getWorkflow,
+  importRedirects,
   importSnapshot,
   inspectPluginPackage,
   installPlugin,
@@ -132,6 +139,7 @@ import {
   listPersonalAccessTokens,
   listPlugins,
   listPromotions,
+  listRedirects,
   listReleases,
   listRoles,
   listScheduledActions,
@@ -153,6 +161,7 @@ import {
   publishEntry,
   publishRelease,
   purgeEntry,
+  type RedirectImport,
   reassignTask,
   refreshVideoAsset,
   reingestAsset,
@@ -167,6 +176,7 @@ import {
   requestPromotion,
   requestReindex,
   resolveEmbed,
+  resolveRedirect,
   resolveTask,
   restoreAsset,
   restoreAssetVersion,
@@ -210,6 +220,7 @@ import {
   updateAssetFolder,
   updateAssetRendition,
   updateEntry,
+  updateRedirect,
   updateRole,
   updateWebhook,
   upgradePlugin,
@@ -230,6 +241,7 @@ import {
   type InstalledPlugin,
   MAX_COLLECTION_CHANGE,
   MAX_COLLECTION_ITEMS,
+  MAX_REDIRECT_IMPORT,
   MAX_ZIP_ASSETS,
   maskDeniedFields,
   NotConfiguredError,
@@ -314,6 +326,9 @@ import {
   pluginSettingsBody,
   previewLinkBody,
   promotionBody,
+  redirectBody,
+  redirectImportBody,
+  redirectPatchBody,
   reindexBody,
   releaseItemBody,
   replaceAssetFileBody,
@@ -3233,6 +3248,153 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     await deleteTag(ctx, scopeOf(c), c.req.param('id'));
     return c.body(null, 204);
   });
+
+  // --- redirects (delivery data: a front end applies them) ----------------
+  app.get(
+    `${BASE}/redirects`,
+    doc('Redirects', 'List redirects', {
+      ok: docs.redirectPage,
+      description: 'By source. Page with the response’s nextCursor.',
+      query: {
+        q: 'Search the source, destination and note',
+        limit: `Page size, 1..${MAX_PAGE_LIMIT}`,
+        cursor: 'nextCursor from the previous page',
+      },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const limit = clampCount(c.req.query('limit'), MAX_PAGE_LIMIT, { min: 1 });
+      const cursor = c.req.query('cursor');
+      const q = c.req.query('q');
+      return c.json(
+        await listRedirects(ctx, scopeOf(c), {
+          ...(limit !== undefined ? { limit } : {}),
+          ...(cursor ? { cursor } : {}),
+          ...(q ? { q } : {}),
+        }),
+      );
+    },
+  );
+  app.post(
+    `${BASE}/redirects`,
+    doc('Redirects', 'Create a redirect', {
+      body: redirectBody,
+      ok: docs.redirectWrite,
+      status: 201,
+      description:
+        'Refused (422) when its source is already redirected for the same locale, when it would ' +
+        'close a loop, or past the environment’s cap. A chain it makes is allowed and reported.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(await createRedirect(ctx, scopeOf(c), await parseBody(c, redirectBody)), 201),
+  );
+  // Before `/redirects/:id`, which would take these words for an id.
+  app.get(
+    `${BASE}/redirects/resolve`,
+    doc('Redirects', 'Resolve a path against the redirects', {
+      ok: docs.redirectMatch,
+      description: 'What Delivery’s `redirects/resolve` answers for it. 404 when nothing does.',
+      query: { path: 'A request path, with or without its query', locale: 'The request’s locale' },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const path = c.req.query('path') ?? '';
+      const match = await resolveRedirect(
+        ctx,
+        scopeOf(c),
+        path,
+        c.req.query('locale') || undefined,
+      );
+      if (!match) throw new NotFoundError('Redirect', path);
+      return c.json(match);
+    },
+  );
+  app.get(
+    `${BASE}/redirects/analysis`,
+    doc('Redirects', 'Check the redirect set', {
+      ok: docs.redirectAnalysis,
+      description:
+        'Loops, chains (each with where it ends) and duplicate sources across the whole set.',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await analyzeRedirectSet(ctx, scopeOf(c))),
+  );
+  app.get(
+    `${BASE}/redirects/export`,
+    doc('Redirects', 'Export the redirects as CSV', {
+      okDescription: 'text/csv: source, destination, status, locale, enabled, note',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) =>
+      c.body(await exportRedirectsCsv(ctx, scopeOf(c)), 200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="redirects.csv"',
+      }),
+  );
+  app.post(
+    `${BASE}/redirects/import`,
+    doc('Redirects', 'Import redirects from CSV or JSON', {
+      body: redirectImportBody,
+      ok: docs.redirectImportReport,
+      description:
+        `All or nothing, at most ${MAX_REDIRECT_IMPORT} rows: every row and the resulting set ` +
+        'are checked first, and a refusal names each bad row (`rows[i].field`). A source ' +
+        'already redirected (for the same locale) is updated; the rest are added.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(
+        await importRedirects(
+          ctx,
+          scopeOf(c),
+          // Each row's shape is the domain's to check, naming the bad ones.
+          (await parseBody(c, redirectImportBody)) as RedirectImport,
+        ),
+      ),
+  );
+  app.post(
+    `${BASE}/redirects/collapse-chains`,
+    doc('Redirects', 'Collapse redirect chains', {
+      ok: docs.redirectCollapse,
+      description: 'Points every redirect that ends a chain straight at where its chain ends.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json(await collapseRedirects(ctx, scopeOf(c))),
+  );
+  app.get(
+    `${BASE}/redirects/:id`,
+    doc('Redirects', 'Get a redirect', { ok: docs.redirect }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await getRedirect(ctx, scopeOf(c), c.req.param('id'))),
+  );
+  app.patch(
+    `${BASE}/redirects/:id`,
+    doc('Redirects', 'Change a redirect', {
+      body: redirectPatchBody,
+      ok: docs.redirectWrite,
+      description: 'Fields left out keep their value; null clears locale or note.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(
+        await updateRedirect(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, redirectPatchBody),
+        ),
+      ),
+  );
+  app.delete(
+    `${BASE}/redirects/:id`,
+    doc('Redirects', 'Delete a redirect', { status: 204 }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      await deleteRedirect(ctx, scopeOf(c), c.req.param('id'));
+      return c.body(null, 204);
+    },
+  );
 
   // --- entry taxonomy associations ---------------------------------------
   app.get(`${BASE}/entries/:id/metadata`, requireScope(SCOPES.previewRead), async (c) => {

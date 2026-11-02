@@ -37,6 +37,7 @@ import type {
   PublishGate,
   QueryFilter,
   QueryOrder,
+  Redirect,
   ReferenceEdge,
   Release,
   ReleaseItem,
@@ -127,6 +128,7 @@ export interface ContentStore {
   readonly workflowRuns: WorkflowRunRepo;
   readonly workflowTasks: WorkflowTaskRepo;
   readonly taxonomy: TaxonomyRepo;
+  readonly redirects: RedirectRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
   readonly functions: FunctionRepo;
@@ -244,6 +246,51 @@ export interface TaxonomyRepo {
     entryIds: readonly string[],
   ): Promise<{ entryId: string; metadata: EntryMetadata }[]>;
   setEntryMetadata(scope: Scope, entryId: string, metadata: EntryMetadata): Promise<void>;
+}
+
+/** A page of an environment's redirects, by source. */
+export interface RedirectPage {
+  readonly items: Redirect[];
+  readonly nextCursor?: string;
+}
+
+export interface RedirectQuery {
+  /** Matches the source, destination or note (case-insensitive substring). */
+  readonly q?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** Where an environment's redirect set stands: what a write checks it still holds at commit. */
+export interface RedirectSetState {
+  /** Bumped by every write to the set; 0 before the first. */
+  readonly revision: number;
+  readonly count: number;
+}
+
+/**
+ * An environment's redirects. Every write to the set rides with {@link RedirectRepo.advance} in
+ * one unit, so two writers that each checked the set (for loops, the cap) can't both commit: the
+ * second fails at commit with `TransactionConflictError` and checks again.
+ */
+export interface RedirectRepo {
+  get(scope: Scope, id: string): Promise<Redirect | null>;
+  /** The whole set (at most `MAX_REDIRECTS`), by source then id; `enabledOnly` for Delivery. */
+  all(scope: Scope, opts?: { readonly enabledOnly?: boolean }): Promise<Redirect[]>;
+  list(scope: Scope, query?: RedirectQuery): Promise<RedirectPage>;
+  /** Redirects whose source or destination is one of `paths` (a slug change's two paths). */
+  involving(scope: Scope, paths: readonly string[]): Promise<Redirect[]>;
+  state(scope: Scope): Promise<RedirectSetState>;
+  /** Inserts or replaces each by id. A source held by another redirect is a `ConflictError`. */
+  saveMany(scope: Scope, redirects: readonly Redirect[]): Promise<void>;
+  removeMany(scope: Scope, ids: readonly string[]): Promise<void>;
+  /**
+   * Moves the set from revision `expected` to the next. Inside a unit a set written since
+   * `expected` was read fails the commit (`TransactionConflictError`); outside one it throws.
+   * Without `expected` it moves on unconditionally: a publish's slug change, which must not fail
+   * over a concurrent edit to the set, still makes that edit check the set again.
+   */
+  advance(scope: Scope, expected?: number): Promise<void>;
 }
 
 export interface CommentRepo {
@@ -1134,6 +1181,8 @@ export interface ContentStoreTx {
   readonly references: ReferenceRepo;
   readonly releases: ReleaseRepo;
   readonly taxonomy: TaxonomyRepo;
+  /** A publish's slug change writes redirects with the publish. */
+  readonly redirects: RedirectRepo;
   readonly bulkJobs: BulkJobRepo;
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;

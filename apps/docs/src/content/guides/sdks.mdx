@@ -129,6 +129,16 @@ there for tests. Entries unpublished since the last sync are not removed locally
 `imageSource(asset, { width, dpr: PixelRatio.get() })` is an `<Image source>` with the width step
 for the device's density and the image's size in dp.
 
+### Redirects
+
+`client.redirects()` returns the environment's enabled redirects and
+`client.resolveRedirect(path, { locale })` asks Delivery about one path (`null` when none matches).
+The subpath `@contentworker/sdk-core/redirects` applies them in a front-door Worker:
+`createRedirectHandler`, `createRedirectMatcher` and `applyRedirects`. See
+[Redirects](/guides/redirects/#apply-redirects-in-a-worker). The management client has
+`cma.redirects.{list, get, create, update, delete, import, resolve, analyze, collapseChains}`, and a
+content type draft takes `urlPattern`.
+
 ## Writing content
 
 ```ts

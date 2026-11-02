@@ -74,6 +74,8 @@ export interface ContentType {
   readonly name: string;
   readonly displayField: string;
   readonly fields: readonly FieldDefinition[];
+  /** Where its entries live on the site, e.g. `/blog/{slug}`. */
+  readonly urlPattern?: string;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -102,6 +104,54 @@ export interface ContentTypeDraft {
   readonly name: string;
   readonly displayField: string;
   readonly fields: readonly FieldDefinition[];
+  /**
+   * Where its entries live on the site: `{id}`, `{locale}` or a Slug field's apiId, e.g.
+   * `/blog/{slug}`. A publish that changes that slug redirects the old path to the new one.
+   * `null` clears it.
+   */
+  readonly urlPattern?: string | null;
+}
+
+/** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
+export interface Redirect {
+  readonly id: string;
+  /** A path: exact, or a pattern of `[param]` segments and a trailing `[...splat]`. */
+  readonly source: string;
+  /** A path or an https URL; `[param]`/`[...splat]` insert what the source captured. */
+  readonly destination: string;
+  readonly status: 301 | 302 | 307 | 308;
+  readonly locale?: string;
+  readonly enabled: boolean;
+  readonly note?: string;
+  /** Written by someone, imported, or made by a publish that changed a slug. */
+  readonly origin: 'manual' | 'import' | 'slug';
+  readonly entryId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface RedirectInput {
+  readonly source: string;
+  readonly destination: string;
+  /** Default 301. */
+  readonly status?: 301 | 302 | 307 | 308;
+  /** One locale only; `null` (or absent) for every locale. */
+  readonly locale?: string | null;
+  readonly enabled?: boolean;
+  readonly note?: string | null;
+}
+
+/** A redirect whose destination is redirected again, and where its chain ends. */
+export interface RedirectChain {
+  readonly id: string;
+  readonly via: readonly string[];
+  readonly destination: string;
+}
+
+export interface RedirectWrite {
+  readonly redirect: Redirect;
+  /** Chains it takes part in: allowed, one hop slower; `collapseChains` straightens them. */
+  readonly chains: readonly RedirectChain[];
 }
 
 export interface Entry {
@@ -985,6 +1035,56 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Entries per content type, by status, from one grouped count. */
       entryCounts: () =>
         items(get<{ items: ContentTypeEntryCounts[] }>(`${envBase}/content-types/entry-counts`)),
+    },
+
+    /** Redirects: delivery data a front end applies (content:manage to change them). */
+    redirects: {
+      /** By source; `q` searches source, destination and note. */
+      list: (o: { q?: string; limit?: number; cursor?: string } = {}) =>
+        get<{ items: Redirect[]; nextCursor?: string }>(`${envBase}/redirects`, { ...o }),
+      get: (id: string) => get<Redirect>(`${envBase}/redirects/${e(id)}`),
+      /** Refused (422) for a source already redirected, a loop, or past the cap. */
+      create: (input: RedirectInput) => post<RedirectWrite>(`${envBase}/redirects`, input),
+      /** Fields left out keep their value; `null` clears locale or note. */
+      update: (id: string, changes: Partial<RedirectInput>) =>
+        patch<RedirectWrite>(`${envBase}/redirects/${e(id)}`, changes),
+      delete: (id: string) => del<void>(`${envBase}/redirects/${e(id)}`),
+      /** All or nothing, up to 1,000 rows; a source already redirected is updated. */
+      import: (input: {
+        format: 'csv' | 'json';
+        data: string | readonly RedirectInput[];
+        dryRun?: boolean;
+      }) =>
+        post<{
+          dryRun: boolean;
+          created: number;
+          updated: number;
+          unchanged: number;
+          chains: RedirectChain[];
+        }>(`${envBase}/redirects/import`, input),
+      /** What a path resolves to among the enabled redirects, or null. */
+      resolve: async (path: string, o: { locale?: string } = {}) => {
+        try {
+          return await get<{ redirect: Redirect; status: number; location: string }>(
+            `${envBase}/redirects/resolve`,
+            { path, ...o },
+          );
+        } catch (err) {
+          if (err instanceof ManagementError && err.status === 404) return null;
+          throw err;
+        }
+      },
+      /** Loops, chains and duplicate sources across the whole set. */
+      analyze: () =>
+        get<{
+          loops: string[][];
+          chains: RedirectChain[];
+          duplicates: { key: string; ids: string[] }[];
+          count: number;
+          max: number;
+        }>(`${envBase}/redirects/analysis`),
+      /** Points every redirect that ends a chain straight at where its chain ends. */
+      collapseChains: () => post<{ updated: number }>(`${envBase}/redirects/collapse-chains`),
     },
 
     entries: {
