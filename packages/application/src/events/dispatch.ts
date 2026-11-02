@@ -20,6 +20,7 @@ import type { AppContext } from '../context';
 import { runEnvironmentPurge } from '../environment-purge';
 import { invokeFunctionsForEvent } from '../functions';
 import { importChunkRunner } from '../import-jobs';
+import { deliverInviteEmail, type InviteMailDeps } from '../invites';
 import { discardStagedJob } from '../job-staging';
 import {
   extractTextByLocale,
@@ -92,6 +93,11 @@ export interface DispatchDeps {
    * per batch; dispatch skips any tag already written under it.
    */
   readonly invalidatedTags?: Set<string>;
+  /**
+   * Email Sending and the token hasher, for `invite.email_due`. Absent (the deployment sends no
+   * email), the event is dropped: the inviter shares the link they were shown.
+   */
+  readonly inviteMail?: InviteMailDeps;
 }
 
 /**
@@ -130,6 +136,12 @@ export async function dispatchEvent(
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),
     });
+    return;
+  }
+
+  // An invitation's link is due by email. A control event, carrying no token: no webhooks apply.
+  if (event.type === 'invite.email_due') {
+    if (deps.inviteMail) await deliverInviteEmail(ctx, deps.inviteMail, event);
     return;
   }
 

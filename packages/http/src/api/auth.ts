@@ -136,6 +136,11 @@ export interface AuthDeps {
    * last-administrator rule. Absent means no SSO.
    */
   readonly accessPolicy?: AccessPolicy;
+  /**
+   * The admin's origin (`OAUTH_ISSUER`), where an invitation's `/invite/<token>` link opens. Unset:
+   * invitations come back with their token only, and none is emailed.
+   */
+  readonly inviteOrigin?: string;
 }
 
 const ADMIN: Principal = {

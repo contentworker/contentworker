@@ -13,7 +13,7 @@ import {
 import { Mark } from '~/components/mark';
 import { audit } from '~/lib/audit.server';
 import { principal, signInToLink, Throttled } from '~/lib/auth.server';
-import { nextPath } from '~/lib/next-path';
+import { nextPath, redirectToNext } from '~/lib/next-path';
 import type { Role } from '~/lib/roles';
 import { clearLinkCookie, finishSsoLink, LINK_PATH, pendingSsoLink } from '~/lib/sso.server';
 import type { Route } from './+types/login-sso-link';
@@ -44,7 +44,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   if (caller) {
     if (pending && !(await finishSsoLink(request, caller)))
       await refused(request, pending.user.email);
-    throw redirect(nextPath(request), { headers: { 'set-cookie': clearLinkCookie } });
+    throw redirectToNext(nextPath(request), { headers: { 'set-cookie': clearLinkCookie } });
   }
   if (!pending) throw startAgain();
   return { email: pending.user.email };
@@ -79,7 +79,7 @@ export async function action({ request }: Route.ActionArgs) {
   }
   const headers = new Headers({ 'set-cookie': await result.signIn() });
   headers.append('set-cookie', clearLinkCookie);
-  return redirect(nextPath(request), { headers });
+  return redirectToNext(nextPath(request), { headers });
 }
 
 export default function LoginSsoLink() {

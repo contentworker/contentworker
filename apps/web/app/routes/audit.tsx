@@ -1,10 +1,8 @@
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
-import { X } from 'lucide-react';
 import { Form, Link, useLoaderData, useSubmit } from 'react-router';
-import { Ago } from '~/components/ago';
+import { AuditTable } from '~/components/audit-table';
 import { Empty, PageHeader, Section } from '~/components/page';
-import { AUDIT_GROUPS, describeEvent, isAuditGroup } from '~/lib/audit';
+import { AUDIT_GROUPS, isAuditGroup } from '~/lib/audit';
 import { listAudit } from '~/lib/audit.server';
 import { requireUser } from '~/lib/auth.server';
 import type { Route } from './+types/audit';
@@ -13,21 +11,21 @@ export const meta = () => [{ title: 'Audit log · contentworker' }];
 
 const PAGE = 100;
 
-/** Actions that record something refused or failed, drawn as a failure. */
-const REFUSED = /(_failed|_throttled|_refused|_expired|\.refused)$/;
-
 export async function loader({ request }: Route.LoaderArgs) {
   await requireUser(request, 'admin');
   const q = new URL(request.url).searchParams;
   const type = q.get('type');
   const group = isAuditGroup(type) ? type : undefined;
   const before = Number(q.get('before')) || undefined;
+  // Where this page sits, for its label: paging is by time (`before`), so the page number rides
+  // along in the URL. Without `before` it's the first page, whatever the URL says.
+  const page = before ? Math.max(2, Math.trunc(Number(q.get('page'))) || 2) : 1;
   const events = await listAudit({ group, before, limit: PAGE });
-  return { events, group: group ?? '', before: before ?? null, more: events.length === PAGE };
+  return { events, group: group ?? '', before: before ?? null, page, more: events.length === PAGE };
 }
 
 export default function Audit() {
-  const { events, group, before, more } = useLoaderData<typeof loader>();
+  const { events, group, before, page, more } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const older = events.at(-1)?.at;
   return (
@@ -56,57 +54,10 @@ export default function Audit() {
               </NativeSelectOption>
             ))}
           </NativeSelect>
-          {before ? (
-            <Link
-              to={group ? `/audit?type=${group}` : '/audit'}
-              className="text-link text-sm hover:underline"
-            >
-              Newest
-            </Link>
-          ) : null}
         </Form>
         <Section title="Events" flush>
           {events.length ? (
-            <Table stack="cards" sticky caption="Events">
-              <TableHead>
-                <Tr>
-                  <Th>When</Th>
-                  <Th>Who</Th>
-                  <Th>What</Th>
-                  <Th>From</Th>
-                </Tr>
-              </TableHead>
-              <TableBody>
-                {events.map((e) => (
-                  <Tr key={e.id}>
-                    <Td className="whitespace-nowrap text-muted-foreground text-xs">
-                      <Ago ms={e.at} />
-                    </Td>
-                    <Td label="Who">
-                      {e.actor ?? <span className="text-muted-foreground">—</span>}
-                    </Td>
-                    <Td label="What">
-                      {/* Something refused or failed: a sign-in, a step-up, an API call. */}
-                      {REFUSED.test(e.action) ? (
-                        <span className="inline-flex items-baseline gap-1.5 text-bad">
-                          <X
-                            aria-hidden="true"
-                            className="size-3 shrink-0 self-center"
-                            strokeWidth={2.5}
-                          />
-                          {describeEvent(e)}
-                        </span>
-                      ) : (
-                        describeEvent(e)
-                      )}
-                    </Td>
-                    <Td label="From" className="font-mono text-muted-foreground text-xs">
-                      {e.ip}
-                    </Td>
-                  </Tr>
-                ))}
-              </TableBody>
-            </Table>
+            <AuditTable events={events} />
           ) : (
             <Empty>
               {group
@@ -115,13 +66,28 @@ export default function Audit() {
             </Empty>
           )}
         </Section>
-        {more && older ? (
-          <Link
-            to={`/audit?${new URLSearchParams({ ...(group ? { type: group } : {}), before: String(older) })}`}
-            className="text-link text-sm hover:underline"
-          >
-            Older
-          </Link>
+        {before || (more && older) ? (
+          <nav aria-label="Audit log pages" className="flex items-center gap-4 text-sm">
+            {before ? (
+              <Link
+                to={group ? `/audit?type=${group}` : '/audit'}
+                className="hit-area text-link hover:underline"
+              >
+                Newest
+              </Link>
+            ) : null}
+            <span className="text-muted-foreground" aria-current="page">
+              Page {page}
+            </span>
+            {more && older ? (
+              <Link
+                to={`/audit?${new URLSearchParams({ ...(group ? { type: group } : {}), before: String(older), page: String(page + 1) })}`}
+                className="hit-area text-link hover:underline"
+              >
+                Older
+              </Link>
+            ) : null}
+          </nav>
         ) : null}
       </div>
     </>

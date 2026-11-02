@@ -71,6 +71,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['settings: roles', '/settings/roles'],
   ['settings: webhooks', '/settings/webhooks'],
   ['settings: environments', '/settings/environments'],
+  ['settings: redirects', '/settings/redirects'],
   ['settings: ai actions', '/settings/ai-actions'],
   ['settings: functions', '/settings/functions'],
   ['settings: extensions', '/settings/extensions'],
@@ -417,6 +418,15 @@ test('the asset sheet’s tabs have no accessibility violations', async ({
   await scan(page, testInfo);
 });
 
+// The page a link opens when it no longer works: public, so it is reachable before sign-in is on.
+test('an invitation link that no longer works has no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await page.goto(`/invite/cwi_${'A'.repeat(43)}`);
+  await expect(page.getByRole('alert')).toContainText('isn’t valid');
+  await scan(page, testInfo);
+});
+
 test('the content type dialog has no accessibility violations', async ({ page }, testInfo) => {
   await openCms(page, '/content');
   await page
@@ -448,6 +458,24 @@ test('the webhook dialog has no accessibility violations', async ({ page }, test
   await edit.waitFor();
   await edit.click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('the redirect and import dialogs have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/redirects');
+  await page.getByRole('button', { name: 'New redirect' }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'New redirect' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('From').fill('/a11y-old');
+  await dialog.getByLabel('To').fill('/a11y-new');
+  await scan(page, testInfo);
+  await dialog.getByRole('button', { name: 'Add redirect' }).click();
+  await expect(page.getByRole('switch', { name: 'Enabled: /a11y-old' })).toBeVisible();
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Import' }).click();
+  await expect(page.getByRole('dialog', { name: 'Import redirects' })).toBeVisible();
   await scan(page, testInfo);
 });
 
@@ -596,4 +624,26 @@ test('a blocks field’s editor has no accessibility violations', async ({ page,
     page.getByRole('button', { name: 'Move Call to action block 2 down' }),
   ).toBeDisabled();
   await scan(page, info);
+});
+
+// The taxonomy screen's tag table (slug, published count) and the term editor sheet with its
+// localized-label fields.
+test('the taxonomy tag table and its term editor have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  const stamp = Date.now().toString(36);
+  const created = await api(page.request, 'POST', `${MGMT}/taxonomy/tags`, {
+    name: `A11y ${stamp}`,
+    description: 'Checked by axe',
+  });
+  expect(created.ok()).toBe(true);
+  await openCms(page, '/taxonomy');
+  await page.getByRole('tab', { name: 'Tags' }).click();
+  const table = page.getByRole('table', { name: 'Tags' });
+  await expect(table.getByText(`a11y-${stamp}`)).toBeVisible();
+  await scan(page, testInfo);
+  await table.getByRole('button', { name: `Edit “A11y ${stamp}”` }).click();
+  const sheet = page.getByRole('dialog', { name: `Edit “A11y ${stamp}”` });
+  await expect(sheet.getByLabel('Slug')).toHaveValue(`a11y-${stamp}`);
+  await scan(page, testInfo, ['[role="dialog"]']);
 });

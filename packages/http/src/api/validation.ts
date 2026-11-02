@@ -11,7 +11,12 @@ import {
   MAX_COLLECTION_CHANGE,
   MAX_COLLECTION_DESCRIPTION,
   MAX_COLLECTION_ITEMS,
+  MAX_REDIRECT_IMPORT,
+  MAX_REDIRECT_LENGTH,
+  MAX_REDIRECT_NOTE_LENGTH,
+  MAX_REDIRECTS,
   MAX_SHARE_PASSWORD,
+  MAX_URL_PATTERN_LENGTH,
   MAX_ZIP_ASSETS,
   PLUGIN_SETTING_MAX_STRING,
   SPACE_ID_PATTERN,
@@ -128,6 +133,7 @@ export const snapshotBody = z.object({
   entries: z.array(z.any()).max(100_000),
   assets: z.array(z.any()).max(100_000).optional(),
   assetFolders: z.array(z.any()).max(10_000).optional(),
+  assetCollections: z.array(z.any()).max(10_000).optional(),
   taxonomy: z
     .object({
       schemes: z.array(z.any()).max(1000),
@@ -136,6 +142,38 @@ export const snapshotBody = z.object({
     })
     .optional(),
   workflows: z.array(z.any()).max(1000).optional(),
+  redirects: z.array(z.any()).max(MAX_REDIRECTS).optional(),
+});
+const redirectFields = {
+  source: z
+    .string()
+    .min(1)
+    .max(MAX_REDIRECT_LENGTH)
+    .describe('A path: /old, /blog/[slug], /docs/[...rest]'),
+  destination: z
+    .string()
+    .min(1)
+    .max(MAX_REDIRECT_LENGTH)
+    .describe('A path or an https:// URL; [slug] and [...rest] insert the captures'),
+  status: z
+    .union([z.literal(301), z.literal(302), z.literal(307), z.literal(308)])
+    .optional()
+    .describe('Default 301'),
+  locale: z.string().max(35).nullable().optional().describe('One locale only; null for every'),
+  enabled: z.boolean().optional().describe('Default true'),
+  note: z.string().max(MAX_REDIRECT_NOTE_LENGTH).nullable().optional(),
+};
+export const redirectBody = z.object(redirectFields);
+export const redirectPatchBody = z.object(redirectFields).partial();
+export const redirectImportBody = z.object({
+  format: z.enum(['csv', 'json']),
+  data: z
+    .union([z.string().max(1_000_000), z.array(z.object({}).loose()).max(MAX_REDIRECT_IMPORT)])
+    .describe(
+      'CSV text with a header row (source, destination, status, locale, enabled, note), or a ' +
+        'JSON array of redirects',
+    ),
+  dryRun: z.boolean().optional().describe('Check and report without writing'),
 });
 export const cloneBody = z.object({
   targetSpaceId: zId.optional(),
@@ -223,6 +261,15 @@ export const contentTypeBody = z.object({
   displayField: zId,
   description: zShort.optional(),
   fields: z.array(fieldDef).max(500),
+  urlPattern: z
+    .string()
+    .max(MAX_URL_PATTERN_LENGTH)
+    .nullable()
+    .optional()
+    .describe(
+      'Where its entries live on the site, e.g. /blog/{slug} ({id}, {locale} or a Slug field). ' +
+        'A publish that changes the slug redirects the old path. null clears it.',
+    ),
 });
 export const createEntryBody = z.object({
   contentTypeApiId: zId,
@@ -582,13 +629,34 @@ export const decideWorkflowTaskBody = z.object({
 export const workflowSettingsBody = z.object({ separateDuties: z.boolean() });
 export const transitionBody = z.object({ workflowId: zId, toStepId: zId });
 export const schemeBody = z.object({ name: zShort });
+/** What a tag or concept carries beside its label (see `TermFieldsInput`). */
+const termFields = {
+  slug: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('URL slug, normalized (a-z, 0-9, hyphens). Made from the label when omitted'),
+  description: z.string().max(2000).nullable().optional().describe('Plain text; null clears it'),
+  labels: z
+    .record(z.string().min(2).max(35).describe('A locale of the space'), z.string().max(256))
+    .refine((r) => Object.keys(r).length <= 100, 'At most 100 locales')
+    .optional()
+    .describe(
+      'Labels by locale (the whole set). The default locale’s sets the term’s own label; an ' +
+        'empty value removes that locale’s label',
+    ),
+};
 export const conceptBody = z.object({
   schemeId: zId,
   prefLabel: zShort,
   broaderId: zId.nullable().optional(),
+  ...termFields,
 });
+export const conceptPatchBody = z.object({ prefLabel: zShort.optional(), ...termFields });
 export const broaderBody = z.object({ broaderId: zId.nullable().optional() });
-export const tagBody = z.object({ name: zShort });
+export const tagBody = z.object({ name: zShort, ...termFields });
+export const tagPatchBody = z.object({ name: zShort.optional(), ...termFields });
 export const entryMetadataBody = z.object({
   tags: z.array(zId).max(1000).optional(),
   concepts: z.array(zId).max(1000).optional(),

@@ -63,6 +63,14 @@ through the gateway. Read replication is turned on per database by `scripts/prov
 - **One writer per database.** No per-request writes on read paths; bulk, import and reindex
   work goes through queues in chunks; the lexical search index lives in `SearchShardDO`
   (its own SQLite per shard), not in D1.
+  Derived counts are kept on the write side instead: taxonomy usage (`taxonomy_usage`, how many
+  published entries of each content type carry each tag and concept) moves in the same batch as
+  the published snapshot (`putPublishedMany` takes the old snapshot's terms off before the upsert
+  and puts the new one's on after it, SQL over `entry_published` that sees the batch's own earlier
+  statements; `removePublishedMany` takes them off before the delete). A Delivery taxonomy read
+  then sums a handful of rows in the round trip that reads the space config. The daily
+  `taxonomy-repair` sweep rebuilds them from the snapshots, the backstop for snapshots older code
+  wrote without them.
 - **10 GB per database.** Asset bytes, import staging, plugin bundles and dead letters live in
   R2; retention prunes relayed outbox rows and webhook deliveries hourly
   (`EVENT_RETENTION_HOURS`, default 168), and the same tick sweeps drafts whose upload never
@@ -139,6 +147,7 @@ kinds hold state that cannot:
 | Share link after expiry or revoke                     | The media Worker reads the link's row from a D1 replica on every request. Expired: `410` at once, from the link's own `expiresAt`. Revoked: `410` once the replica has the revoke (replication lag). The cached page (tag `cws:<space>:<env>:<link>`) is purged on the revoke event and again 90 s later; a file is served through its asset's own cached URL, so an unpublish revokes it as it does for any media file |
 | Share page after a member changes                     | A collection's page is tagged `cwc:<space>:<env>:<collection>`: `asset_collection.changed` purges it, and so do `asset.published`, `asset.unpublished` and `asset.rights_changed` for each collection holding the asset (at most 100; past that the page's own `max-age`, at most an hour, bounds it) |
 | Delivery collection read after a change               | Eventually consistent like every Delivery read: `asset_collection.changed` purges the scope's tag |
+| Delivery redirects after a change                     | Eventually consistent like every Delivery read: `redirects.changed` purges the scope's tag. A publish that writes slug redirects commits them in the publish's own unit, and its `entry.published` purges the same responses. Two writers to the set are serialized by `redirect_sets.revision`: the loser reads again and re-checks for loops, or surfaces `TransactionConflictError` after three attempts. A publish never fails on that race |
 | Multipart upload left unfinished                      | Aborted by the hourly sweep a day on (R2 drops its parts), and by the bucket's 2-day lifecycle rule if the sweep never ran; the empty draft goes with the abandoned-upload sweep |
 | Zip download                                          | A Workflow, one step per 8 MiB part, retried per step. The job moves `pending`, `running`, then `completed` or `failed` (with `error`). The archive is kept a day: the hourly sweep removes it and its job, the `zips/` lifecycle rule (2 days) backs it up, and an environment purge clears it |
 | Media file after publish                              | No wait: a gate miss falls back to a D1 replica, so a just-published asset is served before KV has the entry. A `404` is never cached                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |

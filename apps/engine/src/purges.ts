@@ -27,6 +27,10 @@ export const PURGING_EVENTS = new Set<string>([
   // Delivery lists a collection's published members (`GET …/collections/:id`), cached under the
   // scope's tag like every other delivery read: one tag, coalesced per batch.
   'asset_collection.changed',
+  // Delivery serves tags and concepts (labels, slugs, counts) under the scope's tag too.
+  'taxonomy.changed',
+  // Delivery serves the enabled set (`GET …/redirects`) and each path's match from it.
+  'redirects.changed',
   'content_type.published',
   'release.published',
   'environment_alias.changed',

@@ -94,6 +94,7 @@ describe('nav source', () => {
         'roles',
         'webhooks',
         'environments',
+        'redirects',
         'ai-actions',
         'functions',
         'extensions',

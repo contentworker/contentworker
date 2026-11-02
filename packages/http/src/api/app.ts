@@ -28,6 +28,7 @@ import {
   requestRateLimitMiddleware,
 } from './request-rate-limit';
 import { deliveryRoutes } from './routes/delivery';
+import { inviteRoutes } from './routes/invites';
 import { managementRoutes } from './routes/management';
 import { previewRoutes } from './routes/preview';
 import { teamRoutes } from './routes/team';
@@ -162,6 +163,7 @@ export function createApp(
     trustedProxyCount: config.trustedProxyCount,
     moderateBeforePublish: config.moderateBeforePublish,
     accessPolicy: WEB_SIGN_IN,
+    ...(config.oauthIssuer ? { inviteOrigin: config.oauthIssuer.replace(/\/$/, '') } : {}),
     ...overrides,
   };
 
@@ -176,6 +178,8 @@ export function createApp(
     app.route('/', managementRoutes(deps));
     // After managementRoutes: its `/spaces/*` principal + audit middleware cover these routes.
     app.route('/', teamRoutes(deps));
+    // Also after it: its `/deployment/*` principal middleware covers these.
+    app.route('/', inviteRoutes(deps));
   }
   if (mountDelivery) app.route('/', deliveryRoutes(deps, describeDelivery));
   if (mountPreview) app.route('/', previewRoutes(deps));

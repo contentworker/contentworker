@@ -14,6 +14,7 @@ import {
   createSpace,
   parseImageTransform,
   publishAsset,
+  READ_URL_TTL_SECONDS,
   setAssetMetadata,
   transformAssetUrl,
   transformPublishedAssetUrl,
@@ -89,7 +90,7 @@ describe('transformAssetUrl', () => {
   it('uses the asset focal point when cropping', async () => {
     const id = await newImage();
     await setAssetMetadata(ctx, scope, id, { focalPoint: { x: 0.1, y: 0.2 } });
-    const { url } = await transformAssetUrl(ctx, scope, id, { fit: 'crop', width: 50 });
+    const { url } = await transformAssetUrl(ctx, blob, scope, id, { fit: 'crop', width: 50 });
     const params = new URL(url).searchParams;
     expect(params.get('fp-x')).toBe('0.1');
     expect(params.get('fp-y')).toBe('0.2');
@@ -100,14 +101,14 @@ describe('transformAssetUrl', () => {
       fileName: 'doc.pdf',
       contentType: 'application/pdf',
     });
-    await expect(transformAssetUrl(ctx, scope, asset.id, { width: 10 })).rejects.toThrow(
+    await expect(transformAssetUrl(ctx, blob, scope, asset.id, { width: 10 })).rejects.toThrow(
       ValidationError,
     );
   });
 
   it('rejects an out-of-range quality', async () => {
     const id = await newImage();
-    await expect(transformAssetUrl(ctx, scope, id, { quality: 0 })).rejects.toThrow(
+    await expect(transformAssetUrl(ctx, blob, scope, id, { quality: 0 })).rejects.toThrow(
       ValidationError,
     );
   });
@@ -137,17 +138,20 @@ describe('transform via a bound ImageTransformer', () => {
     });
     await setAssetMetadata(ctx, scope, asset.id, { focalPoint: { x: 0.3, y: 0.6 } });
 
-    const draft = await transformAssetUrl(ctx, scope, asset.id, {
+    const draft = await transformAssetUrl(ctx, blob, scope, asset.id, {
       width: 200,
       height: 100,
       fit: 'crop',
       format: 'auto',
     });
-    expect(draft.url.startsWith(asset.file.url)).toBe(true);
+    // From a fresh short-lived read URL, not the stored one, and expiring with it.
+    const signed = `${asset.file.url}?ttl=${READ_URL_TTL_SECONDS}`;
+    expect(draft.url.startsWith(signed)).toBe(true);
     expect(images.calls[0]).toEqual({
-      sourceUrl: asset.file.url,
+      sourceUrl: signed,
       transform: { width: 200, height: 100, fit: 'crop', format: 'auto' },
       focalPoint: { x: 0.3, y: 0.6 },
+      expiresInSeconds: READ_URL_TTL_SECONDS,
     });
 
     await publishAsset(ctx, scope, asset.id);
@@ -165,7 +169,7 @@ describe('transform via a bound ImageTransformer', () => {
       fileName: 'p.png',
       contentType: 'image/png',
     });
-    await expect(transformAssetUrl(ctx, scope, asset.id, { width: 20000 })).rejects.toThrow(
+    await expect(transformAssetUrl(ctx, blob, scope, asset.id, { width: 20000 })).rejects.toThrow(
       ValidationError,
     );
     expect(images.calls).toHaveLength(0);

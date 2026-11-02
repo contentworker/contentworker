@@ -58,4 +58,6 @@ export interface McpDeps {
   readonly remoteFetcher?: RemoteFetcher;
   /** Whether people sign in through SSO (for the last-administrator rule). Absent: no SSO. */
   readonly accessPolicy?: AccessPolicy;
+  /** The admin's origin, where invitation links open (as AuthDeps' `inviteOrigin`). */
+  readonly inviteOrigin?: string;
 }

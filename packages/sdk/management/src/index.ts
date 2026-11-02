@@ -74,6 +74,8 @@ export interface ContentType {
   readonly name: string;
   readonly displayField: string;
   readonly fields: readonly FieldDefinition[];
+  /** Where its entries live on the site, e.g. `/blog/{slug}`. */
+  readonly urlPattern?: string;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -102,6 +104,54 @@ export interface ContentTypeDraft {
   readonly name: string;
   readonly displayField: string;
   readonly fields: readonly FieldDefinition[];
+  /**
+   * Where its entries live on the site: `{id}`, `{locale}` or a Slug field's apiId, e.g.
+   * `/blog/{slug}`. A publish that changes that slug redirects the old path to the new one.
+   * `null` clears it.
+   */
+  readonly urlPattern?: string | null;
+}
+
+/** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
+export interface Redirect {
+  readonly id: string;
+  /** A path: exact, or a pattern of `[param]` segments and a trailing `[...splat]`. */
+  readonly source: string;
+  /** A path or an https URL; `[param]`/`[...splat]` insert what the source captured. */
+  readonly destination: string;
+  readonly status: 301 | 302 | 307 | 308;
+  readonly locale?: string;
+  readonly enabled: boolean;
+  readonly note?: string;
+  /** Written by someone, imported, or made by a publish that changed a slug. */
+  readonly origin: 'manual' | 'import' | 'slug';
+  readonly entryId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface RedirectInput {
+  readonly source: string;
+  readonly destination: string;
+  /** Default 301. */
+  readonly status?: 301 | 302 | 307 | 308;
+  /** One locale only; `null` (or absent) for every locale. */
+  readonly locale?: string | null;
+  readonly enabled?: boolean;
+  readonly note?: string | null;
+}
+
+/** A redirect whose destination is redirected again, and where its chain ends. */
+export interface RedirectChain {
+  readonly id: string;
+  readonly via: readonly string[];
+  readonly destination: string;
+}
+
+export interface RedirectWrite {
+  readonly redirect: Redirect;
+  /** Chains it takes part in: allowed, one hop slower; `collapseChains` straightens them. */
+  readonly chains: readonly RedirectChain[];
 }
 
 export interface Entry {
@@ -321,6 +371,48 @@ export interface CreateAssetInput {
 }
 
 /** A named, ordered set of assets; an asset may be in any number of them. */
+/** How many published entries carry a term: in all, and per content type. */
+export interface TermUsage {
+  readonly count: number;
+  readonly byContentType: Readonly<Record<string, number>>;
+}
+
+/** What a tag or concept carries beside its label. */
+export interface TermFields {
+  /** URL slug, normalized; made from the label when omitted on create, kept when it changes. */
+  readonly slug?: string;
+  /** Plain text; `null` clears it. */
+  readonly description?: string | null;
+  /** Labels by locale (the whole set). The default locale's sets the term's own label. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+export interface Tag {
+  readonly id: string;
+  /** The default-locale label. */
+  readonly name: string;
+  readonly slug: string;
+  readonly description: string | null;
+  /** Labels in the space's other locales. */
+  readonly labels: Readonly<Record<string, string>>;
+}
+
+export interface ConceptScheme {
+  readonly id: string;
+  readonly name: string;
+}
+
+export interface Concept {
+  readonly id: string;
+  readonly schemeId: string;
+  /** The default-locale label. */
+  readonly prefLabel: string;
+  readonly broaderId: string | null;
+  readonly slug: string;
+  readonly description: string | null;
+  readonly labels: Readonly<Record<string, string>>;
+}
+
 export interface AssetCollection {
   readonly id: string;
   readonly name: string;
@@ -734,6 +826,84 @@ export interface Principal {
   readonly restricted: boolean;
 }
 
+/** An entry as Preview serves it: the latest saved version, drafts included. */
+export interface PreviewEntry {
+  readonly id: string;
+  readonly contentType: string;
+  readonly status: EntryStatus;
+  readonly version: number;
+  /** Keyed by locale, or plain values when the list was read with `locale`. */
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
+/** The Preview list's parameters (`GET /preview/:space/:env/entries`). */
+export interface EntryListQuery {
+  readonly contentType?: string;
+  readonly locale?: string;
+  /** At most 100. */
+  readonly limit?: number;
+  readonly skip?: number;
+  /** Sort keys, e.g. `-sys.updatedAt` or `fields.title`. */
+  readonly order?: string;
+  /** Full-text match over text fields. */
+  readonly query?: string;
+}
+
+/** Maps source records onto one content type: target field apiId → source field name. */
+export interface ImportMapping {
+  readonly contentTypeApiId: string;
+  readonly fields: Readonly<Record<string, string>>;
+  /** The target field holding each record's source id; what makes a re-run update, not repeat. */
+  readonly identityField?: string;
+  /** Locale the values are written under; the space's default when absent. */
+  readonly locale?: string;
+}
+
+export interface ImportInput {
+  /** An id from `imports.sources()`: `csv`, `json` or `wxr`. */
+  readonly source: string;
+  /** The file's text. */
+  readonly payload: string;
+  readonly mapping: ImportMapping;
+  /** Per source, e.g. `{ postType: 'page' }` for WXR. */
+  readonly sourceOptions?: Readonly<Record<string, unknown>>;
+  /** A record matching an existing entry: `skip` (the default), `update` or `fail`. */
+  readonly conflicts?: 'skip' | 'update' | 'fail';
+}
+
+/** What an import would do, decided by the same planner that runs it. */
+export interface ImportAnalysis {
+  readonly contentTypeApiId: string;
+  readonly locale: string;
+  readonly records: number;
+  readonly willCreate: number;
+  readonly willUpdate: number;
+  readonly willSkip: number;
+  readonly invalid: number;
+  /** Source fields nothing maps to: the data this import would drop. */
+  readonly unmappedSourceFields: readonly string[];
+  /** Blocking: required target fields with no source. */
+  readonly missingRequiredFields: readonly string[];
+  /** Blocking: target fields the content type doesn't define. */
+  readonly unknownTargetFields: readonly string[];
+  readonly warnings: readonly string[];
+  readonly issues: readonly { externalId: string; messages: readonly string[] }[];
+  readonly executable: boolean;
+}
+
+export interface ImportResult {
+  readonly analysis: ImportAnalysis;
+  readonly created: number;
+  readonly updated: number;
+  readonly skipped: number;
+  readonly failed: readonly { externalId: string; message: string }[];
+}
+
+export interface StartedImport {
+  readonly job: BulkJob;
+  readonly analysis: ImportAnalysis;
+}
+
 export interface ManagementClientOptions {
   /** Base URL of the Management API, e.g. https://cms.example.com */
   readonly baseUrl: string;
@@ -979,6 +1149,7 @@ export function createManagementClient(opts: ManagementClientOptions) {
     contentTypes: {
       list: () => items(get<{ items: ContentType[] }>(`${envBase}/content-types`)),
       get: (apiId: string) => get<ContentType>(`${envBase}/content-types/${e(apiId)}`),
+      /** Creates a content type, or revises the one with this `apiId` (a new draft version). */
       create: (draft: ContentTypeDraft) => post<ContentType>(`${envBase}/content-types`, draft),
       publish: (apiId: string) =>
         post<ContentType>(`${envBase}/content-types/${e(apiId)}/published`),
@@ -987,7 +1158,73 @@ export function createManagementClient(opts: ManagementClientOptions) {
         items(get<{ items: ContentTypeEntryCounts[] }>(`${envBase}/content-types/entry-counts`)),
     },
 
+    /** Redirects: delivery data a front end applies (content:manage to change them). */
+    redirects: {
+      /** By source; `q` searches source, destination and note. */
+      list: (o: { q?: string; limit?: number; cursor?: string } = {}) =>
+        get<{ items: Redirect[]; nextCursor?: string }>(`${envBase}/redirects`, { ...o }),
+      get: (id: string) => get<Redirect>(`${envBase}/redirects/${e(id)}`),
+      /** Refused (422) for a source already redirected, a loop, or past the cap. */
+      create: (input: RedirectInput) => post<RedirectWrite>(`${envBase}/redirects`, input),
+      /** Fields left out keep their value; `null` clears locale or note. */
+      update: (id: string, changes: Partial<RedirectInput>) =>
+        patch<RedirectWrite>(`${envBase}/redirects/${e(id)}`, changes),
+      delete: (id: string) => del<void>(`${envBase}/redirects/${e(id)}`),
+      /** All or nothing, up to 1,000 rows; a source already redirected is updated. */
+      import: (input: {
+        format: 'csv' | 'json';
+        data: string | readonly RedirectInput[];
+        dryRun?: boolean;
+      }) =>
+        post<{
+          dryRun: boolean;
+          created: number;
+          updated: number;
+          unchanged: number;
+          chains: RedirectChain[];
+        }>(`${envBase}/redirects/import`, input),
+      /** What a path resolves to among the enabled redirects, or null. */
+      resolve: async (path: string, o: { locale?: string } = {}) => {
+        try {
+          return await get<{ redirect: Redirect; status: number; location: string }>(
+            `${envBase}/redirects/resolve`,
+            { path, ...o },
+          );
+        } catch (err) {
+          if (err instanceof ManagementError && err.status === 404) return null;
+          throw err;
+        }
+      },
+      /** Loops, chains and duplicate sources across the whole set. */
+      analyze: () =>
+        get<{
+          loops: string[][];
+          chains: RedirectChain[];
+          duplicates: { key: string; ids: string[] }[];
+          count: number;
+          max: number;
+        }>(`${envBase}/redirects/analysis`),
+      /** Points every redirect that ends a chain straight at where its chain ends. */
+      collapseChains: () => post<{ updated: number }>(`${envBase}/redirects/collapse-chains`),
+    },
+
     entries: {
+      /**
+       * One page of entries as they are now, drafts included, from the Preview API (the same
+       * origin): `total` counts this page, so page with `skip` until one comes back short.
+       */
+      list: (query: EntryListQuery = {}) =>
+        get<{ items: PreviewEntry[]; total: number }>(
+          `${root}/preview/${e(opts.space)}/${e(opts.environment)}/entries`,
+          {
+            content_type: query.contentType,
+            locale: query.locale,
+            limit: query.limit,
+            skip: query.skip,
+            order: query.order,
+            query: query.query,
+          },
+        ),
       create: (input: { contentTypeApiId: string; fields: EntryFields }) =>
         post<EntryView>(`${envBase}/entries`, input),
       get: (id: string) => get<EntryView>(`${envBase}/entries/${e(id)}`),
@@ -1324,6 +1561,49 @@ export function createManagementClient(opts: ManagementClientOptions) {
       },
     },
 
+    /**
+     * The environment's controlled vocabulary: flat tags, and concept schemes holding
+     * hierarchical concepts. Lists carry each term's published usage (`usage`).
+     */
+    taxonomy: {
+      tags: {
+        list: () =>
+          items(get<{ items: (Tag & { usage: TermUsage })[] }>(`${envBase}/taxonomy/tags`)),
+        create: (input: { name: string } & TermFields) =>
+          post<Tag>(`${envBase}/taxonomy/tags`, input),
+        update: (id: string, input: { name?: string } & TermFields) =>
+          patch<Tag>(`${envBase}/taxonomy/tags/${e(id)}`, input),
+        delete: (id: string) => del<void>(`${envBase}/taxonomy/tags/${e(id)}`),
+      },
+      schemes: {
+        list: () => items(get<{ items: ConceptScheme[] }>(`${envBase}/taxonomy/schemes`)),
+        create: (input: { name: string }) =>
+          post<ConceptScheme>(`${envBase}/taxonomy/schemes`, input),
+        delete: (id: string) => del<void>(`${envBase}/taxonomy/schemes/${e(id)}`),
+      },
+      concepts: {
+        list: (o: { scheme?: string } = {}) =>
+          items(
+            get<{ items: (Concept & { usage: TermUsage })[] }>(`${envBase}/taxonomy/concepts`, {
+              scheme: o.scheme,
+            }),
+          ),
+        create: (
+          input: { schemeId: string; prefLabel: string; broaderId?: string | null } & TermFields,
+        ) => post<Concept>(`${envBase}/taxonomy/concepts`, input),
+        update: (id: string, input: { prefLabel?: string } & TermFields) =>
+          patch<Concept>(`${envBase}/taxonomy/concepts/${e(id)}`, input),
+        setBroader: (id: string, broaderId: string | null) =>
+          put<Concept>(`${envBase}/taxonomy/concepts/${e(id)}/broader`, { broaderId }),
+        delete: (id: string) => del<void>(`${envBase}/taxonomy/concepts/${e(id)}`),
+      },
+      /**
+       * Recounts published usage from the published entries and gives a slug to any term without
+       * one. The counts are kept as entries publish; this is the repair, safe to repeat.
+       */
+      repair: () => post<{ slugsAssigned: number }>(`${envBase}/taxonomy/repair`),
+    },
+
     /** Durable bulk jobs (asset bulk actions, entry bulk publishing, imports), newest first. */
     bulkJobs: {
       list: (o: { limit?: number } = {}) =>
@@ -1335,6 +1615,21 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * finishes, and nothing done is rolled back. Cancelling a finished job returns it unchanged.
        */
       cancel: (id: string) => post<BulkJob>(`${envBase}/bulk/jobs/${e(id)}/cancel`),
+    },
+
+    /**
+     * Imports from a file (CSV, JSON, WXR) into one content type. Entries arrive as drafts;
+     * `analyze` writes nothing and reports exactly what `run` or `start` would do.
+     */
+    imports: {
+      /** The formats this deployment reads. */
+      sources: () =>
+        items(get<{ items: { id: string; name: string }[] }>(`${envBase}/imports/sources`)),
+      analyze: (input: ImportInput) => post<ImportAnalysis>(`${envBase}/imports/analyze`, input),
+      /** Runs it in the request (up to 10,000 records). */
+      run: (input: ImportInput) => post<ImportResult>(`${envBase}/imports`, input),
+      /** Runs it as a durable job; follow `job.id` with `bulkJobs.get` and `bulkJobs.report`. */
+      start: (input: ImportInput) => post<StartedImport>(`${envBase}/imports/job`, input),
     },
 
     webhooks: {

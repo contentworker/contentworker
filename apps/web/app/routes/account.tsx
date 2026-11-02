@@ -49,7 +49,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     me.kind === 'user' ? listPasskeys(me.id) : [],
     me.kind === 'user' ? usesPassword(me.id) : true,
   ]);
-  return { me, sessions, twoFactor, passkeys, password };
+  // Just joined from an invitation (routes/invite.tsx): a word on passkeys, once.
+  const welcome = new URL(request.url).searchParams.get('welcome') === '1';
+  return { me, sessions, twoFactor, passkeys, password, welcome };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -112,7 +114,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Account() {
-  const { me, sessions, twoFactor, passkeys, password } = useLoaderData<typeof loader>();
+  const { me, sessions, twoFactor, passkeys, password, welcome } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const end = useFetcher<typeof action>();
   const formatTime = useDateTime();
@@ -141,6 +143,12 @@ export default function Account() {
       <div className="mx-auto max-w-page px-4 pb-10 sm:px-6">
         <div className="max-w-[560px]">
           {/* Not alerts: they are there when the page loads, so they're read in order. */}
+          {welcome ? (
+            <p className="mb-6 rounded-md border bg-muted/40 p-4 text-sm">
+              <span className="font-medium">Welcome to contentworker.</span> You can add a passkey
+              below, to sign in with your fingerprint, face or device PIN instead of your password.
+            </p>
+          ) : null}
           {me.passwordChangeDue ? (
             <p className="mb-6 rounded-md border border-wait/40 bg-wait/10 p-4 text-sm">
               <span className="font-medium">Choose your own password to continue.</span> You signed

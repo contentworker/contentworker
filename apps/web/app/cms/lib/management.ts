@@ -25,6 +25,11 @@ import type {
   EntryWorkflowState,
   FilterOp,
   GraphIssue,
+  Redirect,
+  RedirectChain,
+  RedirectInput,
+  RedirectMatch,
+  RedirectSetReport,
   ReferenceEdge,
   Release,
   ReleaseItem,
@@ -34,6 +39,7 @@ import type {
   ScheduledEntityType,
   Tag,
   Task,
+  TermUsageSummary,
   WorkflowDefinition,
   WorkflowGraph,
   WorkflowGraphChanges,
@@ -220,7 +226,15 @@ export interface PreviewEntry {
   readonly contentType: string;
   readonly status: string;
   readonly version: number;
+  /** When the entry last changed (ISO-8601); the paged list carries it. */
+  readonly updatedAt?: string;
   readonly fields: Record<string, unknown>;
+}
+
+/** One page of the entries list; pass `nextCursor` back for the next. */
+export interface EntryPage {
+  readonly items: readonly PreviewEntry[];
+  readonly nextCursor?: string;
 }
 
 export interface EntryView {
@@ -261,7 +275,6 @@ export interface EntryListQuery {
   readonly order?: readonly EntryOrder[];
   readonly search?: string;
   readonly limit?: number;
-  readonly skip?: number;
   /** List the trash instead of live entries. Trash is hidden by default. */
   readonly trashed?: boolean;
 }
@@ -288,7 +301,6 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
   }
   if (query.search) params.set('query', query.search);
   if (query.limit != null) params.set('limit', String(query.limit));
-  if (query.skip != null) params.set('skip', String(query.skip));
   if (query.trashed) params.set('trashed', 'true');
   return params;
 }
@@ -313,6 +325,18 @@ export interface EnvironmentAlias {
   readonly alias: string;
   readonly targetEnvironmentId: string;
   readonly updatedAt: string;
+}
+
+/** A tag or concept with how many published entries carry it, in all and per content type. */
+export type WithUsage<T> = T & { readonly usage: TermUsageSummary };
+
+/** What a tag or concept carries beside its label. */
+export interface TermFields {
+  readonly slug?: string;
+  /** Plain text; `null` clears it. */
+  readonly description?: string | null;
+  /** Labels by locale (the whole set); the default locale's sets the term's own label. */
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 /** Space configuration — drives the localization tabs in the editor. */
@@ -557,6 +581,20 @@ export const WEBHOOK_TOPICS = [
   'content_type.published',
 ] as const;
 export type WebhookTopic = (typeof WEBHOOK_TOPICS)[number];
+
+/** A redirect write: the redirect, and the chains it now takes part in. */
+export interface RedirectWrite {
+  readonly redirect: Redirect;
+  readonly chains: readonly RedirectChain[];
+}
+
+export interface RedirectImportReport {
+  readonly dryRun: boolean;
+  readonly created: number;
+  readonly updated: number;
+  readonly unchanged: number;
+  readonly chains: readonly RedirectChain[];
+}
 
 export interface WebhookSummary {
   readonly id: string;
@@ -1157,6 +1195,20 @@ export function createManagementClient(
     if (!put.ok) throw new ApiError(put.status, `upload failed: ${put.status}`);
   }
 
+  /** One page of draft/current entries (Preview API), with optional field filters, ordering and
+   *  full-text search applied server-side. `cursor` is the last page's `nextCursor`. */
+  async function listEntryPage(
+    contentType?: string,
+    query: EntryListQuery = {},
+    cursor?: string,
+  ): Promise<EntryPage> {
+    const params = entryQueryParams(query);
+    if (contentType) params.set('content_type', contentType);
+    if (cursor) params.set('cursor', cursor);
+    const qs = params.toString();
+    return req<EntryPage>('GET', `${preview}/entries${qs ? `?${qs}` : ''}`);
+  }
+
   return {
     getSpaceConfig(): Promise<SpaceConfig> {
       return req('GET', `${mgmt}/space-config`);
@@ -1250,29 +1302,20 @@ export function createManagementClient(
       );
       return r.items;
     },
-    /** Lists draft/current entries (Preview API), with optional field filters,
-     *  ordering, and full-text search applied server-side. The API returns at most
-     *  `ENTRY_PAGE` a request, so a larger `limit` is read page by page with `skip`. */
+    listEntryPage,
+    /** Lists draft/current entries (Preview API). The API returns at most `ENTRY_PAGE` a
+     *  request, so a larger `limit` is read page by page, following the cursor. */
     async listEntries(contentType?: string, query: EntryListQuery = {}): Promise<PreviewEntry[]> {
-      const page = async (q: EntryListQuery) => {
-        const params = entryQueryParams(q);
-        if (contentType) params.set('content_type', contentType);
-        const qs = params.toString();
-        const r = await req<{ items: PreviewEntry[] }>(
-          'GET',
-          `${preview}/entries${qs ? `?${qs}` : ''}`,
-        );
-        return r.items;
-      };
       const want = query.limit;
-      if (want === undefined || want <= ENTRY_PAGE) return page(query);
+      if (want === undefined) return [...(await listEntryPage(contentType, query)).items];
       const items: PreviewEntry[] = [];
-      for (let skip = query.skip ?? 0; items.length < want; skip += ENTRY_PAGE) {
+      let cursor: string | undefined;
+      do {
         const size = Math.min(ENTRY_PAGE, want - items.length);
-        const rows = await page({ ...query, skip, limit: size });
-        items.push(...rows);
-        if (rows.length < size) break;
-      }
+        const page = await listEntryPage(contentType, { ...query, limit: size }, cursor);
+        items.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor && items.length < want);
       return items;
     },
     /**
@@ -2237,6 +2280,52 @@ export function createManagementClient(
       );
     },
 
+    // --- settings: redirects (environment-scoped) ------------------------
+    /** One page by source; `q` searches source, destination and note. */
+    listRedirects(
+      query: { q?: string; cursor?: string; limit?: number } = {},
+    ): Promise<{ items: Redirect[]; nextCursor?: string }> {
+      const qs = new URLSearchParams();
+      if (query.q) qs.set('q', query.q);
+      if (query.cursor) qs.set('cursor', query.cursor);
+      if (query.limit) qs.set('limit', String(query.limit));
+      return req('GET', `${mgmt}/redirects${qs.size ? `?${qs}` : ''}`);
+    },
+    createRedirect(input: RedirectInput): Promise<RedirectWrite> {
+      return req('POST', `${mgmt}/redirects`, input);
+    },
+    /** Partial: fields left out keep their value; `null` clears locale or note. */
+    updateRedirect(id: string, changes: Partial<RedirectInput>): Promise<RedirectWrite> {
+      return req('PATCH', `${mgmt}/redirects/${encodeURIComponent(id)}`, changes);
+    },
+    deleteRedirect(id: string): Promise<void> {
+      return req('DELETE', `${mgmt}/redirects/${encodeURIComponent(id)}`);
+    },
+    /** All or nothing; `dryRun` reports what it would do. */
+    importRedirects(input: {
+      format: 'csv' | 'json';
+      data: string;
+      dryRun?: boolean;
+    }): Promise<RedirectImportReport> {
+      return req('POST', `${mgmt}/redirects/import`, input);
+    },
+    analyzeRedirects(): Promise<RedirectSetReport & { count: number; max: number }> {
+      return req('GET', `${mgmt}/redirects/analysis`);
+    },
+    collapseRedirectChains(): Promise<{ updated: number }> {
+      return req('POST', `${mgmt}/redirects/collapse-chains`);
+    },
+    /** What a path resolves to among the enabled redirects, or null. */
+    async resolveRedirect(path: string, locale?: string): Promise<RedirectMatch | null> {
+      const qs = new URLSearchParams({ path, ...(locale ? { locale } : {}) });
+      try {
+        return await req<RedirectMatch>('GET', `${mgmt}/redirects/resolve?${qs}`);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+
     // --- settings: webhooks (environment-scoped) -------------------------
     async listWebhooks(): Promise<WebhookSummary[]> {
       const r = await req<{ items: WebhookSummary[] }>('GET', `${mgmt}/webhooks`);
@@ -2561,17 +2650,20 @@ export function createManagementClient(
     },
 
     // --- taxonomy: concepts (hierarchical) -------------------------------
-    async listConcepts(schemeId?: string): Promise<Concept[]> {
+    /** Concepts with their published usage (how many published entries carry each). */
+    async listConcepts(schemeId?: string): Promise<WithUsage<Concept>[]> {
       const qs = schemeId ? `?scheme=${encodeURIComponent(schemeId)}` : '';
-      const r = await req<{ items: Concept[] }>('GET', `${mgmt}/taxonomy/concepts${qs}`);
+      const r = await req<{ items: WithUsage<Concept>[] }>('GET', `${mgmt}/taxonomy/concepts${qs}`);
       return r.items;
     },
-    createConcept(input: {
-      schemeId: string;
-      prefLabel: string;
-      broaderId?: string | null;
-    }): Promise<Concept> {
+    createConcept(
+      input: { schemeId: string; prefLabel: string; broaderId?: string | null } & TermFields,
+    ): Promise<Concept> {
       return req('POST', `${mgmt}/taxonomy/concepts`, input);
+    },
+    /** Only the keys sent change; the slug stays when the label changes. */
+    updateConcept(id: string, input: { prefLabel?: string } & TermFields): Promise<Concept> {
+      return req('PATCH', `${mgmt}/taxonomy/concepts/${encodeURIComponent(id)}`, input);
     },
     setConceptBroader(id: string, broaderId: string | null): Promise<Concept> {
       return req('PUT', `${mgmt}/taxonomy/concepts/${encodeURIComponent(id)}/broader`, {
@@ -2583,12 +2675,17 @@ export function createManagementClient(
     },
 
     // --- taxonomy: tags --------------------------------------------------
-    async listTags(): Promise<Tag[]> {
-      const r = await req<{ items: Tag[] }>('GET', `${mgmt}/taxonomy/tags`);
+    /** Tags with their published usage (how many published entries carry each). */
+    async listTags(): Promise<WithUsage<Tag>[]> {
+      const r = await req<{ items: WithUsage<Tag>[] }>('GET', `${mgmt}/taxonomy/tags`);
       return r.items;
     },
-    createTag(input: { name: string }): Promise<Tag> {
+    createTag(input: { name: string } & TermFields): Promise<Tag> {
       return req('POST', `${mgmt}/taxonomy/tags`, input);
+    },
+    /** Only the keys sent change; the slug stays when the name changes. */
+    updateTag(id: string, input: { name?: string } & TermFields): Promise<Tag> {
+      return req('PATCH', `${mgmt}/taxonomy/tags/${encodeURIComponent(id)}`, input);
     },
     deleteTag(id: string): Promise<void> {
       return req('DELETE', `${mgmt}/taxonomy/tags/${encodeURIComponent(id)}`);

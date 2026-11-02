@@ -6,6 +6,7 @@ import {
   addToAssetCollection,
   agentUsage,
   analyzeImport,
+  analyzeRedirectSet,
   analyzeSpaceExport,
   applyEntryTags,
   approvePluginCapabilities,
@@ -24,6 +25,7 @@ import {
   canvasToEntry,
   clampCount,
   cloneEnvironment,
+  collapseRedirects,
   commitAssetFile,
   compareEnvironments,
   completeMultipartAssetUpload,
@@ -44,6 +46,7 @@ import {
   createFunction,
   createPersonalAccessToken,
   createPreviewLink,
+  createRedirect,
   createRelease,
   createRole,
   createScheme,
@@ -64,6 +67,7 @@ import {
   deleteEnvironment,
   deleteEnvironmentAlias,
   deleteFunction,
+  deleteRedirect,
   deleteRelease,
   deleteRole,
   deleteScheme,
@@ -76,6 +80,7 @@ import {
   duplicateEntry,
   type EnvironmentSnapshot,
   executeImport,
+  exportRedirectsCsv,
   exportSnapshot,
   findDuplicates,
   generateAltText,
@@ -96,6 +101,7 @@ import {
   getPlugin,
   getPluginSettings,
   getPromotion,
+  getRedirect,
   getRelease,
   getReverseReferences,
   getRole,
@@ -103,6 +109,7 @@ import {
   getSpaceConfig,
   getVersion,
   getWorkflow,
+  importRedirects,
   importSnapshot,
   inspectPluginPackage,
   installPlugin,
@@ -124,7 +131,7 @@ import {
   listAuditLog,
   listBulkJobs,
   listComments,
-  listConcepts,
+  listConceptsWithUsage,
   listConnectedApps,
   listContentTypes,
   listEnvironmentAliases,
@@ -133,12 +140,13 @@ import {
   listPersonalAccessTokens,
   listPlugins,
   listPromotions,
+  listRedirects,
   listReleases,
   listRoles,
   listScheduledActions,
   listSchemes,
   listSpacesFor,
-  listTags,
+  listTagsWithUsage,
   listTasks,
   listVersions,
   listWebhookDeliveries,
@@ -154,6 +162,7 @@ import {
   publishEntry,
   publishRelease,
   purgeEntry,
+  type RedirectImport,
   reassignTask,
   refreshVideoAsset,
   reingestAsset,
@@ -163,11 +172,13 @@ import {
   removeFromAssetCollection,
   reopenTask,
   reorderAssetCollection,
+  repairTaxonomy,
   replaceAssetFile,
   requestAssetZip,
   requestPromotion,
   requestReindex,
   resolveEmbed,
+  resolveRedirect,
   resolveTask,
   restoreAsset,
   restoreAssetVersion,
@@ -211,12 +222,14 @@ import {
   updateAssetCollection,
   updateAssetFolder,
   updateAssetRendition,
+  updateConcept,
   updateEntry,
+  updateRedirect,
   updateRole,
+  updateTag,
   updateWebhook,
   upgradePlugin,
   upgradePluginFromUrl,
-  withReadUrl,
 } from '@contentworker/application';
 import { listDocs, readDoc, searchDocs } from '@contentworker/docs';
 import {
@@ -232,6 +245,7 @@ import {
   type InstalledPlugin,
   MAX_COLLECTION_CHANGE,
   MAX_COLLECTION_ITEMS,
+  MAX_REDIRECT_IMPORT,
   MAX_ZIP_ASSETS,
   maskDeniedFields,
   NotConfiguredError,
@@ -247,6 +261,7 @@ import type { ImportSource } from '@contentworker/ports';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import { createSpaceWithStarter } from '@contentworker/seed';
 import { type Context, Hono } from 'hono';
+import { assetResponse, assetVersionResponse } from '../asset-response';
 import {
   type AuthDeps,
   type AuthVars,
@@ -288,6 +303,7 @@ import {
   commitAssetFileBody,
   completeUploadBody,
   conceptBody,
+  conceptPatchBody,
   contentTypeBody,
   createAiActionBody,
   createApiKeyBody,
@@ -316,6 +332,9 @@ import {
   pluginSettingsBody,
   previewLinkBody,
   promotionBody,
+  redirectBody,
+  redirectImportBody,
+  redirectPatchBody,
   reindexBody,
   releaseItemBody,
   replaceAssetFileBody,
@@ -332,6 +351,7 @@ import {
   spaceExportImportBody,
   summarizeBody,
   tagBody,
+  tagPatchBody,
   tierOnlyBody,
   transitionBody,
   translateBody,
@@ -1932,8 +1952,9 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
 
   // --- assets -------------------------------------------------------------
-  // Reads hand out a short-lived signed URL, never the stored non-expiring one.
-  const signedOne = (c: Context<AuthVars>, asset: Asset) => withReadUrl(blob, scopeOf(c), asset);
+  // Every asset goes out through the one serializer (as MCP's do): a short-lived signed URL, never
+  // the stored non-expiring one, and none of the server's own fields (r2Key).
+  const signedOne = (c: Context<AuthVars>, asset: Asset) => assetResponse(blob, scopeOf(c), asset);
   const signed = (c: Context<AuthVars>, assets: readonly Asset[]) =>
     Promise.all(assets.map((a) => signedOne(c, a)));
   app.get(
@@ -2089,11 +2110,14 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         '501 when no video host is bound.',
     }),
     requireScope(SCOPES.contentWrite),
-    async (c) =>
-      c.json(
-        await createVideoAsset(ctx, scopeOf(c), await parseBody(c, createVideoAssetBody)),
-        201,
-      ),
+    async (c) => {
+      const created = await createVideoAsset(
+        ctx,
+        scopeOf(c),
+        await parseBody(c, createVideoAssetBody),
+      );
+      return c.json({ ...created, asset: await signedOne(c, created.asset) }, 201);
+    },
   );
   // --- asset collections ---------------------------------------------------
   // A key with content grants reads no assets (as the preview asset reads refuse it): not a
@@ -2380,17 +2404,16 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentWrite),
     async (c) => {
       const { parts } = await parseBody(c, completeUploadBody);
-      return c.json(
-        await completeMultipartAssetUpload(
-          ctx,
-          { blob, ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
-          scopeOf(c),
-          c.req.param('id'),
-          c.req.param('uploadId'),
-          parts,
-          { by: auditActor(c.get('principal')) },
-        ),
+      const asset = await completeMultipartAssetUpload(
+        ctx,
+        { blob, ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
+        scopeOf(c),
+        c.req.param('id'),
+        c.req.param('uploadId'),
+        parts,
+        { by: auditActor(c.get('principal')) },
       );
+      return c.json(await signedOne(c, asset));
     },
   );
   app.delete(
@@ -2472,7 +2495,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: docs.asset,
     }),
     requireScope(SCOPES.contentWrite),
-    async (c) => c.json(await refreshVideoAsset(ctx, scopeOf(c), c.req.param('id'))),
+    async (c) =>
+      c.json(await signedOne(c, await refreshVideoAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${BASE}/assets/:id/reingest`,
@@ -2532,9 +2556,10 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Assets', 'Get a resized or re-encoded image URL', {
       ok: docs.transformedImage,
       description:
-        'Built from the stored file URL, through the image service when one is bound (for ' +
-        'published images, prefer the delivered asset’s srcset and renditions). fit=crop is anchored ' +
-        'to the focal point. Images only (422 otherwise).',
+        'Built from a fresh signed read URL for the current file version (it expires with that ' +
+        'URL, 15 minutes), through the image service when one is bound (for published images, ' +
+        'prefer the delivered asset’s srcset and renditions). fit=crop is anchored to the focal ' +
+        'point. Images only (422 otherwise).',
       query: {
         w: 'Width, 1..10000',
         h: 'Height, 1..10000',
@@ -2548,6 +2573,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       c.json(
         await transformAssetUrl(
           ctx,
+          blob,
           scopeOf(c),
           c.req.param('id'),
           parseImageTransform(c.req.query()),
@@ -2727,7 +2753,11 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.previewRead),
     async (c) =>
-      c.json({ items: await listAssetVersions(ctx, scopeOf(c), c.req.param('id'), { blob }) }),
+      c.json({
+        items: (await listAssetVersions(ctx, scopeOf(c), c.req.param('id'), { blob })).map(
+          assetVersionResponse,
+        ),
+      }),
   );
   app.post(
     `${BASE}/assets/:id/versions/:version/restore`,
@@ -3274,11 +3304,49 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     return c.body(null, 204);
   });
 
-  app.get(`${BASE}/taxonomy/concepts`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listConcepts(ctx, scopeOf(c), c.req.query('scheme')) }),
+  app.get(
+    `${BASE}/taxonomy/concepts`,
+    doc('Taxonomy', 'List concepts with their published usage', {
+      ok: docs.conceptList,
+      query: { scheme: 'Only this scheme’s concepts' },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) =>
+      c.json({ items: await listConceptsWithUsage(ctx, scopeOf(c), c.req.query('scheme')) }),
   );
-  app.post(`${BASE}/taxonomy/concepts`, requireScope(SCOPES.contentManage), async (c) =>
-    c.json(await createConcept(ctx, scopeOf(c), await parseBody(c, conceptBody)), 201),
+  app.post(
+    `${BASE}/taxonomy/concepts`,
+    doc('Taxonomy', 'Create a concept', {
+      status: 201,
+      body: conceptBody,
+      ok: docs.concept,
+      description:
+        'A slug is made from prefLabel when omitted (numbered past the scheme’s taken ones); a ' +
+        'slug asked for that another concept of the scheme has is refused (409). labels must be ' +
+        'locales of the space (422 otherwise).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json(await createConcept(ctx, scopeOf(c), await parseBody(c, conceptBody)), 201),
+  );
+  app.patch(
+    `${BASE}/taxonomy/concepts/:id`,
+    doc('Taxonomy', 'Change a concept’s label, slug, description or localized labels', {
+      body: conceptPatchBody,
+      ok: docs.concept,
+      description:
+        'Only the keys sent change. The slug stays when the label changes (an archive URL ' +
+        'never moves by itself); a slug another concept of the scheme has is refused (409).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(
+        await updateConcept(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, conceptPatchBody),
+        ),
+      ),
   );
   app.put(
     `${BASE}/taxonomy/concepts/:id/broader`,
@@ -3295,16 +3363,202 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     return c.body(null, 204);
   });
 
-  app.get(`${BASE}/taxonomy/tags`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json({ items: await listTags(ctx, scopeOf(c)) }),
+  app.get(
+    `${BASE}/taxonomy/tags`,
+    doc('Taxonomy', 'List tags with their published usage', { ok: docs.tagList }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json({ items: await listTagsWithUsage(ctx, scopeOf(c)) }),
   );
-  app.post(`${BASE}/taxonomy/tags`, requireScope(SCOPES.contentManage), async (c) =>
-    c.json(await createTag(ctx, scopeOf(c), await parseBody(c, tagBody)), 201),
+  app.post(
+    `${BASE}/taxonomy/tags`,
+    doc('Taxonomy', 'Create a tag', {
+      status: 201,
+      body: tagBody,
+      ok: docs.tag,
+      description:
+        'A slug is made from name when omitted (numbered past the taken ones); a slug asked for ' +
+        'that another tag has is refused (409). labels must be locales of the space (422 ' +
+        'otherwise).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json(await createTag(ctx, scopeOf(c), await parseBody(c, tagBody)), 201),
+  );
+  app.patch(
+    `${BASE}/taxonomy/tags/:id`,
+    doc('Taxonomy', 'Change a tag’s name, slug, description or localized labels', {
+      body: tagPatchBody,
+      ok: docs.tag,
+      description:
+        'Only the keys sent change. The slug stays when the name changes (an archive URL never ' +
+        'moves by itself); a slug another tag has is refused (409).',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(await updateTag(ctx, scopeOf(c), c.req.param('id'), await parseBody(c, tagPatchBody))),
   );
   app.delete(`${BASE}/taxonomy/tags/:id`, requireScope(SCOPES.contentManage), async (c) => {
     await deleteTag(ctx, scopeOf(c), c.req.param('id'));
     return c.body(null, 204);
   });
+
+  app.post(
+    `${BASE}/taxonomy/repair`,
+    doc('Taxonomy', 'Recount published usage and fill missing slugs', {
+      ok: docs.taxonomyRepair,
+      description:
+        'Rebuilds the environment’s usage counts from its published entries and gives a slug ' +
+        'to any term without one. Counts are kept as entries publish, so this only matters ' +
+        'after something wrote snapshots without them; the engine runs it daily. Safe to repeat.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json(await repairTaxonomy(ctx, scopeOf(c))),
+  );
+  // --- redirects (delivery data: a front end applies them) ----------------
+  app.get(
+    `${BASE}/redirects`,
+    doc('Redirects', 'List redirects', {
+      ok: docs.redirectPage,
+      description: 'By source. Page with the response’s nextCursor.',
+      query: {
+        q: 'Search the source, destination and note',
+        limit: `Page size, 1..${MAX_PAGE_LIMIT}`,
+        cursor: 'nextCursor from the previous page',
+      },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const limit = clampCount(c.req.query('limit'), MAX_PAGE_LIMIT, { min: 1 });
+      const cursor = c.req.query('cursor');
+      const q = c.req.query('q');
+      return c.json(
+        await listRedirects(ctx, scopeOf(c), {
+          ...(limit !== undefined ? { limit } : {}),
+          ...(cursor ? { cursor } : {}),
+          ...(q ? { q } : {}),
+        }),
+      );
+    },
+  );
+  app.post(
+    `${BASE}/redirects`,
+    doc('Redirects', 'Create a redirect', {
+      body: redirectBody,
+      ok: docs.redirectWrite,
+      status: 201,
+      description:
+        'Refused (422) when its source is already redirected for the same locale, when it would ' +
+        'close a loop, or past the environment’s cap. A chain it makes is allowed and reported.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(await createRedirect(ctx, scopeOf(c), await parseBody(c, redirectBody)), 201),
+  );
+  // Before `/redirects/:id`, which would take these words for an id.
+  app.get(
+    `${BASE}/redirects/resolve`,
+    doc('Redirects', 'Resolve a path against the redirects', {
+      ok: docs.redirectMatch,
+      description: 'What Delivery’s `redirects/resolve` answers for it. 404 when nothing does.',
+      query: { path: 'A request path, with or without its query', locale: 'The request’s locale' },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const path = c.req.query('path') ?? '';
+      const match = await resolveRedirect(
+        ctx,
+        scopeOf(c),
+        path,
+        c.req.query('locale') || undefined,
+      );
+      if (!match) throw new NotFoundError('Redirect', path);
+      return c.json(match);
+    },
+  );
+  app.get(
+    `${BASE}/redirects/analysis`,
+    doc('Redirects', 'Check the redirect set', {
+      ok: docs.redirectAnalysis,
+      description:
+        'Loops, chains (each with where it ends) and duplicate sources across the whole set.',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await analyzeRedirectSet(ctx, scopeOf(c))),
+  );
+  app.get(
+    `${BASE}/redirects/export`,
+    doc('Redirects', 'Export the redirects as CSV', {
+      okDescription: 'text/csv: source, destination, status, locale, enabled, note',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) =>
+      c.body(await exportRedirectsCsv(ctx, scopeOf(c)), 200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="redirects.csv"',
+      }),
+  );
+  app.post(
+    `${BASE}/redirects/import`,
+    doc('Redirects', 'Import redirects from CSV or JSON', {
+      body: redirectImportBody,
+      ok: docs.redirectImportReport,
+      description:
+        `All or nothing, at most ${MAX_REDIRECT_IMPORT} rows: every row and the resulting set ` +
+        'are checked first, and a refusal names each bad row (`rows[i].field`). A source ' +
+        'already redirected (for the same locale) is updated; the rest are added.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(
+        await importRedirects(
+          ctx,
+          scopeOf(c),
+          // Each row's shape is the domain's to check, naming the bad ones.
+          (await parseBody(c, redirectImportBody)) as RedirectImport,
+        ),
+      ),
+  );
+  app.post(
+    `${BASE}/redirects/collapse-chains`,
+    doc('Redirects', 'Collapse redirect chains', {
+      ok: docs.redirectCollapse,
+      description: 'Points every redirect that ends a chain straight at where its chain ends.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json(await collapseRedirects(ctx, scopeOf(c))),
+  );
+  app.get(
+    `${BASE}/redirects/:id`,
+    doc('Redirects', 'Get a redirect', { ok: docs.redirect }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await getRedirect(ctx, scopeOf(c), c.req.param('id'))),
+  );
+  app.patch(
+    `${BASE}/redirects/:id`,
+    doc('Redirects', 'Change a redirect', {
+      body: redirectPatchBody,
+      ok: docs.redirectWrite,
+      description: 'Fields left out keep their value; null clears locale or note.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) =>
+      c.json(
+        await updateRedirect(
+          ctx,
+          scopeOf(c),
+          c.req.param('id'),
+          await parseBody(c, redirectPatchBody),
+        ),
+      ),
+  );
+  app.delete(
+    `${BASE}/redirects/:id`,
+    doc('Redirects', 'Delete a redirect', { status: 204 }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      await deleteRedirect(ctx, scopeOf(c), c.req.param('id'));
+      return c.body(null, 204);
+    },
+  );
 
   // --- entry taxonomy associations ---------------------------------------
   app.get(`${BASE}/entries/:id/metadata`, requireScope(SCOPES.previewRead), async (c) => {

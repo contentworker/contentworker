@@ -35,6 +35,8 @@ export async function consumeEvent(
   event: DomainEvent,
 ): Promise<PublishAgentRunSummary[]> {
   await dispatchEvent(ctx, deps, event);
+  // An invitation belongs to no space, so no live subscriber could be told about it.
+  if (event.type === 'invite.email_due') return [];
   if (deps.bus) {
     await deps.bus.publish(event).catch((err) => deps.onLiveError?.(err));
   }

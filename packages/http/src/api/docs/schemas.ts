@@ -87,6 +87,10 @@ export const contentType = z.object({
   name: z.string(),
   displayField: z.string(),
   fields: z.array(field),
+  urlPattern: z
+    .string()
+    .optional()
+    .describe('Where its entries live on the site, e.g. /blog/{slug}'),
   version: z.int(),
   status: z.enum(['draft', 'published']),
 });
@@ -125,6 +129,21 @@ export const publishedEntry = z.object({
 export const publishedEntryList = z.object({
   items: z.array(publishedEntry),
   total: z.int(),
+});
+
+export const previewEntry = z.object({
+  id: z.uuid(),
+  contentType: z.string().describe('Content type apiId'),
+  status: z.enum(['draft', 'published', 'changed', 'archived']),
+  version: z.int().describe('The current (draft) version'),
+  updatedAt: z.iso.datetime().optional().describe('When the entry last changed'),
+  fields: entryFields,
+});
+
+export const previewEntryPage = z.object({
+  items: z.array(previewEntry),
+  total: z.int().describe('Entries on this page'),
+  nextCursor: z.string().optional().describe('Pass back as cursor for the next page'),
 });
 
 export const searchHits = z.object({
@@ -664,6 +683,89 @@ export const assetZip = z.object({
 
 export const assetZipList = z.object({ items: z.array(assetZip) });
 
+// --- redirects ----------------------------------------------------------------
+
+const redirectStatus = z.union([z.literal(301), z.literal(302), z.literal(307), z.literal(308)]);
+
+export const redirect = z.object({
+  id: z.uuid(),
+  source: z
+    .string()
+    .describe('A path: exact, or a pattern of [param] segments and a trailing [...splat]'),
+  destination: z.string().describe('A path or an https:// URL; may use the source’s [captures]'),
+  status: redirectStatus,
+  locale: z.string().optional().describe('Applies to this locale only; absent, to every locale'),
+  enabled: z.boolean(),
+  note: z.string().optional(),
+  origin: z.enum(['manual', 'import', 'slug']),
+  entryId: z.string().optional().describe('The entry whose slug change made it'),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+const redirectChain = z.object({
+  id: z.string().describe('The redirect whose destination is redirected again'),
+  via: z.array(z.string()).describe('The hops after it, in order'),
+  destination: z.string().describe('Where the chain ends: what it can point at directly'),
+});
+
+export const redirectPage = z.object({
+  items: z.array(redirect),
+  nextCursor: z.string().optional(),
+});
+
+export const redirectWrite = z.object({
+  redirect,
+  chains: z.array(redirectChain).describe('Chains it takes part in (allowed; collapsible)'),
+});
+
+export const redirectMatch = z.object({
+  redirect,
+  status: redirectStatus,
+  location: z
+    .string()
+    .describe('The destination with captures filled in (and the query, when it has none)'),
+});
+
+export const redirectAnalysis = z.object({
+  loops: z.array(z.array(z.string())).describe('Cycles, as the ids around each'),
+  chains: z.array(redirectChain),
+  duplicates: z.array(z.object({ key: z.string(), ids: z.array(z.string()) })),
+  count: z.int(),
+  max: z.int(),
+});
+
+export const redirectImportReport = z.object({
+  dryRun: z.boolean(),
+  created: z.int(),
+  updated: z.int(),
+  unchanged: z.int(),
+  chains: z.array(redirectChain),
+});
+
+export const redirectCollapse = z.object({
+  updated: z.int().describe('Redirects pointed straight at where their chain ended'),
+});
+
+export const deliveredRedirect = z.object({
+  id: z.uuid(),
+  source: z.string(),
+  destination: z.string(),
+  status: redirectStatus,
+  locale: z.string().optional(),
+});
+
+export const deliveredRedirectList = z.object({
+  items: z.array(deliveredRedirect),
+  total: z.int(),
+});
+
+export const deliveredRedirectMatch = z.object({
+  redirect: deliveredRedirect,
+  status: redirectStatus,
+  location: z.string(),
+});
+
 /** An `embed` rich-text node's `data`: structured metadata, never the provider's markup. */
 export const embedData = z
   .object({
@@ -691,3 +793,57 @@ export const resolvedEmbed = z.object({
       'Whether the provider answered with metadata; when false, `embed` holds only url, provider and kind (still valid to store)',
     ),
 });
+
+// ---- Taxonomy ----------------------------------------------------------------
+
+const termUsage = z
+  .object({
+    count: z.int().describe('Published entries carrying the term'),
+    byContentType: z.record(z.string(), z.int()).describe('The same count per content type'),
+  })
+  .describe('Published usage, kept as entries publish, unpublish, archive and trash');
+
+const termFields = {
+  slug: z.string().describe('Unique among the environment’s tags, or within the scheme'),
+  description: z.string().nullable(),
+  labels: z
+    .record(z.string(), z.string())
+    .describe('Labels in the space’s other locales; the term’s own label is the default’s'),
+};
+
+export const tag = z.object({ id: z.string(), name: z.string(), ...termFields });
+export const tagWithUsage = tag.extend({ usage: termUsage });
+export const tagList = z.object({ items: z.array(tagWithUsage) });
+
+export const concept = z.object({
+  id: z.string(),
+  schemeId: z.string(),
+  prefLabel: z.string(),
+  broaderId: z.string().nullable(),
+  ...termFields,
+});
+export const conceptWithUsage = concept.extend({ usage: termUsage });
+export const conceptList = z.object({ items: z.array(conceptWithUsage) });
+
+export const taxonomyRepair = z.object({
+  slugsAssigned: z.int().describe('Terms that had no slug and now have one'),
+});
+
+export const deliveredTag = z.object({
+  id: z.string(),
+  slug: z.string(),
+  label: z.string().describe('In the requested locale (with fallbacks), or the default’s'),
+  labels: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Every locale’s label; only without ?locale='),
+  description: z.string().nullable(),
+  count: z.int().describe('Published entries carrying it (of content_type, when given)'),
+  countsByContentType: z.record(z.string(), z.int()),
+});
+export const deliveredConcept = deliveredTag.extend({
+  schemeId: z.string(),
+  broaderId: z.string().nullable(),
+});
+export const deliveredTagList = z.object({ items: z.array(deliveredTag) });
+export const deliveredConceptList = z.object({ items: z.array(deliveredConcept) });

@@ -145,7 +145,7 @@ bind them by `script_name`) and handles:
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
   `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed`,
-  `content_type.published`, `release.published`,
+  `taxonomy.changed`, `redirects.changed`, `content_type.published`, `release.published`,
   `environment_alias.changed`, `environment.deleted`; `asset.ingested` only when `published`;
   `asset_renditions.changed` purges every environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
   and send the media Worker's tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`):
@@ -155,8 +155,9 @@ bind them by `script_name`) and handles:
   the restart of deleted-environment purges that stopped progressing, agent schedules
   (`AGENTS_SCHEDULES=true`), retention, the abandoned-upload sweep (see
   [Asset ingest](#asset-ingest-and-search)), the abandoned multipart-upload sweep and the expired-zip
-  sweep (see [Collections, share links, multipart uploads and zips](#collections-share-links-multipart-uploads-and-zips)) at the top of each hour, and the daily
-  secret reseal at 03:30 UTC. Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
+  sweep (see [Collections, share links, multipart uploads and zips](#collections-share-links-multipart-uploads-and-zips)) at the top of each hour, the daily
+  secret reseal at 03:30 UTC, and the daily taxonomy repair at 04:15 UTC (`repairAllTaxonomies`:
+  recounts each environment's published usage counts and fills missing term slugs). Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
   failure is logged and recorded, and never skips the rest of the tick. At the end of the tick one
   D1 batch writes the heartbeat (`scheduler_jobs`: each sweep's last run, success and redacted
   error, plus the `tick` row); a failed write is logged and the next tick writes again. The api's
@@ -512,8 +513,8 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
 
 | Store                             | Holds                                                                                                                                                                                                                                                                              |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **D1** (`DB`, primary + replicas) | Everything authoritative: spaces, environments, aliases, content types, entries and versions, published read models, assets, releases, schedules, taxonomy, workflows, roles, team, API keys, OAuth, webhooks, the outbox, audit; plus the web app's auth tables (`0002_auth.sql`) |
-| **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle), zip downloads (`zips/`, 2-day lifecycle) and in-progress multipart uploads (aborted by a bucket-wide 2-day rule)                                               |
+| **D1** (`DB`, primary + replicas) | Everything authoritative: spaces, environments, aliases, content types, entries and versions, published read models, assets, releases, schedules, taxonomy, redirects, workflows, roles, team, API keys, OAuth, webhooks, the outbox, audit; plus the web app's auth tables (`0002_auth.sql`) |
+| **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle), zip downloads (`zips/`, 2-day lifecycle) and in-progress multipart uploads (aborted by a bucket-wide 2-day rule)                                                                                                                                                                 |
 | **KV** (`KV_CACHE`)               | Tag-versioned delivery cache, the authenticated-principal cache, and the media gate (shared by api, engine, delivery and media)                                                                                                                                                    |
 | **DO SQLite**                     | Search shards, live hubs, AI budgets, auth-failure counters                                                                                                                                                                                                                        |
 | **Vectorize**                     | Embeddings (768 dims, cosine), metadata-indexed on `spaceId` and `environmentId`                                                                                                                                                                                                   |
@@ -625,6 +626,8 @@ selects a dev fallback (in-memory store, fake blob, stub AI, in-memory vectors),
 - `@contentworker/docs`: `docs/*.md` embedded for the MCP and HTTP docs tools.
 - `@contentworker/design`, `@contentworker/ui`: the Ledger design system for `apps/web`.
 - `packages/sdk/*`: see [SDKs](./sdks.md).
+- `@contentworker/cli`: the `contentworker` command over the Management SDK; see
+  [Developer tooling](./developer-tooling.md).
 
 ## The key invariant: one set of use-cases, every caller
 

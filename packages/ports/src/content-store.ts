@@ -20,14 +20,17 @@ import type {
   DomainEvent,
   Entry,
   EntryFields,
+  EntryKeyset,
   EntryMetadata,
   EntryStatus,
   EntryVersion,
   EntryWorkflowState,
   EventType,
   InstalledPlugin,
+  InviteStatus,
   LocaleCode,
   LocalizedValue,
+  MemberInvite,
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
@@ -37,6 +40,7 @@ import type {
   PublishGate,
   QueryFilter,
   QueryOrder,
+  Redirect,
   ReferenceEdge,
   Release,
   ReleaseItem,
@@ -47,6 +51,8 @@ import type {
   StoredAssetShareLink,
   Tag,
   Task,
+  TermKind,
+  TermUsage,
   UniqueClaim,
   Webhook,
   WebhookDelivery,
@@ -111,6 +117,8 @@ export interface ContentStore {
   readonly auth: AuthRepo;
   readonly roles: RoleRepo;
   readonly members: MemberRepo;
+  /** Invitations to the admin (deployment-wide: they grant roles in any number of spaces). */
+  readonly invites: InviteRepo;
   readonly settings: DeploymentSettingsRepo;
   /** The engine cron's heartbeat (deployment-wide). */
   readonly schedulerJobs: SchedulerJobRepo;
@@ -127,6 +135,7 @@ export interface ContentStore {
   readonly workflowRuns: WorkflowRunRepo;
   readonly workflowTasks: WorkflowTaskRepo;
   readonly taxonomy: TaxonomyRepo;
+  readonly redirects: RedirectRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
   readonly functions: FunctionRepo;
@@ -226,16 +235,48 @@ export interface TaxonomyRepo {
   getScheme(scope: Scope, id: string): Promise<ConceptScheme | null>;
   deleteScheme(scope: Scope, id: string): Promise<void>;
   // Concepts (hierarchical terms within a scheme).
+  /**
+   * Creates or replaces a concept. A slug another concept of the scheme holds is refused with
+   * `ConflictError` (at commit, inside a unit of work).
+   */
   createConcept(scope: Scope, concept: Concept): Promise<void>;
   getConcept(scope: Scope, id: string): Promise<Concept | null>;
   /** All concepts, or just those in `schemeId` when given. */
   listConcepts(scope: Scope, schemeId?: string): Promise<Concept[]>;
+  /** The concepts holding any of `slugs` (in `schemeId`, or in any scheme). */
+  findConceptsBySlug(scope: Scope, slugs: readonly string[], schemeId?: string): Promise<Concept[]>;
+  /** Deletes a concept and its usage counts. */
   deleteConcept(scope: Scope, id: string): Promise<void>;
   // Tags (flat labels).
+  /** Creates or replaces a tag. A slug another tag holds is refused with `ConflictError`. */
   createTag(scope: Scope, tag: Tag): Promise<void>;
   getTag(scope: Scope, id: string): Promise<Tag | null>;
   listTags(scope: Scope): Promise<Tag[]>;
+  /** The tags holding any of `slugs`. */
+  findTagsBySlug(scope: Scope, slugs: readonly string[]): Promise<Tag[]>;
+  /** Deletes a tag and its usage counts. */
   deleteTag(scope: Scope, id: string): Promise<void>;
+  /**
+   * The slugs in a namespace (the environment's tags, or one scheme's concepts) that are `base`
+   * or `base-<anything>`: what a generated slug must step around.
+   */
+  slugsLike(
+    scope: Scope,
+    namespace: { readonly kind: 'tag' } | { readonly kind: 'concept'; readonly schemeId: string },
+    base: string,
+  ): Promise<string[]>;
+  // Published usage counts.
+  /**
+   * How many published entries carry each term, per content type (rows above zero only). The
+   * store keeps these as it writes published snapshots (`entries.putPublishedMany`,
+   * `removePublishedMany`), in the same unit of work, so a read never computes them.
+   */
+  listUsage(
+    scope: Scope,
+    query: { readonly kind: TermKind; readonly termIds?: readonly string[] },
+  ): Promise<TermUsage[]>;
+  /** Rebuilds the scope's usage counts from its published snapshots (the repair sweep). */
+  recountUsage(scope: Scope): Promise<void>;
   // Per-entry associations.
   getEntryMetadata(scope: Scope, entryId: string): Promise<EntryMetadata | null>;
   /** Batch read of entry associations; entries without metadata are absent. */
@@ -244,6 +285,51 @@ export interface TaxonomyRepo {
     entryIds: readonly string[],
   ): Promise<{ entryId: string; metadata: EntryMetadata }[]>;
   setEntryMetadata(scope: Scope, entryId: string, metadata: EntryMetadata): Promise<void>;
+}
+
+/** A page of an environment's redirects, by source. */
+export interface RedirectPage {
+  readonly items: Redirect[];
+  readonly nextCursor?: string;
+}
+
+export interface RedirectQuery {
+  /** Matches the source, destination or note (case-insensitive substring). */
+  readonly q?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** Where an environment's redirect set stands: what a write checks it still holds at commit. */
+export interface RedirectSetState {
+  /** Bumped by every write to the set; 0 before the first. */
+  readonly revision: number;
+  readonly count: number;
+}
+
+/**
+ * An environment's redirects. Every write to the set rides with {@link RedirectRepo.advance} in
+ * one unit, so two writers that each checked the set (for loops, the cap) can't both commit: the
+ * second fails at commit with `TransactionConflictError` and checks again.
+ */
+export interface RedirectRepo {
+  get(scope: Scope, id: string): Promise<Redirect | null>;
+  /** The whole set (at most `MAX_REDIRECTS`), by source then id; `enabledOnly` for Delivery. */
+  all(scope: Scope, opts?: { readonly enabledOnly?: boolean }): Promise<Redirect[]>;
+  list(scope: Scope, query?: RedirectQuery): Promise<RedirectPage>;
+  /** Redirects whose source or destination is one of `paths` (a slug change's two paths). */
+  involving(scope: Scope, paths: readonly string[]): Promise<Redirect[]>;
+  state(scope: Scope): Promise<RedirectSetState>;
+  /** Inserts or replaces each by id. A source held by another redirect is a `ConflictError`. */
+  saveMany(scope: Scope, redirects: readonly Redirect[]): Promise<void>;
+  removeMany(scope: Scope, ids: readonly string[]): Promise<void>;
+  /**
+   * Moves the set from revision `expected` to the next. Inside a unit a set written since
+   * `expected` was read fails the commit (`TransactionConflictError`); outside one it throws.
+   * Without `expected` it moves on unconditionally: a publish's slug change, which must not fail
+   * over a concurrent edit to the set, still makes that edit check the set again.
+   */
+  advance(scope: Scope, expected?: number): Promise<void>;
 }
 
 export interface CommentRepo {
@@ -1063,6 +1149,46 @@ export interface MemberRepo {
   delete(spaceId: string, id: string): Promise<void>;
 }
 
+/**
+ * Invitations to the admin. Deployment-wide like the people they make: no `Scope`, because one
+ * invitation grants roles in any number of spaces (each grant names its own). Only token hashes
+ * are ever stored.
+ */
+export interface InviteRepo {
+  create(invite: MemberInvite): Promise<void>;
+  get(id: string): Promise<MemberInvite | null>;
+  /** The invitation whose link token, or emailed link token, hashes to `tokenHash`. */
+  findByTokenHash(tokenHash: string): Promise<MemberInvite | null>;
+  /**
+   * Newest first. `status` filters on what is stored, read as of `now` (`pending` leaves out the
+   * expired; `expired` is the pending ones past their expiry); `email` on the address.
+   */
+  list(opts: {
+    readonly now: Date;
+    readonly status?: InviteStatus;
+    readonly email?: string;
+    readonly limit?: number;
+  }): Promise<MemberInvite[]>;
+  /**
+   * Replaces the invitation if it is still at `expectedVersion` (the caller bumps `version`).
+   * Another change since the caller read it (a resend, a revoke, another accept) throws
+   * {@link TransactionConflictError}: at commit inside a unit of work, at once outside one.
+   */
+  replace(invite: MemberInvite, expectedVersion: number): Promise<void>;
+  /**
+   * Records the token hash of the link the engine is emailing, and (after the send, with
+   * `emailedAt`) that it went, if the invitation is still pending at `version`; false (nothing
+   * written) when it is not. Doesn't bump `version`. Not in a unit of work: the engine records,
+   * sends, then records again.
+   */
+  recordEmailToken(
+    id: string,
+    version: number,
+    emailTokenHash: string,
+    emailedAt: string | null,
+  ): Promise<boolean>;
+}
+
 /** A deployment-wide setting as stored, with the version its compare-and-set checks. */
 export interface StoredSetting {
   readonly value: unknown;
@@ -1134,6 +1260,8 @@ export interface ContentStoreTx {
   readonly references: ReferenceRepo;
   readonly releases: ReleaseRepo;
   readonly taxonomy: TaxonomyRepo;
+  /** A publish's slug change writes redirects with the publish. */
+  readonly redirects: RedirectRepo;
   readonly bulkJobs: BulkJobRepo;
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;
@@ -1143,6 +1271,12 @@ export interface ContentStoreTx {
   readonly outbox: OutboxRepo;
   /** A promotion's record is created in the same unit as the event that announces it. */
   readonly promotions: PromotionRepo;
+  /**
+   * An invitation is created, resent, revoked or used in the same unit as the event that emails
+   * it, or as the team places it grants (`members.save`).
+   */
+  readonly invites: Pick<InviteRepo, 'create' | 'replace'>;
+  readonly members: Pick<MemberRepo, 'save'>;
 }
 
 /** Promotion fields a status change may set. */
@@ -1321,6 +1455,16 @@ export interface DeliveryReadRequest {
   readonly assetIds?: readonly string[];
   /** A page of published assets. */
   readonly assetPage?: PublishedAssetQuery;
+  /** The scope's tags; with `slugs`, only those holding one. */
+  readonly tags?: { readonly slugs?: readonly string[] };
+  /** The scope's concepts, narrowed to a scheme and/or to the ones holding one of `slugs`. */
+  readonly concepts?: { readonly schemeId?: string; readonly slugs?: readonly string[] };
+  /** Published usage counts of one kind of term, narrowed as `tags` / `concepts` are. */
+  readonly termUsage?: {
+    readonly kind: TermKind;
+    readonly schemeId?: string;
+    readonly slugs?: readonly string[];
+  };
 }
 
 /**
@@ -1339,6 +1483,9 @@ export interface DeliveryReadResult {
   /** Missing ids are absent, order unspecified. */
   readonly assets?: PublishedAsset[];
   readonly assetPage?: PublishedAssetPage;
+  readonly tags?: Tag[];
+  readonly concepts?: Concept[];
+  readonly termUsage?: TermUsage[];
 }
 
 /** Delivery's reads, batched. Read-only: it never writes, so it is safe on a replica session. */
@@ -1444,6 +1591,8 @@ export interface ArchivableVersion {
 export interface EntryWithFields {
   readonly entry: Entry;
   readonly fields: EntryFields;
+  /** When the entry last changed (ISO-8601), as the store stamps it. Set by `list`. */
+  readonly updatedAt?: string;
 }
 
 /** How many entries of one content type are in one status (a row of {@link EntryRepo.countByStatus}). */
@@ -1496,6 +1645,13 @@ export interface EntryQuery {
    * schedules' delta windows).
    */
   readonly after?: { readonly publishedAt: string; readonly entryId: string };
+  /**
+   * Keyset cursor in the list's own order (`order`, or `sys.updatedAt` ascending without one),
+   * ties broken by entry id: only entries strictly after this row. `'start'` reads the first
+   * page in that same total order. Honoured by `list` (the draft path), where `sys.updatedAt`
+   * is the entry's `updatedAt`; build it with `entryKeysetOf`.
+   */
+  readonly afterRow?: EntryKeyset | 'start';
   /** Field-level predicates (all must match). `field` is a field apiId or `sys.*`. */
   readonly filters?: readonly QueryFilter[];
   /** Sort keys, applied in order. */

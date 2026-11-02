@@ -2,6 +2,7 @@ import { NotFoundError, type Scope, ValidationError } from '@contentworker/domai
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
+import { answerStrings, conformingAnswer } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { getAsset, setAssetMetadata } from './assets';
 import type { AppContext } from './context';
@@ -12,6 +13,23 @@ function assertImage(contentType: string): void {
     throw new ValidationError([{ field: 'asset', message: 'Asset is not an image' }]);
   }
 }
+
+/**
+ * The model's answer held no alt text (empty, or not the shape asked for): a 422 like any
+ * validation failure, and its own class so ingest can tell "nothing suggested" from a real error.
+ */
+export class NoAltTextError extends ValidationError {
+  constructor() {
+    super([{ field: 'altText', message: 'Model returned no alt text' }]);
+  }
+}
+
+const ALT_TEXT_SCHEMA = {
+  type: 'object',
+  properties: { altText: { type: 'string' } },
+  required: ['altText'],
+  additionalProperties: false,
+};
 
 export interface GenerateAltTextInput {
   /** Locale to write the alt text for; defaults to the space default. */
@@ -72,18 +90,17 @@ export async function generateAltText(
     prompt,
     tier: input.tier ?? 'fast',
     maxTokens: 256,
-    outputSchema: {
-      type: 'object',
-      properties: { altText: { type: 'string' } },
-      required: ['altText'],
-      additionalProperties: false,
-    },
+    outputSchema: ALT_TEXT_SCHEMA,
   });
 
-  const obj = result.object as { altText?: string } | undefined;
-  const altText = (obj?.altText ?? result.text ?? '').trim();
+  // A provider without JSON mode answers in text; one that answered in JSON must have the shape,
+  // or there is no alt text in it (its text is that JSON, not a sentence).
+  const answer = conformingAnswer<{ altText: string }>(result, ALT_TEXT_SCHEMA);
+  const altText = (
+    answer ? answer.altText : result.object === undefined ? (result.text ?? '') : ''
+  ).trim();
   if (!altText) {
-    throw new ValidationError([{ field: 'altText', message: 'Model returned no alt text' }]);
+    throw new NoAltTextError();
   }
 
   let applied = false;
@@ -104,6 +121,16 @@ export async function generateAltText(
 
   return { altText, locale, applied, usage: result.usage };
 }
+
+const AUTO_TAG_SCHEMA = {
+  type: 'object',
+  properties: {
+    existingTags: { type: 'array', items: { type: 'string' } },
+    newTags: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['existingTags', 'newTags'],
+  additionalProperties: false,
+};
 
 export interface AutoTagInput {
   /** When true, create any suggested new tags and apply all tags to the asset. */
@@ -160,27 +187,30 @@ export async function autoTagAsset(
     prompt,
     tier: input.tier ?? 'fast',
     maxTokens: 512,
-    outputSchema: {
-      type: 'object',
-      properties: {
-        existingTags: { type: 'array', items: { type: 'string' } },
-        newTags: { type: 'array', items: { type: 'string' } },
-      },
-      required: ['existingTags', 'newTags'],
-      additionalProperties: false,
-    },
+    outputSchema: AUTO_TAG_SCHEMA,
   });
 
-  const obj = (result.object ?? {}) as { existingTags?: string[]; newTags?: string[] };
+  // Each list read on its own: what isn't a list of names suggests nothing, never a TypeError (the
+  // run is still recorded and counted).
+  const answer = {
+    existingTags: answerStrings(result, 'existingTags'),
+    newTags: answerStrings(result, 'newTags'),
+  };
   const byName = new Map(existing.map((t) => [t.name.toLowerCase(), t]));
-  const chosen = obj.existingTags ?? [];
-  const tagIds = chosen
+  const tagIds = answer.existingTags
     .map((name) => byName.get(name.toLowerCase())?.id)
     .filter((v): v is string => Boolean(v));
   // New names the model proposed that genuinely aren't in the vocabulary.
-  const newTags = (obj.newTags ?? [])
+  // Each name once, as first spelled (a model repeats itself): `apply` creates one tag per name.
+  const seen = new Set<string>();
+  const newTags = answer.newTags
     .map((n) => n.trim())
-    .filter((n) => n && !byName.has(n.toLowerCase()));
+    .filter((n) => {
+      const key = n.toLowerCase();
+      if (!n || byName.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
   let applied = false;
   if (input.apply) {

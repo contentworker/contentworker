@@ -71,6 +71,9 @@
 # Clients and the admin:
 ^packages/sdk/[a-z-]+/src/	guides/sdks docs/sdks.md	prose
 ^packages/sdk/(core|react-native)/src/image\.ts$|^packages/sdk/(web|vue)/src/index\.ts$	guides/delivering-assets packages/sdk/core/README.md	prose
+^packages/cli/src/	guides/cli docs/developer-tooling.md packages/cli/README.md	prose
+^packages/cli/src/(commands|run)\.ts$	guides/agent-skills skills/building-on-contentworker/SKILL.md skills/modeling-content-with-contentworker/SKILL.md skills/migrating-to-contentworker/SKILL.md	prose
+^skills/	guides/agent-skills docs/developer-tooling.md	prose
 ^apps/web/app/routes\.ts$	docs/admin-ui.md	prose
 ^packages/seed/src/	start/getting-started docs/development.md	prose
 ^(packages/(domain|http)/src/assistant/|apps/engine/src/assistant\.ts$|apps/web/app/cms/(components/assistant/|lib/assistant))	guides/coworker docs/architecture.md	prose
@@ -78,3 +81,4 @@
 ^packages/(domain/src/asset/delivered|application/src/(asset-delivery|asset-renditions|asset-gate))\.ts$	guides/delivering-assets guides/reading-content docs/domain-model.md docs/api-reference.md	prose
 ^packages/(domain/src/asset/collection|application/src/(asset-collections|asset-shares|asset-uploads|asset-zip|zip))\.ts$	guides/media guides/share-links guides/delivering-assets docs/architecture.md docs/domain-model.md docs/api-reference.md	prose
 ^\.github/workflows/deploy\.yml$	docs/backup-and-restore.md docs/deployment.md	prose
+^packages/(domain/src/redirect/|application/src/redirects\.ts$|sdk/core/src/redirects\.ts$|db/migrations/0017_redirects\.sql$)	guides/redirects docs/domain-model.md docs/api-reference.md	prose

@@ -21,7 +21,6 @@ import {
   Table,
   TableBody,
   Td as TableCell,
-  TableEmpty,
   Th as TableHead,
   TableHead as TableHeader,
   Tr as TableRow,
@@ -30,7 +29,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { ConfirmButton, InlineConfirm } from '~/cms/components/InlineConfirm';
-import { Section } from '~/cms/components/page';
+import { Empty, Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { keyKindApi, keyKindLabel } from '../lib/key-kinds';
 import {
@@ -197,33 +196,35 @@ function People(props: {
         </div>
         <Button type="submit">Add person</Button>
       </form>
-      <Table stack="cards" caption="People">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Person</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead className="w-28">Status</TableHead>
-            <TableHead className="w-40">
-              <span className="sr-only">Actions</span>
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {people.map((p) => (
-            <PersonRow
-              key={p.id}
-              person={p}
-              team={team}
-              options={options}
-              act={act}
-              client={client}
-            />
-          ))}
-          {team && people.length === 0 ? (
-            <TableEmpty colSpan={4}>No one on the team yet.</TableEmpty>
-          ) : null}
-        </TableBody>
-      </Table>
+      {/* No one at all is the news, so it is `Empty` in place of the table. */}
+      {team && people.length === 0 ? (
+        <Empty>No one on the team yet. Add someone by email above.</Empty>
+      ) : (
+        <Table stack="cards" caption="People">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Person</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead className="w-28">Status</TableHead>
+              <TableHead className="w-40">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {people.map((p) => (
+              <PersonRow
+                key={p.id}
+                person={p}
+                team={team}
+                options={options}
+                act={act}
+                client={client}
+              />
+            ))}
+          </TableBody>
+        </Table>
+      )}
     </Section>
   );
 }
@@ -262,8 +263,9 @@ function PersonRow(props: {
           }
         />
       </TableCell>
-      <TableCell label="Status">
-        <StatusBadge status={p.disabled ? 'disabled' : 'active'} />
+      <TableCell label={p.disabled ? 'Status' : undefined}>
+        {/* Only the exception is stamped: a row of "Active" on everyone says nothing. */}
+        {p.disabled ? <StatusBadge status="disabled" /> : <span className="sr-only">Active</span>}
       </TableCell>
       <TableCell className="text-right">
         {last ? (
@@ -329,52 +331,55 @@ function Keys(props: {
       description="Long-lived keys and the role each acts with. Mint and revoke them under API keys."
       flush
     >
-      <Table stack="cards" caption="API keys and their roles">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Key</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead className="w-32">Last used</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {keys.map((k) => {
-            const label = k.name ?? `${keyKindLabel(k.kind)} key`;
-            return (
-              <TableRow key={k.id}>
-                <TableCell>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{label}</span>
-                    <Badge variant="outline" title={keyKindApi(k.kind)}>
-                      {keyKindLabel(k.kind)}
-                    </Badge>
-                  </div>
-                  <div className="text-muted-foreground text-xs">
-                    {ISSUANCE[k.issuance]}
-                    {k.subject ? ` · ${k.subject}` : ''}
-                  </div>
-                </TableCell>
-                <TableCell label="Role">
-                  <RoleChange
-                    subject={label}
-                    current={k.role}
-                    options={options}
-                    lastAdmin={isLastAdmin(team, k.admin)}
-                    allowNone
-                    onChange={(roleId, roleName) =>
-                      act(() => client.setApiKeyRole(k.id, roleId), `${label} is now ${roleName}`)
-                    }
-                  />
-                </TableCell>
-                <TableCell label="Last used" className="text-muted-foreground">
-                  {k.lastUsedAt ? <Ago at={k.lastUsedAt} /> : 'Never'}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-          {team && keys.length === 0 ? <TableEmpty colSpan={3}>No API keys.</TableEmpty> : null}
-        </TableBody>
-      </Table>
+      {team && keys.length === 0 ? (
+        <Empty>No API keys.</Empty>
+      ) : (
+        <Table stack="cards" caption="API keys and their roles">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Key</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead className="w-32">Last used</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {keys.map((k) => {
+              const label = k.name ?? `${keyKindLabel(k.kind)} key`;
+              return (
+                <TableRow key={k.id}>
+                  <TableCell>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{label}</span>
+                      <Badge variant="outline" title={keyKindApi(k.kind)}>
+                        {keyKindLabel(k.kind)}
+                      </Badge>
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      {ISSUANCE[k.issuance]}
+                      {k.subject ? ` · ${k.subject}` : ''}
+                    </div>
+                  </TableCell>
+                  <TableCell label="Role">
+                    <RoleChange
+                      subject={label}
+                      current={k.role}
+                      options={options}
+                      lastAdmin={isLastAdmin(team, k.admin)}
+                      allowNone
+                      onChange={(roleId, roleName) =>
+                        act(() => client.setApiKeyRole(k.id, roleId), `${label} is now ${roleName}`)
+                      }
+                    />
+                  </TableCell>
+                  <TableCell label="Last used" className="text-muted-foreground">
+                    {k.lastUsedAt ? <Ago at={k.lastUsedAt} /> : 'Never'}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
     </Section>
   );
 }

@@ -19,6 +19,7 @@ export type DomainEvent =
   | AssetExpiredEvent
   | AssetRenditionsChangedEvent
   | AssetCollectionChangedEvent
+  | TaxonomyChangedEvent
   | AssetShareLinkChangedEvent
   | AssetZipRequestedEvent
   | SearchReindexRequestedEvent
@@ -32,7 +33,9 @@ export type DomainEvent =
   | EnvironmentDeletedEvent
   | PromotionAwaitingApprovalEvent
   | EnvironmentPromotedEvent
-  | EnvironmentPurgeDueEvent;
+  | EnvironmentPurgeDueEvent
+  | InviteEmailDueEvent
+  | RedirectsChangedEvent;
 
 export interface BaseEvent {
   readonly id: string;
@@ -155,6 +158,27 @@ export interface AssetRenditionsChangedEvent extends BaseEvent {
 export interface AssetCollectionChangedEvent extends BaseEvent {
   readonly type: 'asset_collection.changed';
   readonly collectionId: string;
+}
+
+/**
+ * A tag or concept was created, changed (label, slug, description, localized labels, parent) or
+ * deleted. Delivery's taxonomy reads are stale.
+ */
+export interface TaxonomyChangedEvent extends BaseEvent {
+  readonly type: 'taxonomy.changed';
+  readonly termKind: 'tag' | 'concept';
+  readonly termId: string;
+}
+
+/**
+ * An environment's redirects changed (written, deleted, imported or straightened). What Delivery
+ * serves for them (`GET …/redirects`, `…/redirects/resolve`) is stale. A publish whose slug change
+ * writes redirects does not announce this: its `entry.published` purges the same responses.
+ */
+export interface RedirectsChangedEvent extends BaseEvent {
+  readonly type: 'redirects.changed';
+  /** How many redirects the change wrote or removed. */
+  readonly count: number;
 }
 
 /**
@@ -365,6 +389,21 @@ export interface WorkflowWebhookEvent extends BaseEvent {
   readonly nodeId: string;
   readonly entryId: string;
   readonly payload: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * An invitation's link is due to be emailed (the engine sends it when the deployment has Email
+ * Sending; otherwise it is dropped and the inviter shares the link they were shown). A control
+ * event: no webhooks apply, and it carries no token and no address. The engine reads the
+ * invitation, skips it unless it is still pending at `version` (a resend or revoke since makes it
+ * stale), and mints the emailed link's own token. `scope` is the deployment (`*`, `main`):
+ * invitations belong to no one space. `origin` is the admin's, where the link opens.
+ */
+export interface InviteEmailDueEvent extends BaseEvent {
+  readonly type: 'invite.email_due';
+  readonly inviteId: string;
+  readonly version: number;
+  readonly origin: string;
 }
 
 export type EventType = DomainEvent['type'];

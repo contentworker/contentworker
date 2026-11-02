@@ -13,7 +13,8 @@ import {
 } from 'react-router';
 import { Mark } from '~/components/mark';
 import { authEnabled, principal, type SignInResult, signIn, Throttled } from '~/lib/auth.server';
-import { nextPath, withNext } from '~/lib/next-path';
+import { INVITE_INVALID } from '~/lib/invites';
+import { nextPath, redirectToNext, withNext } from '~/lib/next-path';
 import { ssoOnlyInEffect } from '~/lib/settings.server';
 import { ssoConfig } from '~/lib/sso.server';
 import type { Route } from './+types/login';
@@ -24,7 +25,7 @@ export const meta = () => [{ title: 'Sign in · contentworker' }];
 export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;
 
 export async function loader({ request }: Route.LoaderArgs) {
-  if (!(await authEnabled()) || (await principal(request))) throw redirect(nextPath(request));
+  if (!(await authEnabled()) || (await principal(request))) throw redirectToNext(nextPath(request));
   return { sso: !!ssoConfig(), ssoOnly: await ssoOnlyInEffect() };
 }
 
@@ -34,6 +35,7 @@ const SSO_ERRORS: Record<string, string> = {
   refused:
     'Your identity provider signed you in, but you aren’t on this deployment’s team. Ask an admin to add you.',
   disabled: 'Your account here is disabled. Ask an admin to enable it.',
+  invite: INVITE_INVALID,
 };
 
 export async function action({ request }: Route.ActionArgs) {
@@ -55,9 +57,10 @@ export async function action({ request }: Route.ActionArgs) {
   }
   if (!result) return { error: 'That email and password don’t match an active account.' };
   const next = nextPath(request);
-  return redirect(result.twoFactor ? withNext('/login/two-factor', next) : next, {
-    headers: { 'set-cookie': result.cookie },
-  });
+  const headers = { 'set-cookie': result.cookie };
+  return result.twoFactor
+    ? redirect(withNext('/login/two-factor', next), { headers })
+    : redirectToNext(next, { headers });
 }
 
 export default function Login() {

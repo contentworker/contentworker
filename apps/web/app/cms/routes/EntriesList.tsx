@@ -18,9 +18,9 @@ import {
   SheetTitle,
 } from '@contentworker/ui/sheet';
 import { SkeletonText } from '@contentworker/ui/skeleton';
-import { useQueryClient } from '@tanstack/react-query';
+import { type InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { EntryFilterBar } from '~/cms/components/EntryFilterBar';
 import {
@@ -32,21 +32,56 @@ import {
 } from '~/cms/components/loading';
 import { Empty, EmptyState, PageHeader } from '~/cms/components/page';
 import { EntryDiff } from '../components/EntryDiff';
-import { EntriesTable, type EntryRowActions } from '../components/entries/EntriesTable';
+import {
+  EntriesTable,
+  type EntryRowActions,
+  needsPublish,
+  SORT_UPDATED,
+} from '../components/entries/EntriesTable';
+import { EntryBulkBar } from '../components/entries/EntryBulkBar';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
-import {
-  ENTRY_PAGE,
-  type EntryAggregate,
-  type EntryListQuery,
-  type PreviewEntry,
+import { plural } from '../lib/format';
+import type {
+  EntryAggregate,
+  EntryListQuery,
+  EntryOrder,
+  EntryPage,
+  PreviewEntry,
 } from '../lib/management';
-import { useDebouncedValue, useEntriesQuery, useQueryKeys, useScopedQuery } from '../lib/queries';
+import {
+  useDebouncedValue,
+  useEntryPagesQuery,
+  useQueryKeys,
+  useScopedQuery,
+} from '../lib/queries';
 import { type ToastOptions, useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
 type BulkSummary = Awaited<ReturnType<ReturnType<typeof useClient>['client']['bulkEntryAction']>>;
+
+/**
+ * The order a column header asks for. Title and Status go ascending first, then flip. Updated
+ * flips between newest first and the list's default (least recently changed first), which is no
+ * order at all: the plain list, walked in SQL.
+ */
+export function nextOrder(current: EntryOrder | undefined, field: string): EntryOrder | undefined {
+  if (field === SORT_UPDATED) {
+    return current?.field === SORT_UPDATED && current.direction === 'desc'
+      ? undefined
+      : { field, direction: 'desc' };
+  }
+  if (current?.field === field)
+    return { field, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+  return { field, direction: 'asc' };
+}
+
+/** A live entry: published as it is, or changed since. */
+const isLive = (status: string) => status === 'published' || status === 'changed';
+
+/** How many titles a bulk confirm names before counting the rest. */
+const NAMED = 5;
 
 /**
  * Entries table for one content type, with bulk publishing and a draft/published diff.
@@ -114,18 +149,15 @@ export function EntriesList() {
   // re-key the query after 250ms while the previous page stays visible.
   const debounced = useDebouncedValue(filterState, 250);
   const debouncedQuery = debounced.typeId === typeId ? debounced.query : {};
-  // The list reads `ENTRY_PAGE` rows at a time; "Show more" asks for one page more. Another type
-  // or another filter starts again from one page.
+  // The list reads a page at a time and Load more walks on with the last page's cursor. Another
+  // type, filter, search or sort is another key: it starts again from the first page.
   const listKey = JSON.stringify([typeId, debouncedQuery]);
-  const [shown, setShown] = useState({ key: listKey, pages: 1 });
-  const pages = shown.key === listKey ? shown.pages : 1;
-  const listQuery: EntryListQuery = { ...debouncedQuery, limit: ENTRY_PAGE * pages };
-  const entriesQuery = useEntriesQuery(typeId, listQuery);
-  const entries = entriesQuery.data ?? [];
+  const entriesQuery = useEntryPagesQuery(typeId, debouncedQuery);
+  const pagesData = entriesQuery.data;
+  const entries = useMemo(() => dedupe(pagesData?.pages), [pagesData]);
   const loading = entriesQuery.isPending;
-  const entriesKey = keys.entries(typeId, listQuery);
-  // A full last page means there may be more past it.
-  const hasMore = !loading && entries.length >= ENTRY_PAGE * pages;
+  const entriesKey = keys.entryPages(typeId, debouncedQuery);
+  const hasMore = !loading && entriesQuery.hasNextPage;
   // The type's real total, for the header (the list itself holds only what has been read). Under
   // the entries prefix, so entry mutations refresh it; silent, as the header works without it.
   const countsQuery = useScopedQuery(['entries', 'counts'], () => client.contentTypeEntryCounts(), {
@@ -135,22 +167,47 @@ export function EntriesList() {
   const countKey = `entries:${typeId ?? 'all'}`;
   useEffect(() => {
     if (entriesQuery.data && !entriesQuery.isPlaceholderData)
-      rememberCount(countKey, entriesQuery.data.length);
+      rememberCount(countKey, dedupe(entriesQuery.data.pages).length);
   }, [countKey, entriesQuery.data, entriesQuery.isPlaceholderData]);
 
-  const togglePick = (id: string) =>
+  // A new filter, search or sort leaves ticked only what it still shows: a selection the reader
+  // can't see would be published with the rest. Load more and refetches keep it whole.
+  const prunedFor = useRef(listKey);
+  useEffect(() => {
+    if (!entriesQuery.data || entriesQuery.isPlaceholderData || prunedFor.current === listKey)
+      return;
+    prunedFor.current = listKey;
+    const shown = new Set(dedupe(entriesQuery.data.pages).map((e) => e.id));
+    setPicked((prev) => {
+      const next = new Set([...prev].filter((id) => shown.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [listKey, entriesQuery.data, entriesQuery.isPlaceholderData]);
+
+  const pick = (ids: readonly string[], value: boolean) =>
     setPicked((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      for (const id of ids) {
+        if (value) next.add(id);
+        else next.delete(id);
+      }
       return next;
     });
 
-  // Optimistically reflect a status change in the cached list; roll back on failure.
+  // Optimistically reflect a status change in the cached pages; roll back on failure.
   const optimisticStatus = (ids: Set<string>, status: string) =>
-    queryClient.setQueryData<PreviewEntry[]>(entriesKey, (es) =>
-      es?.map((e) => (ids.has(e.id) ? { ...e, status } : e)),
+    queryClient.setQueryData<InfiniteData<EntryPage>>(entriesKey, (data) =>
+      data
+        ? {
+            ...data,
+            pages: data.pages.map((p) => ({
+              ...p,
+              items: p.items.map((e) => (ids.has(e.id) ? { ...e, status } : e)),
+            })),
+          }
+        : data,
     );
+  const snapshotPages = () => queryClient.getQueryData<InfiniteData<EntryPage>>(entriesKey);
 
   const refreshEntries = () =>
     Promise.all([
@@ -278,28 +335,39 @@ export function EntriesList() {
   // One bulk API call handles the whole selection server-side, reporting
   // per-item outcomes; partial failures are surfaced by entry, not as a count.
   const bulk = (action: 'publish' | 'unpublish', verb: string, status: string) => {
-    const ids = [...picked];
+    const ids = bulkIds(action);
     setPicked(new Set());
     setBulkFailures(null);
     return mutateEntries(async () => {
       const optimistic = !entriesQuery.isPlaceholderData;
       const snapshot = entries;
+      const pages = snapshotPages();
       if (optimistic) optimisticStatus(new Set(ids), status);
       let summary: BulkSummary;
       try {
         summary = await client.bulkEntryAction(action, ids);
       } catch (e) {
-        if (optimistic) queryClient.setQueryData(entriesKey, snapshot);
+        if (optimistic) queryClient.setQueryData(entriesKey, pages);
+        // Nothing ran: the selection comes back as it was.
+        setPicked(new Set(ids));
         throw e;
       }
       reportBulk(action, verb, summary, snapshot);
     });
   };
 
+  // What a bulk action sends: the ticked entries it would change (Publish what isn't live as it
+  // is, Unpublish what is live), so the rest aren't reported as failures.
+  const statusOf = (id: string) => entries.find((e) => e.id === id)?.status ?? '';
+  const bulkIds = (action: 'publish' | 'unpublish') =>
+    [...picked].filter((id) =>
+      action === 'publish' ? needsPublish(statusOf(id)) : isLive(statusOf(id)),
+    );
+
   // A bulk change through the assistant's card. Without it, the page's own dialog confirms the
   // batch (`confirmBulk`), and `bulk` runs it straight through the API.
   const requestBulk = (action: 'publish' | 'unpublish') => {
-    const ids = [...picked];
+    const ids = bulkIds(action);
     const verb = action === 'publish' ? 'Published' : 'Unpublished';
     return mutateEntries(async () => {
       const snapshot = entries;
@@ -313,25 +381,23 @@ export function EntriesList() {
         return;
       }
       if (!('output' in r)) return;
-      setPicked(new Set());
       setBulkFailures(null);
       reportBulk(action, verb, r.output, snapshot);
     });
   };
 
-  // Partial failures are surfaced by entry, not as a count; an all-live unpublish offers Undo.
+  // Partial failures are surfaced by entry, not as a count, and stay ticked so the editor can
+  // try them again; an all-live unpublish offers Undo.
   const reportBulk = (
     action: 'publish' | 'unpublish',
     verb: string,
     summary: BulkSummary,
     snapshot: readonly PreviewEntry[],
   ) => {
+    const failed = summary.results.filter((r) => !r.ok);
+    setPicked(new Set(failed.map((r) => r.id)));
     if (summary.failed > 0) {
-      setBulkFailures(
-        summary.results
-          .filter((r) => !r.ok)
-          .map((r) => ({ id: r.id, title: titleOf(r.id), error: r.error })),
-      );
+      setBulkFailures(failed.map((r) => ({ id: r.id, title: titleOf(r.id), error: r.error })));
       toast.error(`${verb} ${summary.succeeded}; ${summary.failed} failed (details in the list)`);
     } else {
       const done = summary.results.filter((r) => r.ok).map((r) => r.id);
@@ -360,12 +426,12 @@ export function EntriesList() {
   // it in `mutateEntries`.
   const applyStatus = async <T,>(id: string, status: string, act: (id: string) => Promise<T>) => {
     const optimistic = !entriesQuery.isPlaceholderData;
-    const snapshot = entries;
+    const pages = snapshotPages();
     if (optimistic) optimisticStatus(new Set([id]), status);
     try {
       return await act(id);
     } catch (e) {
-      if (optimistic) queryClient.setQueryData(entriesKey, snapshot);
+      if (optimistic) queryClient.setQueryData(entriesKey, pages);
       throw e;
     }
   };
@@ -495,6 +561,14 @@ export function EntriesList() {
 
   const count = entries.length;
   const hasQuery = (query.filters?.length ?? 0) > 0 || !!query.search;
+  // Clearing filters keeps the sort and the trash view: they aren't filters.
+  const clearFilters = () => setQuery({ order: query.order, trashed: query.trashed });
+  const sortBy = (field: string) => {
+    const order = nextOrder(query.order?.[0], field);
+    setQuery({ ...query, order: order ? [order] : undefined });
+  };
+  const bulkBar = picked.size > 0 && !viewingTrash;
+  const confirmIds = confirmBulk ? bulkIds(confirmBulk) : [];
   // The total is known only for the whole type: filters and the trash count what was read, with a
   // "+" while more may follow.
   const total =
@@ -521,22 +595,6 @@ export function EntriesList() {
           )
         }
       >
-        {picked.size > 0 && !viewingTrash && (
-          <>
-            <span className="text-sm text-muted-foreground">{picked.size} selected</span>
-            <Button type="button" onClick={() => void requestBulk('publish')} disabled={busy}>
-              Publish selected
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void requestBulk('unpublish')}
-              disabled={busy}
-            >
-              Unpublish selected
-            </Button>
-          </>
-        )}
         <Button
           type="button"
           variant="ghost"
@@ -560,7 +618,28 @@ export function EntriesList() {
         )}
       </PageHeader>
 
-      <EntryFilterBar type={selectedType} value={query} onChange={setQuery} />
+      {/* Ticking anything swaps the filter bar for what can be done to the ticked entries, held
+          under the shell's header; the table's sticky header sits under it (`--sticky-above`). */}
+      {bulkBar ? (
+        <div className="sticky top-(--shell-h) z-20 -my-2 bg-background py-2">
+          <EntryBulkBar
+            count={picked.size}
+            publishable={bulkIds('publish').length}
+            unpublishable={bulkIds('unpublish').length}
+            busy={busy}
+            onPublish={() => void requestBulk('publish')}
+            onUnpublish={() => void requestBulk('unpublish')}
+            onClear={() => setPicked(new Set())}
+          />
+        </div>
+      ) : (
+        <EntryFilterBar type={selectedType} value={query} onChange={setQuery} />
+      )}
+      <p className="sr-only" aria-live="polite">
+        {picked.size > 0 && !viewingTrash
+          ? `${plural(picked.size, 'entry', 'entries')} selected`
+          : ''}
+      </p>
 
       {bulkFailures && bulkFailures.length > 0 && (
         <Alert variant="destructive">
@@ -601,23 +680,14 @@ export function EntriesList() {
             busy
             viewingTrash={viewingTrash}
             hrefFor={(e) => `/content/${selectedType.apiId}/${e.id}`}
-            onTogglePick={togglePick}
+            onPick={() => {}}
             onPickAll={() => {}}
             actions={rowActions}
+            order={query.order?.[0]}
             pending={rememberedCount(countKey)}
           />
         </>
-      ) : entries.length === 0 && hasQuery ? (
-        <EmptyState
-          icon={FileText}
-          title="No matching entries"
-          description="No entries match the current filters. Try loosening or clearing them."
-        >
-          <Button type="button" variant="outline" onClick={() => setQuery({})} disabled={busy}>
-            Clear filters
-          </Button>
-        </EmptyState>
-      ) : entries.length === 0 ? (
+      ) : entries.length === 0 && !hasQuery ? (
         <EmptyState
           icon={FileText}
           title="No entries yet"
@@ -633,30 +703,40 @@ export function EntriesList() {
         </EmptyState>
       ) : (
         <Refreshing busy={entriesQuery.isPlaceholderData}>
-          <EntriesTable
-            type={selectedType}
-            entries={entries}
-            locale={conn.locale}
-            picked={picked}
-            busy={busy}
-            viewingTrash={viewingTrash}
-            hrefFor={(e) => `/content/${selectedType.apiId}/${e.id}`}
-            onTogglePick={togglePick}
-            onPickAll={(all) => setPicked(all ? new Set(entries.map((e) => e.id)) : new Set())}
-            actions={rowActions}
-          />
-          {hasMore ? (
-            <div className="flex justify-center pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={entriesQuery.isFetching}
-                onClick={() => setShown({ key: listKey, pages: pages + 1 })}
-              >
-                {entriesQuery.isFetching ? 'Loading more…' : 'Show more'}
-              </Button>
-            </div>
-          ) : null}
+          <div className={bulkBar ? 'md:[--sticky-above:4rem]' : undefined}>
+            <EntriesTable
+              type={selectedType}
+              entries={entries}
+              locale={conn.locale}
+              picked={picked}
+              busy={busy}
+              viewingTrash={viewingTrash}
+              hrefFor={(e) => `/content/${selectedType.apiId}/${e.id}`}
+              onPick={pick}
+              onPickAll={(all) => setPicked(all ? new Set(entries.map((e) => e.id)) : new Set())}
+              actions={rowActions}
+              order={query.order?.[0]}
+              onSort={sortBy}
+              onLoadMore={hasMore ? () => void entriesQuery.fetchNextPage() : undefined}
+              loadingMore={entriesQuery.isFetchingNextPage}
+              // A search that missed keeps the headers, and says so in a row under them.
+              empty={
+                <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+                  No entries match the current filters.
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="xs"
+                    className="px-0"
+                    onClick={clearFilters}
+                    disabled={busy}
+                  >
+                    Clear filters
+                  </Button>
+                </span>
+              }
+            />
+          </div>
         </Refreshing>
       )}
 
@@ -669,8 +749,8 @@ export function EntriesList() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmBulk === 'publish' ? 'Publish' : 'Unpublish'} {picked.size}{' '}
-              {picked.size === 1 ? 'entry' : 'entries'}?
+              {confirmBulk === 'publish' ? 'Publish' : 'Unpublish'}{' '}
+              {plural(confirmIds.length, 'entry', 'entries')}?
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirmBulk === 'publish'
@@ -678,6 +758,18 @@ export function EntriesList() {
                 : 'Each selected entry is removed from the delivery API and returns to draft.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {/* What the batch changes, by name: the first few, then how many more. */}
+          <ul className="space-y-0.5 text-sm">
+            {confirmIds.slice(0, NAMED).map((id) => (
+              <li key={id}>
+                <span className="font-medium">{titleOf(id)}</span>
+                {idDetail(id, titleOf(id))}
+              </li>
+            ))}
+            {confirmIds.length > NAMED ? (
+              <li className="text-muted-foreground">and {confirmIds.length - NAMED} more</li>
+            ) : null}
+          </ul>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep as is</AlertDialogCancel>
             <AlertDialogAction
@@ -765,4 +857,18 @@ export function EntriesList() {
       </Sheet>
     </div>
   );
+}
+
+/** The pages' entries in order, each once: a refetch can move an edited entry onto a later page. */
+function dedupe(pages: readonly EntryPage[] | undefined): PreviewEntry[] {
+  const seen = new Set<string>();
+  const out: PreviewEntry[] = [];
+  for (const page of pages ?? []) {
+    for (const e of page.items) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      out.push(e);
+    }
+  }
+  return out;
 }

@@ -30,3 +30,9 @@ apps/web/public/vendor/
 # conflict between every pair of PRs that touch docs/ or the MCP skills)
 packages/docs/src/generated.ts
 packages/http/src/mcp/skills.generated.ts
+
+# Themes generated from packages/design/src/tokens.ts by `pnpm sync:theme` (postinstall and the
+# turbo `generate` task); never committed, for the same reason
+apps/docs/src/styles/theme.css
+docs/diagrams/themes/ledger-light.json
+docs/diagrams/themes/ledger-dark.json
