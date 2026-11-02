@@ -132,6 +132,12 @@ function setup(list?: ListPage) {
  * testing-library's default second (it failed at 1.5 s), so this one waits up to five.
  */
 const FIRST_RENDER_MS = 5000;
+/**
+ * The tests that render a full page of rows (100, then 200) take about 0.4 s alone but up to 15 s
+ * on a CI runner busy with every other package's tests, which is the default test timeout. They
+ * get twice that, so they fail only when something is actually wrong.
+ */
+const FULL_PAGE_TEST_MS = 30_000;
 
 async function rowMenu(title: string, item: string) {
   const trigger = await screen.findByRole(
@@ -388,25 +394,29 @@ describe('EntriesList counts and paging', () => {
   const page = (from: number, n = 100) =>
     Array.from({ length: n }, (_, i) => entry(`e${from + i}`, 'draft', `Entry ${from + i}`));
 
-  it("names the type's real total, and Load more appends the next page from its cursor", async () => {
-    client.contentTypeEntryCounts.mockResolvedValue([{ contentType: 'article', total: 250 }]);
-    setup(async (_type, _query, cursor) =>
-      cursor === 'c2'
-        ? { items: page(100), nextCursor: 'c3' }
-        : { items: page(0), nextCursor: 'c2' },
-    );
-    await screen.findByText('Showing 100 of 250 entries', {}, { timeout: FIRST_RENDER_MS });
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select “Entry 3”' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
-    await screen.findByText('Showing 200 of 250 entries');
-    expect(client.listEntryPage).toHaveBeenLastCalledWith('article', expect.anything(), 'c2');
-    // The first page stays, the second follows it, and the tick survives.
-    expect(screen.getByRole('link', { name: 'Entry 0' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Entry 199' })).toBeTruthy();
-    expect(
-      screen.getByRole('checkbox', { name: 'Select “Entry 3”' }).getAttribute('aria-checked'),
-    ).toBe('true');
-  });
+  it(
+    "names the type's real total, and Load more appends the next page from its cursor",
+    async () => {
+      client.contentTypeEntryCounts.mockResolvedValue([{ contentType: 'article', total: 250 }]);
+      setup(async (_type, _query, cursor) =>
+        cursor === 'c2'
+          ? { items: page(100), nextCursor: 'c3' }
+          : { items: page(0), nextCursor: 'c2' },
+      );
+      await screen.findByText('Showing 100 of 250 entries', {}, { timeout: FIRST_RENDER_MS });
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select “Entry 3”' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+      await screen.findByText('Showing 200 of 250 entries', {}, { timeout: FIRST_RENDER_MS });
+      expect(client.listEntryPage).toHaveBeenLastCalledWith('article', expect.anything(), 'c2');
+      // The first page stays, the second follows it, and the tick survives.
+      expect(screen.getByRole('link', { name: 'Entry 0' })).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Entry 199' })).toBeTruthy();
+      expect(
+        screen.getByRole('checkbox', { name: 'Select “Entry 3”' }).getAttribute('aria-checked'),
+      ).toBe('true');
+    },
+    FULL_PAGE_TEST_MS,
+  );
 
   it('counts a list shorter than a page as it is, with no Load more', async () => {
     client.contentTypeEntryCounts.mockResolvedValue([]);
@@ -415,24 +425,28 @@ describe('EntriesList counts and paging', () => {
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
 
-  it('starts again from the first page on a search, and a miss keeps the headers', async () => {
-    setup(async (_type, query) =>
-      query?.search ? { items: [] } : { items: page(0), nextCursor: 'c2' },
-    );
-    await screen.findByRole('link', { name: 'Entry 0' }, { timeout: FIRST_RENDER_MS });
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search entries' }), {
-      target: { value: 'zzz' },
-    });
-    await screen.findByText('No entries match the current filters.', undefined, {
-      timeout: FIRST_RENDER_MS,
-    });
-    expect(screen.getByRole('columnheader', { name: 'Title' })).toBeTruthy();
-    expect(client.listEntryPage).toHaveBeenLastCalledWith(
-      'article',
-      expect.objectContaining({ search: 'zzz' }),
-      undefined,
-    );
-  });
+  it(
+    'starts again from the first page on a search, and a miss keeps the headers',
+    async () => {
+      setup(async (_type, query) =>
+        query?.search ? { items: [] } : { items: page(0), nextCursor: 'c2' },
+      );
+      await screen.findByRole('link', { name: 'Entry 0' }, { timeout: FIRST_RENDER_MS });
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search entries' }), {
+        target: { value: 'zzz' },
+      });
+      await screen.findByText('No entries match the current filters.', undefined, {
+        timeout: FIRST_RENDER_MS,
+      });
+      expect(screen.getByRole('columnheader', { name: 'Title' })).toBeTruthy();
+      expect(client.listEntryPage).toHaveBeenLastCalledWith(
+        'article',
+        expect.objectContaining({ search: 'zzz' }),
+        undefined,
+      );
+    },
+    FULL_PAGE_TEST_MS,
+  );
 });
 
 describe('EntriesList sorting from the headers', () => {
