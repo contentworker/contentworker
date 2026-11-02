@@ -571,7 +571,12 @@ function ShellFrame() {
             id="main"
             tabIndex={-1}
             aria-busy={slow || undefined}
-            className="min-w-0 flex-1 pb-[var(--tabbar-h)] outline-none md:pb-0"
+            className={cn(
+              'min-w-0 flex-1 pb-[var(--tabbar-h)] outline-none md:pb-0',
+              // The floating New entry (2.75rem, 0.75rem above the tab bar) never covers the last
+              // row's actions: the page scrolls clear of it.
+              showNav && floatsNewEntry(path, assistantOpen) && 'pb-[calc(var(--tabbar-h)+4.5rem)]',
+            )}
           >
             <Outlet />
           </main>
@@ -1002,13 +1007,18 @@ function ShellCrumbs() {
  * New entry, in the header once the space is known: an outline on Approvals and Workflows, where
  * starting an entry isn't the page's point (cms/components/layout/NewEntry).
  */
+/**
+ * Phones: New entry floats above the tab bar on Content's lists, where it's the page's next step
+ * (not in the editor, which keeps its own actions there), and not over the assistant's sheet, where
+ * it would sit on the send button. The page leaves room for it below its last row.
+ */
+const floatsNewEntry = (path: string, covered: boolean) =>
+  !covered && /^\/content(\/[^/]+)?$/.test(path);
+
 function ShellNewEntry({ path, covered }: { path: string; covered: boolean }) {
   if (!useOptionalClient()?.ready) return null;
   const quiet = path.startsWith('/approvals') || path.startsWith('/workflows');
-  // Phones: a floating pill above the tab bar on Content's lists, where it's the page's next step
-  // (not in the editor, which keeps its own actions there). Not over the assistant's sheet, where
-  // it would sit on the send button.
-  const float = !covered && /^\/content(\/[^/]+)?$/.test(path);
+  const float = floatsNewEntry(path, covered);
   return (
     <>
       <span className="hidden md:contents">
