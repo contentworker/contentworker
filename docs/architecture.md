@@ -624,6 +624,8 @@ selects a dev fallback (in-memory store, fake blob, stub AI, in-memory vectors),
 - `@contentworker/docs`: `docs/*.md` embedded for the MCP and HTTP docs tools.
 - `@contentworker/design`, `@contentworker/ui`: the Ledger design system for `apps/web`.
 - `packages/sdk/*`: see [SDKs](./sdks.md).
+- `@contentworker/cli`: the `contentworker` command over the Management SDK; see
+  [Developer tooling](./developer-tooling.md).
 
 ## The key invariant: one set of use-cases, every caller
 

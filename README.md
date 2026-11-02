@@ -65,6 +65,7 @@ maintainer docs live in [`docs/`](./docs) (start at [the index](./docs/README.md
 | [Development](./docs/development.md)                  | Workspace commands, local stack, testing, adding a use-case                       |
 | [Admin UI](./docs/admin-ui.md)                        | The React Router admin in `apps/web`                                              |
 | [Plugins](./docs/plugins.md)                          | Sandboxed write-path plugins on Worker Loader                                     |
+| [Developer tooling](./docs/developer-tooling.md)      | The `contentworker` CLI and the developer agent skills in `skills/`              |
 
 For coding agents, the rules every change keeps are in [`AGENTS.md`](./AGENTS.md).
 
@@ -101,6 +102,8 @@ packages/
   docs/           docs/*.md embedded for the MCP and HTTP docs tools
   design/ ui/     Ledger: design tokens and the shared components
   sdk/            core, web, vue, edge, react-native, management, codegen
+  cli/            the `contentworker` command (login, model as code, entries, import, types)
+skills/           agent skills for developers building on contentworker (SKILL.md format)
 deployments/      one registry file per customer deployment
 scripts/          fleet.ts (render configs, CI matrix, secrets), provision.sh, setup-code.sh
 ```
