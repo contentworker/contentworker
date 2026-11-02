@@ -123,6 +123,16 @@ describe('summarizeEntry', () => {
     const { fields } = await getEntry(ctx, scope, id);
     expect(fields.summary?.['en-US']).toBe('Greetings article.');
   });
+
+  it('refuses an answer without the shape asked for, never a TypeError', async () => {
+    const id = await newPost(ctx);
+    for (const answer of [{ summary: 42 }, ['Greetings.'], {}]) {
+      await expect(
+        summarizeEntry(ctx, new StubAIProvider(() => answer), scope, id),
+        JSON.stringify(answer),
+      ).rejects.toThrow(ValidationError);
+    }
+  });
 });
 
 describe('autofillField', () => {
@@ -198,6 +208,22 @@ describe('suggestEntryTags', () => {
     expect(result.tagIds).toEqual([]);
     expect(result.newTags).toEqual(['intro']);
     expect(ai.requests).toHaveLength(1);
+  });
+
+  it('suggests nothing from an answer without the shape asked for, never a TypeError', async () => {
+    const id = await newPost(ctx);
+    await createTag(ctx, scope, { name: 'greetings' });
+    for (const answer of [
+      { existingTags: 'Sample existingTags', newTags: 'Sample newTags' },
+      { existingTags: [{ name: 'greetings' }], newTags: [] },
+      'greetings',
+    ]) {
+      const result = await suggestEntryTags(ctx, new StubAIProvider(() => answer), scope, id, {
+        apply: true,
+      });
+      expect(result, JSON.stringify(answer)).toMatchObject({ tagIds: [], newTags: [] });
+    }
+    expect((await getEntryMetadata(ctx, scope, id))?.tags ?? []).toEqual([]);
   });
 
   it('asks about a large vocabulary 64 tags at a time', async () => {

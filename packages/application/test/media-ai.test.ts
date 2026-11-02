@@ -81,6 +81,28 @@ describe('generateAltText', () => {
     const ai = new StubAIProvider(() => ({ altText: 'x' }));
     await expect(generateAltText(ctx, ai, scope, asset.id)).rejects.toThrow(ValidationError);
   });
+
+  it('refuses an answer without the shape asked for, never a TypeError', async () => {
+    const id = await newImage(ctx, blob);
+    for (const answer of [{ altText: 42 }, { altText: ['a'] }, ['A beach'], 'A beach', {}]) {
+      const err = await generateAltText(ctx, new StubAIProvider(() => answer), scope, id).catch(
+        (e) => e,
+      );
+      expect(err, JSON.stringify(answer)).toBeInstanceOf(ValidationError);
+      expect((err as ValidationError).issues[0]?.field).toBe('altText');
+    }
+    expect((await getAsset(ctx, scope, id)).metadata.altText).toEqual({});
+  });
+
+  it('takes a text answer from a provider without JSON mode', async () => {
+    const id = await newImage(ctx, blob);
+    const ai = {
+      async generate() {
+        return { text: ' A beach at dusk. ', usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    expect((await generateAltText(ctx, ai, scope, id)).altText).toBe('A beach at dusk.');
+  });
 });
 
 describe('autoTagAsset', () => {
@@ -113,6 +135,36 @@ describe('autoTagAsset', () => {
     // The proposed "sunset" name became a real tag in the vocabulary.
     const all = await listTags(ctx, scope);
     expect(all.map((t) => t.name).sort()).toEqual(['beach', 'sunset']);
+  });
+
+  it('suggests nothing from an answer without the shape asked for, never a TypeError', async () => {
+    const id = await newImage(ctx, blob);
+    await createTag(ctx, scope, { name: 'beach' });
+    // What the dev stub provider answers (a string per field), and other ways a model can miss.
+    for (const answer of [
+      { existingTags: 'Sample existingTags', newTags: 'Sample newTags' },
+      { existingTags: ['beach', 7], newTags: [] },
+      { existingTags: ['beach'] },
+      ['beach'],
+      'beach',
+      null,
+    ]) {
+      const result = await autoTagAsset(ctx, new StubAIProvider(() => answer), scope, id, {
+        apply: true,
+      });
+      expect(result, JSON.stringify(answer)).toMatchObject({ tagIds: [], newTags: [] });
+    }
+    // Nothing was created or applied, and each run is still on the ledger.
+    expect((await listTags(ctx, scope)).map((t) => t.name)).toEqual(['beach']);
+    expect((await getAsset(ctx, scope, id)).metadata.tags).toEqual([]);
+    expect(await listAgentRuns(ctx, scope, { workflow: 'auto-tag' })).toHaveLength(6);
+  });
+
+  it('reads the fields it names when the answer adds others', async () => {
+    const id = await newImage(ctx, blob);
+    const beach = await createTag(ctx, scope, { name: 'beach' });
+    const ai = new StubAIProvider(() => ({ existingTags: ['Beach'], newTags: [], why: 'sand' }));
+    expect((await autoTagAsset(ctx, ai, scope, id)).tagIds).toEqual([beach.id]);
   });
 });
 

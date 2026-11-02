@@ -211,7 +211,6 @@ import {
   updateWebhook,
   upgradePlugin,
   upgradePluginFromUrl,
-  withReadUrl,
 } from '@contentworker/application';
 import { listDocs, readDoc, searchDocs } from '@contentworker/docs';
 import {
@@ -242,6 +241,7 @@ import type { ImportSource } from '@contentworker/ports';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import { createSpaceWithStarter } from '@contentworker/seed';
 import { type Context, Hono } from 'hono';
+import { assetResponse, assetVersionResponse } from '../asset-response';
 import {
   type AuthDeps,
   type AuthVars,
@@ -1830,8 +1830,9 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
 
   // --- assets -------------------------------------------------------------
-  // Reads hand out a short-lived signed URL, never the stored non-expiring one.
-  const signedOne = (c: Context<AuthVars>, asset: Asset) => withReadUrl(blob, scopeOf(c), asset);
+  // Every asset goes out through the one serializer (as MCP's do): a short-lived signed URL, never
+  // the stored non-expiring one, and none of the server's own fields (r2Key).
+  const signedOne = (c: Context<AuthVars>, asset: Asset) => assetResponse(blob, scopeOf(c), asset);
   const signed = (c: Context<AuthVars>, assets: readonly Asset[]) =>
     Promise.all(assets.map((a) => signedOne(c, a)));
   app.get(
@@ -1987,11 +1988,14 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
         '501 when no video host is bound.',
     }),
     requireScope(SCOPES.contentWrite),
-    async (c) =>
-      c.json(
-        await createVideoAsset(ctx, scopeOf(c), await parseBody(c, createVideoAssetBody)),
-        201,
-      ),
+    async (c) => {
+      const created = await createVideoAsset(
+        ctx,
+        scopeOf(c),
+        await parseBody(c, createVideoAssetBody),
+      );
+      return c.json({ ...created, asset: await signedOne(c, created.asset) }, 201);
+    },
   );
   // --- asset collections ---------------------------------------------------
   // A key with content grants reads no assets (as the preview asset reads refuse it): not a
@@ -2278,17 +2282,16 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentWrite),
     async (c) => {
       const { parts } = await parseBody(c, completeUploadBody);
-      return c.json(
-        await completeMultipartAssetUpload(
-          ctx,
-          { blob, ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
-          scopeOf(c),
-          c.req.param('id'),
-          c.req.param('uploadId'),
-          parts,
-          { by: auditActor(c.get('principal')) },
-        ),
+      const asset = await completeMultipartAssetUpload(
+        ctx,
+        { blob, ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
+        scopeOf(c),
+        c.req.param('id'),
+        c.req.param('uploadId'),
+        parts,
+        { by: auditActor(c.get('principal')) },
       );
+      return c.json(await signedOne(c, asset));
     },
   );
   app.delete(
@@ -2362,7 +2365,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: docs.asset,
     }),
     requireScope(SCOPES.contentWrite),
-    async (c) => c.json(await refreshVideoAsset(ctx, scopeOf(c), c.req.param('id'))),
+    async (c) =>
+      c.json(await signedOne(c, await refreshVideoAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
     `${BASE}/assets/:id/reingest`,
@@ -2403,6 +2407,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     c.json(
       await transformAssetUrl(
         ctx,
+        blob,
         scopeOf(c),
         c.req.param('id'),
         parseImageTransform(c.req.query()),
@@ -2537,7 +2542,11 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.previewRead),
     async (c) =>
-      c.json({ items: await listAssetVersions(ctx, scopeOf(c), c.req.param('id'), { blob }) }),
+      c.json({
+        items: (await listAssetVersions(ctx, scopeOf(c), c.req.param('id'), { blob })).map(
+          assetVersionResponse,
+        ),
+      }),
   );
   app.post(
     `${BASE}/assets/:id/versions/:version/restore`,

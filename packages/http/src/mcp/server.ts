@@ -30,6 +30,7 @@ import {
   createAgentSchedule,
   createAIAction,
   createAppExtension,
+  createAsset,
   createAssetCollection,
   createAssetFolder,
   createAssetRendition,
@@ -70,6 +71,7 @@ import {
   findDuplicates,
   generateAltText,
   getAgentReview,
+  getAsset,
   getAssetCollection,
   getAssetShareLink,
   getAssetUsage,
@@ -135,6 +137,7 @@ import {
   mergeEnvironments,
   moderateEntry,
   moveAssets,
+  publishAsset,
   publishContentType,
   publishEntry,
   publishRelease,
@@ -189,6 +192,7 @@ import {
   transitionEntry,
   translateEntry,
   trashEntry,
+  unpublishAsset,
   unpublishEntry,
   updateAgentSchedule,
   updateAssetCollection,
@@ -199,7 +203,6 @@ import {
   updateWebhook,
   validateWorkflowGraph,
   visibleSearchHits,
-  withReadUrl,
   workflowRunView,
 } from '@contentworker/application';
 import { listDocs, readDoc, searchDocs } from '@contentworker/docs';
@@ -207,6 +210,7 @@ import {
   ASSET_KINDS,
   type Asset,
   AssetInUseError,
+  AssetRightsError,
   assertQueryRespectsFieldRules,
   assertWritableFields,
   authorize,
@@ -250,9 +254,10 @@ import { createSpaceWithStarter, STARTERS } from '@contentworker/seed';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
+import { assetPageResponse, assetResponse, assetVersionResponse } from '../api/asset-response';
 import { toHttpError } from '../api/http';
 import { MAX_PAGE_LIMIT } from '../api/query';
-import { snapshotBody, updateWebhookBody, webhookBody } from '../api/validation';
+import { createAssetBody, snapshotBody, updateWebhookBody, webhookBody } from '../api/validation';
 import type { McpDeps } from './deps';
 
 /**
@@ -3258,14 +3263,12 @@ export function buildServer(
   // --- assets / media intelligence ---------------------------------------
   const emptyFacets = { kind: {}, tag: {}, folder: {} };
   const assetSearch = deps.assetSearch ?? assetSearchDeps(rag);
-  // Reads hand out a short-lived signed URL, never the stored non-expiring one (as the REST
-  // routes do). Without a blob store (local fakes) there is nothing to sign with.
-  const signedOne = (s: Scope, asset: Asset) =>
-    deps.blob ? withReadUrl(deps.blob, s, asset) : Promise.resolve(asset);
-  const signedPage = async <P extends { items: Asset[] }>(s: Scope, page: P): Promise<P> => ({
-    ...page,
-    items: await Promise.all(page.items.map((a) => signedOne(s, a))),
-  });
+  // Every asset goes out through REST's serializer: a short-lived signed URL, never the stored
+  // non-expiring one, and none of the server's own fields (r2Key). Without a blob store (local
+  // fakes) there is nothing to sign with.
+  const signedOne = (s: Scope, asset: Asset) => assetResponse(deps.blob, s, asset);
+  const signedPage = <P extends { items: Asset[] }>(s: Scope, page: P) =>
+    assetPageResponse(deps.blob, s, page);
   server.registerTool(
     'assets_list',
     {
@@ -3379,6 +3382,61 @@ export function buildServer(
         ...page,
         items: await Promise.all(page.items.map((a) => signedOne(scopeOf(args), a))),
       });
+    },
+  );
+
+  // An asset's rights refusing it (an embargo not yet lifted, rights expired) as REST's 409 body:
+  // the code and the instant that decides it, which a thrown error's message alone would drop.
+  const rightsRefusal = async (run: () => Promise<ReturnType<typeof ok>>) => {
+    try {
+      return await run();
+    } catch (err) {
+      if (!(err instanceof AssetRightsError)) throw err;
+      return { ...ok(toHttpError(err).body), isError: true };
+    }
+  };
+
+  server.registerTool(
+    'asset_get',
+    {
+      description:
+        'Get one asset as it stands (its draft): file (url a short-lived signed read URL; a ' +
+        'hosted video’s playback URLs in file.video), title, description, metadata, rights, ' +
+        'version, status and ingest state.',
+      inputSchema: toolSchema('asset_get', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await signedOne(scopeOf(args), await getAsset(ctx, scopeOf(args), args.id)));
+    },
+  );
+
+  server.registerTool(
+    'asset_publish',
+    {
+      description:
+        'Publish one asset: Delivery serves its current file and metadata from then on. Refused ' +
+        'before its embargo lifts (asset_embargoed, with embargoUntil) and after its rights ' +
+        'expired (asset_expired, with expiresAt), as REST refuses them; an archived asset too.',
+      inputSchema: toolSchema('asset_publish', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      return rightsRefusal(async () =>
+        ok(await signedOne(scopeOf(args), await publishAsset(ctx, scopeOf(args), args.id))),
+      );
+    },
+  );
+
+  server.registerTool(
+    'asset_unpublish',
+    {
+      description: 'Take one asset out of Delivery; it stays a draft. Refused when not published.',
+      inputSchema: toolSchema('asset_unpublish', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.contentPublish, scopeOf(args));
+      return ok(await signedOne(scopeOf(args), await unpublishAsset(ctx, scopeOf(args), args.id)));
     },
   );
 
@@ -3973,6 +4031,29 @@ export function buildServer(
   );
 
   server.registerTool(
+    'asset_create',
+    {
+      description:
+        'Create a draft asset and get a signed PUT for its bytes (up to 100 MiB; past that, ' +
+        'asset_upload_start): PUT the file to upload.url with upload.headers, then ' +
+        'asset_publish. The URL is a short-lived capability for that one key; nothing is ' +
+        'uploaded through MCP itself.',
+      inputSchema: toolSchema('asset_create', () =>
+        z.object({ ...createAssetBody.shape, ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const { space: _space, environment: _environment, folderId, ...input } = args;
+      const created = await createAsset(ctx, uploadBlob(), scopeOf(args), input, {
+        createdBy: collectionAuthor,
+        ...(folderId ? { folderId } : {}),
+      });
+      return ok({ ...created, asset: await signedOne(scopeOf(args), created.asset) });
+    },
+  );
+
+  server.registerTool(
     'asset_upload_start',
     {
       description:
@@ -4050,17 +4131,16 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(
-        await completeMultipartAssetUpload(
-          ctx,
-          { blob: uploadBlob(), ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
-          scopeOf(args),
-          args.id,
-          args.uploadId,
-          args.parts,
-          { by: auditActor(principal) },
-        ),
+      const asset = await completeMultipartAssetUpload(
+        ctx,
+        { blob: uploadBlob(), ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
+        scopeOf(args),
+        args.id,
+        args.uploadId,
+        args.parts,
+        { by: auditActor(principal) },
       );
+      return ok(await signedOne(scopeOf(args), asset));
     },
   );
 
@@ -4247,12 +4327,15 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await setAssetMetadata(ctx, scopeOf(args), args.id, {
-          altText: args.altText,
-          tags: args.tags,
-          focalPoint: args.focalPoint,
-          fields: args.fields,
-        }),
+        await signedOne(
+          scopeOf(args),
+          await setAssetMetadata(ctx, scopeOf(args), args.id, {
+            altText: args.altText,
+            tags: args.tags,
+            focalPoint: args.focalPoint,
+            fields: args.fields,
+          }),
+        ),
       );
     },
   );
@@ -4378,12 +4461,9 @@ export function buildServer(
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
       return ok({
-        items: await listAssetVersions(
-          ctx,
-          scopeOf(args),
-          args.id,
-          deps.blob ? { blob: deps.blob } : {},
-        ),
+        items: (
+          await listAssetVersions(ctx, scopeOf(args), args.id, deps.blob ? { blob: deps.blob } : {})
+        ).map(assetVersionResponse),
       });
     },
   );
@@ -4439,8 +4519,10 @@ export function buildServer(
         ...(args.expiresAt !== undefined ? { expiresAt: args.expiresAt } : {}),
         ...(args.embargoUntil !== undefined ? { embargoUntil: args.embargoUntil } : {}),
       };
-      return ok(
-        await signedOne(scopeOf(args), await setAssetRights(ctx, scopeOf(args), args.id, rights)),
+      return rightsRefusal(async () =>
+        ok(
+          await signedOne(scopeOf(args), await setAssetRights(ctx, scopeOf(args), args.id, rights)),
+        ),
       );
     },
   );
@@ -4560,8 +4642,9 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      if (!deps.blob) throw new NotConfiguredError('blob', 'Transform URLs need a blob store');
       return ok(
-        await transformAssetUrl(ctx, scopeOf(args), args.id, {
+        await transformAssetUrl(ctx, deps.blob, scopeOf(args), args.id, {
           width: args.width,
           height: args.height,
           fit: args.fit,
@@ -4591,14 +4674,13 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(
-        await createVideoAsset(ctx, scopeOf(args), {
-          fileName: args.fileName,
-          contentType: args.contentType,
-          title: args.title,
-          maxDurationSeconds: args.maxDurationSeconds,
-        }),
-      );
+      const created = await createVideoAsset(ctx, scopeOf(args), {
+        fileName: args.fileName,
+        contentType: args.contentType,
+        title: args.title,
+        maxDurationSeconds: args.maxDurationSeconds,
+      });
+      return ok({ ...created, asset: await signedOne(scopeOf(args), created.asset) });
     },
   );
 
@@ -4613,7 +4695,9 @@ export function buildServer(
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(await refreshVideoAsset(ctx, scopeOf(args), args.id));
+      return ok(
+        await signedOne(scopeOf(args), await refreshVideoAsset(ctx, scopeOf(args), args.id)),
+      );
     },
   );
 

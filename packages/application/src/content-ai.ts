@@ -9,6 +9,7 @@ import {
 import type { AIProvider, DecisionQuestion, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { decideWithBudget, generateWithBudget } from './ai-budget';
+import { conformingAnswer } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import type { AppContext } from './context';
 import { getEntry, updateEntry } from './entries';
@@ -162,6 +163,13 @@ export interface SummarizeResult {
   readonly usage: Usage;
 }
 
+const SUMMARY_SCHEMA = {
+  type: 'object',
+  properties: { summary: { type: 'string' } },
+  required: ['summary'],
+  additionalProperties: false,
+};
+
 /** Produces a concise summary of an entry's text content. */
 export async function summarizeEntry(
   ctx: AppContext,
@@ -182,15 +190,13 @@ export async function summarizeEntry(
     prompt: `Summarize this ${ct.name}:\n${wrapUntrusted(text)}`,
     tier: input.tier ?? 'fast',
     maxTokens: 512,
-    outputSchema: {
-      type: 'object',
-      properties: { summary: { type: 'string' } },
-      required: ['summary'],
-      additionalProperties: false,
-    },
+    outputSchema: SUMMARY_SCHEMA,
   });
-  const obj = result.object as { summary?: string } | undefined;
-  const summary = (obj?.summary ?? result.text ?? '').trim();
+  // A text-only answer is the summary; a JSON one without the shape holds none.
+  const obj = conformingAnswer<{ summary: string }>(result, SUMMARY_SCHEMA);
+  const summary = (
+    obj ? obj.summary : result.object === undefined ? (result.text ?? '') : ''
+  ).trim();
   if (!summary) throw new ValidationError([{ field: 'summary', message: 'No summary produced' }]);
 
   let applied = false;
@@ -315,6 +321,16 @@ export interface SuggestEntryTagsResult {
   readonly usage: Usage;
 }
 
+const TAGS_SCHEMA = {
+  type: 'object',
+  properties: {
+    existingTags: { type: 'array', items: { type: 'string' } },
+    newTags: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['existingTags', 'newTags'],
+  additionalProperties: false,
+};
+
 /** Suggests taxonomy tags for an entry, matching the existing vocabulary. */
 export async function suggestEntryTags(
   ctx: AppContext,
@@ -371,29 +387,23 @@ export async function suggestEntryTags(
     ].join('\n'),
     tier: input.tier ?? 'fast',
     maxTokens: 512,
-    outputSchema: {
-      type: 'object',
-      properties: {
-        existingTags: { type: 'array', items: { type: 'string' } },
-        newTags: { type: 'array', items: { type: 'string' } },
-      },
-      required: ['existingTags', 'newTags'],
-      additionalProperties: false,
-    },
+    outputSchema: TAGS_SCHEMA,
   });
 
-  const obj = (result.object ?? {}) as { existingTags?: string[]; newTags?: string[] };
+  // An answer without the schema's shape suggests nothing, rather than failing on its fields.
+  const obj = conformingAnswer<{ existingTags: string[]; newTags: string[] }>(
+    result,
+    TAGS_SCHEMA,
+  ) ?? { existingTags: [], newTags: [] };
   const byName = new Map(existing.map((t) => [t.name.toLowerCase(), t]));
   // After the decision model found no existing tag that fits, only the new names are taken:
   // the generative model doesn't get to overrule that decision.
   const tagIds = decided
     ? []
-    : (obj.existingTags ?? [])
+    : obj.existingTags
         .map((n) => byName.get(n.toLowerCase())?.id)
         .filter((v): v is string => Boolean(v));
-  const newTags = (obj.newTags ?? [])
-    .map((n) => n.trim())
-    .filter((n) => n && !byName.has(n.toLowerCase()));
+  const newTags = obj.newTags.map((n) => n.trim()).filter((n) => n && !byName.has(n.toLowerCase()));
   return finishTagSuggestion(ctx, scope, id, input, tagIds, newTags, result.usage);
 }
 

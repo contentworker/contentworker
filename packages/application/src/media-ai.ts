@@ -2,6 +2,7 @@ import { NotFoundError, type Scope, ValidationError } from '@contentworker/domai
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
+import { conformingAnswer } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { getAsset, setAssetMetadata } from './assets';
 import type { AppContext } from './context';
@@ -12,6 +13,13 @@ function assertImage(contentType: string): void {
     throw new ValidationError([{ field: 'asset', message: 'Asset is not an image' }]);
   }
 }
+
+const ALT_TEXT_SCHEMA = {
+  type: 'object',
+  properties: { altText: { type: 'string' } },
+  required: ['altText'],
+  additionalProperties: false,
+};
 
 export interface GenerateAltTextInput {
   /** Locale to write the alt text for; defaults to the space default. */
@@ -72,16 +80,15 @@ export async function generateAltText(
     prompt,
     tier: input.tier ?? 'fast',
     maxTokens: 256,
-    outputSchema: {
-      type: 'object',
-      properties: { altText: { type: 'string' } },
-      required: ['altText'],
-      additionalProperties: false,
-    },
+    outputSchema: ALT_TEXT_SCHEMA,
   });
 
-  const obj = result.object as { altText?: string } | undefined;
-  const altText = (obj?.altText ?? result.text ?? '').trim();
+  // A provider without JSON mode answers in text; one that answered in JSON must have the shape,
+  // or there is no alt text in it (its text is that JSON, not a sentence).
+  const answer = conformingAnswer<{ altText: string }>(result, ALT_TEXT_SCHEMA);
+  const altText = (
+    answer ? answer.altText : result.object === undefined ? (result.text ?? '') : ''
+  ).trim();
   if (!altText) {
     throw new ValidationError([{ field: 'altText', message: 'Model returned no alt text' }]);
   }
@@ -104,6 +111,16 @@ export async function generateAltText(
 
   return { altText, locale, applied, usage: result.usage };
 }
+
+const AUTO_TAG_SCHEMA = {
+  type: 'object',
+  properties: {
+    existingTags: { type: 'array', items: { type: 'string' } },
+    newTags: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['existingTags', 'newTags'],
+  additionalProperties: false,
+};
 
 export interface AutoTagInput {
   /** When true, create any suggested new tags and apply all tags to the asset. */
@@ -160,25 +177,20 @@ export async function autoTagAsset(
     prompt,
     tier: input.tier ?? 'fast',
     maxTokens: 512,
-    outputSchema: {
-      type: 'object',
-      properties: {
-        existingTags: { type: 'array', items: { type: 'string' } },
-        newTags: { type: 'array', items: { type: 'string' } },
-      },
-      required: ['existingTags', 'newTags'],
-      additionalProperties: false,
-    },
+    outputSchema: AUTO_TAG_SCHEMA,
   });
 
-  const obj = (result.object ?? {}) as { existingTags?: string[]; newTags?: string[] };
+  // An answer without the schema's shape suggests nothing (the run is still recorded and counted).
+  const answer = conformingAnswer<{ existingTags: string[]; newTags: string[] }>(
+    result,
+    AUTO_TAG_SCHEMA,
+  ) ?? { existingTags: [], newTags: [] };
   const byName = new Map(existing.map((t) => [t.name.toLowerCase(), t]));
-  const chosen = obj.existingTags ?? [];
-  const tagIds = chosen
+  const tagIds = answer.existingTags
     .map((name) => byName.get(name.toLowerCase())?.id)
     .filter((v): v is string => Boolean(v));
   // New names the model proposed that genuinely aren't in the vocabulary.
-  const newTags = (obj.newTags ?? [])
+  const newTags = answer.newTags
     .map((n) => n.trim())
     .filter((n) => n && !byName.has(n.toLowerCase()));
 

@@ -145,9 +145,9 @@ describe('video assets', () => {
       fileName: 'intro.mp4',
       contentType: 'video/mp4',
     });
-    await expect(transformAssetUrl(ctx, scope, asset.id, { width: 10 })).rejects.toThrow(
-      ValidationError,
-    );
+    await expect(
+      transformAssetUrl(ctx, new FakeBlobStore(), scope, asset.id, { width: 10 }),
+    ).rejects.toThrow(ValidationError);
   });
 
   it('refuses before minting an upload when a hook vetoes', async () => {

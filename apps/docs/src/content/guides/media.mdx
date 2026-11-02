@@ -40,9 +40,10 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/published
 
 Send every header in `upload.headers` with the `PUT`. An upload URL stores its file once: a second `PUT` through it, even within its 15 minutes, is a `412` and changes nothing (a retry of an upload that never arrived still stores). A new asset is a draft until you publish
 it, and `DELETE …/assets/{id}/published` unpublishes it. Title and description are localized maps
-set at creation, and an optional `folderId` files the asset in a folder. MCP creates an asset with
-`asset_upload_start` (below); it can also list, file, archive and delete assets, replace their
-files, edit metadata and rights, and create videos.
+set at creation, and an optional `folderId` files the asset in a folder. Over MCP the same steps
+are `asset_create` (the signed upload), `asset_publish` and `asset_unpublish`, with `asset_get` to
+read one asset and `asset_upload_start` for a large file (below); it can also list, file, archive
+and delete assets, replace their files, edit metadata and rights, and create videos.
 
 ### Upload a large file
 
@@ -114,7 +115,8 @@ suggestions you review before saving (`POST …/assets/{id}/alt-text` and `…/a
 tools are `asset_generate_alt_text` and `asset_auto_tag`). Both work from the file name, title and
 description (and a `context` hint for alt text), not from the image itself, so give the asset a
 meaningful title first. Suggest tags matches your existing tags and lists new tag ideas to add in
-**Taxonomy**. See [AI features](/guides/ai/).
+**Taxonomy**. A model answer that isn't the shape asked for suggests no tags, and gives no alt text
+(`422`). See [AI features](/guides/ai/).
 
 ## What happens after an upload
 
@@ -321,7 +323,9 @@ the asset stops them. Renditions, the ladder, and the deprecated
 
 With `fit=crop`, crops are anchored to the asset's focal point. Only images are transformed. The
 Management API's `GET …/assets/{id}/transform` answers with a URL as JSON
-(`asset_transform_url` over MCP); the details sheet has a **Transform preview**. For listing and
+(`asset_transform_url` over MCP), built from a fresh signed read URL for the asset's current file,
+so it serves a draft's latest version and expires with that URL (15 minutes); the details sheet has
+a **Transform preview**. For listing and
 fetching published assets, see [Reading content](/guides/reading-content/#assets).
 
 ## Locales

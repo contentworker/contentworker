@@ -644,6 +644,11 @@ export async function enrichAltText(
     ));
   } catch (err) {
     if (err instanceof RateLimitedError) return 'budget';
+    // An answer with no alt text in it (empty, or not the shape asked for) suggests nothing; the
+    // rest of ingest goes on, and asking again would get the same answer at another call's cost.
+    if (err instanceof ValidationError && err.issues.some((i) => i.field === 'altText')) {
+      return 'none';
+    }
     throw err;
   }
   const clean = plainLine(altText, MAX_INGEST_ALT_TEXT_CHARS);
