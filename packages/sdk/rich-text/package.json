@@ -2,13 +2,25 @@
   "name": "@contentworker/sdk-rich-text",
   "version": "0.1.0",
   "description": "Render ContentWorker rich text (RichTextDocument) to HTML, Markdown or plain text. Zero dependencies; any framework, any runtime.",
+  "homepage": "https://docs.contentworker.app/guides/sdks/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/contentworker/contentworker",
+    "directory": "packages/sdk/rich-text"
+  },
+  "license": "Apache-2.0",
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     }
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
     "test": "vitest run",
@@ -21,5 +33,15 @@
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
-  "license": "Apache-2.0"
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      }
+    }
+  }
 }

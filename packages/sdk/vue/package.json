@@ -1,13 +1,25 @@
 {
   "name": "@contentworker/sdk-vue",
   "version": "0.1.0",
+  "homepage": "https://docs.contentworker.app/guides/sdks/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/contentworker/contentworker",
+    "directory": "packages/sdk/vue"
+  },
+  "license": "Apache-2.0",
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     }
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
     "test": "vitest run",
@@ -28,5 +40,15 @@
     "vitest": "catalog:",
     "vue": "catalog:"
   },
-  "license": "Apache-2.0"
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      }
+    }
+  }
 }

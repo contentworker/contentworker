@@ -94,6 +94,9 @@ The docs site runs on its own: `pnpm docs:dev`.
 # Test / typecheck / lint everything (what CI's verify job runs; turbo, cached)
 pnpm check-types && pnpm test && pnpm lint
 
+# The SDKs as npm sees them: pack every SDK, then load each export from the tarballs
+node scripts/sdk-packages.ts pack && node scripts/sdk-packages.ts check
+
 # One package
 pnpm --filter @contentworker/application test
 
