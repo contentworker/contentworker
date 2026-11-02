@@ -28,7 +28,9 @@ Worker's Vite config (`apps/web/vite.config.ts`) starts the **api, engine, media
 auxiliary Workers** in the same session, all on one local D1, with the queues, cron, Durable
 Objects and Workflows emulated. The media Worker isn't routable from the browser locally and
 `MEDIA_PUBLIC_URL` stays empty, so delivered assets keep the api's signed URLs (no renditions or
-srcset); its suite (`pnpm --filter @contentworker/media test`) runs it in workerd instead. Their vars are overridden with `LOCAL_STACK_VARS`:
+srcset); its suite (`pnpm --filter @contentworker/media test`) runs it in workerd instead. Asset
+ingest still runs after an upload: with no R2 notifications locally, the api's signed `PUT` is its
+one trigger ([Architecture](./architecture.md#asset-ingest-and-search)). Their vars are overridden with `LOCAL_STACK_VARS`:
 
 | Var                               | Local value                                   | Why                                                                 |
 | --------------------------------- | --------------------------------------------- | ------------------------------------------------------------------- |

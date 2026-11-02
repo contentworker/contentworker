@@ -449,7 +449,7 @@ a column (`asset_published.expires_at`, migration `0015_asset_expiry`) for the e
 takes any non-archived asset to `archived`, and `restoreAsset` brings an archived one back as a
 `draft` (each throws `InvalidStateError` on a bad transition; an archived asset cannot be
 published, nor one under embargo or past its expiry). File bytes are not part of the aggregate: `createAsset` returns a signed upload URL
-and the bytes go to the blob store (see [Architecture](./architecture.md#media-r2-images-stream)).
+and the bytes go to the blob store (see [Architecture](./architecture.md#assets-r2-images-stream-and-the-media-worker)).
 
 `assetKind(contentType)` derives an `AssetKind` (`image`, `video`, `audio`, `document`, `other`;
 `ASSET_KINDS`) from the content type; the store keeps it in a column for filtering, so it is never

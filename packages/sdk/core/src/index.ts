@@ -7,6 +7,7 @@
 /** Locale-keyed field values, or flattened values when a locale is requested. */
 import { bookmarkTracker } from './bookmark.js';
 import { CONTENT_REF_ATTRIBUTE, formatContentRef } from './content-ref.js';
+import { imageProps } from './image.js';
 
 export type Fields = Record<string, unknown>;
 
@@ -209,14 +210,45 @@ export interface EntryQuery {
   readonly search?: string;
 }
 
+/**
+ * A failed request. `code` is the API's machine-readable error code (`not_found`,
+ * `validation_failed`, …) when the body names one, and `body` the parsed JSON body (`undefined`
+ * when it wasn't JSON). The delivery gateway's own refusals (`401`, `429`) carry no code.
+ */
 export class DeliveryError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
+    readonly body?: unknown,
   ) {
     super(message);
     this.name = 'DeliveryError';
   }
+}
+
+/** `{ error: { code, message } }` from the api, `{ error: 'message' }` from the gateway. */
+async function deliveryError(res: Response, url: string): Promise<DeliveryError> {
+  let body: unknown;
+  try {
+    body = JSON.parse(await res.text());
+  } catch {
+    body = undefined;
+  }
+  const error = (body as { error?: unknown } | undefined)?.error;
+  const detail =
+    typeof error === 'string'
+      ? error
+      : typeof (error as { message?: unknown } | undefined)?.message === 'string'
+        ? (error as { message: string }).message
+        : undefined;
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return new DeliveryError(
+    res.status,
+    `Delivery request failed: ${res.status} ${url}${detail ? ` (${detail})` : ''}`,
+    typeof code === 'string' ? code : undefined,
+    body,
+  );
 }
 
 interface CacheEntry {
@@ -256,13 +288,51 @@ export function createDeliveryClient(opts: ClientOptions) {
       headers: { authorization: `Bearer ${opts.token}`, ...bookmarks.headersFor(url) },
     });
     bookmarks.record(res);
-    if (!res.ok) {
-      throw new DeliveryError(res.status, `Delivery request failed: ${res.status} ${url}`);
-    }
+    if (!res.ok) throw await deliveryError(res, url);
     const value = (await res.json()) as T;
     if (ttl > 0) cache.set(url, { expires: Date.now() + ttl, value });
     return value;
   }
+
+  async function* pages(
+    first: string | undefined,
+    page: (cursor: string | undefined) => Promise<{ items: DeliveredAsset[]; nextCursor?: string }>,
+  ): AsyncGenerator<DeliveredAsset, void, undefined> {
+    const seen = new Set<string>();
+    let cursor = first;
+    for (;;) {
+      const res = await page(cursor);
+      yield* res.items;
+      if (!res.nextCursor) return;
+      // A cursor that comes back again would page forever; the server never does that.
+      if (seen.has(res.nextCursor)) {
+        throw new Error(`Delivery returned cursor ${res.nextCursor} twice`);
+      }
+      seen.add(res.nextCursor);
+      cursor = res.nextCursor;
+    }
+  }
+
+  const getCollection = (
+    id: string,
+    o: { limit?: number; cursor?: string; locale?: string } = {},
+  ): Promise<DeliveredCollection> =>
+    get<DeliveredCollection>(`/collections/${encodeURIComponent(id)}`, {
+      limit: o.limit,
+      cursor: o.cursor,
+      locale: o.locale,
+    });
+
+  const listAssets = (q: AssetQuery = {}): Promise<AssetPage> =>
+    get<AssetPage>('/assets', {
+      limit: q.limit,
+      cursor: q.cursor,
+      skip: q.cursor ? undefined : q.skip,
+      kind: q.kind,
+      tag: q.tag,
+      folder: q.folder,
+      locale: q.locale,
+    });
 
   return {
     /**
@@ -305,28 +375,31 @@ export function createDeliveryClient(opts: ClientOptions) {
      * A collection's published assets in its order (drafts and archived members left out), a
      * page at a time. Delivery only.
      */
-    async getCollection(
+    getCollection,
+
+    /**
+     * Every published member of a collection, in its order, fetching a page (`limit`) at a time
+     * as the loop asks for more: `for await (const asset of client.iterateCollection(id)) …`.
+     */
+    iterateCollection(
       id: string,
       o: { limit?: number; cursor?: string; locale?: string } = {},
-    ): Promise<DeliveredCollection> {
-      return get<DeliveredCollection>(`/collections/${encodeURIComponent(id)}`, {
-        limit: o.limit,
-        cursor: o.cursor,
-        locale: o.locale,
-      });
+    ): AsyncGenerator<DeliveredAsset, void, undefined> {
+      return pages(o.cursor, (cursor) => getCollection(id, { ...o, cursor }));
     },
 
     /** List published assets, a page at a time (pass `nextCursor` back as `cursor`). */
-    async listAssets(q: AssetQuery = {}): Promise<AssetPage> {
-      return get<AssetPage>('/assets', {
-        limit: q.limit,
-        cursor: q.cursor,
-        skip: q.cursor ? undefined : q.skip,
-        kind: q.kind,
-        tag: q.tag,
-        folder: q.folder,
-        locale: q.locale,
-      });
+    listAssets,
+
+    /**
+     * Every published asset the query matches, following `nextCursor` a page (`limit`) at a
+     * time as the loop asks for more: `for await (const asset of client.iterateAssets({ kind:
+     * 'image' })) …`. A `skip` applies to the first page only.
+     */
+    iterateAssets(q: AssetQuery = {}): AsyncGenerator<DeliveredAsset, void, undefined> {
+      return pages(q.cursor, (cursor) =>
+        listAssets(cursor ? { ...q, cursor, skip: undefined } : q),
+      );
     },
 
     /**
@@ -349,6 +422,9 @@ export function createDeliveryClient(opts: ClientOptions) {
 
     /** {@link srcset}, for convenience. */
     srcset,
+
+    /** {@link imageProps}, for convenience. */
+    imageProps,
 
     /** Semantic search over published content. */
     async search(query: string, o: { topK?: number } = {}): Promise<SearchHit[]> {
@@ -481,3 +557,9 @@ export {
   formatContentRef,
   parseContentRef,
 } from './content-ref.js';
+export {
+  type ImageProps,
+  type ImagePropsOptions,
+  imageProps,
+  localizedText,
+} from './image.js';

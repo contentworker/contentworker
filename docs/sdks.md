@@ -56,6 +56,9 @@ client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: numb
 client.search(query, { topK? }): Promise<SearchHit[]>
 client.getAsset(id, { locale? }): Promise<DeliveredAsset>
 client.listAssets({ limit?, cursor?, skip?, kind?, tag?, folder?, locale? }): Promise<AssetPage>
+client.iterateAssets(query?): AsyncGenerator<DeliveredAsset>   // every page, following nextCursor
+client.getCollection(id, { limit?, cursor?, locale? }): Promise<DeliveredCollection>  // Delivery only
+client.iterateCollection(id, { limit?, cursor?, locale? }): AsyncGenerator<DeliveredAsset>
 client.searchAssets(q, { limit?, kind?, tag?, folder?, locale? }): Promise<AssetSearchPage>  // Delivery only
 client.query(): EntryQueryBuilder<F>     // fluent builder
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
@@ -70,7 +73,13 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
 - `include` controls reference embedding depth (linked entries are nested in `fields`, including
   inside components and rich-text `data.target`s).
 - `client.search()` hits `/search` with hybrid mode by default (same as the API).
-- Failed requests throw `DeliveryError`.
+- Failed requests throw `DeliveryError` with the `status`, the API's error `code` when the body
+  names one (`{ error: { code, message } }`; the delivery gateway's `{ error: '…' }` refusals have
+  none), the parsed `body` (`undefined` if it wasn't JSON) and the server's message in `message`.
+- `iterateAssets(query)` and `iterateCollection(id, opts)` are `async` generators: each fetches a
+  page (`limit`) when the loop needs the next item and follows `nextCursor` to the last page, so
+  `break` stops fetching. A `skip` applies to the first page only, and a cursor the server
+  repeats throws rather than looping.
 - `getAsset` / `listAssets` read `/assets` (or `/preview/…/assets` with `preview: true`) and return
   the delivered asset shape (see [API reference](./api-reference.md#delivery-api-cda));
   `AssetPage` is `{ items, total, nextCursor? }`, and a `cursor` wins over `skip`.
@@ -79,6 +88,20 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   `width` (the largest past it, the original without a ladder), or the original; `srcset(asset)`
   returns `"url 320w, url 640w, …"` (empty without a ladder). Neither adds a query parameter, so
   signed and immutable URLs stay intact.
+- `imageProps(asset, { sizes?, width?, rendition?, locale?, priority? })` (also on the client)
+  returns the `<img>` attributes `{ src, srcSet?, sizes?, width?, height?, alt, loading,
+  decoding, fetchPriority?, style: { objectPosition?, backgroundColor? } }`, or `undefined` for
+  an asset with no image (audio, documents, a video without `video.thumbnailUrl`, which is a
+  video's `src`). `srcSet` is the ladder with `sizes` (default `(max-width: Wpx) 100vw, Wpx` with
+  `width`, else `100vw`); `src` is the step at or above `width`, else `url`; `width`/`height` are
+  the asset's, scaled to `width`; a found `rendition` is the only `src`, with no size. `alt` is
+  `localizedText(altText, locale)`, else the title, else `''` (decorative); `localizedText`
+  takes a flattened string, the `locale` key of a map, or without a `locale` the map's first
+  non-empty value. `objectPosition` is the focal point in percent, clamped to 0–100;
+  `backgroundColor` is `placeholder.dominantColor` only when it is `#rrggbb`; URLs that aren't
+  http(s) or relative are dropped. `priority` gives `loading: 'eager'` and `fetchPriority:
+  'high'`, else `'lazy'`. With no ladder (no media origin, as in local development) it is `src`
+  alone. The implementation is `packages/sdk/core/src/image.ts`.
 - With `preview: true` the client keeps [read-your-writes](#read-your-writes) by default. A
   Delivery client never sends a bookmark: the delivery host is cached, reads replicas by design
   and doesn't accept the header.
@@ -134,13 +157,18 @@ Hooks (all return `AsyncState<T> = { data?: T; error?: Error; loading: boolean }
 
 - `useEntry<F>(id, { locale?, include? })`
 - `useEntries<F>(query?)`
+- `useAsset(id, { locale? })`
 - `useSemanticSearch(query, { topK? })` — returns `[]` for an empty query (no request)
 - `useDeliveryClient()` — the injected client
 - `useEditable()` — returns `editable(entry, field, locale?)`, which spreads the inline-edit mark
   onto an element (see [Inline editing](#inline-editing))
 
 `<InlineEditor adminUrl onEdit defaultEnabled toggle />` mounts the click-to-edit overlay and
-renders no markup. `createDeliveryClient` is re-exported, so `sdk-web` alone is enough.
+renders no markup. `<Image asset sizes? width? rendition? locale? priority? …img />` renders
+`imageProps(asset, …)` as an `<img>` (nothing while `asset` is unset, or for an asset with no
+image); other `<img>` attributes pass through, and an `alt` or `style` given wins over or merges
+into its own. `createDeliveryClient`, `DeliveryError`, `assetUrl`, `srcset`, `imageProps` and
+`localizedText` are re-exported, so `sdk-web` alone is enough.
 
 SSR-safe: no fetch happens on the server unless a hook is actually invoked.
 
@@ -170,8 +198,13 @@ Composables (all return `AsyncRefs<T> = { data, error, loading }` as refs):
 
 - `useEntry<F>(id, { locale?, include? })`
 - `useEntries<F>(query?)`
+- `useAsset(id, { locale? })`
 - `useSemanticSearch(query, { topK? })` — returns `[]` for an empty query (no request)
 - `useDeliveryClient()` — the injected client
+
+`<CwImage :asset sizes width rendition locale priority />` renders `imageProps` as an `<img>`
+(`srcset`, `fetchpriority` as attributes), nothing while `asset` is unset; fallthrough `alt`,
+`class` and `style` win or merge. The same helpers as `sdk-web` are re-exported.
 
 Fetching starts on mount (client-side), matching the React hooks' SSR behavior — this
 holds outside components too (plugins, stores): on the server nothing fetches. Rapid
@@ -196,12 +229,14 @@ await client.list('article', { limit: 20, pick: ['title'] });
 ```
 
 Returns `CompactEntry` = `{ id, contentType, fields }` where `fields` is already flattened to the
-client locale (no locale nesting).
+client locale (no locale nesting). It asks for no `include`, so an asset field is the bare link
+`{ id, linkType: 'Asset' }`; fetch the asset with `sdk-core`'s `getAsset` (and render it with
+`imageProps`) where a device shows images.
 
 ## `@contentworker/sdk-react-native` — offline Delivery sync
 
-Hooks and helpers for React Native: an offline entry cache, delta sync via `since`, and image URL
-helpers. Builds on `@contentworker/sdk-core`.
+Hooks and helpers for React Native: an offline entry cache, delta sync via `since`, and image
+helpers (`imageUrl`, `imageSource`). Builds on `@contentworker/sdk-core`.
 `imageUrl(asset, { width?, dpr?, rendition? })` takes a delivered asset and returns the rendition
 when it exists, else the ladder step for `ceil(width × dpr)` (through `assetUrl`), else `url`; it
 never appends parameters to a URL.
@@ -211,6 +246,7 @@ import {
   createDeliveryClient, // re-exported from sdk-core
   createOfflineDelivery,
   InMemoryStorage,
+  imageSource,
   imageUrl,
   useOfflineEntries,
 } from '@contentworker/sdk-react-native';
@@ -224,8 +260,10 @@ import {
   unpublished on the server is not removed locally yet.
 - `useOfflineEntries(store)` serves the cache first, syncs in the background, and returns
   `{ entries, syncing, error, sync }`; call `sync()` on reconnect or pull-to-refresh.
-- `imageUrl(url, { width?, height?, quality?, format?, dpr? })` appends `w`, `h`, `q`, `fm` and
-  `dpr` query parameters to an asset URL for device-density sizing.
+- `imageSource(asset, { width?, dpr?, rendition? })` is an `<Image source>`: `{ uri, width?,
+  height? }`, the same URL `imageUrl` picks (through `imageProps`, so a hosted video gives its thumbnail
+  and audio or a document gives `undefined`) with `width` and, from the aspect ratio, `height` in
+  dp (no `height` for a rendition, which may crop). `localizedText(asset.altText)` gives its alt.
 
 ## `@contentworker/sdk-management` — Management (CMA) client
 

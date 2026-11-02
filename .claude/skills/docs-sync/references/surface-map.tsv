@@ -70,6 +70,7 @@
 #
 # Clients and the admin:
 ^packages/sdk/[a-z-]+/src/	guides/sdks docs/sdks.md	prose
+^packages/sdk/(core|react-native)/src/image\.ts$|^packages/sdk/(web|vue)/src/index\.ts$	guides/delivering-assets packages/sdk/core/README.md	prose
 ^apps/web/app/routes\.ts$	docs/admin-ui.md	prose
 ^packages/seed/src/	start/getting-started docs/development.md	prose
 ^(packages/(domain|http)/src/assistant/|apps/engine/src/assistant\.ts$|apps/web/app/cms/(components/assistant/|lib/assistant))	guides/coworker docs/architecture.md	prose

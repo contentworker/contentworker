@@ -30,7 +30,7 @@ The web, Vue and React Native packages take `react` or `vue` as a peer dependenc
 ## Reading content
 
 ```ts
-import { assetUrl, createDeliveryClient, srcset } from '@contentworker/sdk-core';
+import { createDeliveryClient, imageProps } from '@contentworker/sdk-core';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',
@@ -51,16 +51,24 @@ const latest = await client
 const hits = await client.search('waterproof running shoes', { topK: 5 });
 
 const hero = await client.getAsset(heroId, { locale: 'en-US' });
-const img = `<img src="${assetUrl(hero, { width: 960 })}" srcset="${srcset(hero)}">`;
+const props = imageProps(hero, { sizes: '(min-width: 960px) 960px, 100vw', priority: true });
+// { src, srcSet, sizes, width, height, alt, loading, decoding, fetchPriority, style }
+
+for await (const asset of client.iterateAssets({ kind: 'image' })) {
+  // every published image, a page at a time
+}
 ```
 
-`getAsset`, `listAssets`, `searchAssets`, `assetUrl` and `srcset` read and use
-[delivered assets](/guides/delivering-assets/); React Native's `imageUrl(asset, { width, dpr })`
-picks the right width for the device.
+`getAsset`, `listAssets`, `iterateAssets`, `searchAssets`, `getCollection` and
+`iterateCollection` read [delivered assets](/guides/delivering-assets/). `imageProps` turns one
+into `<img>` attributes (the width ladder as `srcset`, alt text, the focal point and placeholder
+colour as `style`), and `assetUrl` and `srcset` give single values; see
+[build an image component](/guides/delivering-assets/#build-an-image-component).
 
 The client takes the same filters, ordering and projection as the
-[Delivery API](/guides/reading-content/), throws `DeliveryError` on a failed request, and can keep
-a short in-memory cache (`cacheTtlMs`). Pass `preview: true` with a Preview key to read drafts;
+[Delivery API](/guides/reading-content/), throws `DeliveryError` on a failed request (with the
+`status`, the API's error `code` and the parsed `body`), and can keep a short in-memory cache
+(`cacheTtlMs`). Pass `preview: true` with a Preview key to read drafts;
 Preview is served from the workspace's `api.` address, so point `baseUrl` there
 (`https://api.your-workspace.contentworker.app`) for a preview client.
 
@@ -79,8 +87,12 @@ function Article({ id }: { id: string }) {
 // <ContentworkerProvider client={client}><Article id="…" /></ContentworkerProvider>
 ```
 
+`useAsset(id)` fetches an asset and `<Image asset={…} sizes="…" />` renders it with
+`imageProps`; nothing renders while it loads.
+
 `@contentworker/sdk-vue` has the same surface as composables (`useEntry`, `useEntries`,
-`useSemanticSearch`), installed with `app.use(createContentworker(client))`. Both fetch on the
+`useAsset`, `useSemanticSearch`) and a `<CwImage>` component, installed with
+`app.use(createContentworker(client))`. Both fetch on the
 client only, so server rendering stays predictable.
 
 ### Edge devices and mobile
@@ -107,6 +119,8 @@ published since its last cursor (the [`since`](/guides/reading-content/#entries)
 storage you pass it, then reads from there without a network. Storage is pluggable: any object
 with `getItem`, `setItem` and `removeItem`, such as `AsyncStorage` or MMKV; `InMemoryStorage` is
 there for tests. Entries unpublished since the last sync are not removed locally yet. `useOfflineEntries(store)` wraps it in a hook.
+`imageSource(asset, { width, dpr: PixelRatio.get() })` is an `<Image source>` with the width step
+for the device's density and the image's size in dp.
 
 ## Writing content
 
