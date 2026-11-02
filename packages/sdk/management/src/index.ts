@@ -8,6 +8,7 @@
  */
 
 import { bookmarkTracker } from './bookmark.js';
+import { type AssetLink, ManagementError } from './errors.js';
 import {
   inPool,
   SINGLE_UPLOAD_MAX_BYTES,
@@ -18,6 +19,24 @@ import {
   withRetry,
 } from './upload.js';
 
+export {
+  type ApiError,
+  type AssetInUse,
+  type AssetLink,
+  type AssetRightsRefusal,
+  type AssetUsage,
+  type FieldIssue,
+  isAssetInUse,
+  isAssetRightsError,
+  isConflict,
+  isNotFound,
+  isRateLimited,
+  isValidationError,
+  ManagementError,
+  type ManagementErrorWith,
+  type RateLimited,
+  type ValidationFailed,
+} from './errors.js';
 export {
   SINGLE_UPLOAD_MAX_BYTES,
   type UploadBody,
@@ -117,38 +136,109 @@ export interface EntryVersion {
 
 export type AssetKind = 'image' | 'video' | 'audio' | 'document' | 'other';
 
+/** What a reader shows while a raster image loads; ingest computes it from the pixels. */
+export interface AssetPlaceholder {
+  /** The image's ThumbHash, base64: decode it on the client to a blurred preview. */
+  readonly thumbhash: string;
+  /** The image's dominant colour, `#rrggbb`. */
+  readonly dominantColor: string;
+}
+
+export type AssetVideoStatus = 'pending' | 'processing' | 'ready' | 'error';
+
+/** A video hosted by the video service: it plays as adaptive streaming, not from `file.url`. */
+export interface AssetVideo {
+  /** The host that owns the bytes, e.g. `stream`. */
+  readonly provider: string;
+  /** The host's id for the video. */
+  readonly videoId: string;
+  readonly status: AssetVideoStatus;
+  readonly hlsUrl?: string;
+  readonly dashUrl?: string;
+  /** Poster frame. */
+  readonly thumbnailUrl?: string;
+  readonly durationSeconds?: number;
+  /** Why processing failed, while `status` is `error`. */
+  readonly errorReason?: string;
+}
+
+/** The stored file. On a Management read, `url` is a short-lived signed read URL. */
+export interface AssetFile {
+  readonly url: string;
+  readonly fileName: string;
+  /** MIME type. */
+  readonly contentType: string;
+  readonly size?: number;
+  readonly width?: number;
+  readonly height?: number;
+  /** Absent until ingest has computed one. */
+  readonly placeholder?: AssetPlaceholder;
+  /** Present on a hosted video. */
+  readonly video?: AssetVideo;
+}
+
+/** 0..1 on each axis: crops are anchored here. */
+export interface FocalPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** An asset's editorial metadata. */
+export interface AssetMetadata {
+  /** Alt text per locale. */
+  readonly altText: LocalizedValue;
+  /** Taxonomy tag ids. */
+  readonly tags: readonly string[];
+  readonly focalPoint?: FocalPoint;
+  /** Free-form custom values. */
+  readonly fields?: Readonly<Record<string, unknown>>;
+}
+
+/** A metadata change (`assets.setMetadata`): only the keys sent change. */
+export interface AssetMetadataPatch {
+  /** Alt text per locale (the whole map). */
+  readonly altText?: Readonly<Record<string, string>>;
+  /** Tag ids (the whole set). */
+  readonly tags?: readonly string[];
+  readonly focalPoint?: FocalPoint;
+  readonly fields?: Readonly<Record<string, unknown>>;
+}
+
+export type AssetIngestStatus = 'pending' | 'processing' | 'ready' | 'error';
+
+/** What ingest filled from a model that no person has saved yet. */
+export interface AssetAiSuggestions {
+  /** Locales whose alt text a model wrote. */
+  readonly altText?: readonly string[];
+  /** Tag ids a model chose. */
+  readonly tags?: readonly string[];
+}
+
 export interface Asset {
   readonly id: string;
   readonly status: AssetStatus;
-  readonly file: Readonly<Record<string, unknown>>;
+  readonly file: AssetFile;
   readonly title: LocalizedValue;
   readonly description: LocalizedValue;
-  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly metadata: AssetMetadata;
   /** The folder it is filed in; absent at the library root. */
   readonly folderId?: string;
+  /** Starts at 1 and goes up each time the file is replaced. */
   readonly version?: number;
   readonly createdAt?: string;
   readonly createdBy?: string;
+  /** Present only while `status` is `archived`. */
   readonly archivedAt?: string;
-  readonly rights?: {
-    readonly license?: string;
-    readonly credit?: string;
-    readonly expiresAt?: string;
-    readonly embargoUntil?: string;
-  };
+  readonly rights?: AssetRights;
   /** SHA-256 of the bytes (hex), once ingested. */
   readonly contentHash?: string;
   /** Where ingest stands on the current file; absent when it never ran. */
-  readonly ingestStatus?: 'pending' | 'processing' | 'ready' | 'error';
+  readonly ingestStatus?: AssetIngestStatus;
   /** Why the last ingest failed. */
   readonly ingestError?: string;
   /** The oldest other asset here with the same bytes. */
   readonly duplicateOf?: string;
-  /** What ingest filled from a model that no person has saved yet. */
-  readonly aiSuggestions?: {
-    readonly altText?: readonly string[];
-    readonly tags?: readonly string[];
-  };
+  readonly aiSuggestions?: AssetAiSuggestions;
 }
 
 /** An asset search (`assets.search`): text, and filters that narrow it. */
@@ -195,6 +285,9 @@ export interface AssetListQuery {
   readonly sort?: 'updatedAt' | 'createdAt' | 'size';
   readonly order?: 'asc' | 'desc';
 }
+
+/** What `assets.collections.assets` keeps; members come in the collection's order. */
+export type CollectionAssetQuery = Omit<AssetListQuery, 'folder' | 'sort' | 'order'>;
 
 export interface AssetPage {
   readonly items: Asset[];
@@ -308,6 +401,113 @@ export interface AssetZip {
   readonly downloadUrl?: string;
 }
 
+export type ImageFit = 'clip' | 'crop' | 'fill' | 'max' | 'scale';
+export type ImageFormat = 'auto' | 'jpg' | 'png' | 'webp' | 'avif';
+
+/** What a rendition preset makes of an image. */
+export interface AssetRenditionSpec {
+  /** 1..4096. */
+  readonly width?: number;
+  /** 1..4096. */
+  readonly height?: number;
+  readonly fit?: ImageFit;
+  readonly format?: ImageFormat;
+  /** 1..100. */
+  readonly quality?: number;
+}
+
+/** A named image preset of the space, served for every published image at `…/r-<name>/…`. */
+export interface AssetRendition extends AssetRenditionSpec {
+  readonly name: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateAssetRenditionInput extends AssetRenditionSpec {
+  /** Lowercase letters, digits and dashes, up to 40; its URL segment is `r-<name>`. */
+  readonly name: string;
+}
+
+/** A transform (`assets.transformUrl`); `crop` is anchored to the asset's focal point. */
+export interface ImageTransform {
+  /** 1..10000. */
+  readonly width?: number;
+  /** 1..10000. */
+  readonly height?: number;
+  readonly fit?: ImageFit;
+  readonly format?: ImageFormat;
+  /** 1..100. */
+  readonly quality?: number;
+}
+
+export interface TransformedImage {
+  readonly url: string;
+  readonly transform: ImageTransform;
+}
+
+export interface CreateVideoAssetInput {
+  readonly fileName: string;
+  /** A `video/*` type. */
+  readonly contentType: string;
+  readonly title?: LocalizedValue;
+  readonly description?: LocalizedValue;
+  readonly maxDurationSeconds?: number;
+}
+
+/** A draft video asset and its one-time direct upload to the video host. */
+export interface CreatedVideoAsset {
+  readonly asset: Asset;
+  readonly upload: {
+    readonly videoId: string;
+    /** POST the file here as multipart form data, in the field `fileField`. */
+    readonly uploadUrl: string;
+    readonly method: 'POST';
+    readonly fileField: string;
+  };
+}
+
+export type ModelTier = 'flagship' | 'balanced' | 'fast';
+
+/** Token counts a model run used. */
+export interface AiUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+}
+
+export interface GenerateAltTextInput {
+  /** Defaults to the space's default locale. */
+  readonly locale?: string;
+  /** Where or how the image is used, to steer the text. */
+  readonly context?: string;
+  /** Save it on the asset's metadata as well. */
+  readonly apply?: boolean;
+  /** Default `fast`. */
+  readonly tier?: ModelTier;
+}
+
+export interface AltTextResult {
+  readonly altText: string;
+  readonly locale: string;
+  readonly applied: boolean;
+  readonly usage: AiUsage;
+}
+
+export interface AutoTagInput {
+  /** Create the new tags and set every chosen tag on the asset. */
+  readonly apply?: boolean;
+  /** Default `fast`. */
+  readonly tier?: ModelTier;
+}
+
+export interface AutoTagResult {
+  /** Existing tag ids the model chose. */
+  readonly tagIds: readonly string[];
+  /** New tag names it suggested (created only with `apply`). */
+  readonly newTags: readonly string[];
+  readonly applied: boolean;
+  readonly usage: AiUsage;
+}
+
 /** A file to upload as a new asset (`assets.upload`). */
 export interface UploadAssetInput extends CreateAssetInput {
   readonly body: UploadBody;
@@ -328,7 +528,7 @@ export interface AssetFileReplacement {
 export interface AssetVersion {
   readonly version: number;
   /** `file.url` is a short-lived signed read URL. */
-  readonly file: Readonly<Record<string, unknown>>;
+  readonly file: AssetFile;
   readonly contentHash?: string;
   /** When this file became the asset's, and who made it so. */
   readonly createdAt?: string;
@@ -552,18 +752,6 @@ export interface ManagementClientOptions {
   readonly bookmark?: string;
 }
 
-export class ManagementError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-    /** Response body, when the server returned one (JSON-parsed if possible). */
-    readonly body?: unknown,
-  ) {
-    super(message);
-    this.name = 'ManagementError';
-  }
-}
-
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 type Query = Record<string, string | number | undefined>;
 
@@ -618,9 +806,31 @@ export function createManagementClient(opts: ManagementClientOptions) {
 
   const items = async <T>(p: Promise<{ items: T[] }>): Promise<T[]> => (await p).items;
 
+  /** Every item of a cursor-paged list, a page at a time as the loop asks for more. */
+  async function* pages<T>(
+    first: string | undefined,
+    page: (cursor: string | undefined) => Promise<{ items: readonly T[]; nextCursor?: string }>,
+  ): AsyncGenerator<T, void, undefined> {
+    const seen = new Set<string>(first ? [first] : []);
+    let cursor = first;
+    for (;;) {
+      const res = await page(cursor);
+      yield* res.items;
+      if (!res.nextCursor) return;
+      // A cursor that comes back again would page forever; the server never does that.
+      if (seen.has(res.nextCursor)) {
+        throw new Error(`Management API returned cursor ${res.nextCursor} twice`);
+      }
+      seen.add(res.nextCursor);
+      cursor = res.nextCursor;
+    }
+  }
+
   const e = encodeURIComponent;
   /** A signed URL may be root-relative (a deployment without MEDIA_BASE_URL): resolve it here. */
   const absolute = (url: string) => (/^https?:\/\//.test(url) ? url : `${root}${url}`);
+  /** A signed URL without its query: the signature is a write capability, never for a log. */
+  const unsigned = (url: string) => url.split('?')[0];
 
   /**
    * Sends a file to storage the way its size needs: up to {@link SINGLE_UPLOAD_MAX_BYTES} through
@@ -672,7 +882,10 @@ export function createManagementClient(opts: ManagementClientOptions) {
         ...(uploadOpts.signal ? { signal: uploadOpts.signal } : {}),
       });
     const failed = (res: Response, url: string) => {
-      const err = new ManagementError(res.status, `Upload failed: ${res.status} PUT ${url}`);
+      const err = new ManagementError(
+        res.status,
+        `Upload failed: ${res.status} PUT ${unsigned(url)}`,
+      );
       transfers.add(err);
       return err;
     };
@@ -687,7 +900,11 @@ export function createManagementClient(opts: ManagementClientOptions) {
         const res = await putBytes(target.url, sliceOf(body, 0, total), target.headers);
         if (res.ok || (retried && res.status === 412)) return;
         // On the first attempt, 412 means the key held bytes before this upload: no retry helps.
-        if (res.status === 412) throw new ManagementError(412, `Upload refused: ${target.url}`);
+        if (res.status === 412)
+          throw new ManagementError(
+            412,
+            `Upload refused: PUT ${unsigned(target.url)} already stored a file`,
+          );
         throw failed(res, target.url);
       });
       uploadOpts.onProgress?.({ loaded: total, total, partsDone: 1, partCount: 1 });
@@ -714,7 +931,7 @@ export function createManagementClient(opts: ManagementClientOptions) {
             );
             // 404: the upload is gone (aborted, or completed); signing the part again can't help.
             if (res.status === 404)
-              throw new ManagementError(404, `Upload gone: PUT ${signed.url}`);
+              throw new ManagementError(404, `Upload gone: PUT ${unsigned(signed.url)}`);
             if (!res.ok) throw failed(res, signed.url);
             const tag = res.headers.get('etag');
             if (!tag) throw new Error(`part ${n} came back without an ETag`);
@@ -815,6 +1032,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
     assets: {
       /** One page of the library; pass `nextCursor` back as `cursor` for the next. */
       list: (query: AssetListQuery = {}) => get<AssetPage>(`${envBase}/assets`, { ...query }),
+      /**
+       * Every asset the query matches, following `nextCursor` a page (`limit`) at a time as the
+       * loop asks for more: `for await (const asset of cma.assets.iterate({ kind: 'image' })) …`.
+       */
+      iterate: (query: AssetListQuery = {}): AsyncGenerator<Asset, void, undefined> =>
+        pages(query.cursor, (cursor) => get<AssetPage>(`${envBase}/assets`, { ...query, cursor })),
       get: (id: string) => get<Asset>(`${envBase}/assets/${e(id)}`),
       /** Hybrid search of the library (full text and semantic), with facet counts. */
       search: (query: AssetSearchQuery) =>
@@ -836,19 +1059,46 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * bytes to `upload.url` with `upload.headers`, then publish the asset.
        */
       create: (input: CreateAssetInput) => post<CreatedAsset>(`${envBase}/assets`, input),
-      setMetadata: (id: string, metadata: Record<string, unknown>) =>
+      /** Changes only the keys sent; publish again to carry them into Delivery. */
+      setMetadata: (id: string, metadata: AssetMetadataPatch) =>
         patch<Asset>(`${envBase}/assets/${e(id)}/metadata`, metadata),
-      /** Entries whose fields link to this asset. */
-      usage: (id: string) => items(get<{ items: unknown[] }>(`${envBase}/assets/${e(id)}/usage`)),
+      /** The entry fields that link to this asset. */
+      usage: (id: string) => items(get<{ items: AssetLink[] }>(`${envBase}/assets/${e(id)}/usage`)),
+      /**
+       * A URL for the image resized or re-encoded, built from its stored file URL; `fit: 'crop'`
+       * is anchored to its focal point. Images only (others are a 422). For a published image,
+       * prefer the delivered asset's `srcset` and `renditions`.
+       */
+      transformUrl: (id: string, transform: ImageTransform) =>
+        get<TransformedImage>(`${envBase}/assets/${e(id)}/transform`, {
+          w: transform.width,
+          h: transform.height,
+          fit: transform.fit,
+          fm: transform.format,
+          q: transform.quality,
+        }),
+      /**
+       * Suggests alt text for an image from its file name, title, description and `context` (not
+       * the pixels); `apply` saves it too. Counted against the space's AI budget.
+       */
+      generateAltText: (id: string, input: GenerateAltTextInput = {}) =>
+        post<AltTextResult>(`${envBase}/assets/${e(id)}/alt-text`, input),
+      /**
+       * Picks tags for an image from the space's tags and suggests new names; `apply` creates the
+       * new tags and sets them all on the asset.
+       */
+      autoTag: (id: string, input: AutoTagInput = {}) =>
+        post<AutoTagResult>(`${envBase}/assets/${e(id)}/auto-tag`, input),
+      /** A 409 (`isAssetRightsError`) under embargo or past its expiry. */
       publish: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/published`),
       unpublish: (id: string) => del<Asset>(`${envBase}/assets/${e(id)}/published`),
       /** Takes it out of Delivery and out of the default listing; `restore` brings it back. */
       archive: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/archive`),
       restore: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/restore`),
       /**
-       * Deletes it for good. A 409 `ManagementError` while entries link to it: its
-       * `body.error.usage` lists the first 50 links (each with the entry's `contentTypeApiId` and
-       * `entryTitle`) and `body.error.total` counts them all.
+       * Deletes it for good. A 409 while entries link to it (`isAssetInUse`): `error.usage`
+       * lists the first 50 links (each with the entry's `contentTypeApiId` and `entryTitle`) and
+       * `error.total` counts them all.
        */
       delete: (id: string) => del<void>(`${envBase}/assets/${e(id)}`),
       /** Files assets in a folder (`null`: the root), up to 500 at once. */
@@ -915,7 +1165,9 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * Uploads a file as a new draft asset, whatever its size: one signed PUT up to 100 MiB, a
        * multipart upload above it (parts retried on their own, `concurrency` at once, progress
        * after each). A failed or aborted multipart upload is aborted on the server too. Returns
-       * the asset once its bytes are stored.
+       * the asset once its bytes are stored. The signed PUT stores once: a retry answered 412
+       * means an earlier attempt's bytes landed (its answer was lost), so it counts as stored; a
+       * 412 on the first attempt is thrown as a `ManagementError` with status 412.
        */
       upload: (input: UploadAssetInput, uploadOpts: UploadOptions = {}): Promise<Asset> => {
         const { body, ...rest } = input;
@@ -962,6 +1214,13 @@ export function createManagementClient(opts: ManagementClientOptions) {
         /** By name; pass `nextCursor` back as `cursor` for the next page. */
         list: (o: { limit?: number; cursor?: string } = {}) =>
           get<AssetCollectionPage>(`${envBase}/asset-collections`, { ...o }),
+        /** Every collection, by name, a page (`limit`) at a time. */
+        iterate: (
+          o: { limit?: number; cursor?: string } = {},
+        ): AsyncGenerator<AssetCollection, void, undefined> =>
+          pages(o.cursor, (cursor) =>
+            get<AssetCollectionPage>(`${envBase}/asset-collections`, { ...o, cursor }),
+          ),
         get: (id: string) => get<AssetCollection>(`${envBase}/asset-collections/${e(id)}`),
         create: (input: { name: string; description?: string }) =>
           post<AssetCollection>(`${envBase}/asset-collections`, input),
@@ -971,8 +1230,16 @@ export function createManagementClient(opts: ManagementClientOptions) {
         /** Its assets stay in the library. */
         delete: (id: string) => del<void>(`${envBase}/asset-collections/${e(id)}`),
         /** Its assets in its order, filtered as the library is. */
-        assets: (id: string, query: Omit<AssetListQuery, 'folder' | 'sort' | 'order'> = {}) =>
+        assets: (id: string, query: CollectionAssetQuery = {}) =>
           get<AssetPage>(`${envBase}/asset-collections/${e(id)}/assets`, { ...query }),
+        /** Every member in its order, filtered as `assets`, a page (`limit`) at a time. */
+        iterateAssets: (
+          id: string,
+          query: CollectionAssetQuery = {},
+        ): AsyncGenerator<Asset, void, undefined> =>
+          pages(query.cursor, (cursor) =>
+            get<AssetPage>(`${envBase}/asset-collections/${e(id)}/assets`, { ...query, cursor }),
+          ),
         /** After its last member, in the order given (up to 500 ids; 1,000 members at most). */
         add: (id: string, assetIds: readonly string[]) =>
           post<{ added: number; skipped: string[] }>(
@@ -1019,6 +1286,32 @@ export function createManagementClient(opts: ManagementClientOptions) {
         get: (id: string) => get<AssetZip>(`${envBase}/asset-zips/${e(id)}`),
         list: () => items(get<{ items: AssetZip[] }>(`${envBase}/asset-zips`)),
       },
+      /**
+       * The space's named image presets (the same in every environment). Reading needs
+       * preview:read; changing them content:manage.
+       */
+      renditions: {
+        list: () => items(get<{ items: AssetRendition[] }>(`${envBase}/asset-renditions`)),
+        get: (name: string) => get<AssetRendition>(`${envBase}/asset-renditions/${e(name)}`),
+        /** A taken name is a 409; a space has at most 20. */
+        create: (input: CreateAssetRenditionInput) =>
+          post<AssetRendition>(`${envBase}/asset-renditions`, input),
+        /** Replaces the preset (omitted keys are cleared); its URLs stay, their cache is purged. */
+        update: (name: string, spec: AssetRenditionSpec) =>
+          put<AssetRendition>(`${envBase}/asset-renditions/${e(name)}`, spec),
+        delete: (name: string) => del<void>(`${envBase}/asset-renditions/${e(name)}`),
+      },
+      /** Videos hosted by the video service (a 501 when the deployment has none). */
+      videos: {
+        /**
+         * A draft video asset and a one-time upload: POST the file as multipart form data to
+         * `upload.uploadUrl`, in the field `upload.fileField`.
+         */
+        create: (input: CreateVideoAssetInput) =>
+          post<CreatedVideoAsset>(`${envBase}/assets/videos`, input),
+        /** Reads the video's processing status from the host; poll until `file.video.status` is `ready`. */
+        refresh: (id: string) => post<Asset>(`${envBase}/assets/${e(id)}/video/refresh`),
+      },
       folders: {
         list: () => items(get<{ items: AssetFolder[] }>(`${envBase}/asset-folders`)),
         create: (input: { name: string; parentId?: string | null }) =>
@@ -1037,6 +1330,10 @@ export function createManagementClient(opts: ManagementClientOptions) {
         get<BulkJob[]>(`${envBase}/bulk/jobs`, { limit: o.limit }),
       get: (id: string) => get<BulkJob>(`${envBase}/bulk/jobs/${e(id)}`),
       report: (id: string) => get<BulkJobReport>(`${envBase}/bulk/jobs/${e(id)}/report`),
+      /**
+       * Stops the job taking new work: chunks not yet started are skipped, one already running
+       * finishes, and nothing done is rolled back. Cancelling a finished job returns it unchanged.
+       */
       cancel: (id: string) => post<BulkJob>(`${envBase}/bulk/jobs/${e(id)}/cancel`),
     },
 

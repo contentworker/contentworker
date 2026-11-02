@@ -252,7 +252,12 @@ import { McpServer } from '@modelcontextprotocol/server';
 import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { toHttpError } from '../api/http';
-import { snapshotBody, updateWebhookBody, webhookBody } from '../api/validation';
+import {
+  assetMetadataPatchShape,
+  snapshotBody,
+  updateWebhookBody,
+  webhookBody,
+} from '../api/validation';
 import { auditToolCall, declaredArgs } from './audit';
 import type { McpDeps } from './deps';
 
@@ -4263,10 +4268,8 @@ export function buildServer(
       inputSchema: toolSchema('asset_set_metadata', () =>
         z.object({
           id: z.string(),
-          altText: z.record(z.string(), z.string()).optional().describe('locale -> alt text'),
-          tags: z.array(z.string()).optional().describe('taxonomy tag ids'),
-          focalPoint: z.object({ x: z.number(), y: z.number() }).optional(),
-          fields: z.record(z.string(), z.any()).optional(),
+          // The REST body's shape: the two surfaces accept the same patches.
+          ...assetMetadataPatchShape,
           ...scopeArgs,
         }),
       ),
