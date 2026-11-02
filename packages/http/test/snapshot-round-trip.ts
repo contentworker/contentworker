@@ -12,6 +12,7 @@ import {
   createConcept,
   createContentType,
   createEntry,
+  createRedirect,
   createScheme,
   createTag,
   createWorkflowDraft,
@@ -59,6 +60,7 @@ export async function seedEverySection(ctx: AppContext, blob: BlobStore, scope: 
   await createConcept(ctx, scope, { schemeId: scheme.id, prefLabel: 'Science' });
   await createTag(ctx, scope, { name: 'news' });
   await createWorkflowDraft(ctx, scope, { name: 'Review' });
+  await createRedirect(ctx, scope, { source: '/old', destination: '/new' });
 }
 
 /** Runs every pending `bulk.chunk_due`, as the engine's bulk consumer would, until none are left. */
@@ -89,6 +91,7 @@ interface ExportedSnapshot {
   assetCollections: { collection: Named; assetIds: string[] }[];
   taxonomy: { schemes: Named[]; concepts: Named[]; tags: Named[] };
   workflows: Named[];
+  redirects: Named[];
 }
 
 /** The envelope keys that describe the export itself rather than carry content. */
@@ -119,5 +122,6 @@ export function sections(raw: unknown) {
       tags: names(s.taxonomy?.tags),
     },
     workflows: names(s.workflows),
+    redirects: ids(s.redirects),
   };
 }
