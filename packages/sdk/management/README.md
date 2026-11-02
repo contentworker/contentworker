@@ -41,7 +41,11 @@ await cma.assets.setMetadata(asset.id, { altText: { 'en-US': 'A hand holding a c
 await cma.assets.publish(asset.id);
 
 // A new file, whatever its size: the asset at its next version.
-await cma.assets.replaceFile(asset.id, { fileName: 'hero-v2.jpg', contentType: 'image/jpeg', body });
+await cma.assets.replaceFile(asset.id, {
+  fileName: 'hero-v2.jpg',
+  contentType: 'image/jpeg',
+  body,
+});
 
 for await (const a of cma.assets.iterate({ kind: 'image' })) {
   // the whole library, fetched a page at a time as the loop reads

@@ -195,7 +195,14 @@ export interface AssetMetadata {
 }
 
 /** A metadata change (`assets.setMetadata`): only the keys sent change. */
-export type AssetMetadataPatch = Partial<AssetMetadata>;
+export interface AssetMetadataPatch {
+  /** Alt text per locale (the whole map). */
+  readonly altText?: Readonly<Record<string, string>>;
+  /** Tag ids (the whole set). */
+  readonly tags?: readonly string[];
+  readonly focalPoint?: FocalPoint;
+  readonly fields?: Readonly<Record<string, unknown>>;
+}
 
 export type AssetIngestStatus = 'pending' | 'processing' | 'ready' | 'error';
 
@@ -822,6 +829,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
   const e = encodeURIComponent;
   /** A signed URL may be root-relative (a deployment without MEDIA_BASE_URL): resolve it here. */
   const absolute = (url: string) => (/^https?:\/\//.test(url) ? url : `${root}${url}`);
+  /** A signed URL without its query: the signature is a write capability, never for a log. */
+  const unsigned = (url: string) => url.split('?')[0];
 
   /**
    * Sends a file to storage the way its size needs: up to {@link SINGLE_UPLOAD_MAX_BYTES} through
@@ -873,7 +882,10 @@ export function createManagementClient(opts: ManagementClientOptions) {
         ...(uploadOpts.signal ? { signal: uploadOpts.signal } : {}),
       });
     const failed = (res: Response, url: string) => {
-      const err = new ManagementError(res.status, `Upload failed: ${res.status} PUT ${url}`);
+      const err = new ManagementError(
+        res.status,
+        `Upload failed: ${res.status} PUT ${unsigned(url)}`,
+      );
       transfers.add(err);
       return err;
     };
@@ -888,7 +900,11 @@ export function createManagementClient(opts: ManagementClientOptions) {
         const res = await putBytes(target.url, sliceOf(body, 0, total), target.headers);
         if (res.ok || (retried && res.status === 412)) return;
         // On the first attempt, 412 means the key held bytes before this upload: no retry helps.
-        if (res.status === 412) throw new ManagementError(412, `Upload refused: ${target.url}`);
+        if (res.status === 412)
+          throw new ManagementError(
+            412,
+            `Upload refused: PUT ${unsigned(target.url)} already stored a file`,
+          );
         throw failed(res, target.url);
       });
       uploadOpts.onProgress?.({ loaded: total, total, partsDone: 1, partCount: 1 });
@@ -915,7 +931,7 @@ export function createManagementClient(opts: ManagementClientOptions) {
             );
             // 404: the upload is gone (aborted, or completed); signing the part again can't help.
             if (res.status === 404)
-              throw new ManagementError(404, `Upload gone: PUT ${signed.url}`);
+              throw new ManagementError(404, `Upload gone: PUT ${unsigned(signed.url)}`);
             if (!res.ok) throw failed(res, signed.url);
             const tag = res.headers.get('etag');
             if (!tag) throw new Error(`part ${n} came back without an ETag`);
@@ -1049,8 +1065,9 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** The entry fields that link to this asset. */
       usage: (id: string) => items(get<{ items: AssetLink[] }>(`${envBase}/assets/${e(id)}/usage`)),
       /**
-       * A URL for the image resized or re-encoded; `fit: 'crop'` is anchored to its focal point.
-       * Images only (others are a 422).
+       * A URL for the image resized or re-encoded, built from its stored file URL; `fit: 'crop'`
+       * is anchored to its focal point. Images only (others are a 422). For a published image,
+       * prefer the delivered asset's `srcset` and `renditions`.
        */
       transformUrl: (id: string, transform: ImageTransform) =>
         get<TransformedImage>(`${envBase}/assets/${e(id)}/transform`, {

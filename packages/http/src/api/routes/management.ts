@@ -2398,7 +2398,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: docs.asset,
       description:
         'Only the keys sent change: altText (per locale), tags (tag ids), focalPoint (x and y, ' +
-        'each 0..1) and fields. A value saved here stops being an AI suggestion. This edits the ' +
+        'each 0..1) and fields. A value the save changes stops being an AI suggestion; one sent ' +
+        'back unchanged stays one. This edits the ' +
         'draft; publish again to carry it into Delivery.',
     }),
     requireScope(SCOPES.contentWrite),
@@ -2429,7 +2430,8 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Assets', 'Get a resized or re-encoded image URL', {
       ok: docs.transformedImage,
       description:
-        'For the draft file, through the image service when one is bound. fit=crop is anchored ' +
+        'Built from the stored file URL, through the image service when one is bound (for ' +
+        'published images, prefer the delivered asset’s srcset and renditions). fit=crop is anchored ' +
         'to the focal point. Images only (422 otherwise).',
       query: {
         w: 'Width, 1..10000',

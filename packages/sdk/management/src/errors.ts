@@ -11,7 +11,10 @@ export interface ApiError {
   readonly [detail: string]: unknown;
 }
 
-/** A field a write was refused for (`validation_failed`); `field` is `''` for the whole entry. */
+/**
+ * A field a write was refused for (`validation_failed`): a dotted path into the body
+ * (`altText.en-US`), `'(body)'` when the body as a whole is wrong, `''` for an entry as a whole.
+ */
 export interface FieldIssue {
   readonly field: string;
   readonly locale?: string;

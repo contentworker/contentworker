@@ -75,6 +75,13 @@ describe('sdk-management assets against the api', () => {
     );
     expect(isValidationError(err)).toBe(true);
     if (isValidationError(err)) expect(err.error.issues[0]?.field).toBe('tags');
+    // The same patches MCP's asset_set_metadata refuses (test/mcp/asset-tools.test.ts).
+    for (const patch of [{ altText: { 'en-US': 5 } }, { tags: ['x'.repeat(129)] }]) {
+      const refused = await failure(
+        cma.assets.setMetadata(created.id, patch as unknown as { tags: string[] }),
+      );
+      expect(isValidationError(refused), JSON.stringify(patch)).toBe(true);
+    }
   });
 
   it('narrows an embargo and an expiry refused at publish', async () => {
