@@ -138,7 +138,9 @@ The web e2e harness starts its own dev server on port 5390 with a fresh local D1
 `.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings, and unseeded: the tests
 create what they need; the first-run spec sees a deployment with no spaces by filtering
 `GET /spaces` to the space it creates, since the database is shared), so it coexists with a
-`pnpm dev` session. Install browsers once with
+`pnpm dev` session. `E2E_PORT` picks another port, for a second suite (another worktree's)
+beside one already on 5390: outside CI the harness reuses whatever answers on its port, and a
+server from another checkout has another database. Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
 ### D1 query counts

@@ -273,11 +273,15 @@ spaces (`grants`: a role id or preset per space).
   `invalid_invite`.
 - **Accepting** (`/invite/:token`, `apps/web/app/lib/invites.server.ts`). Public, throttled per
   address (`invite-ip`, ten failures in 15 minutes) and protected from cross-site posts like every
-  form (`origin.ts`); the page is `no-store` with `Referrer-Policy: no-referrer`. The link's first
+  form (`origin.ts`); the page is `no-store` with `Referrer-Policy: same-origin` (not `no-referrer`, under which the
+  form would post with `Origin: null` and be refused as cross-site). The link's first
   request moves the token into an HttpOnly, Secure, SameSite=Lax cookie (`cw_invite`, an hour,
   set twice: `Path=/invite` and `Path=/login/sso/callback`) and redirects to `/invite`, so the
   token is in no later URL (Workers Logs records each request's): the forms post whole documents
-  to `/invite`, and sign-in and single sign-on come back to `?next=/invite`. A new person
+  to `/invite`, and sign-in and single sign-on come back to `?next=/invite`. Every way back from
+  signing in (password, two-factor, a confirmed SSO link, already signed in) redirects there as a
+  document (`redirectToNext`, `X-Remix-Reload-Document`): a client navigation would fetch
+  `/invite.data`, outside the cookie's path; a passkey sign-in already loads the page whole. A new person
   either sets a password (refused while web SSO-only is on) or continues with single sign-on, which
   joins them when the provider vouches for the invited address. The link is redeemed **before** the
   `users` row is written, under the id it is about to get, so a failure in between fails closed: the

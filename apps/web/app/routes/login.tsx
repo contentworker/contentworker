@@ -14,7 +14,7 @@ import {
 import { Mark } from '~/components/mark';
 import { authEnabled, principal, type SignInResult, signIn, Throttled } from '~/lib/auth.server';
 import { INVITE_INVALID } from '~/lib/invites';
-import { nextPath, withNext } from '~/lib/next-path';
+import { nextPath, redirectToNext, withNext } from '~/lib/next-path';
 import { ssoOnlyInEffect } from '~/lib/settings.server';
 import { ssoConfig } from '~/lib/sso.server';
 import type { Route } from './+types/login';
@@ -25,7 +25,7 @@ export const meta = () => [{ title: 'Sign in · contentworker' }];
 export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;
 
 export async function loader({ request }: Route.LoaderArgs) {
-  if (!(await authEnabled()) || (await principal(request))) throw redirect(nextPath(request));
+  if (!(await authEnabled()) || (await principal(request))) throw redirectToNext(nextPath(request));
   return { sso: !!ssoConfig(), ssoOnly: await ssoOnlyInEffect() };
 }
 
@@ -57,9 +57,10 @@ export async function action({ request }: Route.ActionArgs) {
   }
   if (!result) return { error: 'That email and password don’t match an active account.' };
   const next = nextPath(request);
-  return redirect(result.twoFactor ? withNext('/login/two-factor', next) : next, {
-    headers: { 'set-cookie': result.cookie },
-  });
+  const headers = { 'set-cookie': result.cookie };
+  return result.twoFactor
+    ? redirect(withNext('/login/two-factor', next), { headers })
+    : redirectToNext(next, { headers });
 }
 
 export default function Login() {

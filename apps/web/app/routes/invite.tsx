@@ -9,7 +9,7 @@
  * page (and the SSO callback) and redirects to `/invite`, so the token is in no later URL: not the
  * form posts, not sign-in's `?next=/invite`, not single sign-on's round trip (`lib/invites.ts`).
  * The forms post as whole documents (`reloadDocument`): a `/invite.data` fetch is outside the
- * cookie's path. The page is never cached and sends no referrer.
+ * cookie's path. The page is never cached and sends no referrer to another origin.
  */
 
 import { Button } from '@contentworker/ui/button';
@@ -38,11 +38,15 @@ import type { Route } from './+types/invite';
 
 export const meta = () => [{ title: 'Accept your invitation · contentworker' }];
 
-/** The token is in the URL: keep the page out of caches and every referrer. */
+/**
+ * Out of caches, and no referrer to another origin. `same-origin`, not `no-referrer`: under
+ * `no-referrer` a browser posts the page's forms with `Origin: null`, which the cross-site check
+ * (`origin.ts`) refuses.
+ */
 export const headers: Route.HeadersFunction = ({ actionHeaders, loaderHeaders }) => {
   const h = new Headers(actionHeaders);
   h.set('cache-control', 'no-store');
-  h.set('referrer-policy', 'no-referrer');
+  h.set('referrer-policy', 'same-origin');
   for (const [k, v] of loaderHeaders) if (!h.has(k)) h.set(k, v);
   return h;
 };
