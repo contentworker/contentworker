@@ -27,6 +27,7 @@ import {
   type PluginSettings,
   type Promotion,
   projectFields,
+  type Redirect,
   type ReferenceEdge,
   type Release,
   type ReleaseItem,
@@ -103,6 +104,7 @@ import type {
   PromotionRepo,
   PublishedAsset,
   PublishedEntry,
+  RedirectRepo,
   ReferenceRepo,
   ReleaseRepo,
   RoleRepo,
@@ -300,6 +302,8 @@ export class InMemoryContentStore implements ContentStore {
         this.conceptData,
         this.tagData,
         this.entryMetadataData,
+        this.redirectData,
+        this.redirectRevisionData,
         this.aiActionData,
         this.functionData,
         this.appExtensionData,
@@ -2298,6 +2302,87 @@ export class InMemoryContentStore implements ContentStore {
   private readonly tagData = new Map<string, Tag>();
   private readonly entryMetadataData = new Map<string, EntryMetadata>();
 
+  /** `space::env::id` → redirect. */
+  private readonly redirectData = new Map<string, Redirect>();
+  /** `space::env` → the set's revision. */
+  private readonly redirectRevisionData = new Map<string, number>();
+
+  private redirectsOf(scope: Scope): Redirect[] {
+    const prefix = `${scopeKey(scope)}::`;
+    // Code-unit order, as SQLite's BINARY collation orders the D1 store's sources.
+    return [...this.redirectData.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v)
+      .sort((a, b) =>
+        a.source < b.source ? -1 : a.source > b.source ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+      );
+  }
+
+  readonly redirects: RedirectRepo = {
+    get: async (scope, id) => this.redirectData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    all: async (scope, opts = {}) =>
+      this.redirectsOf(scope).filter((r) => !opts.enabledOnly || r.enabled),
+    list: async (scope, query = {}) => {
+      const q = query.q?.trim().toLowerCase();
+      const all = this.redirectsOf(scope).filter(
+        (r) =>
+          !q ||
+          r.source.toLowerCase().includes(q) ||
+          r.destination.toLowerCase().includes(q) ||
+          (r.note ?? '').toLowerCase().includes(q),
+      );
+      let start = 0;
+      if (query.cursor) {
+        const [source, id] = JSON.parse(query.cursor) as [string, string];
+        start = all.findIndex((r) => r.source > source || (r.source === source && r.id > id));
+        if (start < 0) start = all.length;
+      }
+      const limit = Math.min(Math.max(1, query.limit ?? 100), 1000);
+      const page = all.slice(start, start + limit);
+      const last = page.at(-1);
+      return {
+        items: page,
+        ...(all.length > start + limit && last
+          ? { nextCursor: JSON.stringify([last.source, last.id]) }
+          : {}),
+      };
+    },
+    involving: async (scope, paths) =>
+      this.redirectsOf(scope).filter(
+        (r) => paths.includes(r.source) || paths.includes(r.destination),
+      ),
+    state: async (scope) => ({
+      revision: this.redirectRevisionData.get(scopeKey(scope)) ?? 0,
+      count: this.redirectsOf(scope).length,
+    }),
+    saveMany: async (scope, redirects) => {
+      // As the D1 store's unique index: one redirect per source per locale.
+      const held = new Map(
+        this.redirectsOf(scope).map((r) => [`${r.locale ?? ''}\u0000${r.source}`, r.id]),
+      );
+      for (const r of redirects) {
+        const key = `${r.locale ?? ''}\u0000${r.source}`;
+        const other = held.get(key);
+        if (other !== undefined && other !== r.id) {
+          throw new ConflictError('A unique value is already taken');
+        }
+        for (const [k, id] of held) if (id === r.id) held.delete(k);
+        held.set(key, r.id);
+      }
+      for (const r of redirects) this.redirectData.set(`${scopeKey(scope)}::${r.id}`, r);
+    },
+    removeMany: async (scope, ids) => {
+      for (const id of ids) this.redirectData.delete(`${scopeKey(scope)}::${id}`);
+    },
+    advance: async (scope, expected) => {
+      const key = scopeKey(scope);
+      // As the D1 store's compare-and-set: another writer moved the set since it was read.
+      const current = this.redirectRevisionData.get(key) ?? 0;
+      if (expected !== undefined && current !== expected) throw new TransactionConflictError();
+      this.redirectRevisionData.set(key, current + 1);
+    },
+  };
+
   readonly taxonomy: TaxonomyRepo = {
     createScheme: async (scope, scheme) => {
       this.schemeData.set(`${scopeKey(scope)}::${scheme.id}`, scheme);
@@ -2739,6 +2824,8 @@ export class InMemoryContentStore implements ContentStore {
       this.workflowNodeRunData,
       this.workflowTimelineData,
       this.workflowTaskData,
+      this.redirectData,
+      this.redirectRevisionData,
     ] as Map<string, unknown>[];
   }
 
@@ -2773,6 +2860,7 @@ export class InMemoryContentStore implements ContentStore {
         references: this.references,
         releases: this.releases,
         taxonomy: this.taxonomy,
+        redirects: this.redirects,
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,

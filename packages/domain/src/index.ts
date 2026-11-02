@@ -22,6 +22,7 @@ export * from './plugin/plugin';
 export * from './plugin/settings';
 export * from './promotion';
 export * from './query/query';
+export * from './redirect/redirect';
 export * from './reference/references';
 export * from './release/release';
 export * from './rich-text/embed';

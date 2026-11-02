@@ -60,6 +60,8 @@ client.iterateAssets(query?): AsyncGenerator<DeliveredAsset>   // every page, fo
 client.getCollection(id, { limit?, cursor?, locale? }): Promise<DeliveredCollection>  // Delivery only
 client.iterateCollection(id, { limit?, cursor?, locale? }): AsyncGenerator<DeliveredAsset>
 client.searchAssets(q, { limit?, kind?, tag?, folder?, locale? }): Promise<AssetSearchPage>  // Delivery only
+client.redirects(): Promise<DeliveredRedirect[]>         // Delivery only: the enabled set, to apply
+client.resolveRedirect(path, { locale? }): Promise<RedirectMatch | null>  // Delivery only; null on 404
 client.query(): EntryQueryBuilder<F>     // fluent builder
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
@@ -119,6 +121,19 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   decode it with the `thumbhash` package) and `#rrggbb` ingest computed for a raster image, `null`
   for videos, other kinds and assets processed before it existed. Codegen's `DeliveredAsset`
   prelude declares it.
+
+- **Redirects.** contentworker serves no site, so redirects are data a front end applies.
+  `client.redirects()` fetches the enabled set once; `resolveRedirect(path, { locale? })` asks
+  Delivery about one path (one request each, so prefer the set). The subpath
+  `@contentworker/sdk-core/redirects` (`packages/sdk/core/src/redirects.ts`, zero dependencies)
+  matches them locally with Delivery's rules (kept in step by a test):
+  `createRedirectMatcher(set).match(pathOrPathWithQuery, locale?)`;
+  `createRedirectHandler(source, { ttlMs?, locale? })`, a front-door helper that returns
+  `(request) => Promise<Response | null>` (the redirect `Response`, or `null` to serve the request
+  as usual), caching the set for `ttlMs` (default 60 000) and keeping the last set while a refresh
+  runs or fails; `locale` is `(request) => string | undefined`; and
+  `applyRedirects(request, redirects, { locale? })` for a one-off. See
+  [the guide](https://docs.contentworker.app/guides/redirects/).
 
 Shapes:
 
@@ -359,6 +374,9 @@ cma.assets.renditions.update(name, spec) / .delete(name)   // content:manage; up
 
 cma.bulkJobs.list({ limit? }) / .get(id) / .report(id) / .cancel(id)
 
+cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .update(id, changes) / .delete(id)
+cma.redirects.import({ format: 'csv' | 'json', data, dryRun? }) / .resolve(path, { locale? }) / .analyze() / .collapseChains()
+
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
 
 cma.releases.create({ title }) / .addEntry(id, { entityId }) / .removeEntry(id, entityId)
@@ -391,6 +409,9 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
   as the loop reads; break out and no further page is fetched. Share links and zips aren't paged.
 - `bulkJobs.cancel` stops a job taking new work: chunks not started are skipped, one already running
   finishes, and nothing done is rolled back. Cancelling a finished job returns it unchanged.
+- `contentTypes.create(draft)` takes `urlPattern` (e.g. `/blog/{slug}`; `null` clears it), which makes
+  a publish that changes a slug write a redirect. `redirects.import` is all or nothing, and
+  `redirects.resolve` answers `null` on `404`.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
 - `publish`, `unpublish` and `versions.restore` take `{ expectedVersion }`, the `currentVersion` you
   read; if a draft was saved since, the server answers 409 and changes nothing (`?expectedVersion=`

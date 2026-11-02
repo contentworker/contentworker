@@ -182,6 +182,7 @@ export function ContentTypeDialog(props: {
   const [apiIdTouched, setApiIdTouched] = useState(editing);
   const [fields, setFields] = useState<FieldRow[]>(seed.fields);
   const [displayField, setDisplayField] = useState(props.initial?.displayField ?? 'title');
+  const [urlPattern, setUrlPattern] = useState(props.initial?.urlPattern ?? '');
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -225,6 +226,8 @@ export function ContentTypeDialog(props: {
         name: name.trim(),
         displayField,
         fields: namedFields.map(toDefinition),
+        // Cleared with null: left out, a saved pattern would stay.
+        urlPattern: urlPattern.trim() || null,
       });
       props.onOpenChange(false);
     } catch (err) {
@@ -415,6 +418,25 @@ export function ContentTypeDialog(props: {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-url">URL pattern</Label>
+            <Input
+              id="ct-url"
+              className="max-w-sm font-mono"
+              placeholder="/blog/{slug}"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-describedby="ct-url-hint"
+              value={urlPattern}
+              onChange={(e) => setUrlPattern(e.target.value)}
+            />
+            <p id="ct-url-hint" className="max-w-measure text-muted-foreground text-ui">
+              Where entries live on your site: {'{id}'}, {'{locale}'} or a Slug field’s API ID.
+              Publishing a changed slug then redirects the old path. Optional.
+            </p>
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
