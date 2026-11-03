@@ -1,4 +1,10 @@
-import type { DomainEvent } from '@contentworker/domain';
+import {
+  type DomainEvent,
+  ForbiddenError,
+  type Principal,
+  rolePresetDefinition,
+  SCOPES,
+} from '@contentworker/domain';
 import {
   FakeBlobStore,
   FixedClock,
@@ -9,6 +15,7 @@ import {
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  authorizeBulkJob,
   createContentType,
   createEntry,
   createSpace,
@@ -222,5 +229,32 @@ describe('entry trash bulk jobs', () => {
     expect((await getBulkJobReport(h.ctx, scope, job.id)).chunks[0]?.failures).toEqual([
       { id: elsewhere.id, error: 'Entry not found' },
     ]);
+  });
+});
+
+describe('who may start a bulk job', () => {
+  const asRole = (grants: Principal['contentGrants']): Principal => ({
+    spaceId: 'site',
+    kind: 'user',
+    scopes: [SCOPES.contentWrite, SCOPES.contentPublish],
+    ...(grants ? { contentGrants: grants } : {}),
+  });
+
+  it('lets a member with the Administrator preset start every entry job', () => {
+    const admin = asRole(rolePresetDefinition('admin').contentGrants);
+    for (const action of ['trash', 'restore', 'purge', 'publish', 'unpublish'] as const) {
+      expect(() => authorizeBulkJob(admin, action), action).not.toThrow();
+    }
+  });
+
+  it('refuses a narrower role, and keeps import and asset jobs to roles with no grants', () => {
+    const postsOnly = asRole([{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }]);
+    for (const action of ['trash', 'restore', 'purge', 'publish'] as const) {
+      expect(() => authorizeBulkJob(postsOnly, action), action).toThrow(ForbiddenError);
+    }
+    const admin = asRole(rolePresetDefinition('admin').contentGrants);
+    expect(() => authorizeBulkJob(admin, 'import')).toThrow(ForbiddenError);
+    expect(() => authorizeBulkJob(admin, 'asset_move')).toThrow(ForbiddenError);
+    expect(() => authorizeBulkJob(asRole(undefined), 'import')).not.toThrow();
   });
 });

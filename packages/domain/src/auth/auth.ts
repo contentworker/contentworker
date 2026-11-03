@@ -327,6 +327,48 @@ export function authorizeTrash(
   }
 }
 
+/**
+ * What a bulk job over entries asks of the grant on every type it may touch: the same actions the
+ * single-entry operation does (`ENTRY_OPERATION_ACTIONS`), restore being a write.
+ */
+export const BULK_JOB_CONTENT_ACTIONS = {
+  publish: ['publish'],
+  unpublish: ['unpublish'],
+  trash: ENTRY_OPERATION_ACTIONS.trash,
+  restore: ['write'],
+  purge: ENTRY_OPERATION_ACTIONS.purge,
+} as const satisfies Record<string, readonly ContentAction[]>;
+
+export type EntryBulkJobKind = keyof typeof BULK_JOB_CONTENT_ACTIONS;
+
+export const ENTRY_BULK_JOB_KINDS = Object.keys(BULK_JOB_CONTENT_ACTIONS) as EntryBulkJobKind[];
+
+/**
+ * Whether `principal` may start (cancel, or read the report of) a bulk job of `kind` over entries.
+ *
+ * A job runs over ids of any content type, too many to authorize one by one, and its report names
+ * entries of every type; so the role must hold the job's actions on every type alike. That is a
+ * principal with no per-type grants at all, or one whose grants are exactly one `*` grant that
+ * holds every action `kind` needs (`grantedActions`, so a withheld `delete` counts) and restricts
+ * no field: a field rule is per type and per field, which a job can't honour. Any narrower role,
+ * or one with an extra type-specific grant, is refused.
+ */
+export function canRunEntryBulkJob(principal: Principal, kind: EntryBulkJobKind): boolean {
+  const grants = principal.contentGrants;
+  if (!grants) return true;
+  if (grants.length !== 1) return false;
+  const [grant] = grants;
+  if (!grant || grant.contentTypeApiId !== '*') return false;
+  if (grant.deniedFields?.length || grant.readOnlyFields?.length) return false;
+  const held = grantedActions(grant);
+  return BULK_JOB_CONTENT_ACTIONS[kind].every((a) => held.has(a));
+}
+
+/** The bulk jobs over entries `principal` may run (see {@link canRunEntryBulkJob}). */
+export function entryBulkJobsFor(principal: Principal): EntryBulkJobKind[] {
+  return ENTRY_BULK_JOB_KINDS.filter((kind) => canRunEntryBulkJob(principal, kind));
+}
+
 /** The fields `principal` may not read on `contentTypeApiId` (empty when unrestricted). */
 export function deniedFieldsFor(principal: Principal, contentTypeApiId: string): readonly string[] {
   if (!principal.contentGrants) return [];

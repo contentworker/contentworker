@@ -10,7 +10,12 @@ import {
   runBulkChunk,
   trashEntry,
 } from '@contentworker/application';
-import { type BulkChunkDueEvent, type Principal, SCOPES } from '@contentworker/domain';
+import {
+  type BulkChunkDueEvent,
+  type Principal,
+  rolePresetDefinition,
+  SCOPES,
+} from '@contentworker/domain';
 import {
   FakeBlobStore,
   FakePasswordHasher,
@@ -134,6 +139,29 @@ describe('bulk trash jobs (MCP), on the HTTP route’s use-case', () => {
     expect((await call('bulk_job_report', { id: job.id })).body).toMatchObject({
       job: { succeeded: 1, failed: 1 },
     });
+  });
+
+  it('lets the Administrator preset start every entry job, and not a narrower role', async () => {
+    const { deps, ids } = await seeded();
+    const preset = rolePresetDefinition('admin');
+    const member: Principal = {
+      spaceId: SPACE,
+      kind: 'user',
+      scopes: [...preset.scopes],
+      contentGrants: preset.contentGrants,
+    };
+    const call = await connect(deps, member);
+    for (const action of ['trash', 'restore', 'purge', 'publish']) {
+      const r = await call('bulk_job_start', { action, entryIds: ids });
+      expect(r.isError, action).toBe(false);
+    }
+    const narrower = await connect(deps, {
+      ...member,
+      contentGrants: [{ contentTypeApiId: 'note', actions: ['read', 'write', 'publish'] }],
+    });
+    expect((await narrower('bulk_job_start', { action: 'trash', entryIds: ids })).isError).toBe(
+      true,
+    );
   });
 
   it('needs content:publish to start one', async () => {

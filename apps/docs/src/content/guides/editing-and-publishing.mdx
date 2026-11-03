@@ -135,8 +135,12 @@ puts it counts as succeeded: one already in the trash for `trash`, one already o
 retried batch report the same totals as the first run. These jobs work through 50 entries per
 batch.
 
-Starting them needs `content:publish` on a role with no per-content-type restrictions, as every
-bulk job does; for any other role the admin disables these actions and says why.
+Starting them needs `content:publish` and a role that holds the job's actions on every content type alike: one with no per-content-type
+grants, or one whose grants are a single `*` grant holding them (publish needs `publish`,
+unpublish `unpublish`, trash `write` and `delete`, restore `write`, purge `publish` and `delete`)
+and restricting no field. The Editor, Manager and Administrator presets qualify; a role limited
+to some types, or with field rules, doesn't. For any other role the admin disables
+the actions it can't start and says why.
 
 ### Empty the trash automatically
 
@@ -208,7 +212,12 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/bulk/jobs" \
 `action` is `publish`, `unpublish`, `trash`, `restore` or `purge`. A job takes 1 to 250,000 ids
 (100,000 for `trash`, `restore` and `purge`, which run in smaller batches)
 and answers `202`. Starting, cancelling and reading the report of a
-job need `content:publish` on a role with no per-content-type restrictions. Follow it at
+job need `content:publish` and a role that holds the job's actions on every content type alike: one with no per-content-type
+grants, or one whose grants are a single `*` grant holding them (publish needs `publish`,
+unpublish `unpublish`, trash `write` and `delete`, restore `write`, purge `publish` and `delete`)
+and restricting no field. The Editor, Manager and Administrator presets qualify; a role limited
+to some types, or with field rules, doesn't (an import's job needs a role with no per-type grants).
+Follow it at
 `GET …/bulk/jobs/{id}`, read per-entry failures at `…/bulk/jobs/{id}/report` and stop it with
 `POST …/bulk/jobs/{id}/cancel`. The MCP tools are `bulk_job_start`, `bulk_job_status`,
 `bulk_job_report` and `bulk_job_cancel`.

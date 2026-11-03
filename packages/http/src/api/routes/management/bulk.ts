@@ -1,4 +1,5 @@
 import {
+  authorizeBulkJob,
   bulkCreateEntries,
   bulkEntryAction,
   cancelBulkJob,
@@ -8,12 +9,7 @@ import {
   listBulkJobs,
   startBulkJob,
 } from '@contentworker/application';
-import {
-  assertWritableFields,
-  authorizeContent,
-  ForbiddenError,
-  SCOPES,
-} from '@contentworker/domain';
+import { assertWritableFields, authorizeContent, SCOPES } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { bulkEntriesBody, bulkJobBody, idsBody, parseBody } from '../../validation';
@@ -53,19 +49,17 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
   });
 
   // --- bulk jobs (durable, chunked; for id sets beyond the sync routes) ----
-  // Granular per-entry RBAC guards are impractical at this cardinality, so
-  // start/cancel/report require an ungranted (full content:publish) principal
-  // — per-item authorization failures would silently skew the compliance
-  // report, and reports expose entry ids across all content types. Job
-  // status/list (counts only) stay readable by any content:publish key.
-  const guardBulkJobs = (c: Context<AuthVars>) => {
-    if (c.get('principal').contentGrants) {
-      throw new ForbiddenError('bulk jobs (unrestricted content:publish role required)');
-    }
+  // Granular per-entry RBAC guards are impractical at this cardinality, and a report names
+  // entries of every content type, so start, cancel and report take a role that holds the job's
+  // actions on every type alike (`authorizeBulkJob`: no per-type grants, or one full `*` grant).
+  // Job status and list (counts only) stay readable by any content:write key.
+  const guardJob = async (c: Context<AuthVars>) => {
+    const job = await getBulkJob(ctx, scopeOf(c), c.req.param('id') ?? '');
+    authorizeBulkJob(c.get('principal'), job.action);
   };
   app.post(`${BASE}/bulk/jobs`, requireScope(SCOPES.contentPublish), async (c) => {
     const body = await parseBody(c, bulkJobBody);
-    guardBulkJobs(c);
+    authorizeBulkJob(c.get('principal'), body.action);
     return c.json(await startBulkJob(ctx, scopeOf(c), body), 202);
   });
   // Reads are `content:write`, not `content:publish`: an import job is started
@@ -79,11 +73,11 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
     c.json(await getBulkJob(ctx, scopeOf(c), c.req.param('id'))),
   );
   app.get(`${BASE}/bulk/jobs/:id/report`, requireScope(SCOPES.contentWrite), async (c) => {
-    guardBulkJobs(c);
+    await guardJob(c);
     return c.json(await getBulkJobReport(ctx, scopeOf(c), c.req.param('id')));
   });
   app.post(`${BASE}/bulk/jobs/:id/cancel`, requireScope(SCOPES.contentPublish), async (c) => {
-    guardBulkJobs(c);
+    await guardJob(c);
     return c.json(await cancelBulkJob(ctx, scopeOf(c), c.req.param('id'), blob ? { blob } : {}));
   });
 

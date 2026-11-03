@@ -417,8 +417,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   permanently ("Permanently delete 2 entries?", naming them, saying it can't be undone and that an
   entry published entries link to is kept; Keep in trash, then a destructive Delete permanently)
   confirm at the assistant's card, or the page's own dialog without it; Restore selected runs at
-  once, as a row's Restore does. A role that can't start a job (not content:publish over every
-  type) sees the three disabled, with the reason under the bar (`aria-describedby`). The job shows
+  once, as a row's Restore does. Each of the three a role can't start (it doesn't hold that job's
+  actions on every type, as the api's `bulkJobs` answer says) is disabled, with the reason under
+  the bar (`aria-describedby`). The job shows
   as the asset library's card does ("Bulk job": "Trashing 2 entries…", then "Trashed 2 entries",
   its stamp, the `Progress` of batches, a ghost Stop asked in place), and Stop takes focus as it
   arrives, since the bar's buttons now wait. When it ends the list reloads, only what it still

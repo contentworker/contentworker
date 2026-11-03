@@ -2,6 +2,9 @@ import { Button } from '@contentworker/ui/button';
 import { ArchiveRestore, CircleSlash, Send, Trash2, X } from 'lucide-react';
 import { useId } from 'react';
 
+/** The entry actions that run as bulk jobs. */
+type EntryJob = 'trash' | 'restore' | 'purge';
+
 /**
  * What can be done to the ticked entries at once, in place of the filter bar while anything is
  * ticked, and held under the shell's header as the list scrolls. It offers only what applies:
@@ -9,8 +12,9 @@ import { useId } from 'react';
  * live, Move to trash for any. In the trash it offers Restore and Delete permanently instead.
  * Labelled as the asset library's bar is ("2 selected", "Publish selected").
  *
- * Trash, restore and delete run as background jobs, which only a role with content:publish over
- * every content type may start; for any other role `jobsRefusal` says why they are disabled.
+ * Trash, restore and delete run as background jobs, which only a role holding their actions on
+ * every content type may start (the api's `canRunEntryBulkJob`); each one this role can't start is
+ * disabled, and `jobsRefusal` says why.
  */
 export function EntryBulkBar(props: {
   count: number;
@@ -25,15 +29,26 @@ export function EntryBulkBar(props: {
   /** The trash's bar: bring them back as drafts, or delete them for good. */
   onRestore?: () => void;
   onPurge?: () => void;
-  /** Why the trash, restore and delete jobs can't be started here; absent when they can. */
+  /** The jobs this role may not start here (disabled, with `jobsRefusal` saying why). */
+  deniedJobs?: readonly EntryJob[];
+  /** Why the jobs in `deniedJobs` can't be started here. */
   jobsRefusal?: string;
   /** While the session's access is still being read: the job actions wait, with no reason yet. */
   jobsPending?: boolean;
   onClear: () => void;
 }) {
   const reasonId = useId();
-  const jobsDisabled = props.busy || props.jobsPending || props.jobsRefusal !== undefined;
-  const described = props.jobsRefusal ? { 'aria-describedby': reasonId } : {};
+  const denied = (job: EntryJob) => props.deniedJobs?.includes(job) ?? false;
+  const jobProps = (job: EntryJob) => ({
+    disabled: props.busy || props.jobsPending || denied(job),
+    ...(denied(job) ? { 'aria-describedby': reasonId } : {}),
+  });
+  const offered: EntryJob[] = [
+    ...(props.onTrash ? (['trash'] as const) : []),
+    ...(props.onRestore ? (['restore'] as const) : []),
+    ...(props.onPurge ? (['purge'] as const) : []),
+  ];
+  const refused = offered.some(denied);
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a form fieldset
     <div
@@ -65,9 +80,8 @@ export function EntryBulkBar(props: {
           type="button"
           size="sm"
           variant="outline"
-          disabled={jobsDisabled}
           onClick={props.onTrash}
-          {...described}
+          {...jobProps('trash')}
         >
           <Trash2 aria-hidden="true" />
           Move to trash
@@ -78,9 +92,8 @@ export function EntryBulkBar(props: {
           type="button"
           size="sm"
           variant="outline"
-          disabled={jobsDisabled}
           onClick={props.onRestore}
-          {...described}
+          {...jobProps('restore')}
         >
           <ArchiveRestore aria-hidden="true" />
           Restore selected
@@ -92,9 +105,8 @@ export function EntryBulkBar(props: {
           size="sm"
           // Outline like its neighbours: the red belongs to the confirm that follows, not the ask.
           variant="outline"
-          disabled={jobsDisabled}
           onClick={props.onPurge}
-          {...described}
+          {...jobProps('purge')}
         >
           <Trash2 aria-hidden="true" />
           Delete permanently…
@@ -111,7 +123,7 @@ export function EntryBulkBar(props: {
         <X aria-hidden="true" />
         Clear
       </Button>
-      {props.jobsRefusal && (props.onTrash || props.onRestore || props.onPurge) ? (
+      {props.jobsRefusal && refused ? (
         <p id={reasonId} className="basis-full text-muted-foreground text-xs">
           {props.jobsRefusal}
         </p>

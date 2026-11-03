@@ -210,6 +210,8 @@ export interface PrincipalInfo {
   readonly scopes: readonly string[];
   readonly subject?: string;
   readonly restricted?: boolean;
+  /** In a space (`GET /spaces/:space/auth/me`): the bulk jobs over entries this role may start. */
+  readonly bulkJobs?: readonly ('publish' | 'unpublish' | 'trash' | 'restore' | 'purge')[];
 }
 
 export interface ManagementClientOptions {
@@ -1938,9 +1940,9 @@ export function createManagementClient(
       return req('POST', `${mgmt}/imports/space-export`, input);
     },
     /**
-     * Who the session is in this space: its scopes, and whether its role is limited to some content
-     * types (`restricted`). A person's role is per space, so the admin asks before offering an
-     * action only some roles may take.
+     * Who the session is in this space: its scopes, and the bulk jobs over entries its role may
+     * start (`bulkJobs`, the api's own rule). A person's role is per space, so the admin asks
+     * before offering an action only some roles may take.
      */
     getSpaceAccess(): Promise<PrincipalInfo> {
       return req('GET', `${spaceBase}/auth/me`);

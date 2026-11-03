@@ -1,6 +1,11 @@
 import {
   type BulkChunkDueEvent,
+  canRunEntryBulkJob,
+  ENTRY_BULK_JOB_KINDS,
+  type EntryBulkJobKind,
+  ForbiddenError,
   NotFoundError,
+  type Principal,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -52,6 +57,21 @@ export const BULK_JOB_MAX_ITEMS = 250_000;
 export const BULK_CHUNK_STALE_SECONDS = 300;
 /** Attempts before a chunk is marked failed instead of retried. */
 export const BULK_CHUNK_MAX_ATTEMPTS = 5;
+
+/**
+ * Refuses a principal who may not start, cancel or read the report of a bulk job of `action`: one
+ * rule for both surfaces. A job over entries is checked by `canRunEntryBulkJob` (no per-type
+ * grants, or one full `*` grant holding the job's actions); any other job (an import, an asset
+ * job) still needs a principal with no per-type grants at all.
+ */
+export function authorizeBulkJob(principal: Principal, action: BulkJobAction): void {
+  const allowed = (ENTRY_BULK_JOB_KINDS as readonly string[]).includes(action)
+    ? canRunEntryBulkJob(principal, action as EntryBulkJobKind)
+    : !principal.contentGrants;
+  if (!allowed) {
+    throw new ForbiddenError(`bulk ${action} jobs (a role holding them on every content type)`);
+  }
+}
 
 export interface StartBulkJobInput {
   readonly action: BulkJobAction;

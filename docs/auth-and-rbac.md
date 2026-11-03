@@ -586,9 +586,18 @@ interface Principal {
 - **`GET /auth/me`** returns the resolved principal summary; **`GET /spaces/:space/auth/me`**
   returns it resolved in that space (a person's role is per space), with `restricted` true when the
   role carries per-content-type grants (every space member's role does; deployment admins and
-  plain keys don't), and `403` for a caller with no standing in that space. The admin reads it before offering the bulk trash,
-  restore and delete jobs, which need an unrestricted `content:publish` role. Neither has an MCP
-  tool: an MCP client already knows its own token.
+  plain keys don't), `bulkJobs` (the bulk jobs over entries it may start there, see below), and
+  `403` for a caller with no standing in that space. The admin reads it before offering the bulk
+  trash, restore and delete jobs. Neither has an MCP tool: an MCP client already knows its own
+  token.
+- **Bulk jobs over entries** (`POST …/bulk/jobs`, its report and cancel, and the matching MCP
+  tools) can't be authorized entry by entry, and a report names entries of every type, so
+  `authorizeBulkJob` (application) asks `canRunEntryBulkJob` (domain) for a role that holds the job's actions on every content type alike: one with no per-content-type
+  grants, or one whose grants are a single `*` grant holding them (publish needs `publish`,
+  unpublish `unpublish`, trash `write` and `delete`, restore `write`, purge `publish` and `delete`)
+  and restricting no field. The Editor, Manager and Administrator presets qualify; a role limited
+  to some types, or with field rules, doesn't.
+  Import and asset jobs still need a principal with no per-type grants.
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through

@@ -4,7 +4,7 @@ import {
   revokeEverythingFor,
   setSchedulerAlertRecipients,
 } from '@contentworker/application';
-import { ForbiddenError, inScope } from '@contentworker/domain';
+import { entryBulkJobsFor, ForbiddenError, inScope } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, principalMiddleware } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -100,12 +100,22 @@ export function deploymentRoutes(deps: AuthDeps): Hono<AuthVars> {
   // is refused rather than described.
   app.get(
     '/spaces/:space/auth/me',
-    doc('Auth', 'Resolve the calling principal in a space', { ok: authDocs.principal }),
+    doc('Auth', 'Resolve the calling principal in a space', { ok: authDocs.spacePrincipal }),
     (c) => {
-      if (!inScope(c.get('principal'), c.req.param('space'))) {
+      const principal = c.get('principal');
+      if (!inScope(principal, c.req.param('space'))) {
         throw new ForbiddenError('this space');
       }
-      return me(c);
+      return c.json({
+        spaceId: principal.spaceId,
+        kind: principal.kind,
+        scopes: principal.scopes,
+        subject: principal.subject,
+        restricted: principal.contentGrants !== undefined,
+        // The bulk jobs over entries this role may start here (`canRunEntryBulkJob`), as the
+        // bulk job routes decide: the admin offers only these.
+        bulkJobs: entryBulkJobsFor(principal),
+      });
     },
   );
 

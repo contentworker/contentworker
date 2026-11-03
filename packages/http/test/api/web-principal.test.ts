@@ -147,6 +147,54 @@ describe('the web principal (x-cw-principal)', () => {
     expect(await (await me('s1', 'admin')).json()).toMatchObject({ restricted: false });
   });
 
+  it('lets a member with the Administrator preset run bulk jobs over entries, and not a narrower one', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app2 = createApp(ctx, config, rag, blob, ai);
+    const limited = await createRole(ctx, 's1', {
+      name: 'Posts only',
+      scopes: ['content:write', 'content:publish', 'preview:read'],
+      contentGrants: [{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }],
+    } as Parameters<typeof createRole>[2]);
+    await addMember(ctx, 's1', { email: 'admin-member@example.com', role: 'admin' });
+    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id });
+    const adminMember = { ...person('member'), sub: 'usr_adm', email: 'admin-member@example.com' };
+    await findMemberForSignIn(ctx, 's1', 'usr_adm', 'admin-member@example.com');
+    await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
+    const call = async (who: typeof adminMember, method: string, target: string, body?: unknown) =>
+      app2.request(target, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-cw-principal': await signPrincipal(KEY, who, principalTarget(method, target)),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    const jobs = '/spaces/s1/environments/main/bulk/jobs';
+    const ids = ['01-a', '01-b'];
+
+    for (const action of ['trash', 'restore', 'purge', 'publish']) {
+      const res = await call(adminMember, 'POST', jobs, { action, entryIds: ids });
+      expect(res.status, action).toBe(202);
+    }
+    const started = (await (
+      await call(adminMember, 'POST', jobs, { action: 'trash', entryIds: ids })
+    ).json()) as { id: string };
+    expect((await call(adminMember, 'GET', `${jobs}/${started.id}/report`)).status).toBe(200);
+    expect((await call(adminMember, 'POST', `${jobs}/${started.id}/cancel`)).status).toBe(200);
+    expect(await (await call(adminMember, 'GET', '/spaces/s1/auth/me')).json()).toMatchObject({
+      bulkJobs: ['publish', 'unpublish', 'trash', 'restore', 'purge'],
+    });
+
+    const narrower = person('member');
+    expect((await call(narrower, 'POST', jobs, { action: 'trash', entryIds: ids })).status).toBe(
+      403,
+    );
+    expect((await call(narrower, 'GET', `${jobs}/${started.id}/report`)).status).toBe(403);
+    expect(await (await call(narrower, 'GET', '/spaces/s1/auth/me')).json()).toMatchObject({
+      bulkJobs: [],
+    });
+  });
+
   it('refuses a key asking about a space it has no standing in', async () => {
     const res = await app.request('/spaces/other/auth/me', {
       headers: { Authorization: 'Bearer cma' },

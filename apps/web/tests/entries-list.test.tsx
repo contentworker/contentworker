@@ -53,6 +53,7 @@ const fullAccess = {
   kind: 'web',
   scopes: ['content:write', 'content:publish'],
   restricted: false,
+  bulkJobs: ['publish', 'unpublish', 'trash', 'restore', 'purge'] as string[],
 };
 
 /** A bulk job as the API reports it: one batch, finished unless said otherwise. */
@@ -654,13 +655,17 @@ describe('EntriesList trash jobs', () => {
   });
 
   it('disables the job actions, saying why, for a role limited to some content types', async () => {
-    client.getSpaceAccess.mockImplementation(async () => ({ ...fullAccess, restricted: true }));
+    client.getSpaceAccess.mockImplementation(async () => ({
+      ...fullAccess,
+      restricted: true,
+      bulkJobs: [],
+    }));
     setup(withTrash);
     await tick('About us');
     const trash = screen.getByRole('button', { name: 'Move to trash' }) as HTMLButtonElement;
     await waitFor(() => expect(trash.disabled).toBe(true));
     expect(trash.getAttribute('aria-describedby')).toBeTruthy();
-    expect(screen.getByText(/Publish content permission/)).toBeTruthy();
+    expect(screen.getByText(/allowed to do that to every content type/)).toBeTruthy();
     // Unpublishing doesn't run as a job, so it stays on offer.
     expect(
       (screen.getByRole('button', { name: 'Unpublish selected' }) as HTMLButtonElement).disabled,
@@ -672,6 +677,32 @@ describe('EntriesList trash jobs', () => {
     for (const name of ['Restore selected', 'Delete permanently…']) {
       expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
     }
+  });
+
+  it('enables the job actions for a member whose role may run them, one by one', async () => {
+    // As the api answers for the Administrator preset: every entry job.
+    setup(withTrash);
+    await tick('About us');
+    const trash = screen.getByRole('button', { name: 'Move to trash' }) as HTMLButtonElement;
+    await waitFor(() => expect(trash.disabled).toBe(false));
+    expect(trash.getAttribute('aria-describedby')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+
+    // A role that may restore but not delete (its `*` grant withholds delete).
+    client.getSpaceAccess.mockImplementation(async () => ({
+      ...fullAccess,
+      restricted: true,
+      bulkJobs: ['publish', 'unpublish', 'restore'],
+    }));
+    cleanup();
+    setup(withTrash);
+    await openTrash();
+    await tick('Old promo');
+    const purge = screen.getByRole('button', { name: 'Delete permanently…' }) as HTMLButtonElement;
+    await waitFor(() => expect(purge.disabled).toBe(true));
+    expect(
+      (screen.getByRole('button', { name: 'Restore selected' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it('offers Restore and Delete permanently for what is ticked in the trash', async () => {
