@@ -68,6 +68,7 @@ describe('authenticateCached', () => {
       spaceId: 's1',
       kind: 'cma',
       roleId: role.id,
+      issuer: 'system',
     });
     expect((await authenticateCached(c, hasher, token)).contentGrants?.[0]?.deniedActions).toBe(
       undefined,
