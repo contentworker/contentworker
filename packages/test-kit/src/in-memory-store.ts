@@ -226,9 +226,12 @@ export class InMemoryContentStore implements ContentStore {
         !config.localeSettings && kept ? { ...config, localeSettings: kept } : config,
       );
     },
-    setLocaleSettings: async (spaceId, settings) => {
+    setLocaleSettings: async (spaceId, settings, expected) => {
       const config = this.spaceConfigs.get(spaceId);
-      if (!config) return;
+      // As D1's compare-and-set: changed (or gone) since the caller read it is a lost race.
+      const was = config?.localeSettings;
+      const same = (a: unknown) => (a && Object.keys(a).length > 0 ? JSON.stringify(a) : null);
+      if (!config || same(was) !== same(expected)) throw new TransactionConflictError();
       const { localeSettings: _was, ...rest } = config;
       this.spaceConfigs.set(
         spaceId,
@@ -415,6 +418,14 @@ export class InMemoryContentStore implements ContentStore {
    * As D1 writes an entry: a create records its authorship whole; a later save keeps the creation
    * and fills in the first publish only once (`COALESCE`), whatever the aggregate it is handed says.
    */
+  /** As D1: the snapshot's first publish is the entry's, as its aggregate holds it now. */
+  private setPublished(scope: Scope, snapshot: PublishedEntry): void {
+    const key = `${scopeKey(scope)}::${snapshot.entryId}`;
+    const { firstPublishedAt: _carried, ...rest } = snapshot;
+    const first = this.entryData.get(key)?.firstPublishedAt;
+    this.publishedData.set(key, { ...rest, ...(first ? { firstPublishedAt: first } : {}) });
+  }
+
   private setEntry(scope: Scope, entry: Entry, created = false): void {
     const key = `${scopeKey(scope)}::${entry.id}`;
     const before = created ? undefined : this.entryData.get(key);
@@ -675,10 +686,10 @@ export class InMemoryContentStore implements ContentStore {
       return marked;
     },
     putPublished: async (scope, snapshot) => {
-      this.publishedData.set(`${scopeKey(scope)}::${snapshot.entryId}`, snapshot);
+      this.setPublished(scope, snapshot);
     },
     putPublishedMany: async (scope, snapshots) => {
-      for (const s of snapshots) this.publishedData.set(`${scopeKey(scope)}::${s.entryId}`, s);
+      for (const s of snapshots) this.setPublished(scope, s);
     },
     removePublished: async (scope, entryId) => {
       this.publishedData.delete(`${scopeKey(scope)}::${entryId}`);

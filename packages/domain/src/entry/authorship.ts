@@ -53,3 +53,40 @@ export function stampPublished(
   const first = before.firstPublishedAt ?? (before.publishedVersion === null ? at : null);
   return { ...published, updatedBy: actor, firstPublishedAt: first };
 }
+
+/** The longest actor id authorship keeps: a person's subject or email, or `kind:<id>`. */
+export const MAX_ENTRY_ACTOR_LENGTH = 320;
+
+/** An ISO-8601 UTC instant as the server writes one (`2026-11-03T15:07:02.000Z`). */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+
+/**
+ * What is wrong with authorship an entry brings from elsewhere (a snapshot): each instant an
+ * ISO-8601 UTC timestamp that parses, the creator a non-empty string of at most
+ * {@link MAX_ENTRY_ACTOR_LENGTH}. Empty when it holds (or carries none).
+ */
+export function carriedAuthorshipIssues(carried: {
+  readonly createdAt?: unknown;
+  readonly createdBy?: unknown;
+  readonly firstPublishedAt?: unknown;
+}): { field: string; message: string }[] {
+  const issues: { field: string; message: string }[] = [];
+  for (const field of ['createdAt', 'firstPublishedAt'] as const) {
+    const v = carried[field];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || !ISO_INSTANT.test(v) || Number.isNaN(Date.parse(v))) {
+      issues.push({ field, message: 'an ISO-8601 UTC timestamp, like 2026-01-31T09:00:00.000Z' });
+    }
+  }
+  const by = carried.createdBy;
+  if (
+    by !== undefined &&
+    (typeof by !== 'string' || by.length === 0 || by.length > MAX_ENTRY_ACTOR_LENGTH)
+  ) {
+    issues.push({
+      field: 'createdBy',
+      message: `a non-empty string of at most ${MAX_ENTRY_ACTOR_LENGTH} characters`,
+    });
+  }
+  return issues;
+}

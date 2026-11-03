@@ -11,6 +11,7 @@ import {
   setLocaleSettings,
 } from '@contentworker/application';
 import { type FieldDefinition, NotFoundError, type Principal, SCOPES } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import { FixedClock } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createD1Store } from '../src/store';
@@ -77,6 +78,31 @@ describe('locale settings on D1', () => {
     // Back to the defaults for every locale: the column is cleared, not left as {}.
     await setLocaleSettings(ctx, admin, scope, { fr: {}, ar: {} });
     expect((await raw())?.locale_settings).toBeNull();
+  });
+
+  it('writes over only the settings the caller read, else the unit is a conflict', async () => {
+    const { ctx, spaceId, scope } = await space();
+    await setLocaleSettings(ctx, admin, scope, { ar: { direction: 'ltr' } });
+    // Read before that change: the write loses, and nothing in its unit commits.
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.spaces.setLocaleSettings(spaceId, { fr: { delivered: false } }, undefined);
+      }),
+    ).rejects.toThrow(TransactionConflictError);
+    expect((await store.spaces.getConfig(scope))?.localeSettings).toEqual({
+      ar: { direction: 'ltr' },
+    });
+    // Over what is there now, it lands; so does the use-case, which re-reads.
+    await store.withTransaction(async (tx) => {
+      await tx.spaces.setLocaleSettings(
+        spaceId,
+        { ar: { direction: 'ltr' }, fr: { delivered: false } },
+        { ar: { direction: 'ltr' } },
+      );
+    });
+    const view = await setLocaleSettings(ctx, admin, scope, { fr: { delivered: true } });
+    expect(view.localeSettings.fr?.delivered).toBe(true);
+    expect(view.localeSettings.ar?.direction).toBe('ltr');
   });
 
   it('serves no undelivered locale through Delivery', async () => {

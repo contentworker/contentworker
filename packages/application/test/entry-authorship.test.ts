@@ -1,17 +1,27 @@
-import type { BulkChunkDueEvent, Entry, FieldDefinition } from '@contentworker/domain';
+import {
+  type BulkChunkDueEvent,
+  type Entry,
+  type FieldDefinition,
+  MAX_ENTRY_ACTOR_LENGTH,
+  ValidationError,
+} from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
   actingAs,
+  cloneEnvironment,
   createContentType,
   createEntry,
   createSnapshotEntry,
   createSpace,
   duplicateEntry,
+  exportSnapshot,
   getPreviewEntry,
   getPublishedEntry,
+  importSnapshot,
   listPreviewEntryPage,
+  mergeEnvironments,
   publishContentType,
   publishEntry,
   restoreEntry,
@@ -53,7 +63,7 @@ beforeEach(async () => {
     spaceId: 's1',
     name: 'S1',
     defaultLocale: 'en-US',
-    environments: ['main', 'staging'],
+    environments: ['main', 'staging', 'copy', 'upload'],
   });
   for (const scope of [main, staging]) {
     await createContentType(base, scope, {
@@ -212,6 +222,7 @@ describe('entry authorship', () => {
       },
       new Map(),
       true,
+      true,
     );
     await createSnapshotEntry(as('grace'), staging, staged);
     expect((await store.entries.get(staging, id))?.entry).toMatchObject({
@@ -220,6 +231,73 @@ describe('entry authorship', () => {
       updatedBy: 'grace',
       firstPublishedAt: '2026-05-01T09:00:00.000Z',
     });
+  });
+
+  it('keeps the creator through a clone, and credits the importer of an uploaded snapshot', async () => {
+    const id = await note(as('ada'), 'Travels');
+    await publishEntry(as('ada'), main, id);
+    clock.advance(HOUR);
+    await cloneEnvironment(as('grace'), main, { spaceId: 's1', environmentId: 'copy' });
+    expect(
+      (await store.entries.get({ spaceId: 's1', environmentId: 'copy' }, id))?.entry,
+    ).toMatchObject({
+      createdBy: 'ada',
+      createdAt: '2026-05-01T09:00:00.000Z',
+      firstPublishedAt: '2026-05-01T09:00:00.000Z',
+    });
+
+    // An uploaded file names whoever it likes: the importer is credited, the instants are kept.
+    const snapshot = await exportSnapshot(base, main);
+    const forged = {
+      ...snapshot,
+      entries: snapshot.entries.map((e) => ({ ...e, createdBy: 'someone-else' })),
+    };
+    const upload = { spaceId: 's1', environmentId: 'upload' };
+    await importSnapshot(as('grace'), upload, forged);
+    expect((await store.entries.get(upload, id))?.entry).toMatchObject({
+      createdBy: 'grace',
+      createdAt: '2026-05-01T09:00:00.000Z',
+      firstPublishedAt: '2026-05-01T09:00:00.000Z',
+    });
+  });
+
+  it('keeps the source’s authorship when a merge brings a new entry over', async () => {
+    const id = await note(as('ada'), 'Merged');
+    await publishEntry(as('ada'), main, id);
+    clock.advance(HOUR);
+    await mergeEnvironments(as('grace'), 's1', 'main', 'staging', { entries: [id] });
+    expect((await store.entries.get(staging, id))?.entry).toMatchObject({
+      createdAt: '2026-05-01T09:00:00.000Z',
+      createdBy: 'ada',
+      updatedBy: 'grace',
+      firstPublishedAt: '2026-05-01T09:00:00.000Z',
+    });
+    // Merged again onto the copy it made: the target's own authorship stays, grace changed it.
+    await updateEntry(as('ada'), main, id, { title: { 'en-US': 'Merged again' } });
+    await mergeEnvironments(as('grace'), 's1', 'main', 'staging', { entries: [id] });
+    expect((await store.entries.get(staging, id))?.entry).toMatchObject({
+      createdBy: 'ada',
+      updatedBy: 'grace',
+      currentVersion: 2,
+    });
+  });
+
+  it('refuses a snapshot whose authorship is malformed, before writing anything', async () => {
+    await note(as('ada'), 'Dated');
+    const snapshot = await exportSnapshot(base, main);
+    const upload = { spaceId: 's1', environmentId: 'upload' };
+    for (const bad of [
+      { createdAt: 'yesterday' },
+      { firstPublishedAt: '2026-13-45T99:00:00Z' },
+      { createdBy: 'x'.repeat(MAX_ENTRY_ACTOR_LENGTH + 1) },
+      { createdAt: 12 },
+    ]) {
+      const broken = { ...snapshot, entries: snapshot.entries.map((e) => ({ ...e, ...bad })) };
+      await expect(importSnapshot(as('grace'), upload, broken as never)).rejects.toThrow(
+        ValidationError,
+      );
+    }
+    expect(await store.contentTypes.list(upload)).toEqual([]);
   });
 
   it('lists my entries with sys.createdBy=me, and only in the scope asked', async () => {

@@ -1599,10 +1599,15 @@ export interface SpaceRepo {
   setWorkflowSeparateDuties(spaceId: string, value: boolean): Promise<void>;
   /** Sets how many days the space keeps trashed entries; null turns retention off. */
   setTrashRetentionDays(spaceId: string, days: number | null): Promise<void>;
-  /** Replaces the space's per-locale settings (an empty object: the defaults for every locale). */
+  /**
+   * Replaces the space's per-locale settings (an empty object: the defaults for every locale),
+   * provided they are still `expected` (what the caller read; undefined: none set). Another change
+   * in between is a lost race: `TransactionConflictError`, at commit inside a unit.
+   */
   setLocaleSettings(
     spaceId: string,
     settings: Readonly<Record<LocaleCode, LocaleSettings>>,
+    expected: Readonly<Record<LocaleCode, LocaleSettings>> | undefined,
   ): Promise<void>;
   /** Where the trash retention sweep resumes in this environment; null is from the oldest. */
   getTrashSweepCursor(scope: Scope): Promise<ExpiredTrashEntry | null>;

@@ -14,6 +14,7 @@ import {
   suggestEntries,
 } from '@contentworker/application';
 import {
+  assertAuthorIdQuery,
   assertQueryRespectsFieldRules,
   authorize,
   authorizeContent,
@@ -24,6 +25,7 @@ import {
   type Scope,
   scopesForKind,
   ValidationError,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -158,6 +160,7 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
         ]);
       const principal = c.get('principal');
       assertQueryRespectsFieldRules(principal, query);
+      assertAuthorIdQuery(principal, query);
       const cursor = c.req.query('cursor');
       const page = await listPreviewEntryPage(
         // Acting as the caller, so `sys.createdBy=me` names them.
@@ -174,7 +177,12 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
       // The grant already narrowed the query; this is the belt to that, and masks denied fields.
       const visible = page.items
         .filter((e) => canAccessContentType(principal, 'read', e.contentType))
-        .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) }));
+        .map((e) =>
+          withAuthorIdsFor(principal, {
+            ...e,
+            fields: maskDeniedFields(principal, e.contentType, e.fields),
+          }),
+        );
       return c.json({
         items: visible,
         total: visible.length,
@@ -265,10 +273,12 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
         locale: c.req.query('locale'),
       });
       authorizeContent(principal, 'read', entry.contentType);
-      return c.json({
-        ...entry,
-        fields: maskDeniedFields(principal, entry.contentType, entry.fields),
-      });
+      return c.json(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
+      );
     },
   );
 

@@ -1,6 +1,7 @@
 import {
   assertEntryFieldsValid,
   type ContentType,
+  type Entry,
   type EntryFields,
   type EntryVersion,
   NotFoundError,
@@ -173,7 +174,7 @@ export async function mergeEnvironments(
         );
       }
       assertEntryFieldsValid(targetCt, found.fields, vctx);
-      await applyEntry(ctx, tgt, entryId, found.entry.contentTypeApiId, found.fields);
+      await applyEntry(ctx, tgt, found.entry, found.fields);
       mergedEntries.push(entryId);
     }
   }
@@ -181,20 +182,33 @@ export async function mergeEnvironments(
   return { mergedContentTypes, mergedEntries };
 }
 
-/** Creates the entry in the target (preserving id) or appends a new version. */
+/**
+ * Creates the entry in the target (preserving id) or appends a new version. A new one is the
+ * source's, merged: like a promotion, it keeps who created it, when, and when it was first
+ * published, and the merge's actor made its latest change. One the target already has keeps its own.
+ */
 async function applyEntry(
   ctx: AppContext,
   tgt: Scope,
-  entryId: string,
-  contentTypeApiId: string,
+  from: Entry,
   fields: EntryFields,
 ): Promise<void> {
+  const { id: entryId, contentTypeApiId } = from;
   const existing = await ctx.store.entries.get(tgt, entryId);
   const now = ctx.clock.now().toISOString();
   const actor = actorOf(ctx);
   if (!existing) {
     const entry = stampCreated(
-      { id: entryId, contentTypeApiId, status: 'draft', currentVersion: 1, publishedVersion: null },
+      {
+        id: entryId,
+        contentTypeApiId,
+        status: 'draft',
+        currentVersion: 1,
+        publishedVersion: null,
+        ...(from.createdAt ? { createdAt: from.createdAt } : {}),
+        ...(from.createdBy !== undefined ? { createdBy: from.createdBy } : {}),
+        ...(from.firstPublishedAt ? { firstPublishedAt: from.firstPublishedAt } : {}),
+      },
       actor,
       now,
     );

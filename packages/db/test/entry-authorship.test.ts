@@ -136,6 +136,31 @@ describe('entry authorship on D1', () => {
     expect(after).toEqual({ ...before, modified_by: 'grace' });
   });
 
+  it('copies the first publish from entries, not from a snapshot that lost the race', async () => {
+    const h = await harness();
+    const id = await h.note('ada', 'Raced');
+    await publishEntry(h.as('ada'), h.scope, id);
+    const kept = (await row(h.scope, id))?.first_published_at;
+    const live = await store.entries.getPublished(h.scope, id);
+    if (!live) throw new Error('not published');
+    // A second publisher that read the entry before the first committed carries its own instant;
+    // the aggregate's COALESCE keeps the first, and the read model must say the same.
+    const stale = { ...live, firstPublishedAt: '2030-01-01T00:00:00.000Z' };
+    await store.withTransaction(async (tx) => {
+      const found = await store.entries.get(h.scope, id);
+      if (!found) throw new Error('entry missing');
+      await tx.entries.saveAggregate(h.scope, {
+        ...found.entry,
+        firstPublishedAt: stale.firstPublishedAt,
+      });
+      await tx.entries.putPublished(h.scope, stale);
+    });
+    expect((await row(h.scope, id))?.first_published_at).toBe(kept);
+    expect((await store.entries.getPublished(h.scope, id))?.firstPublishedAt).toBe(
+      new Date(kept as number).toISOString(),
+    );
+  });
+
   it('stamps a batch publish past the parameter cap, one first publish per entry', async () => {
     const h = await harness();
     const ids: string[] = [];

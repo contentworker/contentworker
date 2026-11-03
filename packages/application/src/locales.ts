@@ -10,7 +10,7 @@ import {
   SCOPES,
   type Scope,
 } from '@contentworker/domain';
-import type { SpaceConfig } from '@contentworker/ports';
+import { type SpaceConfig, TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
 
 /**
@@ -53,24 +53,35 @@ export async function setLocaleSettings(
   changes: Readonly<Record<string, unknown>>,
 ): Promise<SpaceLocalesView> {
   authorize(principal, SCOPES.spaceAdmin, scope.spaceId);
-  const config = await requireConfig(ctx, scope);
-  const valid = assertLocaleSettings(config, changes);
-  // Only the space's current locales are kept: a locale removed since leaves its settings behind.
-  const next: Record<LocaleCode, LocaleSettings> = {};
-  for (const locale of config.locales) {
-    const setting = locale in valid ? valid[locale] : config.localeSettings?.[locale];
-    if (setting && Object.keys(setting).length > 0) next[locale] = setting;
+  for (let attempt = 1; ; attempt++) {
+    const config = await requireConfig(ctx, scope);
+    const valid = assertLocaleSettings(config, changes);
+    // Only the space's current locales are kept: a locale removed since leaves its settings behind.
+    const next: Record<LocaleCode, LocaleSettings> = {};
+    for (const locale of config.locales) {
+      const setting = locale in valid ? valid[locale] : config.localeSettings?.[locale];
+      if (setting && Object.keys(setting).length > 0) next[locale] = setting;
+    }
+    const updated = { ...config, localeSettings: next };
+    try {
+      await ctx.store.withTransaction(async (tx) => {
+        // Only over the settings just read: two admins changing different locales at once both
+        // land, the second re-read on top of the first instead of writing over it.
+        await tx.spaces.setLocaleSettings(scope.spaceId, next, config.localeSettings);
+        await tx.outbox.append({
+          id: ctx.ids.newId(),
+          type: 'space_locales.changed',
+          scope,
+          occurredAt: ctx.clock.now().toISOString(),
+          undelivered: config.locales.filter((l) => !isLocaleDelivered(updated, l)),
+        });
+      });
+      return viewOf(updated);
+    } catch (err) {
+      if (!(err instanceof TransactionConflictError) || attempt >= MAX_ATTEMPTS) throw err;
+    }
   }
-  const updated = { ...config, localeSettings: next };
-  await ctx.store.withTransaction(async (tx) => {
-    await tx.spaces.setLocaleSettings(scope.spaceId, next);
-    await tx.outbox.append({
-      id: ctx.ids.newId(),
-      type: 'space_locales.changed',
-      scope,
-      occurredAt: ctx.clock.now().toISOString(),
-      undelivered: config.locales.filter((l) => !isLocaleDelivered(updated, l)),
-    });
-  });
-  return viewOf(updated);
 }
+
+/** Tries before a change that keeps losing the race to others gives up (as a conflict). */
+const MAX_ATTEMPTS = 3;

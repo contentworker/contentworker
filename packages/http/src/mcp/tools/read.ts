@@ -23,6 +23,7 @@ import {
 } from '@contentworker/application';
 import {
   ANY_FIELD,
+  assertAuthorIdQuery,
   assertPathFilterBudget,
   assertQueryRespectsFieldRules,
   authorizeContent,
@@ -34,6 +35,7 @@ import {
   queryFilterIssues,
   SCOPES,
   ValidationError,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -253,6 +255,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
         select: args.select,
         search: args.search,
       });
+      assertAuthorIdQuery(principal, { filters: args.filters, order: args.order });
       const page = await listPreviewEntryPage(
         ctx,
         scopeOf(args),
@@ -275,7 +278,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       return ok({
         items: page.items
           .filter((e) => canAccessContentType(principal, 'read', e.contentType))
-          .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) })),
+          .map((e) =>
+            withAuthorIdsFor(principal, {
+              ...e,
+              fields: maskDeniedFields(principal, e.contentType, e.fields),
+            }),
+          ),
         ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
       });
     },
@@ -331,10 +339,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.previewRead, scopeOf(args));
       const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
       authorizeContent(principal, 'read', entry.contentType);
-      return ok({
-        ...entry,
-        fields: maskDeniedFields(principal, entry.contentType, entry.fields),
-      });
+      return ok(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
+      );
     },
   );
 

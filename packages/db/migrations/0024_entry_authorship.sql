@@ -23,7 +23,16 @@ CREATE INDEX IF NOT EXISTS `entries_by_creator` ON `entries` (`space_id`,`enviro
 -- An existing entry was created when its first version was saved: one primary-key read per entry,
 -- and only where nothing is recorded yet, so running it again changes nothing. Who created it, and
 -- when it was first published, aren't recorded anywhere exact (the audit log misses scheduled and
--- release publishes), so those stay NULL.
+-- release publishes), so those stay NULL. A known gap follows: an entry published and unpublished
+-- before this migration records its next publish as its first.
+--
+-- One statement rather than a chunked engine job: each row costs a probe of `entry_versions`'
+-- primary key (space, environment, entry, version), so the statement is linear in `entries` with
+-- no scan per row, binds no parameters, and writes each row once. The fleet it runs on is two
+-- deployments created on 2026-10-31 and seeded at SEED_SCALE=1 (about 900 entries an
+-- environment), orders of magnitude under what D1's per-query time limit allows for this shape. A
+-- deployment that ever needed a chunked backfill would be one created later than this migration,
+-- and it starts with an empty `entries`.
 UPDATE `entries`
 SET `created_at` = (
   SELECT v.`created_at` FROM `entry_versions` v

@@ -305,7 +305,9 @@ it has no assets, search, GraphQL or live routes. Its entries list pages with a 
 there is none. Each entry carries `updatedAt`, and `order=-sys.updatedAt` lists the most recently
 changed first. It also carries who wrote it: `createdAt`, `createdBy`, `updatedBy` (who made the
 last change) and `firstPublishedAt`, each null when unknown, and `sys.createdBy=me` lists the
-caller's own entries. Delivery serves `firstPublishedAt` and no other authorship: who created or
+caller's own entries (for an API key, `me` is its kind, so every key of that kind). `createdBy`
+and `updatedBy` go only to people on the team and to keys with a management scope: a preview key
+gets entries without them, and filtering or sorting on them from one answers `400`. Delivery serves `firstPublishedAt` and no other authorship: who created or
 changed an entry names people and keys. `…/entries/{id}` also accepts
 `?preview_token=`, a shareable link token minted from the entry, in place of a bearer key. Roles and
 denied fields apply as they do on Delivery.

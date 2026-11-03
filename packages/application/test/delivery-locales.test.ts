@@ -6,6 +6,7 @@ import {
   SCOPES,
   ValidationError,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import {
   FakeBlobStore,
   FixedClock,
@@ -126,6 +127,50 @@ describe('locale settings', () => {
     ).rejects.toThrow(ValidationError);
     // Another space is untouched.
     expect((await getLocaleSettings(ctx, other)).localeSettings.fr?.delivered).toBe(true);
+  });
+});
+
+describe('two locale settings changes at once', () => {
+  it('lands both: the one that loses the race re-reads and applies on top', async () => {
+    const read = store.spaces.getConfig.bind(store.spaces);
+    let raced = false;
+    // Between the first change's read and its write, another admin's change commits.
+    store.spaces.getConfig = async (at) => {
+      const config = await read(at);
+      if (!raced) {
+        raced = true;
+        await setLocaleSettings(ctx, admin, scope, { ar: { direction: 'ltr' } });
+      }
+      return config;
+    };
+    const view = await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
+    expect(view.localeSettings.fr?.delivered).toBe(false);
+    expect(view.localeSettings.ar?.direction).toBe('ltr');
+    expect((await read(scope))?.localeSettings).toEqual({
+      fr: { delivered: false },
+      ar: { direction: 'ltr' },
+    });
+    // One event per change that committed, none for the attempt that lost.
+    const events = store.allEvents().filter((e) => e.type === 'space_locales.changed');
+    expect(events).toHaveLength(2);
+  });
+
+  it('gives up with the conflict when every attempt loses', async () => {
+    const read = store.spaces.getConfig.bind(store.spaces);
+    let n = 0;
+    // Someone else changes the settings after every read, each time to something new.
+    store.spaces.getConfig = async (at) => {
+      const config = await read(at);
+      await store.spaces.setLocaleSettings(
+        at.spaceId,
+        { ar: { direction: n++ % 2 === 0 ? 'ltr' : 'rtl' } },
+        config?.localeSettings,
+      );
+      return config;
+    };
+    await expect(
+      setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } }),
+    ).rejects.toThrow(TransactionConflictError);
   });
 });
 

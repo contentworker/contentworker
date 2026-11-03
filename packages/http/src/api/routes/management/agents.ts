@@ -8,7 +8,12 @@ import {
   listAgentSchedules,
   updateAgentSchedule,
 } from '@contentworker/application';
-import { assertWritableFields, authorizeContent, SCOPES } from '@contentworker/domain';
+import {
+  assertWritableFields,
+  authorizeContent,
+  principalActorId,
+  SCOPES,
+} from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { agentScheduleBody, agentSchedulePatchBody, parseBody } from '../../validation';
@@ -72,7 +77,7 @@ export function agentsRoutes(deps: AuthDeps): Hono<AuthVars> {
         actingCtx(ctx, c),
         scopeOf(c),
         c.req.param('id'),
-        { approve: true, decidedBy: c.get('principal').subject ?? c.get('principal').kind },
+        { approve: true, decidedBy: principalActorId(c.get('principal')) },
         { signalReview: deps.signalReview },
       ),
     );
@@ -84,7 +89,7 @@ export function agentsRoutes(deps: AuthDeps): Hono<AuthVars> {
         actingCtx(ctx, c),
         scopeOf(c),
         c.req.param('id'),
-        { approve: false, decidedBy: c.get('principal').subject ?? c.get('principal').kind },
+        { approve: false, decidedBy: principalActorId(c.get('principal')) },
         { signalReview: deps.signalReview },
       ),
     );

@@ -138,7 +138,11 @@ describe('entry authorship over HTTP', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: Record<string, unknown>[] };
-    expect(body.items.map((e) => e.id)).toEqual([...ids].reverse());
+    // Newest first publish first. The two can share a millisecond on the real clock, so the check
+    // is the order of the instants, not of the ids.
+    expect(body.items.map((e) => e.id).sort()).toEqual([...ids].sort());
+    const firsts = body.items.map((e) => Date.parse(e.firstPublishedAt as string));
+    expect(firsts).toEqual([...firsts].sort((a, b) => b - a));
     for (const item of body.items) {
       expect(item.firstPublishedAt).toEqual(expect.any(String));
       expect(item).not.toHaveProperty('createdBy');
@@ -149,5 +153,29 @@ describe('entry authorship over HTTP', () => {
       headers: { Authorization: 'Bearer cda' },
     });
     expect(((await byAuthor.json()) as { items: unknown[] }).items).toEqual([]);
+  });
+
+  it('serves a preview key no writer ids, and refuses it a filter or order on them', async () => {
+    const created = await create(cma, 'Draft');
+    const cpa = { Authorization: 'Bearer cpa' };
+    const [row] = await previewList(cpa, '');
+    expect(row).toMatchObject({ id: created.id, createdAt: expect.any(String) });
+    expect(row).not.toHaveProperty('createdBy');
+    expect(row).not.toHaveProperty('updatedBy');
+    const one = await app.request(`${P}/entries/${created.id}`, { headers: cpa });
+    expect(one.status).toBe(200);
+    const single = (await one.json()) as Record<string, unknown>;
+    expect(single).not.toHaveProperty('createdBy');
+    expect(single).not.toHaveProperty('updatedBy');
+
+    for (const qs of ['sys.createdBy=cma', 'sys.updatedBy[ne]=cma', 'order=sys.createdBy']) {
+      const refused = await app.request(`${P}/entries?content_type=memo&${qs}`, { headers: cpa });
+      expect(refused.status).toBe(400);
+      expect(((await refused.json()) as { error: { code: string } }).error.code).toBe(
+        'author_ids_not_served',
+      );
+    }
+    // A management key still reads and filters on them.
+    expect((await previewList(cma, 'sys.createdBy=cma')).map((e) => e.id)).toEqual([created.id]);
   });
 });

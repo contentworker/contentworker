@@ -933,8 +933,13 @@ cursor. A cursor from another order is refused (`422`). A role limited to some c
 pages over those types only, so every page is full and no cursor points at an entry it can't
 read. `sys.updatedAt` sorts and filters like any `sys.*` field, and so does authorship: each
 entry carries `createdAt`, `createdBy`, `updatedBy` and `firstPublishedAt` (null when unknown), and
-`sys.createdBy=me` lists the caller's own. The MCP tool `entries_query` is the same read, paged the
-same way.
+`sys.createdBy=me` lists the caller's own. `me` is the caller's actor id: a person's own subject,
+`admin-token`, or for an API key its kind (`cma`), so `me` from one CMA key also matches entries
+any other CMA key wrote. `createdBy` and `updatedBy` go only to teammates and keys holding a
+management scope (`content:write`, `content:publish`, `content:manage` or `space:admin`): a preview
+key or preview token gets each entry without them, and a filter or `order` on `sys.createdBy` or
+`sys.updatedBy` from one is `400 author_ids_not_served`. The MCP tool `entries_query` is the same
+read, paged the same way, under the same rule.
 
 Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
 least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and

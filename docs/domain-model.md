@@ -472,16 +472,32 @@ chunks write as them; a promotion writes as whoever approved it.
 
 | Field              | Set by                                                   | `sys.*`              |
 | ------------------ | -------------------------------------------------------- | -------------------- |
-| `createdAt`        | creation (kept by an environment clone or a promotion)   | `sys.createdAt`      |
-| `createdBy`        | creation (kept likewise)                                 | `sys.createdBy`      |
+| `createdAt`        | creation (kept by a clone, a merge or a promotion)       | `sys.createdAt`      |
+| `createdBy`        | creation (kept likewise; never from an uploaded snapshot) | `sys.createdBy`      |
 | `updatedBy`        | every change, the one `sys.updatedAt` records            | `sys.updatedBy`      |
 | `firstPublishedAt` | the first publish only; kept through unpublish           | `sys.firstPublishedAt` |
 
 The store writes creation once and `first_published_at` with `COALESCE`, so a stale aggregate or a
-lost race never moves either. An entry already live with nothing recorded (from before
-`0024_entry_authorship`) keeps an unknown (null) first publish when republished. Management and
-Preview serve all four, filter and sort on them, and resolve `me` in `sys.createdBy` and
-`sys.updatedBy` to the caller; Delivery serves `firstPublishedAt` alone, since the others name
+lost race never moves either; the publish upsert copies `entry_published.first_published_at` from
+`entries` in the same batch (a subquery), so the read model always matches that result. An entry
+already live with nothing recorded (from before `0024_entry_authorship`) keeps an unknown (null)
+first publish when republished. A known gap: an entry published and then unpublished before
+`0024` left no trace of that, so its next publish is recorded as its first.
+
+A new entry a merge (`mergeEnvironments`) brings into the target keeps the source's creation and
+first publish, as a promotion's does; one the target already has keeps its own. An environment
+clone keeps all three (`ImportOptions.keepCreators`, set only by the clone paths). An uploaded
+snapshot keeps `createdAt` and `firstPublishedAt`, checked by `carriedAuthorshipIssues` (ISO-8601
+UTC instants; a creator at most 320 characters), and credits its importer as the creator: a file
+can name anyone.
+
+Management and Preview serve all four, filter and sort on them, and resolve `me` in
+`sys.createdBy` and `sys.updatedBy` to the caller's actor id (`principalActorId`: a person's
+subject, `admin-token`, or an API key's kind, so `me` is every key of that kind). The writer ids
+go only where `seesAuthorIds` holds (a teammate, the admin token, or a key with a management
+scope): a preview key reads entries without `createdBy`/`updatedBy` (`withAuthorIdsFor`), and
+`assertAuthorIdQuery` refuses its filter or order on them (400). Agent-review decisions record
+`decidedBy` with the same actor id. Delivery serves `firstPublishedAt` alone, since the others name
 people and keys a public read has no business seeing.
 
 ### Comparing versions

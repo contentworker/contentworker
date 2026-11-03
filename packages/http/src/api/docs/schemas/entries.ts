@@ -86,6 +86,17 @@ export const previewEntry = z.object({
   version: z.int().describe('The current (draft) version'),
   updatedAt: z.iso.datetime().optional().describe('When the entry last changed'),
   ...authorship,
+  // Writer ids go to teammates and management keys only: a preview key reads them as absent,
+  // and filtering or sorting on them answers 400.
+  createdBy: authorship.createdBy
+    .optional()
+    .describe(
+      `${authorship.createdBy.description}. Absent for a preview key (and a filter or sort on ` +
+        'sys.createdBy from one is a 400)',
+    ),
+  updatedBy: authorship.updatedBy
+    .optional()
+    .describe(`${authorship.updatedBy.description}. Absent for a preview key`),
   fields: entryFields,
 });
 

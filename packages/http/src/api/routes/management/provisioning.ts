@@ -11,6 +11,7 @@ import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as spaceDocs from '../../docs/schemas/spaces';
 import { createEnvironmentBody, createSpaceBody, parseBody } from '../../validation';
+import { actingCtx } from './shared';
 
 export function provisioningRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
@@ -40,7 +41,8 @@ export function provisioningRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.spaceAdmin),
     async (c) => {
       const body = await parseBody(c, createSpaceBody);
-      const created = await createSpaceWithStarter(ctx, body, { blob });
+      // Acting as the caller, so the starter content is credited to them, as on MCP.
+      const created = await createSpaceWithStarter(actingCtx(ctx, c), body, { blob });
       return c.json(
         {
           id: created.space.spaceId,

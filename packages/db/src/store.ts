@@ -383,12 +383,21 @@ function makeEntryRepo(
     const ids = idList(snapshots.map((s) => s.entryId));
     // The usage counts move in the same batch: the old snapshots' terms come off before the
     // upsert replaces them, the new ones' go on after it.
+    // Each row's first publish is read from `entries` in the same batch, after the aggregate save
+    // that set it with COALESCE: the copy can't diverge from it, whatever the snapshot carried.
+    // That subquery binds three values where the column bound one, hence the wider rows.
+    const perRow = Object.keys(getTableColumns(schema.entryPublished)).length + 2;
     await writeAll(x, [
       takeUsage(db, scope, ids),
-      ...insertChunks(schema.entryPublished, snapshots, (chunk) =>
+      ...chunked(snapshots, perRow, 0).map((chunk) =>
         db
           .insert(schema.entryPublished)
-          .values(chunk.map((s) => publishedRow(scope, s)))
+          .values(
+            chunk.map((s) => ({
+              ...publishedRow(scope, s),
+              firstPublishedAt: sql`(SELECT ${schema.entries.firstPublishedAt} FROM ${schema.entries} WHERE ${schema.entries.spaceId} = ${scope.spaceId} AND ${schema.entries.environmentId} = ${scope.environmentId} AND ${schema.entries.id} = ${s.entryId})`,
+            })),
+          )
           .onConflictDoUpdate({
             target: [
               schema.entryPublished.spaceId,
@@ -4218,13 +4227,23 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           .where(eq(schema.spaces.id, spaceId)),
       );
     },
-    async setLocaleSettings(spaceId, settings) {
-      await x.write(
-        db
-          .update(schema.spaces)
-          .set({ localeSettings: Object.keys(settings).length > 0 ? { ...settings } : null })
-          .where(eq(schema.spaces.id, spaceId)),
-      );
+    async setLocaleSettings(spaceId, settings, expected) {
+      const s = schema.spaces;
+      // The column holds the JSON text this repo wrote, which a read parses and re-serializes to the
+      // same text (key order kept), so comparing text is comparing what the caller read.
+      const unchanged =
+        expected && Object.keys(expected).length > 0
+          ? eq(sql`${s.localeSettings}`, JSON.stringify(expected))
+          : isNull(s.localeSettings);
+      const cas = and(eq(s.id, spaceId), unchanged);
+      const set = { localeSettings: Object.keys(settings).length > 0 ? { ...settings } : null };
+      if (x.inUnit) {
+        await x.write(db.update(s).set(set).where(cas));
+        x.expectChanged(1);
+        return;
+      }
+      const rows = await db.update(s).set(set).where(cas).returning({ id: s.id });
+      if (rows.length !== 1) throw new TransactionConflictError();
     },
     async setWorkflowSeparateDuties(spaceId, value) {
       await x.write(

@@ -19,6 +19,8 @@ publishing does.
   back as `cursor`, with the same filters and order, for the next.
 - Entries you created: filter `sys.createdBy` `eq` `me` (`me` is you; `sys.updatedBy` works the
   same). What you write is recorded as yours, so a person reading the entry sees who changed it.
+  Connected with an API key, `me` is the key's kind (`cma`), so it also matches other keys of that
+  kind; a preview key sees no `createdBy`/`updatedBy` and can't filter on them.
 
 ## Write
 

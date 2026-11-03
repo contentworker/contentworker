@@ -166,8 +166,9 @@ describe('entries_query over MCP', () => {
     ) as { items: { id: string; createdBy: string }[] };
     expect(page.items.map((e) => [e.id, e.createdBy])).toEqual([[view.entry.id, 'person-1']]);
     // Another caller's `me` is themselves: the five seeded entries name nobody.
+    const colleague: Principal = { ...writer, subject: 'person-2' };
     const other = text(
-      await (await connect(deps, READER)).callTool({
+      await (await connect(deps, colleague)).callTool({
         name: 'entries_query',
         arguments: {
           space: SPACE,
@@ -186,5 +187,36 @@ describe('entries_query over MCP', () => {
       arguments: { space: SPACE, contentType: 'note', skip: 2 },
     });
     expect(res.isError).toBe(true);
+  });
+
+  it('serves a preview key no writer ids, and refuses it a filter or order on them', async () => {
+    const client = await connect(deps, READER);
+    const page = text(
+      await client.callTool({
+        name: 'entries_query',
+        arguments: { space: SPACE, contentType: 'note', limit: 1 },
+      }),
+    ) as { items: Record<string, unknown>[] };
+    expect(page.items[0]).not.toHaveProperty('createdBy');
+    expect(page.items[0]).not.toHaveProperty('updatedBy');
+    const one = text(
+      await client.callTool({
+        name: 'entries_get',
+        arguments: { space: SPACE, id: page.items[0]?.id },
+      }),
+    ) as Record<string, unknown>;
+    expect(one).toHaveProperty('createdAt');
+    expect(one).not.toHaveProperty('createdBy');
+    for (const asked of [
+      { filters: [{ field: 'sys.updatedBy', op: 'eq', value: 'me' }] },
+      { order: [{ field: 'sys.createdBy', direction: 'asc' }] },
+    ]) {
+      const res = await client.callTool({
+        name: 'entries_query',
+        arguments: { space: SPACE, contentType: 'note', ...asked },
+      });
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain('is not served to this key');
+    }
   });
 });
