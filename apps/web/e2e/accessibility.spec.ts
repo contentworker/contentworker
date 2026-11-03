@@ -511,7 +511,9 @@ test('an entry with a field its rules make read-only has no accessibility violat
   await seedRuledType(request);
   await openCms(page, '/content/ruled/new');
   await page.getByLabel('Status').fill('sold', { timeout: 15_000 });
-  await expect(page.getByLabel('Reference')).toBeDisabled();
+  // Read-only, not disabled: still in the tab order, so the sweep sees it as a reader does.
+  await expect(page.getByLabel('Reference')).not.toBeEditable();
+  await expect(page.getByLabel('Reference')).toBeEnabled();
   await expect(page.getByLabel('Sold to')).toBeVisible();
   await scan(page, info);
 });

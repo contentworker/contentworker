@@ -1409,11 +1409,13 @@ test('a field its rules hide appears and goes as its sibling changes, and the en
   await expect(soldTo).toHaveCount(0);
   await page.getByLabel('Status').fill('sold');
   await expect(soldTo).toBeVisible();
-  // Read-only while sold, and saying why.
-  await expect(page.getByLabel('Reference')).toBeDisabled();
-  await expect(page.getByLabel('Reference')).toHaveAccessibleDescription(
-    'Read-only while Status is "sold"',
-  );
+  // Read-only while sold, and saying why; it keeps focus, so the reason is read on it.
+  const reference = page.getByLabel('Reference');
+  await expect(reference).not.toBeEditable();
+  await expect(reference).toHaveAttribute('aria-readonly', 'true');
+  await expect(reference).toHaveAccessibleDescription('Read-only while Status is "sold"');
+  await reference.focus();
+  await expect(reference).toBeFocused();
   await page.getByLabel('Status').fill('open');
   await expect(soldTo).toHaveCount(0);
   // Hidden, so not required: the save goes through.

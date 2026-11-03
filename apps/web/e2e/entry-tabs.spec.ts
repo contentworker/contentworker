@@ -61,5 +61,5 @@ test('entry tabs scroll inside the form, and the page never scrolls sideways', a
   const last = page.getByRole('tab', { name: 'Press' });
   await last.scrollIntoViewIfNeeded();
   await last.click();
-  await expect(page.getByLabel('Press')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Press' })).toBeVisible();
 });
