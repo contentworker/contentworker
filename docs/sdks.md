@@ -78,13 +78,15 @@ client.menus(): Promise<DeliveredMenuSummary[]>          // Delivery only: { han
 client.menu(handle, { locale? }): Promise<DeliveredMenu> // Delivery only: resolved; 404 DeliveryError for an unknown handle
 client.routes(): Promise<DeliveredRoute[]>               // Delivery only: { contentType, urlPattern } per published type
 client.sitemap({ from?, limit?, base? }): Promise<SitemapPage>  // Delivery only: { items, next }, published pages and their paths
-client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive
+client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive,
+                                         // .references(field, ...ids), .linksTo(...ids)
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
 client.bookmark: string | undefined     // read-your-writes position (preview); assignable
 ```
 
-- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, order?, select?, search?, tags? }`.
+- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, linksToEntry?, order?, select?, search?, tags? }`.
+  `linksToEntry` is sent as `links_to_entry`.
   Delivery pages with `skip`; Preview (`preview: true`) pages with `cursor`, the last page's
   `nextCursor`, and refuses `skip` (`422`).
   `tags` (slugs) sends `metadata.tags.slug[in]`, and a filter on `metadata.*` is sent unprefixed.

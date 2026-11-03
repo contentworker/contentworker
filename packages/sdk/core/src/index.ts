@@ -176,7 +176,10 @@ export interface ClientOptions {
   readonly bookmark?: string;
 }
 
-/** Comparison operators for a field-level filter. */
+/**
+ * Comparison operators for a field-level filter. `ref` (one entry id) and `refIn` (several) match
+ * a link field that links to one of those entries.
+ */
 export type FilterOp =
   | 'eq'
   | 'ne'
@@ -187,7 +190,9 @@ export type FilterOp =
   | 'lt'
   | 'lte'
   | 'exists'
-  | 'match';
+  | 'match'
+  | 'ref'
+  | 'refIn';
 
 /**
  * A single field predicate. `field` is a field apiId, a `sys.*` pseudo-field, or a taxonomy
@@ -217,6 +222,8 @@ export interface EntryQuery {
   readonly since?: string;
   /** Field-level predicates (all must match). */
   readonly filters?: readonly EntryFilter[];
+  /** Only entries with a link to one of these entry ids, from any field. */
+  readonly linksToEntry?: readonly string[];
   /** Sort keys, e.g. `['fields.title', '-sys.publishedAt']`. */
   readonly order?: readonly string[];
   /** Projection — return only these field apiIds. */
@@ -704,6 +711,7 @@ function toParams(q: EntryQuery): Record<string, string | number | undefined> {
     const value = Array.isArray(f.value) ? f.value.join(',') : String(f.value ?? '');
     params[key] = value;
   }
+  if (q.linksToEntry?.length) params.links_to_entry = q.linksToEntry.join(',');
   if (q.tags?.length) params['metadata.tags.slug[in]'] = q.tags.join(',');
   if (q.order?.length) params.order = q.order.join(',');
   if (q.select?.length) params.select = q.select.join(',');
@@ -746,6 +754,18 @@ export class EntryQueryBuilder<F extends Fields> {
         ? { field, op: rest[0] as FilterOp, value: rest[1] }
         : { field, op: 'eq', value: rest[0] };
     this.q = { ...this.q, filters: [...(this.q.filters ?? []), filter] };
+    return this;
+  }
+  /**
+   * Only entries whose link field links to one of these entries:
+   * `.references('author', authorId)`.
+   */
+  references(field: string, ...ids: string[]): this {
+    return ids.length === 1 ? this.where(field, 'ref', ids[0]) : this.where(field, 'refIn', ids);
+  }
+  /** Only entries linking to one of these entries from any field: `.linksTo(entryId)`. */
+  linksTo(...ids: string[]): this {
+    this.q = { ...this.q, linksToEntry: [...(this.q.linksToEntry ?? []), ...ids] };
     return this;
   }
   /** Only entries carrying a tag with one of these slugs: `.tagged('news')`. */

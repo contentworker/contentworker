@@ -1,0 +1,257 @@
+import type { AppContext } from '@contentworker/application';
+import {
+  createContentType,
+  createEntry,
+  createSpace,
+  publishContentType,
+  publishEntry,
+  updateEntry,
+} from '@contentworker/application';
+import type { FieldDefinition } from '@contentworker/domain';
+import type { Clock, EntryQuery, IdGenerator } from '@contentworker/ports';
+import { InMemoryContentStore } from '@contentworker/test-kit';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { createD1Store } from '../src/store';
+import { testDb } from './env';
+
+/**
+ * Filter by referenced entry against D1: `ref`/`refIn` on a field and `*` (links_to_entry).
+ * The published path pushes them down as an IN over the reference edges, the draft path as a
+ * scan of the fields' JSON; both must answer exactly as the in-memory engine does, narrow the
+ * candidate scan in SQL, and stay within D1's parameter cap however many ids they carry.
+ */
+
+const clock: Clock = { now: () => new Date('2026-01-01T00:00:00.000Z') };
+const seqIds = (prefix: string): IdGenerator => {
+  let n = 0;
+  return { newId: () => `${prefix}-${String(++n).padStart(4, '0')}` };
+};
+
+const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId' | 'type'>) =>
+  ({
+    name: over.apiId,
+    localized: false,
+    required: false,
+    position: 0,
+    ...over,
+  }) as FieldDefinition;
+const link = (id: string) => ({ id, linkType: 'Entry' as const });
+const embed = (id: string) => ({
+  nodeType: 'document',
+  data: {},
+  content: [{ nodeType: 'embedded-entry-block', data: { target: link(id) }, content: [] }],
+});
+
+/** How many people the posts link to; the refIn lists cross the 100-parameter cap. */
+const PEOPLE = 6;
+
+describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
+  const runId = crypto.randomUUID();
+  const scope = { spaceId: `ref-${runId}`, environmentId: 'main' };
+  const other = { spaceId: `ref-other-${runId}`, environmentId: 'main' };
+  const d1 = createD1Store(testDb);
+  const d1Ctx: AppContext = { store: d1, clock, ids: seqIds(`r-${runId}`) };
+  const memCtx: AppContext = {
+    store: new InMemoryContentStore(),
+    clock,
+    ids: seqIds(`r-${runId}`),
+  };
+  let people: string[] = [];
+  let draftOnly = '';
+
+  async function seed(ctx: AppContext, s: typeof scope): Promise<string[]> {
+    await createSpace(ctx, { spaceId: s.spaceId, name: 'R', defaultLocale: 'en-US' });
+    await createContentType(ctx, s, {
+      apiId: 'person',
+      name: 'Person',
+      displayField: 'name',
+      fields: [field({ apiId: 'name', type: 'Symbol' })],
+    });
+    await createContentType(ctx, s, {
+      apiId: 'post',
+      name: 'Post',
+      displayField: 'title',
+      fields: [
+        field({ apiId: 'title', type: 'Symbol' }),
+        field({ apiId: 'author', type: 'Link', linkType: 'Entry', position: 1 }),
+        field({
+          apiId: 'related',
+          type: 'Array',
+          items: { type: 'Link', linkType: 'Entry' },
+          position: 2,
+        }),
+        field({ apiId: 'body', type: 'RichText', position: 3 }),
+        field({
+          apiId: 'card',
+          type: 'Component',
+          position: 4,
+          fields: [
+            field({ apiId: 'heading', type: 'Symbol' }),
+            field({ apiId: 'person', type: 'Link', linkType: 'Entry', position: 1 }),
+          ],
+        }),
+      ],
+    });
+    await publishContentType(ctx, s, 'person');
+    await publishContentType(ctx, s, 'post');
+    const ids: string[] = [];
+    for (let i = 0; i < PEOPLE; i++) {
+      const p = await createEntry(ctx, s, {
+        contentTypeApiId: 'person',
+        fields: { name: { 'en-US': `P${i}` } },
+      });
+      await publishEntry(ctx, s, p.entry.id);
+      ids.push(p.entry.id);
+    }
+    const posts: Record<string, unknown>[] = [
+      { author: link(ids[0] as string) },
+      { author: link(ids[1] as string), related: [link(ids[0] as string), link(ids[2] as string)] },
+      { body: embed(ids[3] as string) },
+      { card: { heading: 'h', person: link(ids[4] as string) } },
+      { author: link(ids[1] as string) },
+      {},
+    ];
+    for (const [i, f] of posts.entries()) {
+      const e = await createEntry(ctx, s, {
+        contentTypeApiId: 'post',
+        fields: {
+          title: { 'en-US': `Post ${i}` },
+          ...Object.fromEntries(Object.entries(f).map(([k, v]) => [k, { 'en-US': v }])),
+        } as never,
+      });
+      await publishEntry(ctx, s, e.entry.id);
+    }
+    // A post whose author is set only in its draft: Preview sees the link, Delivery doesn't.
+    const draft = await createEntry(ctx, s, {
+      contentTypeApiId: 'post',
+      fields: { title: { 'en-US': 'Draft' } },
+    });
+    await publishEntry(ctx, s, draft.entry.id);
+    await updateEntry(ctx, s, draft.entry.id, {
+      title: { 'en-US': 'Draft' },
+      author: { 'en-US': link(ids[5] as string) },
+    } as never);
+    draftOnly = draft.entry.id;
+    return ids;
+  }
+
+  beforeAll(async () => {
+    people = await seed(d1Ctx, scope);
+    await seed(memCtx, scope);
+  });
+
+  const queries = (): { name: string; q: EntryQuery }[] => [
+    {
+      name: 'ref on a link field',
+      q: { filters: [{ field: 'author', op: 'ref', value: people[1] }] },
+    },
+    {
+      name: 'refIn through a list of links',
+      q: { filters: [{ field: 'related', op: 'refIn', value: [people[2], 'missing'] }] },
+    },
+    {
+      name: 'ref on a component member is found by its top-level field',
+      q: { filters: [{ field: 'card', op: 'ref', value: people[4] }] },
+    },
+    {
+      name: 'links_to_entry in rich text',
+      q: { filters: [{ field: '*', op: 'ref', value: people[3] }] },
+    },
+    {
+      name: 'links_to_entry across fields',
+      q: { filters: [{ field: '*', op: 'refIn', value: [people[0], people[4]] }] },
+    },
+    {
+      name: 'ref with another filter',
+      q: {
+        filters: [
+          { field: 'author', op: 'ref', value: people[1] },
+          { field: 'title', op: 'eq', value: 'Post 4' },
+        ],
+      },
+    },
+    {
+      name: 'the draft-only link',
+      q: { filters: [{ field: 'author', op: 'ref', value: people[5] }] },
+    },
+    {
+      name: 'refIn past the parameter cap',
+      q: {
+        filters: [
+          {
+            field: '*',
+            op: 'refIn',
+            value: [...Array.from({ length: 150 }, (_, i) => `nobody-${i}`), people[0]],
+          },
+        ],
+      },
+    },
+  ];
+
+  it('answers every reference query exactly as the in-memory engine does', async () => {
+    for (const { name, q } of queries()) {
+      const [a, b] = await Promise.all([
+        d1.entries.listPublished(scope, q),
+        memCtx.store.entries.listPublished(scope, q),
+      ]);
+      expect(a.map((r) => r.entryId).sort(), `published: ${name}`).toEqual(
+        b.map((r) => r.entryId).sort(),
+      );
+      const [c, d] = await Promise.all([
+        d1.entries.list(scope, q),
+        memCtx.store.entries.list(scope, q),
+      ]);
+      expect(c.map((r) => r.entry.id).sort(), `draft: ${name}`).toEqual(
+        d.map((r) => r.entry.id).sort(),
+      );
+    }
+  });
+
+  it('reads the published links on Delivery and the draft links on Preview', async () => {
+    const q: EntryQuery = { filters: [{ field: 'author', op: 'ref', value: people[5] }] };
+    expect(await d1.entries.listPublished(scope, q)).toEqual([]);
+    expect((await d1.entries.list(scope, q)).map((r) => r.entry.id)).toEqual([draftOnly]);
+  });
+
+  it('narrows in SQL: a reference filter fits a scan cap the whole type does not', async () => {
+    const tiny = createD1Store(testDb, { queryScanLimit: 2 });
+    const all: EntryQuery = {
+      contentTypeApiId: 'post',
+      order: [{ field: 'title', direction: 'asc' }],
+    };
+    await expect(tiny.entries.listPublished(scope, all)).rejects.toMatchObject({
+      code: 'query_too_broad',
+    });
+    await expect(tiny.entries.list(scope, all)).rejects.toMatchObject({ code: 'query_too_broad' });
+    for (const filters of [
+      [{ field: 'author', op: 'ref' as const, value: people[1] }],
+      [{ field: '*', op: 'ref' as const, value: people[3] }],
+      [{ field: 'related', op: 'refIn' as const, value: [people[0], people[2]] }],
+    ]) {
+      const q = { ...all, filters };
+      await expect(tiny.entries.listPublished(scope, q)).resolves.not.toHaveLength(0);
+      await expect(tiny.entries.list(scope, q)).resolves.not.toHaveLength(0);
+    }
+  });
+
+  it('reads only its own scope’s edges, even for an entry id another scope shares', async () => {
+    const [post] = await d1.entries.listPublished(scope, {
+      filters: [{ field: 'author', op: 'ref', value: people[0] }],
+    });
+    // The same entry id in another space links to `elsewhere`; this space's entry does not.
+    await d1.references.replaceForEntry(other, post?.entryId as string, [
+      {
+        fromEntryId: post?.entryId as string,
+        fromField: 'author',
+        toId: 'elsewhere',
+        toType: 'Entry',
+      },
+    ]);
+    for (const filters of [
+      [{ field: 'author', op: 'ref' as const, value: 'elsewhere' }],
+      [{ field: '*', op: 'ref' as const, value: 'elsewhere' }],
+    ]) {
+      expect(await d1.entries.listPublished(scope, { filters })).toEqual([]);
+    }
+  });
+});

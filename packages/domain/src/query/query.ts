@@ -11,26 +11,104 @@
 
 import type { EntryFields, LocaleCode, LocalizedValue } from '../types';
 
-/** The comparison operators a field filter may use. */
-export type FilterOp =
-  | 'eq'
-  | 'ne'
-  | 'in'
-  | 'nin'
-  | 'gt'
-  | 'gte'
-  | 'lt'
-  | 'lte'
-  | 'exists'
-  | 'match';
+/** The comparison operators a field filter may use, in the order the docs list them. */
+export const FILTER_OPS = [
+  'eq',
+  'ne',
+  'in',
+  'nin',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'exists',
+  'match',
+  'ref',
+  'refIn',
+] as const;
 
-/** A single field-level predicate. `field` may be a content field apiId or a
- *  `sys.*` pseudo-field (e.g. `sys.publishedAt`). */
+/**
+ * The comparison operators a field filter may use. `ref` (one entry id) and `refIn` (several)
+ * match a field that links to one of those entries.
+ */
+export type FilterOp = (typeof FILTER_OPS)[number];
+
+/**
+ * The `field` of a reference filter that looks in every field: `links_to_entry`. Only `ref` and
+ * `refIn` take it.
+ */
+export const ANY_FIELD = '*';
+
+/** A single field-level predicate. `field` may be a content field apiId, a `sys.*`
+ *  pseudo-field (e.g. `sys.publishedAt`), a `metadata.*` association, or {@link ANY_FIELD} for
+ *  a reference filter over every field. */
 export interface QueryFilter {
   readonly field: string;
   readonly op: FilterOp;
-  /** Comparand: scalar for eq/ne/gt…; array for in/nin; boolean for exists. */
+  /** Comparand: scalar for eq/ne/gt…; array for in/nin/refIn; boolean for exists; an entry id
+   *  for ref. */
   readonly value?: unknown;
+}
+
+/** An `in`, `nin` or `refIn` list holds at most this many values. */
+export const MAX_FILTER_VALUES = 100;
+
+/**
+ * A field a filter may name, once any `fields.` prefix is stripped: a content field apiId, a
+ * `sys.*` pseudo-field, a taxonomy association, or {@link ANY_FIELD}.
+ */
+const FILTER_FIELD =
+  /^(?:\*|sys\.[A-Za-z0-9_]+|metadata\.(?:tags|concepts)(?:\.slug)?|[A-Za-z0-9_]+)$/;
+
+type Issue = { readonly field: string; readonly message: string };
+
+/**
+ * Checks one field predicate: a field the query language knows, an operator it supports, and a
+ * comparand of the operator's shape. Returns the problems, empty when it is valid. `at` names the
+ * predicate in the issues (`fields.author[ref]`).
+ */
+export function queryFilterIssues(f: QueryFilter, at: string): Issue[] {
+  const issues: Issue[] = [];
+  const op = f.op as string;
+  if (!(FILTER_OPS as readonly string[]).includes(op)) {
+    return [{ field: at, message: `op must be one of ${FILTER_OPS.join(', ')}` }];
+  }
+  if (typeof f.field !== 'string' || !FILTER_FIELD.test(f.field)) {
+    return [{ field: at, message: `"${String(f.field)}" is not a field a query can name` }];
+  }
+  const isRef = op === 'ref' || op === 'refIn';
+  const content = !f.field.startsWith('sys.') && !f.field.startsWith('metadata.');
+  if (f.field === ANY_FIELD && !isRef) {
+    issues.push({ field: at, message: `"${ANY_FIELD}" takes only ref and refIn` });
+  }
+  if (isRef && !content) {
+    issues.push({ field: at, message: `${op} filters a content field, not ${f.field}` });
+  }
+  const isId = (v: unknown) => typeof v === 'string' && v !== '' && v.length <= 128;
+  const list = (min: number) =>
+    Array.isArray(f.value) && f.value.length >= min && f.value.length <= MAX_FILTER_VALUES;
+  switch (op) {
+    case 'ref':
+      if (!isId(f.value)) issues.push({ field: at, message: 'ref takes one entry id' });
+      break;
+    case 'refIn':
+      if (!list(1) || !(f.value as unknown[]).every(isId))
+        issues.push({
+          field: at,
+          message: `refIn takes 1 to ${MAX_FILTER_VALUES} entry ids`,
+        });
+      break;
+    case 'in':
+    case 'nin':
+      if (!list(1))
+        issues.push({ field: at, message: `${op} takes 1 to ${MAX_FILTER_VALUES} values` });
+      break;
+    case 'match':
+      if (typeof f.value !== 'string' || f.value === '')
+        issues.push({ field: at, message: `${op} takes a non-empty string` });
+      break;
+  }
+  return issues;
 }
 
 /** A sort key. `field` may be a content field apiId or a `sys.*` pseudo-field. */
@@ -179,6 +257,44 @@ function resolveField(
   return comparableValue(fields[field], locale, fallbacks);
 }
 
+/** Deepest a link search descends into one value; a real field is far shallower. */
+const MAX_LINK_DEPTH = 32;
+
+/**
+ * Does `value` hold a link to one of `ids`? A link is a `{ id, linkType: 'Entry' }` object, found
+ * wherever the content model puts one: a Link field, a list of links, a component's members, a
+ * blocks element, or a rich-text document's embedded and inline entries (`data.target`).
+ */
+function linksTo(value: unknown, ids: ReadonlySet<string>, depth = 0): boolean {
+  if (depth > MAX_LINK_DEPTH || !value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some((v) => linksTo(v, ids, depth + 1));
+  const o = value as Record<string, unknown>;
+  if (o.linkType === 'Entry' && typeof o.id === 'string' && ids.has(o.id)) return true;
+  return Object.values(o).some((v) => linksTo(v, ids, depth + 1));
+}
+
+/** True if one field predicate matches the entry. */
+function matchesFilter(
+  f: QueryFilter,
+  fields: EntryFields,
+  sys: Record<string, unknown>,
+  locale?: LocaleCode,
+  fallbacks?: readonly LocaleCode[],
+): boolean {
+  if (f.op === 'ref' || f.op === 'refIn') {
+    const wanted = f.op === 'ref' ? [f.value] : Array.isArray(f.value) ? f.value : [];
+    const ids = new Set(wanted.filter((v): v is string => typeof v === 'string'));
+    // Every field, each in the resolved locale, like any other field predicate.
+    if (f.field === ANY_FIELD) {
+      return Object.values(fields).some((lv) =>
+        linksTo(comparableValue(lv, locale, fallbacks), ids),
+      );
+    }
+    return linksTo(resolveField(f.field, fields, sys, locale, fallbacks), ids);
+  }
+  return matchOp(f.op, resolveField(f.field, fields, sys, locale, fallbacks), f.value);
+}
+
 /** True if every filter matches the entry's fields. */
 function matchesFilters(
   fields: EntryFields,
@@ -187,9 +303,7 @@ function matchesFilters(
   locale?: LocaleCode,
   fallbacks?: readonly LocaleCode[],
 ): boolean {
-  return filters.every((f) =>
-    matchOp(f.op, resolveField(f.field, fields, sys, locale, fallbacks), f.value),
-  );
+  return filters.every((f) => matchesFilter(f, fields, sys, locale, fallbacks));
 }
 
 /** True if `search` (case-insensitive) appears in any string field value. */

@@ -614,4 +614,21 @@ describe('@contentworker/sdk-core taxonomy', () => {
     expect(first.searchParams.get('metadata.tags.slug[in]')).toBe('news,sport');
     expect(new URL(urls[1] ?? '').searchParams.get('metadata.concepts.slug[nin]')).toBe('cats');
   });
+
+  it('filters by referenced entry: references() on a field, linksTo() from any', async () => {
+    const urls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        urls.push(url);
+        return { items: [], total: 0 };
+      }),
+    });
+    await client.query().contentType('post').references('author', 'a1').fetch();
+    await client.query().references('related', 'a1', 'a2').linksTo('b1').linksTo('b2').fetch();
+    const [one, two] = urls.map((u) => new URL(u).searchParams);
+    expect(one?.get('fields.author[ref]')).toBe('a1');
+    expect(two?.get('fields.related[refIn]')).toBe('a1,a2');
+    expect(two?.get('links_to_entry')).toBe('b1,b2');
+  });
 });

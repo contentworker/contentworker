@@ -39,6 +39,9 @@ const DOCS = {
         content_type: 'Filter by content type apiId',
         locale: 'Resolve fields for one locale',
         include: 'Reference resolution depth',
+        links_to_entry: 'Entries with a link to this entry id in any field (a,b: to any of them)',
+        'fields.<field>[ref]':
+          'Entries whose link field links to this entry id ([refIn]=a,b for any of several)',
         'metadata.tags.slug':
           'Entries carrying the tag with this slug (also [in]=a,b, [ne], [nin]; ' +
           'metadata.concepts.slug for concepts, metadata.tags / metadata.concepts for ids)',

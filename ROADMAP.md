@@ -159,8 +159,9 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 
 #### M2. Model and query parity
 
-- [ ] **Filter by referenced entry.** `fields.<link>[ref]=<id>` and `links_to_entry=<id>`, pushed
-  down as a join on the reference edges with one bound parameter.
+- [x] **Filter by referenced entry.** `fields.<link>[ref]=<id>` (`[refIn]` for several) and
+  `links_to_entry=<id>` on Delivery, Preview, GraphQL and `entries_query`; Delivery pushes them down
+  as an `IN` over the reference edges with one JSON parameter, Preview scans the draft's fields.
 - [ ] **Conditional field rules.** `rules` on a field (hide or disable when a sibling matches),
   evaluated in the domain so a hidden field skips `required` on every surface.
 - [ ] **Singleton types.** At most one entry; Delivery `GET /singletons/:apiId`; the admin opens the

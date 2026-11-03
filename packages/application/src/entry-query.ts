@@ -7,6 +7,8 @@
  * Supported syntax:
  *   - `fields.<apiId>=v`                 → equals
  *   - `fields.<apiId>[op]=v`             → op ∈ ne|in|nin|gt|gte|lt|lte|exists|match
+ *   - `fields.<link>[ref]=<id>`          → the field links to that entry (`[refIn]=<id>,<id>`: any)
+ *   - `links_to_entry=<id>`              → any field links to that entry (`<id>,<id>`: any)
  *   - `sys.publishedAt[gt]=<iso>`        → `sys.*` pseudo-fields
  *   - `metadata.tags[in]=<id>,<id>`      → taxonomy associations by id (also `metadata.concepts`)
  *   - `metadata.tags.slug=news`          → by slug (eq|ne|in|nin; also `metadata.concepts.slug`)
@@ -16,21 +18,18 @@
  *   - `content_type`, `limit`, `skip`, `since`, `locale`  → as before
  */
 
-import type { FilterOp, QueryFilter, QueryOrder } from '@contentworker/domain';
+import {
+  ANY_FIELD,
+  FILTER_OPS,
+  type FilterOp,
+  type QueryFilter,
+  type QueryOrder,
+  queryFilterIssues,
+  ValidationError,
+} from '@contentworker/domain';
 import type { EntryQuery } from '@contentworker/ports';
 
-const OPS: ReadonlySet<string> = new Set([
-  'eq',
-  'ne',
-  'in',
-  'nin',
-  'gt',
-  'gte',
-  'lt',
-  'lte',
-  'exists',
-  'match',
-]);
+const OPS: ReadonlySet<string> = new Set(FILTER_OPS);
 
 /**
  * `fields.<apiId>`, `sys.<name>`, or a taxonomy association: `metadata.tags` /
@@ -65,16 +64,25 @@ function fieldName(path: string): string {
   return path.startsWith('fields.') ? path.slice('fields.'.length) : path;
 }
 
+const list = (raw: string) => raw.split(',').map((s) => s.trim());
+
 function toFilter(path: string, op: string, raw: string): QueryFilter | null {
   if (!OPS.has(op)) return null;
   const field = fieldName(path);
-  if (op === 'in' || op === 'nin') {
-    return { field, op: op as FilterOp, value: raw.split(',').map((s) => s.trim()) };
+  if (op === 'in' || op === 'nin' || op === 'refIn') {
+    return { field, op: op as FilterOp, value: list(raw) };
   }
   if (op === 'exists') {
     return { field, op: 'exists', value: raw !== 'false' };
   }
   return { field, op: op as FilterOp, value: raw };
+}
+
+/** Throws the filter's problems, if it has any, naming the query-string key it came from. */
+function checked(filter: QueryFilter, key: string): QueryFilter {
+  const issues = queryFilterIssues(filter, key);
+  if (issues.length) throw new ValidationError(issues);
+  return filter;
 }
 
 function parseOrder(raw: string): QueryOrder[] {
@@ -145,10 +153,22 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
       archived = value === 'true';
       continue;
     }
+    if (key === 'links_to_entry') {
+      const ids = list(value).filter(Boolean);
+      filters.push(
+        checked(
+          ids.length === 1
+            ? { field: ANY_FIELD, op: 'ref', value: ids[0] }
+            : { field: ANY_FIELD, op: 'refIn', value: ids },
+          key,
+        ),
+      );
+      continue;
+    }
     const m = FILTER_KEY.exec(key);
     if (m) {
       const filter = toFilter(m[1] as string, m[2] ?? 'eq', value);
-      if (filter) filters.push(filter);
+      if (filter) filters.push(checked(filter, key));
     }
   }
 

@@ -19,10 +19,14 @@ import {
   visibleSearchHits,
 } from '@contentworker/application';
 import {
+  ANY_FIELD,
   assertQueryRespectsFieldRules,
   authorizeContent,
   canAccessContentType,
+  FILTER_OPS,
   maskDeniedFields,
+  type QueryFilter,
+  queryFilterIssues,
   SCOPES,
   ValidationError,
 } from '@contentworker/domain';
@@ -156,7 +160,9 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       description:
         'List entries (current/draft versions) with optional field-level filters, ' +
         'ordering, projection, and full-text search. Returns one page; pass nextCursor back ' +
-        'as cursor, with the same filters and order, for the next.',
+        'as cursor, with the same filters and order, for the next. ref/refIn find entries ' +
+        'whose link field links to an entry id; linksToEntry finds entries linking to it from ' +
+        'any field.',
       inputSchema: toolSchema('entries_query', () =>
         z.object({
           contentType: z.string().optional(),
@@ -171,11 +177,15 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
             .array(
               z.object({
                 field: z.string().describe('field apiId or a sys.* pseudo-field'),
-                op: z.enum(['eq', 'ne', 'in', 'nin', 'gt', 'gte', 'lt', 'lte', 'exists', 'match']),
-                value: z.any().optional(),
+                op: z.enum(FILTER_OPS),
+                value: z.any().optional().describe('a list for in, nin and refIn'),
               }),
             )
             .optional(),
+          linksToEntry: z
+            .array(z.string())
+            .optional()
+            .describe('entry ids: only entries linking to one of them, from any field'),
           order: z
             .array(z.object({ field: z.string(), direction: z.enum(['asc', 'desc']) }))
             .optional(),
@@ -193,9 +203,22 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
         throw new ValidationError([
           { field: 'skip', message: 'entries_query pages with cursor (its nextCursor), not skip' },
         ]);
+      // The same checks the query string's filters get: an agent's filter is
+      // refused as a client's is, never handed to the store half-formed.
+      const filters: QueryFilter[] = [
+        // `fields.title` is the query string's spelling of `title`; take either.
+        ...(args.filters ?? []).map((f) =>
+          f.field.startsWith('fields.') ? { ...f, field: f.field.slice('fields.'.length) } : f,
+        ),
+        ...(args.linksToEntry?.length
+          ? [{ field: ANY_FIELD, op: 'refIn' as const, value: args.linksToEntry }]
+          : []),
+      ];
+      const issues = filters.flatMap((f, i) => queryFilterIssues(f, `filters[${i}]`));
+      if (issues.length) throw new ValidationError(issues);
       assertQueryRespectsFieldRules(principal, {
         contentTypeApiId: args.contentType,
-        filters: args.filters,
+        filters,
         order: args.order,
         select: args.select,
         search: args.search,
@@ -207,7 +230,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           contentTypeApiId: args.contentType,
           limit: args.limit,
           locale: args.locale,
-          filters: args.filters,
+          ...(filters.length ? { filters } : {}),
           order: args.order,
           select: args.select,
           search: args.search,

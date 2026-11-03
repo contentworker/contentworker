@@ -938,6 +938,8 @@ function makeEntryRepo(
         contentTypeApiId: sql`${schema.entryPublished.contentTypeApiId}`,
         publishedAt: sql`${schema.entryPublished.publishedAt}`,
         metadata: sql`${schema.entryPublished.metadata}`,
+        // Published rows are what the reference edges describe: a link filter reads them.
+        edges: scope,
       };
       if (advanced) {
         if (query.filters?.length) {

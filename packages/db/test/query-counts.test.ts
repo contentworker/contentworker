@@ -411,6 +411,23 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     () => getDeliveredTag(ctx, scope, 'red', { locale: 'de' }),
   ],
   ['delivery: GET /taxonomy/concepts', () => listDeliveredConcepts(ctx, scope)],
+  // Filter by referenced entry: an IN over the reference edges, in the list's own statement.
+  [
+    'delivery: GET /entries?fields.author[ref]=',
+    () =>
+      listPublishedEntries(ctx, scope, {
+        contentTypeApiId: 'article',
+        filters: [{ field: 'author', op: 'ref', value: ids.authors[0] }],
+      }),
+  ],
+  [
+    'delivery: GET /entries?links_to_entry=',
+    () =>
+      listPublishedEntries(ctx, scope, {
+        contentTypeApiId: 'article',
+        filters: [{ field: '*', op: 'refIn', value: ids.authors }],
+      }),
+  ],
   [
     'delivery: GET /entries?metadata.tags.slug=red',
     () =>

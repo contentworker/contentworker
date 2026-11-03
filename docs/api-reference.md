@@ -142,11 +142,19 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 | ----------------- | ------------------------------------- | --------------------------------------------------------------------- |
 | Field filter      | `fields.<apiId>=v`                    | Equals                                                                |
 | Field filter (op) | `fields.<apiId>[op]=v`                | `op` ∈ `ne`, `in`, `nin`, `gt`, `gte`, `lt`, `lte`, `exists`, `match` |
+| Referenced entry  | `fields.<link>[ref]=<id>`             | The field links to the entry (`[refIn]=<id>,<id>`: any of them)        |
+| Links to entry    | `links_to_entry=<id>[,<id>]`          | Any field links to the entry; refused (403) to a key with hidden fields |
 | System field      | `sys.publishedAt[gt]=<iso>`           | Filter on `sys.*` pseudo-fields                                       |
 | Taxonomy          | `metadata.tags.slug=news`             | Delivery only: entries carrying a tag (`metadata.tags` by id; `metadata.concepts[.slug]` for concepts) |
 | Sort              | `order=fields.title,-sys.publishedAt` | Comma-separated; `-` prefix = descending                              |
 | Projection        | `select=fields.title,fields.body`     | Return only listed field apiIds                                       |
 | Full-text         | `query=foo`                           | FTS over string fields (published model on Delivery)                  |
+
+The D1 store pushes a superset of each predicate into SQL and the domain engine
+(`runEntryQuery`) decides exactly (`packages/db/src/query-pushdown.ts`). Reference filters on
+Delivery are an `IN` over the `references` edges table (by its `to_id` index), on Preview a
+`json_tree` scan of the current fields. Prefilters spend at most `PREFILTER_PARAM_BUDGET` (64)
+bound parameters per statement; a predicate past it is left to the engine.
 
 ---
 
