@@ -29,7 +29,7 @@ One file per deployment, parsed by `toDeployment` in `scripts/fleet.ts`:
 | `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI Gateway), no Vectorize, `ALLOW_FAKE_ADAPTERS=ai,vectors` on the api, delivery and engine; never in `general` |
 | `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether AI Gateway logs each call (prompts and answers never)                                                                   |
 | `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`)                                              |
-| `email`         | `{ from, fromName? }`: Email Sending sender; adds the engine's `send_email` binding                                                                            |
+| `email`         | `{ from, fromName? }`: Email Sending sender (workflow notify nodes, invitations, scheduler alerts); adds the engine's `send_email` binding                       |
 
 `scripts/fleet.ts` commands (`pnpm fleet <command>` is the same script):
 
@@ -60,6 +60,30 @@ it lists the secrets the deployment's GitHub environment must hold. Then, for a 
 deployment CI deploys (or with `--url <api base>`, e.g. `http://localhost:8787`), it reads
 `https://api.<domain>/health` and fails on `scheduler: stale`. `--offline` skips the fetch. It
 exits `1` on any error.
+
+## Scheduler alerts
+
+The engine's per-minute cron runs the sweeps nothing else would notice stopping: the outbox relay,
+scheduled actions, asset expiry, retention, the reseal and the rest. Two things watch it:
+
+- **The cron watches its sweeps.** At the end of each tick it checks every sweep the deployment
+  runs; one that has gone two of its runs without a success (five minutes for the every-minute
+  sweeps, two hours for the hourly ones, two days for the daily ones) is stale. The deployment's
+  alert recipients get one email when it goes stale and one when it succeeds again, never one per
+  tick. Set them with `PUT /deployment/scheduler/alerts` (or the `scheduler_alerts_set_recipients`
+  MCP tool) as a deployment administrator; the emails need the deployment's `email` sender. With no
+  recipients or no sender the engine still logs every episode (`scheduler job stale`), which a
+  Workers Logs alert can match. `GET /deployment/scheduler/alerts` shows what is stale and how
+  each email went.
+- **Something outside watches the cron.** When the cron itself stops (the engine fails to deploy
+  or boot, the trigger is gone) nothing of it runs to say so. Point an uptime monitor (a
+  Cloudflare Health Check with a notification, or any external checker) at
+  `https://api.<domain>/health/scheduler`, which answers `503` once the last tick is more than
+  five minutes old. `/health` itself stays `200`: it is the api's liveness, and CI's smoke test
+  reads it right after a deploy, before a new deployment's first tick. When the cron comes back,
+  its first tick emails the recipients that it is ticking again, with how long it was out.
+
+`doctor <id>` reads the same state from `/health` and fails on `scheduler: stale`.
 
 ## Provisioning a deployment
 

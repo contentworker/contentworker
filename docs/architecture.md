@@ -161,7 +161,18 @@ bind them by `script_name`) and handles:
   failure is logged and recorded, and never skips the rest of the tick. At the end of the tick one
   D1 batch writes the heartbeat (`scheduler_jobs`: each sweep's last run, success and redacted
   error, plus the `tick` row); a failed write is logged and the next tick writes again. The api's
-  `/health` reports `scheduler: stale` once the `tick` row is more than five minutes old.
+  `/health` reports `scheduler: stale` once the `tick` row is more than five minutes old, and
+  `/health/scheduler` answers `503` then, for an external uptime check. After the heartbeat the
+  tick evaluates the stale alerts (`alertOnSchedulerTick`, `packages/application/src/scheduler-alerts.ts`):
+  a sweep the deployment runs (`cronSchedule` in `heartbeat.ts`) is stale once it has gone two of
+  its runs without a success, five minutes for the every-minute ones. Each stale episode emails the
+  deployment's alert recipients once through the `EmailSender` (Email Sending), and once more when
+  it recovers; a tick that finds the previous one more than five minutes old emails that the cron
+  is back. The episodes live in the deployment setting `scheduler-alerts:state`, written by the
+  cron only and only when something changes, each write a compare-and-set so overlapping ticks
+  never both send; a notice a tick has claimed is leased to it for two minutes, retried on later
+  ticks if undelivered and given up after five tries. Every episode is also a log line
+  (`scheduler job stale`, `scheduler job recovered`, `scheduler resumed`), with or without email.
 
 | Durable Object   | Keyed by                                             | Purpose                                                             |
 | ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |

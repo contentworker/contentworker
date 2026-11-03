@@ -97,11 +97,12 @@ deleted after its check is refused (`404`).
 
 ## System endpoints
 
-| Method | Path                    | Auth | Response                                             |
-| ------ | ----------------------- | ---- | ---------------------------------------------------- |
-| GET    | `/health`               | none | `{ "status": "ok", "scheduler": "ok" }` (below)      |
-| GET    | `/ready`                | none | `{ "status": "ready", "role": "<role>" }`            |
-| GET    | `/graphiql/:space/:env` | none | GraphiQL HTML shell (queries still need a CDA token) |
+| Method | Path                    | Auth | Response                                                 |
+| ------ | ----------------------- | ---- | -------------------------------------------------------- |
+| GET    | `/health`               | none | `{ "status": "ok", "scheduler": "ok" }` (below)          |
+| GET    | `/health/scheduler`     | none | `{ "scheduler": "ok" }`, `503` unless `ok` (below)       |
+| GET    | `/ready`                | none | `{ "status": "ready", "role": "<role>" }`                |
+| GET    | `/graphiql/:space/:env` | none | GraphiQL HTML shell (queries still need a CDA token)     |
 
 `/health` always answers `200` with `status: "ok"` while the api runs. `scheduler` says whether the
 engine's per-minute cron is ticking: `ok` when its last tick is at most five minutes old, `stale`
@@ -113,6 +114,21 @@ or MCP token; anyone else `403`) and the `scheduler_status` MCP tool return the 
 one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `abandoned-multipart-uploads`, `abandoned-uploads`, `expired-zips`, `event-history-prune`, `secrets-reseal`, `taxonomy-repair`,
 `bulk-resume`, `environment-purge-resume`, `version-archive`, `agent-schedules`), the error
 redacted and at most 500 characters.
+
+`/health/scheduler` is the same answer for an external uptime monitor: `200 { "scheduler": "ok" }`
+while the cron ticks, `503` with `stale` or `unknown` otherwise (same 30 s cache, same privacy).
+`/health` stays `200` because it is the api's liveness and the deploy smoke test's; the cron can't
+report its own outage, so this probe is what an uptime check watches (see
+[Deployment](./deployment.md#scheduler-alerts)).
+
+`GET /deployment/scheduler/alerts` and the `scheduler_alerts` MCP tool (deployment administrators)
+return the stale alerts: `{ recipients, evaluatingSince?, open: [episode], recent: [episode] }`,
+where an episode is `{ id, job, lastSuccessAt?, detectedAt, lastError?, resolvedAt?, resolution?,
+staleNotice?, recoveryNotice? }` and a notice `{ state: pending|sent|failed|skipped, attempts, at?,
+error? }`. `recent` holds the last 20 resolved episodes, newest first; `job: "tick"` is a gap in
+the cron, resolved when it came back. `PUT /deployment/scheduler/alerts` with
+`{ "recipients": ["oncall@example.com"] }` (and `scheduler_alerts_set_recipients`) replaces who is
+emailed: at most 50 addresses, trimmed, lowercased and deduplicated; `[]` turns the emails off.
 
 ---
 

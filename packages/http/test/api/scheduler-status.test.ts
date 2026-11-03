@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import { recordSchedulerTick, SchedulerTick } from '@contentworker/application';
 import type { Principal } from '@contentworker/domain';
-import type { ApiConfig } from '@contentworker/platform/config';
+import { type ApiConfig, loadConfig } from '@contentworker/platform/config';
+import { principalTarget, signPrincipal } from '@contentworker/security/principal';
 import {
   FixedClock,
   InMemoryVectorStore,
@@ -10,7 +11,7 @@ import {
   StubAIProvider,
 } from '@contentworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp, HEALTH_SCHEDULER_TTL_MS } from '../../src/api/app';
 import type { McpDeps } from '../../src/mcp/deps';
 import { buildServer } from '../../src/mcp/server';
@@ -71,6 +72,124 @@ describe('GET /health', () => {
       status: 'ok',
       scheduler: 'stale',
     });
+  });
+});
+
+describe('GET /health/scheduler', () => {
+  it('answers 503 while the scheduler is stale, for an uptime monitor, and 200 once it ticks', async () => {
+    const { ctx, clock, app } = build();
+    let res = await app.request('/health/scheduler');
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ scheduler: 'stale' });
+    // `/health` stays 200 through it: the api is live, and the deploy smoke test reads it.
+    expect((await app.request('/health')).status).toBe(200);
+
+    await tick(ctx, 'boom');
+    clock.advance(HEALTH_SCHEDULER_TTL_MS);
+    res = await app.request('/health/scheduler');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ scheduler: 'ok' });
+  });
+
+  it('answers 503 when the heartbeat cannot be read', async () => {
+    const { ctx, clock } = build();
+    const broken = {
+      ...ctx,
+      store: {
+        ...ctx.store,
+        schedulerJobs: {
+          ...ctx.store.schedulerJobs,
+          list: async () => {
+            throw new Error('D1_ERROR');
+          },
+        },
+      },
+    };
+    const w = wire(config);
+    const app = createApp({ ...broken, clock }, config, w.rag, w.blob, w.ai);
+    const res = await app.request('/health/scheduler');
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ scheduler: 'unknown' });
+  });
+});
+
+describe('/deployment/scheduler/alerts', () => {
+  const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+
+  it('sets and reads who is emailed, for the deployment admin', async () => {
+    const { app } = build();
+    let res = await app.request('/deployment/scheduler/alerts', { headers: admin });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recipients: [], open: [], recent: [] });
+
+    res = await app.request('/deployment/scheduler/alerts', {
+      method: 'PUT',
+      headers: admin,
+      body: JSON.stringify({ recipients: ['OnCall@Example.com', 'oncall@example.com'] }),
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { recipients: string[] }).recipients).toEqual([
+      'oncall@example.com',
+    ]);
+  });
+
+  it('refuses an address that is not one', async () => {
+    const { app } = build();
+    const res = await app.request('/deployment/scheduler/alerts', {
+      method: 'PUT',
+      headers: admin,
+      body: JSON.stringify({ recipients: ['oncall'] }),
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it('refuses a signed-in person who is not a deployment administrator', async () => {
+    const KEY = 'test-principal-key-0123456789abcdef';
+    const signedConfig = loadConfig({
+      ROLE: 'all',
+      ADMIN_TOKEN: 'admin',
+      CMA_KEY: 'cma',
+      CDA_KEY: 'cda',
+      CPA_KEY: 'cpa',
+      SEED_SPACE_ID: 's1',
+      PRINCIPAL_KEY: KEY,
+    } as NodeJS.ProcessEnv);
+    const w = wire(signedConfig);
+    const app = createApp(w.ctx, signedConfig, w.rag, w.blob, w.ai);
+    const member = async (method: string) => ({
+      'x-cw-principal': await signPrincipal(
+        KEY,
+        { sub: 'usr_member', email: 'member@example.com', name: 'member', role: 'member' },
+        principalTarget(method, '/deployment/scheduler/alerts'),
+      ),
+      'Content-Type': 'application/json',
+    });
+    const get = await app.request('/deployment/scheduler/alerts', { headers: await member('GET') });
+    expect(get.status).toBe(403);
+    const put = await app.request('/deployment/scheduler/alerts', {
+      method: 'PUT',
+      headers: await member('PUT'),
+      body: JSON.stringify({ recipients: ['attacker@example.com'] }),
+    });
+    expect(put.status).toBe(403);
+  });
+
+  it('refuses a space’s own keys and anonymous callers', async () => {
+    const { app } = build();
+    const asKey = await app.request('/deployment/scheduler/alerts', {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer cma', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipients: ['a@example.com'] }),
+    });
+    expect(asKey.status).toBe(403);
+    expect(
+      (
+        await app.request('/deployment/scheduler/alerts', {
+          headers: { Authorization: 'Bearer cma' },
+        })
+      ).status,
+    ).toBe(403);
+    expect((await app.request('/deployment/scheduler/alerts')).status).toBe(401);
   });
 });
 
@@ -143,5 +262,132 @@ describe('MCP scheduler_status', () => {
       scopes: ['space:admin'],
     });
     expect((await scoped.callTool({ name: 'scheduler_status', arguments: {} })).isError).toBe(true);
+  });
+});
+
+describe('MCP scheduler alert tools', () => {
+  const hasher = { hash: (v: string) => createHash('sha256').update(v).digest('hex') };
+
+  async function connect(ctx: McpDeps['ctx'], principal: Principal) {
+    const ai = new StubAIProvider(() => ({}));
+    const server = buildServer(
+      {
+        ctx,
+        ai,
+        rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
+        hasher,
+        adminToken: 'admin',
+        agents: new InProcessAgentRuntime(makeActivities({ ctx, ai })),
+      },
+      principal,
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(clientTransport);
+    return client;
+  }
+  const text = (result: Awaited<ReturnType<Client['callTool']>>) =>
+    JSON.parse(
+      (result.content as { type: string; text?: string }[]).find((c) => c.type === 'text')?.text ??
+        'null',
+    );
+
+  it('sets and reads the same as the routes, and refuses a space key', async () => {
+    const { ctx, app } = build();
+    const root = await connect(ctx, { spaceId: '*', kind: 'admin', scopes: [] });
+    const set = await root.callTool({
+      name: 'scheduler_alerts_set_recipients',
+      arguments: { recipients: ['oncall@example.com'] },
+    });
+    expect(text(set).recipients).toEqual(['oncall@example.com']);
+    const route = await (
+      await app.request('/deployment/scheduler/alerts', {
+        headers: { Authorization: 'Bearer admin' },
+      })
+    ).json();
+    expect(text(await root.callTool({ name: 'scheduler_alerts', arguments: {} }))).toEqual(route);
+
+    const scoped = await connect(ctx, { spaceId: 's1', kind: 'cma', scopes: ['space:admin'] });
+    expect((await scoped.callTool({ name: 'scheduler_alerts', arguments: {} })).isError).toBe(true);
+    expect(
+      (
+        await scoped.callTool({
+          name: 'scheduler_alerts_set_recipients',
+          arguments: { recipients: ['x@example.com'] },
+        })
+      ).isError,
+    ).toBe(true);
+  });
+
+  it('declares the read read-only, and the setter not', async () => {
+    const { ctx } = build();
+    const root = await connect(ctx, { spaceId: '*', kind: 'admin', scopes: [] });
+    const { tools } = await root.listTools();
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    expect(byName.scheduler_alerts?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.scheduler_alerts_set_recipients?.annotations?.readOnlyHint).not.toBe(true);
+  });
+});
+
+describe('scheduler alert recipients audit', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const audits = (log: { mock: { calls: unknown[][] } }) =>
+    log.mock.calls
+      .map(([line]) => {
+        try {
+          return JSON.parse(String(line)) as Record<string, unknown>;
+        } catch {
+          return {};
+        }
+      })
+      .filter((l) => l.type === 'deployment_audit');
+
+  it('records the root token as the actor over HTTP and over MCP alike', async () => {
+    const { ctx, app } = build();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const res = await app.request('/deployment/scheduler/alerts', {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipients: ['oncall@example.com'] }),
+    });
+    expect(res.status).toBe(200);
+
+    const ai = new StubAIProvider(() => ({}));
+    const server = buildServer(
+      {
+        ctx,
+        ai,
+        rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
+        hasher: { hash: (v: string) => createHash('sha256').update(v).digest('hex') },
+        adminToken: 'admin',
+        agents: new InProcessAgentRuntime(makeActivities({ ctx, ai })),
+      },
+      { spaceId: '*', kind: 'admin', scopes: [] },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(clientTransport);
+    const result = await client.callTool({
+      name: 'scheduler_alerts_set_recipients',
+      arguments: { recipients: ['a@example.com', 'b@example.com'] },
+    });
+    expect(result.isError).not.toBe(true);
+
+    expect(audits(log)).toEqual([
+      expect.objectContaining({
+        action: 'scheduler.alerts.recipients_set',
+        actor: 'admin-token',
+        count: 1,
+      }),
+      expect.objectContaining({
+        action: 'scheduler.alerts.recipients_set',
+        actor: 'admin-token',
+        count: 2,
+      }),
+    ]);
+    expect(JSON.stringify(audits(log))).not.toContain('example.com');
   });
 });

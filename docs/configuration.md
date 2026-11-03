@@ -30,7 +30,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `Queue`              | `EVENTS_QUEUE` (+ `BULK_QUEUE`, `AGENTS_QUEUE`, `PURGE_QUEUE`)     | Outbox stays pending; no async dispatch                            |
 | `EventBus` (live)    | `LIVE_HUB`                                                         | Keepalives only                                                    |
 | Plugin runtime       | Worker Loader (`PLUGIN_LOADER`)                                    | Installed plugins never execute                                    |
-| `EmailSender`        | `send_email` (`EMAIL`) + `EMAIL_FROM`                              | `content.notify` nodes fail with a clear error                     |
+| `EmailSender`        | `send_email` (`EMAIL`) + `EMAIL_FROM`                              | `content.notify` nodes fail with a clear error; scheduler alerts are logged only |
 
 ## Bindings
 
@@ -218,7 +218,7 @@ Worker when needed.
 | `VERSION_ARCHIVE`               | ✓   | ✓   | `false`                             | Move superseded entry version bodies to the media bucket on the engine's cron (turn on once every Worker reads them) |
 | `AGENT_SCHEDULE_MAX_ENTRIES`    |     |     | `25`                                | Entries per scheduled run                                                                                            |
 | `AGENT_SCHEDULE_MAX_RUN_TOKENS` |     |     | `100000`                            | Token cap per scheduled run                                                                                          |
-| `EMAIL_FROM`, `EMAIL_FROM_NAME` | ✓   | ✓   | empty                               | Email Sending sender for workflow `content.notify` nodes; rendered from the registry's `email`                       |
+| `EMAIL_FROM`, `EMAIL_FROM_NAME` | ✓   | ✓   | empty                               | Email Sending sender for workflow `content.notify` nodes and the scheduler alerts; rendered from the registry's `email` |
 | `PLUGIN_MIN_RELEASE_AGE_HOURS`  | ✓   | ✓   | empty                               | Minimum age of a plugin release installed from a URL; callers may ask for longer, never shorter                      |
 | `PLUGIN_SOURCE_HOSTS`           | ✓   | ✓   | empty                               | Comma-separated hosts plugins may be installed from; callers may narrow, never widen                                 |
 

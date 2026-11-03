@@ -56,7 +56,14 @@ import {
 } from '@contentworker/platform/wire';
 import { redactCredentials } from '@contentworker/redaction';
 import { AssistantAgent } from './assistant';
-import { CRON_JOBS, finishTick, isTaxonomyRepairTick, startTick, sweep } from './heartbeat';
+import {
+  CRON_JOBS,
+  cronSchedule,
+  finishTick,
+  isTaxonomyRepairTick,
+  startTick,
+  sweep,
+} from './heartbeat';
 import { runInLanes } from './lanes';
 import { newPurgePlan, planPurges, sendPurges } from './purges';
 import { AgentWorkflow } from './workflows/agent-workflow';
@@ -468,7 +475,9 @@ export default {
    * missed (crash/eviction), fires due scheduled publish/unpublish actions and
    * unpublishes assets whose rights expired. Each sweep's outcome, and the tick
    * itself, is written as the scheduler's heartbeat at the end (./heartbeat.ts):
-   * the api's /health reads it.
+   * the api's /health reads it. Then the stale alerts: a sweep that has gone two of
+   * its runs (five minutes for the every-minute ones) without a success emails the
+   * deployment's alert recipients once, and again when it recovers.
    */
   async scheduled(ctrl: ScheduledController, rawEnv: EdgeEnv, _exec: ExecutionContext) {
     const env = withJurisdiction(rawEnv);
@@ -755,7 +764,16 @@ export default {
       }
     } finally {
       // The heartbeat goes to D1 only: an in-memory store would hold it for nobody to read.
-      if (wired.persistent) await finishTick(wired.ctx, tick);
+      if (wired.persistent) {
+        await finishTick(wired.ctx, tick, {
+          schedule: cronSchedule({
+            queue: Boolean(wired.queue),
+            versionArchive: env.VERSION_ARCHIVE === 'true',
+            agentSchedules: env.AGENTS_SCHEDULES === 'true',
+          }),
+          ...(wired.workflowNodes.email ? { email: wired.workflowNodes.email } : {}),
+        });
+      }
       await wired.close();
     }
   },

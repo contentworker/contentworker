@@ -69,6 +69,7 @@ export * from './redirects';
 export * from './releases';
 export * from './render';
 export * from './roles';
+export * from './scheduler-alerts';
 export * from './scheduler-health';
 export * from './scheduling';
 export * from './search-index';

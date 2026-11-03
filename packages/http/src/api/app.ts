@@ -18,7 +18,7 @@ import type { AuthDeps, AuthRateLimit } from './auth';
 import { createApiHasher } from './auth';
 import { describeDelivery } from './docs/delivery-docs';
 import { doc, mountDocs } from './docs/openapi';
-import { health, ready } from './docs/schemas/health';
+import { health, ready, schedulerHealth } from './docs/schemas/health';
 import { onError } from './http';
 import { oauthEnabled, oauthRoutes } from './oauth/routes';
 import {
@@ -120,15 +120,36 @@ export function createApp(
   // kept for HEALTH_SCHEDULER_TTL_MS per isolate, so a probe flood costs one D1 read a window,
   // and the api stays live (200) whatever the scheduler is doing.
   let schedulerSeen: { state: SchedulerState; at: number } | undefined;
+  const schedulerNow = async (): Promise<SchedulerState> => {
+    const now = ctx.clock.now().getTime();
+    if (!schedulerSeen || now - schedulerSeen.at >= HEALTH_SCHEDULER_TTL_MS) {
+      schedulerSeen = { state: await schedulerState(ctx), at: now };
+    }
+    return schedulerSeen.state;
+  };
   app.get(
     '/health',
     doc('System', 'Liveness probe, with whether the engine cron is ticking', { ok: health }),
     async (c) => {
-      const now = ctx.clock.now().getTime();
-      if (!schedulerSeen || now - schedulerSeen.at >= HEALTH_SCHEDULER_TTL_MS) {
-        schedulerSeen = { state: await schedulerState(ctx), at: now };
-      }
-      return c.json({ status: 'ok' as const, scheduler: schedulerSeen.state });
+      return c.json({ status: 'ok' as const, scheduler: await schedulerNow() });
+    },
+  );
+  // The check for an external uptime monitor. The cron alerts on its own sweeps, but when the cron
+  // itself stops nothing of it runs to say so: only something outside the deployment can notice
+  // that. `/health` stays 200 (it is the api's liveness, and the deploy smoke test's), so this
+  // answers 503 while the scheduler is stale or unreadable. Same cached read, same privacy.
+  app.get(
+    '/health/scheduler',
+    doc('System', 'Scheduler probe for uptime monitors: 503 unless the engine cron is ticking', {
+      ok: schedulerHealth,
+      description:
+        '200 `{ "scheduler": "ok" }` while the engine cron has ticked in the last five minutes; ' +
+        '503 with `stale` or `unknown` otherwise. Point an external uptime check at it: the ' +
+        'cron cannot report its own outage.',
+    }),
+    async (c) => {
+      const scheduler = await schedulerNow();
+      return c.json({ scheduler }, scheduler === 'ok' ? 200 : 503);
     },
   );
   app.get(
