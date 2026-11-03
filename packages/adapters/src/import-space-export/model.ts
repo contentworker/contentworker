@@ -1,10 +1,14 @@
 import {
   type ContentType,
+  FIELD_GUIDANCE_LIMITS,
   type FieldDefinition,
   type FieldType,
   type FieldValidations,
   isValidApiId,
   type LinkType,
+  MESSAGE_RULES,
+  type MessageRule,
+  normalizeOptions,
   UNIQUE_FIELD_TYPES,
   unsafeRegexReason,
 } from '@contentworker/domain';
@@ -170,6 +174,8 @@ function mapField(
       `${where}[]`,
       typeIdOf,
       findings,
+      // An element's rules are not enforced per element yet, so a message would explain nothing.
+      false,
     );
     if (itemType === 'Symbol') {
       items = {
@@ -220,9 +226,10 @@ function linkTypeOf(value: unknown): LinkType | undefined {
 }
 
 /**
- * The export lists validations as one-rule objects. The rules this platform enforces the same way
- * are kept; the rest (asset size and dimensions, mime groups, date ranges, rich-text node and mark
- * restrictions, custom messages, …) are reported, since an editor here would not be held to them.
+ * The export lists validations as one-rule objects, each with an optional custom message. The
+ * rules this platform enforces the same way are kept, with their message; the rest (asset size and
+ * dimensions, mime groups, date ranges, rich-text node and mark restrictions, …) are reported, since
+ * an editor here would not be held to them.
  */
 function mapValidations(
   raw: unknown,
@@ -230,24 +237,22 @@ function mapValidations(
   where: string,
   typeIdOf: ReadonlyMap<string, string | undefined>,
   findings: ModelFindings,
+  keepMessages = true,
 ): { rules?: FieldValidations; unique?: boolean } {
   if (!Array.isArray(raw) || raw.length === 0) return {};
   const rules: FieldValidations = {};
+  const messages: { [R in MessageRule]?: string } = {};
   let unique = false;
   const report = (rule: string) => findings.unmappedValidations.push(`${where}: ${rule}`);
 
   for (const v of raw) {
     if (!isObject(v)) continue;
+    const message = str(v.message)?.trim();
     for (const [rule, value] of Object.entries(v)) {
-      if (rule === 'message') {
-        // The rule it explains is kept (or reported) on its own; only the wording is lost.
-        report('custom message');
-        continue;
-      }
+      if (rule === 'message') continue;
       if (rule === 'in' && Array.isArray(value)) {
-        rules.in = value.filter((x): x is string | number =>
-          ['string', 'number'].includes(typeof x),
-        );
+        // Only usable values, once each: the export may hold anything.
+        rules.in = normalizeOptions(value.filter((x) => typeof x !== 'object'));
       } else if (rule === 'size' && isObject(value)) {
         rules.size = numericRange(value);
       } else if (rule === 'range' && isObject(value)) {
@@ -270,11 +275,24 @@ function mapValidations(
         else report(`unique (not supported on a ${type} field)`);
       } else {
         report(rule);
+        continue;
       }
+      if (!message) continue;
+      // Kept with a rule that was kept and can carry one (a message for a reported rule would
+      // explain nothing here); otherwise the wording is reported lost.
+      if (!keepMessages || !isMessageRule(rule) || rules[rule] === undefined) {
+        report(`${rule} custom message`);
+      } else if (message.length > FIELD_GUIDANCE_LIMITS.message) {
+        report(`${rule} custom message (longer than ${FIELD_GUIDANCE_LIMITS.message} characters)`);
+      } else messages[rule] = message;
     }
   }
+  if (Object.keys(messages).length > 0) rules.messages = messages;
   return { ...(Object.keys(rules).length ? { rules } : {}), ...(unique ? { unique } : {}) };
 }
+
+const isMessageRule = (rule: string): rule is MessageRule =>
+  (MESSAGE_RULES as readonly string[]).includes(rule);
 
 function numericRange(value: Json): { min?: number; max?: number } {
   return {

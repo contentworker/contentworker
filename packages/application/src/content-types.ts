@@ -20,11 +20,13 @@ export async function createContentType(
   scope: Scope,
   draft: ContentTypeDraft,
 ): Promise<ContentType> {
-  const contentType = defineContentType(draft);
-  const existing = await ctx.store.contentTypes.get(scope, contentType.apiId);
+  // An existing type is revised, not defined afresh: a revision is checked against what is
+  // stored, so a definition saved before a check existed can still be edited.
+  const existing = await ctx.store.contentTypes.get(scope, draft.apiId);
   if (existing) {
-    return updateContentType(ctx, scope, contentType.apiId, draft);
+    return updateContentType(ctx, scope, draft.apiId, draft);
   }
+  const contentType = defineContentType(draft);
   await ctx.store.contentTypes.save(scope, contentType);
   return contentType;
 }

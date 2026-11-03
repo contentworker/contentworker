@@ -2,6 +2,7 @@ import {
   applyDefaults,
   type ContentType,
   type EntryFields,
+  FIELD_GUIDANCE_LIMITS,
   type FieldDefinition,
   type LinkType,
   type LocalizedValue,
@@ -76,7 +77,7 @@ function convertSpace(doc: Json, options: SpaceExportReadOptions): ConvertedSpac
   const exportLocales = new Set(locales.map((l) => l.code));
 
   const types = mapContentTypes(list(doc.contentTypes), findings);
-  reportEditorInterfaces(list(doc.editorInterfaces), findings.warnings);
+  importHelpTexts(list(doc.editorInterfaces), types, findings.warnings);
   for (const key of ['webhooks', 'roles']) {
     const n = list(doc[key]).length;
     if (n > 0) findings.warnings.push(`${n} ${key} in the export are not imported`);
@@ -223,21 +224,39 @@ function readLocales(raw: readonly unknown[], warnings: string[]): ConvertedLoca
 
 /**
  * Editor interfaces describe the source's editing widgets, which have no counterpart here. The
- * one thing in them that is content (help text written for editors) is counted, so its loss is
- * visible.
+ * one thing in them that is content, help text written for editors, becomes the field's `help`.
+ * One for a field that was not imported, or longer than a field's help may be, is counted, so its
+ * loss is visible.
  */
-function reportEditorInterfaces(raw: readonly unknown[], warnings: string[]): void {
-  let helpTexts = 0;
+function importHelpTexts(
+  raw: readonly unknown[],
+  types: Map<string, MappedContentType>,
+  warnings: string[],
+): void {
+  let dropped = 0;
   for (const ei of raw) {
     if (!isObject(ei)) continue;
+    const mapped = types.get(sysId(isObject(ei.sys) ? ei.sys.contentType : undefined) ?? '');
+    const apiIdOf = new Map(
+      [...(mapped?.sourceFieldIds ?? [])].map(([apiId, sourceId]) => [sourceId, apiId]),
+    );
+    const help = new Map<string, string>();
     for (const control of list(ei.controls)) {
-      if (isObject(control) && isObject(control.settings) && str(control.settings.helpText)) {
-        helpTexts += 1;
-      }
+      if (!isObject(control) || !isObject(control.settings)) continue;
+      const text = str(control.settings.helpText)?.trim();
+      if (!text) continue;
+      const apiId = apiIdOf.get(str(control.fieldId) ?? '');
+      if (apiId && text.length <= FIELD_GUIDANCE_LIMITS.help) help.set(apiId, text);
+      else dropped += 1;
     }
+    if (!mapped || help.size === 0) continue;
+    const fields = mapped.contentType.fields.map((f) =>
+      help.has(f.apiId) ? { ...f, help: help.get(f.apiId) } : f,
+    );
+    types.set(mapped.sourceId, { ...mapped, contentType: { ...mapped.contentType, fields } });
   }
-  if (helpTexts > 0)
-    warnings.push(`${helpTexts} field help text(s) from editor interfaces are not imported`);
+  if (dropped > 0)
+    warnings.push(`${dropped} field help text(s) from editor interfaces are not imported`);
 }
 
 /**

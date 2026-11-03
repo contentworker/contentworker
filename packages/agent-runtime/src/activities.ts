@@ -4,6 +4,7 @@ import {
   createAgentReview,
   DEFAULT_MODERATION_THRESHOLD,
   decideWithBudget,
+  describeFieldForModel,
   generateWithBudget,
   moderationQuestions,
   moderationVerdict,
@@ -69,6 +70,8 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
         .map((f) => ({
           apiId: f.apiId,
           name: f.name,
+          ...(f.help ? { help: f.help } : {}),
+          ...(f.description ? { description: f.description } : {}),
           hasValue:
             typeof found.fields[f.apiId]?.[locale] === 'string' &&
             !!found.fields[f.apiId]?.[locale],
@@ -92,7 +95,7 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
       const properties: Record<string, unknown> = {};
       const required: string[] = [];
       for (const f of input.fields) {
-        properties[f.apiId] = { type: 'string', description: f.name };
+        properties[f.apiId] = { type: 'string', description: describeFieldForModel(f) };
         required.push(f.apiId);
       }
       const schema = { type: 'object', properties, required, additionalProperties: false };

@@ -19,6 +19,8 @@ export function RichTextEditor(props: {
   /** id of the field's <Label>, giving the contenteditable its accessible name
    * (label htmlFor can't reach a non-labelable element). */
   ariaLabelledBy?: string;
+  /** ids of the help line and error under the field, read after its name. */
+  ariaDescribedBy?: string;
   value: unknown;
   pickers: Pickers;
   onChange: (value: RichTextDocument | undefined) => void;
@@ -54,9 +56,11 @@ export function RichTextEditor(props: {
         role: 'textbox',
         'aria-multiline': 'true',
         ...(props.ariaLabelledBy ? { 'aria-labelledby': props.ariaLabelledBy } : {}),
+        ...(props.ariaDescribedBy ? { 'aria-describedby': props.ariaDescribedBy } : {}),
       },
     }),
-    [props.ariaLabelledBy],
+    // Changes only when an error comes or goes, not per keystroke.
+    [props.ariaLabelledBy, props.ariaDescribedBy],
   );
 
   const editor = useEditor({

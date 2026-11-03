@@ -34,6 +34,12 @@ exist (create it first). Merging two content models is a different and much hard
 `compare`/`merge` for the intra-space case. Cloning is the cross-space case those cannot cover, and
 the target space is authorized separately so a clone cannot cross a tenancy boundary.
 
+A snapshot's content model is normalised once, before the checks (`normalizeSnapshotModel`): an
+`in` list stored before options were checked keeps its usable options, once each (and goes when
+none is left), and unusable guidance and messages are dropped, rather than failing the import. An
+entry that holds a dropped option is then refused by the checks, before anything is written; a labelled option keeps its value, since this release writes options bare.
+Validation messages and field guidance travel unchanged.
+
 What an import preserves:
 
 - **Ids.** Entries and asset records keep their ids (every table is keyed per environment), so
@@ -288,13 +294,15 @@ whole file in one pass:
 | `Link` (`Entry` / `Asset`)                                               | `Link` with `linkType`                                                                           |
 | `Array` of `Symbol` / `Link`                                             | `Array` with `items`                                                                             |
 | `ResourceLink`, other arrays                                             | not imported, listed in `unmappedFields`                                                         |
-| validations `in`, `size`, `range`, `regexp`, `linkContentType`, `unique` | `in`, `size`, `range`, `regexp` (if `unsafeRegexReason` allows it), `linkContentTypes`, `unique` |
-| any other validation, a custom `message`                                 | listed in `unmappedValidations`                                                                  |
+| validations `in` (usable values once each), `size`, `range`, `regexp`, `linkContentType`, `unique` | `in`, `size`, `range`, `regexp` (if `unsafeRegexReason` allows it), `linkContentTypes`, `unique` |
+| a validation's custom `message`                                          | `validations.messages` for a kept `in`, `size`, `range` or `regexp` on the field; else (a list element's, too) in `unmappedValidations` |
+| any other validation                                                     | listed in `unmappedValidations`                                                                  |
 | `required`, `localized`, `defaultValue`, `displayField`                  | the same (a missing display field becomes the first `Symbol`)                                    |
 | `locales` with `fallbackCode`                                            | the space's locales and `fallbacks` (added only with `addLocales`)                               |
 | `tags`, `metadata.tags`                                                  | taxonomy tags, attached to their entries                                                         |
 | assets (`fields.file` per locale)                                        | one asset each (the default locale's file), the file copied from its URL                         |
-| `editorInterfaces`, `webhooks`, `roles`                                  | not imported; help texts are counted in `warnings`                                               |
+| `editorInterfaces` help text (`settings.helpText`)                       | the field's `help`; one with no imported field, or over 500 characters, is counted in `warnings` |
+| other `editorInterfaces` settings, `webhooks`, `roles`                   | not imported                                                                                     |
 
 A content type or field id that is not a legal apiId here (a hyphen, a leading digit) is rewritten
 (`landing-page` → `landing_page`) and named in `warnings`.

@@ -5,6 +5,8 @@ import {
   type ComponentVariant,
   type FieldDefinition,
   type FieldValidations,
+  optionValue,
+  ruleMessage,
   unsafeRegexReason,
 } from '../content-type/field';
 import { isSlug } from '../content-type/slug';
@@ -113,7 +115,7 @@ function validateValue(
         push('Expected a string');
         return;
       }
-      checkSize(value.length, v?.size, push, 'length');
+      checkSize(value.length, v, push, 'length');
       // Slugs are normalized on write, so anything reaching here that is not
       // already a slug means normalization was bypassed — report it rather
       // than silently storing a value that will break a URL.
@@ -128,7 +130,7 @@ function validateValue(
         push('Expected a string');
         return;
       }
-      checkSize(value.length, v?.size, push, 'length');
+      checkSize(value.length, v, push, 'length');
       checkIn(value, v, push);
       if (v?.regexp) {
         // Defence in depth: patterns are screened at content-type authoring time
@@ -138,7 +140,7 @@ function validateValue(
         if (reason) {
           push(`Invalid pattern: ${reason}`);
         } else if (!new RegExp(v.regexp.pattern, v.regexp.flags).test(value)) {
-          push(`Does not match pattern /${v.regexp.pattern}/`);
+          push(ruleMessage(v, 'regexp') ?? `Does not match pattern /${v.regexp.pattern}/`);
         }
       }
       break;
@@ -150,7 +152,7 @@ function validateValue(
         return;
       }
       if (field.type === 'Integer' && !Number.isInteger(value)) push('Expected an integer');
-      checkRange(value, v?.range, push);
+      checkRange(value, v, push);
       checkIn(value, v, push);
       break;
     }
@@ -210,7 +212,7 @@ function validateValue(
         push('Expected an array');
         return;
       }
-      checkSize(value.length, v?.size, push, 'item count');
+      checkSize(value.length, v, push, 'item count');
       const itemType = field.items?.type;
       const variants = itemType === 'Component' ? field.items?.variants : undefined;
       if (variants) {
@@ -325,25 +327,38 @@ function isLink(value: unknown): value is { id: string; linkType: string } {
   return typeof l?.id === 'string' && typeof l?.linkType === 'string';
 }
 
+// Each check reports the rule's custom message, when the definition gives one,
+// in place of its default text: the author's wording is the instruction an
+// editor (or agent) can act on, and the default is only a description of the rule.
+
 function checkIn(
   value: string | number,
   v: FieldValidations | undefined,
   push: (m: string) => void,
 ) {
-  if (v?.in && !v.in.includes(value)) push(`Value must be one of: ${v.in.join(', ')}`);
+  // A list stored before options were checked may be anything; a non-list constrains nothing.
+  if (!Array.isArray(v?.in)) return;
+  const allowed = v.in.map(optionValue);
+  if (!allowed.includes(value))
+    push(ruleMessage(v, 'in') ?? `Value must be one of: ${allowed.join(', ')}`);
 }
 
-function checkRange(value: number, range: FieldValidations['range'], push: (m: string) => void) {
-  if (range?.min !== undefined && value < range.min) push(`Must be >= ${range.min}`);
-  if (range?.max !== undefined && value > range.max) push(`Must be <= ${range.max}`);
+function checkRange(value: number, v: FieldValidations | undefined, push: (m: string) => void) {
+  const range = v?.range;
+  if (range?.min !== undefined && value < range.min)
+    push(ruleMessage(v, 'range') ?? `Must be >= ${range.min}`);
+  if (range?.max !== undefined && value > range.max)
+    push(ruleMessage(v, 'range') ?? `Must be <= ${range.max}`);
 }
 
 function checkSize(
   n: number,
-  size: FieldValidations['size'],
+  v: FieldValidations | undefined,
   push: (m: string) => void,
   label: string,
 ) {
-  if (size?.min !== undefined && n < size.min) push(`${label} must be >= ${size.min}`);
-  if (size?.max !== undefined && n > size.max) push(`${label} must be <= ${size.max}`);
+  const size = v?.size;
+  const custom = ruleMessage(v, 'size');
+  if (size?.min !== undefined && n < size.min) push(custom ?? `${label} must be >= ${size.min}`);
+  if (size?.max !== undefined && n > size.max) push(custom ?? `${label} must be <= ${size.max}`);
 }

@@ -13,6 +13,7 @@ import {
   exportSnapshot,
   type ImportOptions,
   type ImportReport,
+  normalizeSnapshotModel,
   prepareSnapshotImport,
   publishSnapshotEntry,
   type StagedSnapshotEntry,
@@ -106,7 +107,7 @@ export async function startSnapshotImport(
   snapshot: EnvironmentSnapshot,
   options: StartSnapshotOptions = {},
 ): Promise<StartedSnapshotImport> {
-  snapshot = confineSnapshotFiles(target, snapshot, options.filesFrom);
+  snapshot = normalizeSnapshotModel(confineSnapshotFiles(target, snapshot, options.filesFrom));
   const { report, publishable } = await prepareSnapshotImport(ctx, target, snapshot, options);
   const publishing = options.publish !== false;
 

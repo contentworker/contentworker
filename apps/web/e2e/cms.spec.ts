@@ -12,6 +12,7 @@ import {
   seedAsset,
   seedAssetFolder,
   seedCms,
+  seedGuidedType,
   seedIngestFindings,
   statusOf,
   uploadAssetBytes,
@@ -1101,4 +1102,26 @@ test('a role’s content access: withhold unpublish, save, and read it back', as
   await expect(
     page.getByRole('dialog').getByRole('checkbox', { name: 'Unpublish Every type' }),
   ).not.toBeChecked();
+});
+
+test('guidance saved in the content type dialog shows on the entry form', async ({
+  page,
+  request,
+}) => {
+  await seedGuidedType(request);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Guided”' }).click();
+  await page.getByRole('button', { name: 'Guidance for Subtitle' }).click();
+  await page.getByLabel('Help text for Subtitle').fill('One line under the title.');
+  await page.getByLabel('Placeholder for Subtitle').fill('Close to the park');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+
+  await openCms(page, '/content/guided/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  const subtitle = page.getByLabel('Subtitle');
+  await expect(subtitle).toHaveAttribute('placeholder', 'Close to the park');
+  await expect(subtitle).toHaveAccessibleDescription(/One line under the title\./);
+  // Listed values are offered as a select.
+  await expect(page.getByLabel('Status').getByRole('option')).toHaveText(['None', 'open', 'let']);
 });

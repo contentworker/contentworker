@@ -40,12 +40,26 @@ export const UNIQUE_FIELD_TYPES: readonly FieldType[] = [
 ];
 
 /**
+ * One allowed value of an `in` rule: the bare value, or the value with the
+ * label an editor picks it by. Only `value` is stored on an entry and compared
+ * on write, so relabelling an option never invalidates content.
+ */
+export type FieldOption =
+  | string
+  | number
+  | { readonly value: string | number; readonly label: string };
+
+/** The validation rules a custom message can replace the default error text of. */
+export const MESSAGE_RULES = ['in', 'regexp', 'range', 'size'] as const;
+export type MessageRule = (typeof MESSAGE_RULES)[number];
+
+/**
  * Validation rules for a field. All optional; an absent rule is not enforced.
  * Stored as JSON on the field definition.
  */
 export interface FieldValidations {
-  /** Allowed values (enumeration). */
-  in?: readonly (string | number)[];
+  /** Allowed values (enumeration), bare or labelled. */
+  in?: readonly FieldOption[];
   /** Regular expression a Symbol/Text value must match. */
   regexp?: { pattern: string; flags?: string };
   /** Numeric range (inclusive) for Integer/Number. */
@@ -54,6 +68,122 @@ export interface FieldValidations {
   size?: { min?: number; max?: number };
   /** For Link/Array-of-Link: restrict to these content type apiIds. */
   linkContentTypes?: readonly string[];
+  /**
+   * The error text a broken rule reports instead of the default, keyed by rule:
+   * `{ regexp: 'Enter a five-digit ZIP code' }`. A map rather than a key inside
+   * each rule because `in` is a list, and one shape for every rule is one place
+   * for an editor or agent to look. A message for a rule the field does not
+   * declare is refused: it would explain an error that can never happen.
+   */
+  messages?: { readonly [R in MessageRule]?: string };
+}
+
+/**
+ * Longest `help`, `placeholder` and `description`, option label and validation
+ * message; and `brief`, the most of a field's guidance a model is shown.
+ */
+export const FIELD_GUIDANCE_LIMITS = {
+  help: 500,
+  placeholder: 200,
+  description: 2000,
+  optionLabel: 200,
+  message: 500,
+  brief: 600,
+} as const;
+
+// Both read definitions stored before options were checked, so neither trusts
+// the shape: a stray `null` in a legacy list must not take a save down.
+
+/** The stored value of an `in` option. */
+export const optionValue = (option: FieldOption): string | number =>
+  typeof option === 'object' && option !== null ? option.value : option;
+
+/** What an editor sees for an `in` option: its label, else the value itself. */
+export const optionLabel = (option: FieldOption): string =>
+  typeof option === 'object' && option !== null ? option.label : String(option);
+
+/**
+ * Two options clash when their values read the same as text: `'1'` and `1`
+ * would be one `<option value="1">` in a select, and one word in an error.
+ */
+export const optionKey = (option: FieldOption): string => String(optionValue(option));
+
+/** Why an `in` option is unusable, or null when it is fine. */
+export function optionProblem(option: unknown): string | null {
+  const labelled = typeof option === 'object' && option !== null;
+  const value = labelled ? (option as { value?: unknown }).value : option;
+  if (typeof value !== 'string' && (typeof value !== 'number' || !Number.isFinite(value))) {
+    return 'each validations.in option is a string, a number or { value, label }';
+  }
+  if (value === '') return 'an option value cannot be empty';
+  if (labelled) {
+    const label: unknown = (option as { label?: unknown }).label;
+    if (typeof label !== 'string' || label.trim() === '') {
+      return `option ${JSON.stringify(value)} needs a label`;
+    }
+    if (label.length > FIELD_GUIDANCE_LIMITS.optionLabel) {
+      return `an option label is at most ${FIELD_GUIDANCE_LIMITS.optionLabel} characters`;
+    }
+  }
+  return null;
+}
+
+/**
+ * An `in` list made usable, for a list stored before options were checked (a
+ * snapshot, an import) and for an editor drawing it: unusable options dropped,
+ * and each value kept once. When two options clash by text (`'1'` and `1`),
+ * the one whose type the field holds wins (a number for Integer and Number, a
+ * string for Symbol and Text), since only that one can ever match a value;
+ * otherwise the first. Never refuses; a non-list reads as no options.
+ */
+export function normalizeOptions(options: unknown, type?: FieldType): FieldOption[] {
+  if (!Array.isArray(options)) return [];
+  const want =
+    type === 'Integer' || type === 'Number'
+      ? 'number'
+      : type === 'Symbol' || type === 'Text'
+        ? 'string'
+        : undefined;
+  // A Map keeps each key where it first appeared, even when a later option replaces it.
+  const chosen = new Map<string, FieldOption>();
+  for (const o of options as FieldOption[]) {
+    if (optionProblem(o) !== null) continue;
+    const held = chosen.get(optionKey(o));
+    const better =
+      held !== undefined && typeof optionValue(held) !== want && typeof optionValue(o) === want;
+    if (held === undefined || better) chosen.set(optionKey(o), o);
+  }
+  return [...chosen.values()];
+}
+
+/** The custom message a rule reports, when the definition gives a usable one. */
+export function ruleMessage(
+  v: FieldValidations | undefined,
+  rule: MessageRule,
+): string | undefined {
+  const messages: unknown = v?.messages;
+  if (typeof messages !== 'object' || messages === null) return undefined;
+  const text: unknown = (messages as Record<string, unknown>)[rule];
+  return typeof text === 'string' && text.trim() !== '' ? text : undefined;
+}
+
+/**
+ * A field's guidance as one line for a model: its description, then its help,
+ * whitespace collapsed and capped at `FIELD_GUIDANCE_LIMITS.brief`. Undefined
+ * when it has none. It is author text, so a prompt carries it as data (see
+ * `describeFieldForModel` in the application), never as instructions.
+ */
+export function fieldGuidance(
+  field: Pick<FieldDefinition, 'description' | 'help'>,
+): string | undefined {
+  const text = [field.description, field.help]
+    .filter((t): t is string => typeof t === 'string')
+    .join(' — ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return undefined;
+  const max = FIELD_GUIDANCE_LIMITS.brief;
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 export interface FieldDefinition {
@@ -61,6 +191,20 @@ export interface FieldDefinition {
   readonly apiId: string;
   /** Human-facing name. */
   readonly name: string;
+  /**
+   * What the field is for and how to fill it, for whoever writes the value: a
+   * line under the input in the editor, and part of the field's description to
+   * a model. Plain text.
+   */
+  readonly help?: string;
+  /** An example shown in the empty input. Never stored as a value. Plain text. */
+  readonly placeholder?: string;
+  /**
+   * What the field means, for agents and API readers deciding what belongs in
+   * it: longer than `help`, read from the model rather than shown on every
+   * entry form. Plain text.
+   */
+  readonly description?: string;
   readonly type: FieldType;
   /** Whether values may differ per locale. */
   readonly localized: boolean;

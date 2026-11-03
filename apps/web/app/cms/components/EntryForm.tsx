@@ -3,6 +3,7 @@ import type {
   ContentType,
   EntryFields,
   FieldDefinition,
+  FieldOption,
   LocaleConfig,
 } from '@contentworker/domain';
 import {
@@ -11,6 +12,9 @@ import {
   blockVariants,
   fallbackChain,
   nestedFieldsFor,
+  normalizeOptions,
+  optionLabel,
+  optionValue,
   resolveLocalizedValue,
   SEO_FIELDS,
   validateEntryFields,
@@ -29,6 +33,7 @@ import {
 } from '@contentworker/ui/dropdown-menu';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
+import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Textarea } from '@contentworker/ui/textarea';
 import { Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -405,6 +410,7 @@ export function EntryForm(props: {
               f.localized && locales.length > 1
                 ? fallbackHint(f, values, locale, localeConfig)
                 : undefined;
+            const helpId = f.help ? `${id}-help` : undefined;
             return (
               <div className="space-y-1.5" key={f.apiId}>
                 <Label id={`${id}-label`} htmlFor={id} className="gap-1">
@@ -422,6 +428,7 @@ export function EntryForm(props: {
                   value={values[f.apiId]?.[locale]}
                   invalid={Boolean(err)}
                   errorId={err ? `${id}-error` : undefined}
+                  hintId={helpId}
                   pickers={props.pickers}
                   editor={fieldEditors?.find(
                     (e) =>
@@ -437,6 +444,11 @@ export function EntryForm(props: {
                   onEdited={(p) => clearError(p, locale)}
                   onChange={(v) => set(f.apiId, locale, v)}
                 />
+                {f.help && (
+                  <p id={helpId} className="max-w-measure text-muted-foreground text-xs">
+                    {f.help}
+                  </p>
+                )}
                 {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}
                 {err && (
                   <p id={`${id}-error`} className="text-xs text-destructive">
@@ -660,8 +672,27 @@ function FieldInput(props: {
         key={locale}
         id={id}
         ariaLabelledBy={`${id}-label`}
+        ariaDescribedBy={describedBy}
         value={value}
         pickers={pickers}
+        onChange={onChange}
+      />
+    );
+  }
+
+  // An `in` rule on a scalar: pick from its options by label; the value is what is stored.
+  // Normalised for display: a legacy list may repeat a value or hold one a select can't offer.
+  const options = SELECTABLE.has(field.type)
+    ? normalizeOptions(field.validations?.in, field.type)
+    : [];
+  if (options.length) {
+    return (
+      <OptionsInput
+        id={id}
+        options={options}
+        value={value}
+        required={field.required}
+        aria={aria}
         onChange={onChange}
       />
     );
@@ -687,6 +718,7 @@ function FieldInput(props: {
         className={inputClass}
         {...aria}
         type="number"
+        placeholder={field.placeholder}
         value={value === undefined || value === null ? '' : String(value)}
         onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
       />
@@ -711,6 +743,7 @@ function FieldInput(props: {
         className={inputClass}
         {...aria}
         rows={4}
+        placeholder={field.placeholder}
         value={typeof value === 'string' ? value : ''}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -724,7 +757,7 @@ function FieldInput(props: {
         {...aria}
         // Not normalized as you type: rewriting the value mid-keystroke fights
         // the cursor. The server normalizes on save and returns what it stored.
-        placeholder="my-post-title"
+        placeholder={field.placeholder ?? 'my-post-title'}
         value={typeof value === 'string' ? value : ''}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -736,6 +769,7 @@ function FieldInput(props: {
         id={id}
         className={inputClass}
         {...aria}
+        placeholder={field.placeholder}
         value={typeof value === 'string' ? value : ''}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -749,6 +783,53 @@ function FieldInput(props: {
   // Complex types (Array of Links, JSON, Location): raw JSON editor for the MVP.
   return (
     <JsonFieldInput id={id} inputClass={inputClass} aria={aria} value={value} onChange={onChange} />
+  );
+}
+
+/** The types an `in` rule is enforced on, so the ones an options picker stands in for. */
+const SELECTABLE = new Set(['Symbol', 'Text', 'Integer', 'Number']);
+
+/**
+ * A field limited to listed values, picked by label. A `<select>` holds strings, so the choice is
+ * mapped back to the option's own value (a number stays a number). A stored value the list no
+ * longer offers is kept as a choice of its own, so opening an old entry never blanks it silently.
+ */
+function OptionsInput(props: {
+  id: string;
+  options: readonly FieldOption[];
+  value: unknown;
+  required: boolean;
+  aria: { 'aria-invalid'?: boolean; 'aria-describedby'?: string };
+  onChange: (v: unknown) => void;
+}) {
+  const { id, options, value, required, aria, onChange } = props;
+  const empty = value === undefined || value === null || value === '';
+  const listed = options.some((o) => optionValue(o) === value);
+  return (
+    <NativeSelect
+      id={id}
+      wrapperClassName="w-full max-w-sm"
+      {...aria}
+      value={empty ? '' : String(value)}
+      onChange={(e) => {
+        if (e.target.value === '') return onChange(undefined);
+        const picked = options.find((o) => String(optionValue(o)) === e.target.value);
+        onChange(picked === undefined ? value : optionValue(picked));
+      }}
+    >
+      {/* Offered even on a required field: it is how the form starts, and the save says why. */}
+      <NativeSelectOption value="">{required ? 'Choose…' : 'None'}</NativeSelectOption>
+      {options.map((o) => (
+        <NativeSelectOption key={String(optionValue(o))} value={String(optionValue(o))}>
+          {optionLabel(o)}
+        </NativeSelectOption>
+      ))}
+      {!empty && !listed && (
+        <NativeSelectOption
+          value={String(value)}
+        >{`${String(value)} (not listed)`}</NativeSelectOption>
+      )}
+    </NativeSelect>
   );
 }
 
@@ -812,7 +893,7 @@ function ComponentInput(
         const at = `${path}.${f.apiId}`;
         const nestedId = `${props.id}-${f.apiId}`;
         const err = errorFor?.(at);
-        const help = hint?.(f.apiId, current[f.apiId]);
+        const help = hint?.(f.apiId, current[f.apiId]) ?? f.help;
         return (
           <div key={f.apiId} className="space-y-1.5">
             <Label id={`${nestedId}-label`} htmlFor={nestedId} className="gap-1">

@@ -317,7 +317,8 @@ article.fields.title; // string
 
 Each content type becomes a delivery shape (`ArticleFields`, one value per field) and a management
 shape (`ArticleDraftFields`, keyed by locale). A field's `in` validation becomes a union of its
-allowed values. The same output is served at `GET …/content-types?format=typescript`.
+allowed values (an option's `value`, not its label), and its description or help text becomes the
+property's doc comment. The same output is served at `GET …/content-types?format=typescript`.
 
 ## Inline editing
 

@@ -597,8 +597,13 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   `Location` → `{ lat, lon }`, `JSON` → `Record<string, unknown>`, `RichText` →
   `RichTextDocument`, `Link` → `EntryLink` / `AssetLink | DeliveredAsset` (an asset link can be
   embedded), `Seo` → `{ title?, description?, canonicalUrl?, noindex?, ogImage? }`, `Array` → element type `[]`. The generated prelude declares `DeliveredAsset`.
-  An `in` validation becomes a literal union (`status: 'draft' | 'live'`) exactly where the
-  domain enforces it (`Symbol`/`Text`/`Integer`/`Number`); `required` controls optionality.
+  An `in` validation becomes a literal union of its stored values (`status: 'draft' | 'live'`;
+  a labelled option contributes its `value`) exactly where the domain enforces it
+  (`Symbol`/`Text`/`Integer`/`Number`); `required` controls optionality. A field's `description`
+  (else its `help`) goes into the property's doc comment.
+  **Breaking (types):** the management SDK's `FieldDefinition.validations` was typed as an array
+  of records; it is now the `FieldValidations` object the API returns (with `in: FieldOption[]`
+  and `messages`). Code that indexed it as an array reads the rule by name instead.
   When rendering `RichTextDocument` values, handle the full node vocabulary (headings, lists,
   code blocks, tables, hyperlinks, embeds — see the domain model doc) and skip unrecognized
   `nodeType`s defensively; writes are validated against the vocabulary, but it can grow without an

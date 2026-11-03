@@ -133,16 +133,25 @@ export interface LoadedEntry {
   readonly displayField: string;
   readonly defaultLocale: string;
   /** Text/Symbol fields, with whether each currently has a value. */
-  readonly textFields: { apiId: string; name: string; hasValue: boolean }[];
+  /** With the guidance their author wrote, so a prompt can describe each field. */
+  readonly textFields: (GuidedField & { readonly hasValue: boolean })[];
   readonly fields: EntryFields;
   /** Concatenated current text (for moderation/context). */
   readonly text: string;
 }
 
+/** A field to generate, named and described by its definition's guidance. */
+export interface GuidedField {
+  readonly apiId: string;
+  readonly name: string;
+  readonly help?: string;
+  readonly description?: string;
+}
+
 export interface GenerateFieldsInput {
   readonly scope: Scope;
   readonly contentTypeApiId: string;
-  readonly fields: { apiId: string; name: string }[];
+  readonly fields: GuidedField[];
   readonly context: string;
   /** Task framing for the model (e.g. fill empty fields vs. improve vs. repurpose). */
   readonly instruction?: string;

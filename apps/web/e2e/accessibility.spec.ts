@@ -11,6 +11,7 @@ import {
   seedAsset,
   seedAssetFolder,
   seedCms,
+  seedGuidedType,
   seedIngestFindings,
   uploadAssetBytes,
   useCmsScope,
@@ -454,6 +455,32 @@ test('the content type dialog has no accessibility violations', async ({ page },
     .click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await scan(page, testInfo);
+});
+
+test('the content type dialog’s guidance panels have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  await seedGuidedType(request);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Guided”' }).click();
+  // Open on the field that has guidance; opened by hand on one that has none.
+  await expect(page.getByRole('group', { name: 'Guidance for Title' })).toBeVisible();
+  await page.getByRole('button', { name: 'Guidance for Subtitle' }).click();
+  await expect(page.getByRole('group', { name: 'Guidance for Subtitle' })).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('an entry with help, a placeholder and an options select has no accessibility violations', async ({
+  page,
+  request,
+}, info) => {
+  test.skip(info.project.name.startsWith('iphone'), 'the editor is review-only on a phone');
+  await seedGuidedType(request);
+  await openCms(page, '/content/guided/new');
+  await expect(page.getByText('Lead with the neighbourhood.')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByLabel('Status')).toBeVisible();
+  await scan(page, info);
 });
 
 test('the first-space notice and its dialog have no accessibility violations', async ({

@@ -8,6 +8,7 @@ import {
   SCHEDULER_ALERT_MAX_RECIPIENTS,
 } from '@contentworker/application';
 import {
+  FIELD_GUIDANCE_LIMITS,
   MAX_ASSET_RIGHTS_TEXT,
   MAX_CANONICAL_URL_LENGTH,
   MAX_COLLECTION_CHANGE,
@@ -305,7 +306,28 @@ export const roleBody = z.object({
   scopes: z.array(z.string().max(64)).max(64),
   contentGrants: z.array(contentGrant).max(500).optional(),
 });
-const fieldDef = z.object({}).loose(); // deep field shape validated by the domain
+// The deep field shape (nested fields, validations, options, messages and guidance) is
+// validated by the domain at every depth. The guidance keys are named here so the request
+// documents them, without caps or types: a revision may carry a value stored before guidance was
+// checked, which the domain lets through unchanged, so refusing it here would lock the type.
+const guidanceText = (what: string, max: number) =>
+  z.unknown().optional().describe(`${what} (text, at most ${max} characters)`);
+const fieldDef = z
+  .object({
+    help: guidanceText(
+      'How to fill the field: shown under the input and given to a model',
+      FIELD_GUIDANCE_LIMITS.help,
+    ),
+    placeholder: guidanceText(
+      'An example shown in the empty input; never stored',
+      FIELD_GUIDANCE_LIMITS.placeholder,
+    ),
+    description: guidanceText(
+      'What the field means, for agents and API readers',
+      FIELD_GUIDANCE_LIMITS.description,
+    ),
+  })
+  .loose();
 export const contentTypeBody = z.object({
   apiId: zId,
   name: zShort,

@@ -1,3 +1,4 @@
+import { FIELD_GUIDANCE_LIMITS } from '@contentworker/domain';
 import { z } from 'zod';
 
 /**
@@ -10,9 +11,58 @@ const nestedFields = z
   .array(z.object({}).loose())
   .describe('Nested field definitions (this same shape), for a component');
 
+const option = z.union([z.string().min(1), z.number()]).describe('An allowed value, listed once');
+
+const range = z.object({ min: z.number().optional(), max: z.number().optional() });
+
+/** A field's validation rules. Every rule is optional; an absent rule is not enforced. */
+export const fieldValidations = z
+  .object({
+    in: z.array(option).optional().describe('Allowed values (Symbol, Text, Integer, Number)'),
+    regexp: z
+      .object({ pattern: z.string(), flags: z.string().optional() })
+      .optional()
+      .describe('A pattern a Symbol or Text value must match'),
+    range: range.optional().describe('Inclusive bounds of an Integer or Number'),
+    size: range
+      .optional()
+      .describe('Inclusive length of a Symbol, Text or Slug, or item count of an Array'),
+    linkContentTypes: z
+      .array(z.string())
+      .optional()
+      .describe('The content types a Link may point at'),
+    messages: z
+      .object({
+        in: z.string().optional(),
+        regexp: z.string().optional(),
+        range: z.string().optional(),
+        size: z.string().optional(),
+      })
+      .optional()
+      .describe(
+        `Error text a broken rule reports instead of the default, keyed by rule (at most ${FIELD_GUIDANCE_LIMITS.message} characters). Only for a rule the field declares`,
+      ),
+  })
+  .loose();
+
 export const field = z.object({
   apiId: z.string(),
   name: z.string(),
+  help: z
+    .string()
+    .max(FIELD_GUIDANCE_LIMITS.help)
+    .optional()
+    .describe('How to fill the field: shown under the input in the editor and given to a model'),
+  placeholder: z
+    .string()
+    .max(FIELD_GUIDANCE_LIMITS.placeholder)
+    .optional()
+    .describe('An example shown in the empty input; never stored'),
+  description: z
+    .string()
+    .max(FIELD_GUIDANCE_LIMITS.description)
+    .optional()
+    .describe('What the field means, for agents and API readers'),
   type: z
     .string()
     .describe(
@@ -23,14 +73,14 @@ export const field = z.object({
   position: z.int(),
   unique: z.boolean().optional(),
   defaultValue: z.unknown().optional(),
-  validations: z.object({}).loose().optional(),
+  validations: fieldValidations.optional(),
   linkType: z.enum(['Entry', 'Asset']).optional(),
   fields: nestedFields.optional().describe('Component: the nested field definitions'),
   items: z
     .object({
       type: z.enum(['Symbol', 'Link', 'Component']),
       linkType: z.enum(['Entry', 'Asset']).optional(),
-      validations: z.object({}).loose().optional(),
+      validations: fieldValidations.optional(),
       fields: nestedFields.optional().describe('Array of Component: the shape of every element'),
       variants: z
         .array(
