@@ -64,9 +64,13 @@ const SINGLETON_NAMED = 10;
  * entry created after the read fails the commit (409) rather than becoming a second one. Turning
  * it off gives the claim back the same way. A save that leaves the flag alone is the plain save.
  *
- * Delivery serves a singleton by the flag as last published, so a published save that changes it
- * (an environment merge copies a published definition) announces `content_type.published`, which
- * purges the scope's delivery responses; a draft's change reaches Delivery with its publish.
+ * Every save over a stored definition is guarded on the singleton flag it read, so a save racing
+ * a turn on or off fails (409) rather than undoing it.
+ *
+ * Delivery serves by the definition as last published (its singleton flag included), so a save
+ * of a published definition (a merge or a promotion copies one) announces
+ * `content_type.published` in the same unit, which purges the scope's delivery responses: one
+ * event per published save. A draft's change reaches Delivery with its publish.
  */
 export async function saveContentTypeOver(
   ctx: AppContext,
@@ -76,14 +80,12 @@ export async function saveContentTypeOver(
 ): Promise<void> {
   const was = current?.singleton === true;
   const is = next.singleton === true;
-  if (was === is) {
-    await ctx.store.contentTypes.save(scope, next);
-    return;
-  }
-  // Whose claims change: on, the type's entries outside the trash (at most one, or the turn is
+  // Whose claims change (none while the flag stays as it was): on, the type's entries outside the trash (at most one, or the turn is
   // refused); off, whichever entry holds the claim.
-  let holders: { id: string; fields: EntryFields }[];
-  if (is) {
+  let holders: { id: string; fields: EntryFields }[] = [];
+  if (was === is) {
+    // The plain save: no claim changes hands.
+  } else if (is) {
     const live = await ctx.store.entries.list(scope, {
       contentTypeApiId: next.apiId,
       limit: SINGLETON_NAMED + 1,
@@ -105,10 +107,13 @@ export async function saveContentTypeOver(
   }
   try {
     await ctx.store.withTransaction(async (tx) => {
-      if (is && current) {
+      // Every save over a stored definition is judged against the flag it read, so one that
+      // raced a turn on or off fails rather than undoing it; turning it on also against the
+      // entries it read.
+      if (current) {
         await tx.contentTypes.guard(scope, next.apiId, {
-          singleton: false,
-          entries: holders.map((h) => h.id),
+          singleton: was,
+          ...(is && !was ? { entries: holders.map((h) => h.id) } : {}),
         });
       }
       await tx.contentTypes.save(scope, next);
@@ -130,7 +135,9 @@ export async function saveContentTypeOver(
   } catch (err) {
     if (!(err instanceof TransactionConflictError)) throw err;
     throw new ConflictError(
-      `"${next.apiId}" gained an entry or changed while it was being made a singleton; try again`,
+      is && !was
+        ? `"${next.apiId}" gained an entry or changed while it was being made a singleton; try again`
+        : `"${next.apiId}" changed while it was being saved; try again`,
     );
   }
 }
@@ -319,19 +326,27 @@ export async function publishContentType(
   scope: Scope,
   apiId: string,
 ): Promise<ContentType> {
-  return ctx.store.withTransaction(async (tx) => {
-    const current = await tx.contentTypes.get(scope, apiId);
-    if (!current) throw new NotFoundError('ContentType', apiId);
-    const published: ContentType = { ...current, status: 'published' };
-    await tx.contentTypes.save(scope, published);
-    await tx.outbox.append({
-      id: ctx.ids.newId(),
-      type: 'content_type.published',
-      scope,
-      occurredAt: ctx.clock.now().toISOString(),
-      contentTypeApiId: apiId,
-      version: published.version,
+  return ctx.store
+    .withTransaction(async (tx) => {
+      const current = await tx.contentTypes.get(scope, apiId);
+      if (!current) throw new NotFoundError('ContentType', apiId);
+      const published: ContentType = { ...current, status: 'published' };
+      // Published as read: a turn on or off committed since fails this unit rather than being
+      // published over with the stale flag.
+      await tx.contentTypes.guard(scope, apiId, { singleton: current.singleton === true });
+      await tx.contentTypes.save(scope, published);
+      await tx.outbox.append({
+        id: ctx.ids.newId(),
+        type: 'content_type.published',
+        scope,
+        occurredAt: ctx.clock.now().toISOString(),
+        contentTypeApiId: apiId,
+        version: published.version,
+      });
+      return published;
+    })
+    .catch((err: unknown) => {
+      if (!(err instanceof TransactionConflictError)) throw err;
+      throw new ConflictError(`"${apiId}" changed while it was being published; try again`);
     });
-    return published;
-  });
 }

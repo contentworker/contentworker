@@ -51,8 +51,9 @@ keeps the flag.
 The admin's sidebar opens a singleton's entry in the editor (or a new one when it has none)
 instead of a list. Delivery serves it by the type's API ID, with no entry id:
 `GET …/singletons/{apiId}` (see [Reading content](/guides/reading-content/#singletons)). Delivery
-goes by the type as last published: turning `singleton` on or off takes effect there when you
-publish the type.
+goes by the type as last published: turning `singleton` on or off takes effect there (REST and
+GraphQL alike) when you publish the type. Turned off in a draft, the type can take more entries
+at once; until that draft is published, Delivery serves the published entry with the lowest id.
 
 ## Field types
 

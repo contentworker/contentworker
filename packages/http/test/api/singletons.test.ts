@@ -226,4 +226,39 @@ describe('singleton types over the API', () => {
     const body = (await res.json()) as { data?: { settings?: unknown } };
     expect(body.data?.settings ?? null).toBeNull();
   });
+
+  it('serves REST and GraphQL by the flag as last published, not as a draft has it', async () => {
+    const { app, cma, cda } = setup();
+    const definition = {
+      apiId: 'settings',
+      name: 'Settings',
+      displayField: 'title',
+      fields: [symbol('title', 0)],
+    };
+    await cma.contentTypes.create({ ...definition, singleton: true });
+    await cma.contentTypes.publish('settings');
+    const one = await cma.entries.create({
+      contentTypeApiId: 'settings',
+      fields: { title: { 'en-US': 'Site' } },
+    });
+    await cma.entries.publish(one.entry.id);
+    const graphql = async () => {
+      const res = await app.request('/delivery/s1/main/graphql', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer cda', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ settings(locale: "en-US") { title } }' }),
+      });
+      return (await res.json()) as { data?: { settings?: { title: string } }; errors?: unknown[] };
+    };
+
+    // A draft turns it off: both still serve the singleton.
+    await cma.contentTypes.create({ ...definition, singleton: false });
+    expect((await cda.getSingleton('settings')).id).toBe(one.entry.id);
+    expect((await graphql()).data?.settings).toEqual({ title: 'Site' });
+
+    // Published, both stop: the root wants an id again.
+    await cma.contentTypes.publish('settings');
+    expect(await statusOf(cda.getSingleton('settings'))).toBe(404);
+    expect((await graphql()).errors?.length).toBeGreaterThan(0);
+  });
 });

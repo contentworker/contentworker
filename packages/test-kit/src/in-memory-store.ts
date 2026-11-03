@@ -457,6 +457,16 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  /** As the D1 delivery read: each type with its singleton flag as last published. */
+  private async deliveredContentTypes(scope: Scope): Promise<ContentType[]> {
+    return (await this.contentTypes.list(scope)).map((ct) => {
+      const { singleton: _draft, ...rest } = ct;
+      return this.publishedSingletonData.get(`${scopeKey(scope)}::${ct.apiId}`)
+        ? { ...rest, singleton: true as const }
+        : rest;
+    });
+  }
+
   /**
    * As D1 writes an entry: a create records its authorship whole; a later save keeps the creation
    * and fills in the first publish only once (`COALESCE`), whatever the aggregate it is handed says.
@@ -1714,7 +1724,7 @@ export class InMemoryContentStore implements ContentStore {
       const [config, contentTypes, renditions, entry, asset, entries, assets, assetPage] =
         await Promise.all([
           request.config ? this.spaces.getConfig(scope) : undefined,
-          request.contentTypes ? this.contentTypes.list(scope) : undefined,
+          request.contentTypes ? this.deliveredContentTypes(scope) : undefined,
           request.renditions ? this.assetRenditions.list(scope) : undefined,
           request.entryId !== undefined
             ? this.entries.getPublished(scope, request.entryId)

@@ -6786,8 +6786,11 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         });
       }
       if (request.contentTypes) {
+        // Delivery's view: the singleton flag as last published, not as a draft has it.
         add(contentTypesQuery(db, scope), (rows) => {
-          result.contentTypes = rows.map(toContentType);
+          result.contentTypes = rows.map((row) =>
+            toContentType({ ...row, singleton: row.publishedSingleton }),
+          );
         });
       }
       if (request.renditions) {

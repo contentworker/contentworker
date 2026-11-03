@@ -563,7 +563,8 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       ? types.filter((t) => canAccessContentType(principal, 'read', t.apiId))
       : types;
     const shape = grantedTypes
-      .map((t) => `${t.apiId}@${t.version}`)
+      // The singleton flag changes a root's shape on a publish that keeps the version.
+      .map((t) => `${t.apiId}@${t.version}${t.singleton ? ':singleton' : ''}`)
       .sort()
       .join(',');
     const key = `${scope.spaceId}:${scope.environmentId}:${shape}`;

@@ -423,7 +423,20 @@ interface ContentType {
   second entry is refused when it is requested. Snapshots (clone, export and import) carry the
   flag. Stored in `content_types.singleton` (0027_singleton_types); Delivery serves by
   `content_types.published_singleton`, the flag as last saved published (0028_published_singleton),
-  so a draft's change reaches it with the type's publish.
+  so a draft's change reaches it with the type's publish: `…/singletons/:apiId` and GraphQL's roots
+  (Delivery's `contentTypes` read reports `singleton` as last published) alike. A draft that turns
+  the flag off gives the claim back at once, so the type can gain entries before the turn-off is
+  published; meanwhile Delivery serves the published entry with the lowest id. Every save over a
+  stored definition (`saveContentTypeOver`, and `publishContentType`) is guarded on the flag it
+  read, so a save that raced a turn on or off fails (`409`) rather than undoing it, and every
+  save of a published definition announces `content_type.published` once (a promotion's apply
+  relies on it, with no separate publish).
+- **Merging entries** (`mergeEnvironments`) checks every selected entry's unique values (the
+  singleton's claim included) before the first write, against the target and against each other,
+  and refuses once (`409`, `details.conflicts`), naming each entry and its holder; a value an entry
+  of the merge gives up is free (a swap). Entries the target already has are applied first, each
+  with its claims rebuilt in the same unit, as `updateEntry` does; new ones then stake theirs. An
+  entry the target holds in its trash gets the new version and stays there, claiming nothing.
 - **Delete and clone** (`content-type-lifecycle.ts`). `fieldsLinkingTo(types, apiId)` finds other
   types' fields whose `linkContentTypes` name it, through components, repeaters and block variants
   (a path like `body.byline.who`). `contentTypeDependents` adds its entry counts (live, trashed),

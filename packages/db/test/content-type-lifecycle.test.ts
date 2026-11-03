@@ -1,5 +1,6 @@
 import {
   type AppContext,
+  cancelBulkJob,
   cloneContentType,
   contentTypeDependents,
   createContentType,
@@ -248,6 +249,26 @@ describe('content type ids and job outcomes on D1', () => {
   });
 });
 
+describe('stopping a content type delete on D1', () => {
+  it('stops the job and records the outcome in one unit, once', async () => {
+    const { ctx, scope } = await harness();
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'x' } },
+    });
+    const started = await deleteContentTypeWithEntries(ctx, scope, 'note');
+    if (started.deleted) throw new Error('expected a job');
+    const stopped = await cancelBulkJob(ctx, scope, started.job.id);
+    const outcome = { deleted: false, reason: 'the job was stopped' };
+    expect(stopped).toMatchObject({ status: 'cancelled', config: { typeDeletion: outcome } });
+    const stored = await store.bulkJobs.getJob(scope, started.job.id);
+    expect(stored?.status).toBe('cancelled');
+    expect(stored?.config).toEqual({ contentType: 'note', typeDeletion: outcome });
+    // Again: already terminal, nothing changes.
+    expect((await cancelBulkJob(ctx, scope, started.job.id)).config).toEqual(stored?.config);
+  });
+});
+
 describe('a singleton served by its published revision on D1', () => {
   it('reads the flag as last published, not as the draft has it', async () => {
     const { ctx, scope } = await harness();
@@ -264,7 +285,14 @@ describe('a singleton served by its published revision on D1', () => {
     // A draft turning it off keeps it served until that is published.
     await updateContentType(ctx, scope, 'note', { singleton: false });
     expect((await getDeliveredSingleton(ctx, scope, 'note')).id).toBe(entry.id);
+    // Delivery's list of types (GraphQL's roots) agrees with it.
+    const delivered = async () =>
+      (await store.delivery.read(scope, { contentTypes: true })).contentTypes?.find(
+        (t) => t.apiId === 'note',
+      )?.singleton;
+    expect(await delivered()).toBe(true);
     await publishContentType(ctx, scope, 'note');
     await expect(getDeliveredSingleton(ctx, scope, 'note')).rejects.toBeInstanceOf(NotFoundError);
+    expect(await delivered()).toBeUndefined();
   });
 });

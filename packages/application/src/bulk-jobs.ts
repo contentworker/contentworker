@@ -560,23 +560,39 @@ export async function cancelBulkJob(
   id: string,
   deps: { readonly blob?: BlobStore } = {},
 ): Promise<BulkJob> {
-  const job = await ctx.store.bulkJobs.finalizeJob(scope, id, 'cancelled', ctx.clock.now());
+  // The stop and, for a content type's delete, its outcome commit together: the type stays, and
+  // its readers are told so as a completed job's are (`finishContentTypeDeletion`), never left
+  // waiting for an outcome that never comes.
+  const job = await ctx.store
+    .withTransaction(async (tx) => {
+      const stopped = await tx.bulkJobs.finalizeJob(scope, id, 'cancelled', ctx.clock.now());
+      if (stopped?.action !== 'content_type_delete') return stopped;
+      await tx.bulkJobs.mergeConfig(scope, id, { typeDeletion: STOPPED });
+      return { ...stopped, config: { ...stopped.config, typeDeletion: STOPPED } };
+    })
+    .catch((err: unknown) => {
+      // Another finalizer won at commit: the job is terminal, read below as it is.
+      if (err instanceof TransactionConflictError) return null;
+      throw err;
+    });
   // Its unrun chunks' staged work, and that of the job it would have started, are never read now.
   if (job && deps.blob) await discardStagedJob(deps.blob, scope, job, { nextStarted: false });
   if (!job) {
     const existing = await ctx.store.bulkJobs.getJob(scope, id);
     if (!existing) throw new NotFoundError('BulkJob', id);
+    // Stopped by a release that recorded no outcome: record it now, so it is never missing.
+    const recorded = (existing.config as { typeDeletion?: unknown } | undefined)?.typeDeletion;
+    if (existing.action === 'content_type_delete' && existing.status === 'cancelled' && !recorded) {
+      await ctx.store.bulkJobs.mergeConfig(scope, id, { typeDeletion: STOPPED });
+      return { ...existing, config: { ...existing.config, typeDeletion: STOPPED } };
+    }
     return existing; // already terminal — cancel is idempotent
-  }
-  // A content type's delete stopped: the type stays, and its readers are told so as a completed
-  // job's are (`finishContentTypeDeletion`), not left waiting for an outcome that never comes.
-  if (job.action === 'content_type_delete') {
-    const typeDeletion = { deleted: false, reason: 'the job was stopped' };
-    await ctx.store.bulkJobs.mergeConfig(scope, id, { typeDeletion });
-    return { ...job, config: { ...job.config, typeDeletion } };
   }
   return job;
 }
+
+/** A stopped content type delete's outcome: the type stays. */
+const STOPPED = { deleted: false, reason: 'the job was stopped' } as const;
 
 /**
  * Runs an import, asset or entry trash chunk and folds its outcome into the job.

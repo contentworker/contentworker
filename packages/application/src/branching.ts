@@ -1,19 +1,22 @@
 import {
   assertEntryFieldsValid,
+  ConflictError,
   type ContentType,
   type Entry,
   type EntryFields,
   type EntryVersion,
   NotFoundError,
   type Scope,
+  SINGLETON_CLAIM_FIELD,
   stampChanged,
   stampCreated,
+  type UniqueClaim,
   uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
 import { saveContentTypeOver } from './content-types';
 import { type AppContext, actorOf } from './context';
-import { assertSingletonFree, writeNewEntry } from './entries';
+import { assertClaimsFree, assertSingletonFree, writeNewEntry } from './entries';
 import { allPages } from './paging';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
 
@@ -163,7 +166,7 @@ export async function mergeEnvironments(
     mergedContentTypes.push(apiId);
   }
 
-  const mergedEntries: string[] = [];
+  const plan: PlannedEntry[] = [];
   if (selection.entries?.length) {
     const vctx = await targetValidationContext(ctx, tgt);
     for (const entryId of selection.entries) {
@@ -177,35 +180,132 @@ export async function mergeEnvironments(
         );
       }
       assertEntryFieldsValid(targetCt, found.fields, vctx);
-      await applyEntry(ctx, tgt, found.entry, targetCt, found.fields);
-      mergedEntries.push(entryId);
+      const existing = (await ctx.store.entries.get(tgt, entryId))?.entry ?? null;
+      // An entry the target holds in its trash stays there (as a promotion leaves it), so it
+      // claims nothing: the trash released its values.
+      const trashed = existing?.status === 'archived';
+      plan.push({
+        entryId,
+        from: found.entry,
+        contentType: targetCt,
+        fields: found.fields,
+        existing,
+        claims: trashed ? [] : uniqueClaims(targetCt, found.fields),
+      });
     }
+    await assertPlanFree(ctx, tgt, plan);
   }
 
-  return { mergedContentTypes, mergedEntries };
+  // Entries the target already has first: a value one of them gives up (a swap) is then free
+  // for the new entry that takes it.
+  const order = [...plan.filter((p) => p.existing), ...plan.filter((p) => !p.existing)];
+  for (const p of order) await applyEntry(ctx, tgt, p);
+
+  return { mergedContentTypes, mergedEntries: plan.map((p) => p.entryId) };
+}
+
+/** One selected entry of a merge: its source fields and what the target holds of it. */
+interface PlannedEntry {
+  readonly entryId: string;
+  /** The source's aggregate, whose authorship a new entry keeps. */
+  readonly from: Entry;
+  readonly contentType: ContentType;
+  readonly fields: EntryFields;
+  /** The target's copy, or null when the merge creates it. */
+  readonly existing: Entry | null;
+  /** The unique values it holds in the target afterwards (none while it stays in the trash). */
+  readonly claims: readonly UniqueClaim[];
+}
+
+/** Clashes a merge's refusal names; the details carry them all. */
+const CLASHES_NAMED = 10;
+
+/**
+ * Refuses a merge, before anything is written, whose entries would take a unique value (the
+ * singleton's claim included) that the target holds outside the merge, or that two of them claim
+ * together, naming each source entry and its holder. A value held by an entry of the merge that
+ * gives it up (a swap) is free. A new entry of a singleton type is also refused while the target
+ * has another entry outside the trash, as `createEntry` would refuse it.
+ */
+async function assertPlanFree(
+  ctx: AppContext,
+  tgt: Scope,
+  plan: readonly PlannedEntry[],
+): Promise<void> {
+  const key = (c: Pick<UniqueClaim, 'contentTypeApiId' | 'fieldApiId' | 'locale' | 'value'>) =>
+    `${c.contentTypeApiId}\u0000${c.fieldApiId}\u0000${c.locale}\u0000${c.value}`;
+  const planned = new Set(plan.map((p) => p.entryId));
+  const clashes: { entryId: string; field: string; value: string; heldBy: string }[] = [];
+  const claimedBy = new Map<string, string>();
+  for (const p of plan) {
+    for (const c of p.claims) {
+      const other = claimedBy.get(key(c));
+      if (other) {
+        clashes.push({ entryId: p.entryId, field: c.fieldApiId, value: c.value, heldBy: other });
+      } else claimedBy.set(key(c), p.entryId);
+    }
+    if (p.claims.length > 0) {
+      for (const held of await ctx.store.entries.findUniqueConflicts(tgt, p.claims, p.entryId)) {
+        // Held by an entry of the merge: free if it gives the value up, a clash above if not.
+        if (planned.has(held.entryId)) continue;
+        clashes.push({
+          entryId: p.entryId,
+          field: held.fieldApiId,
+          value: held.value,
+          heldBy: held.entryId,
+        });
+      }
+    }
+    if (!p.existing && p.contentType.singleton) {
+      const live = await ctx.store.entries.list(tgt, {
+        contentTypeApiId: p.contentType.apiId,
+        limit: plan.length + 1,
+      });
+      const other = live.find((e) => !planned.has(e.entry.id));
+      if (other) {
+        clashes.push({
+          entryId: p.entryId,
+          field: SINGLETON_CLAIM_FIELD,
+          value: p.contentType.apiId,
+          heldBy: other.entry.id,
+        });
+      }
+    }
+  }
+  if (clashes.length === 0) return;
+  const unique = [
+    ...new Map(clashes.map((c) => [`${c.entryId}|${c.field}|${c.value}`, c])).values(),
+  ];
+  const named = unique
+    .slice(0, CLASHES_NAMED)
+    .map((c) =>
+      c.field === SINGLETON_CLAIM_FIELD
+        ? `entry ${c.entryId} would be a second entry of the singleton "${c.value}", whose entry is ${c.heldBy}`
+        : `entry ${c.entryId} would take ${c.field} "${c.value}", which entry ${c.heldBy} holds`,
+    );
+  const more = unique.length > CLASHES_NAMED ? ` and ${unique.length - CLASHES_NAMED} more` : '';
+  throw new ConflictError(
+    `The merge would take unique values twice, so nothing was merged: ${named.join('; ')}${more}`,
+    { conflicts: unique },
+  );
 }
 
 /**
- * Creates the entry in the target (preserving id) or appends a new version. A new one is the
- * source's, merged: like a promotion, it keeps who created it, when, and when it was first
- * published, and the merge's actor made its latest change. One the target already has keeps its own.
+ * Creates the entry in the target (preserving id), or appends a new version to the target's copy
+ * with its unique values claimed in the same unit, as `updateEntry` does. A copy in the target's
+ * trash stays there, holding no claims. A new one is the source's, merged: like a promotion, it
+ * keeps who created it, when, and when it was first published, and the merge's actor made its
+ * latest change. One the target already has keeps its own.
  */
-async function applyEntry(
-  ctx: AppContext,
-  tgt: Scope,
-  from: Entry,
-  contentType: ContentType,
-  fields: EntryFields,
-): Promise<void> {
-  const { id: entryId, contentTypeApiId } = from;
-  const existing = await ctx.store.entries.get(tgt, entryId);
+async function applyEntry(ctx: AppContext, tgt: Scope, p: PlannedEntry): Promise<void> {
+  const { entryId, from, contentType, fields, existing } = p;
   const now = ctx.clock.now().toISOString();
   const actor = actorOf(ctx);
   if (!existing) {
     const entry = stampCreated(
       {
         id: entryId,
-        contentTypeApiId,
+        contentTypeApiId: contentType.apiId,
         status: 'draft',
         currentVersion: 1,
         publishedVersion: null,
@@ -221,15 +321,16 @@ async function applyEntry(
     // and the new entry stakes its unique values (the singleton's claim among them) as a create
     // does, in the same guarded unit.
     if (contentType.singleton) await assertSingletonFree(ctx.store.entries, tgt, contentType);
-    await writeNewEntry(ctx, tgt, contentType, entry, version, uniqueClaims(contentType, fields));
+    await writeNewEntry(ctx, tgt, contentType, entry, version, p.claims);
     return;
   }
-  const nextVersion = existing.entry.currentVersion + 1;
+  const nextVersion = existing.currentVersion + 1;
+  const trashed = existing.status === 'archived';
   const entry = stampChanged(
     {
-      ...existing.entry,
+      ...existing,
       currentVersion: nextVersion,
-      status: existing.entry.publishedVersion === null ? 'draft' : 'changed',
+      status: trashed ? 'archived' : existing.publishedVersion === null ? 'draft' : 'changed',
     },
     actor,
   );
@@ -240,5 +341,14 @@ async function applyEntry(
     createdAt: now,
     createdBy: actor,
   };
-  await ctx.store.entries.saveVersion(tgt, entry, version);
+  if (trashed) {
+    await ctx.store.entries.saveVersion(tgt, entry, version);
+    return;
+  }
+  await assertClaimsFree(ctx.store.entries, tgt, p.claims, entryId);
+  await ctx.store.withTransaction(async (tx) => {
+    await tx.entries.saveVersion(tgt, entry, version);
+    // Replace rather than add: a value the source no longer holds is given back.
+    await tx.entries.replaceUniqueClaims(tgt, entryId, p.claims);
+  });
 }

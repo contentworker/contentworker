@@ -11,12 +11,14 @@ import {
   type AppContext,
   approvePromotion,
   bulkCreateEntries,
+  cancelBulkJob,
   cloneEnvironment,
   createContentType,
   createEntry,
   createEnvironment,
   createSpace,
   deleteContentType,
+  deleteContentTypeWithEntries,
   duplicateEntry,
   exportSnapshot,
   getContentType,
@@ -483,5 +485,178 @@ describe('a create racing a change to its content type', () => {
     }
     expect('singleton' in (await getContentType(h.ctx, scope, 'page'))).toBe(false);
     expect((await pages()).sort()).toEqual([first.entry.id, second.entry.id].sort());
+  });
+});
+
+describe('merging entries with unique values', () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = setup();
+    await createSpace(h.ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
+    await createEnvironment(h.ctx, 'site', 'staging');
+    for (const s of [scope, staging]) {
+      await createContentType(h.ctx, s, {
+        apiId: 'product',
+        name: 'Product',
+        displayField: 'sku',
+        fields: [symbol('sku', 0, { unique: true })],
+      } as Parameters<typeof createContentType>[2]);
+      await publishContentType(h.ctx, s, 'product');
+    }
+  });
+
+  const product = (s: typeof scope, sku: string, id?: string) =>
+    createEntry(h.ctx, s, {
+      contentTypeApiId: 'product',
+      fields: { sku: { 'en-US': sku } },
+      ...(id ? { id } : {}),
+    });
+  const holder = async (sku: string) =>
+    (
+      await h.store.entries.findUniqueConflicts(scope, [
+        { contentTypeApiId: 'product', fieldApiId: 'sku', locale: 'en-US', value: sku },
+      ])
+    ).map((c) => c.entryId);
+
+  it('swaps a value: an existing entry gives it up and a new one takes it', async () => {
+    const a = await product(scope, 'a', 'prod-a');
+    // Staging: A moved on to "b", and a new B took "a".
+    await product(staging, 'b', 'prod-a');
+    const b = await product(staging, 'a', 'prod-b');
+    // Selected new-first: the merge still applies the existing entry first.
+    await mergeEnvironments(h.ctx, 'site', 'staging', 'main', {
+      entries: [b.entry.id, a.entry.id],
+    });
+    expect(await holder('a')).toEqual(['prod-b']);
+    expect(await holder('b')).toEqual(['prod-a']);
+  });
+
+  it('refuses before writing anything when a value is taken outside the merge or twice in it', async () => {
+    await product(scope, 'x', 'main-x');
+    const ok = await product(staging, 'fresh', 'st-ok');
+    const taken = await product(staging, 'x', 'st-taken');
+    const before = (await h.store.entries.list(scope, { contentTypeApiId: 'product' })).length;
+    const refused = mergeEnvironments(h.ctx, 'site', 'staging', 'main', {
+      entries: [ok.entry.id, taken.entry.id],
+    });
+    await expect(refused).rejects.toBeInstanceOf(ConflictError);
+    await expect(refused).rejects.toThrow(/entry st-taken would take sku "x", which entry main-x/);
+    expect((await h.store.entries.list(scope, { contentTypeApiId: 'product' })).length).toBe(
+      before,
+    );
+    expect(await h.store.entries.get(scope, ok.entry.id)).toBeNull();
+
+    // Two of the merge's own entries claiming one value (staging's first is in its trash, which
+    // released the value there; merged, both would be live in main).
+    await product(staging, 'dup', 'st-d1');
+    await trashEntry(h.ctx, staging, 'st-d1');
+    await product(staging, 'dup', 'st-d2');
+    await expect(
+      mergeEnvironments(h.ctx, 'site', 'staging', 'main', { entries: ['st-d1', 'st-d2'] }),
+    ).rejects.toThrow(/entry st-d2 would take sku "dup", which entry st-d1 holds/);
+    expect(await h.store.entries.get(scope, 'st-d1')).toBeNull();
+  });
+
+  it('keeps an entry the target holds in its trash there, claiming nothing', async () => {
+    await settingsType(h);
+    await settingsType(h, staging);
+    const first = await settings(h, 'First');
+    await trashEntry(h.ctx, scope, first.entry.id);
+    const second = await settings(h, 'Second');
+    // Staging has its own copy of the trashed one.
+    await createEntry(h.ctx, staging, {
+      contentTypeApiId: 'settings',
+      fields: { title: { 'en-US': 'From staging' } },
+      id: first.entry.id,
+    });
+    await mergeEnvironments(h.ctx, 'site', 'staging', 'main', { entries: [first.entry.id] });
+    const merged = await h.store.entries.get(scope, first.entry.id);
+    expect(merged?.entry.status).toBe('archived');
+    expect(merged?.fields.title).toEqual({ 'en-US': 'From staging' });
+    const live = await h.store.entries.list(scope, { contentTypeApiId: 'settings' });
+    expect(live.map((e) => e.entry.id)).toEqual([second.entry.id]);
+    expect(
+      (await h.store.entries.findUniqueConflicts(scope, [singletonClaim('settings')])).map(
+        (c) => c.entryId,
+      ),
+    ).toEqual([second.entry.id]);
+  });
+});
+
+describe('saving a content type over a raced turn of its flag', () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = setup();
+    await createSpace(h.ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
+    await settingsType(h);
+  });
+
+  /** Runs `fn` with type reads answering `stale`, as a read made before a change committed. */
+  async function stale<T>(read: unknown, fn: () => Promise<T>): Promise<T> {
+    const get = h.store.contentTypes.get;
+    h.store.contentTypes.get = async () => read as Awaited<ReturnType<typeof get>>;
+    try {
+      return await fn();
+    } finally {
+      h.store.contentTypes.get = get;
+    }
+  }
+
+  it('refuses a revision and a publish that read the flag before a turn off', async () => {
+    const read = await getContentType(h.ctx, scope, 'settings');
+    await updateContentType(h.ctx, scope, 'settings', { singleton: false });
+    await expect(
+      stale(read, () => updateContentType(h.ctx, scope, 'settings', { name: 'Renamed' })),
+    ).rejects.toBeInstanceOf(ConflictError);
+    await expect(
+      stale(read, () => publishContentType(h.ctx, scope, 'settings')),
+    ).rejects.toBeInstanceOf(ConflictError);
+    const now = await getContentType(h.ctx, scope, 'settings');
+    expect('singleton' in now).toBe(false);
+    expect(now.name).toBe('Site settings');
+  });
+
+  it('announces a promotion’s published type once', async () => {
+    await createEnvironment(h.ctx, 'site', 'staging');
+    await settingsType(h, staging);
+    await updateContentType(h.ctx, staging, 'settings', { name: 'Settings v2' });
+    await publishContentType(h.ctx, staging, 'settings');
+    const before = h.store.allEvents().length;
+    const requested = await requestPromotion(h.ctx, ada, 'site', {
+      source: 'staging',
+      target: 'main',
+      contentTypes: ['settings'],
+    });
+    await approvePromotion(h.ctx, grace, 'site', requested.id);
+    const published = h.store
+      .allEvents()
+      .slice(before)
+      .filter((e) => e.type === 'content_type.published');
+    expect(published.map((e) => e.scope.environmentId)).toEqual(['main']);
+    expect((await getContentType(h.ctx, scope, 'settings')).status).toBe('published');
+  });
+});
+
+describe('a stopped content type delete', () => {
+  it('records the outcome even when the stop came without one', async () => {
+    const h = setup();
+    await createSpace(h.ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
+    await pageType(h);
+    await createEntry(h.ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: { title: { 'en-US': 'p' } },
+    });
+    const started = await deleteContentTypeWithEntries(h.ctx, scope, 'page');
+    if (started.deleted) throw new Error('expected a job');
+    // A stop that recorded nothing (an older release): the next cancel fills it in.
+    await h.store.bulkJobs.finalizeJob(scope, started.job.id, 'cancelled', new Date());
+    const again = await cancelBulkJob(h.ctx, scope, started.job.id);
+    const recorded = { deleted: false, reason: 'the job was stopped' };
+    expect(again.config?.typeDeletion).toEqual(recorded);
+    expect((await h.store.bulkJobs.getJob(scope, started.job.id))?.config?.typeDeletion).toEqual(
+      recorded,
+    );
   });
 });

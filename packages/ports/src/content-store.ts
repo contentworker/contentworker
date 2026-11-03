@@ -1481,7 +1481,10 @@ export interface DeliveryReadRequest {
    * locales the space doesn't deliver). Present when the asset or page holds anything.
    */
   readonly assetLocales?: boolean;
-  /** Every content type in the scope. */
+  /**
+   * Every content type in the scope, as Delivery sees it: `singleton` is the flag as last
+   * published (what `…/singletons/:apiId` serves by), so GraphQL's singleton roots agree with it.
+   */
   readonly contentTypes?: boolean;
   /** The space's rendition presets. */
   readonly renditions?: boolean;

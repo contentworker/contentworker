@@ -190,7 +190,7 @@ async function prepareFields(
  * so the common case produces "slug 'about' is already used by entry X" rather
  * than a bare constraint violation.
  */
-async function assertClaimsFree(
+export async function assertClaimsFree(
   entries: Pick<EntryRepo, 'findUniqueConflicts'>,
   scope: Scope,
   claims: readonly UniqueClaim[],

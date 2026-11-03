@@ -203,7 +203,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Remove alias                                                                              |
 | GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log (`?limit`, `?skip`)                                                       |
 | GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`)                                                 |
-| POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch                                                                  |
+| POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch; `409` (`details.conflicts`) before any write when its entries would take a unique value twice; an entry in the target's trash stays there |
 | POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`)      |
 | GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |

@@ -27,12 +27,7 @@ import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
 import { auditActor } from './audit';
 import { compareEnvironments } from './branching';
-import {
-  describeRemovedInUse,
-  publishContentType,
-  removedContentInUse,
-  saveContentTypeOver,
-} from './content-types';
+import { describeRemovedInUse, removedContentInUse, saveContentTypeOver } from './content-types';
 import { type AppContext, withActor } from './context';
 import { createEntry, updateEntry } from './entries';
 import { loadPublishGuard } from './publish-gate';
@@ -380,7 +375,8 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         await ctx.store.contentTypes.get(target, ct.apiId),
         ct,
       );
-      if (ct.status === 'published') await publishContentType(ctx, target, pinned.apiId);
+      // A published definition is saved as published, and the save announces it
+      // (`content_type.published`, once): no separate publish.
       result.contentTypes.push(pinned.apiId);
     }
     const pinned = new Map<string, EntryFields>();

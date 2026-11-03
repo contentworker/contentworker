@@ -319,7 +319,9 @@ export async function getPublishedEntry(
  * linked entries per include level. Not found unless `apiId` names a type whose PUBLISHED
  * revision is a singleton (a draft turning the flag on or off changes nothing here until it is
  * published) and that has a published entry, so a client can't read an ordinary type's first
- * entry through it.
+ * entry through it. While a draft that turned the flag off waits to be published, the type can
+ * gain more entries (the claim is given back with the draft); Delivery then serves the published
+ * one with the lowest entry id, until the turn-off is published.
  *
  * Not kept in this tag cache (`ctx.cache`), but the Delivery Worker's entrypoint caches the
  * response like every other, until the scope's next purge. Everything that changes the answer
