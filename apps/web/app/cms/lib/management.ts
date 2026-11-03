@@ -26,6 +26,9 @@ import type {
   FieldDiff,
   FilterOp,
   GraphIssue,
+  Menu,
+  MenuItemInput,
+  MenuLink,
   Redirect,
   RedirectChain,
   RedirectInput,
@@ -582,6 +585,43 @@ export const WEBHOOK_TOPICS = [
   'content_type.published',
 ] as const;
 export type WebhookTopic = (typeof WEBHOOK_TOPICS)[number];
+
+/** A menu as the list shows it: no items, their count. */
+export interface MenuSummary {
+  readonly id: string;
+  readonly handle: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly itemCount: number;
+  readonly revision: number;
+  readonly updatedAt: string;
+}
+
+/** Whether Delivery serves an item now, or why it drops it (its children take its place). */
+export type MenuItemStatus = 'live' | 'unpublished' | 'missing' | 'no_url' | 'hidden';
+
+export interface MenuItemPreview {
+  readonly id: string;
+  readonly link: MenuLink;
+  readonly label: string;
+  readonly url: string | null;
+  readonly status: MenuItemStatus;
+  readonly children: readonly MenuItemPreview[];
+}
+
+export interface MenuPreview {
+  readonly menu: Menu;
+  readonly locale: string;
+  readonly items: readonly MenuItemPreview[];
+}
+
+/** A menu's own fields; `items` replaces the whole tree. */
+export interface MenuInput {
+  readonly handle: string;
+  readonly name: string;
+  readonly description?: string | null;
+  readonly items?: readonly MenuItemInput[];
+}
 
 /** A redirect write: the redirect, and the chains it now takes part in. */
 export interface RedirectWrite {
@@ -2364,6 +2404,41 @@ export function createManagementClient(
         if (err instanceof ApiError && err.status === 404) return null;
         throw err;
       }
+    },
+
+    // --- settings: menus (environment-scoped) ----------------------------
+    async listMenus(): Promise<MenuSummary[]> {
+      return (await req<{ items: MenuSummary[] }>('GET', `${mgmt}/menus`)).items;
+    },
+    getMenu(id: string): Promise<Menu> {
+      return req('GET', `${mgmt}/menus/${encodeURIComponent(id)}`);
+    },
+    /** Each item as Delivery would resolve it now, or why it is dropped. */
+    previewMenu(id: string, locale?: string): Promise<MenuPreview> {
+      const qs = locale ? `?${new URLSearchParams({ locale })}` : '';
+      return req('GET', `${mgmt}/menus/${encodeURIComponent(id)}/preview${qs}`);
+    },
+    /** 409 when another menu has the handle; 422 naming each bad item. */
+    createMenu(input: MenuInput): Promise<Menu> {
+      return req('POST', `${mgmt}/menus`, input);
+    },
+    /** With `revision`, a menu saved since is a 409 rather than an overwrite. */
+    updateMenu(
+      id: string,
+      changes: Partial<MenuInput> & { readonly revision?: number },
+    ): Promise<Menu> {
+      return req('PATCH', `${mgmt}/menus/${encodeURIComponent(id)}`, changes);
+    },
+    /** Moves an item, with everything under it, to `index` under `parentId` (null: the top). */
+    moveMenuItem(
+      id: string,
+      move: { itemId: string; parentId: string | null; index: number; revision?: number },
+    ): Promise<Menu> {
+      return req('POST', `${mgmt}/menus/${encodeURIComponent(id)}/move`, move);
+    },
+    deleteMenu(id: string, revision?: number): Promise<void> {
+      const qs = revision !== undefined ? `?revision=${revision}` : '';
+      return req('DELETE', `${mgmt}/menus/${encodeURIComponent(id)}${qs}`);
     },
 
     // --- settings: webhooks (environment-scoped) -------------------------

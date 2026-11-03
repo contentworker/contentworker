@@ -4,6 +4,7 @@ import {
   createConcept,
   createContentType,
   createEntry,
+  createMenu,
   createRedirect,
   createScheme,
   createSpace,
@@ -12,11 +13,13 @@ import {
   deliveryGraphResolvers,
   deliveryReads,
   getDeliveredAsset,
+  getDeliveredMenu,
   getDeliveredTag,
   getEntry,
   getPublishedEntry,
   listDeliveredAssets,
   listDeliveredConcepts,
+  listDeliveredMenus,
   listDeliveredRedirects,
   listDeliveredRoutes,
   listDeliveredSitemap,
@@ -135,6 +138,7 @@ async function seed(): Promise<void> {
     apiId: 'roundup',
     name: 'Roundup',
     displayField: 'title',
+    urlPattern: '/roundups/{id}',
     fields: [
       field({ apiId: 'title', type: 'Symbol', required: true }),
       field({
@@ -423,6 +427,11 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
   ['delivery: GET /routes', () => listDeliveredRoutes(ctx, scope)],
   ['delivery: GET /sitemap', () => listDeliveredSitemap(ctx, scope)],
   ['delivery: GET /sitemap.xml', () => deliveredSitemapFile(ctx, scope, undefined)],
+  ['delivery: GET /menus', () => listDeliveredMenus(ctx, scope)],
+  [
+    'delivery: GET /menus/:handle?locale=de',
+    () => getDeliveredMenu(ctx, scope, 'main', { locale: 'de' }),
+  ],
   ['management: GET /entries/:id', () => getEntry(ctx, scope, article(5))],
   [
     'management: GET /entries?content_type=article',
@@ -536,6 +545,20 @@ describe('D1 query counts', () => {
       await createRedirect(ctx, scope, { source: `/old/${i}`, destination: `/new/${i}` });
     }
     await createRedirect(ctx, scope, { source: '/blog/[slug]', destination: '/posts/[slug]' });
+    // A menu with every kind of link: an entry (under a URL), a tag and a concept.
+    await createMenu(ctx, scope, {
+      handle: 'main',
+      name: 'Main',
+      items: [
+        {
+          label: 'Home',
+          link: { type: 'url', url: '/' },
+          children: [{ link: { type: 'entry', entryId: ids.roundup } }],
+        },
+        { link: { type: 'term', termKind: 'tag', termId: ids.tag } },
+        { link: { type: 'term', termKind: 'concept', termId: ids.concept } },
+      ],
+    });
   }, 120_000);
 
   it('counts a lone statement as one round trip and a batch as one round trip', async () => {

@@ -73,6 +73,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['settings: webhooks', '/settings/webhooks'],
   ['settings: environments', '/settings/environments'],
   ['settings: redirects', '/settings/redirects'],
+  ['settings: menus', '/settings/menus'],
   ['settings: ai actions', '/settings/ai-actions'],
   ['settings: functions', '/settings/functions'],
   ['settings: extensions', '/settings/extensions'],
@@ -477,6 +478,27 @@ test('the redirect and import dialogs have no accessibility violations', async (
   await scan(page, testInfo);
   await page.getByRole('button', { name: 'Import' }).click();
   await expect(page.getByRole('dialog', { name: 'Import redirects' })).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('the menu editor and its dialogs have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/menus');
+  await page.getByRole('button', { name: 'New menu' }).first().click();
+  const created = page.getByRole('dialog', { name: 'New menu' });
+  await expect(created).toBeVisible();
+  await created.getByLabel('Name').fill(`A11y ${Date.now()}`);
+  await scan(page, testInfo);
+  await created.getByRole('button', { name: 'Create menu' }).click();
+  await page.getByRole('button', { name: 'Add item' }).click();
+  const item = page.getByRole('dialog', { name: 'New item' });
+  await expect(item).toBeVisible();
+  await item.getByLabel('URL').fill('/a11y');
+  await item.getByLabel('Label').fill('A11y one');
+  await scan(page, testInfo);
+  await item.getByRole('button', { name: 'Add item' }).click();
+  await expect(page.getByRole('button', { name: 'Move “A11y one” up' })).toBeVisible();
   await scan(page, testInfo);
 });
 

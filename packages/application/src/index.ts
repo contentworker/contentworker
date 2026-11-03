@@ -52,6 +52,7 @@ export * from './import';
 export * from './import-jobs';
 export * from './invites';
 export * from './media-ai';
+export * from './menus';
 export * from './moderation';
 export * from './oauth';
 export * from './plugin-hooks';

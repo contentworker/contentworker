@@ -86,6 +86,7 @@ export default defineConfig({
             { label: 'Environments', slug: 'guides/environments' },
             { label: 'Redirects', slug: 'guides/redirects' },
             { label: 'SEO and sitemaps', slug: 'guides/seo' },
+            { label: 'Navigation menus', slug: 'guides/menus' },
             { label: 'Workflows', slug: 'guides/workflows' },
             { label: 'Approvals and reviews', slug: 'guides/approvals' },
             { label: 'AI features', slug: 'guides/ai' },

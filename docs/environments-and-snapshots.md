@@ -11,8 +11,9 @@ and `POST …/clone` does both, including across spaces (`packages/application/s
 and `snapshot-jobs.ts`).
 
 A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows,
-asset **metadata**, the asset folders, the asset collections and the redirects (a `redirects` array,
-optional, so snapshots written before redirects still import). It deliberately never carries **credentials** (API keys, OAuth clients and
+asset **metadata**, the asset folders, the asset collections, the redirects (a `redirects` array,
+optional, so snapshots written before redirects still import) and the menus (a `menus` array,
+optional likewise). It deliberately never carries **credentials** (API keys, OAuth clients and
 grants, preview tokens, webhook signing secrets), because a snapshot is a file people move around.
 Asset **binaries** stay in the blob store: a restore into the same space, on a deployment
 pointing at the same bucket, works, and one pointing elsewhere has dangling files, which is
@@ -45,6 +46,11 @@ What an import preserves:
   most `MAX_REDIRECTS`). A source the target already redirects keeps the target's, so a retry adds
   nothing twice. They are written in one unit with the set's revision and a `redirects.changed`
   event. A content type's `urlPattern` travels with the content model.
+- **Menus.** They keep their ids and item ids (`writeSnapshotMenus`), written after the taxonomy so
+  term links are remapped to the target's term ids; entry links keep their ids, since entries import
+  with theirs. Preflight checks each menu's handle, name and items (not its links: the entries come
+  after). A menu whose id or handle the target already holds keeps the target's, and at most
+  `MAX_MENUS` are written. They are written in one unit with one `menus.changed` event.
 - **Every entry.** The export reads every page of entries and assets, not the store's first page.
 - **Live and draft versions.** A `changed` entry (published, with edits since) carries its live
   version's fields too: the import publishes those, then applies the draft, so the copy has the
@@ -83,7 +89,7 @@ infrastructure error) is reported per entry in the job's report.
 
 Replaying every entry through the use-cases is far more than one request can hold for an
 environment of any size. After the checks, the import request writes the content model, asset
-folders, taxonomy, redirects and workflows (small, and everything else depends on them) and answers `202` with
+folders, taxonomy, redirects, menus and workflows (small, and everything else depends on them) and answers `202` with
 `{ report, job, publishJobId }`. The assets and entries are staged in the blob store in chunks of
 100 before the model is written (so a staging failure leaves the target empty and a retry works),
 and written by bulk jobs, with progress at `…/bulk/jobs/:id` and per-item failures at
@@ -127,7 +133,7 @@ published. A dry run (`dryRun: true` on the MCP tool) still exports and checks i
 
 `DELETE …/environments/:env?confirm=:env` (MCP `environment_delete`) removes the environment and
 everything in it: content model, entries and versions, assets, references, releases, schedules,
-workflows and runs, taxonomy, redirects, comments, tasks and jobs, and the webhooks scoped to it (space-wide
+workflows and runs, taxonomy, redirects, menus, comments, tasks and jobs, and the webhooks scoped to it (space-wide
 ones stay). Its audit history stays. `confirm` must
 repeat the environment id. It takes a person holding `space:admin` in that space (signed in, or
 through their OAuth or personal access token) or the deployment admin token; a plain API key gets

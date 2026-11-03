@@ -4,6 +4,7 @@ import { deliveredCollection } from './schemas/asset-collections';
 import { deliveredAsset, deliveredAssetPage, deliveredAssetSearchPage } from './schemas/assets';
 import { deliveredRouteList } from './schemas/content-types';
 import { publishedEntry, publishedEntryList, searchHits } from './schemas/entries';
+import { deliveredMenu, deliveredMenuList } from './schemas/menus';
 import { deliveredRedirectList, deliveredRedirectMatch } from './schemas/redirects';
 import { deliveredSitemapPage } from './schemas/seo';
 import {
@@ -137,6 +138,22 @@ const DOCS = {
         'Every enabled redirect, by source: the set a front end or an edge Worker applies ' +
         'itself (contentworker serves no site). Match exact sources first, then the most ' +
         'specific pattern, as `redirects/resolve` does; the SDKs ship that matcher.',
+    }),
+  listMenus: () =>
+    doc('Delivery', 'List the menus', {
+      ok: deliveredMenuList,
+      description: 'Every navigation menu’s handle and name, by handle: which ones to ask for.',
+    }),
+  getMenu: () =>
+    doc('Delivery', 'Get a menu, resolved', {
+      ok: deliveredMenu,
+      description:
+        'One menu as a tree ready to render. Entry links resolve to the published entry’s path ' +
+        '(its type’s URL pattern) and label (its display field, unless the item has its own); ' +
+        'term links to the term’s label and slug. An item whose link doesn’t resolve (the ' +
+        'entry unpublished or deleted, no URL in the locale, a type the key can’t read) is ' +
+        'dropped and its children take its place. 404 when no menu has the handle.',
+      query: { locale: 'Labels, slugs and paths in this locale (with the space’s fallbacks)' },
     }),
   listRoutes: () =>
     doc('Delivery', 'List the site routes', {

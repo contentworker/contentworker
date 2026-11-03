@@ -145,7 +145,7 @@ bind them by `script_name`) and handles:
   per batch for every space:environment touched by an event in `PURGING_EVENTS`
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
   `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed`,
-  `taxonomy.changed`, `redirects.changed`, `content_type.published`, `release.published`,
+  `taxonomy.changed`, `redirects.changed`, `menus.changed`, `content_type.published`, `release.published`,
   `environment_alias.changed`, `environment.deleted`; the sitemap is purged with the rest of the scope; `asset.ingested` only when `published`;
   `asset_renditions.changed` purges every environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
   and send the media Worker's tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`):
@@ -524,7 +524,7 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
 
 | Store                             | Holds                                                                                                                                                                                                                                                                              |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **D1** (`DB`, primary + replicas) | Everything authoritative: spaces, environments, aliases, content types, entries and versions, published read models, assets, releases, schedules, taxonomy, redirects, workflows, roles, team, API keys, OAuth, webhooks, the outbox, audit; plus the web app's auth tables (`0002_auth.sql`) |
+| **D1** (`DB`, primary + replicas) | Everything authoritative: spaces, environments, aliases, content types, entries and versions, published read models, assets, releases, schedules, taxonomy, redirects, menus, workflows, roles, team, API keys, OAuth, webhooks, the outbox, audit; plus the web app's auth tables (`0002_auth.sql`) |
 | **R2** (`MEDIA_BUCKET`)           | Asset bytes, import staging (`imports/`, 7-day lifecycle), plugin bundles, dead letters (`dlq/`, 30-day lifecycle), zip downloads (`zips/`, 2-day lifecycle) and in-progress multipart uploads (aborted by a bucket-wide 2-day rule)                                                                                                                                                                 |
 | **KV** (`KV_CACHE`)               | Tag-versioned delivery cache, the authenticated-principal cache, and the media gate (shared by api, engine, delivery and media)                                                                                                                                                    |
 | **DO SQLite**                     | Search shards, live hubs, AI budgets, auth-failure counters                                                                                                                                                                                                                        |

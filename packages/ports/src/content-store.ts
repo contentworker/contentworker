@@ -31,6 +31,7 @@ import type {
   LocaleCode,
   LocalizedValue,
   MemberInvite,
+  Menu,
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
@@ -136,6 +137,7 @@ export interface ContentStore {
   readonly workflowTasks: WorkflowTaskRepo;
   readonly taxonomy: TaxonomyRepo;
   readonly redirects: RedirectRepo;
+  readonly menus: MenuRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
   readonly functions: FunctionRepo;
@@ -330,6 +332,26 @@ export interface RedirectRepo {
    * over a concurrent edit to the set, still makes that edit check the set again.
    */
   advance(scope: Scope, expected?: number): Promise<void>;
+}
+
+/**
+ * An environment's navigation menus. A menu is one row (its items a JSON tree), written whole
+ * with its revision as the compare-and-set: two people saving the same menu can't both win.
+ */
+export interface MenuRepo {
+  /** Every menu (at most `MAX_MENUS`), by handle. */
+  all(scope: Scope): Promise<Menu[]>;
+  get(scope: Scope, id: string): Promise<Menu | null>;
+  getByHandle(scope: Scope, handle: string): Promise<Menu | null>;
+  /**
+   * Writes `menu` (at its own `revision`). Without `expected` it is inserted: an id or a handle
+   * another menu holds is a `ConflictError` (at commit, inside a unit). With `expected` it
+   * replaces the menu only while that is still at revision `expected`: inside a unit a menu saved
+   * since fails the commit with `TransactionConflictError`; outside one it throws it.
+   */
+  save(scope: Scope, menu: Menu, expected?: number): Promise<void>;
+  /** Deletes a menu still at revision `expected`, as `save` checks it. */
+  delete(scope: Scope, id: string, expected: number): Promise<void>;
 }
 
 export interface CommentRepo {
@@ -1262,6 +1284,8 @@ export interface ContentStoreTx {
   readonly taxonomy: TaxonomyRepo;
   /** A publish's slug change writes redirects with the publish. */
   readonly redirects: RedirectRepo;
+  /** A menu is written with its revision's compare-and-set and the event that announces it. */
+  readonly menus: MenuRepo;
   readonly bulkJobs: BulkJobRepo;
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;
@@ -1465,6 +1489,11 @@ export interface DeliveryReadRequest {
     readonly schemeId?: string;
     readonly slugs?: readonly string[];
   };
+  /**
+   * One menu by handle, with what its links resolve against: the published entries and the
+   * terms it links to, read in the same batch (the menu's own row names them).
+   */
+  readonly menu?: { readonly handle: string };
   /** A page of the sitemap's published entries. */
   readonly sitemap?: SitemapQuery;
 }
@@ -1505,6 +1534,14 @@ export interface SitemapPage {
   readonly pageStarts?: string[];
 }
 
+/** A menu and the published entries and terms its items link to (those that exist). */
+export interface MenuRead {
+  readonly menu: Menu;
+  readonly entries: PublishedEntry[];
+  readonly tags: Tag[];
+  readonly concepts: Concept[];
+}
+
 /**
  * What a {@link DeliveryReadRequest} read: each part is present exactly when it was asked for,
  * with the same answer its own repo method gives (`spaces.getConfig`, `entries.getPublished`,
@@ -1525,6 +1562,8 @@ export interface DeliveryReadResult {
   readonly concepts?: Concept[];
   readonly termUsage?: TermUsage[];
   readonly sitemap?: SitemapPage;
+  /** Null when no menu has the handle. */
+  readonly menu?: MenuRead | null;
 }
 
 /** Delivery's reads, batched. Read-only: it never writes, so it is safe on a replica session. */

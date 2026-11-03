@@ -12,6 +12,10 @@ import {
   type Concept,
   type ConceptScheme,
   type ContentType,
+  checkMenuDescription,
+  checkMenuHandle,
+  checkMenuItems,
+  checkMenuName,
   checkRedirect,
   type EntryFields,
   type EntryMetadata,
@@ -19,7 +23,10 @@ import {
   type FieldIssue,
   MAX_ASSET_FOLDER_DEPTH,
   MAX_COLLECTION_ITEMS,
+  MAX_MENUS,
   MAX_REDIRECTS,
+  type Menu,
+  type MenuItem,
   NotFoundError,
   type Redirect,
   redirectKey,
@@ -107,6 +114,11 @@ export interface EnvironmentSnapshot {
   readonly assetCollections?: readonly SnapshotCollection[];
   /** The environment's redirects. Absent in snapshots written before redirects. */
   readonly redirects?: readonly Redirect[];
+  /**
+   * The environment's menus, with their ids and item ids. Absent in snapshots written before
+   * menus. Entry links keep their ids (entries import with theirs); term links are remapped.
+   */
+  readonly menus?: readonly Menu[];
   readonly taxonomy: {
     readonly schemes: readonly ConceptScheme[];
     readonly concepts: readonly Concept[];
@@ -200,6 +212,7 @@ export async function exportSnapshot(
     assetFolders: await ctx.store.assetFolders.list(scope),
     assetCollections: await exportCollections(ctx, scope),
     redirects: await ctx.store.redirects.all(scope),
+    menus: await ctx.store.menus.all(scope),
     taxonomy: {
       schemes: await ctx.store.taxonomy.listSchemes(scope),
       concepts: await ctx.store.taxonomy.listConcepts(scope),
@@ -567,10 +580,71 @@ export async function writeSnapshotModel(
     taxonomyIds.set(tag.id, created.id);
   }
 
+  // After taxonomy, so term links point at the target's terms. Entry links keep their ids: the
+  // entries come after, with theirs, and a menu resolves its links only when it is read.
+  await writeSnapshotMenus(ctx, target, snapshot.menus ?? [], taxonomyIds);
+
   for (const workflow of snapshot.workflows) {
     await importWorkflow(ctx, target, workflow, skipped);
   }
   return taxonomyIds;
+}
+
+/**
+ * Writes the snapshot's menus with their ids, in one unit and one `menus.changed` (`preflight`
+ * has checked each). A menu whose id or handle the target already holds (a retried import, or a
+ * menu made there since) keeps the target's.
+ */
+async function writeSnapshotMenus(
+  ctx: AppContext,
+  target: Scope,
+  menus: readonly Menu[],
+  taxonomyIds: ReadonlyMap<string, string>,
+): Promise<void> {
+  if (menus.length === 0) return;
+  const held = await ctx.store.menus.all(target);
+  const ids = new Set(held.map((m) => m.id));
+  const handles = new Set(held.map((m) => m.handle));
+  const at = ctx.clock.now().toISOString();
+  const remap = (items: readonly MenuItem[]): MenuItem[] =>
+    items.map((item) => ({
+      ...item,
+      link:
+        item.link.type === 'term'
+          ? { ...item.link, termId: taxonomyIds.get(item.link.termId) ?? item.link.termId }
+          : item.link,
+      children: remap(item.children),
+    }));
+  const adding: Menu[] = [];
+  for (const m of menus) {
+    // Rebuilt from the checked fields: a snapshot is anyone's JSON.
+    const handle = checkMenuHandle(m.handle);
+    if (ids.has(m.id) || handles.has(handle)) continue;
+    if (held.length + adding.length >= MAX_MENUS) break;
+    const description = checkMenuDescription(m.description);
+    adding.push({
+      // An id is a path segment on every surface: one that isn't id-shaped gets a fresh one.
+      id: typeof m.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(m.id) ? m.id : ctx.ids.newId(),
+      handle,
+      name: checkMenuName(m.name),
+      ...(description ? { description } : {}),
+      items: remap(checkMenuItems(m.items, () => ctx.ids.newId())),
+      revision: 1,
+      createdAt: at,
+      updatedAt: at,
+    });
+    handles.add(handle);
+  }
+  if (adding.length === 0) return;
+  await ctx.store.withTransaction(async (tx) => {
+    for (const menu of adding) await tx.menus.save(target, menu);
+    await tx.outbox.append({
+      id: ctx.ids.newId(),
+      type: 'menus.changed',
+      scope: target,
+      occurredAt: ctx.clock.now().toISOString(),
+    });
+  });
 }
 
 /** An entry as an import writes it: the fields to create it with, and its remapped metadata. */
@@ -896,6 +970,30 @@ function preflight(
   }
   const setError = redirectSetError(analyzeRedirects(redirects));
   for (const issue of setError?.issues ?? []) issues.push({ ...issue, field: 'redirects' });
+
+  // Menus are written with the model too: each must hold today, without checking its links
+  // (the entries they name are written after them).
+  const menus = snapshot.menus ?? [];
+  if (menus.length > MAX_MENUS) {
+    issues.push({ field: 'menus', message: `At most ${MAX_MENUS} menus` });
+  }
+  for (const m of menus) {
+    try {
+      checkMenuHandle(m?.handle);
+      checkMenuName(m.name);
+      checkMenuDescription(m.description);
+      // Stand-in ids no item can be given, so only the snapshot's own can collide.
+      let n = 0;
+      checkMenuItems(m.items, () => `\u0000${++n}`);
+    } catch (err) {
+      if (!(err instanceof ValidationError)) throw err;
+      const first = err.issues[0];
+      issues.push({
+        field: 'menus',
+        message: `Menu ${String(m?.handle ?? m?.id)}: ${first ? `${first.field}: ${first.message}` : err.message}`,
+      });
+    }
+  }
 
   const add = (entryId: string, issue: FieldIssue) =>
     issues.push({ ...issue, message: `Entry ${entryId}: ${issue.message}` });

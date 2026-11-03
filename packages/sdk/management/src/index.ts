@@ -156,6 +156,99 @@ export interface RedirectWrite {
   readonly chains: readonly RedirectChain[];
 }
 
+/** Where a menu item points: an entry (by its type's URL pattern), a taxonomy term, or a URL. */
+export type MenuLink =
+  | { readonly type: 'entry'; readonly entryId: string }
+  | { readonly type: 'term'; readonly termKind: 'tag' | 'concept'; readonly termId: string }
+  | { readonly type: 'url'; readonly url: string };
+
+export interface MenuItem {
+  readonly id: string;
+  /** Required for a URL link; absent, the entry's display field or the term's label. */
+  readonly label?: string;
+  readonly link: MenuLink;
+  readonly target?: '_blank';
+  readonly attrs?: Readonly<Record<string, string>>;
+  readonly children: readonly MenuItem[];
+}
+
+/** An item to write: an id given is kept (a move names it), one left out is made. */
+export interface MenuItemInput {
+  readonly id?: string;
+  readonly label?: string | null;
+  readonly link: MenuLink;
+  readonly target?: '_self' | '_blank' | null;
+  readonly attrs?: Readonly<Record<string, string>> | null;
+  readonly children?: readonly MenuItemInput[];
+}
+
+/** A navigation menu: a named tree of links, served resolved by Delivery. */
+export interface Menu {
+  readonly id: string;
+  readonly handle: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly items: readonly MenuItem[];
+  /** Send it back with a change to be refused (409) rather than overwrite a save made since. */
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface MenuSummary {
+  readonly id: string;
+  readonly handle: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly itemCount: number;
+  readonly revision: number;
+  readonly updatedAt: string;
+}
+
+export interface MenuInput {
+  readonly handle: string;
+  readonly name: string;
+  readonly description?: string | null;
+  readonly items?: readonly MenuItemInput[];
+}
+
+/** A menu item as Delivery would resolve it now, or why it would be dropped. */
+export interface MenuItemPreview {
+  readonly id: string;
+  readonly link: MenuLink;
+  readonly label: string;
+  readonly url: string | null;
+  /** `hidden`: content the caller's grants don't let them read. */
+  readonly status: 'live' | 'unpublished' | 'missing' | 'no_url' | 'hidden';
+  readonly children: readonly MenuItemPreview[];
+}
+
+/** A menu item resolved as Delivery serves it (sdk-core's `DeliveredMenuItem`). */
+export interface ResolvedMenuItem {
+  readonly id: string;
+  readonly label: string;
+  /** null for a term link: route a term by its slug. */
+  readonly url: string | null;
+  readonly target?: '_blank';
+  readonly attrs?: Readonly<Record<string, string>>;
+  readonly entry?: { readonly id: string; readonly contentType: string };
+  readonly term?: {
+    readonly kind: 'tag' | 'concept';
+    readonly id: string;
+    readonly slug: string;
+    readonly schemeId?: string;
+  };
+  readonly children: readonly ResolvedMenuItem[];
+}
+
+export interface ResolvedMenu {
+  readonly handle: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly locale: string;
+  readonly items: readonly ResolvedMenuItem[];
+}
+
 export interface Entry {
   readonly id: string;
   readonly contentTypeApiId: string;
@@ -1177,6 +1270,37 @@ export function createManagementClient(opts: ManagementClientOptions) {
         items(get<{ items: ContentTypeEntryCounts[] }>(`${envBase}/content-types/entry-counts`)),
     },
 
+    /** Navigation menus: delivery data a front end renders (content:manage to change them). */
+    menus: {
+      list: async () => (await get<{ items: MenuSummary[] }>(`${envBase}/menus`)).items,
+      get: (id: string) => get<Menu>(`${envBase}/menus/${e(id)}`),
+      /** Each item as Delivery would resolve it now, or why it is dropped. */
+      preview: (id: string, o: { readonly locale?: string } = {}) =>
+        get<{ menu: Menu; locale: string; items: MenuItemPreview[] }>(
+          `${envBase}/menus/${e(id)}/preview`,
+          { locale: o.locale },
+        ),
+      /** The menu by handle as Delivery serves it now (published entries only), with your grants. */
+      resolve: (handle: string, o: { readonly locale?: string } = {}) =>
+        get<ResolvedMenu>(`${envBase}/menus/resolve/${e(handle)}`, { locale: o.locale }),
+      /** 409 for a taken handle; 422 naming each bad item. */
+      create: (input: MenuInput) => post<Menu>(`${envBase}/menus`, input),
+      /** `items` replaces the whole tree; with `revision`, a save made since is a 409. */
+      update: (id: string, changes: Partial<MenuInput> & { readonly revision?: number }) =>
+        patch<Menu>(`${envBase}/menus/${e(id)}`, changes),
+      /** Moves an item (and everything under it) to `index` under `parentId` (null: the top). */
+      moveItem: (
+        id: string,
+        move: {
+          readonly itemId: string;
+          readonly parentId: string | null;
+          readonly index: number;
+          readonly revision?: number;
+        },
+      ) => post<Menu>(`${envBase}/menus/${e(id)}/move`, move),
+      delete: (id: string, o: { readonly revision?: number } = {}) =>
+        del<void>(`${envBase}/menus/${e(id)}`, { revision: o.revision }),
+    },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {
       /** By source; `q` searches source, destination and note. */

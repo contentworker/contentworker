@@ -195,6 +195,13 @@ total }`, each with `id`, `source`, `destination`, `status` and an optional `loc
 contentworker serves no site, so your front end or an edge Worker applies them. See
 [Redirects](/guides/redirects/).
 
+## Menus
+
+`GET /delivery/{space}/{env}/menus` lists the navigation menus' handles and names; `GET
+…/menus/{handle}?locale=` returns one as a tree ready to render: entry links carry the published
+entry's URL from its type's URL pattern, and an item whose entry isn't published is dropped, its
+children taking its place. See [Navigation menus](/guides/menus/).
+
 ## Routes
 
 `GET /delivery/{space}/{env}/routes` returns where each published content type's entries live on
@@ -227,7 +234,7 @@ Delivery answers from a cache in front of the database. Your key is checked on e
 before the cache, so revoking a key or narrowing its role takes effect at once where it was made
 and within about a minute in other locations; keys that may see the same content share cached
 responses. A cached response is fresh for a minute and is purged
-when anything in its environment is published, unpublished, re-pointed by an alias change or has its redirects changed;
+when anything in its environment is published, unpublished, re-pointed by an alias change or has its redirects or menus changed;
 responses carry an `ETag`, so `If-None-Match` gets a `304` when nothing changed.
 
 You don't need a long cache of your own in front of it. For static sites, rebuild on the

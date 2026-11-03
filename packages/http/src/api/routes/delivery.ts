@@ -9,11 +9,13 @@ import {
   getDeliveredAsset,
   getDeliveredCollection,
   getDeliveredConcept,
+  getDeliveredMenu,
   getDeliveredTag,
   getPublishedEntry,
   hybridSearch,
   listDeliveredAssets,
   listDeliveredConcepts,
+  listDeliveredMenus,
   listDeliveredRedirects,
   listDeliveredRoutes,
   listDeliveredSitemap,
@@ -367,6 +369,29 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
           c.req.query('locale') || undefined,
         ),
       ),
+  );
+  // Menus are site data a front end renders: any delivery key reads them, resolved against
+  // published entries only, and an entry link to a type the key can't read is dropped as if
+  // unpublished. Cached and purged like every read here (`menus.changed`, and the entry events).
+  app.get(`${BASE}/menus`, describe('listMenus'), requireScope(SCOPES.deliveryRead), async (c) => {
+    const items = await listDeliveredMenus(ctx, scopeOf(c));
+    return c.json({ items, total: items.length });
+  });
+  app.get(
+    `${BASE}/menus/:handle`,
+    describe('getMenu'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => {
+      const principal = c.get('principal');
+      // The key's grants apply as on its entry reads: types it can't read, and fields it is
+      // denied, never shape what it's served.
+      return c.json(
+        await getDeliveredMenu(ctx, scopeOf(c), c.req.param('handle'), {
+          ...(c.req.query('locale') ? { locale: c.req.query('locale') } : {}),
+          principal,
+        }),
+      );
+    },
   );
   // Where each published type's entries live on the site, for a front end that routes pages from
   // the model. Unlike redirects these are content: a key limited to some types sees only theirs.

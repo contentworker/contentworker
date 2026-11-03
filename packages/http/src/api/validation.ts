@@ -13,6 +13,11 @@ import {
   MAX_COLLECTION_CHANGE,
   MAX_COLLECTION_DESCRIPTION,
   MAX_COLLECTION_ITEMS,
+  MAX_MENU_DESCRIPTION_LENGTH,
+  MAX_MENU_HANDLE_LENGTH,
+  MAX_MENU_ITEMS,
+  MAX_MENU_NAME_LENGTH,
+  MAX_MENUS,
   MAX_REDIRECT_IMPORT,
   MAX_REDIRECT_LENGTH,
   MAX_REDIRECT_NOTE_LENGTH,
@@ -147,6 +152,43 @@ export const snapshotBody = z.object({
     .optional(),
   workflows: z.array(z.any()).max(1000).optional(),
   redirects: z.array(z.any()).max(MAX_REDIRECTS).optional(),
+  menus: z.array(z.any()).max(MAX_MENUS).optional(),
+});
+
+// Menu items are checked by the domain (shape, links, depth, attributes), which names each bad
+// item by its path; here only that they are a bounded list of objects.
+const menuItems = z
+  .array(z.object({}).loose())
+  .max(MAX_MENU_ITEMS)
+  .describe(
+    'The item tree: { id?, label?, link: { type: "entry", entryId } | { type: "term", termKind, termId } | { type: "url", url }, target?, attrs?, children? }',
+  );
+const menuFields = {
+  handle: z
+    .string()
+    .min(1)
+    .max(MAX_MENU_HANDLE_LENGTH)
+    .describe('Lowercase letters and digits joined by - or _: main, footer-legal'),
+  name: z.string().min(1).max(MAX_MENU_NAME_LENGTH),
+  description: z.string().max(MAX_MENU_DESCRIPTION_LENGTH).nullable().optional(),
+  items: menuItems.optional(),
+};
+export const menuBody = z.object(menuFields);
+export const menuPatchBody = z
+  .object(menuFields)
+  .partial()
+  .extend({
+    revision: z
+      .int()
+      .min(1)
+      .optional()
+      .describe('The revision this change was made against: a menu saved since is a 409'),
+  });
+export const menuMoveBody = z.object({
+  itemId: z.string().min(1),
+  parentId: z.string().min(1).nullable().describe('The new parent, or null for the top level'),
+  index: z.int().min(0).describe('Position among the new siblings; past the end appends'),
+  revision: z.int().min(1).optional(),
 });
 const redirectFields = {
   source: z

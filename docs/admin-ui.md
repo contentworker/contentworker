@@ -70,7 +70,7 @@ Deployment group (People and sign-in, Audit log) after Settings, and Account sit
 menu at the sidebar's foot (the More sheet on a phone). Settings sections are addressed as
 `/settings/:section` (default `team`, Space access): **Access** (Space access, API keys, Roles, Connected apps), **Automation**
 (Webhooks, Functions, AI actions), **Extensions** (App extensions, Plugins), **Workspace**
-(Environments, Redirects, Audit log).
+(Environments, Redirects, Menus, Audit log).
 
 ## Features
 
@@ -117,7 +117,7 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   description and a label per other locale of the space, saving only what changed.
 - **Settings**: API keys, roles, OAuth connected apps, webhooks, functions, AI actions, app
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch
-  compare/merge, redirects, the space audit log.
+  compare/merge, redirects, menus, the space audit log.
 - **Redirects** (`/settings/redirects`, `app/cms/components/Redirects.tsx`): the environment's
   redirect set ([Domain model](./domain-model.md#redirects)) as a list with search over source,
   destination and note, an enable switch per row, and an add/edit dialog (source, destination,
@@ -127,6 +127,19 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   `content:manage`. The content type dialog has a **URL pattern** field (`/blog/{slug}`), the
   input to slug-change redirects and the sitemap; it offers the `Seo` field type until one row
   already is one (a type has at most one).
+- **Menus** (`/settings/menus`, `app/cms/components/Menus.tsx`): the environment's navigation
+  menus ([Domain model](./domain-model.md#menus)) as a list (name, handle, item count; New menu,
+  Edit, Delete), and an editor for one menu's item tree. Add or edit an item in a dialog: a URL
+  (with a label), an entry (the entry search picker; the label defaults to its title) or a tag or
+  concept, and _Open in a new tab_; an item's attributes are kept but not edited here. Each row
+  shows the status Delivery's resolution gives it (`GET …/menus/:id/preview`): Live, Not
+  published, Missing or No URL, in words. Reorder by keyboard: every row has Move up, Move down,
+  Move out a level and Move in a level (also Alt+arrows on a focused row), each one `POST
+  …/menus/:id/move` with the revision read; focus stays on the moved item and an sr-only line
+  says what moved. Move in a level is disabled where the item's subtree would nest past three
+  levels. Every change names the revision it was made against: a menu someone else saved since
+  is a 409, and the editor stops with a _Reload_ alert rather than overwrite it. Reading needs
+  `preview:read`; changing anything, `content:manage`.
 
 ### Inline-edit links
 

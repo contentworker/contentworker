@@ -247,6 +247,42 @@ export interface DeliveredConcept extends DeliveredTag {
   readonly broaderId: string | null;
 }
 
+/** A navigation menu item as Delivery serves it: resolved for one locale, ready to render. */
+export interface DeliveredMenuItem {
+  readonly id: string;
+  readonly label: string;
+  /** Where it goes; null for a term link (route a term by its slug). */
+  readonly url: string | null;
+  readonly target?: '_blank';
+  /** `rel`, `title`, `class`, `aria-label` or `data-*`, to set on the link. */
+  readonly attrs?: Readonly<Record<string, string>>;
+  /** The published entry an entry link resolved to. */
+  readonly entry?: { readonly id: string; readonly contentType: string };
+  /** The taxonomy term a term link resolved to. */
+  readonly term?: {
+    readonly kind: 'tag' | 'concept';
+    readonly id: string;
+    readonly slug: string;
+    readonly schemeId?: string;
+  };
+  readonly children: readonly DeliveredMenuItem[];
+}
+
+/** A navigation menu, resolved: published entries only, dangling items dropped. */
+export interface DeliveredMenu {
+  readonly handle: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly locale: string;
+  readonly items: readonly DeliveredMenuItem[];
+}
+
+export interface DeliveredMenuSummary {
+  readonly handle: string;
+  readonly name: string;
+  readonly description?: string;
+}
+
 /** A published content type's place on the site, as Delivery serves it. */
 export interface DeliveredRoute {
   /** The content type's apiId. */
@@ -564,6 +600,21 @@ export function createDeliveryClient(opts: ClientOptions) {
      */
     async routes(): Promise<DeliveredRoute[]> {
       return (await get<{ items: DeliveredRoute[] }>('/routes', {})).items;
+    },
+
+    /** Every navigation menu's handle and name: which ones to ask for. Delivery only. */
+    async menus(): Promise<DeliveredMenuSummary[]> {
+      return (await get<{ items: DeliveredMenuSummary[] }>('/menus', {})).items;
+    },
+
+    /**
+     * One navigation menu by handle (`main`, `footer`), resolved for a locale: entry links carry
+     * the published entry's URL (its type's `urlPattern`) and an item whose entry isn't published
+     * is dropped, its children lifted into its place. Throws a 404 `DeliveryError` for a handle
+     * no menu has. Delivery only.
+     */
+    async menu(handle: string, o: { readonly locale?: string } = {}): Promise<DeliveredMenu> {
+      return get<DeliveredMenu>(`/menus/${encodeURIComponent(handle)}`, { locale: o.locale });
     },
 
     /**

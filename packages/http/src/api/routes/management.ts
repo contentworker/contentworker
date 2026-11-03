@@ -31,6 +31,7 @@ import { environmentAliasesRoutes } from './management/environment-aliases';
 import { environmentMergeRoutes } from './management/environment-merge';
 import { functionsRoutes } from './management/functions';
 import { importsRoutes } from './management/imports';
+import { menusRoutes } from './management/menus';
 import { oauthConnectionsRoutes } from './management/oauth-connections';
 import { pluginsRoutes } from './management/plugins';
 import { promotionsRoutes } from './management/promotions';
@@ -97,6 +98,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   taxonomyRoutes,
   redirectsRoutes,
   seoRoutes,
+  menusRoutes,
   entryTaxonomyRoutes,
 ];
 

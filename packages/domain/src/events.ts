@@ -35,7 +35,8 @@ export type DomainEvent =
   | EnvironmentPromotedEvent
   | EnvironmentPurgeDueEvent
   | InviteEmailDueEvent
-  | RedirectsChangedEvent;
+  | RedirectsChangedEvent
+  | MenusChangedEvent;
 
 export interface BaseEvent {
   readonly id: string;
@@ -179,6 +180,19 @@ export interface RedirectsChangedEvent extends BaseEvent {
   readonly type: 'redirects.changed';
   /** How many redirects the change wrote or removed. */
   readonly count: number;
+}
+
+/**
+ * An environment's menus changed (one created, saved, reordered or deleted, or a snapshot's
+ * written). What Delivery serves for them (`GET …/menus`, `…/menus/:handle`) is stale. A publish
+ * that changes what a menu resolves to does not announce this: its `entry.published` (or
+ * `entry.unpublished`) purges the same responses.
+ */
+export interface MenusChangedEvent extends BaseEvent {
+  readonly type: 'menus.changed';
+  /** The menu changed; absent when a snapshot wrote several. */
+  readonly menuId?: string;
+  readonly handle?: string;
 }
 
 /**

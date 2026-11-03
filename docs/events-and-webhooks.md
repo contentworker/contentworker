@@ -147,7 +147,8 @@ space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/pur
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
 `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed` (Delivery lists a
 collection's published members), `taxonomy.changed` (Delivery serves tags and concepts),
-`redirects.changed` (Delivery serves the enabled redirects), `content_type.published` (Delivery
+`redirects.changed` (Delivery serves the enabled redirects), `menus.changed` (Delivery serves each
+menu resolved), `content_type.published` (Delivery
 serves each published type's `urlPattern` at `…/routes`, the sitemap built from it, and GraphQL's schema), `release.published`,
 `environment_alias.changed`, `environment.deleted`. The sitemap (`…/sitemap`, `…/sitemap.xml`) has no
 event of its own: it is a delivery read under the scope's tag, so the publishes that change it purge it. It sends them as **one** message on `contentworker-purge`, so a burst
@@ -329,6 +330,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `taxonomy.changed`                                                                 | `termKind` (`tag` or `concept`), `termId` (a tag or concept was created, changed or deleted; Delivery's taxonomy reads are purged with the scope's tag) |
 | `asset_zip.requested`                                                              | `jobId` (a control event: the engine starts `AssetZipWorkflow`, or fails the job when `ASSET_ZIP_WF` is unbound; no webhooks apply) |
 | `redirects.changed`                                                                | `count` (redirects written or removed by a create, update, delete, import, chain collapse or snapshot import; Delivery's `redirects` reads are purged. A publish whose slug change writes redirects does not send it: its `entry.published` purges the same responses) |
+| `menus.changed`                                                                    | `menuId?`, `handle?` (a menu was created, saved, moved or deleted; both absent when a snapshot import wrote several; Delivery's `menus` reads are purged. A publish or unpublish that changes what a menu resolves to does not send it: its entry event purges the same responses) |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                                                                        |
 | `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                                                              |
 | `environment_alias.changed`                                                        | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias                                                                                                                                        |
