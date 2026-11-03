@@ -1,13 +1,13 @@
 ---
 name: security-model
-description: contentworker's trust boundaries and what to check at each, for security review of a diff or a design. Covers the signed x-cw-principal header from the web Worker to the api, the delivery gateway and its unroutable Delivery entrypoint, API keys and scopes per space, the admin and MCP tokens, OAuth for MCP, human sign-in (passwords, passkeys, TOTP, OIDC, SCIM, setup), preview tokens and signed media URLs, outbound webhooks and fetches, plugins on Worker Loader, secrets at rest under DATA_KEY, untrusted content in model prompts, and CI's supply chain. Preloaded by the security-reviewer agent; use it directly when a change touches auth, roles, scopes, signing, secrets, webhooks, external fetches, plugins or model prompts.
+description: contentworker's trust boundaries and what to check at each, for security review of a diff or a design. Covers the signed x-cw-principal header from the web worker to the api, the delivery gateway and its unroutable Delivery entrypoint, API keys and scopes per space, the admin and MCP tokens, OAuth for MCP, human sign-in (passwords, passkeys, TOTP, OIDC, SCIM, setup), preview tokens and signed media URLs, outbound webhooks and fetches, plugins in isolated edge workers, secrets at rest under DATA_KEY, untrusted content in model prompts, and CI's supply chain. Preloaded by the security-reviewer agent; use it directly when a change touches auth, roles, scopes, signing, secrets, webhooks, external fetches, plugins or model prompts.
 ---
 
 # contentworker security model
 
 contentworker is one dedicated deployment per customer (no sharing across customers), so the
-boundaries that matter are _inside_ a deployment: the public internet → the Workers, between the
-web Worker and the api, between spaces and environments, between API keys of different kinds and
+boundaries that matter are _inside_ a deployment: the public internet → the edge workers, between
+the web worker and the api, between spaces and environments, between API keys of different kinds and
 scopes, and between the platform and the code it runs for a customer (plugins, functions, models).
 Read [references/checklist.md](references/checklist.md) for the per-boundary checks; this page is
 the map.
@@ -20,13 +20,13 @@ browser          API client / SDK / MCP client / OAuth client          Delivery 
    ▼                       ▼                                                                  ▼
 apps/web (public) ─── API service binding ──► apps/api (public)                  apps/delivery (public)
   strips caller x-cw-principal;               believes x-cw-principal only        gateway: auth every request
-  session → signed x-cw-principal             if HMAC(PRINCIPAL_KEY), path-bound,   (KV-cached principal)
+  session → signed x-cw-principal             if HMAC(PRINCIPAL_KEY), path-bound,   (principal in key-value cache)
   (60 s, path-bound); bearer passes as is     < 60 s old; else authenticates bearer      │ x-cw-delivery-principal
                                                     │                             Delivery entrypoint (cached,
-                                                    ▼                             never routable, D1 replicas)
-                                     apps/engine (no route; DOs, Workflows, queues, cron)
-                                       │  webhooks out, functions, plugins (Worker Loader),
-                                       ▼  Workers AI via AI Gateway, Email, Stream, Images
+                                                    ▼                             never routable, db replicas)
+                                     apps/engine (no route; stateful objects, workflows, queues, cron)
+                                       │  webhooks out, functions, plugins (plugin isolates),
+                                       ▼  edge inference via the AI gateway, email, video, images
                                      outside world
 ```
 
@@ -39,8 +39,8 @@ apps/web (public) ─── API service binding ──► apps/api (public)     
    `packages/http/src/api/auth.ts`). The gateway always removes a caller-sent copy; a bearer
    request never carries one; cookies never cross the binding.
 2. **The `Delivery` entrypoint is unreachable from outside.** It trusts `x-cw-delivery-principal`
-   only because the gateway in the same Worker is its only caller (`apps/delivery/src/delivery.ts`).
-   Never add a route, a service binding from another Worker, or a trusted header to a publicly
+   only because the gateway in the same worker is its only caller (`apps/delivery/src/delivery.ts`).
+   Never add a route, a service binding from another worker, or a trusted header to a publicly
    routed handler. Its cache key is the canonical URL built from the visibility profile, so one
    caller's view can't be served to another with less access.
 3. **Scopes are checked against the route's space.** `requireScope` → `authorize(principal, scope,
@@ -58,7 +58,7 @@ apps/web (public) ─── API service binding ──► apps/api (public)     
    (`packages/application/src/url-safety.ts`); the engine and api run with
    `global_fetch_strictly_public` as a backstop. Outbound webhooks are signed
    (`packages/adapters/src/http-effects/webhook-sender.ts`).
-6. **Customer code is sandboxed.** Plugins run on Worker Loader isolates with only the
+6. **Customer code is sandboxed.** Plugins run in isolated edge workers with only the
    capabilities their manifest grants (`packages/adapters/src/plugins-cf-loader`,
    `packages/domain/src/plugin/`); `PLUGIN_SOURCE_HOSTS` and `PLUGIN_MIN_RELEASE_AGE_HOURS` gate
    what may be installed.
@@ -80,7 +80,7 @@ apps/web (public) ─── API service binding ──► apps/api (public)     
 3. Report only what you can tie to a line and a concrete attacker: who they are (anonymous, a CDA
    key holder, a member of another space, a signed-in member, a malicious plugin author, a document
    sender), what they send, and what they get. A finding that needs `PRINCIPAL_KEY`, `DATA_KEY` or
-   Cloudflare account access is not a finding.
+   platform account access is not a finding.
 4. Name the test that would have caught it (`packages/http/test/api/web-principal.test.ts`,
    `api-key-tenancy.test.ts`, `oidc-fail-closed.test.ts`, `plugin-capabilities.test.ts`,
    `apps/web/tests/{principal,gateway,csp,origin,sessions}.test.ts`,

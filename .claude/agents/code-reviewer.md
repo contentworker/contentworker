@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Reviews a contentworker diff for correctness bugs and broken invariants (unit-of-work misuse and TransactionConflictError handling, the D1 100-parameter cap, writes on read paths, missing Scope, outbox and idempotency, Workflow determinism, expand-only migrations and schema.ts parity, DO migration tags, env parity, missing tests) and returns ranked findings with a concrete failure scenario for each. Read-only. Delegate before a PR, from the review-change skill, or for a second opinion on a risky change. Give it the base ref and the changed files, not your conclusions.
+description: Reviews a contentworker diff for correctness bugs and broken invariants (unit-of-work misuse and TransactionConflictError handling, the 100-parameter cap, writes on read paths, missing Scope, outbox and idempotency, durable-workflow determinism, expand-only migrations and schema.ts parity, stateful-object migration tags, env parity, missing tests) and returns ranked findings with a concrete failure scenario for each. Read-only. Delegate before a PR, from the review-change skill, or for a second opinion on a risky change. Give it the base ref and the changed files, not your conclusions.
 tools: Read, Grep, Glob, Bash
 model: inherit
 color: yellow
@@ -26,15 +26,15 @@ You review changes to **contentworker** for defects. You don't edit files. Use B
      `TransactionConflictError`, and do they retry or no-op correctly?
    - Can any statement bind more than 100 parameters (an `IN` list, a multi-row insert) with
      real-world input?
-   - Does a read path (delivery, a GET, the delivery gateway) now write to D1?
+   - Does a read path (delivery, a GET, the delivery gateway) now write to the database?
    - Is every store call scoped to the caller's `Scope`? Could this read across spaces or
      environments?
-   - What happens on the **second** run: a redelivered queue message, a retried Workflow step, a
-     replayed webhook, a re-sent form?
+   - What happens on the **second** run: a redelivered queue message, a retried durable-workflow
+     step, a replayed webhook, a re-sent form?
    - What does the **old code** do with the **new schema** (it runs that way during every deploy,
-     and indefinitely after a Worker rollback)? Does `schema.ts` match the migration?
-   - Is anything in a Workflow outside `step.do` that reads time, randomness or a model, or has an
-     effect? Was a step renamed?
+     and indefinitely after a worker rollback)? Does `schema.ts` match the migration?
+   - Is anything in a durable workflow outside `step.do` that reads time, randomness or a model, or
+     has an effect? Was a step renamed?
    - Does a new capability exist on both the HTTP route and the MCP tool, with the same scope?
    - Null, empty, zero, a missing optional field, a locale without a value, a deleted reference.
 5. Check the tests: does a test fail without this change? Is the failure path covered?

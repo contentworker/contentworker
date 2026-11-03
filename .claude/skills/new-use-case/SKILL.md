@@ -1,6 +1,6 @@
 ---
 name: new-use-case
-description: Scaffold a new application capability in contentworker end to end. The use-case and its test, the HTTP route with its OpenAPI description, the MCP tool, the store and D1 changes if any, the SDK method and the docs. Use when adding any behaviour that API clients or agents can invoke (a new endpoint, MCP tool, or operation on content, assets, releases, workflows, roles and so on).
+description: Scaffold a new application capability in contentworker end to end. The use-case and its test, the HTTP route with its OpenAPI description, the MCP tool, the store and database changes if any, the SDK method and the docs. Use when adding any behaviour that API clients or agents can invoke (a new endpoint, MCP tool, or operation on content, assets, releases, workflows, roles and so on).
 argument-hint: "<capability-name> [short description]"
 ---
 
@@ -33,9 +33,9 @@ every capability is one application use-case exposed through **both** surfaces. 
 
 4. **Store changes (only if needed).** A new `ContentStore` method goes in
    `packages/ports/src/content-store.ts` (domain types only), the in-memory store in
-   `packages/test-kit/src/in-memory-store.ts`, and the D1 store in `packages/db/src/store.ts`
-   (lists through `chunked` / `selectChunked`: D1 binds at most 100 parameters), with a contract
-   test in `packages/db/test/`. A schema change is a migration: `d1-migration` skill.
+   `packages/test-kit/src/in-memory-store.ts`, and the SQL store in `packages/db/src/store.ts`
+   (lists through `chunked` / `selectChunked`: the database binds at most 100 parameters), with a
+   contract test in `packages/db/test/`. A schema change is a migration: `d1-migration` skill.
 
 5. **Both surfaces** in `packages/http`:
    - Route in its area's file, `packages/http/src/api/routes/management/<area>.ts` (or
