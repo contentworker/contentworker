@@ -83,6 +83,11 @@ export const environments = sqliteTable(
       .references(() => spaces.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** Where the trash retention sweep resumes here; null is from the oldest. */
+    trashSweepCursor: text('trash_sweep_cursor', { mode: 'json' }).$type<{
+      trashedAt: string;
+      id: string;
+    }>(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.id] })],
 );

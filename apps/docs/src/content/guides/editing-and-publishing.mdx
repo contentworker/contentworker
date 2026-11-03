@@ -206,6 +206,7 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/bulk/jobs" \
 ```
 
 `action` is `publish`, `unpublish`, `trash`, `restore` or `purge`. A job takes 1 to 250,000 ids
+(100,000 for `trash`, `restore` and `purge`, which run in smaller batches)
 and answers `202`. Starting, cancelling and reading the report of a
 job need `content:publish` on a role with no per-content-type restrictions. Follow it at
 `GET …/bulk/jobs/{id}`, read per-entry failures at `…/bulk/jobs/{id}/report` and stop it with

@@ -96,13 +96,15 @@ export interface TrashSweepResult {
  * published entry linking to it (never forced; linked ones are left out of the read and stay).
  *
  * Bounded: at most `limit` purges a run, each its own small unit of work, one after another (the
- * database has one writer). The budget is shared only between the environments that have expired
- * trash, so many quiet environments don't shrink a busy one's share. A refusal (a plugin's veto,
- * an entry restored or relinked since the read, a lost race) uses no purge slot: the sweep reads
- * on past it (a keyset cursor) to the expired entries behind, up to
- * {@link TRASH_SWEEP_REFUSALS_PER_ENVIRONMENT} refusals per environment, and tries it again next
- * run. The environments take turns going first, hour by hour, so a short budget never starves
- * the same one. Idempotent: a re-run starts from what is left.
+ * database has one writer), and at most twice that many refusals in all. The environments take
+ * turns going first, hour by hour; first pages are read only until they hold the run's budget,
+ * which is then shared evenly between the environments that have expired trash.
+ *
+ * Fair to what is behind a refusal: a refused entry (a plugin's legal hold, a race) uses no purge
+ * slot, and each environment resumes where its last run stopped (a keyset cursor stored on the
+ * environment), so entries held for good never stop the ones behind them. Once an environment's
+ * expired trash has been read to its end, the next run starts from the oldest again and retries
+ * what was refused. Idempotent: a re-run starts from what is left.
  */
 export async function sweepExpiredTrash(
   ctx: AppContext,
@@ -110,51 +112,93 @@ export async function sweepExpiredTrash(
 ): Promise<TrashSweepResult> {
   const now = ctx.clock.now().getTime();
   const limit = opts.limit ?? TRASH_SWEEP_LIMIT;
+  const maxRefused = 2 * limit;
 
-  // The environments with expired trash, each with its first page.
-  const due: { scope: Scope; before: Date; page: ExpiredTrashEntry[] }[] = [];
+  const environments: { scope: Scope; before: Date }[] = [];
   for (const space of await ctx.store.spaces.list()) {
     if (!space.trashRetentionDays) continue;
     const before = new Date(now - space.trashRetentionDays * DAY_MS);
     for (const env of await ctx.store.spaces.listEnvironments(space.spaceId)) {
-      const scope = { spaceId: space.spaceId, environmentId: env.id };
-      const page = await ctx.store.entries.listExpiredTrash(scope, before, PAGE);
-      if (page.length > 0) due.push({ scope, before, page });
+      environments.push({ scope: { spaceId: space.spaceId, environmentId: env.id }, before });
     }
   }
-  if (due.length === 0 || limit <= 0) return { purged: 0, refused: 0 };
+  if (environments.length === 0 || limit <= 0) return { purged: 0, refused: 0 };
 
   // Turn by turn: which environment goes first moves on each hour.
-  const first = Math.floor(now / HOUR_MS) % due.length;
-  const order = [...due.slice(first), ...due.slice(0, first)];
+  const first = Math.floor(now / HOUR_MS) % environments.length;
+  const turn = [...environments.slice(first), ...environments.slice(0, first)];
+
+  // The environments with expired trash, each with its first page from where it resumes, read
+  // only until they hold the run's budget.
+  const due: {
+    scope: Scope;
+    before: Date;
+    page: ExpiredTrashEntry[];
+    stored: ExpiredTrashEntry | null;
+  }[] = [];
+  let found = 0;
+  for (const { scope, before } of turn) {
+    if (found >= limit) break;
+    const stored = await ctx.store.spaces.getTrashSweepCursor(scope);
+    let page = await ctx.store.entries.listExpiredTrash(scope, before, PAGE, stored ?? undefined);
+    // Nothing after the cursor: wrap round to the oldest, retrying what was refused.
+    if (page.length === 0 && stored) {
+      page = await ctx.store.entries.listExpiredTrash(scope, before, PAGE);
+    }
+    if (page.length === 0) {
+      if (stored) await ctx.store.spaces.setTrashSweepCursor(scope, null);
+      continue;
+    }
+    due.push({ scope, before, page, stored });
+    found += page.length;
+  }
+
   let budget = limit;
   let purged = 0;
   let refused = 0;
-  for (const [i, { scope, before, page: firstPage }] of order.entries()) {
-    if (budget <= 0) break;
+  for (const [i, { scope, before, page: firstPage, stored }] of due.entries()) {
+    if (budget <= 0 || refused >= maxRefused) break;
     // An even share of what is left, so what one environment doesn't use goes to the rest.
-    let quota = Math.ceil(budget / (order.length - i));
+    let quota = Math.ceil(budget / (due.length - i));
     let refusals = 0;
+    const more = () =>
+      quota > 0 && refusals < TRASH_SWEEP_REFUSALS_PER_ENVIRONMENT && refused < maxRefused;
     let page = firstPage;
-    while (quota > 0 && refusals < TRASH_SWEEP_REFUSALS_PER_ENVIRONMENT && page.length > 0) {
+    let last: ExpiredTrashEntry | undefined;
+    let exhausted = false;
+    for (;;) {
       for (const row of page) {
-        if (quota <= 0 || refusals >= TRASH_SWEEP_REFUSALS_PER_ENVIRONMENT) break;
+        if (!more()) break;
+        last = row;
         try {
           await purgeEntry(ctx, scope, row.id, opts.blob ? { blob: opts.blob } : {});
           purged++;
           quota--;
           budget--;
         } catch (err) {
-          // A rule said no: the entry stays, and is tried again next run. Anything else is the
-          // database's, and fails the sweep.
+          // A rule said no: the entry stays, and is tried again once this environment's sweep
+          // comes round to it. Anything else is the database's, and fails the sweep.
           if (!(err instanceof DomainError)) throw err;
           refused++;
           refusals++;
         }
       }
-      const last = page.at(-1);
-      if (page.length < PAGE || !last) break;
+      if (last === page.at(-1) && page.length < PAGE) {
+        exhausted = true;
+        break;
+      }
+      if (!more() || !last) break;
       page = await ctx.store.entries.listExpiredTrash(scope, before, PAGE, last);
+      if (page.length === 0) {
+        exhausted = true;
+        break;
+      }
+    }
+    // Where the next run starts here: after the last entry looked at, or from the oldest again
+    // once the expired trash has been read to its end.
+    const next = exhausted ? null : (last ?? stored);
+    if (next?.id !== stored?.id || next?.trashedAt !== stored?.trashedAt) {
+      await ctx.store.spaces.setTrashSweepCursor(scope, next ?? null);
     }
   }
   return { purged, refused };

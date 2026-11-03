@@ -1,14 +1,17 @@
 import {
   type AppContext,
+  BULK_JOB_MAX_ITEMS,
   createContentType,
   createEntry,
   createSpace,
   ENTRY_TRASH_CHUNK_SIZE,
+  ENTRY_TRASH_MAX_ITEMS,
   entryTrashChunkRunner,
   getTrashSettings,
   publishContentType,
   publishEntry,
   setTrashRetention,
+  startBulkJob,
   sweepExpiredTrash,
   trashEntry,
 } from '@contentworker/application';
@@ -98,6 +101,17 @@ describe('trash retention on D1', () => {
     });
     await setTrashRetention(h.ctx, admin, h.scope, null);
     expect((await store.spaces.getConfig(h.scope))?.trashRetentionDays).toBeUndefined();
+
+    // The sweep's resume point, per environment.
+    expect(await store.spaces.getTrashSweepCursor(h.scope)).toBeNull();
+    const cursor = { trashedAt: '2026-01-01T00:00:00.000Z', id: uid() };
+    await store.spaces.setTrashSweepCursor(h.scope, cursor);
+    expect(await store.spaces.getTrashSweepCursor(h.scope)).toEqual(cursor);
+    expect(
+      await store.spaces.getTrashSweepCursor({ ...h.scope, environmentId: 'staging' }),
+    ).toBeNull();
+    await store.spaces.setTrashSweepCursor(h.scope, null);
+    expect(await store.spaces.getTrashSweepCursor(h.scope)).toBeNull();
   });
 
   it('lists expired trash oldest first, past the parameter cap, leaving out linked entries', async () => {
@@ -212,4 +226,33 @@ const job = (action: 'trash' | 'purge') => ({
   succeeded: 0,
   failed: 0,
   createdAt: new Date().toISOString(),
+});
+
+describe('starting the largest bulk jobs on D1', () => {
+  it('writes a trash job at its cap, and a publish job at its cap, in under 1,000 statements', async () => {
+    const h = await harness();
+    const counter = countingD1(testDb);
+    const counted: AppContext = { ...h.ctx, store: createD1Store(counter.d1) };
+    const ids = (n: number) => Array.from({ length: n }, () => uid());
+
+    const purge = await counter.measure(() =>
+      startBulkJob(counted, h.scope, { action: 'purge', entryIds: ids(ENTRY_TRASH_MAX_ITEMS) }),
+    );
+    const publish = await counter.measure(() =>
+      startBulkJob(counted, h.scope, { action: 'publish', entryIds: ids(BULK_JOB_MAX_ITEMS) }),
+    );
+    console.log(
+      JSON.stringify({
+        purgeAtCap: { statements: purge.statements, roundTrips: purge.roundTrips },
+        publishAtCap: { statements: publish.statements, roundTrips: publish.roundTrips },
+      }),
+    );
+    expect(purge.statements).toBeLessThan(1000);
+    expect(publish.statements).toBeLessThan(1000);
+    await expect(
+      startBulkJob(counted, h.scope, { action: 'trash', entryIds: ids(ENTRY_TRASH_MAX_ITEMS + 1) }),
+    ).rejects.toMatchObject({
+      issues: [{ field: 'entryIds', message: `Job exceeds ${ENTRY_TRASH_MAX_ITEMS} items` }],
+    });
+  }, 120_000);
 });

@@ -28,11 +28,24 @@ export const BULK_JOB_CHUNK_SIZE = 200;
  */
 export const ENTRY_TRASH_CHUNK_SIZE = 50;
 
+/**
+ * The largest trash, restore or purge job. Its chunks are a quarter the size of a publish job's, so
+ * the same id count would make four times the chunks, every one of them a row and an outbox nudge
+ * written in the one batch that starts the job: 100,000 ids is 2,000 chunks, as many as a
+ * 400,000-id publish job would make if one could be started.
+ */
+export const ENTRY_TRASH_MAX_ITEMS = 100_000;
+
+const isEntryTrashAction = (action: BulkJobAction): boolean =>
+  (ENTRY_TRASH_BULK_ACTIONS as readonly string[]).includes(action);
+
 /** How many ids one chunk of `action` takes. */
 export const bulkChunkSizeOf = (action: BulkJobAction): number =>
-  (ENTRY_TRASH_BULK_ACTIONS as readonly string[]).includes(action)
-    ? ENTRY_TRASH_CHUNK_SIZE
-    : BULK_JOB_CHUNK_SIZE;
+  isEntryTrashAction(action) ? ENTRY_TRASH_CHUNK_SIZE : BULK_JOB_CHUNK_SIZE;
+
+/** The most ids one job of `action` takes. */
+export const bulkMaxItemsOf = (action: BulkJobAction): number =>
+  isEntryTrashAction(action) ? ENTRY_TRASH_MAX_ITEMS : BULK_JOB_MAX_ITEMS;
 /** Largest bulk job a single start call accepts. */
 export const BULK_JOB_MAX_ITEMS = 250_000;
 /** A chunk claimed longer than this is considered crashed and re-claimable. */
@@ -65,10 +78,9 @@ export async function startBulkJob(
   if (ids.length === 0) {
     throw new ValidationError([{ field: 'entryIds', message: 'No items provided' }]);
   }
-  if (ids.length > BULK_JOB_MAX_ITEMS) {
-    throw new ValidationError([
-      { field: 'entryIds', message: `Job exceeds ${BULK_JOB_MAX_ITEMS} items` },
-    ]);
+  const max = bulkMaxItemsOf(input.action);
+  if (ids.length > max) {
+    throw new ValidationError([{ field: 'entryIds', message: `Job exceeds ${max} items` }]);
   }
 
   const jobId = ctx.ids.newId();

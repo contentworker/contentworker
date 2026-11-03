@@ -4140,6 +4140,23 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           }),
       );
     },
+    async getTrashSweepCursor(scope) {
+      const e = schema.environments;
+      const [row] = await db
+        .select({ cursor: e.trashSweepCursor })
+        .from(e)
+        .where(and(eq(e.spaceId, scope.spaceId), eq(e.id, scope.environmentId)));
+      return row?.cursor ?? null;
+    },
+    async setTrashSweepCursor(scope, cursor) {
+      const e = schema.environments;
+      await x.write(
+        db
+          .update(e)
+          .set({ trashSweepCursor: cursor ? { trashedAt: cursor.trashedAt, id: cursor.id } : null })
+          .where(and(eq(e.spaceId, scope.spaceId), eq(e.id, scope.environmentId))),
+      );
+    },
     async setTrashRetentionDays(spaceId, days) {
       await x.write(
         db

@@ -4,7 +4,7 @@ import {
   revokeEverythingFor,
   setSchedulerAlertRecipients,
 } from '@contentworker/application';
-import { ForbiddenError } from '@contentworker/domain';
+import { ForbiddenError, inScope } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, principalMiddleware } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -96,11 +96,17 @@ export function deploymentRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   // The same, resolved in one space: a person's role (and its per-content-type grants) is per
   // space, so this is what the admin asks before offering an action only some roles may take.
+  // `/spaces/*` already resolved the principal; a key or person with no standing in this space
+  // is refused rather than described.
   app.get(
     '/spaces/:space/auth/me',
     doc('Auth', 'Resolve the calling principal in a space', { ok: authDocs.principal }),
-    principalMiddleware(deps),
-    me,
+    (c) => {
+      if (!inScope(c.get('principal'), c.req.param('space'))) {
+        throw new ForbiddenError('this space');
+      }
+      return me(c);
+    },
   );
 
   return app;

@@ -585,7 +585,8 @@ interface Principal {
   [The web principal](#the-web-principal).
 - **`GET /auth/me`** returns the resolved principal summary; **`GET /spaces/:space/auth/me`**
   returns it resolved in that space (a person's role is per space), with `restricted` true when the
-  role is limited to some content types. The admin reads it before offering the bulk trash,
+  role carries per-content-type grants (every space member's role does; deployment admins and
+  plain keys don't), and `403` for a caller with no standing in that space. The admin reads it before offering the bulk trash,
   restore and delete jobs, which need an unrestricted `content:publish` role. Neither has an MCP
   tool: an MCP client already knows its own token.
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA

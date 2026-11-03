@@ -281,6 +281,33 @@ describe('a card', () => {
     expect(screen.getByText('3 entries')).toBeTruthy();
   });
 
+  it('says what a bulk job does to how many entries, and marks a removal destructive', () => {
+    const job = (action: string, n: number) =>
+      card({
+        type: 'tool-bulk_job_start',
+        input: { action, entryIds: Array.from({ length: n }, (_, i) => `e${i}`) },
+        toolMetadata: undefined,
+      });
+    const confirmOf = (action: string, n: number, about: string) => {
+      const view = inRouter(
+        <ActionCard part={job(action, n)} respond={vi.fn()} actionKey="m1:0" direct={false} />,
+      );
+      const region = screen.getByRole('region', { name: 'Run a job on these entries' });
+      expect(within(region).getByText(about)).toBeTruthy();
+      const variant = within(region)
+        .getByRole('button', { name: 'Confirm' })
+        .getAttribute('data-variant');
+      view.unmount();
+      return variant;
+    };
+    // A model's proposal to delete 500 entries says so, and its confirm reads as a removal.
+    expect(confirmOf('purge', 500, 'Permanently delete 500 entries')).toBe('destructive');
+    expect(confirmOf('trash', 12, 'Move 12 entries to the trash')).toBe('destructive');
+    expect(confirmOf('unpublish', 1, 'Unpublish 1 entry')).toBe('destructive');
+    expect(confirmOf('restore', 3, 'Restore 3 entries from the trash')).toBe('default');
+    expect(confirmOf('publish', 2, 'Publish 2 entries')).toBe('default');
+  });
+
   it('stops asking once a newer identical request replaced it', () => {
     inRouter(<ActionCard part={card()} respond={vi.fn()} actionKey="m1:0" direct replaced />);
     expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();

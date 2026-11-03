@@ -1595,6 +1595,9 @@ export interface SpaceRepo {
   setWorkflowSeparateDuties(spaceId: string, value: boolean): Promise<void>;
   /** Sets how many days the space keeps trashed entries; null turns retention off. */
   setTrashRetentionDays(spaceId: string, days: number | null): Promise<void>;
+  /** Where the trash retention sweep resumes in this environment; null is from the oldest. */
+  getTrashSweepCursor(scope: Scope): Promise<ExpiredTrashEntry | null>;
+  setTrashSweepCursor(scope: Scope, cursor: ExpiredTrashEntry | null): Promise<void>;
   /**
    * Registers an environment (branch) within a space. Refused with `TransactionConflictError`
    * while a deleted environment of that id is still being purged, so it can't inherit leftovers.

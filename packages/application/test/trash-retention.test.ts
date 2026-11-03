@@ -164,10 +164,65 @@ describe('the retention sweep', () => {
     const inStaging = await trashed(staging, 's');
     clock.advance(2 * DAY);
 
+    // Hour by hour the environments take turns going first, so within two runs staging has had
+    // its share however large main's trash is.
     expect(await sweepExpiredTrash(ctx, { limit: 2 })).toEqual({ purged: 2, refused: 0 });
-    // The large trash in main didn't take staging's share.
+    clock.advance(60 * 60 * 1000);
+    expect(await sweepExpiredTrash(ctx, { limit: 2 })).toEqual({ purged: 2, refused: 0 });
     expect(await exists(staging, inStaging)).toBe(false);
-    expect(await sweepExpiredTrash(ctx, { limit: 100 })).toEqual({ purged: 4, refused: 0 });
+    expect(await sweepExpiredTrash(ctx, { limit: 100 })).toEqual({ purged: 2, refused: 0 });
+  });
+
+  it('resumes after the last refusal, so more than ten held entries never stall the rest', async () => {
+    const held = new Set<string>();
+    ctx = {
+      ...ctx,
+      hooks: {
+        async dispatch<T>(hook: string, payload: T): Promise<HookResult<T>> {
+          const id = (payload as { entryId?: string }).entryId ?? '';
+          return hook === 'entry:beforePurge' && held.has(id)
+            ? { veto: { hook: 'com.example.hold', reason: 'Legal hold' } }
+            : { payload };
+        },
+      },
+    };
+    await setTrashRetention(ctx, admin, main, 1);
+    for (let i = 0; i < 12; i++) held.add(await trashed(main, `held${i}`));
+    const behind = [
+      await trashed(main, 'b0'),
+      await trashed(main, 'b1'),
+      await trashed(main, 'b2'),
+    ];
+    clock.advance(2 * DAY);
+
+    // The first run meets ten held entries and stops there, remembering where.
+    expect(await sweepExpiredTrash(ctx)).toEqual({ purged: 0, refused: 10 });
+    expect(await store.spaces.getTrashSweepCursor(main)).not.toBeNull();
+    // The next resumes after them: two more refusals, then the three behind go.
+    expect(await sweepExpiredTrash(ctx)).toEqual({ purged: 3, refused: 2 });
+    for (const id of behind) expect(await exists(main, id)).toBe(false);
+    // Read to its end, it starts from the oldest again, retrying what was held.
+    expect(await store.spaces.getTrashSweepCursor(main)).toBeNull();
+    held.delete([...held][0] ?? '');
+    expect(await sweepExpiredTrash(ctx)).toEqual({ purged: 1, refused: 10 });
+  });
+
+  it('stops at twice its purge limit in refusals across environments', async () => {
+    ctx = {
+      ...ctx,
+      hooks: {
+        async dispatch<T>(hook: string, payload: T): Promise<HookResult<T>> {
+          return hook === 'entry:beforePurge'
+            ? { veto: { hook: 'com.example.hold', reason: 'Legal hold' } }
+            : { payload };
+        },
+      },
+    };
+    await setTrashRetention(ctx, admin, main, 1);
+    for (let i = 0; i < 6; i++) await trashed(main, `m${i}`);
+    for (let i = 0; i < 6; i++) await trashed(staging, `s${i}`);
+    clock.advance(2 * DAY);
+    expect(await sweepExpiredTrash(ctx, { limit: 2 })).toEqual({ purged: 0, refused: 4 });
   });
 
   it('reads on past refused entries to the expired ones behind, in every environment', async () => {

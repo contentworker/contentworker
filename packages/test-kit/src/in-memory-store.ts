@@ -96,6 +96,7 @@ import type {
   EntryStatusCount,
   EntryWithFields,
   EnvironmentAlias,
+  ExpiredTrashEntry,
   FunctionDefinition,
   FunctionRepo,
   InviteRepo,
@@ -180,6 +181,8 @@ export class InMemoryContentStore implements ContentStore {
   nowMs: () => number = () => Date.now();
 
   private readonly spaceConfigs = new Map<string, SpaceConfig>();
+  /** Where the trash retention sweep resumes, by environment (as `environments.trash_sweep_cursor`). */
+  private readonly trashSweepCursors = new Map<string, ExpiredTrashEntry>();
   private readonly contentTypeData = new Map<string, ContentType>();
   private readonly entryData = new Map<string, Entry>();
   /**
@@ -216,6 +219,11 @@ export class InMemoryContentStore implements ContentStore {
     list: async () => [...this.spaceConfigs.values()],
     create: async (config) => {
       this.spaceConfigs.set(config.spaceId, config);
+    },
+    getTrashSweepCursor: async (scope) => this.trashSweepCursors.get(scopeKey(scope)) ?? null,
+    setTrashSweepCursor: async (scope, cursor) => {
+      if (cursor) this.trashSweepCursors.set(scopeKey(scope), cursor);
+      else this.trashSweepCursors.delete(scopeKey(scope));
     },
     setTrashRetentionDays: async (spaceId, days) => {
       const config = this.spaceConfigs.get(spaceId);

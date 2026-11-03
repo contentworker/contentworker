@@ -330,7 +330,8 @@ before it keep NULL; nothing is backfilled (see
 [Events & webhooks](./events-and-webhooks.md#webhooks)).
 
 `0023_trash_retention.sql` adds the nullable `spaces.trash_retention_days` (NULL, every existing
-space's value, means off) and the partial index `entries_trashed` on `(space_id, environment_id,
+space's value, means off), the nullable `environments.trash_sweep_cursor` (JSON `{ trashedAt, id }`:
+where the retention sweep resumes in that environment; NULL is from the oldest) and the partial index `entries_trashed` on `(space_id, environment_id,
 updated_at, id) WHERE status = 'archived'`, which the engine's trash retention sweep reads. Nothing
 is backfilled (see [Architecture](./architecture.md)).
 

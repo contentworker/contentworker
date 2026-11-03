@@ -1,4 +1,9 @@
-import { addMember, findMemberForSignIn } from '@contentworker/application';
+import {
+  addMember,
+  createRole,
+  createSpace,
+  findMemberForSignIn,
+} from '@contentworker/application';
 import { loadConfig } from '@contentworker/platform/config';
 import { deriveAssistantPrincipalKey } from '@contentworker/security/assistant-key';
 import { principalTarget, signPrincipal } from '@contentworker/security/principal';
@@ -104,6 +109,49 @@ describe('the web principal (x-cw-principal)', () => {
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
     const items = ((await (await asMember()).json()) as { items: { id: string }[] }).items;
     expect(items.map((i) => i.id)).toEqual(['s1']);
+  });
+
+  it('describes a person as they are in the space asked about', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app2 = createApp(ctx, config, rag, blob, ai);
+    await createSpace(ctx, { spaceId: 's2', name: 'Two', defaultLocale: 'en-US' });
+    // A member limited to one content type in s1, an editor in s2, and on no team in s3.
+    const limited = await createRole(ctx, 's1', {
+      name: 'Posts only',
+      scopes: ['content:write', 'content:publish', 'preview:read'],
+      contentGrants: [{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }],
+    } as Parameters<typeof createRole>[2]);
+    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id });
+    await addMember(ctx, 's2', { email: 'member@example.com', role: 'editor' });
+    await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
+    await findMemberForSignIn(ctx, 's2', 'usr_member', 'member@example.com');
+    const me = async (space: string, who: 'admin' | 'member' = 'member') => {
+      const target = `/spaces/${space}/auth/me`;
+      return app2.request(target, {
+        headers: {
+          'x-cw-principal': await signPrincipal(KEY, person(who), principalTarget('GET', target)),
+        },
+      });
+    };
+    type Me = { spaceId: string; scopes: string[]; restricted: boolean };
+    const inS1 = (await (await me('s1')).json()) as Me;
+    expect(inS1).toMatchObject({ spaceId: 's1', restricted: true });
+    expect(inS1.scopes).toContain('content:publish');
+    // Its role in s2, not s1's: an editor holds space-wide grants but no content:manage there.
+    const inS2 = (await (await me('s2')).json()) as Me;
+    expect(inS2.spaceId).toBe('s2');
+    expect(inS2.scopes).toContain('workflow:approve');
+    expect(inS1.scopes).not.toContain('workflow:approve');
+    expect((await me('s3')).status).toBe(403);
+    // A deployment admin has no per-type grants in any space.
+    expect(await (await me('s1', 'admin')).json()).toMatchObject({ restricted: false });
+  });
+
+  it('refuses a key asking about a space it has no standing in', async () => {
+    const res = await app.request('/spaces/other/auth/me', {
+      headers: { Authorization: 'Bearer cma' },
+    });
+    expect(res.status).toBe(403);
   });
 
   it('forbids a member who is not on the space team', async () => {
