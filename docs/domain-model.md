@@ -377,11 +377,12 @@ the stored field. Snapshot import and clone drop the ones a field can't use
 query that selected it as a JSON scalar keeps working, but generated client types change.
 
 **Rollout.** A time-only Date (`format: 'time'`, or `items.format: 'time'`) and a list of `Text`,
-`Integer`, `Number` or `Date` are read by this release (validation, the entry form, codegen,
-GraphQL) but refused on write, because the release before it reads them wrongly: its validator
-demands a full ISO date and checks no list element, its form edits such a list as raw JSON, and
-its codegen types it as strings. The next release accepts them, once this one is deployed
-everywhere. Only a new use is refused, so a type that already holds one stays editable.
+`Integer`, `Number` or `Date` shipped in two releases. The first read them (validation, the entry
+form, codegen, GraphQL) and refused a new one on write, because the release before it reads them
+wrongly: its validator demands a full ISO date and checks no list element, its form edits such a
+list as raw JSON, and its codegen types it as strings. The second, deployed once the first was
+everywhere, accepts them on write. A rollback goes no further back than the first, or an entry
+holding one could no longer be saved.
 
 ### Field guidance
 

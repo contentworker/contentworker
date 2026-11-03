@@ -16,6 +16,7 @@ import {
   seedIngestFindings,
   seedLaidOutType,
   seedRuledType,
+  seedShelfType,
   seedVenueType,
   statusOf,
   stubLocales,
@@ -1488,4 +1489,33 @@ test('an images-only asset link offers images only', async ({ page, request }) =
   await picker.fill(String(stamp));
   await expect(page.getByRole('option', { name: `Poster art ${stamp}` })).toBeVisible();
   await expect(page.getByRole('option', { name: `Floor plan ${stamp}` })).toHaveCount(0);
+});
+
+test('a list of whole numbers is edited row by row, saved as numbers, beside a time of day', async ({
+  page,
+  request,
+}) => {
+  await seedShelfType(request);
+  await openCms(page, '/content/shelf/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByLabel('Title').fill(`Shelf ${Date.now()}`);
+  const add = page.getByRole('button', { name: 'Add item' });
+  await add.click();
+  await expect(page.getByLabel('Sizes item 1', { exact: true })).toBeFocused();
+  await page.keyboard.type('12');
+  await add.click();
+  await expect(page.getByLabel('Sizes item 2', { exact: true })).toBeFocused();
+  await page.keyboard.type('14');
+  await add.click();
+  await page.keyboard.type('16');
+  // Removing the middle row puts focus on the one that took its place.
+  await page.getByRole('button', { name: 'Remove Sizes item 2' }).click();
+  await expect(page.getByLabel('Sizes item 2', { exact: true })).toBeFocused();
+  await expect(page.getByLabel('Sizes item 2', { exact: true })).toHaveValue('16');
+  await page.getByLabel('Opens').fill('09:30');
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
+  await expect(page.getByLabel('Sizes item 1', { exact: true })).toHaveValue('12');
+  await expect(page.getByLabel('Sizes item 2', { exact: true })).toHaveValue('16');
+  await expect(page.getByLabel('Opens')).toHaveValue('09:30');
 });

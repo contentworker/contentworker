@@ -514,9 +514,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   here)") and Description beside its name. Each field row has Guidance, Rules and Settings
   buttons; each opens a panel under the row (`bg-secondary/40`, `rounded-xl`, a fieldset with an
   sr-only legend naming the field, "Rules for Price"). Rules are rows of action, sibling, operator
-  and value. Settings hold what the type means: a Date's Format (Date and time, Date, Any ISO
-  date; Time of day only where the field already holds one) with its earliest and latest value, a
-  text field's Pattern preset, an asset link's allowed file types. **Layout** is drawn as Fields
+  and value. Settings hold what the type means: a Date's Format (Date and time, Date, Time of
+  day, Any ISO date) with its earliest and latest value, a text field's Pattern preset, an asset
+  link's allowed file types. A list field gains **Items** beside its Type (Symbol, Text, Integer,
+  Number, Date; a new list starts as Symbol); a list of links or components has none. **Layout** is drawn as Fields
   is, its title beside Add tab; each tab a row (its name, a ghost Remove), and each field row gains
   Tab and Group selects once a tab exists.
 - **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the

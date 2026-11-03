@@ -365,13 +365,33 @@ describe('the content type dialog', () => {
     expect(byId(draft, 'poster').validations).toBeUndefined();
   });
 
-  it('offers a time of day only where the field already holds one', () => {
-    render(<ContentTypeDialog open onOpenChange={() => {}} initial={ARTICLE} onSave={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /^Settings for Day/ }));
-    const day = within(screen.getByLabelText('Format for Day'));
-    expect(day.queryByRole('option', { name: 'Time of day' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /^Settings for Opens/ }));
-    const opens = within(screen.getByLabelText('Format for Opens'));
-    expect(opens.getByRole('option', { name: 'Time of day' })).toBeTruthy();
+  it('offers a time of day on any Date', async () => {
+    const draft = await saveDialog(ARTICLE, () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Settings for Day/ }));
+      fireEvent.change(screen.getByLabelText('Format for Day'), { target: { value: 'time' } });
+    });
+    expect(byId(draft, 'day').format).toBe('time');
+  });
+
+  it('chooses what a list of values holds, and leaves a list of links as it was', async () => {
+    const related = field({
+      apiId: 'related',
+      name: 'Related',
+      type: 'Array',
+      position: 5,
+      items: { type: 'Link', linkType: 'Entry' },
+    });
+    const draft = await saveDialog({ ...ARTICLE, fields: [...ARTICLE.fields, related] }, () => {
+      expect(screen.queryByLabelText('Items for Related')).toBeNull();
+      const items = screen.getByLabelText('Items for Sizes');
+      expect(
+        within(items)
+          .getAllByRole('option')
+          .map((o) => o.textContent),
+      ).toEqual(['Symbol', 'Text', 'Integer', 'Number', 'Date']);
+      fireEvent.change(items, { target: { value: 'Number' } });
+    });
+    expect(byId(draft, 'sizes').items).toEqual({ type: 'Number' });
+    expect(byId(draft, 'related').items).toEqual({ type: 'Link', linkType: 'Entry' });
   });
 });
