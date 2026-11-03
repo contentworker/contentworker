@@ -5,7 +5,13 @@ import {
   MAX_SITEMAP_PAGE,
   setEntrySeo,
 } from '@contentworker/application';
-import { assertWritableFields, authorizeContent, SCOPES, seoFieldOf } from '@contentworker/domain';
+import {
+  assertWritableFields,
+  authorizeContent,
+  maskDeniedFields,
+  SCOPES,
+  seoFieldOf,
+} from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { entrySeoShape } from '../../api/validation';
@@ -35,9 +41,18 @@ export function registerSeoTools(server: McpServer, t: ToolContext): void {
         const field = seoFieldOf(await getContentType(ctx, scopeOf(args), entry.contentType));
         if (field) assertWritableFields(principal, entry.contentType, { [field.apiId]: {} });
       }
-      return ok(
-        await setEntrySeo(ctx, scopeOf(args), id, patch, locale !== undefined ? { locale } : {}),
+      const view = await setEntrySeo(
+        ctx,
+        scopeOf(args),
+        id,
+        patch,
+        locale !== undefined ? { locale } : {},
       );
+      // As the route does: the answer shows only the fields the caller may read.
+      return ok({
+        ...view,
+        fields: maskDeniedFields(principal, view.entry.contentTypeApiId, view.fields),
+      });
     },
   );
 

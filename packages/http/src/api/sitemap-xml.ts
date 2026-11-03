@@ -14,10 +14,14 @@ const xml = (value: string): string =>
 
 /**
  * The site's base URL from `?base=`: an absolute http(s) URL, kept with any path prefix (a site
- * served under `/docs`) and without a trailing slash, and its origin. Refused otherwise: a sitemap
+ * served under `/docs`) and without a trailing slash, its origin, and that path prefix. Refused otherwise: a sitemap
  * lists absolute URLs, and contentworker serves no site to take them from.
  */
-export function sitemapBase(raw: string | undefined): { base: string; origin: string } {
+export function sitemapBase(raw: string | undefined): {
+  base: string;
+  origin: string;
+  prefix: string;
+} {
   let url: URL | undefined;
   try {
     url = raw ? new URL(raw) : undefined;
@@ -32,7 +36,8 @@ export function sitemapBase(raw: string | undefined): { base: string; origin: st
       },
     ]);
   }
-  return { base: `${url.origin}${url.pathname.replace(/\/+$/, '')}`, origin: url.origin };
+  const prefix = url.pathname.replace(/\/+$/, '');
+  return { base: `${url.origin}${prefix}`, origin: url.origin, prefix };
 }
 
 const urlset = (items: readonly DeliveredSitemapEntry[], base: string): string => {
@@ -72,7 +77,7 @@ const sitemapIndex = (pages: readonly string[], base: string): string => {
 };
 
 /**
- * One sitemap file as XML. An index names its pages at `<base>/sitemap.xml?page=<first entry id>`:
+ * One sitemap file as XML. An index names its pages at `<base>/sitemap.xml?page=<range token>`:
  * the site serves its sitemap there by proxying to Delivery's `sitemap.xml` with the query.
  */
 export function renderSitemapXml(file: SitemapFile, base: string): string {

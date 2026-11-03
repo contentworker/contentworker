@@ -95,17 +95,60 @@ export interface SitemapSource {
   readonly fields: EntryFields;
 }
 
+/**
+ * Where the site lives, when the caller knows: its origin (`https://example.com`) and the path it
+ * is served under (`/docs`, or `''` at the root). Sitemap paths are relative to it.
+ */
+export interface SiteLocation {
+  readonly origin: string;
+  readonly prefix?: string;
+}
+
 /** The absolute URL's origin, when `value` is one. */
 const originOf = (value: string): string | null => {
   const url = parseAbsoluteUrl(value);
   return url ? `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ''}` : null;
 };
 
-/** The path a canonical URL names, without its query or fragment. */
-const canonicalPath = (value: string): string =>
-  value.startsWith('/')
-    ? value.replace(/[?#].*$/, '')
-    : (parseAbsoluteUrl(value)?.pathname ?? value);
+const decoded = (segment: string): string => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+};
+
+/**
+ * A path in one spelling, so two spellings of the same path compare equal: each segment
+ * percent-encoded as `urlPath` encodes a slug (`/über` and `/%C3%BCber` agree), and one trailing
+ * slash dropped (`/guide/` is `/guide`).
+ */
+export function normalizeSitePath(path: string): string {
+  const encoded = path
+    .split('/')
+    .map((segment) => encodeURIComponent(decoded(segment)))
+    .join('/');
+  return encoded.length > 1 && encoded.endsWith('/') ? encoded.slice(0, -1) : encoded;
+}
+
+/**
+ * The site path a canonical URL names (without query or fragment), or null when it is on another
+ * site. A path (`/guide/setup`) is a site path already, like the ones URL patterns make. An
+ * absolute URL is judged against `site` when known: another origin, or a path outside the site's
+ * prefix, is elsewhere; the prefix is taken off the rest. Without `site` it is judged by its path.
+ */
+function canonicalSitePath(value: string, site?: SiteLocation): string | null {
+  if (value.startsWith('/')) return normalizeSitePath(value.replace(/[?#].*$/, ''));
+  const url = parseAbsoluteUrl(value);
+  if (!url) return null;
+  const path = normalizeSitePath(url.pathname);
+  if (!site) return path;
+  if (originOf(value) !== site.origin) return null;
+  const prefix = normalizeSitePath(site.prefix ?? '');
+  if (!prefix || prefix === '/') return path;
+  if (path === prefix) return '/';
+  return path.startsWith(`${prefix}/`) ? path.slice(prefix.length) : null;
+}
 
 /**
  * The fields a type's sitemap URLs are computed from: the slugs its URL pattern names and its
@@ -127,14 +170,14 @@ export function sitemapFieldsOf(contentType: Pick<ContentType, 'urlPattern' | 'f
  * only the default locale, since every locale shares the one path. Paths two locales share are
  * listed once, under the first locale. A locale is left out when its `Seo` value says `noindex`,
  * or when it names a canonical URL that is not this path (the page is a copy; the sitemap lists
- * canonical pages only). `origin`, when known, also refuses an absolute canonical on another
- * site.
+ * canonical pages only). Both sides are compared in one spelling (`normalizeSitePath`); `site`,
+ * when known, also refuses an absolute canonical on another site or outside its path prefix.
  */
 export function entrySitemapUrls(
   contentType: Pick<ContentType, 'urlPattern' | 'fields'>,
   entry: SitemapSource,
   locales: LocaleConfig,
-  origin?: string,
+  site?: SiteLocation,
 ): SitemapUrl[] {
   const pattern = contentType.urlPattern;
   if (!pattern) return [];
@@ -161,11 +204,7 @@ export function entrySitemapUrls(
       : undefined;
     if (meta?.noindex === true) continue;
     const canonical = typeof meta?.canonicalUrl === 'string' ? meta.canonicalUrl : '';
-    if (canonical) {
-      const elsewhere = originOf(canonical);
-      if (origin && elsewhere && elsewhere !== origin) continue;
-      if (canonicalPath(canonical) !== path) continue;
-    }
+    if (canonical && canonicalSitePath(canonical, site) !== normalizeSitePath(path)) continue;
     seen.add(path);
     urls.push({ path, locale });
   }

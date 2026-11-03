@@ -6282,11 +6282,11 @@ const publishedAssetsQuery = (db: Db, scope: Scope, ids: readonly string[]) =>
     );
 
 /**
- * The sitemap's page of published entries: by entry id from `from`, each with only the named
- * fields of its body, picked out in SQL so a page of thousands never ships a rich-text body. The
- * content types and field names are one JSON parameter each, so the statement binds six
- * parameters however many there are. Field apiIds are identifiers (letters and digits), safe to
- * quote into a JSON path.
+ * The sitemap's page of published entries: by entry id from `from` (up to `before`), each with
+ * only the named fields of its body, picked out in SQL so a page of thousands never ships a
+ * rich-text body. The content types and field names are one JSON parameter each, so the statement
+ * binds at most seven parameters however many there are. Field apiIds are identifiers (letters
+ * and digits), safe to quote into a JSON path.
  */
 function sitemapPageQuery(db: Db, scope: Scope, query: SitemapQuery) {
   const p = schema.entryPublished;
@@ -6306,6 +6306,7 @@ function sitemapPageQuery(db: Db, scope: Scope, query: SitemapQuery) {
         scopeFilter(p, scope),
         sql`${p.contentTypeApiId} IN (SELECT value FROM json_each(${idList(query.contentTypes)}))`,
         query.from !== undefined ? gte(p.entryId, query.from) : undefined,
+        query.before !== undefined ? lt(p.entryId, query.before) : undefined,
       ),
     )
     .orderBy(asc(p.entryId))

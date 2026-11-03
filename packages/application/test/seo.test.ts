@@ -263,6 +263,24 @@ describe('listDeliveredSitemap', () => {
     ).toEqual(['article']);
   });
 
+  it('lists a type whose Seo field the reader may not read as if it had none', async () => {
+    await defineType('article', { urlPattern: '/blog/{slug}' });
+    const hidden = await page('article', 'hidden', { seo: { 'en-US': { noindex: true } } });
+    const shown = await page('article', 'shown');
+    const reader: Principal = {
+      spaceId: 'site',
+      kind: 'cda',
+      scopes: ['delivery:read'],
+      contentGrants: [{ contentTypeApiId: 'article', actions: ['read'], deniedFields: ['seo'] }],
+    };
+    // Which entries noindex drops would tell the reader what the field holds: none are dropped.
+    const listed = await listDeliveredSitemap(ctx, scope, {}, { principal: reader });
+    expect(listed.items.map((e) => e.entryId).sort()).toEqual([hidden, shown].sort());
+    expect(sent.at(-1)?.sitemap?.fields).toEqual(['slug']);
+    // A reader that may read it gets the exclusions.
+    expect((await listDeliveredSitemap(ctx, scope)).items.map((e) => e.entryId)).toEqual([shown]);
+  });
+
   it('answers each environment with its own entries', async () => {
     await createEnvironment(ctx, 'site', 'staging');
     await defineType('article', { urlPattern: '/blog/{slug}' });
@@ -303,21 +321,50 @@ describe('deliveredSitemapFile', () => {
     expect(file).toMatchObject({ kind: 'urlset', items: [{ urls: [{ path: '/blog/hello' }] }] });
   });
 
-  it('is an index of pages past one file, each page served by its first entry id', async () => {
+  it('is an index of pages past one file, each page a range of entry ids', async () => {
     await defineType('article', { urlPattern: '/blog/{slug}' });
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) ids.push(await page('article', `post-${i}`));
     ids.sort();
     const file = await deliveredSitemapFile(ctx, scope, undefined, { pageSize: 2 });
-    expect(file).toEqual({ kind: 'index', pages: [ids[0], ids[2], ids[4]] });
-    const second = await deliveredSitemapFile(ctx, scope, ids[2], { pageSize: 2 });
-    expect(second.kind === 'urlset' && second.items.map((e) => e.entryId)).toEqual([
-      ids[2],
-      ids[3],
-    ]);
+    expect(file).toEqual({
+      kind: 'index',
+      pages: [`,${ids[2]}`, `${ids[2]},${ids[4]}`, `${ids[4]},`],
+    });
+    const entriesOf = async (token: string) => {
+      const f = await deliveredSitemapFile(ctx, scope, token, { pageSize: 2 });
+      return f.kind === 'urlset' ? f.items.map((e) => e.entryId) : [];
+    };
+    expect(await entriesOf(`${ids[2]},${ids[4]}`)).toEqual([ids[2], ids[3]]);
+    expect(await entriesOf(`${ids[4]},`)).toEqual([ids[4]]);
   });
 
-  it('leaves out a page whose canonical copy is on another site, given the origin', async () => {
+  it('still lists an older draft published after the index was read', async () => {
+    await defineType('article', { urlPattern: '/blog/{slug}' });
+    const draft = async (slug: string) =>
+      (
+        await createEntry(ctx, scope, {
+          contentTypeApiId: 'article',
+          fields: { slug: { 'en-US': slug } },
+        })
+      ).entry.id;
+    const first = await draft('first'); // older than every page's start
+    const ids = [await page('article', 'a'), await page('article', 'b')];
+    const middle = await draft('middle'); // between the first page's entries and the next page's
+    ids.push(await page('article', 'c'), await page('article', 'd'), await page('article', 'e'));
+    const index = await deliveredSitemapFile(ctx, scope, undefined, { pageSize: 2 });
+    if (index.kind !== 'index') throw new Error('expected an index');
+    await publishEntry(ctx, scope, first);
+    await publishEntry(ctx, scope, middle);
+    const listed: string[] = [];
+    for (const token of index.pages) {
+      const f = await deliveredSitemapFile(ctx, scope, token, { pageSize: 2 });
+      if (f.kind === 'urlset') listed.push(...f.items.map((e) => e.entryId));
+    }
+    expect(listed.sort()).toEqual([...ids, first, middle].sort());
+  });
+
+  it('leaves out a page whose canonical copy is on another site, given the site', async () => {
     await defineType('article', { urlPattern: '/blog/{slug}' });
     await page('article', 'syndicated', {
       seo: { 'en-US': { canonicalUrl: 'https://partner.example/blog/syndicated' } },
@@ -326,7 +373,7 @@ describe('deliveredSitemapFile', () => {
       seo: { 'en-US': { canonicalUrl: 'https://example.com/blog/own' } },
     });
     const file = await deliveredSitemapFile(ctx, scope, undefined, {
-      origin: 'https://example.com',
+      site: { origin: 'https://example.com' },
     });
     expect(file.kind === 'urlset' && file.items.map((e) => e.urls[0]?.path)).toEqual(['/blog/own']);
   });

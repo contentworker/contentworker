@@ -159,7 +159,7 @@ const DOCS = {
       query: {
         from: 'next from the previous page',
         limit: 'Entries per page, 1..5000 (default 1000)',
-        base: 'The site’s URL: an entry whose absolute canonical URL is on another site is left out',
+        base: 'The site’s URL: an entry whose absolute canonical URL is on another site, or outside its path, is left out',
       },
     }),
   getSitemapXml: () =>

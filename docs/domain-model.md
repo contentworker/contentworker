@@ -715,13 +715,20 @@ type such as `ArticleSeo`) and codegen read it as a component of `SEO_FIELDS`. `
 `{locale}` or a localized slug, else the default locale only. Each locale reads the named slugs and
 the `Seo` value through the fallback chain, as Delivery does; a path two locales share is listed
 once, under the first. A locale is left out when its `Seo` value says `noindex`, or names a
-canonical URL whose path is not the entry's own (and, given the site's origin, one on another
-origin). The store reads only `sitemapFieldsOf` (the pattern's slugs and the `Seo` field) from
+canonical URL whose path is not the entry's own. Paths compare in one spelling
+(`normalizeSitePath`: each segment percent-encoded, one trailing slash dropped). A path canonical is
+a site path, like the pattern's; an absolute one, given the site (`SiteLocation`: origin and path
+prefix, from `base`), is elsewhere on another origin or outside the prefix, and has the prefix taken
+off before comparing. The store reads only `sitemapFieldsOf` (the pattern's slugs and the `Seo` field) from
 each `entry_published` body, picked out in SQL, by entry id. `lastmod` is the live version's
 `publishedAt`. A sitemap file holds `sitemapPageSize(locales)` entries (at most 5,000, and few
 enough that one URL per locale stays under `SITEMAP_MAX_URLS`, 50,000); past one file, the XML
-sitemap is an index of pages, each named by its first entry id. A key with content grants sees only
-the types it may read, and never a type whose pattern names a field it may not read.
+sitemap is an index of pages, each named by a token for its range of entry ids (`<first>,<next
+page's first>`, the first page open at its start and the last at its end), so an entry published
+after the index was read still lands in a page. A key with content grants sees only the types it may
+read, and never a type whose pattern names a field it may not read; a type whose `Seo` field it may
+not read is listed as if it had none (no `noindex` or canonical exclusions, which would reveal the
+field's values).
 
 ## Webhooks
 

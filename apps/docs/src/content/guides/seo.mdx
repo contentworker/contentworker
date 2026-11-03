@@ -108,11 +108,15 @@ with a URL pattern, by entry id, each with its paths:
   path are listed once.
 - Left out: an entry whose Seo value says `noindex` (in that locale), an entry whose canonical URL
   is not its own path, and an entry with no slug for its pattern. Pass `base` (your site's URL,
-  `?base=https://www.example.com`) and a canonical URL on another site is left out too.
+  `?base=https://www.example.com`) and a canonical URL on another site, or outside the path `base`
+  names (`https://www.example.com/docs`), is left out too. Paths compare with percent-encoding and
+  a trailing slash ignored.
 - Page with `limit` (up to 5,000 entries, default 1,000) and `from` set to the previous page's
   `next`; `next` is `null` on the last page. A page can hold fewer than `limit` items, since
   entries that are left out still take their place.
-- A key whose role limits it to some content types sees only their entries.
+- A key whose role limits it to some content types sees only their entries. A key denied the Seo
+  field gets that type's entries without the noindex and canonical exclusions, since which entries
+  drop out would reveal what the field holds.
 
 The SDK reads it with `client.sitemap({ from, limit, base })`.
 
@@ -143,7 +147,8 @@ export async function sitemap(request: Request, env: Env): Promise<Response> {
 ```
 
 A sitemap file holds at most 50,000 URLs. Past that, `sitemap.xml` answers a **sitemap index**
-whose entries are `<base>/sitemap.xml?page=<id>`, and each of those answers one page: the proxy
+whose entries are `<base>/sitemap.xml?page=<token>`, each naming a range of entries (so one
+published after the index was read still lands in a page), and each of those answers one page: the proxy
 above serves them by passing `page` through. Point `robots.txt` at your `/sitemap.xml`.
 
 ## Caching

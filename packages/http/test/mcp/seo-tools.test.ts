@@ -59,12 +59,21 @@ async function setup() {
     name: 'Article',
     displayField: 'title',
     urlPattern: '/blog/{slug}',
-    fields: [field('title', 'Symbol', 0), field('slug', 'Slug', 1), field('seo', 'Seo', 2)],
+    fields: [
+      field('title', 'Symbol', 0),
+      field('slug', 'Slug', 1),
+      field('seo', 'Seo', 2),
+      field('internalNotes', 'Text', 3),
+    ],
   });
   await publishContentType(ctx, scope, 'article');
   const { entry } = await createEntry(ctx, scope, {
     contentTypeApiId: 'article',
-    fields: { title: { 'en-US': 'Hello' }, slug: { 'en-US': 'hello' } },
+    fields: {
+      title: { 'en-US': 'Hello' },
+      slug: { 'en-US': 'hello' },
+      internalNotes: { 'en-US': 'Do not share' },
+    },
   });
   await publishEntry(ctx, scope, entry.id);
   return { ctx, deps, id: entry.id };
@@ -125,6 +134,25 @@ describe('SEO tools (MCP), on the HTTP routes’ use-cases', () => {
     expect((await asReader('entries_set_seo', { id, title: 'x' })).isError).toBe(true);
     const asWriter = await connect(deps, writer);
     expect((await asWriter('entries_set_seo', { id, title: 'x' })).isError).toBe(false);
+  });
+
+  it('answers with only the fields the role may read', async () => {
+    const { deps, id } = await setup();
+    const masked = await connect(deps, {
+      ...writer,
+      contentGrants: [
+        {
+          contentTypeApiId: 'article',
+          actions: ['read', 'write'],
+          deniedFields: ['internalNotes'],
+        },
+      ],
+    });
+    const res = await masked('entries_set_seo', { id, title: 'x' });
+    expect(res.isError).toBe(false);
+    const fields = (res.body as { fields: Record<string, unknown> }).fields;
+    expect(fields).not.toHaveProperty('internalNotes');
+    expect(fields.seo).toEqual({ 'en-US': { title: 'x' } });
   });
 
   it('declares the sitemap a read and the change a write', async () => {

@@ -50,7 +50,12 @@ async function setup() {
     name: 'Article',
     displayField: 'title',
     urlPattern: '/blog/{slug}',
-    fields: [field('title', 'Symbol', 0), field('slug', 'Slug', 1), field('seo', 'Seo', 2)],
+    fields: [
+      field('title', 'Symbol', 0),
+      field('slug', 'Slug', 1),
+      field('seo', 'Seo', 2),
+      field('internalNotes', 'Text', 3),
+    ],
   });
   await createContentType(wired.ctx, scope, {
     apiId: 'author',
@@ -67,6 +72,7 @@ async function setup() {
       fields: {
         title: { 'en-US': slug },
         slug: { 'en-US': slug },
+        ...(type === 'article' ? { internalNotes: { 'en-US': 'Do not share' } } : {}),
         ...(seo ? { seo: { 'en-US': seo } } : {}),
       },
     });
@@ -161,6 +167,19 @@ describe('the sitemap over Delivery', () => {
       const res = await app.request(`${D}/sitemap.xml${q}`, { headers: cda });
       expect(res.status, q).toBe(422);
     }
+  });
+
+  it('judges a canonical URL under the base’s path prefix', async () => {
+    const { app, publish } = await setup();
+    await publish('article', 'setup', { canonicalUrl: 'https://ex.com/docs/blog/setup/' });
+    const xml = await (
+      await app.request(`${D}/sitemap.xml?base=https://ex.com/docs`, { headers: cda })
+    ).text();
+    expect(xml).toContain('<loc>https://ex.com/docs/blog/setup</loc>');
+    const other = await (
+      await app.request(`${D}/sitemap.xml?base=https://ex.com/site`, { headers: cda })
+    ).text();
+    expect(other).not.toContain('/blog/setup');
   });
 
   it('leaves out a page canonical on another site when told the site', async () => {
@@ -273,6 +292,35 @@ describe('SEO metadata over the Management API', () => {
     expect(ok.status).toBe(200);
   });
 
+  it('answers with only the fields the role may read, keeping the denied ones saved', async () => {
+    const { app, hello } = await setup();
+    const masked = await keyFor(
+      app,
+      'cma',
+      [
+        {
+          contentTypeApiId: 'article',
+          actions: ['read', 'write'],
+          deniedFields: ['internalNotes'],
+        },
+      ],
+      ['content:write', 'preview:read'],
+    );
+    const res = await app.request(`${M}/entries/${hello}/seo`, {
+      method: 'PATCH',
+      headers: masked,
+      body: JSON.stringify({ title: 'x' }),
+    });
+    expect(res.status).toBe(200);
+    const view = await json<{ fields: Record<string, unknown> }>(res);
+    expect(view.fields).not.toHaveProperty('internalNotes');
+    expect(view.fields.seo).toEqual({ 'en-US': { title: 'x' } });
+    const full = await json<{ fields: Record<string, unknown> }>(
+      await app.request(`${M}/entries/${hello}`, { headers: admin }),
+    );
+    expect(full.fields.internalNotes).toEqual({ 'en-US': 'Do not share' });
+  });
+
   it('previews the sitemap Delivery serves', async () => {
     const { app } = await setup();
     const res = await app.request(`${M}/sitemap`, { headers: admin });
@@ -320,6 +368,7 @@ describe('renderSitemapXml', () => {
     expect(sitemapBase('https://example.com/docs/')).toEqual({
       base: 'https://example.com/docs',
       origin: 'https://example.com',
+      prefix: '/docs',
     });
   });
 });

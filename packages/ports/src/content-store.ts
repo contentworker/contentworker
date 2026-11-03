@@ -1481,6 +1481,8 @@ export interface SitemapQuery {
   readonly fields: readonly string[];
   /** The first entry id of the page (inclusive); from the start when absent. */
   readonly from?: string;
+  /** The first entry id past the page (exclusive): the next page's first. To the end when absent. */
+  readonly before?: string;
   readonly limit: number;
   /** Also answer the first entry id of every page of this many entries: the sitemap index. */
   readonly pageStarts?: number;

@@ -277,7 +277,10 @@ export interface SitemapQuery {
   readonly from?: string;
   /** Entries per page, 1..5000 (default 1000). */
   readonly limit?: number;
-  /** The site's URL: an entry whose absolute canonical URL is on another site is left out. */
+  /**
+   * The site's URL: an entry whose absolute canonical URL is elsewhere (another site, or outside
+   * its path) is left out.
+   */
   readonly base?: string;
 }
 

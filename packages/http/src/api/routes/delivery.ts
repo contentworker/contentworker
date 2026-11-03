@@ -409,7 +409,7 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
           { ...(from ? { from } : {}), ...(limit !== undefined ? { limit } : {}) },
           {
             principal: c.get('principal'),
-            ...(base !== undefined ? { origin: sitemapBase(base).origin } : {}),
+            ...(base !== undefined ? { site: sitemapBase(base) } : {}),
           },
         ),
       );
@@ -420,12 +420,12 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
     describe('getSitemapXml'),
     requireScope(SCOPES.deliveryRead),
     async (c) => {
-      const { base, origin } = sitemapBase(c.req.query('base'));
+      const site = sitemapBase(c.req.query('base'));
       const file = await deliveredSitemapFile(ctx, scopeOf(c), c.req.query('page') || undefined, {
         principal: c.get('principal'),
-        origin,
+        site,
       });
-      return c.body(renderSitemapXml(file, base), 200, {
+      return c.body(renderSitemapXml(file, site.base), 200, {
         'content-type': 'application/xml; charset=utf-8',
       });
     },

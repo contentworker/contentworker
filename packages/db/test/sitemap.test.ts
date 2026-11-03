@@ -135,9 +135,23 @@ describe('the sitemap on D1', () => {
     expect(read.sitemap?.items.map((r) => r.entryId)).toEqual(ids.slice(2, 5));
     expect(read.sitemap?.pageStarts).toEqual([ids[0], ids[3], ids[6]]);
 
+    const bounded = await store.delivery.read(scope, {
+      sitemap: {
+        contentTypes: ['article'],
+        fields: ['slug'],
+        from: ids[2],
+        before: ids[4],
+        limit: 10,
+      },
+    });
+    expect(bounded.sitemap?.items.map((r) => r.entryId)).toEqual(ids.slice(2, 4));
+
     const file = await deliveredSitemapFile(ctx, scope, undefined, { pageSize: 3 });
-    expect(file).toEqual({ kind: 'index', pages: [ids[0], ids[3], ids[6]] });
-    const last = await deliveredSitemapFile(ctx, scope, ids[6], { pageSize: 3 });
+    expect(file).toEqual({
+      kind: 'index',
+      pages: [`,${ids[3]}`, `${ids[3]},${ids[6]}`, `${ids[6]},`],
+    });
+    const last = await deliveredSitemapFile(ctx, scope, `${ids[6]},`, { pageSize: 3 });
     expect(last.kind === 'urlset' && last.items.map((e) => e.entryId)).toEqual([ids[6]]);
   });
 

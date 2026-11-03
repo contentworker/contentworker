@@ -6,7 +6,13 @@ import {
   MAX_SITEMAP_PAGE,
   setEntrySeo,
 } from '@contentworker/application';
-import { assertWritableFields, authorizeContent, SCOPES, seoFieldOf } from '@contentworker/domain';
+import {
+  assertWritableFields,
+  authorizeContent,
+  maskDeniedFields,
+  SCOPES,
+  seoFieldOf,
+} from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -41,9 +47,18 @@ export function seoRoutes(deps: AuthDeps): Hono<AuthVars> {
         const field = seoFieldOf(await getContentType(ctx, scopeOf(c), entry.contentTypeApiId));
         if (field) assertWritableFields(principal, entry.contentTypeApiId, { [field.apiId]: {} });
       }
-      return c.json(
-        await setEntrySeo(ctx, scopeOf(c), id, patch, locale !== undefined ? { locale } : {}),
+      const view = await setEntrySeo(
+        ctx,
+        scopeOf(c),
+        id,
+        patch,
+        locale !== undefined ? { locale } : {},
       );
+      // The save wrote the whole entry; the answer shows only the fields the caller may read.
+      return c.json({
+        ...view,
+        fields: maskDeniedFields(principal, view.entry.contentTypeApiId, view.fields),
+      });
     },
   );
   app.get(

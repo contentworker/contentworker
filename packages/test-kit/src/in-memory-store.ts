@@ -1587,6 +1587,7 @@ export class InMemoryContentStore implements ContentStore {
           .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
         const items = all
           .filter((p) => q.from === undefined || p.entryId >= q.from)
+          .filter((p) => q.before === undefined || p.entryId < q.before)
           .slice(0, Math.max(1, q.limit))
           .map((p) => ({
             entryId: p.entryId,

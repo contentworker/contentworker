@@ -6,8 +6,10 @@ import {
   entrySitemapUrls,
   extractReferences,
   type FieldDefinition,
+  normalizeSitePath,
   reviseContentType,
   SITEMAP_MAX_URLS,
+  type SiteLocation,
   sitemapFieldsOf,
   sitemapPageSize,
   ValidationError,
@@ -226,19 +228,52 @@ describe('entrySitemapUrls', () => {
   });
 
   it('keeps a self-canonical page and drops one whose canonical copy lives elsewhere', () => {
-    const at = (canonicalUrl: string, origin?: string) =>
+    const at = (canonicalUrl: string, site?: SiteLocation, type = article()) =>
+      entrySitemapUrls(
+        type,
+        { id: 'e1', fields: { slug: { 'en-US': 'hello' }, seo: { 'en-US': { canonicalUrl } } } },
+        en,
+        site,
+      ).length;
+    const site = { origin: 'https://example.com' };
+    expect(at('/blog/hello')).toBe(1);
+    expect(at('https://example.com/blog/hello?utm=x', site)).toBe(1);
+    expect(at('/blog/other')).toBe(0);
+    expect(at('https://partner.example/blog/hello', site)).toBe(0);
+    // Without the site's origin an absolute canonical is judged by its path alone.
+    expect(at('https://partner.example/blog/hello')).toBe(1);
+  });
+
+  it('compares a canonical URL under the site’s path prefix', () => {
+    const at = (canonicalUrl: string) =>
       entrySitemapUrls(
         article(),
         { id: 'e1', fields: { slug: { 'en-US': 'hello' }, seo: { 'en-US': { canonicalUrl } } } },
         en,
-        origin,
+        { origin: 'https://example.com', prefix: '/docs' },
       ).length;
+    expect(at('https://example.com/docs/blog/hello')).toBe(1);
+    expect(at('https://example.com/blog/hello')).toBe(0);
+    expect(at('https://example.com/docsx/blog/hello')).toBe(0);
+    // A path canonical is a site path, as the URL pattern's are: no prefix on it.
     expect(at('/blog/hello')).toBe(1);
-    expect(at('https://example.com/blog/hello?utm=x', 'https://example.com')).toBe(1);
-    expect(at('/blog/other')).toBe(0);
-    expect(at('https://partner.example/blog/hello', 'https://example.com')).toBe(0);
-    // Without the site's origin an absolute canonical is judged by its path alone.
-    expect(at('https://partner.example/blog/hello')).toBe(1);
+  });
+
+  it('compares paths in one spelling: percent-encoding and one trailing slash', () => {
+    const umlaut = article({ urlPattern: '/über/{slug}' });
+    const at = (canonicalUrl: string) =>
+      entrySitemapUrls(
+        umlaut,
+        { id: 'e1', fields: { slug: { 'en-US': 'hello' }, seo: { 'en-US': { canonicalUrl } } } },
+        en,
+        { origin: 'https://example.com' },
+      ).length;
+    expect(at('https://example.com/%C3%BCber/hello')).toBe(1);
+    expect(at('/über/hello')).toBe(1);
+    expect(at('https://example.com/über/hello/')).toBe(1);
+    expect(at('/über/hello//')).toBe(0);
+    expect(normalizeSitePath('/a/')).toBe('/a');
+    expect(normalizeSitePath('/')).toBe('/');
   });
 
   it('lists one URL per locale for a localized slug, following the fallback chain', () => {
