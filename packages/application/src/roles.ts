@@ -111,6 +111,8 @@ export async function updateRole(
     });
   }
   await ctx.store.roles.save(role);
+  // Keys and people pick the change up on their next request, not when a cached principal expires.
+  await invalidateCachedPrincipals(ctx, spaceId);
   return role;
 }
 

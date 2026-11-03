@@ -40,7 +40,9 @@ export function actionAvailable(held: ReadonlySet<ContentAction>, action: Conten
 /**
  * The grant with `action` turned on or off. A listed action comes and goes from `actions`, bringing
  * the finer actions it implies unless they were withheld; a finer one turned off is withheld and
- * turned on is no longer withheld. A withhold with nothing left to withhold from is dropped.
+ * turned on is no longer withheld. Every other withhold is kept as it was, even one the boxes can't
+ * show: `unpublish` withheld on a write-only grant still stops it trashing a live entry, and
+ * ticking Publish again must not hand back an Unpublish someone took away.
  */
 export function setAction(
   grant: ContentTypeGrant,
@@ -56,8 +58,6 @@ export function setAction(
       ? [...new Set([...actions, action])]
       : actions.filter((a): a is ListedContentAction => a !== action);
   }
-  const listed = new Set<ContentAction>(actions);
-  denied = denied.filter((a) => actionAvailable(listed, a));
   const next: ContentTypeGrant = { ...grant, actions };
   if (denied.length) return { ...next, deniedActions: denied };
   delete (next as { deniedActions?: unknown }).deniedActions;

@@ -53,13 +53,16 @@ curl -s "$API/spaces/$SPACE/environments/main/scheduled-actions" \
   -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
   -d '{
     "action": "publish",
-    "entityType": "entry",
+    "entityType": "Entry",
     "entityId": "'"$ENTRY_ID"'",
     "scheduledFor": "2026-12-01T09:00:00Z"
   }'
 ```
 
-`entityType` is `entry` or `release`; a release can be scheduled to publish but not to unpublish.
+`entityType` is `Entry` or `Release` (the lowercase forms are accepted too); a release can be
+scheduled to publish but not to unpublish. Your role must grant the action on the entry's type, or
+on every member's type for a release, and it is checked when the action is created: withdrawing the
+permission later doesn't cancel it, so cancel the action to stop it.
 The MCP tool is `schedule_action`. Scheduled actions are listed under `GET …/scheduled-actions` and
 cancelled with `DELETE …/scheduled-actions/{id}` until they run.
 

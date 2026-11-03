@@ -68,25 +68,34 @@ export interface AddReleaseItemInput {
   readonly action?: ReleaseItem['action'];
 }
 
-/** Adds (or replaces) an entry in an open release. */
+/**
+ * Adds (or replaces) an entry in an open release. Given the `principal` adding it, its role must
+ * grant `read` and the item's action (`publish` or `unpublish`) on the entry's type: a release can
+ * already be scheduled, and the scheduler ships it with no one behind it, so this is where the
+ * member's action is authorized for that path.
+ */
 export async function addEntryToRelease(
   ctx: AppContext,
   scope: Scope,
   releaseId: string,
   input: AddReleaseItemInput,
+  opts: { readonly principal?: Principal } = {},
 ): Promise<ReleaseWithItems> {
   const release = await ctx.store.releases.get(scope, releaseId);
   if (!release) throw new NotFoundError('Release', releaseId);
   if (release.status !== 'open') {
     throw new InvalidStateError(`Cannot modify a ${release.status} release`);
   }
-  if (!(await ctx.store.entries.get(scope, input.entityId))) {
-    throw new NotFoundError('Entry', input.entityId);
+  const found = await ctx.store.entries.get(scope, input.entityId);
+  if (!found) throw new NotFoundError('Entry', input.entityId);
+  const action = input.action ?? 'publish';
+  if (opts.principal) {
+    authorizeContent(opts.principal, ['read', action], found.entry.contentTypeApiId);
   }
   await ctx.store.releases.addItem(scope, releaseId, {
     entityType: 'Entry',
     entityId: input.entityId,
-    action: input.action ?? 'publish',
+    action,
   });
   return getRelease(ctx, scope, releaseId);
 }

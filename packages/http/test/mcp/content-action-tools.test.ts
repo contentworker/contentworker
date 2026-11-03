@@ -146,6 +146,13 @@ describe('finer content actions over MCP, as over HTTP', () => {
       expect(r.text, tool).toContain('content:unpublish:post');
     }
     const release = await createRelease(ctx, scope, { title: 'Takedown' });
+    const added = await call('releases_add_entry', {
+      releaseId: release.id,
+      entryId: id,
+      action: 'unpublish',
+    });
+    expect(added.isError).toBe(true);
+    expect(added.text).toContain('content:unpublish:post');
     await addEntryToRelease(ctx, scope, release.id, { entityId: id, action: 'unpublish' });
     expect((await call('releases_publish', { id: release.id })).text).toContain(
       'content:unpublish:post',

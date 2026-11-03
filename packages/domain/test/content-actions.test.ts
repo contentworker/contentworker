@@ -169,4 +169,45 @@ describe('finer content actions: delete and unpublish', () => {
       ]),
     ).not.toThrow();
   });
+  it('holds an inviter to the grant that governs each type, not any grant they hold', () => {
+    const inviter: Principal = {
+      ...roleWith(
+        { contentTypeApiId: 'post', actions: ['read', 'write'], deniedActions: ['delete'] },
+        { contentTypeApiId: '*', actions: ['read', 'write'] },
+      ),
+      kind: 'user',
+      subject: 'ada',
+    };
+    const grant = (contentGrants: ContentTypeGrant[]) => ({
+      spaceId: 's1',
+      scopes: [],
+      contentGrants,
+    });
+    // Delete on post is withheld by the post grant; the wildcard's delete doesn't lend it.
+    expect(() =>
+      assertCanGrant(inviter, 'member', [
+        grant([{ contentTypeApiId: 'post', actions: ['read', 'write'] }]),
+      ]),
+    ).toThrow(/beyond your own/);
+    // A wildcard would reach post too, where the inviter can't delete.
+    expect(() =>
+      assertCanGrant(inviter, 'member', [
+        grant([{ contentTypeApiId: '*', actions: ['read', 'write'] }]),
+      ]),
+    ).toThrow(/beyond your own/);
+    // Within both: the wildcard everywhere but post, post as the inviter holds it.
+    expect(() =>
+      assertCanGrant(inviter, 'member', [
+        grant([
+          { contentTypeApiId: '*', actions: ['read', 'write'] },
+          { contentTypeApiId: 'post', actions: ['read', 'write'], deniedActions: ['delete'] },
+        ]),
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      assertCanGrant(inviter, 'member', [
+        grant([{ contentTypeApiId: 'page', actions: ['read', 'write'] }]),
+      ]),
+    ).not.toThrow();
+  });
 });

@@ -113,6 +113,72 @@ describe('scheduled publishing', () => {
     expect(await ctx.store.scheduledActions.list(scope)).toHaveLength(1);
   });
 
+  it('refuses adding a member a role can’t ship to a release already scheduled', async () => {
+    const entry = await seedDraft(ctx, 'Live');
+    await publishEntry(ctx, scope, entry.entry.id);
+    const release = await createRelease(ctx, scope, { title: 'Later' });
+    const other = await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'Other' } },
+    });
+    await addEntryToRelease(ctx, scope, release.id, { entityId: other.entry.id });
+    await scheduleAction(ctx, scope, {
+      action: 'publish',
+      entityType: 'Release',
+      entityId: release.id,
+      scheduledFor: '2026-01-01T01:00:00.000Z',
+    });
+    const keepsLive: Principal = {
+      spaceId: scope.spaceId,
+      kind: 'cma',
+      scopes: [SCOPES.contentWrite, SCOPES.contentPublish],
+      contentGrants: [
+        {
+          contentTypeApiId: 'article',
+          actions: ['read', 'write', 'publish'],
+          deniedActions: ['unpublish'],
+        },
+      ],
+    };
+    // The scheduler would ship it with no one behind it, so the member is authorized on the way in.
+    await expect(
+      addEntryToRelease(
+        ctx,
+        scope,
+        release.id,
+        { entityId: entry.entry.id, action: 'unpublish' },
+        { principal: keepsLive },
+      ),
+    ).rejects.toThrow(/content:unpublish:article/);
+    // No grant on the type: neither action goes in.
+    await expect(
+      addEntryToRelease(
+        ctx,
+        scope,
+        release.id,
+        { entityId: entry.entry.id },
+        {
+          principal: {
+            ...keepsLive,
+            contentGrants: [{ contentTypeApiId: 'page', actions: ['read', 'publish'] }],
+          },
+        },
+      ),
+    ).rejects.toThrow(/content:read:article/);
+    clock.advance(60 * 60 * 1000);
+    expect(await runDueScheduledActions(ctx)).toEqual({ executed: 1, failed: 0 });
+    expect((await ctx.store.entries.get(scope, entry.entry.id))?.entry.publishedVersion).toBe(1);
+    // A member it may ship goes in as before.
+    const next = await createRelease(ctx, scope, { title: 'Next' });
+    await addEntryToRelease(
+      ctx,
+      scope,
+      next.id,
+      { entityId: entry.entry.id },
+      { principal: keepsLive },
+    );
+  });
+
   it('a canceled action never fires', async () => {
     const entry = await seedDraft(ctx, 'Canceled');
     const action = await scheduleAction(ctx, scope, {

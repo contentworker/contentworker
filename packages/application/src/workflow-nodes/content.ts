@@ -176,7 +176,13 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
     const release = await getRelease(i.ctx, i.scope, releaseId);
     const wasMember = release.items.some((it) => it.entityId === i.entryId);
     if (!wasMember) {
-      await addEntryToRelease(i.ctx, i.scope, releaseId, { entityId: i.entryId });
+      await addEntryToRelease(
+        i.ctx,
+        i.scope,
+        releaseId,
+        { entityId: i.entryId },
+        { principal: i.actor.principal },
+      );
     }
     return {
       output: { releaseId, wasMember },

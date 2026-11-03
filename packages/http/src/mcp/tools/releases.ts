@@ -67,7 +67,8 @@ export function registerReleaseTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'releases_add_entry',
     {
-      description: 'Add an entry to an open release, choosing whether it publishes or unpublishes.',
+      description:
+        "Add an entry to an open release, choosing whether it publishes or unpublishes. Your role must grant read and that action on the entry's type.",
       inputSchema: toolSchema('releases_add_entry', () =>
         z.object({
           releaseId: z.string(),
@@ -80,10 +81,16 @@ export function registerReleaseTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await addEntryToRelease(ctx, scopeOf(args), args.releaseId, {
-          entityId: args.entryId,
-          action: args.action,
-        }),
+        await addEntryToRelease(
+          ctx,
+          scopeOf(args),
+          args.releaseId,
+          {
+            entityId: args.entryId,
+            action: args.action,
+          },
+          { principal: t.principal },
+        ),
       );
     },
   );

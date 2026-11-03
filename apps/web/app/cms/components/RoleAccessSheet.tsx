@@ -115,7 +115,11 @@ export function RoleAccessSheet(props: {
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-muted-foreground text-xs">
                     {grant.deniedFields?.length || grant.readOnlyFields?.length
-                      ? `Field rules kept: ${grant.deniedFields?.length ?? 0} hidden, ${grant.readOnlyFields?.length ?? 0} read-only.`
+                      ? `Field rules kept: ${grant.deniedFields?.length ?? 0} hidden, ${grant.readOnlyFields?.length ?? 0} read-only. `
+                      : null}
+                    {/* A withhold the boxes can't show, kept as it is. */}
+                    {grant.deniedActions?.includes('unpublish') && !held.has('publish')
+                      ? 'Unpublish stays withheld: live entries can’t be trashed.'
                       : null}
                   </p>
                   <Button

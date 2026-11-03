@@ -438,8 +438,22 @@ Semantics:
   (`publishRelease` with the caller's `principal`, from the route, `releases_publish` and the
   `content.publish_release` node) checks `publish` or `unpublish` per member type, and
   `scheduleAction` checks the scheduler's role against the entry (or every release member) when
-  the action is scheduled, since the cron fires it with no one behind it. Bulk jobs refuse any
-  principal with grants. Management/preview/delivery reads filter out ungranted types and
+  the action is scheduled, since the cron fires it with no one behind it; for the same reason
+  `addEntryToRelease` checks `read` plus the item's action when a member goes in (route,
+  `releases_add_entry`, the `content.add_to_release` node), so a release already scheduled can't
+  gain a member its adder couldn't ship. Bulk jobs refuse any principal with grants.
+- **Limits of a withhold**, stated plainly:
+  - It doesn't constrain a principal that also holds `space:admin`: that principal can edit roles
+    (its own included) and mint keys, so withholding `delete` from an administrator is advice, not
+    a control.
+  - Scheduled actions and workflow runs are authorized when they are created or started.
+    Withdrawing a permission later doesn't cancel them; cancel the scheduled action
+    (`DELETE …/scheduled-actions/{id}`) or the run to revoke what they would do.
+  - A write-only grant (no `publish`, so no `unpublish`) can still trash a live entry, which
+    unpublishes it. Only an explicit `deniedActions: ['unpublish']` stops that.
+- **Role edits are live at once.** `createRole`, `updateRole` and `deleteRole` drop the space's
+  cached principals (`invalidateCachedPrincipals`), so Delivery's cached keys see the new grants on
+  their next request. Management/preview/delivery reads filter out ungranted types and
   `maskDeniedFields` on what remains. Keys without a role (`contentGrants === undefined`) are
   unrestricted at this layer — coarse scopes alone apply, preserving pre-role behavior.
 - Managed at `GET/POST /spaces/:space/roles`, `GET/PUT/DELETE /spaces/:space/roles/:id`

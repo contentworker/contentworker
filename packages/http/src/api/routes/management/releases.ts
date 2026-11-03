@@ -53,6 +53,7 @@ export function releasesRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopeOf(c),
         c.req.param('id'),
         await parseBody(c, releaseItemBody),
+        { principal: c.get('principal') },
       ),
     ),
   );

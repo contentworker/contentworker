@@ -21,14 +21,27 @@ describe('the role editor’s content actions', () => {
     expect(setAction(noDelete, 'delete', true)).toEqual(editor);
   });
 
-  it('brings delete and unpublish with publish, unless withheld, and drops a moot withhold', () => {
+  it('brings delete and unpublish with publish, unless withheld, and keeps every withhold', () => {
     const reader = { contentTypeApiId: 'post', actions: ['read' as const] };
     expect(actionAvailable(heldActions(reader), 'delete')).toBe(false);
     const publisher = setAction(reader, 'publish', true);
     expect([...heldActions(publisher)]).toEqual(['read', 'publish', 'delete', 'unpublish']);
     const keepsLive = setAction(publisher, 'unpublish', false);
-    // Taking publish away leaves nothing to withhold unpublish from.
-    expect(setAction(keepsLive, 'publish', false)).toEqual(reader);
+    // Unticking and re-ticking Publish doesn't hand back the Unpublish that was taken away.
+    const without = setAction(keepsLive, 'publish', false);
+    expect(without).toEqual({ ...reader, deniedActions: ['unpublish'] });
+    expect(heldActions(setAction(without, 'publish', true)).has('unpublish')).toBe(false);
+  });
+
+  it('keeps a withhold the boxes can’t show when another action changes', () => {
+    // Write-only, withholding unpublish: what stops it trashing a live entry.
+    const writer = {
+      contentTypeApiId: 'post',
+      actions: ['read' as const, 'write' as const],
+      deniedActions: ['unpublish' as const],
+    };
+    expect(setAction(writer, 'delete', false).deniedActions).toEqual(['unpublish', 'delete']);
+    expect(setAction(writer, 'read', false).deniedActions).toEqual(['unpublish']);
   });
 
   it('describes each grant for the roles table', () => {

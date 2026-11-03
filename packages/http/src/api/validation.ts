@@ -640,8 +640,10 @@ export const releaseItemBody = z.object({
 });
 export const scheduleBody = z.object({
   action: z.enum(['publish', 'unpublish']),
-  // As the domain, the MCP tool and the admin spell them.
-  entityType: z.enum(['Entry', 'Release']),
+  // Capitalized, as the domain, the MCP tool and the admin spell them; lowercase is accepted too.
+  entityType: z
+    .enum(['Entry', 'Release', 'entry', 'release'])
+    .transform((t) => (t === 'entry' || t === 'Entry' ? 'Entry' : 'Release')),
   entityId: zId,
   scheduledFor: z.string().min(1).max(64),
 });

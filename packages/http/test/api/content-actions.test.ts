@@ -205,11 +205,30 @@ describe('finer content actions over HTTP: delete and unpublish', () => {
         body: JSON.stringify({ title: 'Takedown' }),
       })
     ).json()) as { id: string };
-    await app.request(`${M}/releases/${release.id}/items`, {
+    const addItem = (as: Record<string, string>) =>
+      app.request(`${M}/releases/${release.id}/items`, {
+        method: 'POST',
+        headers: as,
+        body: JSON.stringify({ entityId: live, action: 'unpublish' }),
+      });
+    // Scheduled for later, the release would ship with no one behind it: the item is refused now.
+    const scheduledRelease = await app.request(`${M}/scheduled-actions`, {
       method: 'POST',
-      headers: keepsLive,
-      body: JSON.stringify({ entityId: live, action: 'unpublish' }),
+      headers: admin,
+      body: JSON.stringify({
+        action: 'publish',
+        entityType: 'release',
+        entityId: release.id,
+        scheduledFor: '2099-01-01T00:00:00.000Z',
+      }),
     });
+    expect(scheduledRelease.status).toBe(201);
+    expect(((await scheduledRelease.json()) as { entityType: string }).entityType).toBe('Release');
+    const added = await addItem(keepsLive);
+    expect(added.status).toBe(403);
+    expect(await added.text()).toContain('content:unpublish:post');
+    // Put there by someone who may, it still can't ship it by hand.
+    expect((await addItem(admin)).status).toBe(200);
     const shipped = await app.request(`${M}/releases/${release.id}/published`, {
       method: 'POST',
       headers: keepsLive,

@@ -9,7 +9,7 @@
  */
 import { DomainError } from '../errors';
 import type { ContentTypeGrant, Principal } from './auth';
-import { authorize, grantedActions, SCOPES } from './auth';
+import { authorize, grantedActions, grantFor, SCOPES } from './auth';
 
 /** How long an invitation works unless the inviter picks otherwise. */
 export const INVITE_TTL_DAYS = 7;
@@ -107,11 +107,8 @@ export function authorizeInviter(principal: Principal): void {
   authorize(principal, SCOPES.spaceAdmin, '*');
 }
 
-/** True when `held` allows at least what `granted` does on one content type. */
+/** True when `held` allows at least what `granted` does, both governing the same type. */
 function grantCovers(held: ContentTypeGrant, granted: ContentTypeGrant): boolean {
-  if (held.contentTypeApiId !== '*' && held.contentTypeApiId !== granted.contentTypeApiId) {
-    return false;
-  }
   // Resolved, not as listed: a grant that withholds `delete` doesn't cover one that implies it.
   const heldActions = grantedActions(held);
   if (![...grantedActions(granted)].every((a) => heldActions.has(a))) return false;
@@ -156,8 +153,14 @@ export function assertCanGrant(
     }
     const held = principal.contentGrants;
     if (held === undefined) continue;
-    for (const granted of g.contentGrants) {
-      if (!held.some((h) => grantCovers(h, granted))) {
+    // Compared type by type, each side by the grant that governs it (an exact type over `*`), so
+    // a wildcard can't borrow from one type's grant, nor a type escape its own narrower one.
+    const types = new Set(['*', ...[...held, ...g.contentGrants].map((x) => x.contentTypeApiId)]);
+    for (const type of types) {
+      const granted = grantFor({ ...principal, contentGrants: g.contentGrants }, type);
+      if (!granted) continue;
+      const governing = grantFor(principal, type);
+      if (!governing || !grantCovers(governing, granted)) {
         throw new InviteEscalationError(
           `You can't grant access to "${granted.contentTypeApiId}" beyond your own`,
         );
