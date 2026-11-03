@@ -437,18 +437,20 @@ export function seesAuthorIds(principal: Pick<Principal, 'kind' | 'scopes'>): bo
 }
 
 /**
- * Refuses a query that filters or orders on {@link AUTHOR_ID_FIELDS} for a principal that doesn't
- * see them (a 400): the answer would reveal what the response leaves out.
+ * Refuses a query that filters (in `filters` or anywhere in a `where` tree) or orders on
+ * {@link AUTHOR_ID_FIELDS} for a principal that doesn't see them (a 400): the answer would reveal
+ * what the response leaves out.
  */
 export function assertAuthorIdQuery(
   principal: Pick<Principal, 'kind' | 'scopes'>,
   query: {
     readonly filters?: readonly { readonly field: string }[];
+    readonly where?: QueryNode;
     readonly order?: readonly { readonly field: string }[];
   },
 ): void {
   if (seesAuthorIds(principal)) return;
-  const named = [...(query.filters ?? []), ...(query.order ?? [])]
+  const named = [...(query.filters ?? []), ...queryNodeFilters(query.where), ...(query.order ?? [])]
     .map((f) => f.field)
     .find((f) => AUTHOR_ID_FIELDS.includes(f));
   if (named) {

@@ -937,9 +937,11 @@ entry carries `createdAt`, `createdBy`, `updatedBy` and `firstPublishedAt` (null
 `admin-token`, or for an API key its kind (`cma`), so `me` from one CMA key also matches entries
 any other CMA key wrote. `createdBy` and `updatedBy` go only to teammates and keys holding a
 management scope (`content:write`, `content:publish`, `content:manage` or `space:admin`): a preview
-key or preview token gets each entry without them, and a filter or `order` on `sys.createdBy` or
-`sys.updatedBy` from one is `400 author_ids_not_served`. The MCP tool `entries_query` is the same
-read, paged the same way, under the same rule.
+key or preview token gets each entry without them (here, in `GET …/entries/:id`, in version
+history, whose `createdBy` it also drops, and in the MCP trash listing), and a filter or `order`
+on `sys.createdBy` or `sys.updatedBy` from one, anywhere in `where` too, is
+`400 author_ids_not_served`. The MCP tool `entries_query` is the same read, paged the same way,
+under the same rule.
 
 Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
 least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and

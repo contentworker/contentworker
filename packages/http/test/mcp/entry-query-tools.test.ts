@@ -219,4 +219,63 @@ describe('entries_query over MCP', () => {
       expect(JSON.stringify(res.content)).toContain('is not served to this key');
     }
   });
+
+  it('refuses a preview key a where predicate on a writer id, however deep', async () => {
+    const client = await connect(deps, READER);
+    for (const where of [
+      { field: 'sys.createdBy', op: 'eq', value: 'me' },
+      {
+        or: [
+          { field: 'title', op: 'eq', value: 'a' },
+          { and: [{ field: 'sys.updatedBy', op: 'exists', value: true }] },
+        ],
+      },
+    ]) {
+      const res = await client.callTool({
+        name: 'entries_query',
+        arguments: { space: SPACE, contentType: 'note', where },
+      });
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain('is not served to this key');
+    }
+  });
+
+  it('serves a preview key no writer ids in version history or the trash', async () => {
+    const writer: Principal = {
+      spaceId: SPACE,
+      kind: 'user',
+      subject: 'person-1',
+      scopes: [SCOPES.contentWrite, SCOPES.previewRead],
+    };
+    const author = await connect(deps, writer);
+    const created = text(
+      await author.callTool({
+        name: 'entries_create',
+        arguments: { space: SPACE, contentType: 'note', fields: { title: { 'en-US': 'gone' } } },
+      }),
+    ) as { entry: { id: string } };
+    const id = created.entry.id;
+    const trashed = await author.callTool({ name: 'entries_trash', arguments: { space: SPACE, id } });
+    expect(trashed.isError).toBeFalsy();
+
+    const reads = async (client: Client) => ({
+      versions: text(
+        await client.callTool({ name: 'entries_list_versions', arguments: { space: SPACE, id } }),
+      ) as Record<string, unknown>[],
+      trash: text(
+        await client.callTool({ name: 'entries_list_trashed', arguments: { space: SPACE } }),
+      ) as Record<string, unknown>[],
+    });
+    // The author sees who wrote each record; the preview key gets the same records without it.
+    const mine = await reads(author);
+    expect(mine.versions.map((v) => v.createdBy)).toContain('person-1');
+    expect(mine.trash.find((e) => e.id === id)).toMatchObject({ createdBy: 'person-1' });
+    const theirs = await reads(await connect(deps, READER));
+    expect(theirs.versions).toHaveLength(mine.versions.length);
+    for (const v of theirs.versions) expect(v).not.toHaveProperty('createdBy');
+    const row = theirs.trash.find((e) => e.id === id);
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty('createdBy');
+    expect(row).not.toHaveProperty('updatedBy');
+  });
 });

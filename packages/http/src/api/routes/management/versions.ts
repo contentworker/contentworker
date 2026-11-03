@@ -12,6 +12,7 @@ import {
   maskDeniedFields,
   SCOPES,
   ValidationError,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
@@ -28,14 +29,14 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
 
   // --- entry version history ---------------------------------------------
   // Version snapshots carry raw field values, so every read authorizes the
-  // entry's content type and masks denied fields — matching GET /entries/:id.
+  // entry's content type and masks denied fields — matching GET /entries/:id. Who saved each
+  // version is left out for a principal that doesn't see author ids (a preview key).
   app.get(`${BASE}/entries/:id/versions`, requireScope(SCOPES.previewRead), async (c) => {
     const type = await authorizeEntryRead(c, c.req.param('id'));
     const principal = c.get('principal');
-    const items = (await listVersions(ctx, scopeOf(c), c.req.param('id'))).map((v) => ({
-      ...v,
-      fields: maskDeniedFields(principal, type, v.fields),
-    }));
+    const items = (await listVersions(ctx, scopeOf(c), c.req.param('id'))).map((v) =>
+      withAuthorIdsFor(principal, { ...v, fields: maskDeniedFields(principal, type, v.fields) }),
+    );
     return c.json({ items });
   });
   // A readable diff between two versions, or a version and the current draft or published one.
@@ -80,10 +81,13 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       c.req.param('id'),
       Number(c.req.param('version')),
     );
-    return c.json({
-      ...version,
-      fields: maskDeniedFields(c.get('principal'), type, version.fields),
-    });
+    const principal = c.get('principal');
+    return c.json(
+      withAuthorIdsFor(principal, {
+        ...version,
+        fields: maskDeniedFields(principal, type, version.fields),
+      }),
+    );
   });
   // Restore copies an old version's fields into a NEW draft version. It must pass
   // the same write authorization as a normal edit, so a role with denied/

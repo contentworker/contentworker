@@ -255,7 +255,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
         select: args.select,
         search: args.search,
       });
-      assertAuthorIdQuery(principal, { filters: args.filters, order: args.order });
+      assertAuthorIdQuery(principal, { filters, ...(where ? { where } : {}), order: args.order });
       const page = await listPreviewEntryPage(
         ctx,
         scopeOf(args),

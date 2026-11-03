@@ -10,6 +10,7 @@ import {
   authorizeContent,
   maskDeniedFields,
   SCOPES,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -32,10 +33,9 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
       const type = await authorizeEntryRead(scopeOf(args), args.id);
-      const items = (await listVersions(ctx, scopeOf(args), args.id)).map((v) => ({
-        ...v,
-        fields: maskDeniedFields(principal, type, v.fields),
-      }));
+      const items = (await listVersions(ctx, scopeOf(args), args.id)).map((v) =>
+        withAuthorIdsFor(principal, { ...v, fields: maskDeniedFields(principal, type, v.fields) }),
+      );
       return ok(items);
     },
   );

@@ -495,8 +495,10 @@ Management and Preview serve all four, filter and sort on them, and resolve `me`
 `sys.createdBy` and `sys.updatedBy` to the caller's actor id (`principalActorId`: a person's
 subject, `admin-token`, or an API key's kind, so `me` is every key of that kind). The writer ids
 go only where `seesAuthorIds` holds (a teammate, the admin token, or a key with a management
-scope): a preview key reads entries without `createdBy`/`updatedBy` (`withAuthorIdsFor`), and
-`assertAuthorIdQuery` refuses its filter or order on them (400). Agent-review decisions record
+scope): a preview key reads entries and versions without `createdBy`/`updatedBy`
+(`withAuthorIdsFor`, on every read it can reach: Preview, the management entry and version reads,
+and their MCP tools), and `assertAuthorIdQuery` refuses its filter or order on them, in `filters`
+or anywhere in a `where` tree (400). Agent-review decisions record
 `decidedBy` with the same actor id. Delivery serves `firstPublishedAt` alone, since the others name
 people and keys a public read has no business seeing.
 

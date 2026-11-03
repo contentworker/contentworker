@@ -178,4 +178,57 @@ describe('entry authorship over HTTP', () => {
     // A management key still reads and filters on them.
     expect((await previewList(cma, 'sys.createdBy=cma')).map((e) => e.id)).toEqual([created.id]);
   });
+
+  it('serves a preview key no writer ids on the entry and its versions', async () => {
+    const created = await create(cma, 'Draft');
+    const cpa = { Authorization: 'Bearer cpa' };
+    const read = async (path: string, headers: Record<string, string>) => {
+      const res = await app.request(`${M}/entries/${created.id}${path}`, { headers });
+      expect(res.status).toBe(200);
+      return res.json();
+    };
+
+    const entry = (await read('', cpa)) as { entry: Record<string, unknown> };
+    expect(entry.entry).toMatchObject({ id: created.id, createdAt: expect.any(String) });
+    expect(entry.entry).not.toHaveProperty('createdBy');
+    expect(entry.entry).not.toHaveProperty('updatedBy');
+    const versions = (await read('/versions', cpa)) as { items: Record<string, unknown>[] };
+    expect(versions.items).not.toHaveLength(0);
+    for (const v of versions.items) expect(v).not.toHaveProperty('createdBy');
+    const first = (await read('/versions/1', cpa)) as Record<string, unknown>;
+    expect(first).toMatchObject({ version: 1 });
+    expect(first).not.toHaveProperty('createdBy');
+
+    // A management key reads the same records with who wrote them.
+    expect(((await read('', cma)) as { entry: Authored }).entry.createdBy).toBe('cma');
+    const theirs = (await read('/versions', cma)) as { items: { createdBy: string }[] };
+    expect(theirs.items.map((v) => v.createdBy)).toEqual(['cma']);
+    expect(((await read('/versions/1', cma)) as { createdBy: string }).createdBy).toBe('cma');
+  });
+
+  it('refuses a preview key a where predicate on a writer id', async () => {
+    await create(cma, 'Draft');
+    const cpa = { Authorization: 'Bearer cpa' };
+    const where = (tree: unknown) => `where=${encodeURIComponent(JSON.stringify(tree))}`;
+    for (const tree of [
+      { field: 'sys.createdBy', op: 'eq', value: 'cma' },
+      {
+        or: [
+          { field: 'title', op: 'eq', value: 'Nope' },
+          { and: [{ field: 'sys.updatedBy', op: 'ne', value: 'cma' }] },
+        ],
+      },
+    ]) {
+      const refused = await app.request(`${P}/entries?content_type=memo&${where(tree)}`, {
+        headers: cpa,
+      });
+      expect(refused.status).toBe(400);
+      expect(((await refused.json()) as { error: { code: string } }).error.code).toBe(
+        'author_ids_not_served',
+      );
+    }
+    // A management key may.
+    const mine = await previewList(cma, where({ field: 'sys.createdBy', op: 'eq', value: 'cma' }));
+    expect(mine).toHaveLength(1);
+  });
 });

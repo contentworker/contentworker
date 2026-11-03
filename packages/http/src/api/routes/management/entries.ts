@@ -13,6 +13,7 @@ import {
   maskDeniedFields,
   SCOPES,
   ValidationError,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
@@ -142,7 +143,7 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const principal = c.get('principal');
       authorizeContent(principal, 'read', view.entry.contentTypeApiId);
       return c.json({
-        ...view,
+        entry: withAuthorIdsFor(principal, view.entry),
         fields: maskDeniedFields(principal, view.entry.contentTypeApiId, view.fields),
       });
     },
