@@ -45,7 +45,7 @@ const GUIDED: FieldDefinition[] = [
     name: 'Status',
     position: 1,
     validations: {
-      in: ['open', 'let'],
+      in: [{ value: 'open', label: 'Open for viewings' }, 'let'],
       messages: { in: 'Pick a status from the list' },
     },
   }),
@@ -91,7 +91,7 @@ async function seedLegacy(scope = source) {
 }
 
 describe('guidance in snapshots', () => {
-  it('carries options, messages and guidance through export, import and clone', async () => {
+  it('carries labelled options, messages and guidance through export, import and clone', async () => {
     await createContentType(ctx, source, {
       apiId: 'listing',
       name: 'Listing',

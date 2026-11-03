@@ -46,7 +46,7 @@ const guided = {
       required: false,
       position: 1,
       validations: {
-        in: ['open', 'let'],
+        in: [{ value: 'open', label: 'Open for viewings' }, 'let'],
         messages: { in: 'Pick a status from the list' },
       },
     },
@@ -74,7 +74,7 @@ function setup() {
 }
 
 describe('field guidance over HTTP', () => {
-  it('stores help, placeholder, description and messages as written', async () => {
+  it('stores help, placeholder, description, labelled options and messages as written', async () => {
     const { send } = setup();
     expect((await send(`${M}/content-types`, 'POST', guided)).status).toBe(201);
     const got = (await (await send(`${M}/content-types/listing`, 'GET')).json()) as {
@@ -102,7 +102,7 @@ describe('field guidance over HTTP', () => {
       contentTypeApiId: 'listing',
       fields: {
         title: { 'en-US': 'Flat' },
-        // Not one of the listed values.
+        // The label is not a stored value.
         status: { 'en-US': 'Open for viewings' },
         zip: { 'en-US': 'EH6' },
       },
@@ -129,13 +129,6 @@ describe('field guidance over HTTP', () => {
     );
     expect(orphan.status).toBe(422);
     expect(JSON.stringify(await orphan.json())).toContain('needs the size rule');
-    // Labelled options are read but not yet written: an older reader would choke on one.
-    const labelled = await send(
-      `${M}/content-types`,
-      'POST',
-      withField({ validations: { in: [{ value: 'a', label: 'A' }] } }),
-    );
-    expect(labelled.status).toBe(422);
   });
 
   it('lets a definition stored before guidance was checked be saved again unchanged', async () => {

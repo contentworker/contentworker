@@ -355,11 +355,7 @@ function assertOptionsValid(
     list.filter((x) => identity(x) === identity(o)).length;
   const seen = new Set<string>();
   for (const option of options as unknown[]) {
-    // Read in every form, written bare for now: labelled options are accepted on write only once
-    // every deployed reader handles them.
-    const labelled = typeof option === 'object' && option !== null;
     const problem =
-      (labelled ? 'each validations.in option is a string or a number' : null) ??
       optionProblem(option) ??
       (seen.has(optionKey(option as FieldOption))
         ? `option ${JSON.stringify(optionValue(option as FieldOption))} is listed twice`
@@ -423,13 +419,6 @@ function withoutBlankGuidance(f: FieldDefinition): FieldDefinition {
  *   declares; an Array element's messages go, as nothing enforces them.
  */
 export function normalizeLegacyFields(fields: readonly FieldDefinition[]): FieldDefinition[] {
-  // A labelled option keeps its value and loses its label: options are written bare for now.
-  const bare = (options: unknown) =>
-    Array.isArray(options)
-      ? options.map((o) =>
-          typeof o === 'object' && o !== null ? (o as { value?: unknown }).value : o,
-        )
-      : options;
   const rules = (
     v: FieldValidations | undefined,
     type: FieldDefinition['type'],
@@ -439,7 +428,7 @@ export function normalizeLegacyFields(fields: readonly FieldDefinition[]): Field
     const { in: options, messages, ...rest } = v;
     const kept: FieldValidations = { ...rest };
     if (options !== undefined) {
-      const usable = normalizeOptions(bare(options), type);
+      const usable = normalizeOptions(options, type);
       if (usable.length > 0) kept.in = usable;
     }
     if (!element && typeof messages === 'object' && messages !== null) {

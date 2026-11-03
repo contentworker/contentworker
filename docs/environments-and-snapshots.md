@@ -37,8 +37,8 @@ the target space is authorized separately so a clone cannot cross a tenancy boun
 A snapshot's content model is normalised once, before the checks (`normalizeSnapshotModel`): an
 `in` list stored before options were checked keeps its usable options, once each (and goes when
 none is left), and unusable guidance and messages are dropped, rather than failing the import. An
-entry that holds a dropped option is then refused by the checks, before anything is written; a labelled option keeps its value, since this release writes options bare.
-Validation messages and field guidance travel unchanged.
+entry that holds a dropped option is then refused by the checks, before anything is written. Labelled options, validation messages and field
+guidance travel unchanged.
 
 What an import preserves:
 

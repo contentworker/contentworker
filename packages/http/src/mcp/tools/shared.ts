@@ -74,7 +74,7 @@ export const fieldSchema = z.object({
     .record(z.string(), z.any())
     .optional()
     .describe(
-      '{ in?: allowed values (strings or numbers, each once), ' +
+      '{ in?: allowed values, each bare or { value, label } (entries store the value), ' +
         'regexp?: { pattern, flags? }, range?: { min?, max? }, size?: { min?, max? }, ' +
         'linkContentTypes?, messages?: { in|regexp|range|size: error text replacing the default } }',
     ),

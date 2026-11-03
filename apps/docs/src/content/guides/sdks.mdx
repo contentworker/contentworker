@@ -320,6 +320,13 @@ shape (`ArticleDraftFields`, keyed by locale). A field's `in` validation becomes
 allowed values (an option's `value`, not its label), and its description or help text becomes the
 property's doc comment. The same output is served at `GET …/content-types?format=typescript`.
 
+:::caution[Upgrade before labelling options]
+A field's `in` list can hold `{ value, label }` options. SDK releases from before that throw when
+generating types for one, and typed `validations` as an array. Upgrade `@contentworker/sdk` and
+regenerate your types before a content type gains a labelled option; code that walks
+`validations.in` itself reads an option's value as `typeof o === 'object' ? o.value : o`.
+:::
+
 ## Inline editing
 
 On a preview, the SDKs can mark each rendered value with the entry and field it came from; an

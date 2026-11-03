@@ -91,7 +91,8 @@ describe('P6: AI generation over the content model', () => {
           localized: false,
           required: true,
           position: 2,
-          validations: { in: ['calm', 'bold'] },
+          // Labelled options: the model is offered the stored values, never the labels.
+          validations: { in: [{ value: 'calm', label: 'Calm and measured' }, 'bold'] },
         },
       ],
     });

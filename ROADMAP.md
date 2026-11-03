@@ -29,7 +29,7 @@ Removed in v2, and not coming back:
 Everything below is built and tested on v2.
 
 - **Content.** Spaces, environments (create, delete) and aliases; locales with fallback chains; typed fields with
-  validations (custom messages), guidance for editors and agents (`help`,
+  validations (labelled `in` options, custom messages), guidance for editors and agents (`help`,
   `placeholder`, `description`), components and unique values; the entry lifecycle (draft → published → archived,
   trash, purge, duplicate); versions with a readable diff (per field and locale, by type: words,
   rich-text blocks, list moves) and restore; references and `include`; rich text
@@ -141,7 +141,7 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 
 #### M1. Quick wins
 
-- [ ] **Field guidance.** `help`, `placeholder` and `description` on every field; `in` options as
+- [x] **Field guidance.** `help`, `placeholder` and `description` on every field; `in` options as
   `{value, label}`; a custom `message` on each validation rule. Agents read them from the model.
 - [x] **Self-service password reset.** An emailed single-use code (hashed, expiring, attempt-capped,
   uniform responses), throttled like sign-in. Replaces "ask an admin to reset it". Human sign-in
