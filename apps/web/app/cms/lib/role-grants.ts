@@ -7,10 +7,13 @@
 import {
   type ContentAction,
   type ContentTypeGrant,
+  canHoldAction,
   grantedActions,
+  IMPLIED_BY,
   type ImpliedContentAction,
   type ListedContentAction,
 } from '@contentworker/domain';
+import type { RoleSummary } from './management';
 
 export { CONTENT_ACTIONS } from '@contentworker/domain';
 
@@ -30,12 +33,19 @@ const isImplied = (a: ContentAction): a is ImpliedContentAction =>
 export const heldActions = (grant: ContentTypeGrant): ReadonlySet<ContentAction> =>
   grantedActions(grant);
 
-/** Whether `action` can be held next to `held`: `delete` needs write or publish, `unpublish` publish. */
-export function actionAvailable(held: ReadonlySet<ContentAction>, action: ContentAction): boolean {
-  if (action === 'delete') return held.has('write') || held.has('publish');
-  if (action === 'unpublish') return held.has('publish');
-  return true;
+/** Whether `action` can be held next to `held` (the domain's rule, {@link canHoldAction}). */
+export const actionAvailable = (held: ReadonlySet<ContentAction>, action: ContentAction): boolean =>
+  canHoldAction(held, action);
+
+/** Why a finer action can't be ticked yet, in the editor's words: "Needs Write or Publish". */
+export function actionNeeds(action: ContentAction): string | undefined {
+  if (!isImplied(action)) return undefined;
+  return `Needs ${IMPLIED_BY[action].map((a) => CONTENT_ACTION_LABELS[a].label).join(' or ')}`;
 }
+
+/** A content type's name for people: `*` is Every type, an unknown apiId shows as itself. */
+export const contentTypeName = (apiId: string, names: ReadonlyMap<string, string>): string =>
+  apiId === '*' ? 'Every type' : (names.get(apiId) ?? apiId);
 
 /**
  * The grant with `action` turned on or off. A listed action comes and goes from `actions`, bringing
@@ -65,13 +75,48 @@ export function setAction(
 }
 
 /** A short line for the roles table: each grant's type and what it holds. */
-export function describeGrants(grants: readonly ContentTypeGrant[]): string {
+export function describeGrants(
+  grants: readonly ContentTypeGrant[],
+  names: ReadonlyMap<string, string> = new Map(),
+): string {
   if (grants.length === 0) return 'No content';
   return grants
     .map((g) => {
       const held = [...heldActions(g)].map((a) => CONTENT_ACTION_LABELS[a].label.toLowerCase());
-      const type = g.contentTypeApiId === '*' ? 'Every type' : g.contentTypeApiId;
+      const type = contentTypeName(g.contentTypeApiId, names);
       return `${type}: ${held.length ? held.join(', ') : 'nothing'}`;
     })
     .join(' · ');
+}
+
+/** True when two grant lists say the same thing, in the same order. */
+export const sameGrants = (a: readonly ContentTypeGrant[], b: readonly ContentTypeGrant[]) =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Saves a role's content grants and nothing else. The API replaces a role whole, so the name,
+ * description and scopes are re-read just before writing, not taken from when the sheet opened; and
+ * if someone changed the grants meanwhile, nothing is written and the reason says to reopen it,
+ * rather than silently undoing their change.
+ */
+export async function saveRoleGrants(
+  client: {
+    getRole(id: string): Promise<RoleSummary>;
+    updateRole(id: string, input: Partial<RoleSummary>): Promise<RoleSummary>;
+  },
+  opened: RoleSummary,
+  grants: readonly ContentTypeGrant[],
+): Promise<RoleSummary> {
+  const current = await client.getRole(opened.id);
+  if (!sameGrants(current.contentGrants, opened.contentGrants)) {
+    throw new Error(
+      `${current.name}’s content access changed while you were editing it. Close this and open it again to see the change.`,
+    );
+  }
+  return client.updateRole(opened.id, {
+    name: current.name,
+    ...(current.description ? { description: current.description } : {}),
+    scopes: current.scopes,
+    contentGrants: grants,
+  });
 }

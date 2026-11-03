@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { actionAvailable, describeGrants, heldActions, setAction } from '~/cms/lib/role-grants';
+import { describe, expect, it, vi } from 'vitest';
+import type { RoleSummary } from '~/cms/lib/management';
+import {
+  actionAvailable,
+  actionNeeds,
+  describeGrants,
+  heldActions,
+  saveRoleGrants,
+  setAction,
+} from '~/cms/lib/role-grants';
 
 const editor = { contentTypeApiId: '*', actions: ['read', 'write', 'publish'] as const };
 
@@ -51,6 +59,44 @@ describe('the role editor’s content actions', () => {
         { contentTypeApiId: '*', actions: ['read'] },
       ]),
     ).toBe('post: read, write · Every type: read');
+    expect(
+      describeGrants(
+        [{ contentTypeApiId: 'post', actions: ['read'] }],
+        new Map([['post', 'Post']]),
+      ),
+    ).toBe('Post: read');
     expect(describeGrants([])).toBe('No content');
+  });
+
+  it('says what a finer action needs, from the domain’s rule', () => {
+    expect(actionNeeds('delete')).toBe('Needs Write or Publish');
+    expect(actionNeeds('unpublish')).toBe('Needs Publish');
+    expect(actionNeeds('write')).toBeUndefined();
+  });
+
+  it('saves only the grants, over the role as it is now, and refuses when they moved', async () => {
+    const opened: RoleSummary = {
+      id: 'r1',
+      name: 'Editor',
+      scopes: ['content:write'],
+      contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'write'] }],
+    };
+    const next = [{ contentTypeApiId: '*', actions: ['read' as const] }];
+    // Renamed and given a scope by someone else since the sheet opened: both survive.
+    const renamed = { ...opened, name: 'Writers', scopes: ['content:write', 'preview:read'] };
+    const client = { getRole: vi.fn(async () => renamed), updateRole: vi.fn(async () => renamed) };
+    await saveRoleGrants(client, opened, next);
+    expect(client.updateRole).toHaveBeenCalledWith('r1', {
+      name: 'Writers',
+      scopes: ['content:write', 'preview:read'],
+      contentGrants: next,
+    });
+    // Its grants changed meanwhile: nothing is written.
+    const moved = {
+      getRole: vi.fn(async () => ({ ...opened, contentGrants: next })),
+      updateRole: vi.fn(),
+    };
+    await expect(saveRoleGrants(moved, opened, next)).rejects.toThrow(/changed while you were/);
+    expect(moved.updateRole).not.toHaveBeenCalled();
   });
 });

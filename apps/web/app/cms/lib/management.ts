@@ -2303,6 +2303,9 @@ export function createManagementClient(
       const r = await req<{ items: RoleSummary[] }>('GET', `${spaceBase}/roles`);
       return r.items;
     },
+    getRole(id: string): Promise<RoleSummary> {
+      return req('GET', `${spaceBase}/roles/${encodeURIComponent(id)}`);
+    },
     createRole(input: Omit<RoleSummary, 'id'> & { name: string }): Promise<RoleSummary> {
       return req('POST', `${spaceBase}/roles`, input);
     },

@@ -11,23 +11,26 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@contentworker/ui/sheet';
-import { useState } from 'react';
-import type { RoleSummary } from '../lib/management';
+import { useId, useState } from 'react';
+import { InlineConfirm } from '~/cms/components/InlineConfirm';
+import { useMedia } from '~/cms/lib/device';
+import { apiErrorMessage, type RoleSummary } from '../lib/management';
 import {
   actionAvailable,
+  actionNeeds,
   CONTENT_ACTION_LABELS,
   CONTENT_ACTIONS,
+  contentTypeName,
   heldActions,
+  sameGrants,
   setAction,
 } from '../lib/role-grants';
-
-const typeName = (apiId: string, names: ReadonlyMap<string, string>) =>
-  apiId === '*' ? 'Every type' : (names.get(apiId) ?? apiId);
 
 /**
  * A role's content access, per content type: what it may do with each, as five actions. Write and
  * Publish bring Delete and Unpublish with them, and unticking either finer one withholds it, so a
  * role can write without deleting or publish without unpublishing. Field rules are kept as they are.
+ * Closing with unsaved changes asks first, in place.
  */
 export function RoleAccessSheet(props: {
   role: RoleSummary;
@@ -36,14 +39,25 @@ export function RoleAccessSheet(props: {
   onOpenChange: (open: boolean) => void;
   onSave: (grants: readonly ContentTypeGrant[]) => Promise<void>;
 }) {
+  const phone = useMedia('(max-width: 639px)');
+  const id = useId();
   const [grants, setGrants] = useState<readonly ContentTypeGrant[]>(props.role.contentGrants);
   const [adding, setAdding] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const dirty = !sameGrants(grants, props.role.contentGrants);
   const names = new Map(props.contentTypes.map((t) => [t.apiId, t.name]));
   const addable = ['*', ...props.contentTypes.map((t) => t.apiId)].filter(
-    (id) => !grants.some((g) => g.contentTypeApiId === id),
+    (apiId) => !grants.some((g) => g.contentTypeApiId === apiId),
   );
+
+  // Every way out (the close button, Escape, the overlay, Cancel) asks while there are changes.
+  const close = (open: boolean) => {
+    if (open) return props.onOpenChange(true);
+    if (dirty) setDiscarding(true);
+    else props.onOpenChange(false);
+  };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,15 +66,18 @@ export function RoleAccessSheet(props: {
     try {
       await props.onSave(grants);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-lg">
+    <Sheet open={props.open} onOpenChange={close}>
+      <SheetContent
+        side={phone ? 'bottom' : 'right'}
+        className="w-full gap-0 overflow-y-auto sm:max-w-lg"
+      >
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
           <SheetTitle className="font-semibold text-base tracking-title">
             Content access: {props.role.name}
@@ -78,14 +95,18 @@ export function RoleAccessSheet(props: {
           ) : null}
           {grants.map((grant, index) => {
             const held = heldActions(grant);
-            const type = typeName(grant.contentTypeApiId, names);
+            const type = contentTypeName(grant.contentTypeApiId, names);
             return (
-              <fieldset key={grant.contentTypeApiId} className="space-y-2 rounded-md border p-3">
-                <legend className="font-medium text-sm">{type}</legend>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <fieldset
+                key={grant.contentTypeApiId}
+                className="space-y-2 rounded-xl bg-secondary/40 p-3"
+              >
+                <legend className="float-left mb-2 w-full font-medium text-sm">{type}</legend>
+                <div className="clear-both grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {CONTENT_ACTIONS.map((action) => {
                     const available = actionAvailable(held, action);
                     const { label, hint } = CONTENT_ACTION_LABELS[action];
+                    const hintId = `${id}-${index}-${action}`;
                     return (
                       <Label
                         key={action}
@@ -94,6 +115,7 @@ export function RoleAccessSheet(props: {
                       >
                         <Checkbox
                           aria-label={`${label} ${type}`}
+                          aria-describedby={hintId}
                           checked={held.has(action)}
                           disabled={!available}
                           onCheckedChange={(c) =>
@@ -106,7 +128,10 @@ export function RoleAccessSheet(props: {
                         />
                         <span className="grid gap-0.5">
                           <span className="text-sm">{label}</span>
-                          <span className="text-muted-foreground text-xs">{hint}</span>
+                          {/* Disabled, it says what it needs rather than what it would do. */}
+                          <span id={hintId} className="text-muted-foreground text-xs">
+                            {available ? hint : actionNeeds(action)}
+                          </span>
                         </span>
                       </Label>
                     );
@@ -143,9 +168,9 @@ export function RoleAccessSheet(props: {
                 onChange={(e) => setAdding(e.target.value)}
               >
                 <NativeSelectOption value="">Add a content type…</NativeSelectOption>
-                {addable.map((id) => (
-                  <NativeSelectOption key={id} value={id}>
-                    {typeName(id, names)}
+                {addable.map((apiId) => (
+                  <NativeSelectOption key={apiId} value={apiId}>
+                    {contentTypeName(apiId, names)}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
@@ -168,14 +193,28 @@ export function RoleAccessSheet(props: {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              Save access
-            </Button>
-          </div>
+          {discarding ? (
+            <InlineConfirm
+              message={`Discard your changes to ${props.role.name}’s access?`}
+              note="Nothing has been saved."
+              cancelLabel="Keep editing"
+              onCancel={() => setDiscarding(false)}
+            >
+              {/* The ink pill: nothing stored is deleted, only this sheet's unsaved ticks. */}
+              <Button type="button" size="sm" onClick={() => props.onOpenChange(false)}>
+                Discard
+              </Button>
+            </InlineConfirm>
+          ) : (
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => close(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !dirty}>
+                Save access
+              </Button>
+            </div>
+          )}
         </form>
       </SheetContent>
     </Sheet>

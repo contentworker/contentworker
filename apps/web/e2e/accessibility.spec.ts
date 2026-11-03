@@ -261,20 +261,20 @@ test.describe('on a phone', () => {
   });
 });
 
-// A role's content access: the five actions per type, with a finer one withheld (so the scan sees
-// a ticked, an unticked and a disabled box), over the roles table.
+// A role's content access: the built-in Editor (every type, read/write/publish), with Delete
+// withheld and a read-only type added, so the scan always sees a ticked, an unticked and a disabled
+// box with its reason, over the roles table.
 test('a role’s content access sheet has no accessibility violations', async ({
   page,
 }, testInfo) => {
   await openCms(page, '/settings/roles');
-  await page
-    .getByRole('button', { name: /^Content access for / })
-    .first()
-    .click();
+  await page.getByRole('button', { name: 'Content access for Editor', exact: true }).click();
   const sheet = page.getByRole('dialog');
-  await expect(sheet.getByRole('button', { name: 'Save access' })).toBeVisible();
-  const del = sheet.getByRole('checkbox', { name: /^Delete / }).first();
-  if (await del.isEnabled()) await del.click();
+  await sheet.getByRole('checkbox', { name: 'Delete Every type' }).click();
+  await expect(sheet.getByRole('checkbox', { name: 'Delete Every type' })).not.toBeChecked();
+  await sheet.getByRole('combobox', { name: 'Content type to add' }).selectOption('article');
+  await sheet.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(sheet.getByRole('checkbox', { name: /^Unpublish / }).last()).toBeDisabled();
   await scan(page, testInfo);
 });
 

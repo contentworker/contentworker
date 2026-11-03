@@ -90,6 +90,25 @@ export interface ContentTypeGrant {
   readonly readOnlyFields?: readonly string[];
 }
 
+/** The listed actions each finer one comes with: a grant holds it only beside one of these. */
+export const IMPLIED_BY: Readonly<Record<ImpliedContentAction, readonly ListedContentAction[]>> = {
+  delete: ['write', 'publish'],
+  unpublish: ['publish'],
+};
+
+/**
+ * True when a grant listing `listed` can hold `action` at all: always for a listed action, and for
+ * a finer one only beside an action in {@link IMPLIED_BY}.
+ */
+export function canHoldAction(
+  listed: ReadonlySet<ContentAction> | readonly ContentAction[],
+  action: ContentAction,
+): boolean {
+  const has = (a: ContentAction) =>
+    Array.isArray(listed) ? listed.includes(a) : (listed as ReadonlySet<ContentAction>).has(a);
+  return action === 'delete' || action === 'unpublish' ? IMPLIED_BY[action].some(has) : true;
+}
+
 /**
  * Every action `grant` holds: the ones it lists, plus `delete` (with `write` or `publish`) and
  * `unpublish` (with `publish`) unless it withholds them. The one place grant actions resolve.
@@ -97,8 +116,9 @@ export interface ContentTypeGrant {
 export function grantedActions(grant: ContentTypeGrant): ReadonlySet<ContentAction> {
   const held = new Set<ContentAction>(grant.actions);
   const withheld = new Set<ContentAction>(grant.deniedActions ?? []);
-  if ((held.has('write') || held.has('publish')) && !withheld.has('delete')) held.add('delete');
-  if (held.has('publish') && !withheld.has('unpublish')) held.add('unpublish');
+  for (const action of IMPLIED_CONTENT_ACTIONS) {
+    if (canHoldAction(grant.actions, action) && !withheld.has(action)) held.add(action);
+  }
   return held;
 }
 

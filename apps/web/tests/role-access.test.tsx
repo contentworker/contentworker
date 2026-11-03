@@ -78,9 +78,54 @@ describe('a role’s content access', () => {
     open(async () => {
       throw new Error('Unknown action "destroy"');
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save access' }));
+    const save = screen.getByRole('button', { name: 'Save access' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Delete Post' }));
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
     expect((await screen.findByText('Unknown action "destroy"')).textContent).toBe(
       'Unknown action "destroy"',
     );
+  });
+
+  it('says why a box is disabled, and describes each box by its hint', () => {
+    open(async () => {});
+    fireEvent.change(screen.getByRole('combobox', { name: 'Content type to add' }), {
+      target: { value: 'page' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    const describedBy = (name: string) =>
+      document.getElementById(
+        screen.getByRole('checkbox', { name }).getAttribute('aria-describedby') ?? '',
+      )?.textContent;
+    expect(describedBy('Delete Page')).toBe('Needs Write or Publish');
+    expect(describedBy('Unpublish Page')).toBe('Needs Publish');
+    expect(describedBy('Write Page')).toBe('Create and edit drafts');
+  });
+
+  it('asks before discarding unsaved changes, and closes at once when there are none', () => {
+    const onOpenChange = vi.fn();
+    render(
+      <RoleAccessSheet
+        role={role}
+        contentTypes={[{ apiId: 'post', name: 'Post' }]}
+        open
+        onOpenChange={onOpenChange}
+        onSave={async () => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    onOpenChange.mockClear();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Unpublish Post' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onOpenChange).not.toHaveBeenCalled();
+    const ask = screen.getByRole('alertdialog');
+    expect(ask.textContent).toContain('Discard your changes to Editor’s access?');
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
