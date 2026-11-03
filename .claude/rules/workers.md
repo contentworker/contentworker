@@ -3,6 +3,7 @@ paths:
   - apps/api/**
   - apps/delivery/**
   - apps/engine/**
+  - apps/media/**
   - packages/platform/**
   - packages/adapters/**
   - deployments/**

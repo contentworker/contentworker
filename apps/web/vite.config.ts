@@ -68,7 +68,11 @@ export default defineConfig({
       viteEnvironment: { name: 'ssr' },
       // A fleet deploy builds against its rendered config.
       configPath: process.env.CONTENTWORKER_WRANGLER_CONFIG,
-      ...(e2e ? { remoteBindings: false, persistState: { path: '.wrangler/e2e' } } : {}),
+      // Offline by default: models are mocked and vectors live in KV locally, so no binding needs
+      // the remote resource, and a remote one would ask for a login and bill an account.
+      // CONTENTWORKER_REMOTE=1 pnpm dev opts in (never under the e2e harness).
+      remoteBindings: !e2e && process.env.CONTENTWORKER_REMOTE === '1',
+      ...(e2e ? { persistState: { path: '.wrangler/e2e' } } : {}),
       // A separate local database (e.g. CONTENTWORKER_STATE=.wrangler/scale for a large seed).
       ...(!e2e && process.env.CONTENTWORKER_STATE
         ? { persistState: { path: process.env.CONTENTWORKER_STATE } }

@@ -117,26 +117,24 @@ IDs are **UUIDv7**, always minted through the injected `IdGenerator`.
 
 ## Quick start
 
-Requires **Node ≥ 24** and **pnpm 10**. No cloud account is needed for local development.
+Requires **Node ≥ 24**, **pnpm 10** and, for the Claude Code hooks, **jq** ([full prerequisites](docs/development.md#prerequisites)). No cloud account is needed for local development.
 
 ```bash
 pnpm install
 
-# What CI's verify job runs
-pnpm check-types && pnpm test && pnpm lint
-
-# The local database (shared by every worker in the dev session)
-cd apps/web && npx wrangler d1 migrations apply DB --local && cd ../..
-
-# The whole stack in one Vite session: web, plus api, engine and delivery as auxiliary workers
+# The whole stack in one Vite session: migrates the local D1, then starts web, plus api, engine,
+# media and delivery as auxiliary workers
 pnpm dev
 
 # Open http://localhost:5173: the first request seeds the demo dataset into space-1
-# To start over with a fresh seed: rm -rf apps/web/.wrangler/state, then the migrations again
+# To start over with a fresh seed: pnpm dev:reset
+
+# What CI's verify job runs
+pnpm check-types && pnpm test && pnpm lint
 ```
 
 The dev session runs offline: models are mocked (`AI_MODE=mock`), embeddings are local and vectors
-are held in memory. On localhost the admin is open without signing in until someone creates an
+live in a local KV store. On localhost the admin is open without signing in until someone creates an
 account, and the api accepts the bootstrap token `dev-admin-token` (all scopes, all spaces).
 It always runs on the demo dataset (`@contentworker/seed`, about 550 entries with releases,
 workflows and agent runs in `space-1`), seeded idempotently on the first request.

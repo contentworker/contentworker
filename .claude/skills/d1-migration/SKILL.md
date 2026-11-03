@@ -39,7 +39,7 @@ asks before a new one that drops or renames.
    a **contract** step: a later PR, after a deploy where nothing reads or writes the old shape.
 3. **Mirror it** in `schema.ts` / `auth-schema.ts` (same names, types, defaults, indexes). If a
    port or the store changes, keep the in-memory store in `packages/test-kit` in step.
-4. **Apply locally** to the D1 `pnpm dev` uses: `pnpm --filter @contentworker/web db:migrate:local`
+4. **Apply locally** to the D1 `pnpm dev` uses: `pnpm db:migrate:local`
    (`wrangler d1 migrations apply contentworker --local` in apps/web). Never `--remote` or
    `db:migrate:remote`; the `guard-bash` hook denies both.
 5. **Test.**
