@@ -70,6 +70,7 @@ const MODEL: ContentTypeInput[] = [
         items: { type: 'Link', linkType: 'Entry' },
       },
       { apiId: 'og:image', type: 'Symbol' },
+      { apiId: 'seo', type: 'Seo' },
     ],
   },
   { apiId: 'author', name: 'Author', fields: [{ apiId: 'name', type: 'Symbol', required: true }] },
@@ -157,6 +158,9 @@ describe('@contentworker/sdk-codegen generator', () => {
     expect(source).toContain('tags?: string[];');
     expect(source).toContain("status: 'draft' | 'live';");
     expect(source).toContain('related?: EntryLink[];');
+    expect(source).toContain(
+      'seo?: { title?: string; description?: string; canonicalUrl?: string; noindex?: boolean; ogImage?: AssetLink | DeliveredAsset };',
+    );
   });
 
   it('types a component as its nested shape, not as unknown', () => {

@@ -1,6 +1,7 @@
 import type { ContentType } from '../content-type/content-type';
 import { type FieldDefinition, type LinkType, nestedFieldsFor } from '../content-type/field';
 import { extractRichTextTargets } from '../rich-text/rich-text';
+import { SEO_FIELDS } from '../seo/seo';
 import type { EntryFields } from '../types';
 
 /**
@@ -76,6 +77,10 @@ function collect(field: FieldDefinition, value: unknown, add: (link: LinkValue) 
       break;
     case 'Component':
       collectFromComponent(field.fields, value, add);
+      break;
+    case 'Seo':
+      // Its social image is an asset link like any other: integrity and purges cover it.
+      collectFromComponent(SEO_FIELDS, value, add);
       break;
     case 'Array': {
       if (!Array.isArray(value)) break;

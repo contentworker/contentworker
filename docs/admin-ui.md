@@ -79,7 +79,10 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   search, sorting from the column headers, a bulk bar for publishing and unpublishing what is
   ticked, and Load more past the first 100 (`/content/:typeId`; `/content/:typeId/new` starts a new
   entry);
-  the entry editor (TipTap rich text, components and repeaters, references, localized fields),
+  the entry editor (TipTap rich text, components and repeaters, references, localized fields; a
+  `Seo` field renders as a component of `SEO_FIELDS` in `EntryForm.tsx`, each part with a helper
+  line wired to `aria-describedby`: title and description count characters against what search
+  results show, 60 and 160; canonical URL, hide from search engines, social image (asset picker)),
   version history, diff and restore, comments and tasks, metadata, AI assist; import
   (`/content/:typeId/import`) from CSV, JSON or a WordPress export, with a dry-run report before
   anything is written and a resumable job past 10,000 records; a whole space export
@@ -122,7 +125,8 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   what would be created, updated or left alone, then _Import_ writes it. When the set holds
   chains an alert offers _Collapse chains_. Reading needs `preview:read`; changing anything,
   `content:manage`. The content type dialog has a **URL pattern** field (`/blog/{slug}`), the
-  input to slug-change redirects.
+  input to slug-change redirects and the sitemap; it offers the `Seo` field type until one row
+  already is one (a type has at most one).
 
 ### Inline-edit links
 

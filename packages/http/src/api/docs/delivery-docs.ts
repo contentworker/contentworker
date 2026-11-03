@@ -5,6 +5,7 @@ import { deliveredAsset, deliveredAssetPage, deliveredAssetSearchPage } from './
 import { deliveredRouteList } from './schemas/content-types';
 import { publishedEntry, publishedEntryList, searchHits } from './schemas/entries';
 import { deliveredRedirectList, deliveredRedirectMatch } from './schemas/redirects';
+import { deliveredSitemapPage } from './schemas/seo';
 import {
   deliveredConcept,
   deliveredConceptList,
@@ -145,6 +146,33 @@ const DOCS = {
         'front end that routes pages from the content model. Only published types that have ' +
         'one, by content type; a key limited to some content types sees only theirs. A ' +
         'pattern’s placeholders are `{id}`, `{locale}` or one of the type’s Slug fields.',
+    }),
+  getSitemap: () =>
+    doc('Delivery', 'Get a page of the sitemap', {
+      ok: deliveredSitemapPage,
+      description:
+        'The published entries of every published content type with a URL pattern, by entry ' +
+        'id, each with its paths per locale and `lastmod` (when its live version was ' +
+        'published). Entries whose Seo field says `noindex`, or names a canonical URL that ' +
+        'isn’t their own path, are left out. Page with `next`; a key limited to some content ' +
+        'types sees only theirs. For crawlers, serve `sitemap.xml`.',
+      query: {
+        from: 'next from the previous page',
+        limit: 'Entries per page, 1..5000 (default 1000)',
+        base: 'The site’s URL: an entry whose absolute canonical URL is on another site is left out',
+      },
+    }),
+  getSitemapXml: () =>
+    doc('Delivery', 'Get the XML sitemap', {
+      okDescription:
+        'application/xml: a sitemaps.org urlset of absolute URLs (`base` + path) with lastmod ' +
+        'and hreflang alternates, or, past one file’s 50,000 URLs, a sitemap index of pages at ' +
+        '`<base>/sitemap.xml?page=…`. Serve it at the site’s own /sitemap.xml by proxying here ' +
+        'with the query string.',
+      query: {
+        base: 'Required: the site’s absolute URL, e.g. https://www.example.com',
+        page: 'One page of a sitemap index (as the index names it)',
+      },
     }),
   resolveRedirect: () =>
     doc('Delivery', 'Resolve a path against the redirects', {

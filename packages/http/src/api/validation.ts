@@ -9,6 +9,7 @@ import {
 } from '@contentworker/application';
 import {
   MAX_ASSET_RIGHTS_TEXT,
+  MAX_CANONICAL_URL_LENGTH,
   MAX_COLLECTION_CHANGE,
   MAX_COLLECTION_DESCRIPTION,
   MAX_COLLECTION_ITEMS,
@@ -16,6 +17,8 @@ import {
   MAX_REDIRECT_LENGTH,
   MAX_REDIRECT_NOTE_LENGTH,
   MAX_REDIRECTS,
+  MAX_SEO_DESCRIPTION_LENGTH,
+  MAX_SEO_TITLE_LENGTH,
   MAX_SHARE_PASSWORD,
   MAX_URL_PATTERN_LENGTH,
   MAX_ZIP_ASSETS,
@@ -291,6 +294,43 @@ export const previewLinkBody = z.object({
   previewBaseUrl: z.string().url().max(2048).optional(),
 });
 export const updateEntryBody = z.object({ fields: zFieldValues });
+/**
+ * A change to one locale of an entry's SEO metadata (its type's Seo field): a part left out keeps
+ * its value, null clears it. Shared with the MCP tool, so both take the same change.
+ */
+export const entrySeoShape = {
+  locale: zLocale
+    .optional()
+    .describe(
+      'The locale to change (default: the default locale); only a localized Seo field takes another',
+    ),
+  title: z.string().max(MAX_SEO_TITLE_LENGTH).nullable().optional().describe('Page title'),
+  description: z
+    .string()
+    .max(MAX_SEO_DESCRIPTION_LENGTH)
+    .nullable()
+    .optional()
+    .describe('Meta description'),
+  canonicalUrl: z
+    .string()
+    .max(MAX_CANONICAL_URL_LENGTH)
+    .nullable()
+    .optional()
+    .describe(
+      'Where the canonical copy lives when not here: a site path or an absolute http(s) URL',
+    ),
+  noindex: z
+    .boolean()
+    .nullable()
+    .optional()
+    .describe('Keep the page out of search results and the sitemap'),
+  ogImage: z
+    .object({ id: z.string().min(1), linkType: z.literal('Asset') })
+    .nullable()
+    .optional()
+    .describe('Social sharing image: { id, linkType: "Asset" }'),
+};
+export const entrySeoBody = z.object(entrySeoShape);
 export const translateBody = z.object({
   targetLocale: zLocale,
   sourceLocale: zLocale.optional(),

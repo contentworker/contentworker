@@ -215,6 +215,12 @@ pattern's placeholders are `{id}`, `{locale}` or one of the type's Slug fields (
 [Content modeling](/guides/content-modeling/)). A key whose role limits it to some content types
 sees only their routes. A type with an unpublished revision drops out until it is published again.
 
+## Sitemap
+
+`GET /delivery/{space}/{env}/sitemap` lists your published pages, each with its paths per locale
+and `lastmod`, leaving out pages marked `noindex` or canonical elsewhere; `GET …/sitemap.xml?base=`
+answers the XML a crawler reads. See [SEO and sitemaps](/guides/seo/).
+
 ## Caching
 
 Delivery answers from a cache in front of the database. Your key is checked on every request,

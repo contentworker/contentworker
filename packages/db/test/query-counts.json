@@ -24,11 +24,14 @@
   "delivery: GET /redirects": { "statements": 1, "roundTrips": 1 },
   "delivery: GET /redirects/resolve": { "statements": 1, "roundTrips": 1 },
   "delivery: GET /routes": { "statements": 1, "roundTrips": 1 },
+  "delivery: GET /sitemap": { "statements": 3, "roundTrips": 2 },
+  "delivery: GET /sitemap.xml": { "statements": 4, "roundTrips": 2 },
   "management: GET /entries/:id": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries?content_type=article": { "statements": 2, "roundTrips": 2 },
   "preview: GET /entries?content_type=article (page)": { "statements": 2, "roundTrips": 2 },
   "preview: GET /entries?content_type=article&cursor": { "statements": 2, "roundTrips": 2 },
   "management: POST /entries": { "statements": 4, "roundTrips": 3 },
   "management: POST /entries (blocks)": { "statements": 4, "roundTrips": 3 },
-  "management: POST /entries/:id/published": { "statements": 12, "roundTrips": 6 }
+  "management: POST /entries/:id/published": { "statements": 12, "roundTrips": 6 },
+  "management: PATCH /entries/:id/seo": { "statements": 6, "roundTrips": 4 }
 }

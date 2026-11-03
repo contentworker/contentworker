@@ -13,6 +13,7 @@ export const FIELD_TYPES = [
   'Boolean',
   'Date', // ISO-8601 string
   'Location', // { lat, lon }
+  'Seo', // search engine metadata: a component of fixed shape (SEO_FIELDS), one per type
   'JSON', // arbitrary JSON object
   'Link', // reference to another entry or asset
   'Component', // a group of nested typed fields

@@ -34,6 +34,7 @@ new draft, so history is never rewritten.
 | Do this             | API                                                     | Scope             |
 | ------------------- | ------------------------------------------------------- | ----------------- |
 | Save a draft        | `PUT …/entries/{id}` with `{ "fields": … }`             | `content:write`   |
+| Change SEO metadata | `PATCH …/entries/{id}/seo` ([SEO](/guides/seo/))        | `content:write`   |
 | List versions       | `GET …/entries/{id}/versions`                           | `preview:read`    |
 | Compare two         | `GET …/entries/{id}/versions/diff?from=3&to=draft`      | `preview:read`    |
 | Restore one         | `POST …/entries/{id}/versions/{version}/restore`        | `content:write`   |

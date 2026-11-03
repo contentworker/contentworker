@@ -255,6 +255,32 @@ export interface DeliveredRoute {
   readonly urlPattern: string;
 }
 
+/** A published entry in the sitemap: where it lives, in each locale it lives at. */
+export interface DeliveredSitemapEntry {
+  readonly entryId: string;
+  /** The content type's apiId. */
+  readonly contentType: string;
+  /** When its live version was published (ISO-8601). */
+  readonly lastmod: string;
+  /** One per locale; alternates of each other (`hreflang`) when more than one. */
+  readonly urls: readonly { readonly path: string; readonly locale: string }[];
+}
+
+export interface SitemapPage {
+  readonly items: DeliveredSitemapEntry[];
+  /** Pass as `from` for the next page; null on the last. */
+  readonly next: string | null;
+}
+
+export interface SitemapQuery {
+  /** `next` from the previous page. */
+  readonly from?: string;
+  /** Entries per page, 1..5000 (default 1000). */
+  readonly limit?: number;
+  /** The site's URL: an entry whose absolute canonical URL is on another site is left out. */
+  readonly base?: string;
+}
+
 export interface TermQuery {
   /** Resolve labels for one locale. */
   readonly locale?: string;
@@ -535,6 +561,19 @@ export function createDeliveryClient(opts: ClientOptions) {
      */
     async routes(): Promise<DeliveredRoute[]> {
       return (await get<{ items: DeliveredRoute[] }>('/routes', {})).items;
+    },
+
+    /**
+     * A page of the sitemap: published entries of every routable content type, each with its
+     * paths per locale and `lastmod`; noindex pages and pages canonical elsewhere are left out.
+     * Page with `next`. For crawlers, proxy `/sitemap.xml?base=<your site>` instead. Delivery only.
+     */
+    async sitemap(query: SitemapQuery = {}): Promise<SitemapPage> {
+      return get<SitemapPage>('/sitemap', {
+        from: query.from,
+        limit: query.limit,
+        base: query.base,
+      });
     },
 
     /**

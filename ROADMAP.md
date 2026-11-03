@@ -32,7 +32,9 @@ Everything below is built and tested on v2.
   rich-text blocks, list moves) and restore; references and `include`; rich text
   with HTML import; slugs; redirects (delivery data a front end or edge Worker applies: exact and
   pattern sources, import and export, loop checks, and an automatic `301` when a publish changes a
-  slug a content type's URL pattern names).
+  slug a content type's URL pattern names); SEO metadata (a `Seo` field: title, description,
+  canonical URL, noindex, social image) and a sitemap from Delivery (JSON, and XML with `hreflang`
+  and a sitemap index past 50,000 URLs).
 - **Publishing.** Releases (atomic multi-entry publish), scheduled actions, bulk actions as
   resumable jobs, branch compare and merge, environment promotion with a risk check and approval,
   environment snapshots (export, plus import and clone as resumable jobs; a clone's export and

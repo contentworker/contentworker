@@ -3,6 +3,7 @@ import {
   assetTransformTarget,
   clampCount,
   type DeliveryReads,
+  deliveredSitemapFile,
   deliveryGraphResolvers,
   deliveryReads,
   getDeliveredAsset,
@@ -15,10 +16,12 @@ import {
   listDeliveredConcepts,
   listDeliveredRedirects,
   listDeliveredRoutes,
+  listDeliveredSitemap,
   listDeliveredTags,
   listPublishedEntries,
   liveEventFor,
   MAX_PAGE_LIMIT,
+  MAX_SITEMAP_PAGE,
   maskDeliveredFields,
   parseEntryQuery,
   parseImageTransform,
@@ -63,6 +66,7 @@ import {
 import type { DeliveryDocKey } from '../docs/delivery-docs';
 import { onError } from '../http';
 import { parseAssetSearchQuery, parseDeliveredAssetQuery } from '../query';
+import { renderSitemapXml, sitemapBase } from '../sitemap-xml';
 
 /** Max reference-resolution depth a delivery client may request. */
 const MAX_INCLUDE_DEPTH = 10;
@@ -381,6 +385,49 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
           : {},
       );
       return c.json({ items, total: items.length });
+    },
+  );
+
+  // The sitemap: every published entry's URLs from its type's URL pattern, with noindex pages and
+  // pages whose canonical copy is elsewhere left out. JSON for a front end, paged by entry id;
+  // `sitemap.xml` for crawlers, which a site serves at its own /sitemap.xml by proxying here with
+  // `base` set to itself (a Delivery key never reaches a crawler). Like routes, a key limited to
+  // some types sees only theirs. Cached and purged like every read here: a publish, unpublish or
+  // URL pattern change purges the scope's tag.
+  app.get(
+    `${BASE}/sitemap`,
+    describe('getSitemap'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => {
+      const base = c.req.query('base');
+      const from = c.req.query('from');
+      const limit = clampCount(c.req.query('limit'), MAX_SITEMAP_PAGE, { min: 1 });
+      return c.json(
+        await listDeliveredSitemap(
+          ctx,
+          scopeOf(c),
+          { ...(from ? { from } : {}), ...(limit !== undefined ? { limit } : {}) },
+          {
+            principal: c.get('principal'),
+            ...(base !== undefined ? { origin: sitemapBase(base).origin } : {}),
+          },
+        ),
+      );
+    },
+  );
+  app.get(
+    `${BASE}/sitemap.xml`,
+    describe('getSitemapXml'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => {
+      const { base, origin } = sitemapBase(c.req.query('base'));
+      const file = await deliveredSitemapFile(ctx, scopeOf(c), c.req.query('page') || undefined, {
+        principal: c.get('principal'),
+        origin,
+      });
+      return c.body(renderSitemapXml(file, base), 200, {
+        'content-type': 'application/xml; charset=utf-8',
+      });
     },
   );
 

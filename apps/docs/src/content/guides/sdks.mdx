@@ -161,6 +161,12 @@ Embedded images come out sized and lazy, with the delivered `srcset`. `toMarkdow
 pattern, sorted by content type, so a front end can route pages from the content model (see
 [Routes](/guides/reading-content/#routes)).
 
+### Sitemap
+
+`client.sitemap({ from, limit, base })` returns a page of the sitemap, `{ items, next }`: each
+published page's paths per locale and its `lastmod` (see [SEO and sitemaps](/guides/seo/#the-sitemap)).
+The management client changes an entry's SEO metadata with `cma.entries.setSeo(id, change)`.
+
 ### Redirects
 
 `client.redirects()` returns the environment's enabled redirects and

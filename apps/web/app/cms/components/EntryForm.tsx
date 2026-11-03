@@ -12,6 +12,7 @@ import {
   fallbackChain,
   nestedFieldsFor,
   resolveLocalizedValue,
+  SEO_FIELDS,
   validateEntryFields,
   variantOf,
 } from '@contentworker/domain';
@@ -504,6 +505,8 @@ function FieldInput(props: {
   invalid?: boolean;
   /** id of the error message element, wired to aria-describedby when invalid. */
   errorId?: string;
+  /** id of a helper line under the input, wired to aria-describedby too. */
+  hintId?: string;
   pickers: Pickers;
   editor?: AppExtension;
   editorContext?: EntryContext;
@@ -521,7 +524,8 @@ function FieldInput(props: {
   const { id, field, value, invalid, errorId, onChange, pickers, editor, editorContext, locale } =
     props;
   const inputClass = invalid ? 'border-destructive focus-visible:ring-destructive/30' : undefined;
-  const aria = { 'aria-invalid': invalid || undefined, 'aria-describedby': errorId };
+  const describedBy = [errorId, props.hintId].filter(Boolean).join(' ') || undefined;
+  const aria = { 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy };
 
   // A custom field editor extension takes over the input entirely (sandboxed iframe).
   if (editor) {
@@ -550,6 +554,24 @@ function FieldInput(props: {
       <ComponentInput
         id={id}
         fields={field.fields ?? []}
+        value={value}
+        path={props.path ?? field.apiId}
+        errorFor={props.errorFor}
+        onEdited={props.onEdited}
+        pickers={pickers}
+        locale={locale}
+        onChange={onChange}
+      />
+    );
+  }
+
+  // Search engine metadata: a component of fixed shape, with what each part is for beside it.
+  if (field.type === 'Seo') {
+    return (
+      <ComponentInput
+        id={id}
+        fields={SEO_FIELDS}
+        hint={seoHint}
         value={value}
         path={props.path ?? field.apiId}
         errorFor={props.errorFor}
@@ -614,7 +636,7 @@ function FieldInput(props: {
         value={currentId}
         placeholder={linkType === 'Asset' ? 'Search assets…' : 'Search entries…'}
         invalid={invalid}
-        errorId={errorId}
+        errorId={describedBy}
         // Entries are matched server-side; the seeded options only fill the
         // list before anyone types. Assets stay client-side: the media library
         // is fetched whole for the picker already, and narrowing to one link
@@ -648,7 +670,12 @@ function FieldInput(props: {
   if (field.type === 'Boolean') {
     return (
       <div className="flex items-center gap-2">
-        <Checkbox id={id} checked={!!value} onCheckedChange={(c) => onChange(c === true)} />
+        <Checkbox
+          id={id}
+          aria-describedby={props.hintId}
+          checked={!!value}
+          onCheckedChange={(c) => onChange(c === true)}
+        />
         <span className="text-muted-foreground text-sm">{value ? 'Yes' : 'No'}</span>
       </div>
     );
@@ -738,6 +765,26 @@ interface NestedProps {
   onChange: (v: unknown) => void;
 }
 
+/** Search results cut a title and a description short at about these many characters. */
+const SEO_SHOWN = { title: 60, description: 160 } as const;
+
+/** The helper line under each part of a Seo field: what it is for, and a length to aim at. */
+function seoHint(apiId: string, value: unknown): string | undefined {
+  if (apiId === 'title' || apiId === 'description') {
+    const shown = SEO_SHOWN[apiId];
+    const n = typeof value === 'string' ? value.length : 0;
+    return n > 0
+      ? `${n} characters; search results show about ${shown}`
+      : `Search results show about ${shown} characters`;
+  }
+  if (apiId === 'canonicalUrl') {
+    return 'Only when this page copies another: its path (/guides/setup) or full URL';
+  }
+  if (apiId === 'noindex') return 'Leaves the page out of search results and the sitemap';
+  if (apiId === 'ogImage') return 'Shown when the page is shared';
+  return undefined;
+}
+
 const asObject = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -750,8 +797,13 @@ const asObject = (value: unknown): Record<string, unknown> =>
  * that once — so every input here inherits the locale its container is being
  * edited under, and the labels do not repeat it.
  */
-function ComponentInput(props: NestedProps) {
-  const { fields, path, errorFor, onEdited, pickers, locale, onChange } = props;
+function ComponentInput(
+  props: NestedProps & {
+    /** A helper line under a nested field, given its apiId and value. */
+    hint?: (apiId: string, value: unknown) => string | undefined;
+  },
+) {
+  const { fields, path, errorFor, onEdited, pickers, locale, onChange, hint } = props;
   const current = asObject(props.value);
 
   return (
@@ -760,6 +812,7 @@ function ComponentInput(props: NestedProps) {
         const at = `${path}.${f.apiId}`;
         const nestedId = `${props.id}-${f.apiId}`;
         const err = errorFor?.(at);
+        const help = hint?.(f.apiId, current[f.apiId]);
         return (
           <div key={f.apiId} className="space-y-1.5">
             <Label id={`${nestedId}-label`} htmlFor={nestedId} className="gap-1">
@@ -772,6 +825,7 @@ function ComponentInput(props: NestedProps) {
               value={current[f.apiId]}
               invalid={Boolean(err)}
               errorId={err ? `${nestedId}-error` : undefined}
+              hintId={help ? `${nestedId}-hint` : undefined}
               pickers={pickers}
               locale={locale}
               path={at}
@@ -782,6 +836,14 @@ function ComponentInput(props: NestedProps) {
                 onChange({ ...current, [f.apiId]: v });
               }}
             />
+            {help && (
+              <p
+                id={`${nestedId}-hint`}
+                className="max-w-measure text-muted-foreground text-xs tabular-nums"
+              >
+                {help}
+              </p>
+            )}
             {err && (
               <p id={`${nestedId}-error`} className="text-xs text-destructive">
                 {err}

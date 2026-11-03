@@ -117,6 +117,7 @@ import type {
   SchedulerJobRepo,
   SchedulerJobStatus,
   ScopedScheduledAction,
+  SitemapPage,
   SpaceConfig,
   SpaceRepo,
   StoredSecret,
@@ -1575,7 +1576,37 @@ export class InMemoryContentStore implements ContentStore {
           ...(narrowed ? { termIds: ids } : {}),
         });
       }
+      let sitemap: SitemapPage | undefined;
+      if (request.sitemap) {
+        const q = request.sitemap;
+        const prefix = `${scopeKey(scope)}::`;
+        const types = new Set(q.contentTypes);
+        const all = [...this.publishedData.entries()]
+          .filter(([k, p]) => k.startsWith(prefix) && types.has(p.contentTypeApiId))
+          .map(([, p]) => p)
+          .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
+        const items = all
+          .filter((p) => q.from === undefined || p.entryId >= q.from)
+          .slice(0, Math.max(1, q.limit))
+          .map((p) => ({
+            entryId: p.entryId,
+            contentTypeApiId: p.contentTypeApiId,
+            fields: Object.fromEntries(
+              q.fields.flatMap((f) => (p.fields[f] !== undefined ? [[f, p.fields[f]]] : [])),
+            ) as EntryFields,
+            publishedAt: p.publishedAt,
+          }));
+        const size = q.pageStarts;
+        sitemap =
+          size === undefined
+            ? { items }
+            : {
+                items,
+                pageStarts: all.filter((_, i) => i % Math.max(1, size) === 0).map((p) => p.entryId),
+              };
+      }
       const result: DeliveryReadResult = {
+        ...(sitemap ? { sitemap } : {}),
         ...(request.config ? { config: config ?? null } : {}),
         ...(contentTypes ? { contentTypes } : {}),
         ...(renditions ? { renditions } : {}),

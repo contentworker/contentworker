@@ -7,6 +7,7 @@ import {
   type DeliveredAsset,
   type FieldDefinition,
   type LocalizedValue,
+  SEO_FIELDS,
   variantOf,
 } from '@contentworker/domain';
 import type { DeliveryResolvers, ResolvedAsset, ResolvedEntry } from '@contentworker/ports';
@@ -176,6 +177,8 @@ function typeFor(
   field: FieldDefinition,
 ): GraphQLOutputType {
   if (field.type === 'Component') return componentType(names, preferredName, field.fields);
+  // A Seo field is a component of fixed shape: typed the same way, so a query selects its parts.
+  if (field.type === 'Seo') return componentType(names, preferredName, SEO_FIELDS);
   if (field.type === 'Array' && field.items?.type === 'Component') {
     const variants = field.items.variants;
     if (variants && variants.length > 0) {

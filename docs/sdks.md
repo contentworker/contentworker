@@ -75,6 +75,7 @@ client.getConcept(slug, { scheme?, locale?, contentType? }): Promise<DeliveredCo
 client.redirects(): Promise<DeliveredRedirect[]>         // Delivery only: the enabled set, to apply
 client.resolveRedirect(path, { locale? }): Promise<RedirectMatch | null>  // Delivery only; null on 404
 client.routes(): Promise<DeliveredRoute[]>               // Delivery only: { contentType, urlPattern } per published type
+client.sitemap({ from?, limit?, base? }): Promise<SitemapPage>  // Delivery only: { items, next }, published pages and their paths
 client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
@@ -437,6 +438,8 @@ cma.assets.renditions.update(name, spec) / .delete(name)   // content:manage; up
 
 cma.bulkJobs.list({ limit? }) / .get(id) / .report(id) / .cancel(id)
 
+cma.entries.setSeo(id, { locale?, title?, description?, canonicalUrl?, noindex?, ogImage? })   // one locale of the Seo field; null clears
+
 cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .update(id, changes) / .delete(id)
 cma.redirects.import({ format: 'csv' | 'json', data, dryRun? }) / .resolve(path, { locale? }) / .analyze() / .collapseChains()
 
@@ -581,7 +584,7 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   `Symbol`/`Text`/`Date` → `string`, `Integer`/`Number` → `number`, `Boolean` → `boolean`,
   `Location` → `{ lat, lon }`, `JSON` → `Record<string, unknown>`, `RichText` →
   `RichTextDocument`, `Link` → `EntryLink` / `AssetLink | DeliveredAsset` (an asset link can be
-  embedded), `Array` → element type `[]`. The generated prelude declares `DeliveredAsset`.
+  embedded), `Seo` → `{ title?, description?, canonicalUrl?, noindex?, ogImage? }`, `Array` → element type `[]`. The generated prelude declares `DeliveredAsset`.
   An `in` validation becomes a literal union (`status: 'draft' | 'live'`) exactly where the
   domain enforces it (`Symbol`/`Text`/`Integer`/`Number`); `required` controls optionality.
   When rendering `RichTextDocument` values, handle the full node vocabulary (headings, lists,

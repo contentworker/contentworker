@@ -65,6 +65,28 @@ describe('a component becomes an object type', () => {
   });
 });
 
+describe('a Seo field becomes an object type of its fixed parts', () => {
+  const schema = buildDeliverySchema([
+    type('article', [field({ apiId: 'title' }), field({ apiId: 'seo', type: 'Seo', position: 1 })]),
+  ]);
+
+  it('types each part, so a query selects them', () => {
+    const seo = named(schema, 'ArticleSeo') as GraphQLObjectType;
+    const fields = seo.getFields();
+    expect(Object.keys(fields)).toEqual([
+      'title',
+      'description',
+      'canonicalUrl',
+      'noindex',
+      'ogImage',
+    ]);
+    expect(String(fields.noindex?.type)).toBe('Boolean');
+    expect(String((named(schema, 'Article') as GraphQLObjectType).getFields().seo?.type)).toBe(
+      'ArticleSeo',
+    );
+  });
+});
+
 describe('a repeater becomes a list of them', () => {
   const schema = buildDeliverySchema([
     type('page', [

@@ -148,8 +148,9 @@ space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/pur
 `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed` (Delivery lists a
 collection's published members), `taxonomy.changed` (Delivery serves tags and concepts),
 `redirects.changed` (Delivery serves the enabled redirects), `content_type.published` (Delivery
-serves each published type's `urlPattern` at `…/routes`, and GraphQL's schema), `release.published`,
-`environment_alias.changed`, `environment.deleted`. It sends them as **one** message on `contentworker-purge`, so a burst
+serves each published type's `urlPattern` at `…/routes`, the sitemap built from it, and GraphQL's schema), `release.published`,
+`environment_alias.changed`, `environment.deleted`. The sitemap (`…/sitemap`, `…/sitemap.xml`) has no
+event of its own: it is a delivery read under the scope's tag, so the publishes that change it purge it. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
 path's environment and the one it resolves to. `asset_renditions.changed` adds the tag of every

@@ -8,6 +8,7 @@ import {
   createScheme,
   createSpace,
   createTag,
+  deliveredSitemapFile,
   deliveryGraphResolvers,
   deliveryReads,
   getDeliveredAsset,
@@ -18,6 +19,7 @@ import {
   listDeliveredConcepts,
   listDeliveredRedirects,
   listDeliveredRoutes,
+  listDeliveredSitemap,
   listDeliveredTags,
   listPreviewEntries,
   listPreviewEntryPage,
@@ -27,6 +29,7 @@ import {
   publishEntry,
   resolveDeliveredRedirect,
   setEntryMetadata,
+  setEntrySeo,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import { buildDeliverySchema, type DeliveryContext } from '@contentworker/graphql-gen';
@@ -84,6 +87,8 @@ const ids = {
   articles: [] as string[],
   roundup: '',
   landing: '',
+  /** Routable pages with SEO metadata: the sitemap's entries. */
+  pages: [] as string[],
   /** Left a draft, so the publish request has one to publish. */
   draft: '',
   tag: '',
@@ -175,7 +180,19 @@ async function seed(): Promise<void> {
       }),
     ],
   });
-  for (const apiId of ['author', 'article', 'roundup', 'landing']) {
+  await createContentType(ctx, scope, {
+    apiId: 'page',
+    name: 'Page',
+    displayField: 'title',
+    urlPattern: '/{slug}',
+    fields: [
+      field({ apiId: 'title', type: 'Symbol', required: true }),
+      field({ apiId: 'slug', type: 'Slug', position: 1 }),
+      field({ apiId: 'seo', type: 'Seo', position: 2 }),
+      field({ apiId: 'body', type: 'RichText', position: 3 }),
+    ],
+  });
+  for (const apiId of ['author', 'article', 'roundup', 'landing', 'page']) {
     await publishContentType(ctx, scope, apiId);
   }
 
@@ -252,6 +269,20 @@ async function seed(): Promise<void> {
   const { entry: landing } = await createEntry(ctx, scope, landingFields());
   await publishEntry(ctx, scope, landing.id);
   ids.landing = landing.id;
+
+  for (let i = 0; i < 4; i++) {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': `Page ${i}` },
+        slug: { 'en-US': `page-${i}` },
+        seo: { 'en-US': { title: `Page ${i} | Site`, noindex: i === 3 } },
+        body: { 'en-US': { nodeType: 'document', content: [] } },
+      },
+    });
+    await publishEntry(ctx, scope, entry.id);
+    ids.pages.push(entry.id);
+  }
 }
 
 /** A landing page of three blocks, linking an asset and two entries from inside them. */
@@ -390,6 +421,8 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     () => resolveDeliveredRedirect(ctx, scope, '/blog/old-3?ref=x'),
   ],
   ['delivery: GET /routes', () => listDeliveredRoutes(ctx, scope)],
+  ['delivery: GET /sitemap', () => listDeliveredSitemap(ctx, scope)],
+  ['delivery: GET /sitemap.xml', () => deliveredSitemapFile(ctx, scope, undefined)],
   ['management: GET /entries/:id', () => getEntry(ctx, scope, article(5))],
   [
     'management: GET /entries?content_type=article',
@@ -424,6 +457,10 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
   ],
   ['management: POST /entries (blocks)', () => createEntry(ctx, scope, landingFields())],
   ['management: POST /entries/:id/published', () => publishEntry(ctx, scope, ids.draft)],
+  [
+    'management: PATCH /entries/:id/seo',
+    () => setEntrySeo(ctx, scope, ids.pages[0] as string, { description: 'About us' }),
+  ],
 ];
 
 /** The snapshot as written: one line per request, so a diff names the request. */

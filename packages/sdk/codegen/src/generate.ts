@@ -227,6 +227,9 @@ export function fieldValueType(field: FieldInput, opts: { delivered?: boolean } 
     // inventing collision-prone names for something nobody imports by name.
     case 'Component':
       return componentType(field.fields, opts);
+    // A component of fixed shape (the domain's SEO_FIELDS), spelled out: the SDK depends on nothing.
+    case 'Seo':
+      return `{ title?: string; description?: string; canonicalUrl?: string; noindex?: boolean; ogImage?: ${asset} }`;
     case 'Array': {
       const items = field.items;
       if (items?.type === 'Link') {

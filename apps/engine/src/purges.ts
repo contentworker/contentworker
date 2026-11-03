@@ -17,6 +17,8 @@ import {
 
 /** Events after which a space:environment's delivery responses may be stale. */
 export const PURGING_EVENTS = new Set<string>([
+  // Besides the entries themselves, the sitemap (`GET …/sitemap`, `…/sitemap.xml`) lists the
+  // published entries and their SEO: a publish or unpublish purges it with them.
   'entry.published',
   'entry.unpublished',
   'entries.published_bulk',
@@ -31,7 +33,8 @@ export const PURGING_EVENTS = new Set<string>([
   'taxonomy.changed',
   // Delivery serves the enabled set (`GET …/redirects`) and each path's match from it.
   'redirects.changed',
-  // Delivery serves each published type's URL pattern (`GET …/routes`) and builds GraphQL from it.
+  // Delivery serves each published type's URL pattern (`GET …/routes`), builds GraphQL from it,
+  // and lists the type's entries in the sitemap by it.
   'content_type.published',
   'release.published',
   'environment_alias.changed',
