@@ -19,6 +19,7 @@
   "dependencies": {
     "@ai-sdk/react": "catalog:",
     "@cloudflare/ai-chat": "catalog:",
+    "@contentworker/adapters": "workspace:*",
     "@contentworker/db": "workspace:*",
     "@contentworker/domain": "workspace:*",
     "@contentworker/security": "workspace:*",

@@ -14,6 +14,9 @@ export const AUDIT_ACTIONS = {
   'auth.sign_in_throttled': 'Sign-in refused: too many failures',
   'auth.sign_out': 'Signed out',
   'auth.password_changed': 'Changed own password',
+  'auth.password_reset_requested': 'Asked for a password reset code',
+  'auth.password_reset_failed': 'Password reset code refused',
+  'auth.password_reset': 'Reset own password with an emailed code',
   'auth.session_ended': 'Signed out a session',
   'auth.other_sessions_ended': 'Signed out everywhere else',
   'auth.two_factor_failed': 'Two-factor code wrong',
@@ -94,9 +97,14 @@ export function describeEvent(e: AuditEvent): string {
   if (d.via === 'sso') parts.push('by single sign-on');
   if (d.via === 'scim') parts.push('by SCIM provisioning');
   if (d.via === 'invite') parts.push('by accepting an invitation');
+  if (d.via === 'link') parts.push('from the emailed link');
   if (typeof d.space === 'string') parts.push(`space ${d.space}`);
   if (typeof d.kept === 'string') parts.push(`kept: ${d.kept}`);
-  if (e.action === 'team.user_disabled' && typeof d.sessions === 'number')
+  if (typeof d.outcome === 'string') parts.push(d.outcome);
+  if (
+    (e.action === 'team.user_disabled' || e.action === 'auth.password_reset') &&
+    typeof d.sessions === 'number'
+  )
     parts.push(`${d.sessions} sessions ended`);
   if (e.action === 'scim.token_created' && d.replaced) parts.push('replacing the old one');
   if (d.passkeys === 'removed') parts.push('passkeys removed');

@@ -29,7 +29,7 @@ One file per deployment, parsed by `toDeployment` in `scripts/fleet.ts`:
 | `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI gateway), no vector index, `ALLOW_FAKE_ADAPTERS=ai,vectors` on the api, delivery and engine; never in `general` |
 | `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether the AI gateway logs each call (prompts and answers never)                                                                  |
 | `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`)                                                 |
-| `email`         | `{ from, fromName? }`: edge email sender (workflow notify nodes, invitations, scheduler alerts); adds the engine's `send_email` binding                           |
+| `email`         | `{ from, fromName? }`: edge email sender (workflow notify nodes, invitations, scheduler alerts; password reset codes on web); adds the engine's and web's `send_email` binding |
 
 `scripts/fleet.ts` commands (`pnpm fleet <command>` is the same script):
 
@@ -49,7 +49,7 @@ A rendered config is the app's `wrangler.jsonc` with the deployment's names, ids
 (custom domains) and vars filled in: `OAUTH_ISSUER=https://<domain>` on the api (OAuth for MCP
 clients is served on the admin host, so its consent screen can use the person's web sign-in) and
 `MEDIA_BASE_URL=https://api.<domain>`, the AI gateway id with `AI_GATEWAY_LOGS` on every worker
-that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and edge email on the engine.
+that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and edge email on the engine and web.
 
 `doctor <id>` is read-only. It renders every app for the deployment and checks that each has the
 bindings its code reads (`REQUIRED_BINDINGS` in `scripts/fleet.ts`), the database and key-value

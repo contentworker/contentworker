@@ -51,7 +51,14 @@ import {
   sessionIdleMs,
 } from './roles';
 import { ssoOnlyInEffect, twoFactorRequirement } from './settings.server';
-import { blockedFor, retryText, signInKeys, throttleKey, WINDOW_MS } from './throttle';
+import {
+  blockedFor,
+  type FailureRow,
+  retryText,
+  signInKeys,
+  throttleKey,
+  WINDOW_MS,
+} from './throttle';
 import { hashRecoveryCode, looksLikeTotp, verifyTotp } from './totp';
 import { mustUseTwoFactor } from './two-factor';
 
@@ -261,6 +268,36 @@ export async function recordFailure(keys: string[]) {
   await db()
     .delete(authFailures)
     .where(lt(authFailures.windowStart, now - 86_400_000));
+}
+
+/**
+ * Counts an attempt against each key and returns each count as written (one upsert per key, a new
+ * window where the old one has ended). For limits on every attempt rather than on failures
+ * (password reset): the caller decides with `overFor` on what this returns, so a burst of
+ * parallel requests can't all read a count under the limit before any of them writes.
+ */
+export async function countAttempt(keys: string[]): Promise<FailureRow[]> {
+  const now = Date.now();
+  const expired = sql`${now} - ${authFailures.windowStart} >= ${WINDOW_MS}`;
+  const counted: FailureRow[] = [];
+  for (const key of keys) {
+    const [row] = await db()
+      .insert(authFailures)
+      .values({ key, count: 1, windowStart: now })
+      .onConflictDoUpdate({
+        target: authFailures.key,
+        set: {
+          count: sql`case when ${expired} then 1 else ${authFailures.count} + 1 end`,
+          windowStart: sql`case when ${expired} then ${now} else ${authFailures.windowStart} end`,
+        },
+      })
+      .returning();
+    counted.push(row!);
+  }
+  await db()
+    .delete(authFailures)
+    .where(lt(authFailures.windowStart, now - 86_400_000));
+  return counted;
 }
 
 /**

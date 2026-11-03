@@ -203,6 +203,19 @@ test('email sending is bound only when a deployment names a sender', () => {
   assert.equal(c.vars.EMAIL_FROM, 'cms@acme.com');
 });
 
+test('the web Worker gets the sender too, for password reset codes', () => {
+  assert.equal(renderWeb(base('web'), acme).send_email, undefined);
+  const mailing = toDeployment({
+    ...acme,
+    slot: 3,
+    email: { from: 'cms@acme.com', fromName: 'Acme' },
+  });
+  const c = renderWeb(base('web'), mailing);
+  assert.deepEqual(c.send_email, [{ name: 'EMAIL' }]);
+  assert.equal(c.vars.EMAIL_FROM, 'cms@acme.com');
+  assert.equal(c.vars.EMAIL_FROM_NAME, 'Acme');
+});
+
 test('a demo mocks its models and has no vector index', () => {
   const demo = toDeployment({ ...acme, id: 'demo-x', slot: 4, demo: true });
   const engine = renderEngine(base('engine'), demo);

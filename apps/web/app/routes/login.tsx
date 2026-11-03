@@ -15,6 +15,8 @@ import { Mark } from '~/components/mark';
 import { authEnabled, principal, type SignInResult, signIn, Throttled } from '~/lib/auth.server';
 import { INVITE_INVALID } from '~/lib/invites';
 import { nextPath, redirectToNext, withNext } from '~/lib/next-path';
+import { FORGOT_PATH } from '~/lib/password-reset';
+import { resetAvailable } from '~/lib/password-reset.server';
 import { ssoOnlyInEffect } from '~/lib/settings.server';
 import { ssoConfig } from '~/lib/sso.server';
 import type { Route } from './+types/login';
@@ -26,7 +28,12 @@ export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeade
 
 export async function loader({ request }: Route.LoaderArgs) {
   if (!(await authEnabled()) || (await principal(request))) throw redirectToNext(nextPath(request));
-  return { sso: !!ssoConfig(), ssoOnly: await ssoOnlyInEffect() };
+  return {
+    sso: !!ssoConfig(),
+    ssoOnly: await ssoOnlyInEffect(),
+    // Without email (and outside local development), only an admin can reset a password.
+    canReset: resetAvailable(request),
+  };
 }
 
 /** What the sign-in page says after single sign-on sent someone back without a session. */
@@ -44,13 +51,16 @@ export async function action({ request }: Route.ActionArgs) {
     return { error: 'This deployment signs in with single sign-on only. Use the button above.' };
   const email = String(form.get('email') ?? '');
   let result: SignInResult | null;
+  const forgot = resetAvailable(request)
+    ? 'If you’ve forgotten your password, reset it below.'
+    : 'If you’ve forgotten your password, ask an admin to reset it.';
   try {
     result = await signIn(request, email, String(form.get('password') ?? ''));
   } catch (err) {
     if (!(err instanceof Throttled)) throw err;
     return data(
       {
-        error: `${err.message} If you’ve forgotten your password, ask an admin to reset it.`,
+        error: `${err.message} ${forgot}`,
       },
       { status: 429, headers: { 'retry-after': String(Math.ceil(err.retryAfterMs / 1000)) } },
     );
@@ -64,7 +74,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Login() {
-  const { sso, ssoOnly } = useLoaderData<typeof loader>();
+  const { sso, ssoOnly, canReset } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const [params] = useSearchParams();
   const busy = useNavigation().state === 'submitting';
@@ -83,6 +93,10 @@ export default function Login() {
         {params.get('signed-out') && !error ? (
           <p role="status" className="mb-4 text-muted-foreground text-sm">
             You’ve signed out.
+          </p>
+        ) : params.get('reset') && !error ? (
+          <p role="status" className="mb-4 text-muted-foreground text-sm">
+            Your password is changed and every session signed out. Sign in with the new one.
           </p>
         ) : null}
         <Mark className="size-7 text-brand" />
@@ -157,9 +171,18 @@ export default function Login() {
                 {passkey.busy ? 'Waiting for your passkey…' : 'Sign in with a passkey'}
               </Button>
             ) : null}
-            <p className="mt-3 text-muted-foreground text-xs">
-              Forgot your password? Ask an admin to reset it on the Team page.
-            </p>
+            {canReset ? (
+              <a
+                href={FORGOT_PATH}
+                className="-my-1 mt-3 inline-flex min-h-8 items-center text-link text-xs hover:underline"
+              >
+                Forgot your password?
+              </a>
+            ) : (
+              <p className="mt-3 text-muted-foreground text-xs">
+                Forgot your password? Ask an admin to reset it on the Team page.
+              </p>
+            )}
           </>
         )}
       </Form>

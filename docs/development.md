@@ -307,6 +307,13 @@ admin, deployment-wide (`grants` JSON names each space). Only the links' token h
 makes a link work once, and `expired` is read from `expires_at`, never written (see
 [Auth & RBAC](./auth-and-rbac.md#invitations)). Nothing is backfilled.
 
+`0021_password_resets.sql` adds `password_resets` and touches no existing table: the web app's
+self-service password reset codes (`user_id`; `code_hash`, HMAC-SHA256 with `PASSWORD_PEPPER` over
+the row id and the code, never the code; `browser_hash`, the SHA-256 of the asking browser's
+nonce, which a typed code must come with; `created_at`, `expires_at`, `used_at`), indexed by
+`(user_id, created_at)` and by `expires_at`. Tries are counted in `auth_failures` (`reset-try`). Nothing is backfilled (see
+[Auth & RBAC](./auth-and-rbac.md#password-reset)).
+
 `0020_menus.sql` adds `menus` and touches no existing table: one environment-scoped row per
 navigation menu (`handle`, `name`, `description`, `items` as a JSON tree written whole, `revision`,
 epoch-ms `created_at` and `updated_at`), with the unique index `menus_by_handle` on `(space_id,

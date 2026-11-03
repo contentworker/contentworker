@@ -4,6 +4,10 @@ export default [
   route('login', 'routes/login.tsx'),
   route('login/two-factor', 'routes/login-two-factor.tsx'),
   route('login/passkey', 'routes/login-passkey.ts'),
+  // Self-service password reset by an emailed code (lib/password-reset.server.ts). Public.
+  // `/login/reset/<id>.<code>` (the emailed link) moves the code into a cookie and redirects.
+  route('login/forgot', 'routes/login-forgot.tsx'),
+  route('login/reset/:token?', 'routes/login-reset.tsx'),
   // Single sign-on with the deployment's identity provider (lib/sso.server.ts).
   route('login/sso', 'routes/login-sso.ts'),
   route('login/sso/callback', 'routes/login-sso-callback.ts'),

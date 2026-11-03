@@ -47,7 +47,13 @@
     "OIDC_ISSUER": "",
     "OIDC_CLIENT_ID": "",
     // "true" when the provider leaves out email_verified for addresses it owns (Entra ID).
-    "OIDC_TRUST_EMAIL": ""
+    "OIDC_TRUST_EMAIL": "",
+    // Password reset codes (app/lib/password-reset.server.ts) go out through Email Sending:
+    // scripts/fleet.ts adds the `send_email` binding (EMAIL) and these when the deployment names a
+    // sender. Empty: no email, and only an admin resets a password (local development prints the
+    // email to the log instead).
+    "EMAIL_FROM": "",
+    "EMAIL_FROM_NAME": ""
   }
   // Secrets (wrangler secret put): SETUP_TOKEN — the one-time setup code that creates an admin on
   // /setup (app/lib/setup.server.ts). PRINCIPAL_KEY — signs the x-cw-principal header forwarded to

@@ -29,7 +29,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `Queue`              | `EVENTS_QUEUE` (+ `BULK_QUEUE`, `AGENTS_QUEUE`, `PURGE_QUEUE`)             | Outbox stays pending; no async dispatch                                          |
 | `EventBus` (live)    | `LIVE_HUB`                                                                 | Keepalives only                                                                  |
 | Plugin runtime       | Plugin isolates (`PLUGIN_LOADER`)                                          | Installed plugins never execute                                                  |
-| `EmailSender`        | `send_email` (`EMAIL`) + `EMAIL_FROM`                                      | `content.notify` nodes fail with a clear error; scheduler alerts are logged only |
+| `EmailSender`        | `send_email` (`EMAIL`) + `EMAIL_FROM`                                      | `content.notify` nodes fail with a clear error; scheduler alerts are logged only; web: no password reset by email (an admin resets) |
 
 ## Bindings
 
@@ -56,7 +56,7 @@ behind a fake unless `ALLOW_FAKE_ADAPTERS` names it.
 | `ASSET_INGEST_WF` (durable workflows)                    |     |     |     | ✓   | `AssetIngestWorkflow`, one run per asset file version, started by the `contentworker-asset-events` consumer. Absent → asset events are acknowledged and nothing is ingested                                                                                                            |
 | `ASSET_ZIP_WF` (durable workflows)                       |     |     |     | ✓   | `AssetZipWorkflow` (`contentworker-asset-zip`), one run per zip download, started from `asset_zip.requested`. Absent → a requested zip fails at once with "Zip downloads are not available on this deployment"                                                                         |
 | `ASSET_EVENTS_QUEUE`                                     |     | ✓   |     | ✓   | Producer onto `contentworker-asset-events` (the api on a completed signed upload and a re-ingest; the engine for `asset_reindex` chunks); the engine consumes it (+ `-dlq`), which the media bucket's object-create notification also feeds. Absent on the api → re-ingest answers 501 |
-| `EMAIL` (`send_email`)                                   |     |     |     | ✓   | Added by fleet render only when the deployment sets `email`                                                                                                                                                                                                                            |
+| `EMAIL` (`send_email`)                                   | ✓   |     |     | ✓   | Added by fleet render only when the deployment sets `email`; web sends password reset codes with it                                                                                                                                                                                   |
 | `METRICS` (metrics store)                                |     | ✓   | ✓   | ✓   | Absent → counters fall back to log lines                                                                                                                                                                                                                                               |
 | `RATE_LIMIT_READ` / `_WRITE` / `_AI` (edge rate limiter) |     | ✓   | ✓   |     | api: 600 / 120 / 20 per 60 s, inert until a `RATE_LIMIT_*_PER_WINDOW` var is set (see [Rate limits](#rate-limits)); delivery: `RATE_LIMIT_READ` 1200 per 60 s, always applied                                                                                                          |
 | `RATE_LIMIT_SHARE_UNLOCK` (edge rate limiter)            |     |     |     |     | The media worker's: 10 password attempts per 60 s per share link and client address, and per link overall (namespace `1006`, rendered per slot). Absent → attempts are limited only by PBKDF2's cost                                                                                   |
@@ -107,6 +107,10 @@ ones at deploy.
 | `OIDC_TRUST_EMAIL` | empty   | `true` when the provider omits `email_verified` for addresses it owns (Entra ID)                                                           |
 
 Rendered from the registry's `sso` field. Passwords, passkeys, TOTP and SCIM need no vars.
+Password reset by email needs the `EMAIL` binding with `EMAIL_FROM` and `EMAIL_FROM_NAME`
+(empty by default), rendered from the registry's `email` field like the engine's. As on the
+engine, a bound `EMAIL` without `EMAIL_FROM` is a configuration error: the web worker throws
+rather than treating the deployment as sending no email.
 
 ## API keys and seeding (api, engine)
 
