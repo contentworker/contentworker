@@ -266,7 +266,7 @@ describe('authoring block types in the content type dialog', () => {
 
   it('offers Blocks as a field type', async () => {
     renderDialog(typeWith([]));
-    fireEvent.click(screen.getAllByRole('combobox')[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole('combobox', { name: /^Type for/ })[0] as HTMLElement);
     await waitFor(() => expect(screen.getAllByRole('option').length).toBeGreaterThan(0));
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toContain('Blocks');
   });

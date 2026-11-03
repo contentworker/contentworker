@@ -9,6 +9,7 @@ import type {
   AssetZipSource,
   AssetZipStatus,
   ContentTypeGrant,
+  ContentTypeLayout,
   DomainEvent,
   EntryFields,
   FieldDefinition,
@@ -175,6 +176,12 @@ export const contentTypes = sqliteTable(
     publishedSingleton: integer('published_singleton', { mode: 'boolean' })
       .notNull()
       .default(false),
+    /** The admin's sidebar group, description and icon (0026_content_type_details). */
+    group: text('group_name'),
+    description: text('description'),
+    icon: text('icon'),
+    /** The entry form's tabs and field groups; editor-only, never delivered (0026). */
+    layout: text('layout', { mode: 'json' }).$type<ContentTypeLayout>(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.apiId] })],
 );

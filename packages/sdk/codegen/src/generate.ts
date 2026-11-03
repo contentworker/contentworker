@@ -35,8 +35,11 @@ export interface FieldInput {
   readonly linkType?: 'Entry' | 'Asset';
   /** Conditional rules; a field a rule can hide may be absent even when required. */
   readonly rules?: readonly { readonly action: string }[];
+  /** For a Date field: `date`, `datetime` or `time`; noted in the doc comment. */
+  readonly format?: string;
   readonly items?: {
     readonly type: string;
+    readonly format?: string;
     readonly linkType?: 'Entry' | 'Asset';
     readonly validations?: { readonly in?: readonly OptionInput[] };
     readonly fields?: readonly FieldInput[];
@@ -255,6 +258,8 @@ export function fieldValueType(field: FieldInput, opts: { delivered?: boolean } 
         return `(${items.variants.map((v) => blockType(v, opts)).join(' | ')})[]`;
       }
       if (items?.type === 'Component') return `${componentType(items.fields, opts)}[]`;
+      if (items?.type === 'Integer' || items?.type === 'Number') return 'number[]';
+      // Symbol, Text and Date elements are strings.
       return 'string[]';
     }
     default:
@@ -332,6 +337,14 @@ function fieldComment(field: FieldInput): string {
   // reading a type wants; help is the fallback.
   const guidance = (field.description ?? field.help)?.replace(/\s+/g, ' ').trim();
   if (guidance) notes.push(escapeComment(guidance));
+  const format =
+    field.type === 'Date'
+      ? field.format
+      : field.items?.type === 'Date'
+        ? field.items.format
+        : undefined;
+  const written = format ? DATE_WRITTEN[format] : undefined;
+  if (written) notes.push(written);
   if (field.localized) notes.push('localized');
   if (Array.isArray(field.rules) && field.rules.length > 0) {
     const actions = [...new Set(field.rules.map((r) => r?.action).filter(Boolean))];
@@ -343,6 +356,13 @@ function fieldComment(field: FieldInput): string {
   }
   return notes.length ? `  /** ${notes.join(' — ')} */\n` : '';
 }
+
+/** How each Date format is written, for the doc comment. */
+const DATE_WRITTEN: Readonly<Record<string, string>> = {
+  date: 'date: YYYY-MM-DD',
+  datetime: 'date and time: YYYY-MM-DDThh:mm',
+  time: 'time: hh:mm',
+};
 
 function escapeComment(text: string): string {
   return text.replace(/\*\//g, '*\\/');

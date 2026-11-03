@@ -353,6 +353,28 @@ describe('@contentworker/sdk-codegen CLI', () => {
     expect(out).toContain('conditional: hide by rules');
   });
 
+  it('types lists of scalars and notes a Date field’s format', () => {
+    const out = generateTypes([
+      {
+        apiId: 'event',
+        fields: [
+          { apiId: 'day', type: 'Date', format: 'date' },
+          { apiId: 'opens', type: 'Date', format: 'time' },
+          { apiId: 'sizes', type: 'Array', items: { type: 'Integer' } },
+          { apiId: 'weights', type: 'Array', items: { type: 'Number' } },
+          { apiId: 'lines', type: 'Array', items: { type: 'Text' } },
+          { apiId: 'days', type: 'Array', items: { type: 'Date', format: 'date' } },
+        ],
+      },
+    ]);
+    expect(out).toContain('/** date: YYYY-MM-DD */\n  day?: string;');
+    expect(out).toContain('/** time: hh:mm */');
+    expect(out).toContain('  sizes?: number[];');
+    expect(out).toContain('  weights?: number[];');
+    expect(out).toContain('  lines?: string[];');
+    expect(out).toContain('/** date: YYYY-MM-DD */\n  days?: string[];');
+  });
+
   it('parses flags and rejects unknown ones', () => {
     expect(parseArgs(['--url', 'https://x', '--space', 's1', '--token', 't'])).toEqual({
       url: 'https://x',

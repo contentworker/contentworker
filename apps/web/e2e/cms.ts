@@ -464,3 +464,41 @@ export async function seedRuledType(request: APIRequestContext) {
   if (![200, 201].includes(res.status())) throw new Error(await res.text());
   await api(request, 'POST', `${MGMT}/content-types/ruled/published`);
 }
+
+/**
+ * A content type filed under a group with an icon, laid out in two tabs (a named group on the
+ * second), with a date-only field: what the content nav, the dialog's Settings and Layout, and the
+ * entry form's tabs are exercised on.
+ */
+export async function seedLaidOutType(request: APIRequestContext) {
+  const field = (apiId: string, name: string, position: number, extra: object = {}) => ({
+    apiId,
+    name,
+    type: 'Symbol',
+    localized: false,
+    required: false,
+    position,
+    ...extra,
+  });
+  const res = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'happening',
+    name: 'Happening',
+    displayField: 'title',
+    group: 'Programme',
+    icon: 'calendar',
+    description: 'Something on the calendar.',
+    layout: {
+      tabs: [
+        { apiId: 'main', name: 'Main', groups: [{ fields: ['title'] }] },
+        { apiId: 'when', name: 'When', groups: [{ name: 'Timing', fields: ['day', 'note'] }] },
+      ],
+    },
+    fields: [
+      field('title', 'Title', 0, { required: true }),
+      field('day', 'Day', 1, { type: 'Date', format: 'date' }),
+      field('note', 'Note', 2, { validations: { regexp: { preset: 'email' } } }),
+    ],
+  });
+  if (![200, 201].includes(res.status())) throw new Error(await res.text());
+  await api(request, 'POST', `${MGMT}/content-types/happening/published`);
+}

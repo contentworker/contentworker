@@ -1,11 +1,12 @@
 import { cn } from '@contentworker/ui/lib/utils';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { useContentTypeDeleteJob } from '~/cms/components/ContentTypeDeleteJob';
 import { StatusDot } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
+import { ContentTypeIcon } from '../lib/content-type-icons';
 import {
   useContentTypesQuery,
   useInvalidate,
@@ -44,6 +45,8 @@ export function ContentLayout() {
     void invalidate(['entries']);
   });
 
+  const sections = useMemo(() => groupContentTypes(types), [types]);
+
   const outlet: ContentOutlet = {
     deleteJob,
     types,
@@ -77,39 +80,58 @@ export function ContentLayout() {
             <h2 id="content-types-nav" className="caption px-2.5 pb-1">
               Content types
             </h2>
-            <ul className="flex flex-col gap-0.5">
-              {types.map((t) => {
-                // Active anywhere under the type, so a singleton's entry (reached through
-                // `/entry`) marks it as the list does its entries.
-                const base = `/content/${t.apiId}`;
-                const active = pathname === base || pathname.startsWith(`${base}/`);
-                return (
-                  <li key={t.apiId}>
-                    <Link
-                      // A singleton opens its one entry, not a list of one.
-                      to={t.singleton ? `${base}/entry` : base}
-                      aria-current={active ? 'page' : undefined}
-                      className={cn(
-                        'relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
-                        active
-                          ? 'bg-accent font-medium text-accent-foreground tick-current'
-                          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                      )}
-                    >
-                      <span className="truncate">{t.name}</span>
-                      {t.status !== 'published' ? <StatusDot status={t.status} /> : null}
-                    </Link>
+            {/* Types without a group first, then each group under its name: the order an
+                author filed them in, found the same way every time. */}
+            {sections.map((section, index) => (
+              <div key={section.group ?? ''} className={section.group ? 'pt-3' : undefined}>
+                {section.group && (
+                  <h3 id={sectionId(index)} className="caption px-2.5 pb-1">
+                    {section.group}
+                  </h3>
+                )}
+                <ul
+                  className="flex flex-col gap-0.5"
+                  {...(section.group ? { 'aria-labelledby': sectionId(index) } : {})}
+                >
+                  {section.types.map((t) => {
+                    // Active anywhere under the type, so a singleton's entry (reached through
+                    // `/entry`) marks it as the list does its entries.
+                    const base = `/content/${t.apiId}`;
+                    const active = pathname === base || pathname.startsWith(`${base}/`);
+                    return (
+                      <li key={t.apiId}>
+                        <Link
+                          // A singleton opens its one entry, not a list of one.
+                          to={t.singleton ? `${base}/entry` : base}
+                          aria-current={active ? 'page' : undefined}
+                          className={cn(
+                            'relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
+                            active
+                              ? 'bg-accent font-medium text-accent-foreground tick-current'
+                              : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                          )}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <ContentTypeIcon name={t.icon} />
+                            <span className="truncate">{t.name}</span>
+                          </span>
+                          {t.status !== 'published' ? <StatusDot status={t.status} /> : null}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+            {typesQuery.isPending ? (
+              <ul className="flex flex-col gap-0.5">
+                {['72%', '55%', '64%', '48%'].map((w) => (
+                  <li key={w} aria-hidden="true" className="px-2.5 py-1.5 text-sm touch:min-h-11">
+                    <SkeletonText width={w} />
                   </li>
-                );
-              })}
-              {typesQuery.isPending
-                ? ['72%', '55%', '64%', '48%'].map((w) => (
-                    <li key={w} aria-hidden="true" className="px-2.5 py-1.5 text-sm touch:min-h-11">
-                      <SkeletonText width={w} />
-                    </li>
-                  ))
-                : null}
-            </ul>
+                ))}
+              </ul>
+            ) : null}
             {types.length === 0 && !typesQuery.isPending && (
               <p className="px-2.5 py-1 text-muted-foreground text-sm">No content types yet.</p>
             )}
@@ -122,4 +144,30 @@ export function ContentLayout() {
       </div>
     </div>
   );
+}
+
+/**
+ * The id of a group's heading in the content types nav, by its place in the list: two group names
+ * that differ only in punctuation ("A B", "A-B") would collide as slugs.
+ */
+const sectionId = (index: number) => `content-types-group-${index}`;
+
+/**
+ * Content types by their `group`, for the nav: the ungrouped first (as `group: undefined`), then
+ * each group by name. Within a section the types keep the model's order.
+ */
+export function groupContentTypes<T extends { readonly group?: string }>(
+  types: readonly T[],
+): { group?: string; types: T[] }[] {
+  const ungrouped = types.filter((t) => !t.group);
+  const byGroup = new Map<string, T[]>();
+  for (const t of types) {
+    if (!t.group) continue;
+    byGroup.set(t.group, [...(byGroup.get(t.group) ?? []), t]);
+  }
+  const groups = [...byGroup.keys()].sort((a, b) => a.localeCompare(b));
+  return [
+    ...(ungrouped.length > 0 ? [{ types: ungrouped }] : []),
+    ...groups.map((group) => ({ group, types: byGroup.get(group) ?? [] })),
+  ];
 }

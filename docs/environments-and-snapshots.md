@@ -297,24 +297,24 @@ snapshot, into one with **no content types**. The routes are `POST …/imports/s
 The reader (`@contentworker/adapters/import-space-export`, the `SpaceExportReader` port) maps the
 whole file in one pass:
 
-| Export                                                                   | Here                                                                                             |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `Symbol`, `Text`, `RichText`                                             | the same types                                                                                   |
-| `Integer`, `Number`, `Boolean`, `Date`                                   | the same types                                                                                   |
-| `Location`                                                               | `Location` (`{ lat, lon }`)                                                                      |
-| `Object`                                                                 | `JSON`                                                                                           |
-| `Link` (`Entry` / `Asset`)                                               | `Link` with `linkType`                                                                           |
-| `Array` of `Symbol` / `Link`                                             | `Array` with `items`                                                                             |
-| `ResourceLink`, other arrays                                             | not imported, listed in `unmappedFields`                                                         |
-| validations `in` (usable values once each), `size`, `range`, `regexp`, `linkContentType`, `unique` | `in`, `size`, `range`, `regexp` (if `unsafeRegexReason` allows it), `linkContentTypes`, `unique` |
-| a validation's custom `message`                                          | `validations.messages` for a kept `in`, `size`, `range` or `regexp` on the field; else (a list element's, too) in `unmappedValidations` |
-| any other validation                                                     | listed in `unmappedValidations`                                                                  |
-| `required`, `localized`, `defaultValue`, `displayField`                  | the same (a missing display field becomes the first `Symbol`)                                    |
-| `locales` with `fallbackCode`                                            | the space's locales and `fallbacks` (added only with `addLocales`)                               |
-| `tags`, `metadata.tags`                                                  | taxonomy tags, attached to their entries                                                         |
-| assets (`fields.file` per locale)                                        | one asset each (the default locale's file), the file copied from its URL                         |
-| `editorInterfaces` help text (`settings.helpText`)                       | the field's `help`; one with no imported field, or over 500 characters, is counted in `warnings` |
-| other `editorInterfaces` settings, `webhooks`, `roles`                   | not imported                                                                                     |
+| Export                                                                                             | Here                                                                                                                                    |
+| -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `Symbol`, `Text`, `RichText`                                                                       | the same types                                                                                                                          |
+| `Integer`, `Number`, `Boolean`, `Date`                                                             | the same types                                                                                                                          |
+| `Location`                                                                                         | `Location` (`{ lat, lon }`)                                                                                                             |
+| `Object`                                                                                           | `JSON`                                                                                                                                  |
+| `Link` (`Entry` / `Asset`)                                                                         | `Link` with `linkType`                                                                                                                  |
+| `Array` of `Symbol` / `Link`                                                                       | `Array` with `items`                                                                                                                    |
+| `ResourceLink`, other arrays                                                                       | not imported, listed in `unmappedFields`                                                                                                |
+| validations `in` (usable values once each), `size`, `range`, `regexp`, `linkContentType`, `unique` | `in`, `size`, `range`, `regexp` (if `unsafeRegexReason` allows it), `linkContentTypes`, `unique`                                        |
+| a validation's custom `message`                                                                    | `validations.messages` for a kept `in`, `size`, `range` or `regexp` on the field; else (a list element's, too) in `unmappedValidations` |
+| any other validation                                                                               | listed in `unmappedValidations`                                                                                                         |
+| `required`, `localized`, `defaultValue`, `displayField`                                            | the same (a missing display field becomes the first `Symbol`)                                                                           |
+| `locales` with `fallbackCode`                                                                      | the space's locales and `fallbacks` (added only with `addLocales`)                                                                      |
+| `tags`, `metadata.tags`                                                                            | taxonomy tags, attached to their entries                                                                                                |
+| assets (`fields.file` per locale)                                                                  | one asset each (the default locale's file), the file copied from its URL                                                                |
+| `editorInterfaces` help text (`settings.helpText`)                                                 | the field's `help`; one with no imported field, or over 500 characters, is counted in `warnings`                                        |
+| other `editorInterfaces` settings, `webhooks`, `roles`                                             | not imported                                                                                                                            |
 
 A content type or field id that is not a legal apiId here (a hyphen, a leading digit) is rewritten
 (`landing-page` → `landing_page`) and named in `warnings`.

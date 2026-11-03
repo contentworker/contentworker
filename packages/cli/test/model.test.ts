@@ -17,11 +17,12 @@ const field = (apiId: string, type = 'Symbol', extra: Record<string, unknown> = 
   ...extra,
 });
 
-const live = (draft: ContentTypeDraft, version = 3): ContentType => ({
-  ...normalizeDraft(draft),
-  version,
-  status: 'published',
-});
+const live = (draft: ContentTypeDraft, version = 3): ContentType =>
+  ({
+    ...normalizeDraft(draft),
+    version,
+    status: 'published',
+  }) as ContentType;
 
 const article: ContentTypeDraft = {
   apiId: 'article',
@@ -121,6 +122,24 @@ describe('planModel', () => {
       ['page.sections[quote]', 'add-variant', false],
     ]);
     expect(changes[0]?.detail).toBe('type Symbol → Text, localized false → true');
+  });
+
+  it('compares the group, description, icon and layout a file states, and keeps the ones it leaves out', () => {
+    const detailed = {
+      ...article,
+      group: 'Editorial',
+      icon: 'newspaper',
+      layout: { tabs: [{ apiId: 'main', name: 'Main', groups: [{ fields: ['title'] }] }] },
+    };
+    expect(planModel([normalizeDraft(article)], [live(detailed)]).changes).toBe(0);
+    const plan = planModel(
+      [normalizeDraft({ ...detailed, group: 'Magazine', layout: null })],
+      [live(detailed)],
+    );
+    expect(plan.types[0]?.changes.map((c) => c.detail)).toEqual([
+      'group "Editorial" → "Magazine"',
+      'layout removed',
+    ]);
   });
 
   it('leaves types missing from the file alone, and says so', () => {

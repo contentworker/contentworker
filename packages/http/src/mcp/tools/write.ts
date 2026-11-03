@@ -17,6 +17,7 @@ import {
 import {
   assertWritableFields,
   authorizeContent,
+  CONTENT_TYPE_LIMITS,
   type EntryFields,
   MAX_URL_PATTERN_LENGTH,
   SCOPES,
@@ -46,7 +47,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         'input), `placeholder` (an example), labelled options in `validations.in` as ' +
         '{ value, label }, and `validations.messages` to replace a rule’s default error text. ' +
         '`rules` hide or disable a field while a sibling matches: a hidden field is not ' +
-        'required, and a disabled one keeps its stored value.',
+        'required, and a disabled one keeps its stored value. The type can carry a `group` and ' +
+        '`icon` (how the admin lists it), a `description`, and an editor-only `layout` of tabs ' +
+        'and field groups for the entry form.',
       inputSchema: toolSchema('model_create_content_type', () =>
         z.object({
           apiId: z.string(),
@@ -69,6 +72,33 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
               'holds at most one entry (site settings, a home page), read with singleton_get; ' +
                 'refused while the type has more than one entry. Left out, unchanged',
             ),
+          group: z
+            .string()
+            .max(CONTENT_TYPE_LIMITS.group)
+            .nullable()
+            .optional()
+            .describe('the admin sidebar lists types under their group; null clears it'),
+          description: z
+            .string()
+            .max(CONTENT_TYPE_LIMITS.description)
+            .nullable()
+            .optional()
+            .describe('what the type is for, for editors and agents; null clears it'),
+          icon: z
+            .string()
+            .max(CONTENT_TYPE_LIMITS.icon)
+            .nullable()
+            .optional()
+            .describe('a kebab-case icon name the admin draws, e.g. newspaper; null clears it'),
+          layout: z
+            .record(z.string(), z.any())
+            .nullable()
+            .optional()
+            .describe(
+              'editor-only entry form layout, never delivered: { tabs: [{ apiId, name, groups: ' +
+                '[{ name?, fields: [top-level field apiIds], collapsed? }] }] }; each field ' +
+                'placed at most once, unplaced fields follow on the first tab; null clears it',
+            ),
           ...scopeArgs,
         }),
       ),
@@ -82,6 +112,11 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           displayField: args.displayField,
           ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
           ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
+          ...(args.group !== undefined ? { group: args.group } : {}),
+          ...(args.description !== undefined ? { description: args.description } : {}),
+          ...(args.icon !== undefined ? { icon: args.icon } : {}),
+          // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
+          ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
           fields: args.fields as any,
         }),

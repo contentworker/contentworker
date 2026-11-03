@@ -1,10 +1,13 @@
 import type {
+  ArrayItemType,
   ComponentVariant,
   ContentType,
+  DateFormat,
   EntryFields,
   FieldDefinition,
   FieldOption,
   LocaleConfig,
+  ResolvedTab,
 } from '@contentworker/domain';
 import {
   BLOCK_KEY,
@@ -16,6 +19,8 @@ import {
   fallbackChain,
   fieldState,
   fieldStates,
+  layoutTabs,
+  mimeTypeAllowed,
   nestedFieldsFor,
   normalizeOptions,
   optionLabel,
@@ -32,6 +37,7 @@ import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent } from '@contentworker/ui/card';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@contentworker/ui/collapsible';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,9 +47,11 @@ import {
 } from '@contentworker/ui/dropdown-menu';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
+import { cn } from '@contentworker/ui/lib/utils';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
 import { Textarea } from '@contentworker/ui/textarea';
-import { Plus } from 'lucide-react';
+import { ChevronRight, Plus } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppExtension, TextDirection } from '../lib/management';
 import { EntityPicker } from './EntityPicker';
@@ -58,6 +66,8 @@ export interface PickOption {
   readonly id: string;
   readonly label: string;
   readonly contentType?: string;
+  /** An asset's file type, so a field limited to some types offers only those. */
+  readonly mimeType?: string;
 }
 
 export interface Pickers {
@@ -88,6 +98,12 @@ type Values = Record<string, Record<string, unknown>>;
 
 /** Per-field, per-locale validation messages from the domain validator. */
 type FieldErrors = Record<string, string>;
+
+/** The top-level field an issue path starts at: `cards` for `cards[2].title`. */
+const topLevel = (path: string): string => path.split(/[.[]/)[0] ?? path;
+
+/** A layout group's key: its tab and its place in the tab. */
+const groupKey = (tab: string, index: number): string => `${tab}:${index}`;
 
 function errorKey(apiId: string, locale: string): string {
   return `${apiId}:${locale}`;
@@ -369,6 +385,48 @@ export function EntryForm(props: {
     [contentType, shown, activeLocale, defaultLocale],
   );
 
+  // The layout's tabs and groups; without one, a single tab of every field (drawn without a bar).
+  const tabs = useMemo(
+    () => layoutTabs(contentType.fields, contentType.layout),
+    [contentType.fields, contentType.layout],
+  );
+  /** Each top-level field's tab, and the collapsed group holding it, if any. */
+  const { tabOf, groupOf } = useMemo(() => {
+    const tabOf = new Map<string, string>();
+    const groupOf = new Map<string, string>();
+    for (const t of tabs) {
+      t.groups.forEach((g, gi) => {
+        for (const f of g.fields) {
+          tabOf.set(f.apiId, t.apiId);
+          if (g.collapsed) groupOf.set(f.apiId, groupKey(t.apiId, gi));
+        }
+      });
+    }
+    return { tabOf, groupOf };
+  }, [tabs]);
+  const [activeTab, setActiveTab] = useState(
+    () => (focusField && tabOf.get(focusField.apiId)) || tabs[0]?.apiId || '',
+  );
+  // Collapsed groups the editor opened, or that a deep link or an error opened for them.
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => {
+    const opened = focusField && groupOf.get(focusField.apiId);
+    return new Set(opened ? [opened] : []);
+  });
+  const toggleGroup = (key: string, open: boolean) =>
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  /** Brings a top-level field into view: its tab, and its group when collapsed. */
+  const showField = (apiId: string) => {
+    const tab = tabOf.get(apiId);
+    if (tab) setActiveTab(tab);
+    const group = groupOf.get(apiId);
+    if (group) toggleGroup(group, true);
+  };
+
   const localeConfig = useMemo<LocaleConfig>(
     () => ({ defaultLocale, locales, fallbacks }),
     [defaultLocale, locales, fallbacks],
@@ -442,9 +500,22 @@ export function EntryForm(props: {
       // If the active locale is clean, jump to the first locale that isn't, so
       // the failure is never invisible (errors on unmounted tabs).
       const errorLocales = new Set(Object.keys(errors).map((k) => k.split(':')[1] ?? ''));
-      if (!errorLocales.has(activeLocale)) {
-        const target = locales.find((l) => errorLocales.has(l));
-        if (target) setActiveLocale(target);
+      const errorLocale = errorLocales.has(activeLocale)
+        ? activeLocale
+        : locales.find((l) => errorLocales.has(l));
+      if (errorLocale && errorLocale !== activeLocale) setActiveLocale(errorLocale);
+      // The same for tabs: unless the tab on screen holds an error, go to the first that does,
+      // and open every collapsed group that holds one.
+      const failing = Object.keys(errors)
+        .filter((k) => k.split(':')[1] === errorLocale)
+        .map((k) => topLevel(k.split(':')[0] ?? ''));
+      if (!failing.some((apiId) => tabOf.get(apiId) === activeTab)) {
+        const first = tabs.find((t) => failing.some((apiId) => tabOf.get(apiId) === t.apiId));
+        if (first) setActiveTab(first.apiId);
+      }
+      for (const apiId of failing) {
+        const group = groupOf.get(apiId);
+        if (group) toggleGroup(group, true);
       }
       setFailedSubmits((n) => n + 1);
       props.onValidationFailed?.(issues.length);
@@ -464,6 +535,16 @@ export function EntryForm(props: {
     return out;
   }, [fieldErrors, defaultLocale]);
 
+  // Per-tab error counts, for the badges on the tab bar.
+  const errorsByTab = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const key of Object.keys(fieldErrors)) {
+      const tab = tabOf.get(topLevel(key.split(':')[0] ?? ''));
+      if (tab) out.set(tab, (out.get(tab) ?? 0) + 1);
+    }
+    return out;
+  }, [fieldErrors, tabOf]);
+
   const fieldName = (path: string, locale: string) =>
     labelForPath(
       contentType.fields,
@@ -472,6 +553,143 @@ export function EntryForm(props: {
         Object.entries(shown).map(([apiId, byLocale]) => [apiId, byLocale[locale]]),
       ),
     );
+
+  /** One top-level field, or null when it is not drawn here (hidden, or another locale's). */
+  const renderField = (f: FieldDefinition) => {
+    // Non-localized fields are only editable on the default-locale tab.
+    const locale = f.localized ? activeLocale : defaultLocale;
+    if (!f.localized && activeLocale !== defaultLocale) return null;
+    // A field its rules hide is not drawn at all; its value stays and is still sent.
+    const state = states.get(f.apiId);
+    if (state?.hidden) return null;
+    const id = `field-${f.apiId}`;
+    const err = fieldErrors[errorKey(f.apiId, locale)];
+    const hint =
+      f.localized && locales.length > 1 ? fallbackHint(f, shown, locale, localeConfig) : undefined;
+    const helpId = f.help ? `${id}-help` : undefined;
+    const ruleId = state?.disabled ? `${id}-rule` : undefined;
+    return (
+      <div className="space-y-1.5" key={f.apiId}>
+        <Label id={`${id}-label`} htmlFor={id} className="gap-1">
+          {f.name}
+          {f.required && <RequiredMark />}
+          {locales.length > 1 && (
+            <span className="ml-1 font-normal text-muted-foreground">
+              {f.localized ? activeLocale : 'all locales'}
+            </span>
+          )}
+        </Label>
+        <DisabledBy state={state}>
+          <FieldInput
+            id={id}
+            field={f}
+            value={shown[f.apiId]?.[locale]}
+            disabled={state?.disabled}
+            invalid={Boolean(err)}
+            errorId={err ? `${id}-error` : undefined}
+            hintId={[helpId, ruleId].filter(Boolean).join(' ') || undefined}
+            pickers={props.pickers}
+            editor={fieldEditors?.find(
+              (e) => !e.fieldTypes || e.fieldTypes.length === 0 || e.fieldTypes.includes(f.type),
+            )}
+            editorContext={props.entryContext}
+            locale={locale}
+            path={f.apiId}
+            onSearchEntries={props.onSearchEntries}
+            errorFor={(p) => fieldErrors[errorKey(p, locale)]}
+            // A nested edit clears its own error, not the whole
+            // component's: fixing card 1 must not make card 2 look fine.
+            onEdited={(p) => clearError(p, locale)}
+            onChange={(v) => set(f.apiId, locale, v)}
+          />
+        </DisabledBy>
+        {f.help && (
+          <p id={helpId} className="max-w-measure text-muted-foreground text-xs">
+            {f.help}
+          </p>
+        )}
+        {ruleId && (
+          <p id={ruleId} className="max-w-measure text-muted-foreground text-xs">
+            {disabledReason(
+              f,
+              contentType.fields,
+              Object.fromEntries(
+                contentType.fields.map((g) => [
+                  g.apiId,
+                  shown[g.apiId]?.[g.localized ? locale : defaultLocale],
+                ]),
+              ),
+            )}
+          </p>
+        )}
+        {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}
+        {err && (
+          <p id={`${id}-error`} className="text-xs text-destructive">
+            {err}
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  const shared = contentType.fields.filter((f) => !f.localized).length;
+  /** One tab of the form: its groups, a named group under its heading (closed ones collapsed). */
+  const renderTab = (tab: ResolvedTab) => (
+    <Card>
+      <CardContent className="space-y-5">
+        {activeLocale !== defaultLocale && shared > 0 && (
+          <p className="text-muted-foreground text-xs">
+            {shared} {shared === 1 ? 'field' : 'fields'} shared across all locales{' '}
+            {shared === 1 ? 'is' : 'are'} edited on the {defaultLocale} (default) tab.
+          </p>
+        )}
+        {tab.groups.map((g, gi) => {
+          const drawn = g.fields.map(renderField).filter(Boolean);
+          // A group with nothing to draw here (hidden, or another locale's) leaves no heading.
+          if (drawn.length === 0) return null;
+          const key = groupKey(tab.apiId, gi);
+          if (!g.name) {
+            return (
+              <div key={key} className="space-y-5">
+                {drawn}
+              </div>
+            );
+          }
+          const headingId = `group-${tab.apiId}-${gi}`;
+          if (g.collapsed) {
+            const open = openGroups.has(key);
+            return (
+              <Collapsible
+                key={key}
+                open={open}
+                onOpenChange={(next) => toggleGroup(key, next)}
+                className="space-y-4 border-t pt-4"
+              >
+                <CollapsibleTrigger asChild>
+                  <Button type="button" variant="ghost" size="sm" className="-ml-2 gap-1.5">
+                    <ChevronRight
+                      aria-hidden="true"
+                      className={cn('size-4 transition-transform', open && 'rotate-90')}
+                    />
+                    <span className="section-title">{g.name}</span>
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-5">{drawn}</CollapsibleContent>
+              </Collapsible>
+            );
+          }
+          return (
+            <section key={key} aria-labelledby={headingId} className="space-y-5 border-t pt-4">
+              <h3 id={headingId} className="section-title">
+                {g.name}
+              </h3>
+              {drawn}
+            </section>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
 
   return (
     <form id={props.formId} onSubmit={submit} className="max-w-2xl space-y-4">
@@ -519,101 +737,35 @@ export function EntryForm(props: {
           </div>
         )}
 
-        <Card>
-          <CardContent className="space-y-5">
-            {activeLocale !== defaultLocale &&
-              (() => {
-                const shared = contentType.fields.filter((f) => !f.localized).length;
-                return shared > 0 ? (
-                  <p className="text-muted-foreground text-xs">
-                    {shared} {shared === 1 ? 'field' : 'fields'} shared across all locales{' '}
-                    {shared === 1 ? 'is' : 'are'} edited on the {defaultLocale} (default) tab.
-                  </p>
-                ) : null;
-              })()}
-            {contentType.fields.map((f) => {
-              // Non-localized fields are only editable on the default-locale tab.
-              const locale = f.localized ? activeLocale : defaultLocale;
-              if (!f.localized && activeLocale !== defaultLocale) return null;
-              // A field its rules hide is not drawn at all; its value stays and is still sent.
-              const state = states.get(f.apiId);
-              if (state?.hidden) return null;
-              const id = `field-${f.apiId}`;
-              const err = fieldErrors[errorKey(f.apiId, locale)];
-              const hint =
-                f.localized && locales.length > 1
-                  ? fallbackHint(f, shown, locale, localeConfig)
-                  : undefined;
-              const helpId = f.help ? `${id}-help` : undefined;
-              const ruleId = state?.disabled ? `${id}-rule` : undefined;
-              return (
-                <div className="space-y-1.5" key={f.apiId}>
-                  <Label id={`${id}-label`} htmlFor={id} className="gap-1">
-                    {f.name}
-                    {f.required && <RequiredMark />}
-                    {locales.length > 1 && (
-                      <span className="ml-1 font-normal text-muted-foreground">
-                        {f.localized ? activeLocale : 'all locales'}
+        {tabs.length > 1 ? (
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList aria-label="Sections of the entry">
+              {tabs.map((t) => {
+                const count = errorsByTab.get(t.apiId) ?? 0;
+                return (
+                  <TabsTrigger key={t.apiId} value={t.apiId} className="px-3">
+                    {t.name}
+                    {count > 0 && (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-2xl bg-destructive/15 px-1 text-xs text-destructive">
+                        {count}
+                        <span className="sr-only">
+                          {` validation ${count === 1 ? 'error' : 'errors'}`}
+                        </span>
                       </span>
                     )}
-                  </Label>
-                  <DisabledBy state={state}>
-                    <FieldInput
-                      id={id}
-                      field={f}
-                      value={shown[f.apiId]?.[locale]}
-                      disabled={state?.disabled}
-                      invalid={Boolean(err)}
-                      errorId={err ? `${id}-error` : undefined}
-                      hintId={[helpId, ruleId].filter(Boolean).join(' ') || undefined}
-                      pickers={props.pickers}
-                      editor={fieldEditors?.find(
-                        (e) =>
-                          !e.fieldTypes ||
-                          e.fieldTypes.length === 0 ||
-                          e.fieldTypes.includes(f.type),
-                      )}
-                      editorContext={props.entryContext}
-                      locale={locale}
-                      path={f.apiId}
-                      onSearchEntries={props.onSearchEntries}
-                      errorFor={(p) => fieldErrors[errorKey(p, locale)]}
-                      // A nested edit clears its own error, not the whole
-                      // component's: fixing card 1 must not make card 2 look fine.
-                      onEdited={(p) => clearError(p, locale)}
-                      onChange={(v) => set(f.apiId, locale, v)}
-                    />
-                  </DisabledBy>
-                  {f.help && (
-                    <p id={helpId} className="max-w-measure text-muted-foreground text-xs">
-                      {f.help}
-                    </p>
-                  )}
-                  {ruleId && (
-                    <p id={ruleId} className="max-w-measure text-muted-foreground text-xs">
-                      {disabledReason(
-                        f,
-                        contentType.fields,
-                        Object.fromEntries(
-                          contentType.fields.map((g) => [
-                            g.apiId,
-                            shown[g.apiId]?.[g.localized ? locale : defaultLocale],
-                          ]),
-                        ),
-                      )}
-                    </p>
-                  )}
-                  {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}
-                  {err && (
-                    <p id={`${id}-error`} className="text-xs text-destructive">
-                      {err}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+            {tabs.map((t) => (
+              <TabsContent key={t.apiId} value={t.apiId}>
+                {renderTab(t)}
+              </TabsContent>
+            ))}
+          </Tabs>
+        ) : (
+          tabs[0] && renderTab(tabs[0])
+        )}
 
         {Object.keys(fieldErrors).length > 0 && (
           <div
@@ -628,9 +780,11 @@ export function EntryForm(props: {
             <ul className="space-y-0.5">
               {Object.entries(fieldErrors).map(([key, message]) => {
                 const [apiId = '', loc = defaultLocale] = key.split(':');
+                const tab = tabOf.get(topLevel(apiId));
+                const here = loc === activeLocale && (tab === undefined || tab === activeTab);
                 return (
                   <li key={key} className="text-destructive">
-                    {loc === activeLocale ? (
+                    {here ? (
                       <span>
                         {fieldName(apiId, loc)} ({loc}): {message}
                       </span>
@@ -638,7 +792,10 @@ export function EntryForm(props: {
                       <button
                         type="button"
                         className="underline underline-offset-2"
-                        onClick={() => setActiveLocale(loc)}
+                        onClick={() => {
+                          setActiveLocale(loc);
+                          if (tab !== undefined) showField(topLevel(apiId));
+                        }}
                       >
                         {fieldName(apiId, loc)} ({loc}): {message}
                       </button>
@@ -799,6 +956,11 @@ function FieldInput(props: {
     if (linkType === 'Entry' && allowed?.length) {
       options = options.filter((o) => !o.contentType || allowed.includes(o.contentType));
     }
+    // Only the files the field takes: the server refuses any other on save.
+    const mimes = field.validations?.assetMimeTypes;
+    if (linkType === 'Asset' && Array.isArray(mimes) && mimes.length > 0) {
+      options = options.filter((o) => !o.mimeType || mimeTypeAllowed(o.mimeType, mimes));
+    }
     const currentId = (value as { id?: string } | undefined)?.id ?? '';
     return (
       <EntityPicker
@@ -888,13 +1050,13 @@ function FieldInput(props: {
   }
   if (field.type === 'Date') {
     return (
-      <Input
+      <DateInput
         id={id}
         className={inputClass}
-        {...aria}
-        type="date"
-        value={typeof value === 'string' ? value : ''}
-        onChange={(e) => onChange(e.target.value)}
+        aria={aria}
+        format={field.format}
+        value={value}
+        onChange={onChange}
       />
     );
   }
@@ -942,6 +1104,19 @@ function FieldInput(props: {
   if (field.type === 'Array' && field.items?.type === 'Symbol') {
     return (
       <SymbolListInput id={id} label={field.name} aria={aria} value={value} onChange={onChange} />
+    );
+  }
+  if (field.type === 'Array' && field.items && LIST_ITEM_TYPES.has(field.items.type)) {
+    return (
+      <ScalarListInput
+        id={id}
+        label={field.name}
+        itemType={field.items.type}
+        format={field.items.format}
+        aria={aria}
+        value={value}
+        onChange={onChange}
+      />
     );
   }
   // Complex types (Array of Links, JSON, Location): raw JSON editor for the MVP.
@@ -1451,6 +1626,143 @@ function SymbolListInput(props: {
         }}
         onBlur={() => draft.trim() && add(draft)}
       />
+    </div>
+  );
+}
+
+/** The input type and the value it edits, per Date format. */
+const DATE_INPUT: Readonly<Record<DateFormat, 'date' | 'datetime-local' | 'time'>> = {
+  date: 'date',
+  datetime: 'datetime-local',
+  time: 'time',
+};
+
+/**
+ * What a date input can show of a stored value. A `datetime-local` input takes no seconds' fraction
+ * or offset, so a stored `2026-11-03T14:30:00Z` shows as `2026-11-03T14:30`; the stored value is
+ * only replaced when the editor changes the input.
+ */
+function dateInputValue(value: unknown, format: DateFormat | undefined): string {
+  if (typeof value !== 'string') return '';
+  if (format === 'datetime') return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.exec(value)?.[0] ?? '';
+  return value;
+}
+
+/** A Date value, picked by its format: a date, a date and time, or a time of day. */
+function DateInput(props: {
+  id: string;
+  className?: string;
+  aria: Record<string, string | boolean | undefined>;
+  'aria-label'?: string;
+  format: DateFormat | undefined;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  // Without a format, as before formats existed: a date picker.
+  const type = props.format ? DATE_INPUT[props.format] : 'date';
+  return (
+    <Input
+      id={props.id}
+      className={props.className}
+      {...props.aria}
+      aria-label={props['aria-label']}
+      type={type}
+      // Seconds are kept when typed or stored; the picker offers minutes.
+      step={props.format === 'time' || props.format === 'datetime' ? 60 : undefined}
+      value={dateInputValue(props.value, props.format)}
+      onChange={(e) => props.onChange(e.target.value === '' ? undefined : e.target.value)}
+    />
+  );
+}
+
+/** The element types a list editor handles value by value; Symbol lists keep their chips. */
+const LIST_ITEM_TYPES: ReadonlySet<ArrayItemType> = new Set(['Text', 'Integer', 'Number', 'Date']);
+
+/**
+ * A list of scalars (Text, Integer, Number or Date) edited one value per row: each with the input
+ * its type takes, named "<Field> item N" since the rows repeat, and Remove; Add item appends an
+ * empty one. Numbers are kept as numbers; an emptied row is dropped from the value.
+ */
+function ScalarListInput(props: {
+  id: string;
+  label: string;
+  itemType: ArrayItemType;
+  format: DateFormat | undefined;
+  aria: Record<string, string | boolean | undefined>;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const { id, label, itemType, format } = props;
+  const stored = Array.isArray(props.value) ? (props.value as unknown[]) : [];
+  // Rows being typed into, including an added empty one, which the value itself can't hold.
+  const [rows, setRows] = useState<unknown[]>(stored);
+  useEffect(() => {
+    setRows((current) => {
+      const kept = current.filter((r) => r !== undefined && r !== '');
+      return JSON.stringify(kept) === JSON.stringify(stored) ? current : stored;
+    });
+  }, [stored]);
+  const emit = (next: unknown[]) => {
+    setRows(next);
+    const value = next.filter((r) => r !== undefined && r !== '' && !Number.isNaN(r));
+    props.onChange(value.length > 0 ? value : undefined);
+  };
+  const numeric = itemType === 'Integer' || itemType === 'Number';
+  return (
+    <div className="space-y-2">
+      {rows.map((item, i) => {
+        const name = `${label} item ${i + 1}`;
+        const change = (v: unknown) => emit(rows.map((r, j) => (j === i ? v : r)));
+        return (
+          <div key={i} className="flex items-start gap-2">
+            {itemType === 'Date' ? (
+              <DateInput
+                id={i === 0 ? id : `${id}-${i}`}
+                aria={{}}
+                aria-label={name}
+                format={format}
+                value={item}
+                onChange={change}
+              />
+            ) : itemType === 'Text' ? (
+              <Textarea
+                id={i === 0 ? id : `${id}-${i}`}
+                aria-label={name}
+                rows={2}
+                value={typeof item === 'string' ? item : ''}
+                onChange={(e) => change(e.target.value)}
+              />
+            ) : (
+              <Input
+                id={i === 0 ? id : `${id}-${i}`}
+                aria-label={name}
+                type="number"
+                step={itemType === 'Integer' ? 1 : 'any'}
+                value={typeof item === 'number' ? String(item) : ''}
+                onChange={(e) => change(e.target.value === '' ? undefined : Number(e.target.value))}
+              />
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Remove ${name}`}
+              onClick={() => emit(rows.filter((_, j) => j !== i))}
+            >
+              Remove
+            </Button>
+          </div>
+        );
+      })}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-describedby={props.aria['aria-describedby'] as string | undefined}
+        onClick={() => setRows([...rows, numeric ? undefined : ''])}
+      >
+        <Plus className="size-4" /> Add item
+      </Button>
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import {
   assertEntryFieldsValid,
   type ContentType,
+  DATE_FORMAT_EXAMPLES,
+  type DateFormat,
   type EntryFields,
   type FieldDefinition,
   NotFoundError,
@@ -60,11 +62,19 @@ function jsonTypeFor(field: FieldDefinition): Record<string, unknown> {
       return {
         ...base,
         type: 'string',
-        description: `${describeFieldForModel(field)} (ISO-8601 date)`,
+        description: `${describeFieldForModel(field)} (${dateWritten(field.format)})`,
       };
     default:
       return { ...base, type: 'string' };
   }
+}
+
+/** How a Date value is written, for the model: its format's form, or any ISO-8601 date. */
+function dateWritten(format: DateFormat | undefined): string {
+  if (format === 'date') return `a date, ${DATE_FORMAT_EXAMPLES.date}`;
+  if (format === 'datetime') return `a date and time, ${DATE_FORMAT_EXAMPLES.datetime}`;
+  if (format === 'time') return `a time of day, ${DATE_FORMAT_EXAMPLES.time}`;
+  return 'ISO-8601 date';
 }
 
 /**

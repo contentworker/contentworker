@@ -15,11 +15,15 @@ export type Field = FieldDefinition;
 
 /** The draft of each type: what `POST …/content-types` takes, without server bookkeeping. */
 export function toDrafts(types: readonly ContentType[]): ContentTypeDraft[] {
-  return types.map(({ apiId, name, displayField, fields }) => ({
+  return types.map(({ apiId, name, displayField, fields, group, description, icon, layout }) => ({
     apiId,
     name,
     displayField,
     fields,
+    ...(group ? { group } : {}),
+    ...(description ? { description } : {}),
+    ...(icon ? { icon } : {}),
+    ...(layout ? { layout } : {}),
   }));
 }
 
@@ -187,6 +191,21 @@ export function planModel(
       changes.push(
         typeChange(draft.apiId, `displayField ${live.displayField} → ${draft.displayField}`),
       );
+    }
+    // Left out of the file, these keep what the space has (as the API does), so only a value the
+    // file states is compared.
+    for (const key of ['group', 'description', 'icon'] as const) {
+      const wanted = draft[key];
+      if (wanted !== undefined && (wanted ?? undefined) !== live[key]) {
+        const show = (v: unknown) => JSON.stringify(v ?? null);
+        changes.push(typeChange(draft.apiId, `${key} ${show(live[key])} → ${show(wanted)}`));
+      }
+    }
+    if (
+      draft.layout !== undefined &&
+      JSON.stringify(draft.layout ?? null) !== JSON.stringify(live.layout ?? null)
+    ) {
+      changes.push(typeChange(draft.apiId, draft.layout ? 'layout changed' : 'layout removed'));
     }
     diffFields(draft.apiId, normalizeFields(live.fields), draft.fields, changes);
     return {

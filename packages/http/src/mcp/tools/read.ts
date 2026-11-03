@@ -74,8 +74,9 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
         '`value`), and `validations.messages` (the error text a broken rule reports). `rules` ' +
         'hide or disable a field while a sibling matches ({ action, when: { field, operator, ' +
         'value } }), judged on the values you write: leave a hidden field empty (it is not ' +
-        'required), and send a disabled one unchanged (a change is refused). Read them before ' +
-        'writing an entry.',
+        'required), and send a disabled one unchanged (a change is refused). A Date field’s ' +
+        '`format` says how to write it (date YYYY-MM-DD, datetime YYYY-MM-DDThh:mm, time ' +
+        'hh:mm). Read them before writing an entry.',
       inputSchema: toolSchema('model_get_content_type', () =>
         z.object({ apiId: z.string(), ...scopeArgs }),
       ),

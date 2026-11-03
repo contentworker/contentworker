@@ -1,7 +1,11 @@
 import { ConflictError, ValidationError } from '../errors';
 import type { ContentTypeStatus } from '../types';
+import { DATE_FORMAT_EXAMPLES, dateSortKey } from './dates';
 import {
+  ARRAY_ITEM_TYPES,
   type ComponentVariant,
+  DATE_FORMATS,
+  type DateFormat,
   FIELD_GUIDANCE_LIMITS,
   type FieldDefinition,
   type FieldOption,
@@ -18,6 +22,8 @@ import {
   unsafeRegexReason,
 } from './field';
 import { MAX_FIELD_RULES, ruleProblem, ruleTarget } from './field-rules';
+import { type ContentTypeLayout, checkLayout } from './layout';
+import { isPatternPreset, PATTERN_PRESETS, presetRegexp } from './patterns';
 
 /**
  * A content type: the schema for a class of entries. Definitions are versioned
@@ -41,6 +47,17 @@ export interface ContentType {
    * ({@link singletonClaim}), so two concurrent creates can't both win.
    */
   readonly singleton?: true;
+  /** The admin's sidebar lists types under their group (`Marketing`, `Docs`). Plain text. */
+  readonly group?: string;
+  /** What the type is for, for editors choosing one and agents reading the model. Plain text. */
+  readonly description?: string;
+  /** A short icon name the admin draws beside the type, in kebab case (`newspaper`). */
+  readonly icon?: string;
+  /**
+   * How the admin's entry form arranges the fields into tabs and groups. Editor-only: it changes
+   * nothing stored or validated, and Delivery never serves it.
+   */
+  readonly layout?: ContentTypeLayout;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -54,7 +71,33 @@ export interface ContentTypeDraft {
   urlPattern?: string | null;
   /** Holds at most one entry ({@link ContentType.singleton}). Left out on a revision, kept. */
   singleton?: boolean;
+  /** Each of these: left out keeps it on a revision; `null` (or blank text) clears it. */
+  group?: string | null;
+  description?: string | null;
+  icon?: string | null;
+  layout?: ContentTypeLayout | null;
 }
+
+/** The longest group and description, and icon name. */
+export const CONTENT_TYPE_LIMITS = { group: 100, description: 2000, icon: 40 } as const;
+
+const ICON_NAME = /^[a-z][a-z0-9-]*$/;
+
+/** What a revision may change; everything but the apiId. */
+export type ContentTypeChanges = Partial<
+  Pick<
+    ContentTypeDraft,
+    | 'name'
+    | 'displayField'
+    | 'fields'
+    | 'urlPattern'
+    | 'singleton'
+    | 'group'
+    | 'description'
+    | 'icon'
+    | 'layout'
+  >
+>;
 
 /**
  * Validates a content type definition for internal consistency and returns a
@@ -67,15 +110,17 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
       { field: 'apiId', message: `Invalid content type apiId "${draft.apiId}"` },
     ]);
   }
-  assertFieldsValid(draft.fields, draft.displayField, undefined);
-  const urlPattern = draft.urlPattern ? checkUrlPattern(draft.urlPattern, draft.fields) : undefined;
+  const fields = compilePatternPresets(draft.fields);
+  assertFieldsValid(fields, draft.displayField, undefined);
+  const urlPattern = draft.urlPattern ? checkUrlPattern(draft.urlPattern, fields) : undefined;
   return {
     apiId: draft.apiId,
     name: draft.name,
     displayField: draft.displayField,
-    fields: [...draft.fields].map(withoutBlankGuidance).sort((a, b) => a.position - b.position),
+    fields: [...fields].map(withoutBlankGuidance).sort((a, b) => a.position - b.position),
     ...(urlPattern ? { urlPattern } : {}),
     ...(draft.singleton ? { singleton: true as const } : {}),
+    ...typeDetails(draft, undefined, fields),
     version: 1,
     status: 'draft',
   };
@@ -86,20 +131,23 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
  * current definition is the baseline for the checks that only refuse what is
  * new, so a type stored before a check existed can still be revised.
  */
-export function reviseContentType(
-  current: ContentType,
-  changes: Partial<
-    Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern' | 'singleton'>
-  >,
-): ContentType {
-  const fields = changes.fields ?? [...current.fields];
+export function reviseContentType(current: ContentType, changes: ContentTypeChanges): ContentType {
+  const fields = compilePatternPresets(changes.fields ?? [...current.fields]);
   const displayField = changes.displayField ?? current.displayField;
   assertFieldsValid(fields, displayField, current.fields);
   // Checked against the revised fields too: removing the slug a kept pattern names is refused.
   const pattern = changes.urlPattern === undefined ? current.urlPattern : changes.urlPattern;
   const urlPattern = pattern ? checkUrlPattern(pattern, fields) : undefined;
   const singleton = changes.singleton ?? current.singleton === true;
-  const { urlPattern: _old, singleton: _was, ...rest } = current;
+  const {
+    urlPattern: _old,
+    singleton: _was,
+    group: _g,
+    description: _d,
+    icon: _i,
+    layout: _l,
+    ...rest
+  } = current;
   return {
     ...rest,
     name: changes.name ?? current.name,
@@ -107,9 +155,121 @@ export function reviseContentType(
     fields: [...fields].map(withoutBlankGuidance).sort((a, b) => a.position - b.position),
     ...(urlPattern ? { urlPattern } : {}),
     ...(singleton ? { singleton: true as const } : {}),
+    ...typeDetails(changes, current, fields),
     version: current.version + 1,
     status: 'draft',
   };
+}
+
+/**
+ * A type's group, description, icon and layout as stored, from a draft or revision: left out
+ * keeps the current value, `null` or blank text clears it. A value stored as it stands passes
+ * unchecked, so a type saved before a check existed stays editable. The layout is checked against
+ * the fields as revised: a field the revision removes leaves the layout quietly (there is nothing
+ * left to draw), and a kept layout naming a field that is no longer there is pruned the same way.
+ */
+function typeDetails(
+  input: ContentTypeChanges,
+  current: ContentType | undefined,
+  fields: readonly FieldDefinition[],
+): Pick<ContentType, 'group' | 'description' | 'icon' | 'layout'> {
+  const fail = (field: string, message: string): never => {
+    throw new ValidationError([{ field, message }]);
+  };
+  const out: { group?: string; description?: string; icon?: string; layout?: ContentTypeLayout } =
+    {};
+  const text = (key: 'group' | 'description' | 'icon') => {
+    const given: unknown = input[key];
+    if (given === undefined) {
+      const kept = current?.[key];
+      if (kept !== undefined) out[key] = kept;
+      return;
+    }
+    if (given === null || (typeof given === 'string' && given.trim() === '')) return;
+    if (sameJson(given, current?.[key])) {
+      out[key] = given as string;
+      return;
+    }
+    if (typeof given !== 'string') return fail(key, `${key} must be text`);
+    const value = key === 'description' ? given : given.trim();
+    if (value.length > CONTENT_TYPE_LIMITS[key]) {
+      fail(key, `${key} must be at most ${CONTENT_TYPE_LIMITS[key]} characters`);
+    }
+    if (key === 'icon' && !ICON_NAME.test(value)) {
+      fail('icon', 'An icon is a kebab-case name, e.g. newspaper or shopping-bag');
+    }
+    out[key] = value;
+  };
+  text('group');
+  text('description');
+  text('icon');
+
+  const known = new Set(fields.map((f) => f.apiId));
+  if (input.layout === undefined) {
+    // Carried over: whatever no longer names a field goes, so a kept layout never blocks a save.
+    const stale = new Set(
+      (current?.layout?.tabs ?? []).flatMap((t) =>
+        (t.groups ?? []).flatMap((g) => (g.fields ?? []).filter((f) => !known.has(f))),
+      ),
+    );
+    const layout = current?.layout ? checkLayout(current.layout, fields, stale) : undefined;
+    if (layout) out.layout = layout;
+  } else if (input.layout !== null) {
+    const removed = new Set(
+      (current?.fields ?? []).map((f) => f.apiId).filter((apiId) => !known.has(apiId)),
+    );
+    const layout = checkLayout(input.layout, fields, removed);
+    if (layout) out.layout = layout;
+  }
+  return out;
+}
+
+/**
+ * Writes each named pattern preset's `pattern` and `flags` into its rule, at every depth, so the
+ * stored rule is a plain screened pattern every reader enforces. An unknown preset is left for
+ * the checks to refuse by name.
+ */
+function compilePatternPresets(fields: readonly FieldDefinition[]): FieldDefinition[] {
+  const rules = (v: FieldValidations | undefined): FieldValidations | undefined => {
+    const preset = v?.regexp?.preset;
+    if (!v || !isPatternPreset(preset)) return v;
+    const compiled = presetRegexp(preset);
+    return sameJson(v.regexp, compiled) ? v : { ...v, regexp: compiled };
+  };
+  // Each level is rebuilt only when something under it changed, as withoutBlankGuidance does.
+  const list = (defs: readonly FieldDefinition[] | undefined) => {
+    const next = defs && compilePatternPresets(defs);
+    return next?.some((g, i) => g !== defs?.[i]) ? next : defs;
+  };
+  return fields.map((f) => {
+    const validations = rules(f.validations);
+    const nested = list(f.fields);
+    const itemRules = rules(f.items?.validations);
+    const itemFields = list(f.items?.fields);
+    const variants = f.items?.variants?.map((v) => {
+      const vf = list(v.fields) ?? v.fields;
+      return vf === v.fields ? v : { ...v, fields: vf };
+    });
+    const variantsChanged = variants?.some((v, i) => v !== f.items?.variants?.[i]) ?? false;
+    const itemsChanged =
+      itemRules !== f.items?.validations || itemFields !== f.items?.fields || variantsChanged;
+    if (validations === f.validations && nested === f.fields && !itemsChanged) return f;
+    return {
+      ...f,
+      ...(validations ? { validations } : {}),
+      ...(nested ? { fields: nested } : {}),
+      ...(f.items && itemsChanged
+        ? {
+            items: {
+              ...f.items,
+              ...(itemRules ? { validations: itemRules } : {}),
+              ...(itemFields ? { fields: itemFields } : {}),
+              ...(variantsChanged ? { variants } : {}),
+            },
+          }
+        : {}),
+    } as FieldDefinition;
+  });
 }
 
 function assertFieldsValid(
@@ -156,8 +316,15 @@ function assertFieldSetValid(
     const before = previous?.find((p) => p.apiId === f.apiId);
     assertGuidanceValid(f, where, before);
     assertRulesValid(f, fields, where, before, inList);
-    const rx = f.validations?.regexp;
-    if (rx) {
+    assertSettingsValid(f, where, before);
+    assertWritableYet(f, where, before);
+    for (const rx of [f.validations?.regexp, f.items?.validations?.regexp]) {
+      if (!rx) continue;
+      if (typeof rx.pattern !== 'string') {
+        throw new ValidationError([
+          { field: where, message: 'validations.regexp needs a pattern or a preset' },
+        ]);
+      }
       const reason = unsafeRegexReason(rx.pattern, rx.flags);
       if (reason) throw new ValidationError([{ field: where, message: reason }]);
     }
@@ -341,6 +508,138 @@ function assertRulesValid(
   }
 }
 
+/** Most MIME types an asset link lists. */
+const MAX_ASSET_MIME_TYPES = 50;
+/** `image/png`, `application/vnd.ms-excel`, or a family, `image/*`. */
+const MIME_TYPE = /^[a-z]+\/(?:\*|[a-z0-9][a-z0-9.+-]*)$/;
+
+/** Why a `validations.assetMimeTypes` list is unusable on `f`, or null. */
+function assetMimeTypesProblem(f: FieldDefinition, list: unknown): string | null {
+  const assetLink =
+    (f.type === 'Link' && f.linkType === 'Asset') ||
+    (f.type === 'Array' && f.items?.type === 'Link' && f.items.linkType === 'Asset');
+  if (!assetLink) return 'validations.assetMimeTypes applies to an asset link';
+  if (!Array.isArray(list) || list.length === 0 || list.length > MAX_ASSET_MIME_TYPES) {
+    return `validations.assetMimeTypes lists 1 to ${MAX_ASSET_MIME_TYPES} MIME types`;
+  }
+  const bad = list.find((m) => typeof m !== 'string' || m.length > 100 || !MIME_TYPE.test(m));
+  return bad === undefined
+    ? null
+    : `${JSON.stringify(bad)} is not a MIME type (image/png) or family (image/*)`;
+}
+
+/** Why a `validations.dateRange` is unusable for a Date of `format`, or null. */
+function dateRangeProblem(range: unknown, format: DateFormat | undefined): string | null {
+  if (typeof range !== 'object' || range === null || Array.isArray(range)) {
+    return 'validations.dateRange is { min?, max? }';
+  }
+  const { min, max } = range as { min?: unknown; max?: unknown };
+  if (min === undefined && max === undefined) return 'validations.dateRange needs a min or a max';
+  const written = format ? `${format} (${DATE_FORMAT_EXAMPLES[format]})` : 'ISO-8601 date';
+  const key = (v: unknown) => (typeof v === 'string' ? dateSortKey(v, format) : null);
+  for (const [name, v] of [
+    ['min', min],
+    ['max', max],
+  ] as const) {
+    if (v !== undefined && key(v) === null) return `dateRange.${name} must be a ${written}`;
+  }
+  const lo = key(min);
+  const hi = key(max);
+  return lo !== null && hi !== null && lo > hi ? 'dateRange.min is later than dateRange.max' : null;
+}
+
+/**
+ * The settings a field's type gives meaning to: a Date's `format` and `dateRange`, an Array's
+ * element `type` and `format`, an asset link's `assetMimeTypes`, a named pattern `preset`. Each is
+ * refused where it would mean nothing, and checked only when new against the stored field.
+ */
+function assertSettingsValid(
+  f: FieldDefinition,
+  where: string,
+  before: FieldDefinition | undefined,
+): void {
+  const fail = (message: string): never => {
+    throw new ValidationError([{ field: where, message }]);
+  };
+  const changed = (a: unknown, b: unknown) => !sameJson(a, b);
+  const formats = DATE_FORMATS.join(', ');
+  if (f.format !== undefined && changed(f.format, before?.format)) {
+    if (f.type !== 'Date') fail(`A ${f.type} field has no format; only a Date does`);
+    if (!(DATE_FORMATS as readonly unknown[]).includes(f.format))
+      fail(`format is one of: ${formats}`);
+  }
+  const items = f.items;
+  if (items && changed(items.type, before?.items?.type)) {
+    if (!(ARRAY_ITEM_TYPES as readonly unknown[]).includes(items.type)) {
+      fail(`items.type is one of: ${ARRAY_ITEM_TYPES.join(', ')}`);
+    }
+  }
+  if (items?.format !== undefined && changed(items.format, before?.items?.format)) {
+    if (items.type !== 'Date') fail('Only a list of Dates has items.format');
+    if (!(DATE_FORMATS as readonly unknown[]).includes(items.format)) {
+      fail(`items.format is one of: ${formats}`);
+    }
+  }
+  const range: unknown = f.validations?.dateRange;
+  if (
+    range !== undefined &&
+    (changed(range, before?.validations?.dateRange) || changed(f.format, before?.format))
+  ) {
+    if (f.type !== 'Date') fail('validations.dateRange applies to a Date field');
+    const problem = dateRangeProblem(range, f.format);
+    if (problem) fail(problem);
+  }
+  const mimes: unknown = f.validations?.assetMimeTypes;
+  if (mimes !== undefined && changed(mimes, before?.validations?.assetMimeTypes)) {
+    const problem = assetMimeTypesProblem(f, mimes);
+    if (problem) fail(problem);
+  }
+  for (const [rx, was] of [
+    [f.validations?.regexp, before?.validations?.regexp],
+    [f.items?.validations?.regexp, before?.items?.validations?.regexp],
+  ] as const) {
+    const preset: unknown = rx?.preset;
+    if (preset !== undefined && !isPatternPreset(preset) && changed(preset, was?.preset)) {
+      fail(
+        `Unknown pattern preset ${JSON.stringify(preset)} (one of: ${Object.keys(PATTERN_PRESETS).join(', ')})`,
+      );
+    }
+  }
+}
+
+/**
+ * Shapes this release reads but does not yet write, because the release before it reads them
+ * wrongly: a time-only Date value (its validator demands a full ISO date, so an entry holding one
+ * could no longer be saved after a rollback) and a list of Text, Integer, Number or Date (its
+ * validator checks no element, its form edits the list as raw JSON and its codegen types it as
+ * strings). Accepted on write by the next release, once this one is deployed everywhere. Only a
+ * new use is refused, so a type that already holds one stays editable.
+ */
+function assertWritableYet(
+  f: FieldDefinition,
+  where: string,
+  before: FieldDefinition | undefined,
+): void {
+  const fail = (message: string): never => {
+    throw new ValidationError([{ field: where, message }]);
+  };
+  const later = 'is read by this release and accepted on write by the next';
+  if (f.format === 'time' && before?.format !== 'time') fail(`A time-only Date field ${later}`);
+  if (f.items?.format === 'time' && before?.items?.format !== 'time') {
+    fail(`A list of time-only Dates ${later}`);
+  }
+  const itemType = f.items?.type;
+  if (
+    (itemType === 'Text' ||
+      itemType === 'Integer' ||
+      itemType === 'Number' ||
+      itemType === 'Date') &&
+    before?.items?.type !== itemType
+  ) {
+    fail(`A list of ${itemType} values ${later}`);
+  }
+}
+
 /** Equal as stored JSON: for the scalars and small objects a revision may carry over unchanged. */
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -472,7 +771,9 @@ function withoutBlankGuidance(f: FieldDefinition): FieldDefinition {
  * - a message goes unless it is text within its cap for a rule the field
  *   declares; an Array element's messages go, as nothing enforces them;
  * - each unusable rule goes (one reading a sibling that is not there, say), and
- *   `rules` with it when none is left.
+ *   `rules` with it when none is left;
+ * - a Date `format`, `dateRange` or asset `assetMimeTypes` the field cannot use
+ *   goes, and an unknown pattern preset leaves its pattern behind.
  */
 export function normalizeLegacyFields(
   fields: readonly FieldDefinition[],
@@ -522,11 +823,14 @@ export function normalizeLegacyFields(
   return fields.map((f) => {
     const { help: _h, placeholder: _p, description: _d, validations: _v, rules: _r, ...rest } = f;
     const kept = usableRules(f);
-    const validations = rules(f.validations, f.type, false);
-    const itemRules = rules(f.items?.validations, f.items?.type ?? 'Symbol', true);
-    const { validations: _iv, ...itemRest } = f.items ?? {};
+    const validations = usableSettings(f, rules(f.validations, f.type, false));
+    const itemRules = presetKnown(rules(f.items?.validations, f.items?.type ?? 'Symbol', true));
+    const { validations: _iv, format: itemFormat, ...itemRest } = f.items ?? {};
     const items = f.items && {
       ...(itemRest as NonNullable<FieldDefinition['items']>),
+      ...(f.items.type === 'Date' && (DATE_FORMATS as readonly unknown[]).includes(itemFormat)
+        ? { format: itemFormat }
+        : {}),
       ...(itemRules ? { validations: itemRules } : {}),
       ...(f.items.fields ? { fields: normalizeLegacyFields(f.items.fields, true) } : {}),
       ...(f.items.variants
@@ -538,8 +842,12 @@ export function normalizeLegacyFields(
           }
         : {}),
     };
+    const { format, ...unformatted } = rest;
     return {
-      ...rest,
+      ...unformatted,
+      ...(f.type === 'Date' && (DATE_FORMATS as readonly unknown[]).includes(format)
+        ? { format }
+        : {}),
       ...guidance(f),
       ...(validations ? { validations } : {}),
       ...(kept.length > 0 ? { rules: kept } : {}),
@@ -547,6 +855,40 @@ export function normalizeLegacyFields(
       ...(items ? { items } : {}),
     };
   });
+}
+
+/** A rule naming a preset this release does not know keeps its pattern and loses the name. */
+function presetKnown(v: FieldValidations | undefined): FieldValidations | undefined {
+  const rx = v?.regexp;
+  if (!v || !rx || rx.preset === undefined || isPatternPreset(rx.preset)) return v;
+  const { preset: _p, ...plain } = rx;
+  const { regexp: _r, ...rest } = v;
+  return typeof plain.pattern === 'string' ? { ...v, regexp: plain } : rest;
+}
+
+/**
+ * A field's validations without the settings its type cannot use (see `assertSettingsValid`): a
+ * date range that does not read in the field's format, MIME types on anything but an asset link,
+ * an unknown preset.
+ */
+function usableSettings(
+  f: FieldDefinition,
+  v: FieldValidations | undefined,
+): FieldValidations | undefined {
+  const known = presetKnown(v);
+  if (!known) return known;
+  const format = (DATE_FORMATS as readonly unknown[]).includes(f.format) ? f.format : undefined;
+  const { dateRange, assetMimeTypes, ...rest } = known;
+  const out: FieldValidations = {
+    ...rest,
+    ...(dateRange !== undefined && f.type === 'Date' && dateRangeProblem(dateRange, format) === null
+      ? { dateRange }
+      : {}),
+    ...(assetMimeTypes !== undefined && assetMimeTypesProblem(f, assetMimeTypes) === null
+      ? { assetMimeTypes }
+      : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** The attributes a nested field may not carry. See COMPONENT_NESTED_RULES. */

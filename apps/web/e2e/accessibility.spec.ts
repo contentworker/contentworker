@@ -14,6 +14,7 @@ import {
   seedCms,
   seedGuidedType,
   seedIngestFindings,
+  seedLaidOutType,
   seedRuledType,
   stubLocales,
   uploadAssetBytes,
@@ -961,4 +962,32 @@ test('a content type’s clone and delete dialogs have no accessibility violatio
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('checkbox', { name: /Also delete its 1 entry/ })).toBeVisible();
   await scan(page, testInfo);
+});
+
+test('the content type dialog’s settings and layout have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  await seedLaidOutType(request);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Happening”' }).click();
+  await page.getByRole('button', { name: /^Settings for Day/ }).click();
+  await expect(page.getByLabel('Format for Day')).toBeVisible();
+  await page.getByRole('button', { name: /^Settings for Note/ }).click();
+  await expect(page.getByLabel('Pattern for Note')).toBeVisible();
+  await expect(page.getByLabel('Name of tab 1')).toBeVisible();
+  await expect(page.getByLabel('Tab for Day')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('an entry form in tabs with a named group has no accessibility violations', async ({
+  page,
+  request,
+}, info) => {
+  test.skip(info.project.name.startsWith('iphone'), 'the editor is review-only on a phone');
+  await seedLaidOutType(request);
+  await openCms(page, '/content/happening/new');
+  await page.getByRole('tab', { name: 'When' }).click({ timeout: 15_000 });
+  await expect(page.getByRole('region', { name: 'Timing' })).toBeVisible();
+  await scan(page, info);
 });

@@ -31,7 +31,10 @@ Everything below is built and tested on v2.
 - **Content.** Spaces, environments (create, delete) and aliases; locales with fallback chains; typed fields with
   validations (labelled `in` options, custom messages), guidance for editors and agents (`help`,
   `placeholder`, `description`), conditional field rules (hide or disable a field while a sibling
-  matches, judged in the domain on every surface), components and unique values; the entry lifecycle (draft → published → archived,
+  matches, judged in the domain on every surface), components and unique values; model
+  ergonomics (a group, description and icon per content type, the sidebar grouped by them, an
+  editor-only layout of tabs and field groups, date and date-and-time formats with `dateRange`,
+  asset MIME rules on asset links, named pattern presets); the entry lifecycle (draft → published → archived,
   trash, purge, duplicate); versions with a readable diff (per field and locale, by type: words,
   rich-text blocks, list moves) and restore; references and `include`; rich text
   with HTML import; slugs; redirects (delivery data a front end or edge worker applies: exact and
@@ -209,9 +212,8 @@ in-browser model, page-per-language translation, and rich text or styles stored 
   (≤ 4 deep, ≤ 20 predicates), component subfield paths through `json_tree` with bound keys, and
   distinct field values (`…/content-types/:apiId/fields/:field/values`, `entries_field_values`).
 - [ ] **Saved views.** Named filters, sort and columns per content type, personal or shared.
-- [ ] **Model ergonomics.** Groups, description and icon on content types; editor-only tabs and
-  field groups; date, time and datetime formats with `dateRange`; lists of any scalar; asset MIME
-  rules on asset links; named pattern presets.
+- [ ] **Model ergonomics, writers.** Accept time-only Date fields and lists of Text, Integer, Number
+  and Date on write, once the release that reads them is deployed everywhere.
 - [x] **Delivery locales.** A per-locale "delivered" flag (0025, `locale_settings` beside
   `locales`): an undelivered locale is edited and previewed, while Delivery answers 404 for it,
   fallbacks skip it and the sitemap's `hreflang` alternates leave it out; and a text direction,

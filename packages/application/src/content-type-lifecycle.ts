@@ -362,6 +362,10 @@ export async function cloneContentType(
     displayField: from.displayField,
     fields: [...from.fields],
     ...(from.singleton ? { singleton: true } : {}),
+    ...(from.group ? { group: from.group } : {}),
+    ...(from.description ? { description: from.description } : {}),
+    ...(from.icon ? { icon: from.icon } : {}),
+    ...(from.layout ? { layout: from.layout } : {}),
   });
   // Insert-only: a clone (or create) of the same apiId that landed after the read keeps its type.
   try {

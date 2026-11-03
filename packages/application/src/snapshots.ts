@@ -568,6 +568,10 @@ export async function writeSnapshotModel(
       fields: [...ct.fields],
       ...(ct.urlPattern ? { urlPattern: ct.urlPattern } : {}),
       singleton: ct.singleton === true,
+      ...(ct.group ? { group: ct.group } : {}),
+      ...(ct.description ? { description: ct.description } : {}),
+      ...(ct.icon ? { icon: ct.icon } : {}),
+      ...(ct.layout ? { layout: ct.layout } : {}),
     });
     if (ct.status === 'published') await publishContentType(ctx, target, ct.apiId);
   }

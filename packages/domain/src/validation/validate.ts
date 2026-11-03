@@ -1,8 +1,10 @@
 import type { ContentType } from '../content-type/content-type';
+import { dateSortKey, dateValueProblem } from '../content-type/dates';
 import {
   BLOCK_KEY,
   BLOCK_TYPE_KEY,
   type ComponentVariant,
+  type DateFormat,
   type FieldDefinition,
   type FieldValidations,
   optionValue,
@@ -193,11 +195,12 @@ function validateValue(
     case 'Boolean':
       if (typeof value !== 'boolean') push('Expected a boolean');
       break;
-    case 'Date':
-      if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
-        push('Expected an ISO-8601 date string');
-      }
+    case 'Date': {
+      const problem = dateValueProblem(value, field.format);
+      if (problem) push(problem);
+      else checkDateRange(value as string, field.format, v, push);
       break;
+    }
     case 'Location': {
       const loc = value as { lat?: unknown; lon?: unknown };
       if (typeof loc?.lat !== 'number' || typeof loc?.lon !== 'number') {
@@ -257,6 +260,10 @@ function validateValue(
         if (itemType === 'Link' && !isLink(item))
           push('Array item must be a link { id, linkType }');
         if (itemType === 'Symbol' && typeof item !== 'string') push('Array item must be a string');
+        // The other scalars report against the element, so "the third date" is sayable. Element
+        // rules (`items.validations`) are stored but not enforced per element yet.
+        const problem = scalarItemProblem(itemType, field.items?.format, item);
+        if (problem) issues.push({ field: `${path}[${index}]`, locale, message: problem });
         if (itemType === 'Component') {
           // Indexed, so "the third card is missing its title" is sayable.
           const at = `${path}[${index}]`;
@@ -372,6 +379,26 @@ function validateBlocks(
   });
 }
 
+/** Why an element of a list of Text, Integer, Number or Date is not one, or null. */
+function scalarItemProblem(
+  type: string | undefined,
+  format: DateFormat | undefined,
+  item: unknown,
+): string | null {
+  switch (type) {
+    case 'Text':
+      return typeof item === 'string' ? null : 'Expected a string';
+    case 'Integer':
+      return typeof item === 'number' && Number.isInteger(item) ? null : 'Expected an integer';
+    case 'Number':
+      return typeof item === 'number' && Number.isFinite(item) ? null : 'Expected a number';
+    case 'Date':
+      return dateValueProblem(item, format);
+    default:
+      return null;
+  }
+}
+
 function isLink(value: unknown): value is { id: string; linkType: string } {
   const l = value as { id?: unknown; linkType?: unknown };
   return typeof l?.id === 'string' && typeof l?.linkType === 'string';
@@ -391,6 +418,25 @@ function checkIn(
   const allowed = v.in.map(optionValue);
   if (!allowed.includes(value))
     push(ruleMessage(v, 'in') ?? `Value must be one of: ${allowed.join(', ')}`);
+}
+
+function checkDateRange(
+  value: string,
+  format: DateFormat | undefined,
+  v: FieldValidations | undefined,
+  push: (m: string) => void,
+) {
+  const range = v?.dateRange;
+  if (!range) return;
+  const at = dateSortKey(value, format);
+  const min = typeof range.min === 'string' ? dateSortKey(range.min, format) : null;
+  const max = typeof range.max === 'string' ? dateSortKey(range.max, format) : null;
+  if (at === null) return;
+  if (min !== null && at < min)
+    push(ruleMessage(v, 'dateRange') ?? `Must be ${range.min} or later`);
+  if (max !== null && at > max) {
+    push(ruleMessage(v, 'dateRange') ?? `Must be ${range.max} or earlier`);
+  }
 }
 
 function checkRange(value: number, v: FieldValidations | undefined, push: (m: string) => void) {

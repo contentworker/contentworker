@@ -1,6 +1,7 @@
 import {
   ConflictError,
   type ContentType,
+  type ContentTypeChanges,
   type ContentTypeDraft,
   defineContentType,
   type EntryFields,
@@ -39,9 +40,7 @@ export async function updateContentType(
   ctx: AppContext,
   scope: Scope,
   apiId: string,
-  changes: Partial<
-    Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern' | 'singleton'>
-  >,
+  changes: ContentTypeChanges,
 ): Promise<ContentType> {
   const current = await ctx.store.contentTypes.get(scope, apiId);
   if (!current) throw new NotFoundError('ContentType', apiId);

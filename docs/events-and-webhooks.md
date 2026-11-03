@@ -285,7 +285,7 @@ and `packages/http/src/mcp/tools/webhooks.ts`, on the same use-cases and body sc
 without its `secret` or `headers`; the secret is the caller's own and is never echoed:
 
 | Operation  | Route                                                   | MCP tool             |
-| ---------- | ------------------------------------------------------- | -------------------- |
+| ---------- | --------------------------------------------------------- | -------------------- |
 | List       | `GET …/webhooks`                                        | `webhooks_list`      |
 | Create     | `POST …/webhooks` (201)                                 | `webhook_create`     |
 | Update     | `PUT …/webhooks/:id` (partial; omitted fields are kept) | `webhook_update`     |
@@ -352,7 +352,7 @@ failed attempt.
 Domain events (`packages/domain/src/events.ts`):
 
 | `type`                                                                             | Payload (besides `id`, `scope`, `occurredAt`)                                                                                                                                                                        |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `entry.published`                                                                  | `entryId`, `contentTypeApiId`, `version`, `fields`                                                                                                                                                                   |
 | `entry.unpublished`                                                                | `entryId`, `contentTypeApiId`                                                                                                                                                                                        |
 | `entries.published_bulk`                                                           | `jobId`, `chunkId`, `action` (`publish` / `unpublish`), `entryIds`                                                                                                                                                   |

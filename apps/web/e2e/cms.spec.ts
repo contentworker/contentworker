@@ -14,6 +14,7 @@ import {
   seedCms,
   seedGuidedType,
   seedIngestFindings,
+  seedLaidOutType,
   seedRuledType,
   statusOf,
   stubLocales,
@@ -1417,4 +1418,28 @@ test('a field its rules hide appears and goes as its sibling changes, and the en
   // Hidden, so not required: the save goes through.
   await page.getByRole('button', { name: 'Save draft' }).click();
   await expect(page.getByText('Entry created')).toBeVisible();
+});
+
+test('a laid-out type: filed under its group, its entry form in tabs, a date field saved', async ({
+  page,
+  request,
+}) => {
+  await seedLaidOutType(request);
+  await openCms(page, '/content/happening/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  // The content nav files it under its group (wide enough to show the nav).
+  const nav = page.getByRole('navigation', { name: 'Content types' });
+  if (await nav.isVisible()) {
+    await expect(
+      nav.getByRole('list', { name: 'Programme' }).getByRole('link', { name: 'Happening' }),
+    ).toBeVisible();
+  }
+  await page.getByLabel('Title').fill(`Happening ${Date.now()}`);
+  await page.getByRole('tab', { name: 'When' }).click();
+  await expect(page.getByRole('region', { name: 'Timing' })).toBeVisible();
+  await page.getByLabel('Day').fill('2026-11-03');
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
+  await page.getByRole('tab', { name: 'When' }).click();
+  await expect(page.getByLabel('Day')).toHaveValue('2026-11-03');
 });

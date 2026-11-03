@@ -364,14 +364,14 @@ spaces (`grants`: a role id or preset per space).
   refused link in `admin_audit` (`team.invite_*`, `auth.invite_failed`, with a fixed reason, never
   an error's text). No token or token hash is logged or audited.
 
-| Route (`/deployment/invites`) | MCP tool        | Does                                              |
-| ----------------------------- | --------------- | ------------------------------------------------- |
-| `GET ?status=`                | `invites_list`  | Invitations, newest first (never a token)         |
-| `GET /{id}`                   | `invite_get`    | One invitation: its role, grants and status       |
-| `POST`                        | `invite_create` | Invite; the link comes back once (201). `admin` only from a person, not a root token |
-| `POST /{id}/resend`           | `invite_resend` | A new link and expiry; the old ones stop working  |
-| `POST /{id}/revoke`           | `invite_revoke` | End it (an accepted one can't be: 400)            |
-| `POST /lookup`, `POST /accept` | none           | The web app's sign-up handshake                   |
+| Route (`/deployment/invites`)  | MCP tool        | Does                                                                                 |
+| ------------------------------ | --------------- | ------------------------------------------------------------------------------------ |
+| `GET ?status=`                 | `invites_list`  | Invitations, newest first (never a token)                                            |
+| `GET /{id}`                    | `invite_get`    | One invitation: its role, grants and status                                          |
+| `POST`                         | `invite_create` | Invite; the link comes back once (201). `admin` only from a person, not a root token |
+| `POST /{id}/resend`            | `invite_resend` | A new link and expiry; the old ones stop working                                     |
+| `POST /{id}/revoke`            | `invite_revoke` | End it (an accepted one can't be: 400)                                               |
+| `POST /lookup`, `POST /accept` | none            | The web app's sign-up handshake                                                      |
 
 ## Ending a person's access
 
@@ -617,7 +617,7 @@ interface Principal {
   `authorizeBulkJob` (application) asks `canRunEntryBulkJob` (domain) for a role that holds the job's actions on every content type alike: one with no per-content-type
   grants, or one whose grants are a single `*` grant holding them (publish needs `publish`,
   unpublish `unpublish`, trash `write` and `delete` and not a withheld `unpublish`, restore
-`write`, purge `publish` and `delete`)
+  `write`, purge `publish` and `delete`)
   and restricting no field. The Editor, Manager and Administrator presets qualify; a role limited
   to some types, or with field rules, doesn't.
   Asset jobs still need a principal with no per-type grants. An import job's report and cancel go

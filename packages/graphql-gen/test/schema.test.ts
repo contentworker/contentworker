@@ -100,6 +100,53 @@ describe('@contentworker/graphql-gen', () => {
     expect((a.hero as { id: string }).id).toBe('a1');
   });
 
+  it('types a list of scalars as a list of that scalar, and a list of links as JSON', () => {
+    const lists = buildDeliverySchema([
+      {
+        apiId: 'event',
+        name: 'Event',
+        displayField: 'title',
+        version: 1,
+        status: 'published',
+        fields: [
+          {
+            apiId: 'title',
+            name: 'Title',
+            type: 'Symbol',
+            localized: false,
+            required: true,
+            position: 0,
+          },
+          ...(
+            [
+              ['tags', 'Symbol'],
+              ['lines', 'Text'],
+              ['sizes', 'Integer'],
+              ['weights', 'Number'],
+              ['days', 'Date'],
+              ['links', 'Link'],
+            ] as const
+          ).map(([apiId, type], i) => ({
+            apiId,
+            name: apiId,
+            type: 'Array' as const,
+            localized: false,
+            required: false,
+            position: i + 1,
+            items: { type },
+          })),
+        ],
+      },
+    ]);
+    const fields = (lists.getType('Event') as GraphQLObjectType).getFields();
+    expect(String(fields.tags?.type)).toBe('[String]');
+    expect(String(fields.lines?.type)).toBe('[String]');
+    expect(String(fields.sizes?.type)).toBe('[Int]');
+    expect(String(fields.weights?.type)).toBe('[Float]');
+    expect(String(fields.days?.type)).toBe('[String]');
+    expect(String(fields.links?.type)).toBe('JSON');
+  });
+
   it('describes a rich-text field as a document tree with structured embeds, never HTML', () => {
     const type = schema.getType('Article') as GraphQLObjectType;
     const description = type.getFields().body?.description ?? '';

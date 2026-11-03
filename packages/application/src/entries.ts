@@ -3,6 +3,7 @@ import {
   applyDefaults,
   archive,
   assertEntryFieldsValid,
+  assetMimeChecks,
   assignBlockKeys,
   ConflictError,
   deriveStatus,
@@ -10,8 +11,10 @@ import {
   type Entry,
   type EntryFields,
   type EntryVersion,
+  type FieldIssue,
   hasUniqueFields,
   InvalidStateError,
+  mimeTypeAllowed,
   NotFoundError,
   nextSlugCandidate,
   normalizeSlugFields,
@@ -23,6 +26,7 @@ import {
   stampCreated,
   uniqueClaims,
   type ValidationContext,
+  ValidationError,
 } from '@contentworker/domain';
 import { type BlobStore, type EntryRepo, TransactionConflictError } from '@contentworker/ports';
 import { type AppContext, actorOf } from './context';
@@ -188,7 +192,38 @@ async function prepareFields(
     () => ctx.ids.newId(),
   );
   assertEntryFieldsValid(contentType, fields, vctx);
+  await assertAssetMimeTypes(ctx, scope, contentType, fields);
   return { fields, skippedHooks: hooked.skipped };
+}
+
+/**
+ * Refuses a link to an asset whose file is not one of the MIME types its field allows
+ * (`validations.assetMimeTypes`). The rule is on the field and the type on the asset, so this is
+ * the one field check that reads: one batch for every linked asset, and none when no field has
+ * the rule. An asset that does not exist is left to the publish gate, as any link is.
+ */
+async function assertAssetMimeTypes(
+  ctx: AppContext,
+  scope: Scope,
+  contentType: ContentType,
+  fields: EntryFields,
+): Promise<void> {
+  const checks = assetMimeChecks(contentType, fields);
+  if (checks.length === 0) return;
+  const assets = await ctx.store.assets.getMany(scope, [...new Set(checks.map((c) => c.assetId))]);
+  const mimeOf = new Map(assets.map((a) => [a.id, a.file.contentType]));
+  const issues: FieldIssue[] = [];
+  for (const c of checks) {
+    const mime = mimeOf.get(c.assetId);
+    if (mime === undefined || mimeTypeAllowed(mime, c.allowed)) continue;
+    issues.push({
+      field: c.field,
+      locale: c.locale,
+      message:
+        c.message ?? `Asset ${c.assetId} is ${mime}; this field takes ${c.allowed.join(', ')}`,
+    });
+  }
+  if (issues.length > 0) throw new ValidationError(issues);
 }
 
 /**
