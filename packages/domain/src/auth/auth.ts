@@ -39,8 +39,36 @@ export function scopesForKind(kind: ApiKeyKind): PermissionScope[] {
   }
 }
 
-/** Content-level actions a role can grant per content type. */
-export type ContentAction = 'read' | 'write' | 'publish';
+/**
+ * Content-level actions a role can grant per content type. `read`, `write` and `publish` are listed
+ * on a grant; `delete` (trash and purge) and `unpublish` are finer actions a grant holds by
+ * implication and can withhold ({@link ContentTypeGrant.deniedActions}).
+ */
+export type ContentAction = 'read' | 'write' | 'publish' | 'delete' | 'unpublish';
+
+/** The actions a grant lists. */
+export type ListedContentAction = 'read' | 'write' | 'publish';
+
+/** The actions a grant holds by implication unless it withholds them. */
+export type ImpliedContentAction = 'delete' | 'unpublish';
+
+export const LISTED_CONTENT_ACTIONS: readonly ListedContentAction[] = ['read', 'write', 'publish'];
+export const IMPLIED_CONTENT_ACTIONS: readonly ImpliedContentAction[] = ['delete', 'unpublish'];
+export const CONTENT_ACTIONS: readonly ContentAction[] = [
+  ...LISTED_CONTENT_ACTIONS,
+  ...IMPLIED_CONTENT_ACTIONS,
+];
+
+/**
+ * What each entry operation asks of the grant on the entry's type, all together. Trashing and
+ * purging stay a write and a publish (as they were before `delete` existed) and also need `delete`;
+ * unpublishing needs `unpublish`, which a grant only holds with `publish`.
+ */
+export const ENTRY_OPERATION_ACTIONS = {
+  trash: ['write', 'delete'],
+  purge: ['publish', 'delete'],
+  unpublish: ['unpublish'],
+} as const satisfies Record<string, readonly ContentAction[]>;
 
 /**
  * Per-content-type grant inside a role. `contentTypeApiId: '*'` matches any
@@ -50,9 +78,28 @@ export type ContentAction = 'read' | 'write' | 'publish';
  */
 export interface ContentTypeGrant {
   readonly contentTypeApiId: string;
-  readonly actions: readonly ContentAction[];
+  readonly actions: readonly ListedContentAction[];
+  /**
+   * The finer actions this grant withholds. A grant holds `delete` with `write` or `publish`, and
+   * `unpublish` with `publish`, unless it names them here: so every grant stored before these
+   * actions existed (none names any) authorizes exactly what it did, and a role can write but not
+   * delete, or publish but not unpublish. See {@link grantedActions}.
+   */
+  readonly deniedActions?: readonly ImpliedContentAction[];
   readonly deniedFields?: readonly string[];
   readonly readOnlyFields?: readonly string[];
+}
+
+/**
+ * Every action `grant` holds: the ones it lists, plus `delete` (with `write` or `publish`) and
+ * `unpublish` (with `publish`) unless it withholds them. The one place grant actions resolve.
+ */
+export function grantedActions(grant: ContentTypeGrant): ReadonlySet<ContentAction> {
+  const held = new Set<ContentAction>(grant.actions);
+  const withheld = new Set<ContentAction>(grant.deniedActions ?? []);
+  if ((held.has('write') || held.has('publish')) && !withheld.has('delete')) held.add('delete');
+  if (held.has('publish') && !withheld.has('unpublish')) held.add('unpublish');
+  return held;
 }
 
 /**
@@ -174,28 +221,58 @@ export function grantFor(
   );
 }
 
-/** True when the principal may perform `action` on the content type. */
+/**
+ * True when the principal may perform `action` (or every one of `actions`) on the content type.
+ */
 export function canAccessContentType(
   principal: Principal,
-  action: ContentAction,
+  action: ContentAction | readonly ContentAction[],
   contentTypeApiId: string,
 ): boolean {
-  if (!principal.contentGrants) return true; // unrestricted principal
+  return missingContentAction(principal, action, contentTypeApiId) === undefined;
+}
+
+/** The first of `action` the principal's grant on the type doesn't hold, if any. */
+function missingContentAction(
+  principal: Principal,
+  action: ContentAction | readonly ContentAction[],
+  contentTypeApiId: string,
+): ContentAction | undefined {
+  const wanted: readonly ContentAction[] = typeof action === 'string' ? [action] : action;
+  if (!principal.contentGrants) return undefined; // unrestricted principal
   const grant = grantFor(principal, contentTypeApiId);
-  return !!grant && grant.actions.includes(action);
+  const held = grant ? grantedActions(grant) : new Set<ContentAction>();
+  return wanted.find((a) => !held.has(a));
 }
 
 /**
  * Enforces a content-level grant on top of the coarse scopes. Unrestricted
- * principals (no role) always pass — coarse `authorize` already ran.
+ * principals (no role) always pass — coarse `authorize` already ran. Given several actions (an
+ * {@link ENTRY_OPERATION_ACTIONS} entry), every one must be held.
  */
 export function authorizeContent(
   principal: Principal,
-  action: ContentAction,
+  action: ContentAction | readonly ContentAction[],
   contentTypeApiId: string,
 ): void {
-  if (!canAccessContentType(principal, action, contentTypeApiId)) {
-    throw new ForbiddenError(`content:${action}:${contentTypeApiId}`);
+  const missing = missingContentAction(principal, action, contentTypeApiId);
+  if (missing) throw new ForbiddenError(`content:${missing}:${contentTypeApiId}`);
+}
+
+/**
+ * Authorizes moving an entry to the trash: `write` and `delete` on its type. Trashing a live entry
+ * also unpublishes it, so a grant that withholds `unpublish` can't take a live entry offline this
+ * way either. (A grant without `publish` never held `unpublish`, and trashes live entries as it
+ * always has: only an explicit withhold closes this door.)
+ */
+export function authorizeTrash(
+  principal: Principal,
+  entry: { readonly contentTypeApiId: string; readonly publishedVersion: number | null },
+): void {
+  authorizeContent(principal, ENTRY_OPERATION_ACTIONS.trash, entry.contentTypeApiId);
+  if (entry.publishedVersion === null || !principal.contentGrants) return;
+  if (grantFor(principal, entry.contentTypeApiId)?.deniedActions?.includes('unpublish')) {
+    throw new ForbiddenError(`content:unpublish:${entry.contentTypeApiId}`);
   }
 }
 

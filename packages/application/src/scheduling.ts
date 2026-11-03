@@ -1,9 +1,11 @@
 import {
+  authorizeContent,
   cancelAction,
   completeAction,
   failAction,
   InvalidStateError,
   NotFoundError,
+  type Principal,
   type ScheduledAction,
   type ScheduledActionType,
   type ScheduledEntityType,
@@ -12,7 +14,7 @@ import {
 import type { AppContext } from './context';
 import { assertReleaseUngated, loadPublishGuard } from './publish-gate';
 import { publishEntry, unpublishEntry } from './publishing';
-import { publishRelease } from './releases';
+import { authorizeReleaseMembers, publishRelease } from './releases';
 
 export interface ScheduleActionInput {
   readonly action: ScheduledActionType;
@@ -29,17 +31,24 @@ export interface ScheduleActionInput {
  * when it fires, since gating can be turned on in between: a scheduled publish never runs from a
  * workflow run, so it can never pass a gate (not even one a workflow's `content.schedule` node
  * created).
+ *
+ * The action fires later with no one behind it, so the `principal` scheduling it is authorized now:
+ * its role must grant the action (`publish` or `unpublish`) on the entry's type, or on every
+ * release member's.
  */
 export async function scheduleAction(
   ctx: AppContext,
   scope: Scope,
   input: ScheduleActionInput,
+  opts: { readonly principal?: Principal } = {},
 ): Promise<ScheduledAction> {
   // Validate the target exists now (it may still be deleted before firing — the
   // worker handles that by failing the action rather than crashing).
   if (input.entityType === 'Entry') {
     const found = await ctx.store.entries.get(scope, input.entityId);
     if (!found) throw new NotFoundError('Entry', input.entityId);
+    if (opts.principal)
+      authorizeContent(opts.principal, input.action, found.entry.contentTypeApiId);
     if (input.action === 'publish') {
       const guard = await loadPublishGuard(ctx.store.workflowGraphs, scope);
       guard.assert(input.entityId, found.entry.contentTypeApiId);
@@ -51,6 +60,7 @@ export async function scheduleAction(
     if (input.action === 'publish') {
       const guard = await loadPublishGuard(ctx.store.workflowGraphs, scope);
       const items = await ctx.store.releases.listItems(scope, input.entityId);
+      await authorizeReleaseMembers(ctx.store, scope, items, opts.principal);
       await assertReleaseUngated(ctx.store, scope, input.entityId, items, guard);
     }
   }

@@ -291,6 +291,11 @@ export const createPatBody = z.object({
 const contentGrant = z.object({
   contentTypeApiId: z.string().max(128),
   actions: z.array(z.enum(['read', 'write', 'publish'])).max(3),
+  // `delete` comes with write or publish and `unpublish` with publish; naming one here withholds it.
+  deniedActions: z
+    .array(z.enum(['delete', 'unpublish']))
+    .max(2)
+    .optional(),
   deniedFields: z.array(zId).max(500).optional(),
   readOnlyFields: z.array(zId).max(500).optional(),
 });
@@ -635,7 +640,8 @@ export const releaseItemBody = z.object({
 });
 export const scheduleBody = z.object({
   action: z.enum(['publish', 'unpublish']),
-  entityType: z.enum(['entry', 'release']),
+  // As the domain, the MCP tool and the admin spell them.
+  entityType: z.enum(['Entry', 'Release']),
   entityId: zId,
   scheduledFor: z.string().min(1).max(64),
 });

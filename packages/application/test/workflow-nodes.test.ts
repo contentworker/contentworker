@@ -17,6 +17,7 @@ import {
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  addEntryToRelease,
   createContentType,
   createEntry,
   createRelease,
@@ -177,6 +178,42 @@ describe('workflow node executors', () => {
       (await exec('content.set_fields', { values: { summary: 'x' } }, noSummary)).failed,
     ).toMatch(/content:write:post.summary/);
     expect((await ctx.store.entries.get(scope, entryId))?.entry.publishedVersion).toBeNull();
+  });
+
+  it('refuses unpublishing to a role that publishes but withholds unpublish', async () => {
+    const keepsLive: Principal = {
+      ...editor,
+      subject: 'pub@example.com',
+      contentGrants: [
+        {
+          contentTypeApiId: 'post',
+          actions: ['read', 'write', 'publish'],
+          deniedActions: ['unpublish'],
+        },
+      ],
+    };
+    expect((await exec('content.publish', {}, keepsLive)).output).toMatchObject({ version: 1 });
+    expect((await exec('content.unpublish', {}, keepsLive)).failed).toMatch(
+      /content:unpublish:post/,
+    );
+    expect(
+      (await exec('content.schedule', { action: 'unpublish', after: '1 day' }, keepsLive)).failed,
+    ).toMatch(/content:unpublish:post/);
+    expect(
+      (await exec('content.schedule', { action: 'publish', after: '1 day' }, keepsLive)).output,
+    ).toMatchObject({ action: 'publish' });
+    // A release that would take the entry down is refused whole, as shipping it by hand would be.
+    const release = await createRelease(ctx, scope, { title: 'Takedown' });
+    await addEntryToRelease(ctx, scope, release.id, { entityId: entryId, action: 'unpublish' });
+    expect(
+      (await exec('content.publish_release', { releaseId: release.id }, keepsLive)).failed,
+    ).toMatch(/content:unpublish:post/);
+    expect((await ctx.store.entries.get(scope, entryId))?.entry.publishedVersion).toBe(1);
+    expect(await ctx.store.scheduledActions.list(scope, { status: 'pending' })).toHaveLength(1);
+    // A role whose grant doesn't withhold it unpublishes as before.
+    expect((await exec('content.unpublish', {}, noSummary)).output).toMatchObject({
+      unpublished: true,
+    });
   });
 
   it('content.schedule schedules once and its compensation cancels it', async () => {

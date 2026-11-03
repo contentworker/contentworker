@@ -1,7 +1,8 @@
 import {
-  type ContentAction,
   type ContentTypeGrant,
   grantsAdmin,
+  IMPLIED_CONTENT_ACTIONS,
+  LISTED_CONTENT_ACTIONS,
   NotFoundError,
   type Role,
   SCOPES,
@@ -19,7 +20,8 @@ export interface RoleInput {
 }
 
 const KNOWN_SCOPES = new Set<string>(Object.values(SCOPES));
-const KNOWN_ACTIONS = new Set<ContentAction>(['read', 'write', 'publish']);
+const LISTED = new Set<string>(LISTED_CONTENT_ACTIONS);
+const IMPLIED = new Set<string>(IMPLIED_CONTENT_ACTIONS);
 
 function validateRoleInput(input: RoleInput): void {
   const issues: { field: string; message: string }[] = [];
@@ -33,9 +35,25 @@ function validateRoleInput(input: RoleInput): void {
     if (!grant.contentTypeApiId?.trim()) {
       issues.push({ field: 'contentGrants', message: 'contentTypeApiId is required' });
     }
-    for (const action of grant.actions ?? []) {
-      if (!KNOWN_ACTIONS.has(action)) {
+    // Read as strings: the input crossed a wire, and its type is what this proves.
+    for (const action of (grant.actions ?? []) as readonly string[]) {
+      if (IMPLIED.has(action)) {
+        // One way to say it: `delete` and `unpublish` come with `write` and `publish`, so a grant
+        // only ever names them to withhold them.
+        issues.push({
+          field: 'contentGrants',
+          message: `"${action}" comes with ${action === 'delete' ? 'write or publish' : 'publish'}; list that, and withhold "${action}" with deniedActions`,
+        });
+      } else if (!LISTED.has(action)) {
         issues.push({ field: 'contentGrants', message: `Unknown action "${action}"` });
+      }
+    }
+    for (const action of (grant.deniedActions ?? []) as readonly string[]) {
+      if (!IMPLIED.has(action)) {
+        issues.push({
+          field: 'contentGrants',
+          message: `deniedActions can withhold "delete" or "unpublish", not "${action}"`,
+        });
       }
     }
   }

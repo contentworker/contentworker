@@ -207,7 +207,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      for (const id of args.ids) await guardEntry(scopeOf(args), id, 'publish');
+      for (const id of args.ids) await guardEntry(scopeOf(args), id, args.action);
       return ok(await bulkEntryAction(ctx, scopeOf(args), args.action, args.ids));
     },
   );

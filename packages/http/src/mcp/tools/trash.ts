@@ -5,25 +5,31 @@ import {
   restoreEntry,
   trashEntry,
 } from '@contentworker/application';
-import { authorizeContent, canAccessContentType, SCOPES } from '@contentworker/domain';
+import {
+  authorizeContent,
+  canAccessContentType,
+  ENTRY_OPERATION_ACTIONS,
+  SCOPES,
+} from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerTrashTools(server: McpServer, t: ToolContext): void {
-  const { deps, ctx, principal, guard, guardEntry } = t;
+  const { deps, ctx, principal, guard, guardEntry, guardTrash } = t;
   // --- trash lifecycle ----------------------------------------------------
   server.registerTool(
     'entries_trash',
     {
       description:
         'Move an entry to the trash. Unpublishes it first when it is live, so ' +
-        'delivery stops serving it. Recoverable with entries_restore.',
+        'delivery stops serving it. Recoverable with entries_restore. A role needs write and ' +
+        'delete on the type (and unpublish, when its grant withholds it and the entry is live).',
       inputSchema: toolSchema('entries_trash', () => z.object({ id: z.string(), ...scopeArgs })),
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      await guardEntry(scopeOf(args), args.id, 'write');
+      await guardTrash(scopeOf(args), args.id);
       return ok(await trashEntry(ctx, scopeOf(args), args.id));
     },
   );
@@ -72,7 +78,8 @@ export function registerTrashTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Permanently delete a trashed entry and every version of it. IRREVERSIBLE. ' +
-        'Refuses while published entries still link to it unless force is true.',
+        'Refuses while published entries still link to it unless force is true. A role ' +
+        'needs publish and delete on the type.',
       inputSchema: toolSchema('entries_purge', () =>
         z.object({ id: z.string(), force: z.boolean().optional(), ...scopeArgs }),
       ),
@@ -81,7 +88,7 @@ export function registerTrashTools(server: McpServer, t: ToolContext): void {
       // Gated on content:publish, not content:write: this is the only entry
       // action that cannot be undone.
       guard(SCOPES.contentPublish, scopeOf(args));
-      await guardEntry(scopeOf(args), args.id, 'publish');
+      await guardEntry(scopeOf(args), args.id, ENTRY_OPERATION_ACTIONS.purge);
       await purgeEntry(ctx, scopeOf(args), args.id, {
         force: args.force,
         ...(deps.blob ? { blob: deps.blob } : {}),

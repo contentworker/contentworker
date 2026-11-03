@@ -1,12 +1,16 @@
+import { type Principal, SCOPES } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  addEntryToRelease,
   cancelScheduledAction,
   createContentType,
   createEntry,
+  createRelease,
   getPublishedEntry,
   publishContentType,
+  publishEntry,
   runDueScheduledActions,
   scheduleAction,
 } from '../src/index';
@@ -75,6 +79,38 @@ describe('scheduled publishing', () => {
     expect(await runDueScheduledActions(ctx)).toEqual({ executed: 0, failed: 0 });
     const [action] = await ctx.store.scheduledActions.list(scope);
     expect(action?.status).toBe('completed');
+  });
+
+  it('authorizes the principal scheduling an action against its role, now', async () => {
+    const entry = await seedDraft(ctx, 'Scheduled');
+    const keepsLive: Principal = {
+      spaceId: scope.spaceId,
+      kind: 'cma',
+      scopes: [SCOPES.contentPublish],
+      contentGrants: [
+        { contentTypeApiId: 'article', actions: ['read', 'publish'], deniedActions: ['unpublish'] },
+      ],
+    };
+    const at = (action: 'publish' | 'unpublish', entityType: 'Entry' | 'Release', id: string) =>
+      scheduleAction(
+        ctx,
+        scope,
+        { action, entityType, entityId: id, scheduledFor: '2026-01-01T01:00:00.000Z' },
+        { principal: keepsLive },
+      );
+    await expect(at('unpublish', 'Entry', entry.entry.id)).rejects.toThrow(
+      /content:unpublish:article/,
+    );
+    await at('publish', 'Entry', entry.entry.id);
+    // A release with a member it would take down is refused too: it fires with no one behind it.
+    await publishEntry(ctx, scope, entry.entry.id);
+    const release = await createRelease(ctx, scope, { title: 'Takedown' });
+    await addEntryToRelease(ctx, scope, release.id, {
+      entityId: entry.entry.id,
+      action: 'unpublish',
+    });
+    await expect(at('publish', 'Release', release.id)).rejects.toThrow(/content:unpublish:article/);
+    expect(await ctx.store.scheduledActions.list(scope)).toHaveLength(1);
   });
 
   it('a canceled action never fires', async () => {

@@ -261,6 +261,23 @@ test.describe('on a phone', () => {
   });
 });
 
+// A role's content access: the five actions per type, with a finer one withheld (so the scan sees
+// a ticked, an unticked and a disabled box), over the roles table.
+test('a role’s content access sheet has no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/roles');
+  await page
+    .getByRole('button', { name: /^Content access for / })
+    .first()
+    .click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByRole('button', { name: 'Save access' })).toBeVisible();
+  const del = sheet.getByRole('checkbox', { name: /^Delete / }).first();
+  if (await del.isEnabled()) await del.click();
+  await scan(page, testInfo);
+});
+
 // An unpublished asset's share dialog: the warning in place of the form, over the sheet.
 test('the share dialog for an unpublished asset has no accessibility violations', async ({
   page,

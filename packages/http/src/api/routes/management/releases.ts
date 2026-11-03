@@ -62,7 +62,9 @@ export function releasesRoutes(deps: AuthDeps): Hono<AuthVars> {
     ),
   );
   app.post(`${BASE}/releases/:id/published`, requireScope(SCOPES.contentPublish), async (c) =>
-    c.json(await publishRelease(ctx, scopeOf(c), c.req.param('id'))),
+    c.json(
+      await publishRelease(ctx, scopeOf(c), c.req.param('id'), { principal: c.get('principal') }),
+    ),
   );
 
   // --- scheduled actions --------------------------------------------------
@@ -73,11 +75,9 @@ export function releasesRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.post(`${BASE}/scheduled-actions`, requireScope(SCOPES.contentPublish), async (c) =>
     c.json(
-      await scheduleAction(
-        ctx,
-        scopeOf(c),
-        (await parseBody(c, scheduleBody)) as unknown as Parameters<typeof scheduleAction>[2],
-      ),
+      await scheduleAction(ctx, scopeOf(c), await parseBody(c, scheduleBody), {
+        principal: c.get('principal'),
+      }),
       201,
     ),
   );

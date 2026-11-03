@@ -7,7 +7,12 @@ import {
   trashEntry,
   updateEntry,
 } from '@contentworker/application';
-import { assertWritableFields, authorizeContent, SCOPES } from '@contentworker/domain';
+import {
+  assertWritableFields,
+  authorizeContent,
+  ENTRY_OPERATION_ACTIONS,
+  SCOPES,
+} from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -17,7 +22,7 @@ import { BASE, entryAccess, scopeOf } from './shared';
 
 export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
-  const { guardEntry, authorizeEntryRead } = entryAccess(ctx);
+  const { guardEntry, guardTrash, authorizeEntryRead } = entryAccess(ctx);
   const app = new Hono<AuthVars>();
 
   // --- trash lifecycle ----------------------------------------------------
@@ -29,11 +34,13 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 200,
       description:
         'Unpublishes the entry first when it is live, so delivery stops serving it. ' +
-        'Idempotent. Restore it, or delete it permanently, from the trash.',
+        'Idempotent. Restore it, or delete it permanently, from the trash. A role needs ' +
+        '`write` and `delete` on the type, and `unpublish` too when its grant withholds it ' +
+        'and the entry is live.',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
-      await guardEntry(c, c.req.param('id'), 'write');
+      await guardTrash(c, c.req.param('id'));
       return c.json(await trashEntry(ctx, scopeOf(c), c.req.param('id')));
     },
   );
@@ -54,12 +61,13 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 204,
       description:
         'Irreversible. Refuses with 409 while published entries still link to it, ' +
-        'unless ?force=true. Requires content:publish, not merely content:write.',
+        'unless ?force=true. Requires content:publish, not merely content:write, and a ' +
+        'role needs `publish` and `delete` on the type.',
     }),
     // A harder gate than trashing: this is the only unrecoverable entry action.
     requireScope(SCOPES.contentPublish),
     async (c) => {
-      await guardEntry(c, c.req.param('id'), 'publish');
+      await guardEntry(c, c.req.param('id'), ENTRY_OPERATION_ACTIONS.purge);
       await purgeEntry(ctx, scopeOf(c), c.req.param('id'), {
         force: c.req.query('force') === 'true',
         ...(blob ? { blob } : {}),

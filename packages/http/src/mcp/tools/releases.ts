@@ -92,12 +92,12 @@ export function registerReleaseTools(server: McpServer, t: ToolContext): void {
     'releases_publish',
     {
       description:
-        'Ship a release: publish/unpublish every member atomically in one transaction. Refused whole (publish_gated) when a gated workflow covers a member it publishes.',
+        "Ship a release: publish/unpublish every member atomically in one transaction. Refused whole (publish_gated) when a gated workflow covers a member it publishes, and (forbidden) when your role lacks publish or unpublish on a member's type.",
       inputSchema: toolSchema('releases_publish', () => z.object({ id: z.string(), ...scopeArgs })),
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      return ok(await publishRelease(ctx, scopeOf(args), args.id));
+      return ok(await publishRelease(ctx, scopeOf(args), args.id, { principal: t.principal }));
     },
   );
 }

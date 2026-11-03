@@ -68,11 +68,19 @@ list of grants:
 
 - A key bound to a role can only touch the content types its grants name (`*` matches any type;
   an exact grant wins over `*`). Types without a grant are invisible to it, in lists too.
+- **Actions** are `read`, `write` and `publish`. Two finer actions come with them: `delete`
+  (moving to the trash, and with `publish` deleting permanently) with `write` or `publish`, and
+  `unpublish` with `publish`. List `deniedActions` to withhold either, so a role can write but not
+  delete, or publish but not unpublish:
+  `{ "contentTypeApiId": "*", "actions": ["read", "write", "publish"], "deniedActions": ["unpublish"] }`.
+  A role that withholds `unpublish` can't take a live entry down any other way either: not in
+  bulk, by trashing it, in a release or a scheduled action.
 - **Denied fields** are removed from every response and refused on write. **Read-only fields**
   can be read but not written.
 - Roles are live: editing a role changes what every key bound to it can do on the next request.
 
-Create roles in **Settings → Roles** or at `POST /spaces/{space}/roles`, then bind a key with
+Create roles in **Settings → Roles** (where **Access** sets each type's five actions) or at
+`POST /spaces/{space}/roles`, then bind a key with
 `{ "kind": "cma", "roleId": "…" }`.
 
 Every space also has five built-in roles, Viewer, Approver, Editor, Manager and Administrator,

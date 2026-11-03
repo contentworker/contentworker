@@ -46,6 +46,7 @@ import { Menus } from '~/cms/components/Menus';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader } from '~/cms/components/page';
 import { Redirects } from '~/cms/components/Redirects';
+import { RoleAccessSheet } from '~/cms/components/RoleAccessSheet';
 import { StatusBadge } from '~/cms/components/status';
 import { Team } from '~/cms/components/Team';
 import { WebhookDeliveriesSheet } from '~/cms/components/WebhookDeliveriesSheet';
@@ -55,11 +56,13 @@ import {
   type ApiKeyKind,
   type CreatedApiKey,
   type ManagementClient,
+  type RoleSummary,
   WEBHOOK_TOPICS,
   type WebhookSummary,
   type WebhookTopic,
 } from '../lib/management';
-import { useInvalidate, useScopedQuery } from '../lib/queries';
+import { useContentTypesQuery, useInvalidate, useScopedQuery } from '../lib/queries';
+import { describeGrants } from '../lib/role-grants';
 import { useToast } from '../lib/toast';
 import { DEFAULT_SETTINGS_SECTION } from './layout/nav';
 import { SettingsNav } from './layout/SettingsNav';
@@ -394,8 +397,23 @@ function RolesSettings(props: { client: ManagementClient }) {
   const invalidate = useInvalidate();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [accessFor, setAccessFor] = useState<RoleSummary | null>(null);
 
   const roles = useScopedQuery(['roles'], () => props.client.listRoles()).data ?? [];
+  const contentTypes = useContentTypesQuery().data ?? [];
+
+  // The role is replaced whole (PUT), so its name, description and scopes go back as they were.
+  const saveAccess = async (role: RoleSummary, contentGrants: RoleSummary['contentGrants']) => {
+    await props.client.updateRole(role.id, {
+      name: role.name,
+      ...(role.description ? { description: role.description } : {}),
+      scopes: role.scopes,
+      contentGrants,
+    });
+    await invalidate(['roles']);
+    setAccessFor(null);
+    toast.success(`Saved content access for ${role.name}`);
+  };
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -459,6 +477,7 @@ function RolesSettings(props: { client: ManagementClient }) {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Scopes</TableHead>
+              <TableHead>Content</TableHead>
               <TableHead className="w-24" />
             </TableRow>
           </TableHeader>
@@ -474,8 +493,20 @@ function RolesSettings(props: { client: ManagementClient }) {
                 <TableCell className="text-muted-foreground text-sm">
                   {role.scopes.join(', ')}
                 </TableCell>
+                <TableCell className="text-muted-foreground text-sm">
+                  {describeGrants(role.contentGrants)}
+                </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Content access for ${role.name}`}
+                      onClick={() => setAccessFor(role)}
+                    >
+                      Access
+                    </Button>
                     <Button
                       type="button"
                       variant="ghost"
@@ -504,6 +535,16 @@ function RolesSettings(props: { client: ManagementClient }) {
             ))}
           </TableBody>
         </Table>
+        {accessFor ? (
+          <RoleAccessSheet
+            key={accessFor.id}
+            role={accessFor}
+            contentTypes={contentTypes}
+            open
+            onOpenChange={(o) => !o && setAccessFor(null)}
+            onSave={(grants) => saveAccess(accessFor, grants)}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );

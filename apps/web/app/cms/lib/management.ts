@@ -18,6 +18,7 @@ import type {
   ConceptScheme,
   ContentType,
   ContentTypeDraft,
+  ContentTypeGrant,
   EmbedData,
   EntryFields,
   EntryMetadata,
@@ -508,12 +509,8 @@ export interface RoleSummary {
   /** Set on the built-in presets seeded into every space. */
   readonly preset?: RolePreset;
   readonly scopes: readonly string[];
-  readonly contentGrants: readonly {
-    contentTypeApiId: string;
-    actions: readonly ('read' | 'write' | 'publish')[];
-    deniedFields?: readonly string[];
-    readOnlyFields?: readonly string[];
-  }[];
+  /** Per content type; `deniedActions` withholds the delete and unpublish write and publish bring. */
+  readonly contentGrants: readonly ContentTypeGrant[];
 }
 
 export interface PreviewLinkResult {

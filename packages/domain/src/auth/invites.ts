@@ -9,7 +9,7 @@
  */
 import { DomainError } from '../errors';
 import type { ContentTypeGrant, Principal } from './auth';
-import { authorize, SCOPES } from './auth';
+import { authorize, grantedActions, SCOPES } from './auth';
 
 /** How long an invitation works unless the inviter picks otherwise. */
 export const INVITE_TTL_DAYS = 7;
@@ -112,7 +112,9 @@ function grantCovers(held: ContentTypeGrant, granted: ContentTypeGrant): boolean
   if (held.contentTypeApiId !== '*' && held.contentTypeApiId !== granted.contentTypeApiId) {
     return false;
   }
-  if (!granted.actions.every((a) => held.actions.includes(a))) return false;
+  // Resolved, not as listed: a grant that withholds `delete` doesn't cover one that implies it.
+  const heldActions = grantedActions(held);
+  if (![...grantedActions(granted)].every((a) => heldActions.has(a))) return false;
   // A field the inviter can't see or change must stay that way for whoever they invite.
   const denied = new Set(granted.deniedFields ?? []);
   if (!(held.deniedFields ?? []).every((f) => denied.has(f))) return false;
