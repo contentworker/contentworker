@@ -1337,6 +1337,18 @@ test('a content type is cloned, then deleted with its entries, from its menu', a
   await api(request, 'POST', `${MGMT}/content-types/${apiId}/published`);
 
   await openCms(page, '/content');
+  const focused = () =>
+    page.evaluate(() => {
+      const at = document.activeElement;
+      return at?.getAttribute('aria-label') ?? at?.tagName ?? null;
+    });
+  // Closed without cloning, focus goes back to the row's menu button, not to the page.
+  await page.getByRole('button', { name: `More actions for “Scratch ${stamp}”` }).click();
+  await page.getByRole('menuitem', { name: 'Clone…' }).click();
+  await expect(page.getByRole('dialog', { name: `Clone “Scratch ${stamp}”` })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect.poll(focused).toBe(`More actions for “Scratch ${stamp}”`);
+
   await page.getByRole('button', { name: `More actions for “Scratch ${stamp}”` }).click();
   await page.getByRole('menuitem', { name: 'Clone…' }).click();
   const clone = page.getByRole('dialog', { name: `Clone “Scratch ${stamp}”` });
@@ -1363,11 +1375,12 @@ test('a content type is cloned, then deleted with its entries, from its menu', a
   ).toBeVisible({
     timeout: 30_000,
   });
-  await expect
-    .poll(async () => (await api(request, 'GET', `${MGMT}/content-types/${apiId}`)).status(), {
-      timeout: 30_000,
-    })
-    .toBe(404);
+  // The card waits for the type's own delete, recorded on the job, and says when it is done.
+  await expect(
+    page.getByRole('alert').filter({ hasText: `“Scratch ${stamp}” was deleted, with its entries` }),
+  ).toBeVisible({ timeout: 30_000 });
+  expect((await api(request, 'GET', `${MGMT}/content-types/${apiId}`)).status()).toBe(404);
+  await expect(page.getByRole('link', { name: `Scratch ${stamp}`, exact: true })).toHaveCount(0);
 
   // The clone has no entries: deleted at once.
   await page.getByRole('button', { name: `More actions for “Copy ${stamp}”` }).click();
@@ -1377,4 +1390,6 @@ test('a content type is cloned, then deleted with its entries, from its menu', a
   await second.getByRole('button', { name: 'Delete content type' }).click();
   await expect(page.getByText(`Deleted “Copy ${stamp}”`)).toBeVisible();
   expect((await api(request, 'GET', `${MGMT}/content-types/${copyId}`)).status()).toBe(404);
+  // Its row is gone: focus moves to the next row's menu button, or the page's heading.
+  await expect.poll(focused).toMatch(/^(More actions for “(?!Copy \d+”).*”|H1)$/);
 });

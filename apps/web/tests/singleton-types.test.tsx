@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ContentType } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PreviewEntry } from '~/cms/lib/management';
@@ -154,6 +154,19 @@ describe('the content sidebar', () => {
   });
 });
 
+/**
+ * The dialog's singleton checkbox, found by role within the dialog and told from the fields'
+ * checkboxes by the label it points at (jsdom computes no name through `aria-labelledby` reliably).
+ */
+const singletonBox = () => {
+  const box = within(screen.getByRole('dialog'))
+    .getAllByRole('checkbox')
+    .find((b) => b.getAttribute('aria-labelledby') === 'ct-singleton-label');
+  if (!box) throw new Error('no singleton checkbox');
+  expect(document.getElementById('ct-singleton-label')?.textContent).toMatch(/one entry only/i);
+  return box;
+};
+
 describe('the content type dialog', () => {
   it('saves the singleton choice, and shows a saved one ticked', async () => {
     const onSave = vi.fn(async (_draft: unknown) => {});
@@ -165,7 +178,7 @@ describe('the content type dialog', () => {
         onSave={onSave}
       />,
     );
-    const box = screen.getByRole('checkbox', { name: /one entry only/i });
+    const box = singletonBox();
     expect(box.getAttribute('aria-checked')).toBe('false');
     fireEvent.click(box);
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
@@ -181,8 +194,6 @@ describe('the content type dialog', () => {
         onSave={onSave}
       />,
     );
-    expect(
-      screen.getByRole('checkbox', { name: /one entry only/i }).getAttribute('aria-checked'),
-    ).toBe('true');
+    expect(singletonBox().getAttribute('aria-checked')).toBe('true');
   });
 });

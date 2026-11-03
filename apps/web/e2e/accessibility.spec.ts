@@ -919,9 +919,10 @@ test('a content type’s clone and delete dialogs have no accessibility violatio
   });
   await openCms(page, '/content');
   const more = page.getByRole('button', { name: `More actions for “A11y doomed ${apiId}”` });
-  // The open menu itself isn't scanned: a modal Radix menu hides the page behind it with
-  // aria-hidden, which axe reports on every such menu (aria-hidden-focus), not on this one.
+  // The open menu, scanned on its own: a modal Radix menu hides the page behind it with
+  // aria-hidden (focus is trapped in the menu), which axe would report outside it.
   await more.click();
+  await scan(page, testInfo, ['[role="menu"]']);
   await page.getByRole('menuitem', { name: 'Clone…' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await scan(page, testInfo);

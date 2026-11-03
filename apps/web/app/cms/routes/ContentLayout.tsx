@@ -3,9 +3,15 @@ import { SkeletonText } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
+import { useContentTypeDeleteJob } from '~/cms/components/ContentTypeDeleteJob';
 import { StatusDot } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
-import { useContentTypesQuery, useQueryKeys, useSpaceConfigQuery } from '../lib/queries';
+import {
+  useContentTypesQuery,
+  useInvalidate,
+  useQueryKeys,
+  useSpaceConfigQuery,
+} from '../lib/queries';
 import type { ContentOutlet } from './content-context';
 
 /**
@@ -30,7 +36,16 @@ export function ContentLayout() {
     void queryClient.invalidateQueries({ queryKey: keys.spaceConfig });
   }, [queryClient, keys]);
 
+  // A content type's delete job, kept here rather than on the overview so its card is still there
+  // after a visit to an entry. When it decides the type's fate, the types and entries reload.
+  const invalidate = useInvalidate();
+  const deleteJob = useContentTypeDeleteJob(() => {
+    reload();
+    void invalidate(['entries']);
+  });
+
   const outlet: ContentOutlet = {
+    deleteJob,
     types,
     typesPending: typesQuery.isPending,
     locales: cfg?.locales ?? [conn.locale],

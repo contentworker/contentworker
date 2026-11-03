@@ -30,19 +30,29 @@ export function CloneContentTypeDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCloned: (clone: ContentType) => void;
+  /** Where focus goes as it closes (the row's menu button), rather than the page. */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const { client } = useClient();
   const [name, setName] = useState(`${props.source.name} copy`);
   const [apiId, setApiId] = useState(toApiId(`${props.source.name} copy`));
   const [apiIdTouched, setApiIdTouched] = useState(false);
-  const [error, setError] = useState<string>();
+  // What went wrong, and whether it is the API ID's (marked on that field, and read with it).
+  const [error, setError] = useState<{ message: string; apiId: boolean }>();
   const [busy, setBusy] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(undefined);
-    if (!name.trim() || !isValidApiId(apiId)) {
-      setError('A name and a valid API ID (letter, then letters/numbers/_) are required.');
+    if (!name.trim()) {
+      setError({ message: 'A name is required.', apiId: false });
+      return;
+    }
+    if (!isValidApiId(apiId)) {
+      setError({
+        message: 'The API ID must start with a letter, then letters, numbers or _.',
+        apiId: true,
+      });
       return;
     }
     setBusy(true);
@@ -54,7 +64,9 @@ export function CloneContentTypeDialog(props: {
       props.onCloned(clone);
       props.onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      // The API refuses a taken or invalid API ID; anything else is the request's.
+      setError({ message, apiId: /already exists|api ?id/i.test(message) });
     } finally {
       setBusy(false);
     }
@@ -62,7 +74,7 @@ export function CloneContentTypeDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" onCloseAutoFocus={props.onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>Clone “{props.source.name}”</DialogTitle>
           <DialogDescription>
@@ -88,13 +100,19 @@ export function CloneContentTypeDialog(props: {
               id="ct-clone-apiid"
               value={apiId}
               className="font-mono"
+              aria-invalid={error?.apiId ? true : undefined}
+              aria-describedby={error?.apiId ? 'ct-clone-error' : undefined}
               onChange={(e) => {
                 setApiIdTouched(true);
                 setApiId(e.target.value);
               }}
             />
           </div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {error && (
+            <Alert id="ct-clone-error" variant="destructive">
+              <AlertDescription>{error.message}</AlertDescription>
+            </Alert>
+          )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
               Cancel
@@ -133,6 +151,8 @@ export function DeleteContentTypeDialog(props: {
   onOpenChange: (open: boolean) => void;
   /** Deleted at once (null), or a job deleting its entries first. */
   onDeleted: (job: BulkJobSummary | null) => void;
+  /** Where focus goes as it closes, rather than the page (the menu that opened it is gone). */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const { client } = useClient();
   const { apiId, name } = props.type;
@@ -173,7 +193,7 @@ export function DeleteContentTypeDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg" onCloseAutoFocus={props.onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>Delete “{name}”?</DialogTitle>
           <DialogDescription>
@@ -218,13 +238,16 @@ export function DeleteContentTypeDialog(props: {
                 <div className="space-y-1.5">
                   <Label className="gap-2 font-normal">
                     <Checkbox
+                      aria-labelledby="ct-delete-entries-label"
                       aria-describedby="ct-delete-entries-hint"
                       checked={withEntries}
                       disabled={blocked.length > 0}
                       onCheckedChange={(c) => setWithEntries(c === true)}
                     />
-                    Also delete its {plural(entries, 'entry', 'entries')}
-                    {d.entries.trashed > 0 ? ` (${d.entries.trashed} in the trash)` : ''}
+                    <span id="ct-delete-entries-label">
+                      Also delete its {plural(entries, 'entry', 'entries')}
+                      {d.entries.trashed > 0 ? ` (${d.entries.trashed} in the trash)` : ''}
+                    </span>
                   </Label>
                   <p id="ct-delete-entries-hint" className="text-muted-foreground text-ui">
                     A background job moves each to the trash, unpublishing the live ones, then
@@ -251,7 +274,12 @@ export function DeleteContentTypeDialog(props: {
               )}
             </>
           )}
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {error && (
+            <Alert variant="destructive">
+              <AlertTitle>It wasn’t deleted</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
               Keep it

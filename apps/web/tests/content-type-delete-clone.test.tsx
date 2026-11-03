@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ContentType } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BulkJobSummary, ContentTypeDependents } from '~/cms/lib/management';
 
@@ -102,9 +102,11 @@ describe('deleting a content type from the admin', () => {
     const onDeleted = renderDelete();
     fireEvent.change(await screen.findByLabelText(/to confirm/), { target: { value: 'note' } });
     expect(deleteButton().hasAttribute('disabled')).toBe(true);
-    fireEvent.click(
-      screen.getByRole('checkbox', { name: /Also delete its 4 entries \(1 in the trash\)/ }),
+    const box = within(screen.getByRole('dialog')).getByRole('checkbox');
+    expect(document.getElementById(box.getAttribute('aria-labelledby') ?? '')?.textContent).toBe(
+      'Also delete its 4 entries (1 in the trash)',
     );
+    fireEvent.click(box);
     fireEvent.click(deleteButton());
     await waitFor(() => expect(onDeleted).toHaveBeenCalledWith(job));
     expect(client.deleteContentType).toHaveBeenCalledWith('note', { purgeEntries: true });
@@ -133,6 +135,22 @@ describe('cloning a content type from the admin', () => {
       <CloneContentTypeDialog source={note} open onOpenChange={() => {}} onCloned={() => {}} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Clone content type' }));
-    expect(await screen.findByText('A content type "memo" already exists')).toBeTruthy();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('A content type "memo" already exists');
+    // The refusal is the API ID's: that field is marked and described by it.
+    const apiId = screen.getByLabelText('API ID');
+    expect(apiId.getAttribute('aria-invalid')).toBe('true');
+    expect(apiId.getAttribute('aria-describedby')).toBe(alert.id);
+  });
+
+  it('marks the name, not the API ID, when only the name is missing', async () => {
+    render(
+      <CloneContentTypeDialog source={note} open onOpenChange={() => {}} onCloned={() => {}} />,
+    );
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: ' ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Clone content type' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('A name is required.');
+    expect(screen.getByLabelText('API ID').getAttribute('aria-invalid')).toBeNull();
+    expect(client.cloneContentType).not.toHaveBeenCalled();
   });
 });

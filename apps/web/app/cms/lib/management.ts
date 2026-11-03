@@ -868,6 +868,14 @@ export interface BulkJobSummary {
   readonly failed: number;
   readonly createdAt?: string;
   readonly completedAt?: string;
+  /**
+   * The action's own settings. A `content_type_delete` job names its type, and records what
+   * became of it once that is decided (`typeDeletion`): absent until the job ends.
+   */
+  readonly config?: {
+    readonly contentType?: string;
+    readonly typeDeletion?: { readonly deleted: boolean; readonly reason?: string };
+  };
 }
 
 /**

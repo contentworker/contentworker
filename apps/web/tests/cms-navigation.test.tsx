@@ -173,6 +173,30 @@ describe('command palette', () => {
     );
   });
 
+  it('opens a singleton rather than offering a new entry or an import', async () => {
+    client.listContentTypes.mockResolvedValueOnce([
+      { apiId: 'article', name: 'Article', displayField: 'title', fields: [], status: 'published' },
+      {
+        apiId: 'settings',
+        name: 'Site settings',
+        displayField: 'title',
+        fields: [],
+        status: 'published',
+        singleton: true,
+      } as never,
+    ]);
+    palette('/content/settings');
+    act(openCommandPalette);
+    const list = await screen.findByRole('listbox', { name: 'Results' });
+    const open = await within(list).findByRole('option', { name: 'Open Site settings' });
+    expect(within(list).queryByRole('option', { name: /^New .* entry$/ })).toBeNull();
+    expect(within(list).queryByRole('option', { name: /^Import / })).toBeNull();
+    fireEvent.click(open);
+    await waitFor(() =>
+      expect(screen.getByTestId('path').textContent).toBe('/content/settings/entry'),
+    );
+  });
+
   it('finds Settings sections by name once you type', async () => {
     palette('/dashboard');
     act(openCommandPalette);

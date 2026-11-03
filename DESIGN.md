@@ -275,7 +275,10 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   holds them too. It is never more than one press away.
 - **New entry:** in the header's primary-action place. An entry needs a content type: on a content
   type's pages it links straight to that type's new entry; anywhere else it opens a menu of the
-  space's content types. Ink, except on Approvals and Workflows, where it steps back to an outline.
+  space's content types. On a singleton's pages (a type with one entry only) it opens that entry
+  (`/content/:typeId/entry`, which goes to its editor, or to a new one while it has none), and the
+  palette offers "Open ‹type›" in place of New and Import entries; the entries page shows no
+  Import. Ink, except on Approvals and Workflows, where it steps back to an outline.
   On a phone it is a floating pill (`shadow-float`) above the tab bar on Overview and the Content
   pages; main pads its foot so the last row clears it.
 - **Account:** the sidebar's foot. Its menu holds who is signed in (the person, else the kind of
@@ -323,6 +326,8 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   is down the panel says so in one quiet line and the page makes the edit itself, confirming in its
   own dialog as before. Beside the column a page is narrower than the screen, so the Content pages'
   content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
+  In that list a singleton links to its one entry (`/content/:typeId/entry`), not a list of one,
+  and stays marked current anywhere under the type.
 - **Slow pages:** a navigation that takes over 400ms draws a link-blue rule sweeping under the
   header and marks main `aria-busy`. Quicker ones show nothing.
 - **Route announcer:** after a client-side navigation, the new page's h1 is read out in a polite
@@ -391,9 +396,24 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Overview** (`cms/components/Dashboard.tsx`): what needs attention as cards (not yet published,
   coming up, agent proposals, live activity), then search, AI usage and recent agent runs.
 - **Content:** the content types as a table (`PageHeader` with New content type): each type's
-  name linked to its entries with its API id in mono under it, then its entries, drafts, changed
-  entries and fields as figures, and Edit; a Draft badge only on a type whose schema isn't
-  published. Below md it stacks into cards; a content type's
+  name linked to its entries (a singleton's to its one entry, `/entry`, as the sidebar's link is)
+  with its API id in mono under it ("· one entry only" after it for a singleton), then its
+  entries, drafts, changed entries and fields as figures, Edit, and a ghost ⋯ menu ("More actions
+  for ‹type›") with Clone… and, after a separator, a destructive Delete…; a Draft badge only on a
+  type whose schema isn't published. Clone… opens a dialog with the copy's name and API ID. Closed
+  either way, focus goes back to the row's ⋯. **Deleting a type** is the second written exception
+  to "never a modal" (the trash's Delete permanently is the first): it can't be undone, so a dialog
+  reads what depends on the type first, names in a warning Alert whatever blocks it (another type
+  linking to it, a menu or redirect naming its entries, its URL pattern; then no confirm is
+  offered), and with entries offers "Also delete its N entries" as an unticked opt-in. It is
+  confirmed by typing the API ID, and a refusal shows as a destructive Alert in the dialog. Deleted
+  at once, focus moves to the next row's ⋯, or the page heading when it was the last. With its
+  entries, the delete runs as a bulk job shown in the trash's card above the table, Stop included,
+  kept by the Content layout so it is still there after a visit to an entry. The type goes in a
+  step after the last entry: the card says "Deleting the content type…" until that is recorded on
+  the job, then a success Alert, or a warning that the type was kept, naming the entries that
+  couldn't be deleted (from the job's report) or why the delete was refused. Below md it stacks
+  into cards; a content type's
   entries beside the list of types (from md): `PageHeader` with the real total ("250 entries",
   "Showing 100 of 250 entries" while more pages wait; filtered or in the trash, what was read,
   "100+"), then the filter bar (search, named "Search entries", and Filters, `aria-expanded`, whose

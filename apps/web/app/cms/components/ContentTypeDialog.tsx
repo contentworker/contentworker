@@ -503,11 +503,12 @@ export function ContentTypeDialog(props: {
           <div className="space-y-1.5">
             <Label className="gap-2 font-normal">
               <Checkbox
+                aria-labelledby="ct-singleton-label"
                 aria-describedby="ct-singleton-hint"
                 checked={singleton}
                 onCheckedChange={(c) => setSingleton(c === true)}
               />
-              One entry only (singleton)
+              <span id="ct-singleton-label">One entry only (singleton)</span>
             </Label>
             <p id="ct-singleton-hint" className="max-w-measure text-muted-foreground text-ui">
               For site settings or a home page: the content type holds a single entry, opened
