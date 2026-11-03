@@ -12,13 +12,13 @@ The published site (`docs.contentworker.app`) is for two readers: people who wor
 who integrate with one (API keys, the Delivery, Management and Preview APIs, webhooks, SDKs,
 MCP). It is not for people who deploy, configure or develop contentworker.
 
-Material only someone with the source or a platform account needs goes in the repo-root `docs/`
+Material only someone with the source or a Cloudflare account needs goes in the repo-root `docs/`
 folder instead: plain Markdown, indexed by `docs/README.md`, embedded into
 `packages/docs/src/generated.ts` so agents can read it over MCP. That covers source paths and
-function names, bindings, env vars and secrets, `wrangler`, database tables, object storage keys,
-durable-workflow and stateful-object mechanics, the fleet, deploys, CI and local development. On the
-site, describe a deployment setting by what it does and say the deployment's administrator sets it,
-never by its variable name.
+function names, bindings, env vars and secrets, `wrangler`, D1 tables, R2 keys, Workflow and
+Durable Object mechanics, the fleet, deploys, CI and local development. On the site, describe a
+deployment setting by what it does and say the deployment's administrator sets it, never by its
+variable name.
 
 ## Where it goes
 

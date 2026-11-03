@@ -1,6 +1,6 @@
 ---
 name: new-adapter
-description: Add an edge-platform adapter to contentworker. A new subpath of @contentworker/adapters implementing a port, its tests, the test-kit fake, the binding and env wiring in packages/platform, every wrangler.jsonc and the fleet, and the docs. Use when adding a new backing service for an existing port (vector store, queue, blob store, AI or embeddings provider, email, images, video), or a new port with its first adapter.
+description: Add a Cloudflare adapter to contentworker. A new subpath of @contentworker/adapters implementing a port, its tests, the test-kit fake, the binding and env wiring in packages/platform, every wrangler.jsonc and the fleet, and the docs. Use when adding a new backing service for an existing port (vector store, queue, blob store, AI or embeddings provider, email, images, video), or a new port with its first adapter.
 argument-hint: "<port> <adapter-name>"
 ---
 
@@ -21,10 +21,10 @@ Adapters live in one package, `packages/adapters`, one subpath each:
    signature), plus an in-memory fake in `packages/test-kit/src/` exported from its index.
 
 3. **Implementation.** Export a `create<Name>(options)` factory taking the binding and explicit
-   options (never reading env itself). It runs on the edge-worker runtime (`nodejs_compat`): `fetch`
-   and bindings, no filesystem, no long-lived sockets. Every operation honours `Scope` where the
-   port carries one, so isolation holds inside the backing service. Describe a binding with a narrow
-   `…Like` type (see `R2BucketLike`, `ImagesBindingLike`) so tests can stub it.
+   options (never reading env itself). It runs on workerd (`nodejs_compat`): `fetch` and bindings,
+   no filesystem, no long-lived sockets. Every operation honours `Scope` where the port carries one,
+   so isolation holds inside the backing service. Describe a binding with a narrow `…Like` type
+   (see `R2BucketLike`, `ImagesBindingLike`) so tests can stub it.
 
 4. **Tests:** `packages/adapters/test/<name>/*.test.ts`, in node with the binding stubbed. Cover the
    mapping to and from domain types, errors, and a two-scope case.
@@ -36,7 +36,7 @@ Adapters live in one package, `packages/adapters`, one subpath each:
    `assertNoFakeAdapters`.
 
 6. **Parity** (`infra-change` skill): the binding or var goes in `EdgeEnv`
-   (`packages/platform/src/env.ts`), every `apps/*/wrangler.jsonc` whose worker uses it, the local
+   (`packages/platform/src/env.ts`), every `apps/*/wrangler.jsonc` whose Worker uses it, the local
    stack's `LOCAL_STACK_VARS` in `apps/web/vite.config.ts` when local dev needs a value or a fake,
    `scripts/fleet.ts` (per-deployment names or ids) and `scripts/provision.sh` (a resource that must
    exist before deploy), then `pnpm test:fleet`.
@@ -45,5 +45,5 @@ Adapters live in one package, `packages/adapters`, one subpath each:
    `docs/ai-agents-and-search.md`), then `pnpm --filter @contentworker/docs generate`.
 
 8. **Verify:** `pnpm install`, `pnpm --filter @contentworker/adapters test`,
-   `pnpm --filter @contentworker/adapters check-types`, a dry-run bundle of each worker that binds
+   `pnpm --filter @contentworker/adapters check-types`, a dry-run bundle of each Worker that binds
    it (`infra-change`, step 7), then `/preflight` and `/review-change`.

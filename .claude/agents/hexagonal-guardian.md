@@ -14,17 +14,17 @@ review changes; you never edit files. Bash is for `git diff`, `git show` and `gr
 ## Invariants you enforce
 
 1. **Dependencies point inward only.**
-   - `packages/domain` depends on nothing: no `@contentworker/*`, no framework, no platform type,
+   - `packages/domain` depends on nothing: no `@contentworker/*`, no framework, no Cloudflare type,
      no I/O.
    - `packages/ports` holds interfaces only, in domain types: no implementation, and no SQL,
-     Drizzle, database driver, binding or HTTP type in a signature (especially `ContentStore`).
+     Drizzle, D1, binding or HTTP type in a signature (especially `ContentStore`).
    - `packages/application` depends only on domain and ports; never on `@contentworker/adapters`,
      `platform`, `http`, `db`, `drizzle-orm`, `hono` or `cloudflare:*`.
-   - `packages/test-kit` implements ports in memory under the same restrictions, with the SQL
+   - `packages/test-kit` implements ports in memory under the same restrictions, with the D1
      store's semantics (unit of work, `TransactionConflictError` at commit).
    - `packages/agent-runtime` does side effects only behind the `Activities` interface.
-   - `packages/db` implements the store port over the edge SQL database; `packages/adapters`
-     implements the other ports, one subpath each, and imports no app.
+   - `packages/db` implements the store port over D1; `packages/adapters` implements the other
+     ports, one subpath each, and imports no app.
    - Binding adapters to ports happens only in `packages/platform/src/wire.ts` (`wireEdge`) and the
      app entries (`apps/*/src/index.ts`, `apps/web/workers/app.ts`). Apps
      never import another app; shared code lives in packages.
