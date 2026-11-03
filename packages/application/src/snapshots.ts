@@ -91,6 +91,13 @@ export interface SnapshotEntry {
    */
   readonly publishedFields?: EntryFields;
   readonly metadata?: EntryMetadata;
+  /**
+   * Its authorship, which the copy keeps rather than crediting whoever imported it. Absent in older
+   * snapshots (and when unknown): the import's own principal is then its creator.
+   */
+  readonly createdAt?: string;
+  readonly createdBy?: string;
+  readonly firstPublishedAt?: string;
 }
 
 export interface EnvironmentSnapshot {
@@ -208,6 +215,9 @@ export async function exportSnapshot(
       fields: r.fields,
       ...(live.has(r.entry.id) ? { publishedFields: live.get(r.entry.id) } : {}),
       metadata: byEntry.get(r.entry.id)?.metadata,
+      ...(r.entry.createdAt ? { createdAt: r.entry.createdAt } : {}),
+      ...(r.entry.createdBy ? { createdBy: r.entry.createdBy } : {}),
+      ...(r.entry.firstPublishedAt ? { firstPublishedAt: r.entry.firstPublishedAt } : {}),
     })),
     assets: await allAssets(ctx, scope),
     assetFolders: await ctx.store.assetFolders.list(scope),
@@ -672,6 +682,8 @@ export interface StagedSnapshotEntry {
   readonly fields: EntryFields;
   readonly tags: readonly string[];
   readonly concepts: readonly string[];
+  /** The source entry's authorship, when the snapshot carries it. */
+  readonly authorship?: Pick<SnapshotEntry, 'createdAt' | 'createdBy' | 'firstPublishedAt'>;
 }
 
 /** A publication an import makes: the entry, and the draft to lay on top of a changed one. */
@@ -692,6 +704,15 @@ export function stagedEntry(
     fields: (publishing && entry.publishedFields) || entry.fields,
     tags: entry.metadata?.tags.map((t) => taxonomyIds.get(t) ?? t) ?? [],
     concepts: entry.metadata?.concepts.map((c) => taxonomyIds.get(c) ?? c) ?? [],
+    ...(entry.createdAt || entry.createdBy || entry.firstPublishedAt
+      ? {
+          authorship: {
+            ...(entry.createdAt ? { createdAt: entry.createdAt } : {}),
+            ...(entry.createdBy ? { createdBy: entry.createdBy } : {}),
+            ...(entry.firstPublishedAt ? { firstPublishedAt: entry.firstPublishedAt } : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -874,6 +895,7 @@ export async function createSnapshotEntry(
       contentTypeApiId: entry.contentTypeApiId,
       fields: entry.fields,
       id: entry.id,
+      ...(entry.authorship ? { authorship: entry.authorship } : {}),
     });
   }
   if (entry.tags.length > 0 || entry.concepts.length > 0) {

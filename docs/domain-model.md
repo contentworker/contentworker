@@ -422,6 +422,10 @@ interface Entry {
   status: EntryStatus;
   currentVersion: number; // latest saved draft snapshot
   publishedVersion: number | null; // snapshot served by Delivery (if any)
+  createdAt?: string | null; // authorship (below); null when unknown
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  firstPublishedAt?: string | null;
 }
 
 interface EntryVersion {
@@ -429,6 +433,7 @@ interface EntryVersion {
   entryId: string;
   version: number;
   fields: EntryFields;
+  createdBy?: string | null; // who saved it
 }
 ```
 
@@ -453,6 +458,31 @@ Transitions (pure functions; each throws `InvalidStateError` when its preconditi
 
 `currentVersion`/`publishedVersion` are pointers into the immutable version ledger; each
 `saveDraft` appends a new version, and `publishedVersion` pins which one Delivery serves.
+
+### Authorship
+
+Every write stamps who made it, from the context's `actor` (`AppContext.actor`) and `ctx.clock`
+(`stampCreated`, `stampChanged`, `stampPublished` in `entry/authorship.ts`). An actor is the
+principal's audit identity (`principalActorId`: a person's subject, `admin-token`, or the key kind),
+or names what acted without a request: `agent:<name>` (an editorial agent), `workflow:<id>` (a
+workflow node or its compensation, whatever principal's grants it runs with), `plugin:<id>` (a
+plugin's capabilities) and `system` (the scheduler). The HTTP routes and the MCP session derive the
+context per request (`actingAs`); a bulk job records who started it in its `config.actor` and its
+chunks write as them; a promotion writes as whoever approved it.
+
+| Field              | Set by                                                   | `sys.*`              |
+| ------------------ | -------------------------------------------------------- | -------------------- |
+| `createdAt`        | creation (kept by an environment clone or a promotion)   | `sys.createdAt`      |
+| `createdBy`        | creation (kept likewise)                                 | `sys.createdBy`      |
+| `updatedBy`        | every change, the one `sys.updatedAt` records            | `sys.updatedBy`      |
+| `firstPublishedAt` | the first publish only; kept through unpublish           | `sys.firstPublishedAt` |
+
+The store writes creation once and `first_published_at` with `COALESCE`, so a stale aggregate or a
+lost race never moves either. An entry already live with nothing recorded (from before
+`0024_entry_authorship`) keeps an unknown (null) first publish when republished. Management and
+Preview serve all four, filter and sort on them, and resolve `me` in `sys.createdBy` and
+`sys.updatedBy` to the caller; Delivery serves `firstPublishedAt` alone, since the others name
+people and keys a public read has no business seeing.
 
 ### Comparing versions
 

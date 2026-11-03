@@ -1,4 +1,5 @@
 import {
+  actingAs,
   authenticate,
   clampCount,
   getPreviewAsset,
@@ -132,7 +133,9 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
         locale: 'Resolve one locale',
         limit: 'Page size (at most 100)',
         cursor: 'nextCursor from the previous page, with the same filters and order',
-        order: 'Sort keys, e.g. -sys.updatedAt,fields.title',
+        order: 'Sort keys, e.g. -sys.updatedAt,fields.title or -sys.firstPublishedAt',
+        'sys.createdBy':
+          'Who created it; me is the caller (also sys.updatedBy, with [in] and [ne])',
         query: 'Full-text search across text fields',
         where: 'AND/OR groups of predicates as JSON (as on Delivery)',
         links_to_entry: 'Entries whose current version links to this entry id in any field',
@@ -157,7 +160,8 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
       assertQueryRespectsFieldRules(principal, query);
       const cursor = c.req.query('cursor');
       const page = await listPreviewEntryPage(
-        ctx,
+        // Acting as the caller, so `sys.createdBy=me` names them.
+        actingAs(ctx, principal),
         scopeOf(c),
         { ...query, ...(cursor ? { cursor } : {}) },
         {

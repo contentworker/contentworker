@@ -786,7 +786,7 @@ export function EntriesList() {
   }
 
   const count = entries.length;
-  const hasQuery = (query.filters?.length ?? 0) > 0 || !!query.search;
+  const hasQuery = (query.filters?.length ?? 0) > 0 || !!query.search || query.mine === true;
   // Clearing filters keeps the sort and the trash view: they aren't filters.
   const clearFilters = () => setQuery({ order: query.order, trashed: query.trashed });
   const sortBy = (field: string) => {

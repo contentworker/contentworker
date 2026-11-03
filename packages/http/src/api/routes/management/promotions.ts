@@ -10,6 +10,7 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import { parseBody, promotionBody } from '../../validation';
+import { actingCtx } from './shared';
 
 export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
@@ -35,7 +36,7 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       authorize(c.get('principal'), SCOPES.contentPublish, c.req.param('space'));
       const body = await parseBody(c, promotionBody);
       return c.json(
-        await requestPromotion(ctx, c.get('principal'), c.req.param('space'), body),
+        await requestPromotion(actingCtx(ctx, c), c.get('principal'), c.req.param('space'), body),
         201,
       );
     },
@@ -69,7 +70,12 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentPublish),
     async (c) =>
       c.json(
-        await approvePromotion(ctx, c.get('principal'), c.req.param('space'), c.req.param('id')),
+        await approvePromotion(
+          actingCtx(ctx, c),
+          c.get('principal'),
+          c.req.param('space'),
+          c.req.param('id'),
+        ),
       ),
   );
   app.post(

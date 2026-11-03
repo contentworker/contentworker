@@ -138,6 +138,47 @@ describe('entries_query over MCP', () => {
     expect(res.isError).toBe(true);
   });
 
+  it('writes as the session’s principal and lists its own entries with sys.createdBy=me', async () => {
+    const writer: Principal = {
+      spaceId: SPACE,
+      kind: 'user',
+      subject: 'person-1',
+      scopes: [SCOPES.contentWrite, SCOPES.previewRead],
+    };
+    const client = await connect(deps, writer);
+    const created = await client.callTool({
+      name: 'entries_create',
+      arguments: { space: SPACE, contentType: 'note', fields: { title: { 'en-US': 'mine' } } },
+    });
+    expect(created.isError).toBeFalsy();
+    const view = text(created) as { entry: { id: string; createdBy: string; updatedBy: string } };
+    expect(view.entry).toMatchObject({ createdBy: 'person-1', updatedBy: 'person-1' });
+
+    const page = text(
+      await client.callTool({
+        name: 'entries_query',
+        arguments: {
+          space: SPACE,
+          contentType: 'note',
+          filters: [{ field: 'sys.createdBy', op: 'eq', value: 'me' }],
+        },
+      }),
+    ) as { items: { id: string; createdBy: string }[] };
+    expect(page.items.map((e) => [e.id, e.createdBy])).toEqual([[view.entry.id, 'person-1']]);
+    // Another caller's `me` is themselves: the five seeded entries name nobody.
+    const other = text(
+      await (await connect(deps, READER)).callTool({
+        name: 'entries_query',
+        arguments: {
+          space: SPACE,
+          contentType: 'note',
+          filters: [{ field: 'sys.createdBy', op: 'eq', value: 'me' }],
+        },
+      }),
+    ) as Page;
+    expect(other.items).toEqual([]);
+  });
+
   it('refuses skip rather than reading the first page again', async () => {
     const client = await connect(deps, READER);
     const res = await client.callTool({

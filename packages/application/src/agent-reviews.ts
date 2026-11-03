@@ -1,12 +1,13 @@
 import type { AgentReview, EntryFields, Principal, Scope } from '@contentworker/domain';
 import {
+  agentActor,
   ConflictError,
   canAccessContentType,
   maskDeniedFields,
   NotFoundError,
 } from '@contentworker/domain';
 import { recordAgentRun } from './agent-audit';
-import type { AppContext } from './context';
+import { type AppContext, withActor } from './context';
 import { updateEntry } from './entries';
 
 /** Default watcher wait for a human decision before it stands down: 7 days. */
@@ -111,9 +112,13 @@ async function applyReviewOnce(
 ): Promise<boolean> {
   const at = ctx.clock.now().toISOString();
   if (!(await ctx.store.agentReviews.markApplied(scope, review.id, at))) return false;
+  // The request that approved it writes as its principal; the review watcher, which has none,
+  // writes as whoever decided it (or, failing that, the agent that proposed it).
+  const acting =
+    ctx.actor !== undefined ? ctx : withActor(ctx, review.decidedBy ?? agentActor(review.workflow));
   let applied = false;
   try {
-    applied = await applyProposedFields(ctx, scope, review.entryId, review.proposed);
+    applied = await applyProposedFields(acting, scope, review.entryId, review.proposed);
   } catch (err) {
     await ctx.store.agentReviews.clearApplied(scope, review.id).catch(() => {});
     throw err;

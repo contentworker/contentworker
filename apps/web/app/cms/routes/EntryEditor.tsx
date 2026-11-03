@@ -39,6 +39,7 @@ import { VersionHistory } from '~/cms/components/VersionHistory';
 import { CanvasDialog } from '../components/CanvasDialog';
 import type { Pickers, PickOption } from '../components/EntryForm';
 import { EntryForm } from '../components/EntryForm';
+import { EntryAuthorship } from '../components/entries/EntryAuthorship';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
@@ -51,9 +52,13 @@ import {
   useAssetsQuery,
   useEntryQuery,
   useQueryKeys,
+  useScopedQuery,
 } from '../lib/queries';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
+
+/** The scope that reads the team (`GET …/team`), and with it teammates' names. */
+const SPACE_ADMIN = 'space:admin';
 
 const FORM_ID = 'entry-form';
 
@@ -159,6 +164,22 @@ export function EntryEditor() {
     ? { version: entryQuery.data.version, status: entryQuery.data.status }
     : null;
   const baseFields = isEdit ? ((entryQuery.data?.fields as EntryFields) ?? null) : {};
+  // Who wrote it: the freshest aggregate (a save names its author) over the loaded entry. Names
+  // come from the team, which only an administrator may read; anyone else sees "You" and kinds.
+  const authorship =
+    lastAggregate?.id === entryId ? { ...entryQuery.data, ...lastAggregate } : entryQuery.data;
+  const accessQuery = useScopedQuery(['space-access'], () => client.getSpaceAccess(), {
+    silent: true,
+    enabled: isEdit,
+  });
+  const teamQuery = useScopedQuery(['team'], () => client.getTeam(), {
+    silent: true,
+    enabled: isEdit && accessQuery.data?.scopes.includes(SPACE_ADMIN) === true,
+  });
+  const directory = {
+    me: accessQuery.data?.subject,
+    people: teamQuery.data?.people,
+  };
   const initial: EntryFields | null = baseFields;
 
   // A failed load already toasts via the query cache; leave the broken editor.
@@ -732,6 +753,7 @@ export function EntryEditor() {
           ) : null}
           {isEdit && entryId && paneView === 'details' && (
             <>
+              {authorship && <EntryAuthorship authorship={authorship} directory={directory} />}
               {/* Editor work first; AI assist sits last and starts collapsed. */}
               <CollaborationPanel key={`collab:${entryId}`} entryId={entryId} />
               <EntryMetadataPanel key={`metadata:${entryId}`} entryId={entryId} />

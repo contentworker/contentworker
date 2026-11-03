@@ -172,6 +172,16 @@ describe('workflow node executors', () => {
     expect((await exec('content.unpublish')).summary).toBe('Not published');
   });
 
+  it('writes as the workflow, not as the person whose grants it acts with', async () => {
+    await exec('content.set_fields', { values: { summary: 'From the run' } });
+    await exec('content.publish');
+    const entry = (await ctx.store.entries.get(scope, entryId))?.entry;
+    expect(entry?.updatedBy).toBe('workflow:wf-1');
+    expect(entry?.firstPublishedAt).toBe('2026-03-04T10:00:00.000Z');
+    const [latest] = await ctx.store.entries.listVersions(scope, entryId);
+    expect(latest?.createdBy).toBe('workflow:wf-1');
+  });
+
   it('refuses effects the run’s principal lacks, as the API would', async () => {
     expect((await exec('content.publish', {}, reader)).failed).toMatch(/content:publish/);
     expect(

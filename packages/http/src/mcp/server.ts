@@ -1,4 +1,5 @@
 import {
+  actingAs,
   getEntry,
   getPreviewEntry,
   resolveEnvironment,
@@ -150,7 +151,10 @@ export function buildServer(
   principal: Principal,
   skills?: SkillsExtension,
 ): McpServer {
-  const { ctx, ai, rag, agents } = deps;
+  const { ai, rag, agents } = deps;
+  // Every tool writes as this session's principal: entries it creates or changes record it as
+  // their author, exactly as the HTTP API's routes do.
+  const ctx = actingAs(deps.ctx, principal);
   const server = new McpServer(
     { name: 'contentworker', version: '0.1.0' },
     { cacheHints: CACHE_HINTS },

@@ -8,11 +8,13 @@ import {
   publish,
   type ReferenceEdge,
   type Scope,
+  stampChanged,
+  stampPublished,
   unpublish,
   ValidationError,
 } from '@contentworker/domain';
 import type { ContentStoreTx, EntryWithFields, PublishedEntry } from '@contentworker/ports';
-import type { AppContext } from './context';
+import { type AppContext, actorOf } from './context';
 import { runHook } from './hooks';
 import {
   loadPublishGuard,
@@ -84,7 +86,8 @@ export async function publishEntryTx(
     version: found.entry.currentVersion,
   });
 
-  const published = publish(found.entry);
+  const now = ctx.clock.now().toISOString();
+  const published = stampPublished(found.entry, publish(found.entry), actorOf(ctx), now);
 
   // Materialize reference edges from the entry's link fields and verify each
   // linked entry exists in this environment (referential integrity).
@@ -114,7 +117,8 @@ export async function publishEntryTx(
     contentTypeApiId: published.contentTypeApiId,
     version: published.currentVersion,
     fields: found.fields,
-    publishedAt: ctx.clock.now().toISOString(),
+    publishedAt: now,
+    ...(published.firstPublishedAt ? { firstPublishedAt: published.firstPublishedAt } : {}),
     metadata,
   };
   await tx.entries.putPublished(scope, snapshot);
@@ -149,7 +153,7 @@ export async function unpublishEntryTx(
   if (found.entry.publishedVersion === null) {
     throw new InvalidStateError('Entry is not published');
   }
-  const updated = unpublish(found.entry);
+  const updated = stampChanged(unpublish(found.entry), actorOf(ctx));
   await tx.entries.saveAggregate(scope, updated);
   await tx.entries.removePublished(scope, id);
   await tx.references.removeForEntry(scope, id);
@@ -229,6 +233,9 @@ export async function publishEntriesTx(
     if (contentType) types.set(apiId, contentType);
   }
 
+  // Every published entry in the chunk shares one instant (see above).
+  const publishedAt = ctx.clock.now().toISOString();
+  const actor = actorOf(ctx);
   // Validate per item: existence, state machine, reference extraction.
   const candidates: { item: EntryWithFields; published: Entry; edges: ReferenceEdge[] }[] = [];
   for (const id of uniqueIds) {
@@ -242,7 +249,7 @@ export async function publishEntriesTx(
       // Same order as publishEntryTx: the state machine runs before the
       // content-type check, so an archived entry with a missing type reports
       // the same error on either path.
-      const published = publish(item.entry);
+      const published = stampPublished(item.entry, publish(item.entry), actor, publishedAt);
       const contentType = types.get(item.entry.contentTypeApiId);
       if (!contentType) {
         failures.push({
@@ -314,7 +321,6 @@ export async function publishEntriesTx(
     ),
   );
 
-  const publishedAt = ctx.clock.now().toISOString();
   await tx.entries.saveAggregateMany(
     scope,
     publishable.map((c) => c.published),
@@ -327,6 +333,7 @@ export async function publishEntriesTx(
       version: c.published.currentVersion,
       fields: c.item.fields,
       publishedAt,
+      ...(c.published.firstPublishedAt ? { firstPublishedAt: c.published.firstPublishedAt } : {}),
       metadata: metadataByEntry.get(c.published.id),
     })),
   );
@@ -386,7 +393,7 @@ export async function unpublishEntriesTx(
       continue;
     }
     try {
-      unpublishable.push(unpublish(item.entry));
+      unpublishable.push(stampChanged(unpublish(item.entry), actorOf(ctx)));
     } catch (e) {
       failures.push({ id, error: errorMessage(e) });
     }

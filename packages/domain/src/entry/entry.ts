@@ -13,6 +13,17 @@ export interface Entry {
   readonly status: EntryStatus;
   readonly currentVersion: number;
   readonly publishedVersion: number | null;
+  /**
+   * Authorship, stamped by the use-cases (which hold the clock and the actor) and kept by the
+   * store: `createdAt`/`createdBy` once, at creation; `updatedBy` on every change (the change
+   * `sys.updatedAt` records); `firstPublishedAt` by the first publish only. An actor is an
+   * actor id (see `authorship.ts`). Null when unknown (an entry from before they were
+   * recorded); absent on an entry nothing has stamped yet.
+   */
+  readonly createdAt?: string | null;
+  readonly createdBy?: string | null;
+  readonly updatedBy?: string | null;
+  readonly firstPublishedAt?: string | null;
 }
 
 /** An immutable point-in-time snapshot of an entry's field values. */
@@ -23,6 +34,8 @@ export interface EntryVersion {
   /** When this version was saved (ISO-8601). Optional: set by use-cases, which
    *  hold the clock; the domain stays time-free. */
   readonly createdAt?: string;
+  /** Who saved this version (an actor, as {@link Entry.updatedBy}); null when unknown. */
+  readonly createdBy?: string | null;
   /** Set when the body moved to object storage and could not be read back there: `fields` is
    *  then empty. History lists show such a version without failing the rest. */
   readonly bodyUnavailable?: true;

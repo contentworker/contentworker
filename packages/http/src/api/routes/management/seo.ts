@@ -19,7 +19,7 @@ import { doc } from '../../docs/openapi';
 import * as entryDocs from '../../docs/schemas/entries';
 import * as seoDocs from '../../docs/schemas/seo';
 import { entrySeoBody, parseBody } from '../../validation';
-import { BASE, scopeOf } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 export function seoRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
@@ -48,7 +48,7 @@ export function seoRoutes(deps: AuthDeps): Hono<AuthVars> {
         if (field) assertWritableFields(principal, entry.contentTypeApiId, { [field.apiId]: {} });
       }
       const view = await setEntrySeo(
-        ctx,
+        actingCtx(ctx, c),
         scopeOf(c),
         id,
         patch,

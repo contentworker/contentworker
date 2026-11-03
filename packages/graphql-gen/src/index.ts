@@ -240,6 +240,11 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
         type: new GraphQLNonNull(GraphQLString),
         resolve: (s: ResolvedEntry) => s.publishedAt,
       },
+      // Null when unknown (first published before it was recorded).
+      firstPublishedAt: {
+        type: GraphQLString,
+        resolve: (s: ResolvedEntry) => s.firstPublishedAt ?? null,
+      },
     },
   });
 

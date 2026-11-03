@@ -1726,6 +1726,9 @@ export interface PublishedEntry {
   readonly version: number;
   readonly fields: EntryFields;
   readonly publishedAt: string;
+  /** When the entry was first published (kept through unpublish and republish); absent when
+   *  unknown, for an entry first published before it was recorded. */
+  readonly firstPublishedAt?: string;
   /** Taxonomy associations captured at publish time (tags + concepts). */
   readonly metadata?: EntryMetadata;
 }

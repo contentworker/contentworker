@@ -17,7 +17,7 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as versionDocs from '../../docs/schemas/versions';
-import { BASE, entryAccess, expectedVersionOf, scopeOf } from './shared';
+import { actingCtx, BASE, entryAccess, expectedVersionOf, scopeOf } from './shared';
 
 const VERSION_REF = 'A version number (1 or more), draft or published';
 
@@ -111,7 +111,7 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       assertWritableFields(principal, entry.contentTypeApiId, target.fields);
       return c.json(
         await restoreVersion(
-          ctx,
+          actingCtx(ctx, c),
           scopeOf(c),
           c.req.param('id'),
           Number(c.req.param('version')),

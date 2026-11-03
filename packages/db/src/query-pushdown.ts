@@ -266,6 +266,9 @@ export interface SysColumns {
    * not drafts), where a link filter reads the fields instead.
    */
   readonly edges?: Scope;
+  /** Who created and last changed a draft entry (`sys.createdBy`, `sys.updatedBy`). */
+  readonly createdBy?: SQL;
+  readonly updatedBy?: SQL;
 }
 
 /** The epoch ms for an ISO comparand the engine could equal, or null if none can. */
@@ -300,7 +303,15 @@ function filterPredicate(f: QueryFilter, fieldsCol: SQL, sys: SysColumns): SQL |
       return ms === null ? null : sql`${sys.publishedAt} = ${ms}`;
     }
     const col =
-      name === 'id' ? sys.entryId : name === 'contentType' ? sys.contentTypeApiId : undefined;
+      name === 'id'
+        ? sys.entryId
+        : name === 'contentType'
+          ? sys.contentTypeApiId
+          : name === 'createdBy'
+            ? sys.createdBy
+            : name === 'updatedBy'
+              ? sys.updatedBy
+              : undefined;
     if (!col) return null;
     if (f.op === 'eq' && typeof f.value === 'string') return sql`${col} = ${f.value}`;
     if (f.op === 'in' && Array.isArray(f.value) && f.value.length > 0) {

@@ -185,7 +185,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
               z.object({
                 field: z
                   .string()
-                  .describe('field apiId, a component path (seo.title) or a sys.* pseudo-field'),
+                  .describe(
+                    'field apiId, a component path (seo.title) or a sys.* pseudo-field: sys.id, ' +
+                      'sys.contentType, sys.status, sys.updatedAt, sys.createdAt, sys.createdBy, ' +
+                      'sys.updatedBy, sys.firstPublishedAt. For sys.createdBy and sys.updatedBy ' +
+                      'the value "me" is the caller',
+                  ),
                 op: z.enum(FILTER_OPS),
                 value: z
                   .any()

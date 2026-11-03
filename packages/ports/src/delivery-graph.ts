@@ -12,6 +12,8 @@ export interface ResolvedEntry {
   readonly contentType: string;
   readonly fields: Record<string, unknown>;
   readonly publishedAt: string;
+  /** When it was first published, when known. */
+  readonly firstPublishedAt?: string;
 }
 
 export interface DeliverySearchHit {

@@ -83,8 +83,13 @@ export interface Activities {
   loadEntry(scope: Scope, entryId: string): Promise<LoadedEntry | null>;
   /** Generates values for the named empty fields; returns localized fields. */
   generateFields(input: GenerateFieldsInput): Promise<{ fields: EntryFields; usage: Usage }>;
-  /** Saves field values as a new draft version (validated by the core). */
-  applyFields(scope: Scope, entryId: string, fields: EntryFields): Promise<void>;
+  /** Saves field values as a new draft version (validated by the core), written as `agent`. */
+  applyFields(
+    scope: Scope,
+    entryId: string,
+    fields: EntryFields,
+    agent: WorkflowName,
+  ): Promise<void>;
   /** Classifies entry text against a policy. */
   classify(
     scope: Scope,
@@ -119,7 +124,7 @@ export interface Activities {
    * Retracts a flagged entry from the delivery read model. Moderation runs
    * post-publish, so a held entry is briefly live; this is what takes it down.
    */
-  retractEntry(scope: Scope, entryId: string): Promise<void>;
+  retractEntry(scope: Scope, entryId: string, agent: WorkflowName): Promise<void>;
   /** Settles a watcher outcome: apply-once on approval, record, or stand down. */
   settleReview(
     scope: Scope,

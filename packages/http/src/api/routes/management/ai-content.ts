@@ -16,7 +16,7 @@ import {
   tierOnlyBody,
   translateBody,
 } from '../../validation';
-import { BASE, scopeOf } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, ai } = deps;
@@ -26,7 +26,7 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.post(`${BASE}/entries/:id/translate`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(
       await translateEntry(
-        ctx,
+        actingCtx(ctx, c),
         ai,
         scopeOf(c),
         c.req.param('id'),
@@ -37,7 +37,7 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.post(`${BASE}/entries/:id/summarize`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(
       await summarizeEntry(
-        ctx,
+        actingCtx(ctx, c),
         ai,
         scopeOf(c),
         c.req.param('id'),
@@ -47,7 +47,13 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.post(`${BASE}/entries/:id/autofill`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(
-      await autofillField(ctx, ai, scopeOf(c), c.req.param('id'), await parseBody(c, autofillBody)),
+      await autofillField(
+        actingCtx(ctx, c),
+        ai,
+        scopeOf(c),
+        c.req.param('id'),
+        await parseBody(c, autofillBody),
+      ),
     ),
   );
   app.post(`${BASE}/entries/:id/suggest-tags`, requireScope(SCOPES.contentWrite), async (c) =>
@@ -64,7 +70,12 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
   // Persists a reviewed tag suggestion exactly as approved (no model re-run).
   app.post(`${BASE}/entries/:id/apply-tags`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(
-      await applyEntryTags(ctx, scopeOf(c), c.req.param('id'), await parseBody(c, applyTagsBody)),
+      await applyEntryTags(
+        actingCtx(ctx, c),
+        scopeOf(c),
+        c.req.param('id'),
+        await parseBody(c, applyTagsBody),
+      ),
     ),
   );
 

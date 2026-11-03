@@ -289,7 +289,21 @@ export interface ResolvedMenu {
   readonly items: readonly ResolvedMenuItem[];
 }
 
-export interface Entry {
+/**
+ * Who wrote an entry and when (`sys.createdBy` and the rest in a query). An actor is a person's id,
+ * `admin-token`, an API key's kind, or `agent:<name>`, `workflow:<id>`, `plugin:<id>` or `system`.
+ * Null when unknown: an entry from before authorship was recorded, or one never published.
+ */
+export interface EntryAuthorship {
+  readonly createdAt: string | null;
+  readonly createdBy: string | null;
+  /** Who made the last change, the one `updatedAt` records. */
+  readonly updatedBy: string | null;
+  /** Kept through unpublish and republish. */
+  readonly firstPublishedAt: string | null;
+}
+
+export interface Entry extends EntryAuthorship {
   readonly id: string;
   readonly contentTypeApiId: string;
   readonly status: EntryStatus;
@@ -1004,11 +1018,13 @@ export interface Principal {
 }
 
 /** An entry as Preview serves it: the latest saved version, drafts included. */
-export interface PreviewEntry {
+export interface PreviewEntry extends EntryAuthorship {
   readonly id: string;
   readonly contentType: string;
   readonly status: EntryStatus;
   readonly version: number;
+  /** When the entry last changed. */
+  readonly updatedAt?: string;
   /** Keyed by locale, or plain values when the list was read with `locale`. */
   readonly fields: Readonly<Record<string, unknown>>;
 }
@@ -1024,6 +1040,10 @@ export interface EntryListQuery {
   readonly order?: string;
   /** Full-text match over text fields. */
   readonly query?: string;
+  /** Who created the entries: an actor id, or `me` for the caller (`sys.createdBy`). */
+  readonly createdBy?: string;
+  /** Who changed the entries last: an actor id, or `me` for the caller (`sys.updatedBy`). */
+  readonly updatedBy?: string;
 }
 
 /** Maps source records onto one content type: target field apiId → source field name. */
@@ -1445,6 +1465,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
             skip: query.skip,
             order: query.order,
             query: query.query,
+            'sys.createdBy': query.createdBy,
+            'sys.updatedBy': query.updatedBy,
           },
         ),
       create: (input: { contentTypeApiId: string; fields: EntryFields }) =>

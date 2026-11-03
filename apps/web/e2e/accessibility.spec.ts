@@ -4,6 +4,7 @@ import {
   api,
   asFreshDeployment,
   createChanged,
+  createDraft,
   MGMT,
   openCms,
   PROPOSAL_TARGET,
@@ -731,6 +732,23 @@ test('the publish confirmation has no accessibility violations', async ({
     .click();
   const dialog = page.getByRole('alertdialog');
   await expect(dialog.getByText('1 field changed')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('an entry’s authorship and the Mine filter have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const id = await createDraft(request, `Authorship ${Date.now()}`);
+  await openCms(page, `/content/article/${id}`);
+  const pane = page.getByRole('complementary', { name: 'Side pane' });
+  await pane.getByRole('radio', { name: 'Details' }).click();
+  await expect(pane.getByText('Last edited by')).toBeVisible();
+  await scan(page, testInfo);
+  await openCms(page, '/content/article');
+  await page.getByRole('button', { name: 'Mine' }).click();
+  await expect(page.getByRole('button', { name: 'Mine' })).toHaveAttribute('aria-pressed', 'true');
   await scan(page, testInfo);
 });
 

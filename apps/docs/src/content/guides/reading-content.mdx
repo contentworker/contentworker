@@ -65,6 +65,7 @@ Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>
 | `fields.related[refIn]=<id>,<id>`     | it links to any of them                 |
 | `links_to_entry=<entryId>`            | any field links to that entry (`<id>,<id>` for any of several) |
 | `sys.publishedAt[gt]=2026-10-01`      | system fields work the same way         |
+| `order=-sys.firstPublishedAt`         | newest first by first publish, not by the last republish |
 
 Delivery reads the links of the published version, Preview those of the current one, in any
 locale. A link counts where the content type declares one: a Link field, a list of links, a
@@ -296,7 +297,10 @@ and the same filters as Delivery, but ignores `include`, so linked entries stay 
 it has no assets, search, GraphQL or live routes. Its entries list pages with a cursor, and refuses
 `skip`: pass the response's `nextCursor` back as `cursor` (with the same filters and `order`) until
 there is none. Each entry carries `updatedAt`, and `order=-sys.updatedAt` lists the most recently
-changed first. `…/entries/{id}` also accepts
+changed first. It also carries who wrote it: `createdAt`, `createdBy`, `updatedBy` (who made the
+last change) and `firstPublishedAt`, each null when unknown, and `sys.createdBy=me` lists the
+caller's own entries. Delivery serves `firstPublishedAt` and no other authorship: who created or
+changed an entry names people and keys. `…/entries/{id}` also accepts
 `?preview_token=`, a shareable link token minted from the entry, in place of a bearer key. Roles and
 denied fields apply as they do on Delivery.
 

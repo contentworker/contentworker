@@ -147,6 +147,7 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 | Links to entry    | `links_to_entry=<id>[,<id>]`          | Any field links to the entry; refused (403) to a key with hidden fields |
 | Groups            | `where=<json>`                        | `and`/`or` groups of `{ field, op, value }`, ≤ 4 deep, ≤ 20 predicates (`parseQueryWhere`); ANDed with the rest |
 | System field      | `sys.publishedAt[gt]=<iso>`           | Filter on `sys.*` pseudo-fields                                       |
+| Authorship        | `sys.createdBy=me`                    | Preview and Management: `sys.createdBy`/`sys.updatedBy` (`me` is the caller), `sys.createdAt`, `sys.firstPublishedAt`; Delivery has `sys.firstPublishedAt` only |
 | Taxonomy          | `metadata.tags.slug=news`             | Delivery only: entries carrying a tag (`metadata.tags` by id; `metadata.concepts[.slug]` for concepts) |
 | Sort              | `order=fields.title,-sys.publishedAt` | Comma-separated; `-` prefix = descending                              |
 | Projection        | `select=fields.title,fields.body`     | Return only listed field apiIds                                       |
@@ -929,8 +930,10 @@ ascending), ties broken by entry id. In the default order an entry edited betwee
 never skipped; under another order, an edit to a sorted field can move an entry across the
 cursor. A cursor from another order is refused (`422`). A role limited to some content types
 pages over those types only, so every page is full and no cursor points at an entry it can't
-read. `sys.updatedAt` sorts and filters like any `sys.*` field. The MCP tool `entries_query` is
-the same read, paged the same way.
+read. `sys.updatedAt` sorts and filters like any `sys.*` field, and so does authorship: each
+entry carries `createdAt`, `createdBy`, `updatedBy` and `firstPublishedAt` (null when unknown), and
+`sys.createdBy=me` lists the caller's own. The MCP tool `entries_query` is the same read, paged the
+same way.
 
 Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
 least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and

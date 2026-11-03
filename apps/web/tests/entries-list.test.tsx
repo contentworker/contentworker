@@ -513,6 +513,26 @@ describe('EntriesList sorting from the headers', () => {
   });
 });
 
+describe('EntriesList Mine filter', () => {
+  it('lists only the signed-in person’s entries, and Clear brings everyone’s back', async () => {
+    setup();
+    const mine = await screen.findByRole('button', { name: 'Mine' }, { timeout: FIRST_RENDER_MS });
+    expect(mine.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(mine);
+    expect(mine.getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() =>
+      expect(client.listEntryPage).toHaveBeenLastCalledWith(
+        'article',
+        expect.objectContaining({ mine: true }),
+        undefined,
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(client.listEntryPage.mock.lastCall?.[1]?.mine).toBeUndefined());
+    expect(screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
 describe('EntriesList bulk bar', () => {
   const tick = async (t: string) =>
     fireEvent.click(

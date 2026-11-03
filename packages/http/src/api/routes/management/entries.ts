@@ -28,7 +28,7 @@ import {
   resolveEmbedBody,
   validateEntryBody,
 } from '../../validation';
-import { BASE, entryAccess, scopeOf } from './shared';
+import { actingCtx, BASE, entryAccess, scopeOf } from './shared';
 
 export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, hasher, ai } = deps;
@@ -50,7 +50,11 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const principal = c.get('principal');
       authorizeContent(principal, 'write', body.contentTypeApiId);
       assertWritableFields(principal, body.contentTypeApiId, body.fields ?? {});
-      const view = await createEntry(ctx, scopeOf(c), body as Parameters<typeof createEntry>[2]);
+      const view = await createEntry(
+        actingCtx(ctx, c),
+        scopeOf(c),
+        body as Parameters<typeof createEntry>[2],
+      );
       return c.json(view, 201);
     },
   );

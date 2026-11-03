@@ -11,7 +11,7 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import { cloneBody, parseBody, snapshotBody } from '../../validation';
-import { BASE, scopeOf } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 export function snapshotsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
@@ -60,10 +60,13 @@ export function snapshotsRoutes(deps: AuthDeps): Hono<AuthVars> {
         reindexAssets: Boolean(deps.assetIngest),
       };
       if (options.dryRun || !blob) {
-        const report = await importSnapshot(ctx, scopeOf(c), snapshot, options);
+        const report = await importSnapshot(actingCtx(ctx, c), scopeOf(c), snapshot, options);
         return c.json(report, report.dryRun ? 200 : 201);
       }
-      return c.json(await startSnapshotImport(ctx, blob, scopeOf(c), snapshot, options), 202);
+      return c.json(
+        await startSnapshotImport(actingCtx(ctx, c), blob, scopeOf(c), snapshot, options),
+        202,
+      );
     },
   );
   app.post(
@@ -94,8 +97,12 @@ export function snapshotsRoutes(deps: AuthDeps): Hono<AuthVars> {
         environmentId: body.targetEnvironmentId,
       };
       const options = { publish: body.publish !== false, reindexAssets: Boolean(deps.assetIngest) };
-      if (!blob) return c.json(await cloneEnvironment(ctx, scopeOf(c), target, options), 201);
-      return c.json(await startEnvironmentClone(ctx, scopeOf(c), target, options), 202);
+      if (!blob)
+        return c.json(await cloneEnvironment(actingCtx(ctx, c), scopeOf(c), target, options), 201);
+      return c.json(
+        await startEnvironmentClone(actingCtx(ctx, c), scopeOf(c), target, options),
+        202,
+      );
     },
   );
 

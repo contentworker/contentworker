@@ -19,6 +19,7 @@ import {
   type EntryMetadata,
   type EntryVersion,
   type EventType,
+  entrySysOf,
   type InstalledPlugin,
   isWebhookSendRequest,
   type MemberInvite,
@@ -400,6 +401,7 @@ function makeEntryRepo(
               fields: sql`excluded.fields`,
               metadata: sql`excluded.metadata`,
               publishedAt: sql`excluded.published_at`,
+              firstPublishedAt: sql`excluded.first_published_at`,
             },
           }),
       ),
@@ -511,6 +513,8 @@ function makeEntryRepo(
         const p = buildFilterPrefilter(query, vFields, {
           entryId: sql`${schema.entries.id}`,
           contentTypeApiId: sql`${schema.entries.contentTypeApiId}`,
+          createdBy: sql`${schema.entries.createdBy}`,
+          updatedBy: sql`${schema.entries.modifiedBy}`,
         });
         if (p) conditions.push(p);
         if (query.search) {
@@ -544,12 +548,7 @@ function makeEntryRepo(
         results,
         query,
         (r) => r.fields,
-        (r) => ({
-          id: r.entry.id,
-          contentType: r.entry.contentTypeApiId,
-          status: r.entry.status,
-          updatedAt: r.updatedAt,
-        }),
+        (r) => entrySysOf(r.entry, r.updatedAt),
       );
       if (!query.select) return filtered;
       return filtered.map((r) => ({
@@ -761,12 +760,7 @@ function makeEntryRepo(
         entries.map((e) =>
           db
             .update(schema.entries)
-            .set({
-              status: e.status,
-              currentVersion: e.currentVersion,
-              publishedVersion: e.publishedVersion ?? null,
-              updatedAt: at,
-            })
+            .set(aggregateSet(e, at))
             .where(and(scopeFilter(schema.entries, scope), eq(schema.entries.id, e.id))),
         ),
       );
@@ -1037,6 +1031,7 @@ function makeEntryRepo(
           id: r.entryId,
           contentType: r.contentTypeApiId,
           publishedAt: r.publishedAt,
+          firstPublishedAt: r.firstPublishedAt,
           'metadata.tags': r.metadata?.tags ?? [],
           'metadata.concepts': r.metadata?.concepts ?? [],
         }),
@@ -6891,6 +6886,10 @@ const toEntry = (r: EntryRow): Entry => ({
   status: r.status,
   currentVersion: r.currentVersion,
   publishedVersion: r.publishedVersion,
+  createdAt: r.createdAt?.toISOString() ?? null,
+  createdBy: r.createdBy,
+  updatedBy: r.modifiedBy,
+  firstPublishedAt: r.firstPublishedAt?.toISOString() ?? null,
 });
 
 type AgentRunRow = typeof schema.agentRuns.$inferSelect;
@@ -7050,6 +7049,7 @@ const toPublished = (r: PubRow): PublishedEntry => ({
   version: r.version,
   fields: r.fields,
   publishedAt: r.publishedAt.toISOString(),
+  ...(r.firstPublishedAt ? { firstPublishedAt: r.firstPublishedAt.toISOString() } : {}),
   ...(r.metadata ? { metadata: r.metadata } : {}),
 });
 
@@ -7064,18 +7064,28 @@ const publishedRow = (scope: Scope, snapshot: PublishedEntry) => ({
     ? { tags: [...snapshot.metadata.tags], concepts: [...snapshot.metadata.concepts] }
     : null,
   publishedAt: new Date(snapshot.publishedAt),
+  firstPublishedAt: snapshot.firstPublishedAt ? new Date(snapshot.firstPublishedAt) : null,
 });
 
-const entryRow = (scope: Scope, entry: Entry) => ({
-  spaceId: scope.spaceId,
-  environmentId: scope.environmentId,
-  id: entry.id,
-  contentTypeApiId: entry.contentTypeApiId,
-  status: entry.status,
-  currentVersion: entry.currentVersion,
-  publishedVersion: entry.publishedVersion,
-  updatedAt: new Date(),
-});
+const isoDate = (iso: string | null | undefined): Date | null => (iso ? new Date(iso) : null);
+
+const entryRow = (scope: Scope, entry: Entry) => {
+  const at = new Date();
+  return {
+    spaceId: scope.spaceId,
+    environmentId: scope.environmentId,
+    id: entry.id,
+    contentTypeApiId: entry.contentTypeApiId,
+    status: entry.status,
+    currentVersion: entry.currentVersion,
+    publishedVersion: entry.publishedVersion,
+    updatedAt: at,
+    createdAt: isoDate(entry.createdAt) ?? at,
+    createdBy: entry.createdBy ?? null,
+    modifiedBy: entry.updatedBy ?? null,
+    firstPublishedAt: isoDate(entry.firstPublishedAt),
+  };
+};
 
 const versionRow = (scope: Scope, version: EntryVersion) => ({
   spaceId: scope.spaceId,
@@ -7086,6 +7096,7 @@ const versionRow = (scope: Scope, version: EntryVersion) => ({
   // Honor a use-case-supplied timestamp (deterministic via the clock); else the
   // column defaults to the insert instant.
   ...(version.createdAt ? { createdAt: new Date(version.createdAt) } : {}),
+  createdBy: version.createdBy ?? null,
 });
 
 type EntryVersionRow = typeof schema.entryVersions.$inferSelect;
@@ -7094,17 +7105,31 @@ const toVersion = (r: EntryVersionRow): EntryVersion => ({
   version: r.version,
   fields: r.fields,
   createdAt: r.createdAt.toISOString(),
+  createdBy: r.createdBy,
+});
+
+/**
+ * What an aggregate save writes: the pointers, the change's time and author, and the first
+ * publish. Creation is never rewritten, and `first_published_at` only fills in: a lost race
+ * between two first publishes, or a stale aggregate, can't move it.
+ */
+const aggregateSet = (entry: Entry, at: Date) => ({
+  status: entry.status,
+  currentVersion: entry.currentVersion,
+  publishedVersion: entry.publishedVersion ?? null,
+  updatedAt: at,
+  modifiedBy: entry.updatedBy ?? null,
+  ...(entry.firstPublishedAt
+    ? {
+        firstPublishedAt: sql`COALESCE(${schema.entries.firstPublishedAt}, ${Date.parse(entry.firstPublishedAt)})`,
+      }
+    : {}),
 });
 
 /** The aggregate UPDATE (an UPDATE, so a concurrently deleted row stays deleted). */
 function saveEntryAggregate(db: Db, scope: Scope, entry: Entry) {
   return db
     .update(schema.entries)
-    .set({
-      status: entry.status,
-      currentVersion: entry.currentVersion,
-      publishedVersion: entry.publishedVersion,
-      updatedAt: new Date(),
-    })
+    .set(aggregateSet(entry, new Date()))
     .where(and(scopeFilter(schema.entries, scope), eq(schema.entries.id, entry.id)));
 }

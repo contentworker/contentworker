@@ -90,6 +90,10 @@ describe('P8: durable agents (in-process executor)', () => {
     expect(got?.entry.currentVersion).toBe(2);
     // Title (display field) was left untouched.
     expect(got?.fields.title?.['en-US']).toBe('SQLite indexing tips');
+    // Written as the agent: the entry's last change and its new version are enrich's.
+    expect(got?.entry.updatedBy).toBe('agent:enrich');
+    const [latest] = await ctx.store.entries.listVersions(scope, id);
+    expect(latest?.createdBy).toBe('agent:enrich');
   });
 
   it('describes each field to the model with its guidance, delimited as data', async () => {

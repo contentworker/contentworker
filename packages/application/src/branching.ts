@@ -1,14 +1,15 @@
 import {
   assertEntryFieldsValid,
   type ContentType,
-  type Entry,
   type EntryFields,
   type EntryVersion,
   NotFoundError,
   type Scope,
+  stampChanged,
+  stampCreated,
   type ValidationContext,
 } from '@contentworker/domain';
-import type { AppContext } from './context';
+import { type AppContext, actorOf } from './context';
 import { allPages } from './paging';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
 
@@ -190,24 +191,32 @@ async function applyEntry(
 ): Promise<void> {
   const existing = await ctx.store.entries.get(tgt, entryId);
   const now = ctx.clock.now().toISOString();
+  const actor = actorOf(ctx);
   if (!existing) {
-    const entry: Entry = {
-      id: entryId,
-      contentTypeApiId,
-      status: 'draft',
-      currentVersion: 1,
-      publishedVersion: null,
-    };
-    const version: EntryVersion = { entryId, version: 1, fields, createdAt: now };
+    const entry = stampCreated(
+      { id: entryId, contentTypeApiId, status: 'draft', currentVersion: 1, publishedVersion: null },
+      actor,
+      now,
+    );
+    const version: EntryVersion = { entryId, version: 1, fields, createdAt: now, createdBy: actor };
     await ctx.store.entries.create(tgt, entry, version);
     return;
   }
   const nextVersion = existing.entry.currentVersion + 1;
-  const entry: Entry = {
-    ...existing.entry,
-    currentVersion: nextVersion,
-    status: existing.entry.publishedVersion === null ? 'draft' : 'changed',
+  const entry = stampChanged(
+    {
+      ...existing.entry,
+      currentVersion: nextVersion,
+      status: existing.entry.publishedVersion === null ? 'draft' : 'changed',
+    },
+    actor,
+  );
+  const version: EntryVersion = {
+    entryId,
+    version: nextVersion,
+    fields,
+    createdAt: now,
+    createdBy: actor,
   };
-  const version: EntryVersion = { entryId, version: nextVersion, fields, createdAt: now };
   await ctx.store.entries.saveVersion(tgt, entry, version);
 }

@@ -198,8 +198,11 @@ in-browser model, page-per-language translation, and rich text or styles stored 
   editor directly.
 - [ ] **Delete and clone a content type.** Delete refuses while entries exist or runs as a resumable
   trash-then-purge job; clone copies the definition under a new `apiId`.
-- [ ] **Authorship.** `created_by`, `modified_by` and `first_published_at` on entries and versions
-  (expand-only), served as `sys` fields, filterable and sortable.
+- [x] **Authorship.** `created_by`, `modified_by`, `created_at` and `first_published_at` on entries
+  and `created_by` on versions (0024, expand-only), stamped on every write path from the request's
+  principal or the agent, workflow, plugin or scheduler acting; served as `sys` fields in
+  Management and Preview (`sys.createdBy=me`), `firstPublishedAt` alone in Delivery; "Created by",
+  "Last edited by" and a Mine filter in the admin.
 - [x] **Richer queries.** `startsWith` and `between`, OR and AND groups in a `where` JSON parameter
   (≤ 4 deep, ≤ 20 predicates), component subfield paths through `json_tree` with bound keys, and
   distinct field values (`…/content-types/:apiId/fields/:field/values`, `entries_field_values`).

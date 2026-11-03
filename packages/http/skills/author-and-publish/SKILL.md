@@ -17,6 +17,8 @@ publishing does.
 - Use `entries_query` for structured questions (field filters, ordering, `select` projection) and
   `entries_get` for a full entry. It returns one page (`{ items, nextCursor? }`); pass `nextCursor`
   back as `cursor`, with the same filters and order, for the next.
+- Entries you created: filter `sys.createdBy` `eq` `me` (`me` is you; `sys.updatedBy` works the
+  same). What you write is recorded as yours, so a person reading the entry sees who changed it.
 
 ## Write
 

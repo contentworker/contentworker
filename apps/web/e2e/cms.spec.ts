@@ -1198,3 +1198,30 @@ test('guidance saved in the content type dialog shows on the entry form', async 
   // Listed values are offered as a select.
   await expect(page.getByLabel('Status').getByRole('option')).toHaveText(['None', 'open', 'let']);
 });
+
+test('the editor names who created and last edited an entry, and Mine lists one’s own', async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const title = `Authored ${Date.now()}`;
+  // Through the same origin as the browser: the signed-in person is its author.
+  const id = await createDraft(request, title);
+  await openCms(page, `/content/article/${id}`);
+  const pane = page.getByRole('complementary', { name: 'Side pane' });
+  await pane.getByRole('radio', { name: 'Details' }).click();
+  // The person reads as "You", never as their id; the creation time is a <time>.
+  await expect(pane.getByText('Created by').locator('+ dd')).toContainText('You');
+  await expect(pane.getByText('Created by').locator('+ dd time')).toHaveCount(1);
+  await expect(pane.getByText('Last edited by').locator('+ dd')).toHaveText('You');
+
+  await openCms(page, '/content/article');
+  const mine = page.getByRole('button', { name: 'Mine' });
+  await mine.click();
+  await expect(mine).toHaveAttribute('aria-pressed', 'true');
+  await expect(
+    page.getByRole('table').getByRole('link', { name: title, exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Clear' }).click();
+  await expect(mine).toHaveAttribute('aria-pressed', 'false');
+});

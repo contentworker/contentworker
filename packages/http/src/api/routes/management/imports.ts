@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import { importBody, parseBody } from '../../validation';
-import { BASE, importSourceOr400, scopeOf } from './shared';
+import { actingCtx, BASE, importSourceOr400, scopeOf } from './shared';
 
 export function importsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
@@ -63,9 +63,15 @@ export function importsRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, importBody);
       return c.json(
-        await executeImport(ctx, scopeOf(c), resolveSource(body.source), toImportInput(body), {
-          ...(body.conflicts ? { conflicts: body.conflicts } : {}),
-        }),
+        await executeImport(
+          actingCtx(ctx, c),
+          scopeOf(c),
+          resolveSource(body.source),
+          toImportInput(body),
+          {
+            ...(body.conflicts ? { conflicts: body.conflicts } : {}),
+          },
+        ),
         201,
       );
     },
@@ -85,7 +91,7 @@ export function importsRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, importBody);
       const started = await startImportJob(
-        ctx,
+        actingCtx(ctx, c),
         blob,
         scopeOf(c),
         resolveSource(body.source),

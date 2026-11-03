@@ -10,6 +10,7 @@
  */
 
 import type { ContentType } from '../content-type/content-type';
+import type { Entry } from '../entry/entry';
 import { ValidationError } from '../errors';
 import { extractReferences } from '../reference/references';
 import type { EntryFields, LocaleCode, LocalizedValue } from '../types';
@@ -442,6 +443,24 @@ function pluck(value: unknown, segment: string): unknown {
   }
   if (value && typeof value === 'object') return (value as Record<string, unknown>)[segment];
   return undefined;
+}
+
+/**
+ * The `sys.*` record of a draft (current) entry, as Preview and Management filter and sort it:
+ * `sys.createdBy=…`, `order=-sys.firstPublishedAt`. Every store builds it here, so the names are
+ * the same on every backend. Unknown authorship is undefined (it matches no comparison).
+ */
+export function entrySysOf(entry: Entry, updatedAt: string | undefined): Record<string, unknown> {
+  return {
+    id: entry.id,
+    contentType: entry.contentTypeApiId,
+    status: entry.status,
+    updatedAt,
+    createdAt: entry.createdAt ?? undefined,
+    createdBy: entry.createdBy ?? undefined,
+    updatedBy: entry.updatedBy ?? undefined,
+    firstPublishedAt: entry.firstPublishedAt ?? undefined,
+  };
 }
 
 /** Resolves a filter/order field name to its comparable value, honoring the

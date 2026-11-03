@@ -21,6 +21,7 @@ import {
   type EntryMetadata,
   type EntryVersion,
   type EntryWorkflowState,
+  entrySysOf,
   type InstalledPlugin,
   inviteStatus,
   isWebhookSendRequest,
@@ -396,9 +397,22 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private setEntry(scope: Scope, entry: Entry): void {
+  /**
+   * As D1 writes an entry: a create records its authorship whole; a later save keeps the creation
+   * and fills in the first publish only once (`COALESCE`), whatever the aggregate it is handed says.
+   */
+  private setEntry(scope: Scope, entry: Entry, created = false): void {
     const key = `${scopeKey(scope)}::${entry.id}`;
-    this.entryData.set(key, entry);
+    const before = created ? undefined : this.entryData.get(key);
+    this.entryData.set(key, {
+      ...entry,
+      createdAt: before
+        ? (before.createdAt ?? null)
+        : (entry.createdAt ?? new Date(this.nowMs()).toISOString()),
+      createdBy: before ? (before.createdBy ?? null) : (entry.createdBy ?? null),
+      updatedBy: entry.updatedBy ?? null,
+      firstPublishedAt: before?.firstPublishedAt ?? entry.firstPublishedAt ?? null,
+    });
     this.lastEntryTouch = Math.max(this.nowMs(), this.lastEntryTouch + 1);
     this.entryTouched.set(key, new Date(this.lastEntryTouch).toISOString());
   }
@@ -459,12 +473,7 @@ export class InMemoryContentStore implements ContentStore {
         withFields,
         query,
         (r) => r.fields,
-        (r) => ({
-          id: r.entry.id,
-          contentType: r.entry.contentTypeApiId,
-          status: r.entry.status,
-          updatedAt: r.updatedAt,
-        }),
+        (r) => entrySysOf(r.entry, r.updatedAt),
       );
       if (!query.select) return filtered;
       return filtered.map((r) => ({
@@ -516,7 +525,7 @@ export class InMemoryContentStore implements ContentStore {
         .slice(0, query.limit);
     },
     create: async (scope, entry, version) => {
-      this.setEntry(scope, entry);
+      this.setEntry(scope, entry, true);
       this.versionData.set(`${scopeKey(scope)}::${entry.id}`, [version]);
     },
     saveVersion: async (scope, entry, version) => {
@@ -721,6 +730,7 @@ export class InMemoryContentStore implements ContentStore {
           id: r.entryId,
           contentType: r.contentTypeApiId,
           publishedAt: r.publishedAt,
+          firstPublishedAt: r.firstPublishedAt,
           'metadata.tags': r.metadata?.tags ?? [],
           'metadata.concepts': r.metadata?.concepts ?? [],
         }),

@@ -46,6 +46,11 @@ export interface DeliveredEntry {
   readonly contentType: string;
   readonly fields: Record<string, unknown>;
   readonly publishedAt: string;
+  /**
+   * When the entry was first published, when known. The only authorship Delivery serves: who
+   * created or changed an entry names people and keys, which a public read has no business seeing.
+   */
+  readonly firstPublishedAt?: string;
   /** Taxonomy associations (tags + concepts), when the entry has any. */
   readonly metadata?: { readonly tags: readonly string[]; readonly concepts: readonly string[] };
 }
@@ -238,6 +243,7 @@ function render(
     contentType: snapshot.contentTypeApiId,
     fields,
     publishedAt: snapshot.publishedAt,
+    ...(snapshot.firstPublishedAt ? { firstPublishedAt: snapshot.firstPublishedAt } : {}),
     ...(snapshot.metadata
       ? { metadata: { tags: snapshot.metadata.tags, concepts: snapshot.metadata.concepts } }
       : {}),

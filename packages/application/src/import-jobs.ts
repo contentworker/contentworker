@@ -6,7 +6,7 @@ import type {
   ImportSource,
   RemoteFetcher,
 } from '@contentworker/ports';
-import { persistJob } from './bulk-jobs';
+import { actingForJob, persistJob } from './bulk-jobs';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
 import {
@@ -217,8 +217,9 @@ export async function discardImportChunk(blob: BlobStore, payloadKey: string): P
  * a shape to remember. `fetcher` copies the asset files a space export import
  * brings; without it those chunks wait for a consumer that has one.
  */
-export function importChunkRunner(ctx: AppContext, blob: BlobStore, fetcher?: RemoteFetcher) {
+export function importChunkRunner(base: AppContext, blob: BlobStore, fetcher?: RemoteFetcher) {
   return async (scope: Scope, job: BulkJob, chunk: BulkJobChunk) => {
+    const ctx = actingForJob(base, job);
     if (isSnapshotJob(job.config)) {
       const outcome = await runSnapshotChunk(
         ctx,

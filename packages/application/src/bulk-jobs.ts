@@ -18,7 +18,7 @@ import {
   ENTRY_TRASH_BULK_ACTIONS,
   TransactionConflictError,
 } from '@contentworker/ports';
-import type { AppContext } from './context';
+import { type AppContext, withActor } from './context';
 import { discardStagedJob, importChunkKey } from './job-staging';
 import { publishEntriesTx, unpublishEntriesTx } from './publishing';
 
@@ -148,6 +148,9 @@ export async function persistJob(
   chunks: readonly BulkJobChunk[],
   now: string,
 ): Promise<BulkJob> {
+  // Its chunks run later, on a consumer with no principal: whoever started the job is recorded with
+  // it, so what they write is theirs (see `jobActor`).
+  if (ctx.actor !== undefined) job = { ...job, config: { ...job.config, actor: ctx.actor } };
   await ctx.store.withTransaction(async (tx) => {
     await tx.bulkJobs.createJob(scope, job);
     await tx.bulkJobs.createChunks(scope, chunks);
@@ -242,6 +245,15 @@ export interface BulkChunkDeps {
   ) => Promise<BulkChunkOutcome>;
 }
 
+/** Who started `job` (recorded by `persistJob`), as its chunks' writes are authored; undefined when
+ *  it was started before that was recorded. */
+export const jobActor = (job: BulkJob): string | undefined =>
+  typeof job.config?.actor === 'string' ? job.config.actor : undefined;
+
+/** `ctx` writing as whoever started `job`. */
+export const actingForJob = (ctx: AppContext, job: BulkJob): AppContext =>
+  withActor(ctx, jobActor(job));
+
 export async function runBulkChunk(
   ctx: AppContext,
   event: BulkChunkDueEvent,
@@ -299,6 +311,7 @@ export async function runBulkChunk(
   }
 
   const runTx = job.action === 'publish' ? publishEntriesTx : unpublishEntriesTx;
+  const acting = actingForJob(ctx, job);
   let batch: Awaited<ReturnType<typeof runTx>>;
   try {
     batch = await ctx.store.withTransaction(async (tx) => {
@@ -306,7 +319,7 @@ export async function runBulkChunk(
       // the chunk's single fact (otherwise every entry would dispatch twice).
       // `idempotent`: a re-run of a committed chunk counts already-satisfied
       // items as no-op successes, never report-corrupting failures.
-      const result = await runTx(ctx, tx, scope, chunk.entryIds, {
+      const result = await runTx(acting, tx, scope, chunk.entryIds, {
         emitPerEntryEvents: false,
         idempotent: true,
       });
