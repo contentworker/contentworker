@@ -250,30 +250,44 @@ where the email is printed to the dev server's log instead; otherwise it says to
 
 1. **Asking.** `/login/forgot` takes an address and always answers the same: "if it belongs to an
    account that signs in with a password, we've emailed it a code", then moves on to the code step.
-   Before the response it does the same work for every address: it reads and counts the request
-   against the place (`reset-ip`, 10 per 15-minute window; over it, 429) and the address
-   (`reset-email`, 3 per window; over it, the same answer and no email, unless the request comes
-   from where the person has a live session, so a stranger can't use up their codes) in
-   `auth_failures`.
-   Everything that depends on the account (the lookup, writing the code, sending the email, the
+   Before the response it does the same work for every address: it counts the request against the
+   place (`reset-ip`, 10 per 15-minute window; over it, 429) and the address (`reset-email`, 3 per
+   window; over it, the same answer and no email) in `auth_failures`. Each count is one upsert that
+   returns the count it wrote (`countAttempt`), and the decision is on that count (`overFor`), so a
+   burst of parallel requests can't all pass a read made before any of them wrote. Everything that
+   depends on the account (the lookup, writing the code, sending the email, the
    `auth.password_reset_requested` audit entry with its outcome) runs after the response
    (`waitUntil`), so neither the answer nor its timing says whether the account exists.
+
+   The address cap is a hard ceiling, whoever asks. Someone who knows only an address can use up
+   its 3 codes for a window, and the owner's own requests in that window then send nothing. That
+   stranger gets none of the codes, and each new code replaces the last; the owner waits out the
+   window or asks an admin.
 2. **Who gets a code.** Only an enabled account with a password, while web SSO-only is off. A
    disabled account, an unknown address, an account single sign-on or SCIM created without a
    password, and every account under SSO-only get nothing, with the same answer; the audit entry
    says which. Under SSO-only the page says the workspace resets passwords at its identity
    provider (a workspace-wide fact the sign-in page shows anyway). An SSO account gets no password
    this way, because the provider couldn't then take its access away.
-3. **The code.** 8 characters of Crockford base32 (40 bits), shown `ABCD-EFGH`, with a link
-   `/login/reset/<reset id>.<code>` that moves both into the `cw_reset` cookie (path
-   `/login/reset`, HttpOnly, 15 minutes) and redirects, so the code is in no later URL. Only
-   HMAC-SHA256 with `PASSWORD_PEPPER` over the reset id and the code is stored
-   (`password_resets.code_hash`; plain SHA-256 without a pepper, in local development). A code works once
-   (`used_at`), for 15 minutes, and for 5 tries, each counted by a conditional update before the
-   comparison so racing requests can't share one. That one statement (an `UPDATE … RETURNING`
-   over the newest live code for an enabled account with a password) runs for every attempt, and
-   the hashing runs whether or not it found a code, so a wrong guess costs the same for any address; a new code deletes the person's older ones. Wrong
-   codes count against the place too (`reset-code-ip`, 10 per window). Every failure reads the same
+3. **The code.** 8 characters of Crockford base32 (40 bits), shown `ABCD-EFGH`. Only HMAC-SHA256
+   with `PASSWORD_PEPPER` over the reset id and the code is stored (`password_resets.code_hash`;
+   plain SHA-256 without a pepper, in local development). A code works once (`used_at`), for 15
+   minutes; a new code deletes the person's older ones. It can be used two ways:
+   - **Typed**, only in the browser that asked for it. Asking sets a random nonce in that browser's
+     `cw_reset` cookie (path `/login/reset`, HttpOnly, 15 minutes), stored hashed with the code
+     (`browser_hash`). A typed code from any other browser finds no live code, so a stranger can't
+     spend the owner's tries, and rotating browsers gets a guesser nothing.
+   - **Through the emailed link** `/login/reset/<reset id>.<code>`, from anywhere. Opening it
+     checks the code (a try) and moves the code into the cookie, with the masked address it is for
+     (`b***@example.com`), then redirects, so the code is in no later URL. The page shows the
+     masked address, so a link planted for someone else's account is noticed before a password is
+     set on it.
+
+   Tries are counted the way requests are, one atomic upsert each: 5 per way in (`reset-try`,
+   keyed by the browser's nonce or the link's reset id) and 10 per place across addresses
+   (`reset-code-ip`, over it 429). Every check does the same work whatever it finds (the two
+   upserts, one read for the newest live code, the SSO-only check and the hashing) and changes no
+   reset row, so a wrong guess costs the same for any address. Every failure reads the same
    ("isn't right, or it has expired or been used"); `auth.password_reset_failed` records why.
 4. **Setting the password.** The password policy applies (`passwordProblem`; for a typed code it is
    checked first, against the address typed, and spends no try). Spending the code is a

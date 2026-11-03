@@ -17,21 +17,32 @@ export type EmailSender = ReturnType<typeof createCfEmailSender>;
 type EmailEnv = { EMAIL?: SendEmailBinding; EMAIL_FROM?: string; EMAIL_FROM_NAME?: string };
 
 /**
- * Whether this deployment sends email: an Email Sending `send_email` binding (EMAIL, added per
- * deployment by scripts/fleet.ts when the registry names a sender) and its sender address.
+ * The deployment's email settings, or null when it sends none: an Email Sending `send_email`
+ * binding (EMAIL, added per deployment by scripts/fleet.ts when the registry names a sender) and
+ * its sender address. A bound EMAIL without EMAIL_FROM is a configuration error, refused with the
+ * engine's words (`makeEmail` in packages/platform/src/wire.ts) rather than read as "no email".
  */
-export function sendsEmail(): boolean {
+function emailSettings(): (EmailEnv & { EMAIL: SendEmailBinding; EMAIL_FROM: string }) | null {
   const e = env as EmailEnv;
-  return !!e.EMAIL && !!e.EMAIL_FROM;
+  if (!e.EMAIL) return null;
+  if (!e.EMAIL_FROM)
+    throw new Error(
+      'The EMAIL send_email binding is set but EMAIL_FROM is not; set it to an address on a domain onboarded to Email Sending',
+    );
+  return e as EmailEnv & { EMAIL: SendEmailBinding; EMAIL_FROM: string };
 }
+
+/** Whether this deployment sends email. Throws on EMAIL bound without EMAIL_FROM. */
+export const sendsEmail = (): boolean => emailSettings() !== null;
 
 /**
  * The `EmailSender` over the EMAIL binding (`@contentworker/adapters/email-cf`), or undefined
- * when the deployment sends no email. Throws on a sender address the adapter can't use.
+ * when the deployment sends no email. Throws on EMAIL without EMAIL_FROM, and on a sender address
+ * the adapter can't use.
  */
 export function emailSender(): EmailSender | undefined {
-  const e = env as EmailEnv;
-  if (!e.EMAIL || !e.EMAIL_FROM) return undefined;
+  const e = emailSettings();
+  if (!e) return undefined;
   return createCfEmailSender(e.EMAIL, {
     from: e.EMAIL_FROM,
     ...(e.EMAIL_FROM_NAME ? { fromName: e.EMAIL_FROM_NAME } : {}),

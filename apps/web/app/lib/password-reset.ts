@@ -9,12 +9,17 @@
  * `/login/reset`, so the code is in one logged URL (the link itself) and in no later one.
  */
 
+import { LIMITS } from './throttle';
+
 /** How long a code works. */
 export const RESET_MINUTES = 15;
 export const RESET_MS = RESET_MINUTES * 60_000;
 
-/** Tries per code, the right one included; then it is dead and a new one must be asked for. */
-export const RESET_TRIES = 5;
+/**
+ * Tries per code, the right one included; then it is dead and a new one must be asked for. The
+ * limit itself is `reset-try` in throttle.ts, where the tries are counted.
+ */
+export const RESET_TRIES = LIMITS['reset-try'];
 
 export const FORGOT_PATH = '/login/forgot';
 export const RESET_PATH = '/login/reset';
@@ -57,10 +62,12 @@ export function parseResetLink(token: string): { id: string; code: string } | nu
 export const resetLinkToken = (id: string, code: string) => `${id}.${code}`;
 
 /**
- * What a reset in progress carries between pages: the address a code was asked for (to type the
- * code), or an emailed link's id and code (to choose a password straight away).
+ * What a reset in progress carries between pages. From asking: the address a code was asked for
+ * and this browser's nonce (only a hash of it is stored with the code, and a typed code must come
+ * with it, so a stranger can't spend the owner's tries). From an emailed link: its id and code, and
+ * the masked address the code is for, to show on the page.
  */
-export type ResetCarry = { email: string } | { link: string };
+export type ResetCarry = { email: string; nonce: string } | { link: string; masked: string };
 
 /**
  * The cookie holding it: HttpOnly, Secure, SameSite=Lax (the link is opened from a mail client),
@@ -83,10 +90,15 @@ const fromBase64url = (s: string) => {
   return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 };
 
+/** A browser's nonce: `randomToken(16)`, base64url. */
+const NONCE = /^[A-Za-z0-9_-]{22}$/;
+
 /** The `set-cookie` value that keeps `carry` for the reset page. */
 export const keepReset = (carry: ResetCarry) =>
   resetCookie(
-    'link' in carry ? `l.${carry.link}` : `e.${toBase64url(carry.email)}`,
+    'link' in carry
+      ? `l.${carry.link}.${toBase64url(carry.masked)}`
+      : `e.${toBase64url(carry.email)}.${carry.nonce}`,
     RESET_MS / 1000,
   );
 
@@ -99,19 +111,30 @@ export function resetFrom(request: Request): ResetCarry | null {
     .split(/;\s*/)
     .find((c) => c.startsWith(`${RESET_COOKIE}=`))
     ?.slice(RESET_COOKIE.length + 1);
-  if (value?.startsWith('l.')) {
-    const link = value.slice(2);
-    return parseResetLink(link) ? { link } : null;
-  }
-  if (value?.startsWith('e.')) {
-    try {
-      const email = fromBase64url(value.slice(2));
-      return email.includes('@') && email.length <= 320 ? { email } : null;
-    } catch {
-      return null;
+  const parts = value?.split('.') ?? [];
+  try {
+    if (parts[0] === 'l' && parts.length === 4) {
+      const link = `${parts[1]}.${parts[2]}`;
+      return parseResetLink(link) ? { link, masked: fromBase64url(parts[3]!) } : null;
     }
+    if (parts[0] === 'e' && parts.length === 3 && NONCE.test(parts[2]!)) {
+      const email = fromBase64url(parts[1]!);
+      return email.includes('@') && email.length <= 320 ? { email, nonce: parts[2]! } : null;
+    }
+  } catch {
+    // Not base64url: not a cookie this page set.
   }
   return null;
+}
+
+/**
+ * An address as the link page shows it, `b***@example.com`: enough to notice a link meant for
+ * another account, not enough to read someone's address off a forwarded link.
+ */
+export function maskEmail(email: string): string {
+  const at = email.lastIndexOf('@');
+  if (at < 1) return '***';
+  return `${email[0]}***${email.slice(at)}`;
 }
 
 /**

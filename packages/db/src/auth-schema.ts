@@ -163,8 +163,10 @@ export const passkeyChallenges = sqliteTable('passkey_challenges', {
 
 /**
  * Self-service password reset codes (migration 0021). Only `code_hash` is kept: HMAC-SHA256 with
- * `PASSWORD_PEPPER` over the row id and the emailed code. A code works once (`used_at`), until `expires_at`, for a few tries
- * (`attempts`, counted before each comparison); a new code for the person deletes their older rows.
+ * `PASSWORD_PEPPER` over the row id and the emailed code. `browser_hash` is the SHA-256 of the
+ * nonce in the asking browser's cookie, which a typed code must come from. A code works once
+ * (`used_at`), until `expires_at`; its tries are counted in `auth_failures` (`reset-try`). A new
+ * code for the person deletes their older rows.
  */
 export const passwordResets = sqliteTable(
   'password_resets',
@@ -174,9 +176,9 @@ export const passwordResets = sqliteTable(
       .notNull()
       .references(() => users.id),
     codeHash: text('code_hash').notNull(),
+    browserHash: text('browser_hash').notNull(),
     createdAt: integer('created_at').notNull(),
     expiresAt: integer('expires_at').notNull(),
-    attempts: integer('attempts').notNull().default(0),
     usedAt: integer('used_at'),
   },
   (t) => [

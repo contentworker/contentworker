@@ -30,8 +30,13 @@ export const LIMITS = {
   'reset-email': 3,
   /** Password reset codes asked for from one place, across addresses (every request counts). */
   'reset-ip': 10,
-  /** Wrong or dead reset codes tried from one place, across addresses. */
+  /** Reset codes tried from one place, across addresses (every try counts). */
   'reset-code-ip': 10,
+  /**
+   * Tries at one reset code: through its emailed link (keyed by the reset's id), or typed in the
+   * browser that asked for it (keyed by that browser's nonce). Every try counts.
+   */
+  'reset-try': 5,
 } as const;
 
 export type ThrottleKind = keyof typeof LIMITS;
@@ -63,6 +68,18 @@ export function blockedFor(rows: FailureRow[], now: number): number {
     if (limit !== undefined && now < ends && r.count >= limit) wait = Math.max(wait, ends - now);
   }
   return wait;
+}
+
+/**
+ * `blockedFor` for counts that already include this attempt (`countAttempt` in auth.server.ts):
+ * a key is over when its open window holds more than the limit. Deciding on the count the write
+ * returned, rather than on one read before it, is what keeps parallel requests from all passing.
+ */
+export function overFor(rows: FailureRow[], now: number): number {
+  return blockedFor(
+    rows.map((r) => ({ ...r, count: r.count - 1 })),
+    now,
+  );
 }
 
 /** "Try again in 12 minutes" for a wait in milliseconds. */

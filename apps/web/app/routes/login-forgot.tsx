@@ -42,8 +42,8 @@ export async function action({ request }: Route.ActionArgs) {
   if (why) return data({ error: why }, { status: 400 });
   const form = await request.formData();
   try {
-    const email = await requestReset(request, String(form.get('email') ?? ''));
-    return redirect(RESET_PATH, { headers: { 'set-cookie': keepReset({ email }) } });
+    const asked = await requestReset(request, String(form.get('email') ?? ''));
+    return redirect(RESET_PATH, { headers: { 'set-cookie': keepReset(asked) } });
   } catch (err) {
     if (err instanceof ResetError) return data({ error: err.message }, { status: 400 });
     if (!(err instanceof Throttled)) throw err;

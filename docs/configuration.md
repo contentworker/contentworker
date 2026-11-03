@@ -108,7 +108,9 @@ ones at deploy.
 
 Rendered from the registry's `sso` field. Passwords, passkeys, TOTP and SCIM need no vars.
 Password reset by email needs the `EMAIL` binding with `EMAIL_FROM` and `EMAIL_FROM_NAME`
-(empty by default), rendered from the registry's `email` field like the engine's.
+(empty by default), rendered from the registry's `email` field like the engine's. As on the
+engine, a bound `EMAIL` without `EMAIL_FROM` is a configuration error: the web worker throws
+rather than treating the deployment as sending no email.
 
 ## API keys and seeding (api, engine)
 

@@ -46,7 +46,9 @@ manages accounts, single sign-on, SCIM provisioning and the audit log, and admin
   authenticator app can be required.
 - **Forgotten passwords.** When the workspace sends email, **Forgot your password?** on the
   sign-in page emails a code (and a link carrying it) to the address you enter. The code works once,
-  for 15 minutes; asking again replaces it, and a few wrong tries end it. The page answers the same
+  for 15 minutes; asking again replaces it, and a few wrong tries end it. Type the code in the
+  browser you asked from, or open the link anywhere; the link's page shows the address it resets
+  (like `b***@example.com`), so check it's yours. The page answers the same
   whether or not the address has an account, so nobody can use it to find out who does. Choosing
   the new password signs you out everywhere; you then sign in with it, and with your two-factor code
   if you use one: a reset never skips two-factor sign-in, and leaves your passkeys, personal access tokens and

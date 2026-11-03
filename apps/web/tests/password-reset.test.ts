@@ -5,13 +5,19 @@ import {
   signInChallenges,
   users,
 } from '@contentworker/db/auth';
-import { hashPassword, sha256Hex, verifyPassword } from '@contentworker/security/credentials';
+import {
+  hashPassword,
+  randomToken,
+  sha256Hex,
+  verifyPassword,
+} from '@contentworker/security/credentials';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   forgetReset,
   formatResetCode,
   keepReset,
+  maskEmail,
   newResetCode,
   parseResetCode,
   parseResetLink,
@@ -60,7 +66,9 @@ vi.mock('~/lib/settings.server', () => ({
 }));
 
 const { signIn, Throttled } = await import('~/lib/auth.server');
-const { requestReset, resetPassword, ResetError } = await import('~/lib/password-reset.server');
+const { openResetLink, requestReset, resetPassword, ResetError } = await import(
+  '~/lib/password-reset.server'
+);
 
 const OLD = 'old horse battery';
 const NEW = 'new horse battery staple';
@@ -93,10 +101,14 @@ async function addSession(token: string, userId: string, ip?: string) {
   });
 }
 
+/** The nonce each address's code was asked for with: the asking browser's cookie. */
+const browsers = new Map<string, string>();
+
 /** Asks for a code and lets the after-response work finish; the code and link it emailed. */
 async function ask(email: string, ip?: string) {
   const sent = mail.length;
-  await requestReset(from(ip), email);
+  const asked = await requestReset(from(ip), email);
+  browsers.set(asked.email, asked.nonce);
   await Promise.all(later.splice(0));
   const m = mail[sent];
   if (!m) return null;
@@ -105,8 +117,12 @@ async function ask(email: string, ip?: string) {
   return { code, link, mail: m };
 }
 
+/** Types a code in the browser that asked for it (another, if none did). */
 const reset = (email: string, code: string, password = NEW, ip?: string) =>
-  resetPassword(from(ip), { email }, code, password);
+  resetPassword(from(ip), { email, nonce: browsers.get(email) ?? randomToken(16) }, code, password);
+
+const viaLink = (link: string, password = NEW, ip?: string) =>
+  resetPassword(from(ip), { link, masked: 'a***@example.com' }, '', password);
 
 const failureWith = (fn: () => Promise<unknown>) =>
   fn().then(
@@ -124,6 +140,7 @@ beforeEach(async () => {
   mail = [];
   mailWorks = true;
   audits.length = 0;
+  browsers.clear();
   await addUser('usr_ann', 'ann@example.com');
 });
 
@@ -151,12 +168,20 @@ describe('reset codes', () => {
       new Request('https://cms.example.com/login/reset', {
         headers: { cookie: set.split(';')[0]! },
       });
-    expect(keepReset({ link })).toMatch(/Path=\/login\/reset; HttpOnly; Secure; SameSite=Lax/);
-    expect(resetFrom(cookie(keepReset({ link })))).toEqual({ link });
-    expect(resetFrom(cookie(keepReset({ email: 'ann@example.com' })))).toEqual({
+    const masked = 'a***@example.com';
+    const nonce = randomToken(16);
+    expect(keepReset({ link, masked })).toMatch(
+      /Path=\/login\/reset; HttpOnly; Secure; SameSite=Lax/,
+    );
+    expect(resetFrom(cookie(keepReset({ link, masked })))).toEqual({ link, masked });
+    expect(resetFrom(cookie(keepReset({ email: 'ann@example.com', nonce })))).toEqual({
       email: 'ann@example.com',
+      nonce,
     });
     expect(resetFrom(cookie('cw_reset=l.not-a-link'))).toBeNull();
+    // An address without the asking browser's nonce is no carry at all.
+    expect(resetFrom(cookie('cw_reset=e.YW5uQGV4YW1wbGUuY29t'))).toBeNull();
+    expect(maskEmail('blake@example.com')).toBe('b***@example.com');
     expect(forgetReset()).toMatch(/Max-Age=0/);
   });
 });
@@ -188,7 +213,7 @@ describe('asking for a code', () => {
       const answer = await requestReset(from(ip), email);
       const work = store.log.slice(before);
       await Promise.all(later.splice(0));
-      return { answer: answer.replace(email, '<email>'), work };
+      return { answer: answer.email.replace(email, '<email>'), work };
     };
     const ann = await workFor('ann@example.com', '198.51.100.1');
     for (const [email, ip] of [
@@ -217,19 +242,38 @@ describe('asking for a code', () => {
     for (let i = 0; i < 3; i++)
       expect(await ask('ann@example.com', `198.51.100.${i}`)).not.toBeNull();
     // The fourth, even from elsewhere, gets the same answer and no email.
-    await expect(requestReset(from('198.51.100.9'), 'ann@example.com')).resolves.toBe(
-      'ann@example.com',
-    );
+    await expect(requestReset(from('198.51.100.9'), 'ann@example.com')).resolves.toMatchObject({
+      email: 'ann@example.com',
+    });
     await Promise.all(later.splice(0));
     expect(mail).toHaveLength(3);
     expect(audits.at(-1)?.detail?.outcome).toBe('too many codes for this address');
   });
 
-  it('still sends a code to a place the person is signed in from, once strangers used them up', async () => {
+  it('is a hard cap: once a stranger has used up the window, the owner gets no email either', async () => {
     await addSession('s-home', 'usr_ann', '192.0.2.77');
     for (let i = 0; i < 3; i++) await ask('ann@example.com', `198.51.100.${i}`);
-    expect(await ask('ann@example.com', '198.51.100.9')).toBeNull();
-    expect(await ask('ann@example.com', '192.0.2.77')).not.toBeNull();
+    expect(await ask('ann@example.com', '192.0.2.77')).toBeNull();
+    expect(mail).toHaveLength(3);
+  });
+
+  it('counts a burst of parallel requests atomically: no more than the cap is sent', async () => {
+    const burst = Array.from({ length: 20 }, (_, i) =>
+      requestReset(from(`198.51.100.${i}`), 'ann@example.com'),
+    );
+    await Promise.all(burst);
+    await Promise.all(later.splice(0));
+    const inserts = store.log.filter((q) => /^insert into "password_resets"/i.test(q));
+    expect(inserts.length).toBeLessThanOrEqual(3);
+    expect(mail.length).toBeLessThanOrEqual(3);
+    expect(mail.length).toBeGreaterThan(0);
+  });
+
+  it('counts a burst of parallel requests from one place atomically too', async () => {
+    const burst = await Promise.allSettled(
+      Array.from({ length: 20 }, (_, i) => requestReset(from(), `person${i}@example.com`)),
+    );
+    expect(burst.filter((r) => r.status === 'fulfilled')).toHaveLength(10);
   });
 
   it('peppers the stored hash when the deployment has a pepper', async () => {
@@ -257,7 +301,9 @@ describe('asking for a code', () => {
 
   it('records a send that failed, and still answers the same', async () => {
     mailWorks = false;
-    await expect(requestReset(from(), 'ann@example.com')).resolves.toBe('ann@example.com');
+    await expect(requestReset(from(), 'ann@example.com')).resolves.toMatchObject({
+      email: 'ann@example.com',
+    });
     await Promise.all(later.splice(0));
     expect(audits.at(-1)?.detail?.outcome).toBe('email not sent: E_SENDER_NOT_VERIFIED');
   });
@@ -389,6 +435,49 @@ describe('setting a new password with a code', () => {
     ]);
   });
 
+  it('does equal write work for a live code and for none: two counter upserts, no row changed', async () => {
+    await ask('ann@example.com');
+    const workFor = async (email: string, ip: string) => {
+      const before = store.log.length;
+      await failureWith(() => reset(email, '2222-2222', NEW, ip));
+      return store.log.slice(before);
+    };
+    const live = await workFor('ann@example.com', '198.51.100.1');
+    expect(await workFor('nobody@example.com', '198.51.100.2')).toEqual(live);
+    expect(live.filter((q) => /^insert into "auth_failures"/i.test(q))).toHaveLength(2);
+    expect(live.filter((q) => /^update "password_resets"/i.test(q))).toHaveLength(0);
+  });
+
+  it('takes typed tries only from the browser that asked: a stranger can’t kill the owner’s code', async () => {
+    const { code } = (await ask('ann@example.com'))!;
+    const stranger = { email: 'ann@example.com', nonce: randomToken(16) };
+    for (let i = 0; i < RESET_TRIES; i++) {
+      const err = await failureWith(() =>
+        resetPassword(from(`192.0.2.${i}`), stranger, '2222-2222', NEW),
+      );
+      expect(err.message).toBe(RESET_CODE_INVALID);
+    }
+    // Even the right code is refused from a browser that didn't ask, fresh tries or not: rotating
+    // browsers gets a guesser nothing.
+    const fresh = { email: 'ann@example.com', nonce: randomToken(16) };
+    expect(
+      (await failureWith(() => resetPassword(from('192.0.2.99'), fresh, code, NEW))).message,
+    ).toBe(RESET_CODE_INVALID);
+    expect(audits.at(-1)?.detail?.reason).toBe('no live code');
+    await expect(reset('ann@example.com', code)).resolves.toBeUndefined();
+  });
+
+  it('counts a burst of parallel tries from one place atomically', async () => {
+    const { code } = (await ask('ann@example.com'))!;
+    const wrong = code.startsWith('2') ? '3333-3333' : '2222-2222';
+    const burst = await Promise.allSettled(
+      Array.from({ length: 20 }, (_, i) => reset(`person${i}@example.com`, wrong)),
+    );
+    const throttled = burst.filter((r) => r.status === 'rejected' && r.reason instanceof Throttled);
+    expect(throttled).toHaveLength(10);
+    expect(audits.filter((a) => a.action === 'auth.password_reset_failed')).toHaveLength(10);
+  });
+
   it('keeps the password policy, without spending a try', async () => {
     const { code } = (await ask('ann@example.com'))!;
     for (let i = 0; i < RESET_TRIES + 1; i++)
@@ -428,7 +517,7 @@ describe('setting a new password with a code', () => {
 describe('setting a new password from the emailed link', () => {
   it('needs no typed code', async () => {
     const { link } = (await ask('ann@example.com'))!;
-    await resetPassword(from(), { link }, '', NEW);
+    await viaLink(link);
     const ann = await store.db.select().from(users).where(eq(users.id, 'usr_ann')).get();
     expect(await verifyPassword(NEW, ann!.passwordHash!)).toBe(true);
     expect(audits.at(-1)?.detail).toMatchObject({ via: 'link' });
@@ -438,22 +527,32 @@ describe('setting a new password from the emailed link', () => {
     const { link } = (await ask('ann@example.com'))!;
     const [id, code] = link.split('.') as [string, string];
     const other = `${id}.${code.startsWith('2') ? '33333333' : '22222222'}`;
-    for (let i = 0; i < RESET_TRIES; i++)
-      await failureWith(() => resetPassword(from(), { link: other }, '', NEW));
-    expect((await failureWith(() => resetPassword(from(), { link }, '', NEW))).message).toBe(
-      RESET_LINK_INVALID,
-    );
+    for (let i = 0; i < RESET_TRIES; i++) await failureWith(() => viaLink(other));
+    expect((await failureWith(() => viaLink(link))).message).toBe(RESET_LINK_INVALID);
+  });
+
+  it('shows the masked address only for a link that works, counting a wrong one as a try', async () => {
+    await addUser('usr_blake', 'blake@example.com');
+    const { link } = (await ask('blake@example.com'))!;
+    expect(await openResetLink(from(), link)).toBe('b***@example.com');
+    const [id, code] = link.split('.') as [string, string];
+    const other = `${id}.${code.startsWith('2') ? '33333333' : '22222222'}`;
+    expect(await openResetLink(from(), other)).toBeNull();
+    expect(audits.at(-1)).toMatchObject({
+      action: 'auth.password_reset_failed',
+      detail: { reason: 'wrong code', via: 'link' },
+    });
+    // Opening it spent tries but not the code: the link still sets the password.
+    await expect(viaLink(link)).resolves.toBeUndefined();
   });
 
   it('refuses a link with another code, or one already used', async () => {
     const { link } = (await ask('ann@example.com'))!;
     const [id, code] = link.split('.') as [string, string];
     const other = `${id}.${code.startsWith('2') ? '33333333' : '22222222'}`;
-    const err = await failureWith(() => resetPassword(from(), { link: other }, '', NEW));
+    const err = await failureWith(() => viaLink(other));
     expect(err.message).toBe(RESET_LINK_INVALID);
-    await resetPassword(from(), { link }, '', NEW);
-    expect((await failureWith(() => resetPassword(from(), { link }, '', NEW))).message).toBe(
-      RESET_LINK_INVALID,
-    );
+    await viaLink(link);
+    expect((await failureWith(() => viaLink(link))).message).toBe(RESET_LINK_INVALID);
   });
 });

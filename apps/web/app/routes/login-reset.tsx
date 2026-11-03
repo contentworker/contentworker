@@ -26,7 +26,7 @@ import {
   RESET_PATH,
   resetFrom,
 } from '~/lib/password-reset';
-import { ResetError, resetPassword } from '~/lib/password-reset.server';
+import { openResetLink, ResetError, resetPassword } from '~/lib/password-reset.server';
 import { retryText } from '~/lib/throttle';
 import type { Route } from './+types/login-reset';
 
@@ -46,17 +46,29 @@ export const headers: Route.HeadersFunction = ({ actionHeaders, loaderHeaders })
 };
 
 export async function loader({ request, params }: Route.LoaderArgs) {
-  // The emailed link: keep its code in the cookie and drop it from the address.
+  // The emailed link: check it (a try), keep its code and the masked address it is for in the
+  // cookie, and drop it from the address bar.
   if (params.token !== undefined) {
     if (!parseResetLink(params.token)) return { mode: 'invalid' as const };
+    let masked: string | null;
+    try {
+      masked = await openResetLink(request, params.token);
+    } catch (err) {
+      if (!(err instanceof Throttled)) throw err;
+      return {
+        mode: 'invalid' as const,
+        error: `Too many codes tried from here. ${retryText(err.retryAfterMs)}`,
+      };
+    }
+    if (!masked) return { mode: 'invalid' as const };
     throw redirect(RESET_PATH, {
-      headers: { 'set-cookie': keepReset({ link: params.token }) },
+      headers: { 'set-cookie': keepReset({ link: params.token, masked }) },
     });
   }
   const carry = resetFrom(request);
   if (!carry) throw redirect(FORGOT_PATH);
   return 'link' in carry
-    ? { mode: 'link' as const }
+    ? { mode: 'link' as const, masked: carry.masked }
     : { mode: 'code' as const, email: carry.email };
 }
 
@@ -107,7 +119,7 @@ export default function LoginReset() {
           <>
             <h1 className="mt-4 font-semibold tracking-title text-2xl">Reset your password</h1>
             <p role="alert" className="mt-1 text-muted-foreground text-sm">
-              {RESET_LINK_INVALID}
+              {('error' in loaded && loaded.error) || RESET_LINK_INVALID}
             </p>
           </>
         ) : (
@@ -144,7 +156,8 @@ export default function LoginReset() {
               </>
             ) : (
               <p className="mt-1 text-muted-foreground text-sm">
-                Choose the password you’ll sign in with from now on.
+                Choose the password <span className="text-foreground">{loaded.masked}</span> will
+                sign in with from now on. Not your address? Don’t continue: ask for a code yourself.
               </p>
             )}
             <label className="mt-3 block text-sm" htmlFor="password">
