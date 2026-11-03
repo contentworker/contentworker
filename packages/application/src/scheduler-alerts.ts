@@ -7,8 +7,14 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { EmailSender, SchedulerJobRun, SchedulerJobStatus } from '@contentworker/ports';
+import { redactCredentials } from '@contentworker/redaction';
+import { auditActor } from './audit';
 import type { AppContext } from './context';
-import { SCHEDULER_STALE_AFTER_MS, SCHEDULER_TICK_JOB } from './scheduler-health';
+import {
+  SCHEDULER_ERROR_MAX_CHARS,
+  SCHEDULER_STALE_AFTER_MS,
+  SCHEDULER_TICK_JOB,
+} from './scheduler-health';
 
 /**
  * Telling someone when a cron sweep goes stale.
@@ -148,10 +154,28 @@ export async function setSchedulerAlertRecipients(
     if (
       await ctx.store.settings.put(SCHEDULER_ALERTS_SETTINGS_KEY, value, stored?.version ?? null)
     ) {
+      auditRecipientsSet(ctx, principal, next.length);
       return getSchedulerAlerts(ctx, principal);
     }
   }
   throw new ConflictError('Scheduler alert settings changed concurrently; try again');
+}
+
+/**
+ * Records who changed the recipients. One structured log line (`deployment_audit`, which Logpush
+ * carries like `invite_audit`): the api has no deployment-wide audit log, and the setting belongs
+ * to no space. The count only, never the addresses.
+ */
+function auditRecipientsSet(ctx: AppContext, principal: Principal, count: number): void {
+  console.log(
+    JSON.stringify({
+      type: 'deployment_audit',
+      at: ctx.clock.now().toISOString(),
+      action: 'scheduler.alerts.recipients_set',
+      actor: auditActor(principal),
+      count,
+    }),
+  );
 }
 
 // ---- the read ----------------------------------------------------------------------------------
@@ -324,6 +348,11 @@ export async function alertOnSchedulerTick(
       result = await email.send({ to: settings.recipients, ...message });
     } catch (err) {
       result = { delivered: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    // Kept in the state and shown to admins: redacted and bounded, as the heartbeat keeps errors.
+    if (!result.delivered) {
+      const error = redactCredentials(result.error ?? 'not delivered');
+      result = { delivered: false, error: error.slice(0, SCHEDULER_ERROR_MAX_CHARS) || 'failed' };
     }
     sent.push({
       episodeId: episode.id,

@@ -6,7 +6,7 @@ import {
   RecordingEmailSender,
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type AppContext,
   alertOnSchedulerTick,
@@ -301,6 +301,25 @@ describe('scheduler stale alerts', () => {
     ]);
   });
 
+  it('keeps a send error redacted, as the heartbeat keeps sweep errors', async () => {
+    const { ctx, clock } = setup();
+    await setSchedulerAlertRecipients(ctx, admin, ['ops@example.com']);
+    const leaky: EmailSender = {
+      send: async (): Promise<EmailSendResult> => ({
+        delivered: false,
+        error: 'relay refused at https://user:s3cret@smtp.example',
+      }),
+    };
+    await tick(ctx, { email: leaky }, { 'outbox-relay': 'ok' });
+    await minutes(ctx, clock, {}, 5, { 'outbox-relay': 'boom' });
+    clock.advance(MINUTE);
+    const outcome = await tick(ctx, { email: leaky }, { 'outbox-relay': 'boom' });
+    expect(JSON.stringify(outcome.notices)).not.toContain('s3cret');
+    const stored = JSON.stringify(await getSchedulerAlerts(ctx, admin));
+    expect(stored).toContain('relay refused');
+    expect(stored).not.toContain('s3cret');
+  });
+
   it('records a sender that throws as an undelivered try', async () => {
     const { ctx, clock } = setup();
     await setSchedulerAlertRecipients(ctx, admin, ['ops@example.com']);
@@ -320,6 +339,35 @@ describe('scheduler stale alerts', () => {
 });
 
 describe('scheduler alert settings', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('audits who set the recipients, with the count and never the addresses', async () => {
+    const { ctx } = setup();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await setSchedulerAlertRecipients(ctx, admin, ['a@example.com', 'b@example.com']);
+    const lines = log.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .filter((l) => l.type === 'deployment_audit');
+    expect(lines).toEqual([
+      {
+        type: 'deployment_audit',
+        at: '2026-11-01T10:00:00.000Z',
+        action: 'scheduler.alerts.recipients_set',
+        actor: 'admin-token',
+        count: 2,
+      },
+    ]);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('example.com');
+  });
+
+  it('audits nothing when the change is refused', async () => {
+    const { ctx } = setup();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await expect(setSchedulerAlertRecipients(ctx, spaceAdmin, ['a@example.com'])).rejects.toThrow();
+    await expect(setSchedulerAlertRecipients(ctx, admin, ['nope'])).rejects.toThrow();
+    expect(log).not.toHaveBeenCalled();
+  });
+
   it('are for deployment administrators only', async () => {
     const { ctx } = setup();
     await expect(getSchedulerAlerts(ctx, spaceAdmin)).rejects.toBeInstanceOf(ForbiddenError);

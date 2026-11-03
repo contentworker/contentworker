@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import { recordSchedulerTick, SchedulerTick } from '@contentworker/application';
 import type { Principal } from '@contentworker/domain';
-import type { ApiConfig } from '@contentworker/platform/config';
+import { type ApiConfig, loadConfig } from '@contentworker/platform/config';
+import { principalTarget, signPrincipal } from '@contentworker/security/principal';
 import {
   FixedClock,
   InMemoryVectorStore,
@@ -10,7 +11,7 @@ import {
   StubAIProvider,
 } from '@contentworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp, HEALTH_SCHEDULER_TTL_MS } from '../../src/api/app';
 import type { McpDeps } from '../../src/mcp/deps';
 import { buildServer } from '../../src/mcp/server';
@@ -140,6 +141,37 @@ describe('/deployment/scheduler/alerts', () => {
       body: JSON.stringify({ recipients: ['oncall'] }),
     });
     expect(res.status).toBe(422);
+  });
+
+  it('refuses a signed-in person who is not a deployment administrator', async () => {
+    const KEY = 'test-principal-key-0123456789abcdef';
+    const signedConfig = loadConfig({
+      ROLE: 'all',
+      ADMIN_TOKEN: 'admin',
+      CMA_KEY: 'cma',
+      CDA_KEY: 'cda',
+      CPA_KEY: 'cpa',
+      SEED_SPACE_ID: 's1',
+      PRINCIPAL_KEY: KEY,
+    } as NodeJS.ProcessEnv);
+    const w = wire(signedConfig);
+    const app = createApp(w.ctx, signedConfig, w.rag, w.blob, w.ai);
+    const member = async (method: string) => ({
+      'x-cw-principal': await signPrincipal(
+        KEY,
+        { sub: 'usr_member', email: 'member@example.com', name: 'member', role: 'member' },
+        principalTarget(method, '/deployment/scheduler/alerts'),
+      ),
+      'Content-Type': 'application/json',
+    });
+    const get = await app.request('/deployment/scheduler/alerts', { headers: await member('GET') });
+    expect(get.status).toBe(403);
+    const put = await app.request('/deployment/scheduler/alerts', {
+      method: 'PUT',
+      headers: await member('PUT'),
+      body: JSON.stringify({ recipients: ['attacker@example.com'] }),
+    });
+    expect(put.status).toBe(403);
   });
 
   it('refuses a space’s own keys and anonymous callers', async () => {
@@ -295,5 +327,67 @@ describe('MCP scheduler alert tools', () => {
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
     expect(byName.scheduler_alerts?.annotations?.readOnlyHint).toBe(true);
     expect(byName.scheduler_alerts_set_recipients?.annotations?.readOnlyHint).not.toBe(true);
+  });
+});
+
+describe('scheduler alert recipients audit', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const audits = (log: { mock: { calls: unknown[][] } }) =>
+    log.mock.calls
+      .map(([line]) => {
+        try {
+          return JSON.parse(String(line)) as Record<string, unknown>;
+        } catch {
+          return {};
+        }
+      })
+      .filter((l) => l.type === 'deployment_audit');
+
+  it('records the root token as the actor over HTTP and over MCP alike', async () => {
+    const { ctx, app } = build();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const res = await app.request('/deployment/scheduler/alerts', {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipients: ['oncall@example.com'] }),
+    });
+    expect(res.status).toBe(200);
+
+    const ai = new StubAIProvider(() => ({}));
+    const server = buildServer(
+      {
+        ctx,
+        ai,
+        rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
+        hasher: { hash: (v: string) => createHash('sha256').update(v).digest('hex') },
+        adminToken: 'admin',
+        agents: new InProcessAgentRuntime(makeActivities({ ctx, ai })),
+      },
+      { spaceId: '*', kind: 'admin', scopes: [] },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(clientTransport);
+    const result = await client.callTool({
+      name: 'scheduler_alerts_set_recipients',
+      arguments: { recipients: ['a@example.com', 'b@example.com'] },
+    });
+    expect(result.isError).not.toBe(true);
+
+    expect(audits(log)).toEqual([
+      expect.objectContaining({
+        action: 'scheduler.alerts.recipients_set',
+        actor: 'admin-token',
+        count: 1,
+      }),
+      expect.objectContaining({
+        action: 'scheduler.alerts.recipients_set',
+        actor: 'admin-token',
+        count: 2,
+      }),
+    ]);
+    expect(JSON.stringify(audits(log))).not.toContain('example.com');
   });
 });
