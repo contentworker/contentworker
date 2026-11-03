@@ -209,6 +209,7 @@ export function ContentTypeDialog(props: {
   const [fields, setFields] = useState<FieldRow[]>(seed.fields);
   const [displayField, setDisplayField] = useState(props.initial?.displayField ?? 'title');
   const [urlPattern, setUrlPattern] = useState(props.initial?.urlPattern ?? '');
+  const [singleton, setSingleton] = useState(props.initial?.singleton === true);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -254,6 +255,7 @@ export function ContentTypeDialog(props: {
         fields: namedFields.map(toDefinition),
         // Cleared with null: left out, a saved pattern would stay.
         urlPattern: urlPattern.trim() || null,
+        singleton,
       });
       props.onOpenChange(false);
     } catch (err) {
@@ -495,6 +497,22 @@ export function ContentTypeDialog(props: {
             <p id="ct-url-hint" className="max-w-measure text-muted-foreground text-ui">
               Where entries live on your site: {'{id}'}, {'{locale}'} or a Slug field’s API ID.
               Publishing a changed slug then redirects the old path. Optional.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="gap-2 font-normal">
+              <Checkbox
+                aria-describedby="ct-singleton-hint"
+                checked={singleton}
+                onCheckedChange={(c) => setSingleton(c === true)}
+              />
+              One entry only (singleton)
+            </Label>
+            <p id="ct-singleton-hint" className="max-w-measure text-muted-foreground text-ui">
+              For site settings or a home page: the content type holds a single entry, opened
+              straight from the sidebar, and the delivery API serves it by the type’s API ID. A type
+              that already has more than one entry can’t become one.
             </p>
           </div>
 

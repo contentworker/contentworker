@@ -11,6 +11,8 @@ import {
   removedVariantUses,
   reviseContentType,
   type Scope,
+  singletonClaim,
+  uniqueClaims,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
 
@@ -36,14 +38,72 @@ export async function updateContentType(
   ctx: AppContext,
   scope: Scope,
   apiId: string,
-  changes: Partial<Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern'>>,
+  changes: Partial<
+    Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern' | 'singleton'>
+  >,
 ): Promise<ContentType> {
   const current = await ctx.store.contentTypes.get(scope, apiId);
   if (!current) throw new NotFoundError('ContentType', apiId);
   const revised = reviseContentType(current, changes);
   await assertNoRemovedContentInUse(ctx, scope, current, revised);
-  await ctx.store.contentTypes.save(scope, revised);
+  await saveContentTypeOver(ctx, scope, current, revised);
   return revised;
+}
+
+/** Entry ids a refusal to make a type a singleton names; the details carry the same. */
+const SINGLETON_NAMED = 10;
+
+/**
+ * Saves `next` over `current` (null when the type is new to the scope): the one save every path
+ * that writes a definition over another goes through (a revision, an environment merge, a
+ * promotion), so turning `singleton` on or off keeps its rule wherever it happens.
+ *
+ * Turning it on is refused while the type has more than one entry outside the trash, naming them;
+ * with one, that entry takes the singleton's claim in the same unit as the save. Turning it off
+ * gives the claim back the same way. A save that leaves the flag alone is the plain save.
+ */
+export async function saveContentTypeOver(
+  ctx: AppContext,
+  scope: Scope,
+  current: ContentType | null,
+  next: ContentType,
+): Promise<void> {
+  const was = current?.singleton === true;
+  const is = next.singleton === true;
+  if (was === is) {
+    await ctx.store.contentTypes.save(scope, next);
+    return;
+  }
+  // Whose claims change: on, the type's entries outside the trash (at most one, or the turn is
+  // refused); off, whichever entry holds the claim.
+  let holders: { id: string; fields: EntryFields }[];
+  if (is) {
+    const live = await ctx.store.entries.list(scope, {
+      contentTypeApiId: next.apiId,
+      limit: SINGLETON_NAMED + 1,
+    });
+    if (live.length > 1) {
+      const ids = live.slice(0, SINGLETON_NAMED).map((e) => e.entry.id);
+      const more = live.length > SINGLETON_NAMED ? ' and more' : '';
+      throw new ConflictError(
+        `"${next.apiId}" has more than one entry outside the trash (${ids.join(', ')}${more}), ` +
+          'so it cannot be a singleton. Move all but one to the trash first.',
+        { entries: ids },
+      );
+    }
+    holders = live.map((e) => ({ id: e.entry.id, fields: e.fields }));
+  } else {
+    const [held] = await ctx.store.entries.findUniqueConflicts(scope, [singletonClaim(next.apiId)]);
+    const found = held ? await ctx.store.entries.get(scope, held.entryId) : null;
+    holders = found ? [{ id: found.entry.id, fields: found.fields }] : [];
+  }
+  await ctx.store.withTransaction(async (tx) => {
+    await tx.contentTypes.save(scope, next);
+    // Rebuilt from the entry's fields, so its unique values keep their claims beside it.
+    for (const h of holders) {
+      await tx.entries.replaceUniqueClaims(scope, h.id, uniqueClaims(next, h.fields));
+    }
+  });
 }
 
 /** Entries read per page while looking for content a revision would strand. */

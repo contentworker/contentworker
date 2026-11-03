@@ -2,7 +2,7 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
-import { NavLink, Outlet } from 'react-router';
+import { Link, Outlet, useLocation } from 'react-router';
 import { StatusDot } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import { useContentTypesQuery, useQueryKeys, useSpaceConfigQuery } from '../lib/queries';
@@ -16,6 +16,7 @@ import type { ContentOutlet } from './content-context';
  */
 export function ContentLayout() {
   const { conn } = useClient();
+  const { pathname } = useLocation();
   const queryClient = useQueryClient();
   const keys = useQueryKeys();
   const typesQuery = useContentTypesQuery();
@@ -62,24 +63,30 @@ export function ContentLayout() {
               Content types
             </h2>
             <ul className="flex flex-col gap-0.5">
-              {types.map((t) => (
-                <li key={t.apiId}>
-                  <NavLink
-                    to={`/content/${t.apiId}`}
-                    className={({ isActive }) =>
-                      cn(
+              {types.map((t) => {
+                // Active anywhere under the type, so a singleton's entry (reached through
+                // `/entry`) marks it as the list does its entries.
+                const base = `/content/${t.apiId}`;
+                const active = pathname === base || pathname.startsWith(`${base}/`);
+                return (
+                  <li key={t.apiId}>
+                    <Link
+                      // A singleton opens its one entry, not a list of one.
+                      to={t.singleton ? `${base}/entry` : base}
+                      aria-current={active ? 'page' : undefined}
+                      className={cn(
                         'relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
-                        isActive
+                        active
                           ? 'bg-accent font-medium text-accent-foreground tick-current'
                           : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                      )
-                    }
-                  >
-                    <span className="truncate">{t.name}</span>
-                    {t.status !== 'published' ? <StatusDot status={t.status} /> : null}
-                  </NavLink>
-                </li>
-              ))}
+                      )}
+                    >
+                      <span className="truncate">{t.name}</span>
+                      {t.status !== 'published' ? <StatusDot status={t.status} /> : null}
+                    </Link>
+                  </li>
+                );
+              })}
               {typesQuery.isPending
                 ? ['72%', '55%', '64%', '48%'].map((w) => (
                     <li key={w} aria-hidden="true" className="px-2.5 py-1.5 text-sm touch:min-h-11">

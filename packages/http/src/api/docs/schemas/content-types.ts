@@ -129,6 +129,10 @@ export const contentType = z.object({
     .string()
     .optional()
     .describe('Where its entries live on the site, e.g. /blog/{slug}'),
+  singleton: z
+    .literal(true)
+    .optional()
+    .describe('Holds at most one entry, served at GET …/singletons/:apiId; absent otherwise'),
   version: z.int(),
   status: z.enum(['draft', 'published']),
 });

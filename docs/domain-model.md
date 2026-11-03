@@ -394,6 +394,7 @@ interface ContentType {
   displayField: string; // apiId of the field used as the entry's display title
   fields: readonly FieldDefinition[];
   urlPattern?: string; // where its entries live on the site, e.g. /blog/{slug}
+  singleton?: true; // holds at most one entry outside the trash; absent otherwise
   version: number; // bumped on each revision
   status: 'draft' | 'published';
 }
@@ -404,7 +405,16 @@ interface ContentType {
   `ValidationError` / `ConflictError`.
 - `reviseContentType(current, changes)` — increments `version`, resets status to `draft`, sorts
   fields by `position`, optionally updates `name`/`displayField`/`fields`/`urlPattern` (`null` or
-  `''` clears it).
+  `''` clears it) and `singleton` (left out, kept).
+- **Singletons.** Every entry of a singleton type stakes `singletonClaim(apiId)` (field
+  `SINGLETON_CLAIM_FIELD`, `$singleton`, which no field apiId can be) beside its unique values, so
+  the `entry_unique_values` unique index admits one entry outside the trash whatever the race.
+  `createEntry`, `restoreEntry` and an environment merge also read for one first
+  (`assertSingletonFree`), which names the entry and still refuses when its claim went missing (an
+  entry saved by a release from before singletons). `saveContentTypeOver` is the one save of a
+  definition over another (a revision, a merge, a promotion): turning the flag on is refused over
+  more than one entry outside the trash and claims the one there is, in the same unit as the save;
+  turning it off gives the claim back. Stored in `content_types.singleton` (0027_singleton_types).
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
   `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields; anything else is a

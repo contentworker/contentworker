@@ -106,6 +106,8 @@ export interface ContentType {
   readonly fields: readonly FieldDefinition[];
   /** Where its entries live on the site, e.g. `/blog/{slug}`. */
   readonly urlPattern?: string;
+  /** Holds at most one entry, read by type with the delivery client's `getSingleton`. */
+  readonly singleton?: true;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -152,6 +154,12 @@ export interface ContentTypeDraft {
    * `null` clears it.
    */
   readonly urlPattern?: string | null;
+  /**
+   * Holds at most one entry (site settings, a home page): a second is refused, and Delivery
+   * serves the one at `GET …/singletons/:apiId`. Turning it on is refused while the type has more
+   * than one entry. Left out of a revision, unchanged.
+   */
+  readonly singleton?: boolean;
 }
 
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */

@@ -1267,3 +1267,47 @@ test('the editor names who created and last edited an entry, and Mine lists oneâ
   await page.getByRole('button', { name: 'Clear' }).click();
   await expect(mine).toHaveAttribute('aria-pressed', 'false');
 });
+
+test('a singleton type opens its one entry, and refuses a second', async ({ page, request }) => {
+  const stamp = Date.now();
+  const name = `Settings ${stamp}`;
+  const apiId = `settings${stamp}`;
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'New content type' }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'New content type' });
+  await dialog.getByLabel('Name', { exact: true }).fill(name);
+  await dialog.getByLabel('API ID', { exact: true }).fill(apiId);
+  await dialog.getByRole('checkbox', { name: /one entry only/i }).check();
+  await dialog.getByRole('button', { name: 'Create content type' }).click();
+  await expect(dialog).toBeHidden();
+
+  // The sidebar and the overview open the entry, not a list: a new one while there is none.
+  await expect(
+    page.locator(`nav[aria-labelledby="content-types-nav"] a[href="/content/${apiId}/entry"]`),
+  ).toHaveCount(1);
+  const row = page
+    .getByRole('main')
+    .getByRole('table')
+    .getByRole('row', { name: new RegExp(name) });
+  await expect(row.getByText('one entry only')).toBeVisible();
+  await row.getByRole('link', { name, exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/content/${apiId}/new$`));
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByRole('textbox', { name: /Title/ }).fill('Our site');
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/content/${apiId}/[0-9a-f-]{36}$`));
+  const editorUrl = page.url();
+
+  // With its entry made, the same link opens that entry.
+  await openCms(page, `/content/${apiId}/entry`);
+  await expect(page).toHaveURL(editorUrl);
+  await expect(page.getByRole('heading', { name: 'Our site' })).toBeVisible();
+
+  // A second entry is refused, whoever asks.
+  const second = await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: apiId,
+    fields: { title: { 'en-US': 'Another' } },
+  });
+  expect(second.status()).toBe(409);
+});

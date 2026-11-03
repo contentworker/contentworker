@@ -290,6 +290,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
         status: ct.status,
         updatedAt: new Date(),
         urlPattern: ct.urlPattern ?? null,
+        singleton: ct.singleton === true,
       };
       await x.write(
         db
@@ -309,6 +310,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
               status: values.status,
               updatedAt: values.updatedAt,
               urlPattern: values.urlPattern,
+              singleton: values.singleton,
             },
           }),
       );
@@ -6818,6 +6820,40 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         );
       }
 
+      if (request.singleton) {
+        // The type and its published entry, two statements of the same batch: whether the type is
+        // a singleton at all is the caller's to judge, from the row read here.
+        const apiId = request.singleton.contentType;
+        const read: { contentType: ContentType | null; entry: PublishedEntry | null } = {
+          contentType: null,
+          entry: null,
+        };
+        result.singleton = read;
+        add(
+          db
+            .select()
+            .from(schema.contentTypes)
+            .where(
+              and(scopeFilter(schema.contentTypes, scope), eq(schema.contentTypes.apiId, apiId)),
+            ),
+          ([row]) => {
+            read.contentType = row ? toContentType(row) : null;
+          },
+        );
+        const ep = schema.entryPublished;
+        add(
+          db
+            .select()
+            .from(ep)
+            .where(and(scopeFilter(ep, scope), eq(ep.contentTypeApiId, apiId)))
+            .orderBy(asc(ep.entryId))
+            .limit(1),
+          ([row]) => {
+            read.entry = row ? toPublished(row) : null;
+          },
+        );
+      }
+
       if (queries.length === 0) return result;
       const rows =
         queries.length === 1
@@ -6958,6 +6994,7 @@ const toContentType = (r: CtRow): ContentType => ({
   displayField: r.displayField,
   fields: r.fields,
   ...(r.urlPattern ? { urlPattern: r.urlPattern } : {}),
+  ...(r.singleton ? { singleton: true as const } : {}),
   version: r.version,
   status: r.status,
 });

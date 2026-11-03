@@ -4,7 +4,9 @@ import {
   draftEntry,
   findDuplicates,
   getContentType,
+  getDeliveredSingleton,
   getPreviewEntry,
+  getPreviewSingleton,
   getSchedulerStatus,
   hybridSearch,
   listContentTypes,
@@ -13,6 +15,7 @@ import {
   MAX_FIELD_VALUES_PAGE,
   MAX_PAGE_LIMIT,
   MAX_WHERE_LENGTH,
+  maskDeliveredFields,
   relatedEntries,
   requestReindex,
   resolveEmbed,
@@ -345,6 +348,51 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           fields: maskDeniedFields(principal, entry.contentType, entry.fields),
         }),
       );
+    },
+  );
+
+  server.registerTool(
+    'singleton_get',
+    {
+      description:
+        'Get the one entry of a singleton content type (site settings, a home page) by the ' +
+        'type’s apiId, no entry id needed: its current version, a draft included, or with ' +
+        'published=true what Delivery serves (GET …/singletons/:apiId), links resolved to ' +
+        '`include` levels. Not found when the type is not a singleton or has no such entry.',
+      inputSchema: toolSchema('singleton_get', () =>
+        z.object({
+          contentType: z.string(),
+          published: z.boolean().optional().describe('the published entry, as Delivery serves it'),
+          locale: z.string().optional(),
+          include: z
+            .number()
+            .int()
+            .min(0)
+            .max(10)
+            .optional()
+            .describe('link resolution depth (published only)'),
+          ...scopeArgs,
+        }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(args.published ? SCOPES.deliveryRead : SCOPES.previewRead, scopeOf(args));
+      authorizeContent(principal, 'read', args.contentType);
+      if (args.published) {
+        const entry = await getDeliveredSingleton(ctx, scopeOf(args), args.contentType, {
+          locale: args.locale,
+          include: args.include,
+        });
+        return ok({
+          ...entry,
+          fields: maskDeliveredFields(principal, entry.contentType, entry.fields),
+        });
+      }
+      const entry = await getPreviewSingleton(ctx, scopeOf(args), args.contentType, {
+        locale: args.locale,
+      });
+      return ok({ ...entry, fields: maskDeniedFields(principal, entry.contentType, entry.fields) });
     },
   );
 

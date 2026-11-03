@@ -125,6 +125,7 @@ import type {
   SchedulerJobRepo,
   SchedulerJobStatus,
   ScopedScheduledAction,
+  SingletonRead,
   SitemapPage,
   SpaceConfig,
   SpaceRepo,
@@ -1741,7 +1742,21 @@ export class InMemoryContentStore implements ContentStore {
           };
         } else menu = null;
       }
+      let singleton: SingletonRead | undefined;
+      if (request.singleton) {
+        const apiId = request.singleton.contentType;
+        const prefix = `${scopeKey(scope)}::`;
+        const [first] = [...this.publishedData.entries()]
+          .filter(([k, p]) => k.startsWith(prefix) && p.contentTypeApiId === apiId)
+          .map(([, p]) => p)
+          .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
+        singleton = {
+          contentType: (await this.contentTypes.get(scope, apiId)) ?? null,
+          entry: first ?? null,
+        };
+      }
       const result: DeliveryReadResult = {
+        ...(singleton ? { singleton } : {}),
         ...(sitemap ? { sitemap } : {}),
         ...(request.config ? { config: config ?? null } : {}),
         ...(contentTypes ? { contentTypes } : {}),

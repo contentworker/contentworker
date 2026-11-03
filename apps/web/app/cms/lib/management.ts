@@ -1482,6 +1482,22 @@ export function createManagementClient(
       return entry;
     },
 
+    /**
+     * A singleton type's one entry as it is now, or null when it has none outside the trash (or
+     * the type is not a singleton): what the sidebar opens for the type.
+     */
+    async getSingletonEntry(contentType: string): Promise<PreviewEntry | null> {
+      try {
+        return await req<PreviewEntry>(
+          'GET',
+          `${preview}/singletons/${encodeURIComponent(contentType)}`,
+        );
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+
     // --- trash lifecycle -------------------------------------------------
     /** Moves an entry to the trash, unpublishing it first when it is live. */
     trashEntry(id: string): Promise<EntryAggregate> {

@@ -14,8 +14,10 @@ import {
   deliveryReads,
   getDeliveredAsset,
   getDeliveredMenu,
+  getDeliveredSingleton,
   getDeliveredTag,
   getEntry,
+  getPreviewSingleton,
   getPublishedEntry,
   listDeliveredAssets,
   listDeliveredConcepts,
@@ -196,7 +198,18 @@ async function seed(): Promise<void> {
       field({ apiId: 'body', type: 'RichText', position: 3 }),
     ],
   });
-  for (const apiId of ['author', 'article', 'roundup', 'landing', 'page']) {
+  // A singleton: Delivery reads it by type, not by id.
+  await createContentType(ctx, scope, {
+    apiId: 'settings',
+    name: 'Settings',
+    displayField: 'title',
+    singleton: true,
+    fields: [
+      field({ apiId: 'title', type: 'Symbol', localized: true, required: true }),
+      field({ apiId: 'featured', type: 'Link', linkType: 'Entry', position: 1 }),
+    ],
+  });
+  for (const apiId of ['author', 'article', 'roundup', 'landing', 'page', 'settings']) {
     await publishContentType(ctx, scope, apiId);
   }
 
@@ -273,6 +286,15 @@ async function seed(): Promise<void> {
   const { entry: landing } = await createEntry(ctx, scope, landingFields());
   await publishEntry(ctx, scope, landing.id);
   ids.landing = landing.id;
+
+  const { entry: settings } = await createEntry(ctx, scope, {
+    contentTypeApiId: 'settings',
+    fields: {
+      title: { 'en-US': 'Site', de: 'Seite' },
+      featured: { 'en-US': entryLink(ids.articles[0] as string) },
+    },
+  });
+  await publishEntry(ctx, scope, settings.id);
 
   for (let i = 0; i < 4; i++) {
     const { entry } = await createEntry(ctx, scope, {
@@ -463,6 +485,19 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     'delivery: GET /menus/:handle?locale=de',
     () => getDeliveredMenu(ctx, scope, 'main', { locale: 'de' }),
   ],
+  [
+    'delivery: GET /singletons/:apiId?locale=de',
+    () => getDeliveredSingleton(ctx, scope, 'settings', { locale: 'de' }),
+  ],
+  [
+    'delivery: GET /singletons/:apiId?include=1',
+    () => getDeliveredSingleton(ctx, scope, 'settings', { include: 1 }),
+  ],
+  [
+    'delivery: POST /graphql singleton',
+    () => graphql('{ settings { _sys { id } title featured } }'),
+  ],
+  ['preview: GET /singletons/:apiId', () => getPreviewSingleton(ctx, scope, 'settings')],
   ['management: GET /entries/:id', () => getEntry(ctx, scope, article(5))],
   [
     'management: GET /entries?content_type=article',

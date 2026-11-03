@@ -45,7 +45,25 @@ const article = defineContentType({
   ],
 });
 
+const settings = defineContentType({
+  apiId: 'settings',
+  name: 'Settings',
+  displayField: 'title',
+  singleton: true,
+  fields: [
+    {
+      apiId: 'title',
+      name: 'Title',
+      type: 'Symbol',
+      localized: false,
+      required: false,
+      position: 0,
+    },
+  ],
+});
+
 const entries: Record<string, ResolvedEntry> = {
+  s1: { id: 's1', contentType: 'settings', publishedAt: 'now', fields: { title: 'Site' } },
   e1: {
     id: 'e1',
     contentType: 'article',
@@ -56,7 +74,8 @@ const entries: Record<string, ResolvedEntry> = {
 
 const resolvers: DeliveryResolvers = {
   entry: async (_ct, id) => entries[id] ?? null,
-  collection: async () => Object.values(entries),
+  singleton: async (ct) => (ct === 'settings' ? (entries.s1 ?? null) : null),
+  collection: async (ct) => Object.values(entries).filter((e) => e.contentType === ct),
   asset: async (id) => ({ id, file: { fileName: 'h.jpg' } }),
   search: async () => [{ entryId: 'e1', score: 0.9, snippet: 'Hello' }],
 };
@@ -100,6 +119,22 @@ describe('@contentworker/graphql-gen', () => {
     const data = r.data as { articleCollection: unknown[]; search: { entryId: string }[] };
     expect(data.articleCollection).toHaveLength(1);
     expect(data.search[0]?.entryId).toBe('e1');
+  });
+
+  it('gives a singleton type a root that needs no id, and an ordinary one a root that does', async () => {
+    const both = buildDeliverySchema([article, settings]);
+    const r = await graphql({
+      schema: both,
+      contextValue,
+      source: '{ settings { _sys { id } title } byId: settings(id: "e1") { _sys { id } } }',
+    });
+    expect(r.errors).toBeUndefined();
+    expect(r.data).toEqual({
+      settings: { _sys: { id: 's1' }, title: 'Site' },
+      byId: { _sys: { id: 'e1' } },
+    });
+    const ordinary = await graphql({ schema: both, contextValue, source: '{ article { title } }' });
+    expect(ordinary.errors?.[0]?.message).toMatch(/article\(id:\).*is required/);
   });
 
   it('returns null for a wrong-id query without throwing', async () => {

@@ -6,11 +6,14 @@ import {
   type EntryVersion,
   NotFoundError,
   type Scope,
+  singletonClaim,
   stampChanged,
   stampCreated,
   type ValidationContext,
 } from '@contentworker/domain';
+import { saveContentTypeOver } from './content-types';
 import { type AppContext, actorOf } from './context';
+import { assertSingletonFree } from './entries';
 import { allPages } from './paging';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
 
@@ -156,7 +159,7 @@ export async function mergeEnvironments(
   for (const apiId of selection.contentTypes ?? []) {
     const ct = await ctx.store.contentTypes.get(src, apiId);
     if (!ct) throw new NotFoundError('ContentType', `${source}/${apiId}`);
-    await ctx.store.contentTypes.save(tgt, ct);
+    await saveContentTypeOver(ctx, tgt, await ctx.store.contentTypes.get(tgt, apiId), ct);
     mergedContentTypes.push(apiId);
   }
 
@@ -174,7 +177,7 @@ export async function mergeEnvironments(
         );
       }
       assertEntryFieldsValid(targetCt, found.fields, vctx);
-      await applyEntry(ctx, tgt, found.entry, found.fields);
+      await applyEntry(ctx, tgt, found.entry, targetCt, found.fields);
       mergedEntries.push(entryId);
     }
   }
@@ -191,6 +194,7 @@ async function applyEntry(
   ctx: AppContext,
   tgt: Scope,
   from: Entry,
+  contentType: ContentType,
   fields: EntryFields,
 ): Promise<void> {
   const { id: entryId, contentTypeApiId } = from;
@@ -213,7 +217,16 @@ async function applyEntry(
       now,
     );
     const version: EntryVersion = { entryId, version: 1, fields, createdAt: now, createdBy: actor };
-    await ctx.store.entries.create(tgt, entry, version);
+    if (!contentType.singleton) {
+      await ctx.store.entries.create(tgt, entry, version);
+      return;
+    }
+    // A singleton in the target already holding its entry takes no second one from the source.
+    await assertSingletonFree(ctx.store.entries, tgt, contentType);
+    await ctx.store.withTransaction(async (tx) => {
+      await tx.entries.create(tgt, entry, version);
+      await tx.entries.replaceUniqueClaims(tgt, entryId, [singletonClaim(contentTypeApiId)]);
+    });
     return;
   }
   const nextVersion = existing.entry.currentVersion + 1;

@@ -859,3 +859,36 @@ test('the taxonomy tag table and its term editor have no accessibility violation
   await expect(sheet.getByLabel('Slug')).toHaveValue(`a11y-${stamp}`);
   await scan(page, testInfo, ['[role="dialog"]']);
 });
+
+test('a singleton’s entry, opened by its type, has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const apiId = `a11ySettings${Date.now()}`;
+  const made = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId,
+    name: 'A11y settings',
+    displayField: 'title',
+    singleton: true,
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+    ],
+  });
+  expect(made.status()).toBe(201);
+  await api(request, 'POST', `${MGMT}/content-types/${apiId}/published`);
+  await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: apiId,
+    fields: { title: { 'en-US': 'Site' } },
+  });
+  await openCms(page, `/content/${apiId}/entry`);
+  await expect(page).toHaveURL(new RegExp(`/content/${apiId}/[0-9a-f-]{36}$`));
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible();
+  await scan(page, testInfo);
+});

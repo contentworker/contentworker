@@ -55,6 +55,13 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
               'where its entries live on the site, e.g. /blog/{slug} ({id}, {locale} or a Slug ' +
                 'field); a publish that changes the slug redirects the old path. null clears it',
             ),
+          singleton: z
+            .boolean()
+            .optional()
+            .describe(
+              'holds at most one entry (site settings, a home page), read with singleton_get; ' +
+                'refused while the type has more than one entry. Left out, unchanged',
+            ),
           ...scopeArgs,
         }),
       ),
@@ -67,6 +74,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           name: args.name,
           displayField: args.displayField,
           ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
+          ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
           fields: args.fields as any,
         }),

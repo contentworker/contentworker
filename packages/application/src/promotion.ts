@@ -27,7 +27,12 @@ import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
 import { auditActor } from './audit';
 import { compareEnvironments } from './branching';
-import { describeRemovedInUse, publishContentType, removedContentInUse } from './content-types';
+import {
+  describeRemovedInUse,
+  publishContentType,
+  removedContentInUse,
+  saveContentTypeOver,
+} from './content-types';
 import { type AppContext, withActor } from './context';
 import { createEntry, updateEntry } from './entries';
 import { loadPublishGuard } from './publish-gate';
@@ -367,7 +372,12 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
           `The content type "${pinned.apiId}" changed in ${promotion.source} after the promotion was requested; request a new one`,
         );
       }
-      await ctx.store.contentTypes.save(target, ct);
+      await saveContentTypeOver(
+        ctx,
+        target,
+        await ctx.store.contentTypes.get(target, ct.apiId),
+        ct,
+      );
       if (ct.status === 'published') await publishContentType(ctx, target, pinned.apiId);
       result.contentTypes.push(pinned.apiId);
     }

@@ -74,6 +74,33 @@ export async function getPreviewEntry(
   };
 }
 
+/**
+ * A singleton type's entry as it is now (`GET /preview/…/singletons/:apiId`): its current version,
+ * a draft included, as {@link getPreviewEntry} serves one. Not found unless `apiId` names a
+ * singleton type with an entry outside the trash.
+ */
+export async function getPreviewSingleton(
+  ctx: AppContext,
+  scope: Scope,
+  apiId: string,
+  opts: RenderOptions = {},
+): Promise<PreviewedEntry> {
+  const [contentType, [found], config] = await Promise.all([
+    ctx.store.contentTypes.get(scope, apiId),
+    ctx.store.entries.list(scope, { contentTypeApiId: apiId, limit: 1 }),
+    spaceConfig(ctx, scope),
+  ]);
+  if (!contentType?.singleton) throw new NotFoundError('Singleton', apiId);
+  if (!found) throw new NotFoundError('Singleton entry', apiId);
+  return {
+    id: found.entry.id,
+    contentType: found.entry.contentTypeApiId,
+    status: found.entry.status,
+    version: found.entry.currentVersion,
+    fields: renderFields(found.fields, config, opts.locale),
+  };
+}
+
 export async function listPreviewEntries(
   ctx: AppContext,
   scope: Scope,

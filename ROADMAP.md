@@ -194,8 +194,9 @@ in-browser model, page-per-language translation, and rich text or styles stored 
   as an `IN` over the reference edges with one JSON parameter, Preview scans the draft's fields.
 - [ ] **Conditional field rules.** `rules` on a field (hide or disable when a sibling matches),
   evaluated in the domain so a hidden field skips `required` on every surface.
-- [ ] **Singleton types.** At most one entry; Delivery `GET /singletons/:apiId`; the admin opens the
-  editor directly.
+- [x] **Singleton types.** At most one entry outside the trash, held by a unique claim on every
+  create path; Delivery and Preview `GET /singletons/:apiId`, a GraphQL root without `id`,
+  `singleton_get`, the SDK's `getSingleton`; the admin opens the editor directly.
 - [ ] **Delete and clone a content type.** Delete refuses while entries exist or runs as a resumable
   trash-then-purge job; clone copies the definition under a new `apiId`.
 - [x] **Authorship.** `created_by`, `modified_by`, `created_at` and `first_published_at` on entries

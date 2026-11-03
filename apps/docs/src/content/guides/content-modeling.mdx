@@ -16,7 +16,8 @@ A content type has:
 - a **name** people see (`Article`);
 - a **display field**, the field used as each entry's title in lists, pickers and search results;
 - an ordered list of **fields**;
-- optionally a **URL pattern**, where its entries live on your site.
+- optionally a **URL pattern**, where its entries live on your site;
+- optionally **singleton**: it holds one entry only.
 
 Creating or changing a content type makes a draft definition. Each revision bumps the type's
 `version`; publishing marks that version live for authoring and delivery and emits a
@@ -33,6 +34,21 @@ of the type's own `Slug` fields; anything else is refused. In the content type d
 an entry that was already published, contentworker writes a `301` from the old path to the new one;
 see [Redirects](/guides/redirects/#redirect-slug-changes). A revision that removes a slug a kept
 pattern names is refused.
+
+### Singletons
+
+A singleton type holds at most one entry outside the trash: site settings, a home page, a footer.
+In the content type dialog it is **One entry only (singleton)**; over the API and MCP it is
+`singleton: true` on `POST …/content-types` and `model_create_content_type` (left out of a
+revision, it stays as it was). A second entry is refused with `409` on every path that makes one:
+create, bulk create, duplicate, import, a snapshot restore, a promotion or an environment merge.
+Trashing the entry frees the place; restoring it is refused while another entry has taken it.
+Turning `singleton` on is refused while the type has more than one entry outside the trash, and
+names them.
+
+The admin's sidebar opens a singleton's entry in the editor (or a new one when it has none)
+instead of a list. Delivery serves it by the type's API ID, with no entry id:
+`GET …/singletons/{apiId}` (see [Reading content](/guides/reading-content/#singletons)).
 
 ## Field types
 

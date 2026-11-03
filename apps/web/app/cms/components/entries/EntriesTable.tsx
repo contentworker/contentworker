@@ -384,9 +384,12 @@ export function EntriesTable(props: EntriesTableProps) {
                                 Diff vs published
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem onSelect={() => actions.duplicate(e)}>
-                              Duplicate
-                            </DropdownMenuItem>
+                            {/* A singleton's copy would be its refused second entry. */}
+                            {!type.singleton && (
+                              <DropdownMenuItem onSelect={() => actions.duplicate(e)}>
+                                Duplicate
+                              </DropdownMenuItem>
+                            )}
                             {e.status === 'published' && (
                               <DropdownMenuItem onSelect={() => actions.unpublish(e)}>
                                 Unpublish

@@ -34,6 +34,12 @@ export interface ContentType {
    * from it too.
    */
   readonly urlPattern?: string;
+  /**
+   * At most one entry outside the trash: a site's settings, its home page, its footer. Delivery
+   * serves it at `GET …/singletons/:apiId`. Present only when true. Held by a unique claim
+   * ({@link singletonClaim}), so two concurrent creates can't both win.
+   */
+  readonly singleton?: true;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -45,6 +51,8 @@ export interface ContentTypeDraft {
   fields: FieldDefinition[];
   /** `null` or `''` clears it on a revision. */
   urlPattern?: string | null;
+  /** Holds at most one entry ({@link ContentType.singleton}). Left out on a revision, kept. */
+  singleton?: boolean;
 }
 
 /**
@@ -66,6 +74,7 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
     displayField: draft.displayField,
     fields: [...draft.fields].map(withoutBlankGuidance).sort((a, b) => a.position - b.position),
     ...(urlPattern ? { urlPattern } : {}),
+    ...(draft.singleton ? { singleton: true as const } : {}),
     version: 1,
     status: 'draft',
   };
@@ -78,7 +87,9 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
  */
 export function reviseContentType(
   current: ContentType,
-  changes: Partial<Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern'>>,
+  changes: Partial<
+    Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern' | 'singleton'>
+  >,
 ): ContentType {
   const fields = changes.fields ?? [...current.fields];
   const displayField = changes.displayField ?? current.displayField;
@@ -86,13 +97,15 @@ export function reviseContentType(
   // Checked against the revised fields too: removing the slug a kept pattern names is refused.
   const pattern = changes.urlPattern === undefined ? current.urlPattern : changes.urlPattern;
   const urlPattern = pattern ? checkUrlPattern(pattern, fields) : undefined;
-  const { urlPattern: _old, ...rest } = current;
+  const singleton = changes.singleton ?? current.singleton === true;
+  const { urlPattern: _old, singleton: _was, ...rest } = current;
   return {
     ...rest,
     name: changes.name ?? current.name,
     displayField,
     fields: [...fields].map(withoutBlankGuidance).sort((a, b) => a.position - b.position),
     ...(urlPattern ? { urlPattern } : {}),
+    ...(singleton ? { singleton: true as const } : {}),
     version: current.version + 1,
     status: 'draft',
   };

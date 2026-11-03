@@ -115,14 +115,18 @@ export function ContentTypesOverview() {
                     <Td>
                       <div className="flex flex-wrap items-center gap-2">
                         <Link
-                          to={`/content/${ct.apiId}`}
+                          // A singleton opens its one entry, as the sidebar does.
+                          to={ct.singleton ? `/content/${ct.apiId}/entry` : `/content/${ct.apiId}`}
                           className="font-medium text-foreground hover:underline"
                         >
                           {ct.name}
                         </Link>
                         {ct.status === 'draft' ? <StatusBadge status="draft" /> : null}
                       </div>
-                      <div className="font-mono text-muted-foreground text-xs">{ct.apiId}</div>
+                      <div className="text-muted-foreground text-xs">
+                        <span className="font-mono">{ct.apiId}</span>
+                        {ct.singleton ? ' · one entry only' : null}
+                      </div>
                     </Td>
                     <Td numeric label="Entries">
                       {figure(n?.total)}

@@ -17,6 +17,7 @@ import {
   normalizeSlugFields,
   restore,
   type Scope,
+  SINGLETON_CLAIM_FIELD,
   saveDraft,
   stampChanged,
   stampCreated,
@@ -73,6 +74,7 @@ export async function createEntry(
   input: CreateEntryInput,
 ): Promise<EntryView> {
   const contentType = await requireContentType(ctx, scope, input.contentTypeApiId);
+  if (contentType.singleton) await assertSingletonFree(ctx.store.entries, scope, contentType);
   const vctx = await loadValidationContext(ctx, scope);
   // Defaults fill gaps, then slugs are normalized, and only then is the result
   // validated — so an editor is judged on what will actually be stored.
@@ -171,12 +173,44 @@ async function assertClaimsFree(
 ): Promise<void> {
   const conflicts = await entries.findUniqueConflicts(scope, claims, excludeEntryId);
   if (conflicts.length === 0) return;
+  const singleton = claims[0]?.fieldApiId === SINGLETON_CLAIM_FIELD ? claims[0] : undefined;
   throw new ConflictError(
     conflicts
-      .map((c) => `${c.fieldApiId} "${c.value}" is already used by entry ${c.entryId}`)
+      .map((c) =>
+        c.fieldApiId === SINGLETON_CLAIM_FIELD
+          ? singletonTaken(singleton?.contentTypeApiId ?? '', c.entryId)
+          : `${c.fieldApiId} "${c.value}" is already used by entry ${c.entryId}`,
+      )
       .join('; '),
     { conflicts },
   );
+}
+
+const singletonTaken = (contentTypeApiId: string, entryId: string) =>
+  `"${contentTypeApiId}" is a singleton type and entry ${entryId} is its one entry: edit that ` +
+  'one, or move it to the trash first';
+
+/**
+ * Refuses a second entry of a singleton type, naming the one it has. The claim every entry of the
+ * type stakes (`singletonClaim`) is what holds under a race; this read is what an editor hears in
+ * the common case, and it also counts an entry whose claim went missing (one saved while an older
+ * release that knew nothing of singletons was serving), so the rule holds through a rollback.
+ */
+export async function assertSingletonFree(
+  entries: Pick<EntryRepo, 'list'>,
+  scope: Scope,
+  contentType: Pick<ContentType, 'apiId'>,
+  excludeEntryId?: string,
+): Promise<void> {
+  const [held] = (
+    await entries.list(scope, { contentTypeApiId: contentType.apiId, limit: 2 })
+  ).filter((e) => e.entry.id !== excludeEntryId);
+  if (held) {
+    throw new ConflictError(singletonTaken(contentType.apiId, held.entry.id), {
+      singleton: contentType.apiId,
+      entryId: held.entry.id,
+    });
+  }
 }
 
 export async function getEntry(ctx: AppContext, scope: Scope, id: string): Promise<EntryView> {
@@ -377,6 +411,10 @@ export async function restoreEntry(ctx: AppContext, scope: Scope, id: string): P
   if (!found) throw new NotFoundError('Entry', id);
   const restored = stampChanged(restore(found.entry), actorOf(ctx));
   const contentType = await ctx.store.contentTypes.get(scope, found.entry.contentTypeApiId);
+  // Out of the trash, it would be the singleton's second entry.
+  if (contentType?.singleton) {
+    await assertSingletonFree(ctx.store.entries, scope, contentType, id);
+  }
   const claims = contentType ? uniqueClaims(contentType, found.fields) : [];
 
   if (claims.length === 0) {

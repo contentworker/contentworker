@@ -314,6 +314,42 @@ export async function getPublishedEntry(
 }
 
 /**
+ * A singleton type's published entry, rendered as `getPublishedEntry` renders one (`GET
+ * …/singletons/:apiId`): the type and its entry in one round trip with the space config, then
+ * linked entries per include level. Not found unless `apiId` names a singleton type with a
+ * published entry, so a client can't read an ordinary type's first entry through it.
+ *
+ * Not kept in the delivery cache: which entry a singleton serves can change without a publish
+ * (trashing it, turning the flag off), and the Delivery Worker's own cache already keeps every
+ * response until the scope's next purge.
+ */
+export async function getDeliveredSingleton(
+  ctx: AppContext,
+  scope: Scope,
+  apiId: string,
+  opts: RenderOptions = {},
+): Promise<DeliveredEntry> {
+  const depth = clampDepth(opts.include);
+  const reads = opts.reads ?? deliveryReads(ctx);
+  const read = await reads.read(scope, { singleton: { contentType: apiId }, config: true });
+  if (!read.singleton?.contentType?.singleton) throw new NotFoundError('Singleton', apiId);
+  const snapshot = read.singleton.entry;
+  if (!snapshot) throw new NotFoundError('Published singleton entry', apiId);
+  const config = spaceConfig(scope, read.config);
+  const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts, reads, config);
+  return render(
+    scope,
+    snapshot,
+    config,
+    opts,
+    depth,
+    new Set([snapshot.entryId]),
+    new Set(),
+    fetched,
+  );
+}
+
+/**
  * The locale-preference chain used for query field resolution, passed to the
  * store so filtering/ordering/search resolve the same locale on every backend
  * (jsonb key order is not insertion order).

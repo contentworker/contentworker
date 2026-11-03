@@ -1512,6 +1512,19 @@ export interface DeliveryReadRequest {
   readonly menu?: { readonly handle: string };
   /** A page of the sitemap's published entries. */
   readonly sitemap?: SitemapQuery;
+  /**
+   * One content type and its published entry: what `GET …/singletons/:apiId` serves, in the same
+   * batch. The entry is the type's first published one by id (a singleton has at most one).
+   */
+  readonly singleton?: { readonly contentType: string };
+}
+
+/** A content type and its published entry, as {@link DeliveryReadRequest.singleton} reads them. */
+export interface SingletonRead {
+  /** Null when no content type has the apiId. */
+  readonly contentType: ContentType | null;
+  /** Null when none of its entries is published. */
+  readonly entry: PublishedEntry | null;
 }
 
 /**
@@ -1582,6 +1595,7 @@ export interface DeliveryReadResult {
   readonly sitemap?: SitemapPage;
   /** Null when no menu has the handle. */
   readonly menu?: MenuRead | null;
+  readonly singleton?: SingletonRead;
 }
 
 /** Delivery's reads, batched. Read-only: it never writes, so it is safe on a replica session. */

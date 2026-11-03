@@ -60,6 +60,7 @@ API:
 
 ```ts
 client.getEntry<F>(id, { locale?, include? }): Promise<DeliveredEntry<F>>
+client.getSingleton<F>(contentType, { locale?, include? }): Promise<DeliveredEntry<F>> // a singleton type's one entry; 404 DeliveryError otherwise
 client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: number; nextCursor? }>
 client.search(query, { topK? }): Promise<SearchHit[]>
 client.getAsset(id, { locale? }): Promise<DeliveredAsset>
