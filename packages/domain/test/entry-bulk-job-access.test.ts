@@ -63,6 +63,10 @@ describe('who may run a bulk job over entries', () => {
       },
     ]);
     expect(canRunEntryBulkJob(noUnpublish, 'unpublish')).toBe(false);
+    // Trashing takes live entries offline, so withholding unpublish refuses a trash job too, as
+    // authorizeTrash refuses one live entry; restore, purge and publish stay.
+    expect(canRunEntryBulkJob(noUnpublish, 'trash')).toBe(false);
+    expect(entryBulkJobsFor(noUnpublish)).toEqual(['publish', 'restore', 'purge']);
     const writer = member([{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
     // A writer holds delete with write, so it may trash, but not publish or purge.
     expect(entryBulkJobsFor(writer)).toEqual(['trash', 'restore']);

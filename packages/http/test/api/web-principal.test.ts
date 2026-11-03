@@ -185,6 +185,30 @@ describe('the web principal (x-cw-principal)', () => {
       bulkJobs: ['publish', 'unpublish', 'trash', 'restore', 'purge'],
     });
 
+    // A full `*` grant that withholds unpublish can't trash in bulk (it would take live entries
+    // down), as it can't trash one live entry; it can still restore.
+    const noUnpublish = await createRole(ctx, 's1', {
+      name: 'Everything but unpublish',
+      scopes: ['content:write', 'content:publish', 'preview:read'],
+      contentGrants: [
+        {
+          contentTypeApiId: '*',
+          actions: ['read', 'write', 'publish'],
+          deniedActions: ['unpublish'],
+        },
+      ],
+    } as Parameters<typeof createRole>[2]);
+    await addMember(ctx, 's1', { email: 'keeper@example.com', role: noUnpublish.id });
+    await findMemberForSignIn(ctx, 's1', 'usr_keep', 'keeper@example.com');
+    const keeper = { ...person('member'), sub: 'usr_keep', email: 'keeper@example.com' };
+    expect((await call(keeper, 'POST', jobs, { action: 'trash', entryIds: ids })).status).toBe(403);
+    expect((await call(keeper, 'POST', jobs, { action: 'restore', entryIds: ids })).status).toBe(
+      202,
+    );
+    expect(await (await call(keeper, 'GET', '/spaces/s1/auth/me')).json()).toMatchObject({
+      bulkJobs: ['publish', 'restore', 'purge'],
+    });
+
     const narrower = person('member');
     expect((await call(narrower, 'POST', jobs, { action: 'trash', entryIds: ids })).status).toBe(
       403,

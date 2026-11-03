@@ -594,7 +594,8 @@ interface Principal {
   tools) can't be authorized entry by entry, and a report names entries of every type, so
   `authorizeBulkJob` (application) asks `canRunEntryBulkJob` (domain) for a role that holds the job's actions on every content type alike: one with no per-content-type
   grants, or one whose grants are a single `*` grant holding them (publish needs `publish`,
-  unpublish `unpublish`, trash `write` and `delete`, restore `write`, purge `publish` and `delete`)
+  unpublish `unpublish`, trash `write` and `delete` and not a withheld `unpublish`, restore
+`write`, purge `publish` and `delete`)
   and restricting no field. The Editor, Manager and Administrator presets qualify; a role limited
   to some types, or with field rules, doesn't.
   Import and asset jobs still need a principal with no per-type grants.

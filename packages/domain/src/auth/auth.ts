@@ -350,8 +350,9 @@ export const ENTRY_BULK_JOB_KINDS = Object.keys(BULK_JOB_CONTENT_ACTIONS) as Ent
  * entries of every type; so the role must hold the job's actions on every type alike. That is a
  * principal with no per-type grants at all, or one whose grants are exactly one `*` grant that
  * holds every action `kind` needs (`grantedActions`, so a withheld `delete` counts) and restricts
- * no field: a field rule is per type and per field, which a job can't honour. Any narrower role,
- * or one with an extra type-specific grant, is refused.
+ * no field: a field rule is per type and per field, which a job can't honour. A trash job is also
+ * refused to a grant that withholds `unpublish`, as one trashed entry is (`authorizeTrash`). Any
+ * narrower role, or one with an extra type-specific grant, is refused.
  */
 export function canRunEntryBulkJob(principal: Principal, kind: EntryBulkJobKind): boolean {
   const grants = principal.contentGrants;
@@ -361,7 +362,10 @@ export function canRunEntryBulkJob(principal: Principal, kind: EntryBulkJobKind)
   if (!grant || grant.contentTypeApiId !== '*') return false;
   if (grant.deniedFields?.length || grant.readOnlyFields?.length) return false;
   const held = grantedActions(grant);
-  return BULK_JOB_CONTENT_ACTIONS[kind].every((a) => held.has(a));
+  if (!BULK_JOB_CONTENT_ACTIONS[kind].every((a) => held.has(a))) return false;
+  // As `authorizeTrash`: trashing takes a live entry offline, so a grant that explicitly withholds
+  // `unpublish` can't trash in bulk either (a job meets live entries it can't tell apart up front).
+  return !(kind === 'trash' && grant.deniedActions?.includes('unpublish'));
 }
 
 /** The bulk jobs over entries `principal` may run (see {@link canRunEntryBulkJob}). */
