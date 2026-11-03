@@ -1,13 +1,13 @@
 # Development
 
 How to run contentworker locally, test it, and extend it: setup, suites, adding a use-case, changing
-the D1 schema and the schema reference.
+the database schema and the schema reference.
 
 ## Prerequisites
 
 - Node.js ≥ 24 (`.nvmrc`) and pnpm 10 (`packageManager` in the root `package.json`).
-- No Cloudflare account: local development runs every Worker in workerd through the Cloudflare
-  Vite plugin and Miniflare, with a local D1.
+- No platform account: local development runs every edge worker in the local runtime through the
+  platform's Vite plugin, with a local database.
 
 ## Running locally
 
@@ -23,33 +23,35 @@ pnpm dev     # applies packages/db/migrations to the local D1 (db:migrate:local)
 `pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173; `PORT=5174 pnpm
 dev` for another port). The port is fixed rather than "the next free one": the local OAuth issuer
 (`OAUTH_ISSUER`, so MCP clients can connect with OAuth as on a deployment), the MCP smoke scripts
-and these docs all name it, so a busy port fails fast. The web
-Worker's Vite config (`apps/web/vite.config.ts`) starts the **api, engine, media and delivery Workers as
-auxiliary Workers** in the same session, all on one local D1, with the queues, cron, Durable
-Objects and Workflows emulated. The media Worker isn't routable from the browser locally and
-`MEDIA_PUBLIC_URL` stays empty, so delivered assets keep the api's signed URLs (no renditions or
-srcset); its suite (`pnpm --filter @contentworker/media test`) runs it in workerd instead. Asset
-ingest still runs after an upload: with no R2 notifications locally, the api's signed `PUT` is its
-one trigger ([Architecture](./architecture.md#asset-ingest-and-search)). Their vars are overridden with `LOCAL_STACK_VARS`:
+and these docs all name it, so a busy port fails fast. The web worker's Vite config
+(`apps/web/vite.config.ts`) starts the **api, engine, media and delivery workers as auxiliary
+workers** in the same session, all on one local database, with the queues, cron, stateful edge
+objects and durable workflows emulated. The media worker isn't routable from the browser locally
+and `MEDIA_PUBLIC_URL` stays empty, so delivered assets keep the api's signed URLs (no renditions
+or srcset); its suite (`pnpm --filter @contentworker/media test`) runs it in the local runtime
+instead. Asset ingest still runs after an upload: with no object-storage notifications locally,
+the api's signed `PUT` is its one trigger
+([Architecture](./architecture.md#asset-ingest-and-search)). Their vars are overridden with
+`LOCAL_STACK_VARS`:
 
-| Var                               | Local value                                   | Why                                                                 |
-| --------------------------------- | --------------------------------------------- | ------------------------------------------------------------------- |
-| `REQUIRE_SECURE_SECRETS`          | `false`                                       | Allow the dev tokens below                                          |
-| `ADMIN_TOKEN`                     | `dev-admin-token`                             | Root bearer token                                                   |
-| `CMA_KEY` / `CDA_KEY` / `CPA_KEY` | `dev-cma-key` / `dev-cda-key` / `dev-cpa-key` | The seeded space's Management, Delivery and Preview keys            |
-| `MCP_TOKEN`                       | `dev-mcp-token`                               | Mounts `/mcp`                                                       |
-| `TOKEN_PEPPER`                    | `dev-pepper`                                  |                                                                     |
-| `MEDIA_SIGNING_SECRET`            | `dev-media-signing-secret`                    |                                                                     |
-| `PRINCIPAL_KEY`                   | `contentworker-local-dev-principal-key`       | The same `DEV_PRINCIPAL_KEY` the web Worker uses locally            |
-| `ASSISTANT_PRINCIPAL_KEY`         | `DEV_ASSISTANT_PRINCIPAL_KEY`                 | Derived from the dev `PRINCIPAL_KEY`, for the engine                |
-| `OAUTH_ISSUER`                    | `http://localhost:<port>`                     | OAuth for MCP clients on the admin origin, as on a deployment       |
-| `AI_MODE`                         | `mock`                                        | No model calls                                                      |
-| `AI_GATEWAY_ID`                   | empty                                         | No AI Gateway                                                       |
-| `EMBEDDINGS_PROVIDER`             | `local`                                       | Hash embeddings                                                     |
-| `VECTOR_STORE`                    | `kv`                                          | Vectorize has no local emulator; KV is shared by the Workers        |
-| `ALLOW_FAKE_ADAPTERS`             | `all`                                         | Accept every dev fake                                               |
-| `SEED_DEV`                        | `true` (`false` under the e2e harness)        | Load the demo dataset; refused wherever secure secrets are required |
-| `SEED_SCALE`                      | `1`, or the shell's `SEED_SCALE`              | Demo size (~550 entries); raise it for a benchmark corpus           |
+| Var                               | Local value                                   | Why                                                                                  |
+| --------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `REQUIRE_SECURE_SECRETS`          | `false`                                       | Allow the dev tokens below                                                           |
+| `ADMIN_TOKEN`                     | `dev-admin-token`                             | Root bearer token                                                                    |
+| `CMA_KEY` / `CDA_KEY` / `CPA_KEY` | `dev-cma-key` / `dev-cda-key` / `dev-cpa-key` | The seeded space's Management, Delivery and Preview keys                             |
+| `MCP_TOKEN`                       | `dev-mcp-token`                               | Mounts `/mcp`                                                                        |
+| `TOKEN_PEPPER`                    | `dev-pepper`                                  |                                                                                      |
+| `MEDIA_SIGNING_SECRET`            | `dev-media-signing-secret`                    |                                                                                      |
+| `PRINCIPAL_KEY`                   | `contentworker-local-dev-principal-key`       | The same `DEV_PRINCIPAL_KEY` the web worker uses locally                             |
+| `ASSISTANT_PRINCIPAL_KEY`         | `DEV_ASSISTANT_PRINCIPAL_KEY`                 | Derived from the dev `PRINCIPAL_KEY`, for the engine                                 |
+| `OAUTH_ISSUER`                    | `http://localhost:<port>`                     | OAuth for MCP clients on the admin origin, as on a deployment                        |
+| `AI_MODE`                         | `mock`                                        | No model calls                                                                       |
+| `AI_GATEWAY_ID`                   | empty                                         | No AI gateway                                                                        |
+| `EMBEDDINGS_PROVIDER`             | `local`                                       | Hash embeddings                                                                      |
+| `VECTOR_STORE`                    | `kv`                                          | The vector index has no local emulator; the key-value store is shared by the workers |
+| `ALLOW_FAKE_ADAPTERS`             | `all`                                         | Accept every dev fake                                                                |
+| `SEED_DEV`                        | `true` (`false` under the e2e harness)        | Load the demo dataset; refused wherever secure secrets are required                  |
+| `SEED_SCALE`                      | `1`, or the shell's `SEED_SCALE`              | Demo size (~550 entries); raise it for a benchmark corpus                            |
 
 Local dev always runs on the demo dataset (`@contentworker/seed`): on its first request the api
 seeds a space, dev API keys and a corpus covering every capability (content model, entries,
@@ -64,9 +66,9 @@ The same package holds the **sample starter** a real space can start with (`inst
 "sample"` and the `space_create` MCP tool): the demo content model, a 39-entry slice of the corpus,
 the taxonomy, eight sample images and documents when a blob store is bound, and one open release.
 None of the dev-only rest (API keys, comments and tasks, webhooks and functions, agent runs,
-schedules, reviews, audit entries). It installs inside the request: about 550 D1 calls, held under
-a 600-call budget by `packages/db/test/starter.test.ts` against the 1,000 queries one invocation
-may make. If it has to grow past that, it becomes a background job.
+schedules, reviews, audit entries). It installs inside the request: about 550 database calls,
+held under a 600-call budget by `packages/db/test/starter.test.ts` against the 1,000 queries one
+invocation may make. If it has to grow past that, it becomes a background job.
 
 For a larger corpus, seed it into a database of its own so the everyday one stays small:
 
@@ -116,29 +118,29 @@ pnpm generate
 
 ### Where each suite runs
 
-| Package                        | Environment                                                                                                                                       | What it covers                                                                                                                                                     |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@contentworker/domain`        | node                                                                                                                                              | Pure rules                                                                                                                                                         |
-| `@contentworker/application`   | node, `@contentworker/test-kit` fakes                                                                                                             | Every use-case                                                                                                                                                     |
-| `@contentworker/db`            | workerd (`@cloudflare/vitest-plugin`), Miniflare D1 with the migrations applied                                                                   | The D1 store contract, unit of work and guards, query pushdown equivalence, secrets at rest, D1 statements per request                                             |
-| `@contentworker/http`          | node, in-memory fakes                                                                                                                             | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                                                                            |
-| `@contentworker/engine`        | workerd                                                                                                                                           | Durable Objects (search shard, live hub, cost guard, rate limiter), real Workflow runs with `AI_MODE=mock`, the media gate and both purge queues                   |
-| `@contentworker/media`         | workerd, Miniflare KV, R2 and D1, a fake Images binding                                                                                           | The media Worker end to end: gate and replica fallback, 404/410, `Accept` negotiation, purge drain, signed draft reads                                             |
-| `@contentworker/docs`          | node                                                                                                                                              | The `docs/` embed (built, not committed) matches disk                                                                                                              |
-| `@contentworker/adapters`      | node, fakes of each binding                                                                                                                       | One suite per adapter subpath (`test/<adapter>/`), including the structured, WXR and space export import parsers                                                   |
-| `@contentworker/agent-runtime` | node                                                                                                                                              | The agent workflows and the graph interpreter, without Cloudflare                                                                                                  |
-| `@contentworker/security`      | node                                                                                                                                              | The signed principal, the derived assistant key, roles and session lifetimes                                                                                       |
-| `@contentworker/delivery`      | node                                                                                                                                              | Visibility profiles, canonical URLs, client cache headers and the purge drain                                                                                      |
-| `@contentworker/web`           | vitest, two projects: `node` (`tests/**/*.test.ts`) and `dom` (jsdom, `tests/**/*.test.tsx`); Playwright (`pnpm --filter @contentworker/web e2e`) | Auth and lib units; CMS screens; device and CMS e2e with axe in WebKit and Chromium                                                                                |
-| `packages/sdk/*`               | node (vitest)                                                                                                                                     | The Delivery and Management clients, codegen, and the published `@contentworker/sdk`'s subpaths                                                                                                       |
-| `@contentworker/cli`           | node (vitest), a scripted fake server                                                                                                             | The `contentworker` CLI's commands, device flow and token file, model plans, and the drift check on `skills/` ([Developer tooling](./developer-tooling.md))       |
-| `scripts/*.test.ts`            | `node --test` (`pnpm test:fleet`)                                                                                                                 | Fleet registry rendering, DO migration tags (append-only), the pnpm catalog, assistant key derivation, and a guard on names that must not appear in the repository |
+| Package                        | Environment                                                                                                                                       | What it covers                                                                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@contentworker/domain`        | node                                                                                                                                              | Pure rules                                                                                                                                                                      |
+| `@contentworker/application`   | node, `@contentworker/test-kit` fakes                                                                                                             | Every use-case                                                                                                                                                                  |
+| `@contentworker/db`            | the local runtime (`@cloudflare/vitest-plugin`), a local database with the migrations applied                                                     | The database store contract, unit of work and guards, query pushdown equivalence, secrets at rest, database statements per request                                              |
+| `@contentworker/http`          | node, in-memory fakes                                                                                                                             | REST routes, auth, OpenAPI, MCP tools, the skills embed                                                                                                                         |
+| `@contentworker/engine`        | the local runtime                                                                                                                                 | Stateful edge objects (search shard, live hub, cost guard, rate limiter), real durable workflow runs with `AI_MODE=mock`, the media gate and both purge queues                  |
+| `@contentworker/media`         | the local runtime, a local key-value store, object storage and database, a fake image-transform binding                                           | The media worker end to end: gate and replica fallback, 404/410, `Accept` negotiation, purge drain, signed draft reads                                                          |
+| `@contentworker/docs`          | node                                                                                                                                              | The `docs/` embed (built, not committed) matches disk                                                                                                                           |
+| `@contentworker/adapters`      | node, fakes of each binding                                                                                                                       | One suite per adapter subpath (`test/<adapter>/`), including the structured, WXR and space export import parsers                                                                |
+| `@contentworker/agent-runtime` | node                                                                                                                                              | The agent workflows and the graph interpreter, without the platform                                                                                                             |
+| `@contentworker/security`      | node                                                                                                                                              | The signed principal, the derived assistant key, roles and session lifetimes                                                                                                    |
+| `@contentworker/delivery`      | node                                                                                                                                              | Visibility profiles, canonical URLs, client cache headers and the purge drain                                                                                                   |
+| `@contentworker/web`           | vitest, two projects: `node` (`tests/**/*.test.ts`) and `dom` (jsdom, `tests/**/*.test.tsx`); Playwright (`pnpm --filter @contentworker/web e2e`) | Auth and lib units; CMS screens; device and CMS e2e with axe in WebKit and Chromium                                                                                             |
+| `packages/sdk/*`               | node (vitest)                                                                                                                                     | The Delivery and Management clients, codegen, and the published `@contentworker/sdk`'s subpaths                                                                                 |
+| `@contentworker/cli`           | node (vitest), a scripted fake server                                                                                                             | The `contentworker` CLI's commands, device flow and token file, model plans, and the drift check on `skills/` ([Developer tooling](./developer-tooling.md))                     |
+| `scripts/*.test.ts`            | `node --test` (`pnpm test:fleet`)                                                                                                                 | Fleet registry rendering, stateful-object migration tags (append-only), the pnpm catalog, assistant key derivation, and a guard on names that must not appear in the repository |
 
 `@contentworker/platform` has no suite of its own: its wiring is exercised through the http, db and
 engine suites. Also `@contentworker/graphql-gen`, `seed`, `redaction`, `design` and `docs` run
 `vitest` in node.
 
-The web e2e harness starts its own dev server on port 5390 with a fresh local D1 in
+The web e2e harness starts its own dev server on port 5390 with a fresh local database in
 `.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings, and unseeded: the tests
 create what they need; the first-run spec sees a deployment with no spaces by filtering
 `GET /spaces` to the space it creates, since the database is shared), so it coexists with a
@@ -147,14 +149,14 @@ beside one already on 5390: outside CI the harness reuses whatever answers on it
 server from another checkout has another database. Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
-### D1 query counts
+### Query counts
 
 `packages/db/test/query-counts.test.ts` runs representative Delivery and Management requests
 (entry by id, with a locale and with `include`, filtered and searched lists, a link list past the
 100-parameter cap, GraphQL entry, collection and asset queries, asset delivery, create, publish,
-get and list entries) through their use-cases over the real D1 store (GraphQL through the
-route's own resolvers, `deliveryGraphResolvers`), with no delivery cache, and
-counts the statements and round trips each sends to D1 (a `batch()` is one round trip). The
+get and list entries) through their use-cases over the real database store (GraphQL through the
+route's own resolvers, `deliveryGraphResolvers`), with no delivery cache, and counts the
+statements and round trips each sends to the database (a `batch()` is one round trip). The
 counts are compared with the committed `packages/db/test/query-counts.json`; any change fails the
 `@contentworker/db` suite with a report of what moved and, for an increase, the SQL the request now
 runs. When the change is intended, rewrite the snapshot and commit it:
@@ -180,7 +182,7 @@ node apps/api/scripts/mcp-search-smoke.mjs   # search tools
 
 The rules every change keeps (strict TypeScript, ESM import specifiers, TypeScript 7 having no JS
 API, the pnpm catalog, Biome, UUIDv7 ids from `ctx.ids`, time from `ctx.clock`, scoped operations,
-workerd-only code, and the unit of work) are in `AGENTS.md`; see also
+code for the edge runtime only, and the unit of work) are in `AGENTS.md`; see also
 [Consistency](./consistency.md) for the unit-of-work rule.
 
 ## Adding a use-case
@@ -208,15 +210,15 @@ workerd-only code, and the unit of work) are in `AGENTS.md`; see also
    Timestamps are `integer` epoch milliseconds (`mode: 'timestamp_ms'`), JSON is `text`
    (`mode: 'json'`), booleans are `integer` 0/1.
 3. Apply locally with `pnpm db:migrate:local` (`pnpm dev` does it too). The
-   `@contentworker/db` tests apply the migrations to Miniflare D1 themselves.
+   `@contentworker/db` tests apply the migrations to a local database themselves.
 4. Remote databases are migrated only by CI, before the new code deploys
    ([Deployment](./deployment.md#migrations)); never by hand.
 
-Keep the D1 limits in mind: at most 100 bound parameters per statement (`chunked`,
+Keep the database limits in mind: at most 100 bound parameters per statement (`chunked`,
 `selectChunked`, or one JSON parameter with `json_each`), one writer per database (no writes on
 read paths), 10 GB per database.
 
-## D1 schema reference
+## Database schema reference
 
 `(space_id, environment_id)` leads the primary key or a unique index of every content table.
 `0001_init.sql` creates:
@@ -328,10 +330,10 @@ receives events from; `NULL`, as every existing row stays, means every environme
 `0006_environment_promotions.sql` adds `environment_promotions`: promotions between environments
 with their pinned entries, risk check, status and result (see [API reference](./api-reference.md)).
 
-`0004_version_bodies.sql` adds `entry_versions.body_key` (a superseded version's body moves to R2
-under that key, and `fields` becomes `{}`) and `version_archive_queue` (versions waiting to move,
-queued as they are superseded and due a day later), backfilling the queue with every version already
-superseded (see [Consistency](./consistency.md)).
+`0004_version_bodies.sql` adds `entry_versions.body_key` (a superseded version's body moves to
+object storage under that key, and `fields` becomes `{}`) and `version_archive_queue` (versions
+waiting to move, queued as they are superseded and due a day later), backfilling the queue with
+every version already superseded (see [Consistency](./consistency.md)).
 
 `0003_environment_purges.sql` adds `environment_purges`: deleted environments whose rows the engine
 is still removing in bounded steps (their ids can't be reused until it finishes).
@@ -340,14 +342,14 @@ is still removing in bounded steps (their ids can't be reused until it finishes)
 `sign_in_challenges`, `passkeys`, `passkey_challenges`, `scim_groups`, `scim_group_members`,
 `workspace_settings`, `auth_failures`, `admin_audit`.
 
-The lexical search index is not in D1: it lives in `SearchShardDO` (FTS5). Vectors live in
-Vectorize. See [AI, agents & search](./ai-agents-and-search.md).
+The lexical search index is not in the database: it lives in `SearchShardDO` (FTS5). Vectors live
+in the vector index. See [AI, agents & search](./ai-agents-and-search.md).
 
 ## Testing approach
 
 The application layer is tested against `@contentworker/test-kit` fakes: an in-memory
-`ContentStore` that enforces the same unit-of-work rule as D1 (no reading your own uncommitted
-writes), fake blob, vector and embeddings stores, and deterministic `Clock` and `IdGenerator`.
-The D1 store runs the same contract suite in workerd, plus concurrency tests (racing publishes:
-exactly one wins; outbox leases never double-claim). Because the fakes implement the same ports
-as the real adapters, a passing application test exercises the real use-case logic.
+`ContentStore` that enforces the same unit-of-work rule as the database (no reading your own
+uncommitted writes), fake blob, vector and embeddings stores, and deterministic `Clock` and
+`IdGenerator`. The database store runs the same contract suite in the local runtime, plus
+concurrency tests (racing publishes: exactly one wins; outbox leases never double-claim). Because
+the fakes implement the same ports as the real adapters, a passing application test exercises the real use-case logic.

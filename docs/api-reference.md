@@ -8,7 +8,7 @@
 > Scalar's default fonts and "Ask AI" off, so it makes no third-party requests.
 
 The API is a [Hono](https://hono.dev) app (`createApp` in `packages/http/src/api/app.ts`) mounted by
-two Workers. It exposes three role-based surfaces:
+two edge workers. It exposes three role-based surfaces:
 
 - **Management (CMA)**: authoring, publishing, space administration, AI, releases, workflows.
 - **Delivery (CDA)**: read-only published content, hybrid search, Live Content SSE, GraphQL.
@@ -25,7 +25,7 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 
 `ROLE` may also be a comma-separated union. Where each surface is served:
 
-| Host                      | Worker          | `ROLE`                        | Serves                                                                                                                                                                                                                                                                                        |
+| Host                      | Edge worker     | `ROLE`                        | Serves                                                                                                                                                                                                                                                                                        |
 | ------------------------- | --------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `api.<domain>`            | `apps/api`      | `management,preview,delivery` | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads                                                                                                                                                                                                        |
 | `cdn.<domain>`            | `apps/delivery` | `delivery`                    | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request                                                                                                                                                                                                         |
@@ -35,7 +35,7 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 Public delivery clients should use `cdn.<domain>`; it answers only `GET`/`HEAD` (cached) and
 `POST` for GraphQL (uncached), and anonymous reads get 401 before the cache.
 
-**Read-your-writes.** Every api response carries `x-cw-bookmark`, the D1 Sessions API bookmark
+**Read-your-writes.** Every api response carries `x-cw-bookmark`, the database session's bookmark
 after the request's queries. Send it back on the next request and that read is at least as fresh
 as your last response, even from a read replica. Without it, a `GET` may be served by any replica.
 See [Consistency](./consistency.md).
@@ -48,8 +48,8 @@ Every endpoint needs a credential except:
   `/openapi.json` and `/docs`;
 - `/oauth/*` and `/.well-known/*`, which speak the OAuth protocol (see below);
 - `/media/*`, which is authorized by an HMAC signature in the URL;
-- `POST /webhooks/stream`, authorized by Stream's `Webhook-Signature` (mounted only with the
-  `STREAM` binding and `STREAM_WEBHOOK_SECRET`).
+- `POST /webhooks/stream`, authorized by the video streaming service's `Webhook-Signature` (mounted
+  only with the `STREAM` binding and `STREAM_WEBHOOK_SECRET`).
 
 A credential is resolved in this order (`principalMiddleware`, `packages/http/src/api/auth.ts`):
 
@@ -510,20 +510,20 @@ A collection is a named, ordered, many-to-many set of assets of one environment 
 members; a change names at most 500 ids). Deleting an asset removes it from its collections and
 announces each. **Share links** are published-only: an unpublished asset cannot be shared, and a
 collection's page lists only its published members. The media origin serves a link at
-`https://media.<domain>/s/<space>/<env>/<linkId>/<token>`: the token is a 128-bit HMAC checked before
-any lookup; the page is HTML, or JSON with `?format=json` or `Accept: application/json`; a file is
-at `…/f/<assetId>/<fileName>`, and `?download` is honoured only when the link has `allowDownload`.
-The link is checked on every request: an expired one answers `410` at once, a revoked one as
-soon as the media Worker's D1 replica has the revoke. A password is asked for through a form (`POST …/unlock`, limited
-to 10 a minute per link and address, and 10 a minute per link from all addresses together, by
-`RATE_LIMIT_SHARE_UNLOCK`) and remembered in a cookie scoped
-to the link's path for at most 12 hours and never past the expiry. The MCP tools are
+`https://media.<domain>/s/<space>/<env>/<linkId>/<token>`: the token is a 128-bit HMAC checked
+before any lookup; the page is HTML, or JSON with `?format=json` or `Accept: application/json`; a
+file is at `…/f/<assetId>/<fileName>`, and `?download` is honoured only when the link has
+`allowDownload`. The link is checked on every request: an expired one answers `410` at once, a
+revoked one as soon as the media worker's database replica has the revoke. A password is asked for
+through a form (`POST …/unlock`, limited to 10 a minute per link and address, and 10 a minute per
+link from all addresses together, by `RATE_LIMIT_SHARE_UNLOCK`) and remembered in a cookie scoped to
+the link's path for at most 12 hours and never past the expiry. The MCP tools are
 `asset_collections_list`, `asset_collections_get`, `asset_collections_create`,
 `asset_collections_update`, `asset_collections_delete`, `asset_collection_assets_list`,
 `asset_collection_assets_add`, `asset_collection_assets_remove`, `asset_collection_reorder`,
-`share_links_list`, `share_link_create`, `share_link_get`, `share_link_revoke`, `asset_upload_start`,
-`asset_upload_parts`, `asset_upload_complete`, `asset_upload_abort`, `asset_zip_create`,
-`asset_zip_get` and `asset_zips_list`, with the same scopes. See
+`share_links_list`, `share_link_create`, `share_link_get`, `share_link_revoke`,
+`asset_upload_start`, `asset_upload_parts`, `asset_upload_complete`, `asset_upload_abort`,
+`asset_zip_create`, `asset_zip_get` and `asset_zips_list`, with the same scopes. See
 [Architecture](./architecture.md#collections-share-links-multipart-uploads-and-zips).
 
 ### Releases
@@ -600,7 +600,7 @@ Human-in-the-loop decisions on agent proposals; see
 
 #### Workflow runs and tasks
 
-Runs execute on Cloudflare Workflows (`EDITORIAL_WF`, see [Architecture](./architecture.md#editorial-workflow-runs)).
+Runs execute on durable workflows (`EDITORIAL_WF`, see [Architecture](./architecture.md#editorial-workflow-runs)).
 Without that binding the run actions below answer **501** (`not_configured`); reads still work.
 A run acts as whoever started it: every node is authorized as if they made the call. Run and task
 reads also need `read` on the entry's content type (role-bound keys); lists leave out what the
@@ -641,17 +641,16 @@ caller can't read. A run never exposes its starter's resolved principal, only `s
 | POST   | `…/taxonomy/repair`               | `content:manage` | Recount published usage from the published entries and give a slug to any term without one → `{ slugsAssigned }` |
 
 A term's **slug** is normalized like a Slug field (`a-z`, `0-9`, single hyphens, at most 200
-characters) and unique among the environment's tags, or within a concept's scheme (a unique index
-in D1). Omitted on create, it is made from the label and numbered past the taken ones
+characters) and unique among the environment's tags, or within a concept's scheme (a unique index in
+the database). Omitted on create, it is made from the label and numbered past the taken ones
 (`news`, `news-2`); a label with nothing slug-worthy gives `tag` / `concept`. A slug asked for that
-another term holds is a `409`; one with no letter or digit a `422`. The slug never changes with
-the label: an archive URL moves only when a client sends a new slug. **`labels`** maps locales of
-the space to labels (another locale is a `422`) and is replaced whole; the default locale's entry
-sets `name` / `prefLabel`, the term's own label, and an empty value drops that locale. Every
-create, change and delete commits a `taxonomy.changed` event, which purges Delivery's cache for the
-scope.
+another term holds is a `409`; one with no letter or digit a `422`. The slug never changes with the
+label: an archive URL moves only when a client sends a new slug. **`labels`** maps locales of the
+space to labels (another locale is a `422`) and is replaced whole; the default locale's entry sets
+`name` / `prefLabel`, the term's own label, and an empty value drops that locale. Every create,
+change and delete commits a `taxonomy.changed` event, which purges Delivery's cache for the scope.
 
-**Usage counts** are published entries only: how many carry the term, per content type. The D1
+**Usage counts** are published entries only: how many carry the term, per content type. The database
 store keeps them in `taxonomy_usage`, in the same batch that writes or removes the published
 snapshot (publish, republish with other tags, unpublish, trash, bulk and release publishes), so a
 read sums a few rows and never writes. `POST …/taxonomy/repair` rebuilds them from the snapshots;
@@ -659,7 +658,7 @@ the engine runs the same repair daily (`taxonomy-repair`).
 
 ### Redirects
 
-Redirects are delivery data: contentworker serves no site, so a front end (or an edge Worker in
+Redirects are delivery data: contentworker serves no site, so a front end (or an edge worker in
 front of it) applies them. Reads need `preview:read`, writes `content:manage`; every write checks
 the whole set and answers `422` for a loop or a duplicate source (a chain is allowed). Model in
 [Domain model](./domain-model.md#redirects).
@@ -759,7 +758,7 @@ the same ([Events & webhooks](./events-and-webhooks.md#webhooks)).
 
 ## Delivery API (CDA)
 
-Base path: `/delivery/:space/:env`. Reads the denormalized **published** read model (through the Workers KV
+Base path: `/delivery/:space/:env`. Reads the denormalized **published** read model (through the key-value
 delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness after a publish). List/get responses apply granular RBAC when the key is role-bound.
 
 | Method   | Path                                         | Scope           | Description                                                                                                                                                                                                                                                                                                                   |
@@ -792,17 +791,17 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 `lexical`.
 
 **Taxonomy for archive pages.** The taxonomy reads serve each term's `label` in `?locale=` (its own
-label in that locale, then its fallbacks', ending at the default locale's), or without `locale`
-the default label plus `labels` for every locale. `count` is how many **published** entries carry
-the term (of `content_type` only, when given) and `countsByContentType` the same per type; a key
-with content grants counts only the types it may read. Each read is one D1 round trip (the space
+label in that locale, then its fallbacks', ending at the default locale's), or without `locale` the
+default label plus `labels` for every locale. `count` is how many **published** entries carry the
+term (of `content_type` only, when given) and `countsByContentType` the same per type; a key with
+content grants counts only the types it may read. Each read is one database round trip (the space
 config, the terms and their counts in one batch) and is cached under the scope's tag like every
 delivery read, purged by a publish or a `taxonomy.changed`. Entries filter by term with
 `metadata.tags` / `metadata.concepts` (ids) or `metadata.tags.slug` / `metadata.concepts.slug`
 (slugs, `eq`, `ne`, `in`, `nin`): `GET …/entries?content_type=article&metadata.tags.slug=news`. A
-slug filter resolves the slugs to ids in the same round trip as the space config; a slug no term
-has matches nothing. Membership (`eq`, `in`) is pushed into SQL, so a tag archive scans only the
-entries carrying the tag.
+slug filter resolves the slugs to ids in the same round trip as the space config; a slug no term has
+matches nothing. Membership (`eq`, `in`) is pushed into SQL, so a tag archive scans only the entries
+carrying the tag.
 
 A delivered entry is `{ id, contentType, fields, publishedAt }`; with `?locale=` fields flatten to
 that locale; with `?include=N` linked entries embed up to depth N (cycle-guarded). Links are
@@ -832,7 +831,7 @@ with content grants reads no assets (lists are empty, gets are 403, embeds stay 
   (`deliveryGraphResolvers` in `@contentworker/application`, built per request with the caller's
   principal). A request reads the space config and content types once, with the schema, and
   reuses them in every field; each step's independent reads (an entry, one include level's links,
-  an asset with its renditions) go to D1 together, one round trip.
+  an asset with its renditions) go to the database together, one round trip.
 - `asset(id, locale)` is a typed `Asset`: `title`, `description` and `altText` each take
   `locale` (falling back to the query's, then the space default); `url(rendition, width)` picks a
   rendition or the width step at or above `width`; `srcset { width url }`, `renditions`,
@@ -843,7 +842,7 @@ with content grants reads no assets (lists are empty, gets are 403, embeds stay 
 ### Live Content (SSE)
 
 `GET /delivery/:space/:env/live` opens a Server-Sent Events stream. The route authorizes like any
-Delivery route, then hands the connection to the `LiveHubDO` Durable Object for that
+Delivery route, then hands the connection to the `LiveHubDO` stateful edge object for that
 space/environment (named by `liveHubName`, each id percent-encoded so no id can reach another
 scope's hub), stamping the request with the authorized scope and the principal's content grants
 (`x-cw-live-access`; the object refuses a request without it, and sends a subscriber only events
@@ -996,7 +995,7 @@ the same or shallower depth.
 The same three are exposed as the `docs_list`, `docs_read`, and `docs_search` MCP tools.
 
 Pages are embedded into the build rather than read from disk: the endpoints have to answer
-identically from a Cloudflare Worker, which has no filesystem, and from a container image that
+identically from an edge worker, which has no filesystem, and from a container image that
 may not have shipped the Markdown. A test fails if the embedded copy drifts from `docs/`.
 
 

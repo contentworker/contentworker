@@ -488,9 +488,9 @@ from a model; `clearAcceptedSuggestions` drops a field's mark when a metadata pa
 so saving the field makes it the editor's.
 
 `file.placeholder` (`AssetPlaceholder`: `thumbhash`, base64; `dominantColor`, `#rrggbb`) is
-measured by ingest's `placeholder` step for raster types the Images binding decodes, no larger than
-20 MiB. Like `width` and `height` it lives in the `file` JSON (no column), is written by
-`recordIngest` and copied into the published snapshot by `finish`. It is data a client renders,
+measured by ingest's `placeholder` step for raster types the image-transform binding decodes, no
+larger than 20 MiB. Like `width` and `height` it lives in the `file` JSON (no column), is written
+by `recordIngest` and copied into the published snapshot by `finish`. It is data a client renders,
 never a URL or markup.
 
 An upload whose presigned PUT never landed leaves a draft with no `ingestStatus` and no `size`;
@@ -522,7 +522,8 @@ a column (`asset_published.expires_at`, migration `0015_asset_expiry`) for the e
 takes any non-archived asset to `archived`, and `restoreAsset` brings an archived one back as a
 `draft` (each throws `InvalidStateError` on a bad transition; an archived asset cannot be
 published, nor one under embargo or past its expiry). File bytes are not part of the aggregate: `createAsset` returns a signed upload URL
-and the bytes go to the blob store (see [Architecture](./architecture.md#assets-r2-images-stream-and-the-media-worker)).
+and the bytes go to the blob store (see
+[Architecture](./architecture.md#assets-object-storage-image-transforms-video-and-the-media-worker)).
 
 `assetKind(contentType)` derives an `AssetKind` (`image`, `video`, `audio`, `document`, `other`;
 `ASSET_KINDS`) from the content type; the store keeps it in a column for filtering, so it is never
@@ -625,7 +626,7 @@ edges are materialized so the platform can:
 ## Redirects
 
 `packages/domain/src/redirect/redirect.ts`. contentworker serves no site, so a redirect is
-**delivery data**: Delivery hands the set (or one path's match) to the front end, or an edge Worker
+**delivery data**: Delivery hands the set (or one path's match) to the front end, or an edge worker
 in front of it, that answers the request. A redirect belongs to a space and environment:
 
 ```ts
@@ -857,9 +858,10 @@ See [API reference](./api-reference.md) for HTTP shapes.
 to one and may nest under a `broaderId` (cycles refused); a `Tag` is flat. Both kinds of term carry:
 
 - **`slug`**: normalized like a Slug field (`normalizeSlug`), unique among the environment's tags
-  or within the concept's scheme (unique indexes in D1). Made from the label when none is given
-  (`termSlug`), numbered past the taken ones (`uniqueTermSlug`: `news`, `news-2`). A slug asked
-  for that another term holds is a `ConflictError`. It never follows the label: a rename keeps it.
+  or within the concept's scheme (unique indexes in the database). Made from the label when none
+  is given (`termSlug`), numbered past the taken ones (`uniqueTermSlug`: `news`, `news-2`). A slug
+  asked for that another term holds is a `ConflictError`. It never follows the label: a rename
+  keeps it.
 - **`description`**: plain text or null.
 - **`labels`**: labels in the space's other locales. The term's own label (`Tag.name`,
   `Concept.prefLabel`) is the default locale's, so nothing that reads the label changed.
@@ -869,8 +871,8 @@ to one and may nest under a `broaderId` (cycles refused); a `Tag` is flat. Both 
 (`TermUsage`: per term and content type, how many published entries carry it) counts snapshots
 only: a draft's terms count once it is published and stop counting when it is unpublished or
 trashed. The store keeps it as it writes snapshots (`TaxonomyRepo.listUsage`, `recountUsage`; see
-[Consistency](./consistency.md#d1-limits-as-design-inputs)); `summarizeUsage` sums it per term,
-leaving out the content types a key may not read. Every term change emits `taxonomy.changed`.
+[Consistency](./consistency.md#database-limits-as-design-inputs)); `summarizeUsage` sums it per
+term, leaving out the content types a key may not read. Every term change emits `taxonomy.changed`.
 
 
 ## RBAC types

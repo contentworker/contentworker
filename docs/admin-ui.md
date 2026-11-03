@@ -1,6 +1,6 @@
 # Admin UI
 
-The admin is `apps/web`: a React Router 8 app rendered on the web Worker (SSR), which also owns
+The admin is `apps/web`: a React Router 8 app rendered on the web worker (SSR), which also owns
 human sign-in and fronts the api over the `API` service binding. Its design context is
 `PRODUCT.md` and `DESIGN.md` at the repo root ("Ledger", from `@contentworker/design` and
 `@contentworker/ui`); read both before designing a screen, and compose the existing tokens and
@@ -9,12 +9,12 @@ components rather than stock defaults.
 ## Running locally
 
 `pnpm dev` (see [Development](./development.md#running-locally)) serves the admin at
-http://localhost:5173 together with the api, engine and delivery Workers. While the local
+http://localhost:5173 together with the api, engine and delivery workers. While the local
 database has no people the admin is open; once someone is added through `/setup`, sign-in is on.
 
 ## In production
 
-The web Worker is deployed at `<domain>` (custom domain rendered by `scripts/fleet.ts`). Static
+The web worker is deployed at `<domain>` (custom domain rendered by `scripts/fleet.ts`). Static
 assets are served by the platform; HTML responses default to `private, no-cache`. Every response
 carries the security headers from `app/lib/csp.ts`, and state-changing browser requests from
 another origin are refused (403).
@@ -36,7 +36,7 @@ another origin are refused (403).
 | `/audit`                                               | The deployment's admin audit log (`admin_audit`, hash-chained)                                                                                                                   |
 | `/account`                                             | Your password, passkeys, two-factor                                                                                                                                              |
 
-Sessions, users, passkeys and challenges live in D1 (`0002_auth.sql`). Authenticator secrets are
+Sessions, users, passkeys and challenges live in the database (`0002_auth.sql`). Authenticator secrets are
 sealed with `DATA_KEY`. Sign-in paths that need no session, and SCIM, are rate-limited per address
 (`API_LIMIT`).
 
@@ -44,11 +44,11 @@ sealed with `DATA_KEY`. Sign-in paths that need no session, and SCIM, are rate-l
 
 The CMS screens (`app/cms`) call the Management API in the browser with TanStack Query
 (`app/cms/lib/management.ts`) on the same origin: `/spaces/...`, `/preview/...`, `/delivery/...`,
-`/mcp`, `/media/...`. The web Worker's gateway forwards those to the api with a signed
+`/mcp`, `/media/...`. The web worker's gateway forwards those to the api with a signed
 `x-cw-principal` (60 s, bound to the path) in place of the session cookie, and passes the
 `x-cw-bookmark` read-your-writes header both ways. The admin keeps the newest bookmark it has seen
-(`rememberBookmark`: D1 bookmarks sort as strings, so an older reply arriving late never moves it
-back, and a value not shaped like a D1 bookmark is ignored), as the SDKs do. See
+(`rememberBookmark`: database bookmarks sort as strings, so an older reply arriving late never
+moves it back, and a value not shaped like a database bookmark is ignored), as the SDKs do. See
 [Architecture](./architecture.md#appsweb-the-admin-and-the-gateway) and
 [Auth & RBAC](./auth-and-rbac.md#the-web-principal).
 
@@ -191,12 +191,12 @@ pnpm --filter @contentworker/web test   # vitest: auth, sessions, gateway, lib u
 pnpm --filter @contentworker/web e2e    # Playwright in WebKit and Chromium, with axe
 ```
 
-The e2e suite (`apps/web/e2e`) runs the dev server offline on port 5390 against a fresh local D1
-(`.wrangler/e2e`): shell layout on iPhone, iPad and desktop (both orientations), the CMS flows,
-space access (`space-access.spec.ts`), OAuth for MCP clients end to end (`oauth.spec.ts`), the
-workflow list and editor (`workflows.spec.ts`), an axe WCAG 2.1 A/AA sweep
-(`accessibility.spec.ts`; `contrast-settle.spec.ts` checks a re-enabled button is at full opacity
-at once, so the sweep cannot catch it mid-fade), and sign-in last (the `auth`
-project signs up the first admin, which turns sign-in on). CI runs it in the `devices` job.
+The e2e suite (`apps/web/e2e`) runs the dev server offline on port 5390 against a fresh local
+database (`.wrangler/e2e`): shell layout on iPhone, iPad and desktop (both orientations), the CMS
+flows, space access (`space-access.spec.ts`), OAuth for MCP clients end to end (`oauth.spec.ts`),
+the workflow list and editor (`workflows.spec.ts`), an axe WCAG 2.1 A/AA sweep
+(`accessibility.spec.ts`; `contrast-settle.spec.ts` checks a re-enabled button is at full opacity at
+once, so the sweep cannot catch it mid-fade), and sign-in last (the `auth` project signs up the
+first admin, which turns sign-in on). CI runs it in the `devices` job.
 
 Assert accessible names only in Playwright: jsdom names some controls a real browser does not.
