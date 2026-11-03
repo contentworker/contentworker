@@ -12,6 +12,7 @@ import {
   createConcept,
   createContentType,
   createEntry,
+  createMenu,
   createRedirect,
   createScheme,
   createTag,
@@ -61,6 +62,11 @@ export async function seedEverySection(ctx: AppContext, blob: BlobStore, scope: 
   await createTag(ctx, scope, { name: 'news' });
   await createWorkflowDraft(ctx, scope, { name: 'Review' });
   await createRedirect(ctx, scope, { source: '/old', destination: '/new' });
+  await createMenu(ctx, scope, {
+    handle: 'main',
+    name: 'Main',
+    items: [{ label: 'Home', link: { type: 'url', url: '/' } }],
+  });
 }
 
 /** Runs every pending `bulk.chunk_due`, as the engine's bulk consumer would, until none are left. */
@@ -92,6 +98,7 @@ interface ExportedSnapshot {
   taxonomy: { schemes: Named[]; concepts: Named[]; tags: Named[] };
   workflows: Named[];
   redirects: Named[];
+  menus: Named[];
 }
 
 /** The envelope keys that describe the export itself rather than carry content. */
@@ -123,5 +130,6 @@ export function sections(raw: unknown) {
     },
     workflows: names(s.workflows),
     redirects: ids(s.redirects),
+    menus: ids(s.menus),
   };
 }

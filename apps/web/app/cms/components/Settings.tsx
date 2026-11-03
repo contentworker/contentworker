@@ -42,6 +42,7 @@ import { ConnectedApps } from '~/cms/components/ConnectedApps';
 import { Functions } from '~/cms/components/Functions';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
+import { Menus } from '~/cms/components/Menus';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader } from '~/cms/components/page';
 import { Redirects } from '~/cms/components/Redirects';
@@ -75,6 +76,7 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   extensions: (client) => <AppExtensions client={client} />,
   plugins: (client) => <Plugins client={client} />,
   redirects: (client) => <Redirects client={client} />,
+  menus: (client) => <Menus client={client} />,
   environments: (client) => <Environments client={client} />,
   'audit-log': (client) => <AuditLog client={client} />,
 };

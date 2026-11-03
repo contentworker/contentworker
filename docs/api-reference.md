@@ -693,6 +693,31 @@ it is also written with the entry's other fields (`PUT …/entries/:id`).
 
 MCP: `entries_set_seo` (audited) and `sitemap_list` (`readOnlyHint`, not audited).
 
+### Menus
+
+Navigation menus are delivery data too: named trees of links a front end renders. A menu is live,
+not versioned; Delivery resolves its entry links against published entries when it reads it. See
+[Domain model](./domain-model.md#menus).
+
+| Method | Path                     | Scope            | Notes                                                                                                                                           |
+| ------ | ------------------------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/menus`                | `preview:read`   | `{ items, total }`: every menu by handle, `{ id, handle, name, description?, itemCount, revision, updatedAt }`, no items                         |
+| POST   | `…/menus`                | `content:manage` | Create `{ handle, name, description?, items? }` (`201`); `409` for a taken handle, `422` naming each bad item (`items[0].children[1].link`)      |
+| GET    | `…/menus/:id`            | `preview:read`   | The menu with its item tree and `revision`                                                                                                      |
+| GET    | `…/menus/:id/preview`    | `preview:read`   | `?locale=` → `{ menu, locale, items }`: each item's label, URL and `status` (`live`, `unpublished`, `missing`, `no_url`, `hidden`), nothing dropped |
+| GET    | `…/menus/resolve/:handle` | `preview:read`   | `?locale=` → the menu exactly as Delivery serves it, with the caller's content grants; `404` for an unknown handle |
+| PATCH  | `…/menus/:id`            | `content:manage` | Fields left out keep their value; `items` replaces the tree (given item ids kept); with `revision`, a menu saved since is `409`                  |
+| POST   | `…/menus/:id/move`       | `content:manage` | `{ itemId, parentId (null: top level), index, revision? }` moves an item and its subtree; `422` under itself or past the depth, `404` unknown ids |
+| DELETE | `…/menus/:id`            | `content:manage` | `?revision=` optional (`409` when stale)                                                                                                        |
+
+A link to an entry that doesn't exist, to an entry whose type has no `urlPattern`, or to a term
+that doesn't exist is refused (`422`); only links a save adds are checked, and an entry of a type
+the caller's content grants don't cover counts as not existing. Grants apply to every read too: a
+type the caller can't read is `hidden` in a preview and dropped when resolved, a denied display
+field never becomes a label, and a denied slug field drops the item. Every write appends
+`menus.changed`. MCP: `menus_list`, `menus_get`, `menus_preview`, `menus_resolve` (`preview:read`),
+`menus_create`, `menus_update`, `menus_move_item`, `menus_delete` (`content:manage`).
+
 ### Platform configuration
 
 | Method | Path                   | Scope            | Description                         |
@@ -750,6 +775,8 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 | GET      | `/delivery/:space/:env/taxonomy/concepts/:slug` | `delivery:read` | One concept by slug; `409` when two schemes share it and `scheme` is not given                                                              |
 | GET      | `/delivery/:space/:env/redirects`            | `delivery:read` | The environment's **enabled** redirects → `{ items, total }`, each `{ id, source, destination, status, locale? }`; cached under the scope's tag, purged by `redirects.changed` |
 | GET      | `/delivery/:space/:env/redirects/resolve`    | `delivery:read` | `?path=&locale=` → `{ redirect, status, location }`, or `404`. One request per path: to redirect every request, fetch the set once |
+| GET      | `/delivery/:space/:env/menus`                | `delivery:read` | Every menu → `{ items, total }`, each `{ handle, name, description? }`, by handle (`listDeliveredMenus`, one statement) |
+| GET      | `/delivery/:space/:env/menus/:handle`        | `delivery:read` | One menu resolved for `?locale=` (default: the space's default, with its fallbacks) → `{ handle, name, description?, locale, items }`, each item `{ id, label, url, target?, attrs?, entry?, term?, children }`. Entry links resolve to the published entry's path from its published type's `urlPattern`; an item that doesn't resolve (unpublished, deleted, no URL in the locale, a type the key can't read) is dropped and its children lifted. `404` for an unknown handle. One round trip (`DeliveryReadRequest.menu`: the menu, and its linked published entries, tags and concepts through `json_tree` over its own row); cached under the scope's tag, purged by `menus.changed` and the entry publish events |
 | GET      | `/delivery/:space/:env/routes`               | `delivery:read` | Site routes: every **published** content type with a `urlPattern` → `{ items, total }`, each `{ contentType, urlPattern }`, sorted by `contentType`; a key with content grants sees only the types it may read. One statement through `DeliveryReads` (`listDeliveredRoutes`); cached under the scope's tag, purged by `content_type.published`. MCP: `model_list_content_types` returns each type's `urlPattern` and `status` |
 | GET      | `/delivery/:space/:env/sitemap`              | `delivery:read` | A page of the sitemap: published entries of every published type with a `urlPattern`, by entry id → `{ items, next }`, each `{ entryId, contentType, lastmod, urls: [{ path, locale }] }`; `noindex` entries and entries canonical elsewhere left out. `from` (a previous `next`), `limit` (1–5000, default 1000), `base` (the site's URL, to judge absolute canonicals). Content grants apply as for `routes`. Two round trips (`listDeliveredSitemap`); cached under the scope's tag, purged by any publish, unpublish or `content_type.published` |
 | GET      | `/delivery/:space/:env/sitemap.xml`          | `delivery:read` | `application/xml` for crawlers: a sitemaps.org `urlset` of `base` + path with `lastmod` and `hreflang` alternates, or past one file an index of `<base>/sitemap.xml?page=<token>` (each page's range of entry ids). `base` (an absolute `http(s)` URL, path prefix kept) is required (`422` otherwise); `page` serves one page. A site proxies its own `/sitemap.xml` here with the query string |

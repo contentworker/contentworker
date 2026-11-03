@@ -15,6 +15,7 @@ import type {
   InviteGrant,
   InviteRole,
   LocalizedValue,
+  MenuItem,
   PluginManifest,
   PluginSettingValue,
   PromotedContentType,
@@ -1228,6 +1229,27 @@ export const redirectSets = sqliteTable(
     revision: integer('revision').notNull(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
+);
+
+/** Navigation menus, each a JSON tree of items written whole at its revision (0020_menus). */
+export const menus = sqliteTable(
+  'menus',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    handle: text('handle').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    items: text('items', { mode: 'json' }).$type<MenuItem[]>().notNull(),
+    revision: integer('revision').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    uniqueIndex('menus_by_handle').on(t.spaceId, t.environmentId, t.handle),
+  ],
 );
 
 export const entryMetadata = sqliteTable(

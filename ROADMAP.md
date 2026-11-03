@@ -34,7 +34,9 @@ Everything below is built and tested on v2.
   pattern sources, import and export, loop checks, and an automatic `301` when a publish changes a
   slug a content type's URL pattern names); SEO metadata (a `Seo` field: title, description,
   canonical URL, noindex, social image) and a sitemap from Delivery (JSON, and XML with `hreflang`
-  and a sitemap index past 50,000 URLs).
+  and a sitemap index past 50,000 URLs); navigation menus (named trees of entry, taxonomy-term and
+  URL links, live rather than versioned, resolved by Delivery against published entries through
+  each type's URL pattern; managed in Settings > Menus with keyboard reorder).
 - **Publishing.** Releases (atomic multi-entry publish), scheduled actions, bulk actions as
   resumable jobs, branch compare and merge, environment promotion with a risk check and approval,
   environment snapshots (export, plus import and clone as resumable jobs; a clone's export and

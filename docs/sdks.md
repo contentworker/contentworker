@@ -74,6 +74,8 @@ client.listConcepts({ scheme?, locale?, contentType? }): Promise<DeliveredConcep
 client.getConcept(slug, { scheme?, locale?, contentType? }): Promise<DeliveredConcept>
 client.redirects(): Promise<DeliveredRedirect[]>         // Delivery only: the enabled set, to apply
 client.resolveRedirect(path, { locale? }): Promise<RedirectMatch | null>  // Delivery only; null on 404
+client.menus(): Promise<DeliveredMenuSummary[]>          // Delivery only: { handle, name, description? }
+client.menu(handle, { locale? }): Promise<DeliveredMenu> // Delivery only: resolved; 404 DeliveryError for an unknown handle
 client.routes(): Promise<DeliveredRoute[]>               // Delivery only: { contentType, urlPattern } per published type
 client.sitemap({ from?, limit?, base? }): Promise<SitemapPage>  // Delivery only: { items, next }, published pages and their paths
 client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive
@@ -151,6 +153,11 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   runs or fails; `locale` is `(request) => string | undefined`; and
   `applyRedirects(request, redirects, { locale? })` for a one-off. See
   [the guide](https://docs.contentworker.app/guides/redirects/).
+- **Menus.** `client.menus()` lists the navigation menus' handles; `client.menu(handle, { locale? })`
+  returns one resolved for rendering: each `DeliveredMenuItem` has `label`, `url` (`null` for a term
+  link), optional `target`, `attrs`, `entry` or `term`, and `children`. Only published entries
+  appear; an item whose link doesn't resolve is dropped and its children lifted. See
+  [the guide](https://docs.contentworker.app/guides/menus/).
 
 Shapes:
 
@@ -443,6 +450,8 @@ cma.entries.setSeo(id, { locale?, title?, description?, canonicalUrl?, noindex?,
 cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .update(id, changes) / .delete(id)
 cma.redirects.import({ format: 'csv' | 'json', data, dryRun? }) / .resolve(path, { locale? }) / .analyze() / .collapseChains()
 
+cma.menus.list() / .get(id) / .preview(id, { locale? }) / .resolve(handle, { locale? }) / .create(input) / .update(id, changes) / .moveItem(id, move) / .delete(id, { revision? })
+
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
 cma.taxonomy.tags.list() / .create({ name, slug?, description?, labels? }) / .update(id, patch) / .delete(id)   // list: each with usage
 cma.taxonomy.schemes.list() / .create({ name }) / .delete(id)
@@ -482,6 +491,8 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
 - `contentTypes.create(draft)` takes `urlPattern` (e.g. `/blog/{slug}`; `null` clears it), which makes
   a publish that changes a slug write a redirect. `redirects.import` is all or nothing, and
   `redirects.resolve` answers `null` on `404`.
+- `menus.update` replaces the whole tree when given `items`; with `revision` (and on `moveItem` and
+  `delete`) a menu saved since is a `409`.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
 - `entries.list` reads `GET /preview/:space/:env/entries` on the same origin (the Management API
   has no entry list): the latest saved version, drafts included, `{ items, total }` with `total`

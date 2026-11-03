@@ -33,6 +33,10 @@ export const PURGING_EVENTS = new Set<string>([
   'taxonomy.changed',
   // Delivery serves the enabled set (`GET …/redirects`) and each path's match from it.
   'redirects.changed',
+  // Delivery serves menus (`GET …/menus/:handle`) resolved against published entries: a menu's
+  // own change says so here, and a publish or unpublish that changes what it resolves to already
+  // purges through the entry events above.
+  'menus.changed',
   // Delivery serves each published type's URL pattern (`GET …/routes`), builds GraphQL from it,
   // and lists the type's entries in the sitemap by it.
   'content_type.published',

@@ -20,6 +20,7 @@ export * from './entry/entry-diff';
 export * from './errors';
 export * from './events';
 export * from './locale';
+export * from './menu/menu';
 export * from './plugin/plugin';
 export * from './plugin/settings';
 export * from './promotion';

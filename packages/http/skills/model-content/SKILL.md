@@ -122,3 +122,7 @@ to action), declare one `Array` field whose `items` lists the shapes as `variant
   `redirects_update`, `redirects_delete`, `redirects_import` (CSV or JSON; `dryRun` first),
   `redirects_resolve` to test a path, `redirects_analyze` for loops and chains and
   `redirects_collapse_chains`. A loop is refused; a chain is allowed. Use `docs_read` for details.
+- Navigation menus are delivery data too: `menus_create` with a handle (`main`, `footer`) and an
+  item tree of entry, term (`tag`/`concept`) and URL links; `menus_move_item` to reorder;
+  `menus_update` with the `revision` you read. An entry link needs its type's `urlPattern` and shows
+  only while the entry is published: `menus_preview` says why an item isn't showing.

@@ -24,7 +24,9 @@ import {
   type InstalledPlugin,
   inviteStatus,
   type MemberInvite,
+  type Menu,
   matchesTopic,
+  menuTargets,
   type OAuthClient,
   type PluginSettings,
   type Promotion,
@@ -96,6 +98,8 @@ import type {
   FunctionRepo,
   InviteRepo,
   MemberRepo,
+  MenuRead,
+  MenuRepo,
   OAuthClientRepo,
   OAuthGrantRecord,
   OAuthGrantRepo,
@@ -310,6 +314,7 @@ export class InMemoryContentStore implements ContentStore {
         this.entryMetadataData,
         this.redirectData,
         this.redirectRevisionData,
+        this.menuData,
         this.aiActionData,
         this.functionData,
         this.appExtensionData,
@@ -1606,6 +1611,23 @@ export class InMemoryContentStore implements ContentStore {
                 pageStarts: all.filter((_, i) => i % Math.max(1, size) === 0).map((p) => p.entryId),
               };
       }
+      let menu: MenuRead | null | undefined;
+      if (request.menu) {
+        const found = await this.menus.getByHandle(scope, request.menu.handle);
+        if (found) {
+          const targets = menuTargets(found.items);
+          const termIds = (kind: string) =>
+            new Set(targets.terms.filter((t) => t.kind === kind).map((t) => t.id));
+          const tagIds = termIds('tag');
+          const conceptIds = termIds('concept');
+          menu = {
+            menu: found,
+            entries: await this.entries.getPublishedMany(scope, targets.entryIds),
+            tags: (await this.taxonomy.listTags(scope)).filter((t) => tagIds.has(t.id)),
+            concepts: (await this.taxonomy.listConcepts(scope)).filter((c) => conceptIds.has(c.id)),
+          };
+        } else menu = null;
+      }
       const result: DeliveryReadResult = {
         ...(sitemap ? { sitemap } : {}),
         ...(request.config ? { config: config ?? null } : {}),
@@ -1619,6 +1641,7 @@ export class InMemoryContentStore implements ContentStore {
         ...(tags ? { tags } : {}),
         ...(concepts ? { concepts } : {}),
         ...(termUsage ? { termUsage } : {}),
+        ...(request.menu ? { menu: menu ?? null } : {}),
       };
       return result;
     },
@@ -2520,6 +2543,43 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  /** `space::env::id` → menu. */
+  private readonly menuData = new Map<string, Menu>();
+
+  private menusOf(scope: Scope): Menu[] {
+    const prefix = `${scopeKey(scope)}::`;
+    return [...this.menuData.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v)
+      .sort((a, b) => (a.handle < b.handle ? -1 : a.handle > b.handle ? 1 : 0));
+  }
+
+  readonly menus: MenuRepo = {
+    all: async (scope) => this.menusOf(scope),
+    get: async (scope, id) => this.menuData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    getByHandle: async (scope, handle) =>
+      this.menusOf(scope).find((m) => m.handle === handle) ?? null,
+    save: async (scope, menu, expected) => {
+      const key = `${scopeKey(scope)}::${menu.id}`;
+      const current = this.menuData.get(key);
+      // As the D1 store: an insert collides on the id, a save on a revision moved since.
+      if (expected === undefined ? current : current?.revision !== expected) {
+        if (expected === undefined) throw new ConflictError('A unique value is already taken');
+        throw new TransactionConflictError();
+      }
+      // As its unique index: one menu per handle.
+      if (this.menusOf(scope).some((m) => m.handle === menu.handle && m.id !== menu.id)) {
+        throw new ConflictError('A unique value is already taken');
+      }
+      this.menuData.set(key, menu);
+    },
+    delete: async (scope, id, expected) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      if (this.menuData.get(key)?.revision !== expected) throw new TransactionConflictError();
+      this.menuData.delete(key);
+    },
+  };
+
   readonly taxonomy: TaxonomyRepo = {
     createScheme: async (scope, scheme) => {
       this.schemeData.set(`${scopeKey(scope)}::${scheme.id}`, scheme);
@@ -2986,6 +3046,7 @@ export class InMemoryContentStore implements ContentStore {
       this.workflowTaskData,
       this.redirectData,
       this.redirectRevisionData,
+      this.menuData,
     ] as Map<string, unknown>[];
   }
 
@@ -3021,6 +3082,7 @@ export class InMemoryContentStore implements ContentStore {
         releases: this.releases,
         taxonomy: this.taxonomy,
         redirects: this.redirects,
+        menus: this.menus,
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,

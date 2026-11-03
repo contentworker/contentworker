@@ -99,6 +99,7 @@ Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
 | `asset_collection.changed` | `collectionId` | A collection is created, renamed or deleted, or its assets are added, removed or reordered (also for each collection a deleted asset leaves) |
 | `asset_share.created`, `asset_share.revoked` | `linkId` | A share link is created or revoked (see [Share assets with a link](/guides/share-links/)) |
 | `redirects.changed`      | `count` | Redirects are created, changed, deleted, imported or collapsed (not for the redirect a slug change writes on publish; that publish sends `entry.published`) |
+| `menus.changed`          | `menuId`, `handle` | A menu is created, saved, reordered or deleted (both absent when a snapshot import writes several; not for a publish that changes what a menu resolves to, which sends `entry.published` or `entry.unpublished`) |
 | `content_type.published` | `contentTypeApiId`, `version`                         | A content type's definition is published |
 | `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
 | `environment_alias.changed` | `targetEnvironmentId` (`null` when removed)        | An alias is created, repointed or removed; `scope.environmentId` is the alias name |

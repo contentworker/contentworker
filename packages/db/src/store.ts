@@ -20,6 +20,7 @@ import {
   type EntryVersion,
   type InstalledPlugin,
   type MemberInvite,
+  type Menu,
   matchesTopic,
   type OAuthClient,
   type PluginSettings,
@@ -95,6 +96,8 @@ import type {
   FunctionRepo,
   InviteRepo,
   MemberRepo,
+  MenuRead,
+  MenuRepo,
   OAuthClientRepo,
   OAuthGrantRecord,
   OAuthGrantRepo,
@@ -4340,6 +4343,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.entryMetadata,
   schema.redirects,
   schema.redirectSets,
+  schema.menus,
   schema.previewTokens,
   schema.bulkJobs,
   schema.bulkJobChunks,
@@ -6002,6 +6006,105 @@ function makeRedirectRepo(x: Exec): RedirectRepo {
   };
 }
 
+type MenuRow = typeof schema.menus.$inferSelect;
+const toMenu = (r: MenuRow): Menu => ({
+  id: r.id,
+  handle: r.handle,
+  name: r.name,
+  ...(r.description ? { description: r.description } : {}),
+  items: r.items,
+  revision: r.revision,
+  createdAt: r.createdAt.toISOString(),
+  updatedAt: r.updatedAt.toISOString(),
+});
+
+const menuByHandleQuery = (db: Db, scope: Scope, handle: string) =>
+  db
+    .select()
+    .from(schema.menus)
+    .where(and(scopeFilter(schema.menus, scope), eq(schema.menus.handle, handle)));
+
+/**
+ * The ids a menu's links name, as a subquery over its own row: every `{ type: 'entry' }` (or
+ * `'term'` of `termKind`) object in the item tree. Item attributes can't hold a `type` key, so
+ * only links match. However many links, a handful of bound parameters.
+ */
+const menuLinkIds = (
+  scope: Scope,
+  handle: string,
+  link: { readonly type: 'entry' } | { readonly type: 'term'; readonly termKind: TermKind },
+) => {
+  const m = schema.menus;
+  const id = link.type === 'entry' ? '$.entryId' : '$.termId';
+  const kind =
+    link.type === 'term' ? sql` AND json_extract(j.value, '$.termKind') = ${link.termKind}` : sql``;
+  return sql`(SELECT json_extract(j.value, ${id}) FROM ${m}, json_tree(${m.items}) AS j WHERE ${m.spaceId} = ${scope.spaceId} AND ${m.environmentId} = ${scope.environmentId} AND ${m.handle} = ${handle} AND j.type = 'object' AND json_extract(j.value, '$.type') = ${link.type}${kind})`;
+};
+
+function makeMenuRepo(x: Exec): MenuRepo {
+  const db = x.db;
+  const t = schema.menus;
+  const one = (scope: Scope, id: string) => and(scopeFilter(t, scope), eq(t.id, id));
+  return {
+    async all(scope) {
+      const rows = await db.select().from(t).where(scopeFilter(t, scope)).orderBy(asc(t.handle));
+      return rows.map(toMenu);
+    },
+    async get(scope, id) {
+      const [row] = await db.select().from(t).where(one(scope, id));
+      return row ? toMenu(row) : null;
+    },
+    async getByHandle(scope, handle) {
+      const [row] = await menuByHandleQuery(db, scope, handle);
+      return row ? toMenu(row) : null;
+    },
+    async save(scope, menu, expected) {
+      const values = {
+        handle: menu.handle,
+        name: menu.name,
+        description: menu.description ?? null,
+        items: [...menu.items],
+        revision: menu.revision,
+        updatedAt: new Date(menu.updatedAt),
+      };
+      if (expected === undefined) {
+        await x.write(
+          db.insert(t).values({
+            spaceId: scope.spaceId,
+            environmentId: scope.environmentId,
+            id: menu.id,
+            createdAt: new Date(menu.createdAt),
+            ...values,
+          }),
+        );
+        return;
+      }
+      const update = db
+        .update(t)
+        .set(values)
+        .where(and(one(scope, menu.id), eq(t.revision, expected)));
+      if (x.inUnit) {
+        // Saved by someone else since `expected` was read: the unit commits nothing.
+        await x.write(update);
+        x.expectChanged(1);
+        return;
+      }
+      const changed = await update.returning({ id: t.id });
+      if (changed.length === 0) throw new TransactionConflictError();
+    },
+    async delete(scope, id, expected) {
+      const remove = db.delete(t).where(and(one(scope, id), eq(t.revision, expected)));
+      if (x.inUnit) {
+        await x.write(remove);
+        x.expectChanged(1);
+        return;
+      }
+      const changed = await remove.returning({ id: t.id });
+      if (changed.length === 0) throw new TransactionConflictError();
+    },
+  };
+}
+
 function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
   const db = x.db;
   const u = schema.taxonomyUsage;
@@ -6441,6 +6544,63 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
           });
         }
       }
+      if (request.menu) {
+        // The menu and what its links name, as four statements of the same batch: the links are
+        // read through the menu's own row, so nothing waits on a first round trip.
+        const { handle } = request.menu;
+        const read: { menu?: Menu; entries: PublishedEntry[]; tags: Tag[]; concepts: Concept[] } = {
+          entries: [],
+          tags: [],
+          concepts: [],
+        };
+        add(menuByHandleQuery(db, scope, handle), ([row]) => {
+          if (row) read.menu = toMenu(row);
+          result.menu = read.menu ? (read as MenuRead) : null;
+        });
+        const ep = schema.entryPublished;
+        add(
+          db
+            .select()
+            .from(ep)
+            .where(
+              and(
+                scopeFilter(ep, scope),
+                sql`${ep.entryId} IN ${menuLinkIds(scope, handle, { type: 'entry' })}`,
+              ),
+            ),
+          (rows) => {
+            read.entries = rows.map(toPublished);
+          },
+        );
+        add(
+          db
+            .select()
+            .from(schema.tags)
+            .where(
+              and(
+                scopeFilter(schema.tags, scope),
+                sql`${schema.tags.id} IN ${menuLinkIds(scope, handle, { type: 'term', termKind: 'tag' })}`,
+              ),
+            ),
+          (rows) => {
+            read.tags = rows.map(toTag);
+          },
+        );
+        add(
+          db
+            .select()
+            .from(schema.concepts)
+            .where(
+              and(
+                scopeFilter(schema.concepts, scope),
+                sql`${schema.concepts.id} IN ${menuLinkIds(scope, handle, { type: 'term', termKind: 'concept' })}`,
+              ),
+            ),
+          (rows) => {
+            read.concepts = rows.map(toConcept);
+          },
+        );
+      }
 
       if (queries.length === 0) return result;
       const rows =
@@ -6487,6 +6647,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     promotions: makePromotionRepo(x),
     taxonomy: makeTaxonomyRepo(x),
     redirects: makeRedirectRepo(x),
+    menus: makeMenuRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
@@ -6548,6 +6709,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     workflowTasks: makeWorkflowTaskRepo(x),
     taxonomy: makeTaxonomyRepo(x),
     redirects: makeRedirectRepo(x),
+    menus: makeMenuRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),
     storedSecrets: makeStoredSecretRepo(x),

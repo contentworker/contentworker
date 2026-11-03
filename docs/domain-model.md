@@ -730,6 +730,63 @@ read, and never a type whose pattern names a field it may not read; a type whose
 not read is listed as if it had none (no `noindex` or canonical exclusions, which would reveal the
 field's values).
 
+## Menus
+
+`packages/domain/src/menu/menu.ts`. A navigation menu is **delivery data**: a named, ordered tree
+of links a front end renders. A menu belongs to a space and environment:
+
+```ts
+interface Menu {
+  id: string;
+  handle: string; // unique in the environment: lowercase letters and digits joined by - or _
+  name: string;
+  description?: string;
+  items: MenuItem[];
+  revision: number; // bumped by every save: the compare-and-set
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface MenuItem {
+  id: string; // stable within the menu; made when not given
+  label?: string; // required for a URL link
+  link:
+    | { type: 'entry'; entryId: string }
+    | { type: 'term'; termKind: 'tag' | 'concept'; termId: string }
+    | { type: 'url'; url: string };
+  target?: '_blank';
+  attrs?: Record<string, string>; // rel, title, class, aria-label, data-*
+  children: MenuItem[];
+}
+```
+
+- **Live, not versioned.** A saved change is what Delivery serves next. An entry link resolves only
+  against the published entry, so a menu never shows unpublished work, and a publish, unpublish or
+  slug change moves the menu with it without a save.
+- **Limits.** `MAX_MENUS` (100) per environment, `MAX_MENU_ITEMS` (250) per menu at every depth,
+  `MAX_MENU_DEPTH` (3) levels, labels up to 120 characters, URLs up to 2048, up to 8 attributes of
+  up to 256 characters.
+- **Checks** (`checkMenuItems`) normalize the tree and throw one `ValidationError` naming each bad
+  item by its path. A URL link is a site path, `#fragment`, `?query`, `http(s)://` URL without
+  credentials, `mailto:` or `tel:` (`checkMenuUrl`).
+- **Moves** (`moveMenuItem`) relocate an item and its subtree under a parent (or the top level),
+  refusing a move under itself or past the depth.
+- **Resolution** (`resolveMenuItems`, `entryUrlPath`). An entry link becomes its published
+  entry's path from the published type's `urlPattern` in the requested locale (each slug following
+  the space's fallback chain) and its label the display field; a term link the term's localized
+  label and slug, with `url: null`. An item whose link doesn't resolve is dropped and its children
+  take its place.
+
+The use-cases (`packages/application/src/menus.ts`) read the menu, apply the change, check the links
+a save adds (the entry exists and its type has a URL pattern; the term exists), and commit the menu
+at its revision with a `menus.changed` event in one unit. A caller that names the revision it read
+gets a `ConflictError` (`409`) when someone saved since; one that doesn't is retried against the
+menu as it now stands (three attempts, then the `TransactionConflictError` surfaces). Every read
+and link check takes the caller (`MenuAccess`): an entry of a type their content grants don't
+cover is `hidden` (dropped on delivery) and, on a write, doesn't exist; a denied display field
+never becomes a label and a denied slug field drops the item, as `maskDeliveredFields` hides them
+on an entry read.
+
 ## Webhooks
 
 ```ts
@@ -754,7 +811,7 @@ under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows
 `DomainEvent` (`packages/domain/src/events.ts`) is a discriminated union appended to the
 transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. The types are
 `entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
-`asset.unpublished`, `asset.deleted`, `asset.ingested`, `asset.file_replaced`, `asset.rights_changed`, `asset.expired`, `content_type.published`, `release.published`, `redirects.changed`, `environment_alias.changed`,
+`asset.unpublished`, `asset.deleted`, `asset.ingested`, `asset.file_replaced`, `asset.rights_changed`, `asset.expired`, `content_type.published`, `release.published`, `redirects.changed`, `menus.changed`, `environment_alias.changed`,
 `environment.deleted`, `promotion.awaiting_approval`, `environment.promoted`, `bulk.job_completed`,
 the `workflow_run.*` end states,
 `workflow.task_opened` and `workflow.webhook`, plus control messages for background work
