@@ -239,6 +239,19 @@ Generated TypeScript types carry a field's description (or help) as its doc comm
 - **Keep the model in a file.** `contentworker model export` writes it out, and `contentworker
   model apply --dry-run` shows what a changed file would add, change and remove before anything
   does; see the [command-line tool](/guides/cli/#the-content-model-as-code).
+- **Cloning a type** copies its fields, display field and singleton flag under a new API ID and
+  name, as a draft with no entries; its URL pattern stays behind, so two types never route the
+  same paths. In the admin it is **Clone…** in the type's menu on the Content page; over the API
+  `POST …/content-types/{apiId}/clone` with `{ apiId, name }`, over MCP `model_clone_content_type`.
+- **Deleting a type** is refused, naming every reason, while anything depends on it: entries (the
+  trash included), another type whose links are restricted to it (in a component or block too), a
+  menu or slug redirect naming one of its entries, or its URL pattern (clear it first, so the
+  site's routes change on purpose). `GET …/content-types/{apiId}/dependents` lists them. To delete
+  a type with its entries, ask for it (`DELETE …/content-types/{apiId}?purge_entries=true`,
+  `model_delete_content_type` with `purgeEntries`, or the checkbox in the admin's delete dialog,
+  confirmed by typing the API ID): a background job moves each entry to the trash and deletes it
+  permanently, keeping any that another type's published entry links to, and the type goes when
+  none are left. A deleted type sends `content_type.deleted`.
 - **Try risky changes in an environment.** Clone `main` into a `staging` environment, change the
   model there, point a preview at it, then merge it back. See
   [Environments](/guides/environments/).

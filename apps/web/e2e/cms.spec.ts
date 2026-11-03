@@ -1311,3 +1311,70 @@ test('a singleton type opens its one entry, and refuses a second', async ({ page
   });
   expect(second.status()).toBe(409);
 });
+
+test('a content type is cloned, then deleted with its entries, from its menu', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  const apiId = `scratch${stamp}`;
+  const made = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId,
+    name: `Scratch ${stamp}`,
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+    ],
+  });
+  expect(made.status()).toBe(201);
+  await api(request, 'POST', `${MGMT}/content-types/${apiId}/published`);
+
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: `More actions for “Scratch ${stamp}”` }).click();
+  await page.getByRole('menuitem', { name: 'Clone…' }).click();
+  const clone = page.getByRole('dialog', { name: `Clone “Scratch ${stamp}”` });
+  await clone.getByLabel('Name', { exact: true }).fill(`Copy ${stamp}`);
+  await clone.getByRole('button', { name: 'Clone content type' }).click();
+  await expect(page.getByText(`Cloned as “Copy ${stamp}”, a draft`)).toBeVisible();
+  const copyId = `copy${stamp}`;
+  expect((await api(request, 'GET', `${MGMT}/content-types/${copyId}`)).status()).toBe(200);
+
+  // The original gets an entry; deleting it then takes the entries with it, as a job.
+  await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: apiId,
+    fields: { title: { 'en-US': 'Doomed' } },
+  });
+  await page.getByRole('button', { name: `More actions for “Scratch ${stamp}”` }).click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  const remove = page.getByRole('dialog', { name: `Delete “Scratch ${stamp}”?` });
+  await remove.getByLabel(/to confirm/).fill(apiId);
+  await expect(remove.getByRole('button', { name: 'Delete type and entries' })).toBeDisabled();
+  await remove.getByRole('checkbox', { name: /Also delete its 1 entry/ }).check();
+  await remove.getByRole('button', { name: 'Delete type and entries' }).click();
+  await expect(
+    page.getByRole('status').filter({ hasText: `Deleted 1 entry of “Scratch ${stamp}”` }),
+  ).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(async () => (await api(request, 'GET', `${MGMT}/content-types/${apiId}`)).status(), {
+      timeout: 30_000,
+    })
+    .toBe(404);
+
+  // The clone has no entries: deleted at once.
+  await page.getByRole('button', { name: `More actions for “Copy ${stamp}”` }).click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  const second = page.getByRole('dialog', { name: `Delete “Copy ${stamp}”?` });
+  await second.getByLabel(/to confirm/).fill(copyId);
+  await second.getByRole('button', { name: 'Delete content type' }).click();
+  await expect(page.getByText(`Deleted “Copy ${stamp}”`)).toBeVisible();
+  expect((await api(request, 'GET', `${MGMT}/content-types/${copyId}`)).status()).toBe(404);
+});

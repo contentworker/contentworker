@@ -607,3 +607,37 @@ export function urlPath(
   });
   return missing ? null : path;
 }
+
+/** A field of another content type that may link to a given one (`validations.linkContentTypes`). */
+export interface LinkingField {
+  readonly contentType: string;
+  /** The field's path, through components and blocks: `body.cta.target`. */
+  readonly field: string;
+}
+
+/**
+ * The fields of `types` other than `apiId` itself whose links are restricted to it, at any depth:
+ * a Link or list of links (`validations` or `items.validations`), inside a component, a repeater
+ * or a blocks variant (named in the path). A type's links to itself don't count: they go with it.
+ */
+export function fieldsLinkingTo(
+  types: readonly Pick<ContentType, 'apiId' | 'fields'>[],
+  apiId: string,
+): LinkingField[] {
+  const found: LinkingField[] = [];
+  const walk = (contentType: string, fields: readonly FieldDefinition[], path: string) => {
+    for (const f of fields) {
+      const at = path ? `${path}.${f.apiId}` : f.apiId;
+      const targets = [
+        ...(f.validations?.linkContentTypes ?? []),
+        ...(f.items?.validations?.linkContentTypes ?? []),
+      ];
+      if (targets.includes(apiId)) found.push({ contentType, field: at });
+      if (f.fields) walk(contentType, f.fields, at);
+      if (f.items?.fields) walk(contentType, f.items.fields, at);
+      for (const v of f.items?.variants ?? []) walk(contentType, v.fields, `${at}.${v.apiId}`);
+    }
+  };
+  for (const t of types) if (t.apiId !== apiId) walk(t.apiId, t.fields, '');
+  return found;
+}

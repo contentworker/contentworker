@@ -82,7 +82,10 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   ticked, and Load more past the first 100 (`/content/:typeId`; `/content/:typeId/new` starts a new
   entry); a singleton type's sidebar and overview links go to `/content/:typeId/entry`
   (`SingletonEntry.tsx`), which opens its one entry in the editor, or a new one when it has none,
-  and its rows offer no Duplicate;
+  and its rows offer no Duplicate; each type's row on the overview has a menu (`More actions for
+  “…”`) with Clone… and Delete… (`ContentTypeActions.tsx`): the delete dialog reads
+  `…/dependents`, names what blocks it, offers to delete the entries too (a `content_type_delete`
+  job, followed with `BulkJobProgress`), and is confirmed by typing the API ID;
   the entry editor (TipTap rich text, components and repeaters, references, localized fields; a
   `Seo` field renders as a component of `SEO_FIELDS` in `EntryForm.tsx`, each part with a helper
   line wired to `aria-describedby`: title and description count characters against what search

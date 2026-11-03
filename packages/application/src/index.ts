@@ -31,6 +31,7 @@ export * from './bulk';
 export * from './bulk-jobs';
 export * from './comments';
 export * from './content-ai';
+export * from './content-type-lifecycle';
 export * from './content-types';
 export * from './context';
 export * from './delivery';

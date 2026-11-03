@@ -1,18 +1,30 @@
 import type { ContentType, ContentTypeDraft } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { Skeleton, SkeletonText } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
-import { Plus, Shapes } from 'lucide-react';
-import { useState } from 'react';
+import { MoreHorizontalIcon, Plus, Shapes } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
+import { BulkJobProgress } from '~/cms/components/bulk-job-progress';
+import {
+  CloneContentTypeDialog,
+  DeleteContentTypeDialog,
+} from '~/cms/components/ContentTypeActions';
 import { ContentTypeDialog } from '~/cms/components/ContentTypeDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Empty, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { count, plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import type { ContentTypeEntryCounts } from '../lib/management';
-import { useScopedQuery } from '../lib/queries';
+import type { BulkJobSummary, ContentTypeEntryCounts } from '../lib/management';
+import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
@@ -27,6 +39,35 @@ export function ContentTypesOverview() {
   const { types, typesPending, reload } = useContentOutlet();
   const toast = useToast();
   const [dialog, setDialog] = useState<{ open: boolean; initial?: ContentType }>({ open: false });
+  // A type's menu: Clone and Delete, each in its own dialog.
+  const [cloning, setCloning] = useState<ContentType | null>(null);
+  const [deleting, setDeleting] = useState<ContentType | null>(null);
+  // A delete that removes the type's entries first, running as a job on the server.
+  const [deleteJob, setDeleteJob] = useState<{ job: BulkJobSummary; type: ContentType } | null>(
+    null,
+  );
+  const invalidate = useInvalidate();
+  const running = deleteJob?.job.status === 'running';
+  const polled = useScopedQuery(
+    ['bulk-jobs', deleteJob?.job.id],
+    () => client.getBulkJob(deleteJob?.job.id ?? ''),
+    { enabled: running, refetchInterval: 2000, silent: true },
+  );
+  useEffect(() => {
+    const next = polled.data;
+    if (!next || !deleteJob || next.id !== deleteJob.job.id) return;
+    if (
+      next.status === deleteJob.job.status &&
+      next.completedChunks === deleteJob.job.completedChunks
+    )
+      return;
+    setDeleteJob({ ...deleteJob, job: next });
+    // Its entries are gone, and with a clean run the type too (the engine deletes it then).
+    if (next.status !== 'running') {
+      reload();
+      void invalidate(['entries']);
+    }
+  }, [polled.data, deleteJob, reload, invalidate]);
   // Under the entries prefix, so every entry mutation's invalidation refreshes them too. Silent:
   // the counts are a summary beside the list, which works without them.
   const countsQuery = useScopedQuery(['entries', 'counts'], () => client.contentTypeEntryCounts(), {
@@ -71,6 +112,19 @@ export function ContentTypesOverview() {
           </Button>
         }
       />
+      {deleteJob && (
+        <div className="mb-4">
+          <BulkJobProgress
+            job={deleteJob.job}
+            verbs={{ done: 'Deleted', doing: 'Deleting' }}
+            // The type goes when every entry has: a clean run removes it from the list.
+            nouns={[`entry of “${deleteJob.type.name}”`, `entries of “${deleteJob.type.name}”`]}
+            where="the content types"
+            takeFocus
+            onDismiss={() => setDeleteJob(null)}
+          />
+        </div>
+      )}
       {typesPending ? (
         // Never "No content types yet" before the types have arrived.
         <div className="card overflow-clip" aria-busy="true">
@@ -155,6 +209,30 @@ export function ContentTypesOverview() {
                         >
                           Edit
                         </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`More actions for “${ct.name}”`}
+                            >
+                              <MoreHorizontalIcon aria-hidden="true" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-auto min-w-40">
+                            <DropdownMenuItem onSelect={() => setCloning(ct)}>
+                              Clone…
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onSelect={() => setDeleting(ct)}
+                            >
+                              Delete…
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </Td>
                   </Tr>
@@ -163,6 +241,35 @@ export function ContentTypesOverview() {
             </TableBody>
           </Table>
         </div>
+      )}
+
+      {cloning && (
+        <CloneContentTypeDialog
+          key={cloning.apiId}
+          source={cloning}
+          open
+          onOpenChange={(open) => !open && setCloning(null)}
+          onCloned={(clone) => {
+            reload();
+            toast.success(`Cloned as “${clone.name}”, a draft`);
+          }}
+        />
+      )}
+      {deleting && (
+        <DeleteContentTypeDialog
+          key={deleting.apiId}
+          type={deleting}
+          open
+          onOpenChange={(open) => !open && setDeleting(null)}
+          onDeleted={(job) => {
+            if (job) setDeleteJob({ job, type: deleting });
+            else {
+              reload();
+              void invalidate(['entries']);
+              toast.success(`Deleted “${deleting.name}”`);
+            }
+          }}
+        />
       )}
 
       {/* Key on the target so the form seeds fresh each time it opens. */}

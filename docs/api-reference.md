@@ -331,6 +331,9 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | GET    | `…/content-types/:apiId/fields/:field/values` | `preview:read` | Distinct values of a short scalar field (not `Text`) or list of Symbols across current entries, trash excluded, each with its entry `count`; booleans, numbers, strings ascending; `locale`, `limit` (≤ 100), `cursor` → `{ items, nextCursor? }`. 422 for any other field, 403 for a hidden one, `query_too_broad` when the type holds more entries than the scan cap (5,000) |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
+| GET    | `…/content-types/:apiId/dependents` | `preview:read`   | What blocks a delete: `{ entries: { live, trashed }, linkedFrom, menus, redirects, urlPattern? }` |
+| DELETE | `…/content-types/:apiId`           | `content:manage`  | Delete (`{ deleted: true }`, emits `content_type.deleted`); `409` naming every dependent (`details.dependents`); `?purge_entries=true` (also `content:publish`, and a role on every type) → `202 { deleted: false, job }`, a `content_type_delete` bulk job that trashes and purges each entry, then deletes the type on `bulk.job_completed` |
+| POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton; not `urlPattern`; draft, version 1; `409` for a taken apiId |
 
 A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,
 `{locale}` or its own `Slug` fields' apiIds, e.g. `/blog/{slug}`; `null` or `''` clears it; `422`

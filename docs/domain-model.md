@@ -415,6 +415,18 @@ interface ContentType {
   definition over another (a revision, a merge, a promotion): turning the flag on is refused over
   more than one entry outside the trash and claims the one there is, in the same unit as the save;
   turning it off gives the claim back. Stored in `content_types.singleton` (0027_singleton_types).
+- **Delete and clone** (`content-type-lifecycle.ts`). `fieldsLinkingTo(types, apiId)` finds other
+  types' fields whose `linkContentTypes` name it, through components, repeaters and block variants
+  (a path like `body.byline.who`). `contentTypeDependents` adds its entry counts (live, trashed),
+  menus and slug redirects naming its entries, and its `urlPattern`; `deleteContentType` refuses
+  while any is there, then deletes in one unit with `content_type.deleted`. The store's
+  `ContentTypeRepo.delete(scope, apiId, version)` is a compare-and-set whose own `WHERE` also
+  requires no entry of the type, so a revision or an entry written after the reads fails the
+  commit (`TransactionConflictError`). `deleteContentTypeWithEntries` starts a `content_type_delete`
+  bulk job instead (chunks of `ENTRY_TRASH_CHUNK_SIZE`): `trashEntry`, then `purgeEntry`, forced
+  only past links from entries of the same type; `finishContentTypeDeletion` deletes the type on
+  the job's clean `bulk.job_completed`. `cloneContentType` defines a copy (fields, display field,
+  singleton; not `urlPattern`) at version 1 under a new `apiId`.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
   `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields; anything else is a

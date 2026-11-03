@@ -315,6 +315,30 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
           }),
       );
     },
+    async delete(scope, apiId, version) {
+      const t = schema.contentTypes;
+      const e = schema.entries;
+      // The entries check is the delete's own WHERE, so an entry written after the caller looked
+      // (a create that read the type before this committed) leaves the type in place.
+      const remove = db
+        .delete(t)
+        .where(
+          and(
+            scopeFilter(t, scope),
+            eq(t.apiId, apiId),
+            eq(t.version, version),
+            sql`NOT EXISTS (SELECT 1 FROM ${e} WHERE ${e.spaceId} = ${scope.spaceId} AND ${e.environmentId} = ${scope.environmentId} AND ${e.contentTypeApiId} = ${apiId})`,
+          ),
+        );
+      if (x.inUnit) {
+        await x.write(remove);
+        x.expectChanged(1);
+        return;
+      }
+      if ((await remove.returning({ apiId: t.apiId })).length === 0) {
+        throw new TransactionConflictError();
+      }
+    },
   };
 }
 

@@ -352,6 +352,8 @@ export const contentTypeBody = z.object({
         'Turning it on is refused while the type has more than one entry. Left out, unchanged.',
     ),
 });
+/** A content type's copy: its new apiId and name. */
+export const cloneContentTypeBody = z.object({ apiId: zId, name: zShort });
 export const createEntryBody = z.object({
   contentTypeApiId: zId,
   fields: zFieldValues.optional(),

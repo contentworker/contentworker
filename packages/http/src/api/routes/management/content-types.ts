@@ -1,7 +1,12 @@
 import {
+  authorizeBulkJob,
   clampCount,
+  cloneContentType,
+  contentTypeDependents,
   countEntriesByContentType,
   createContentType,
+  deleteContentType,
+  deleteContentTypeWithEntries,
   getContentType,
   getLocaleSettings,
   listContentTypes,
@@ -12,6 +17,7 @@ import {
 } from '@contentworker/application';
 import {
   assertQueryRespectsFieldRules,
+  authorize,
   authorizeContent,
   canAccessContentType,
   SCOPES,
@@ -21,7 +27,12 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as contentTypeDocs from '../../docs/schemas/content-types';
-import { contentTypeBody, localeSettingsBody, parseBody } from '../../validation';
+import {
+  cloneContentTypeBody,
+  contentTypeBody,
+  localeSettingsBody,
+  parseBody,
+} from '../../validation';
 import { BASE, scopeOf } from './shared';
 
 export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
@@ -159,6 +170,64 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
           ...(locale ? { locale } : {}),
           ...(cursor ? { cursor } : {}),
         }),
+      );
+    },
+  );
+  app.get(
+    `${BASE}/content-types/:apiId/dependents`,
+    doc('Content types', 'What depends on a content type', {
+      description:
+        'Why deleting it would be refused: its entries (live and in the trash), other types ' +
+        'whose links are restricted to it (in components and blocks too), menus and slug ' +
+        'redirects naming its entries, and its URL pattern.',
+      ok: contentTypeDocs.contentTypeDependents,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await contentTypeDependents(ctx, scopeOf(c), c.req.param('apiId'))),
+  );
+  app.delete(
+    `${BASE}/content-types/:apiId`,
+    doc('Content types', 'Delete a content type', {
+      description:
+        'Refused (409, with `details.dependents`) while anything depends on it: entries, the ' +
+        'trash included, other types linking to it, menus or redirects naming its entries, its ' +
+        'URL pattern. `?purge_entries=true` deletes its entries too, as a resumable bulk job ' +
+        '(202 with the job): each is trashed, then purged, and the type goes when the job ' +
+        'completes cleanly. That takes `content:publish` too (live entries are unpublished) and ' +
+        'a role that holds it on every content type. Emits `content_type.deleted`.',
+      query: { purge_entries: 'true to delete its entries first, as a job' },
+      ok: contentTypeDocs.contentTypeDeletion,
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      const apiId = c.req.param('apiId');
+      if (c.req.query('purge_entries') !== 'true') {
+        await deleteContentType(ctx, scopeOf(c), apiId);
+        return c.json({ deleted: true });
+      }
+      const principal = c.get('principal');
+      authorize(principal, SCOPES.contentPublish, scopeOf(c).spaceId);
+      authorizeBulkJob(principal, 'content_type_delete');
+      const done = await deleteContentTypeWithEntries(ctx, scopeOf(c), apiId);
+      return c.json(done, done.deleted ? 200 : 202);
+    },
+  );
+  app.post(
+    `${BASE}/content-types/:apiId/clone`,
+    doc('Content types', 'Clone a content type', {
+      description:
+        'Copies the definition (fields, display field, singleton) under a new apiId and name, ' +
+        'as a draft with no entries. Not its URL pattern. 409 when the apiId is taken.',
+      body: cloneContentTypeBody,
+      ok: contentTypeDocs.contentType,
+      status: 201,
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      const body = await parseBody(c, cloneContentTypeBody);
+      return c.json(
+        await cloneContentType(ctx, scopeOf(c), c.req.param('apiId'), body.apiId, body.name),
+        201,
       );
     },
   );

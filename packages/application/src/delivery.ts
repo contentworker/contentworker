@@ -638,6 +638,7 @@ export const LIVE_EVENT_TYPES: ReadonlySet<DomainEvent['type']> = new Set([
   'asset.published',
   'asset.unpublished',
   'content_type.published',
+  'content_type.deleted',
   'release.published',
   'environment_alias.changed',
 ]);
@@ -683,6 +684,7 @@ export function liveEventFor(
       };
     case 'entry.unpublished':
     case 'content_type.published':
+    case 'content_type.deleted':
       return canAccessContentType(p, 'read', event.contentTypeApiId) ? event : null;
     case 'environment_alias.changed':
       return event;

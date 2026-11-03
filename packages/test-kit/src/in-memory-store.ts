@@ -413,6 +413,18 @@ export class InMemoryContentStore implements ContentStore {
     save: async (scope, ct) => {
       this.contentTypeData.set(`${scopeKey(scope)}::${ct.apiId}`, ct);
     },
+    // Judged at the call, as the D1 store's WHERE judges it at commit.
+    delete: async (scope, apiId, version) => {
+      const key = `${scopeKey(scope)}::${apiId}`;
+      const prefix = `${scopeKey(scope)}::`;
+      const hasEntries = [...this.entryData.entries()].some(
+        ([k, e]) => k.startsWith(prefix) && e.contentTypeApiId === apiId,
+      );
+      if (this.contentTypeData.get(key)?.version !== version || hasEntries) {
+        throw new TransactionConflictError();
+      }
+      this.contentTypeData.delete(key);
+    },
   };
 
   /**

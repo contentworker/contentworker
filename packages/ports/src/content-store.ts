@@ -1701,6 +1701,12 @@ export interface ContentTypeRepo {
   list(scope: Scope): Promise<ContentType[]>;
   /** Upserts the definition at its version. */
   save(scope: Scope, contentType: ContentType): Promise<void>;
+  /**
+   * Deletes the definition while it is still at `version` and no entry of the type exists (the
+   * trash included), both judged by the delete itself: a type revised since (or gone), or an
+   * entry written in the meantime, is a `TransactionConflictError` (at commit, inside a unit).
+   */
+  delete(scope: Scope, apiId: string, version: number): Promise<void>;
 }
 
 /** A superseded entry version whose body can move to object storage. */
@@ -2139,7 +2145,12 @@ export type BulkJobAction =
   | 'import'
   | 'asset_reindex'
   | EntryTrashBulkJobAction
-  | AssetBulkJobAction;
+  | AssetBulkJobAction
+  /**
+   * Deletes a content type's entries (each trashed, then purged), then the type: `config` names
+   * it as `{ contentType }`.
+   */
+  | 'content_type_delete';
 
 /** What an entry trash bulk job does to each entry: each through its single-entry use-case. */
 export type EntryTrashBulkJobAction = 'trash' | 'restore' | 'purge';

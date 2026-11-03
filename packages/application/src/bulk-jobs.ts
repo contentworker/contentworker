@@ -41,7 +41,9 @@ export const ENTRY_TRASH_CHUNK_SIZE = 50;
  */
 export const ENTRY_TRASH_MAX_ITEMS = 100_000;
 
+/** Trash, restore and purge, and a content type's delete: each entry through its use-cases. */
 const isEntryTrashAction = (action: BulkJobAction): boolean =>
+  action === 'content_type_delete' ||
   (ENTRY_TRASH_BULK_ACTIONS as readonly string[]).includes(action);
 
 /** How many ids one chunk of `action` takes. */
@@ -243,6 +245,16 @@ export interface BulkChunkDeps {
     job: BulkJob,
     chunk: BulkJobChunk,
   ) => Promise<BulkChunkOutcome>;
+  /**
+   * Runs a content type delete's chunk, trashing and purging its entries
+   * (`content-type-lifecycle.ts`), injected for the blob store as above. Absent, the chunk stays
+   * claimable.
+   */
+  readonly contentTypePurgeChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
 }
 
 /** Who started `job` (recorded by `persistJob`), as its chunks' writes are authored; undefined when
@@ -304,6 +316,10 @@ export async function runBulkChunk(
   // Trash, restore or purge: each entry through its single-entry use-case.
   if (job.action === 'trash' || job.action === 'restore' || job.action === 'purge') {
     return runChunkAndFold(ctx, deps.entryTrashChunk, scope, job, chunk);
+  }
+  // A content type's delete: its entries trashed and purged, each through its use-cases.
+  if (job.action === 'content_type_delete') {
+    return runChunkAndFold(ctx, deps.contentTypePurgeChunk, scope, job, chunk);
   }
   // An asset library action: each asset through its own use-case, failures reported by name.
   if (job.action !== 'publish' && job.action !== 'unpublish') {

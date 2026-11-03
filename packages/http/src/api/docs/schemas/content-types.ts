@@ -172,3 +172,42 @@ export const fieldValuesPage = z.object({
   ),
   nextCursor: z.string().optional().describe('Pass back as cursor for the next page'),
 });
+
+/** What still depends on a content type (`GET …/content-types/:apiId/dependents`). */
+export const contentTypeDependents = z.object({
+  contentType: z.string(),
+  entries: z.object({
+    live: z.int().describe('Outside the trash'),
+    trashed: z.int().describe('In the trash'),
+  }),
+  linkedFrom: z
+    .array(
+      z.object({
+        contentType: z.string(),
+        field: z.string().describe('Path, e.g. body.cta.target'),
+      }),
+    )
+    .describe('Other types’ fields whose links are restricted to it'),
+  menus: z
+    .array(z.object({ id: z.string(), handle: z.string() }))
+    .describe('Menus with an item linking one of its entries'),
+  redirects: z
+    .array(z.object({ id: z.string(), source: z.string() }))
+    .describe('Redirects made by a slug change of one of its entries'),
+  urlPattern: z.string().optional().describe('Its URL pattern, served as a site route'),
+});
+
+/** A content type deleted at once, or a job deleting its entries first. */
+export const contentTypeDeletion = z.object({
+  deleted: z.boolean().describe('true when the type is gone; false while the job runs'),
+  job: z
+    .object({
+      id: z.string(),
+      action: z.literal('content_type_delete'),
+      status: z.string(),
+      totalItems: z.int(),
+    })
+    .loose()
+    .optional()
+    .describe('The bulk job deleting its entries; the type goes when it completes cleanly'),
+});
