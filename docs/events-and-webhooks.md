@@ -1,16 +1,16 @@
 # Events, async backbone & webhooks
 
 contentworker uses a **transactional outbox** so that domain events are emitted exactly when (and
-only when) their state change commits. The api Worker relays new events onto Cloudflare Queues
-right after each write; the engine Worker consumes them, sweeps the outbox every minute, keeps
-the media Worker's gate in line with what is published, and tells the delivery and media Workers
-which cache tags to purge.
+only when) their state change commits. The api worker relays new events onto queues right after
+each write; the engine worker consumes them, sweeps the outbox every minute, keeps the media
+worker's gate in line with what is published, and tells the delivery and media workers which cache
+tags to purge.
 
 ## The pipeline
 
 ```
   publishEntry / unpublishEntry / publishContentType / setEnvironmentAlias …
-        │  (ONE store.withTransaction = ONE D1 batch)
+        │  (ONE store.withTransaction = ONE database batch)
         ├─ write the denormalized read model (entry_published / removePublished)
         └─ outbox.append(event)                ← event is durable iff the batch commits
                                    │
@@ -26,8 +26,8 @@ which cache tags to purge.
              ├─ dispatchEvent
              │    ├─ webhooks  — fan out to subscribers (HMAC-signed)
              │    ├─ functions — invoke user-defined HTTP hooks (FunctionInvoker)
-             │    ├─ cache     — invalidate the entry's tag + reverse-reference tags (KV)
-             │    ├─ gate      — asset.*: write or remove asset-gate:<space>:<env>:<id> (KV)
+             │    ├─ cache     — invalidate the entry's tag + reverse-reference tags (key-value)
+             │    ├─ gate      — asset.*: write or remove asset-gate:<space>:<env>:<id> (key-value)
              │    ├─ zip       — asset_zip.requested: start AssetZipWorkflow
              │    ├─ rag       — re-index (published) or delete (unpublished) embeddings
              │    └─ search    — SearchShardDO index / remove
@@ -66,8 +66,8 @@ interface OutboxRepo {
 }
 ```
 
-In D1, the `outbox` table has a partial index on `occurred_at WHERE relayed_at IS NULL`, so
-draining pending events is cheap. Because `append` is buffered into the same unit of work, and so
+In the database, the `outbox` table has a partial index on `occurred_at WHERE relayed_at IS NULL`,
+so draining pending events is cheap. Because `append` is buffered into the same unit of work, and so
 the same `db.batch()`, as the publish, there is **no window** where the read model is updated but
 the event is lost, or vice versa.
 
@@ -97,12 +97,12 @@ Delivery is **at-least-once**, which is why dispatch is idempotent (keyed on `ev
 
 ## Dispatch
 
-`consumeEvent(ctx, deps, event)` (`events/consume.ts`) is the queue consumer's body. The engine
-runs a batch's events in lanes (`apps/engine/src/lanes.ts`): one lane per entry, so an entry's
-publish and unpublish never overtake each other, and one per space:environment for every other
-event; up to six lanes run at once, since each event spends most of its time waiting on D1, KV,
-the search shard and the live hub (a batch of 25 went from ~2.2 s to ~0.35 s locally). It calls
-`dispatchEvent(ctx, deps, event)` (`events/dispatch.ts`), which fans out to:
+`consumeEvent(ctx, deps, event)` (`events/consume.ts`) is the queue consumer's body. The engine runs
+a batch's events in lanes (`apps/engine/src/lanes.ts`): one lane per entry, so an entry's publish
+and unpublish never overtake each other, and one per space:environment for every other event; up to
+six lanes run at once, since each event spends most of its time waiting on the database, the
+key-value store, the search shard and the live hub (a batch of 25 went from ~2.2 s to ~0.35 s
+locally). It calls `dispatchEvent(ctx, deps, event)` (`events/dispatch.ts`), which fans out to:
 
 1. **Webhook fan-out** — active subscribers for `event.type` in the event's environment (its own
    hooks and the space-wide ones), HMAC-signed POST, delivery log.
@@ -126,8 +126,8 @@ searchIndex?, blob?, invalidatedTags? }`; optional deps degrade gracefully. `onW
 observes each delivery outcome (the host's metrics); `scheduleWebhookRetry` queues the delayed
 retry of one webhook, and without it a failed delivery is recorded and not retried.
 
-After dispatch, `consumeEvent` publishes the event to the scope's **`LiveHubDO`** Durable Object
-(when `LIVE_HUB` is bound), which fans it out to Live Content SSE clients
+After dispatch, `consumeEvent` publishes the event to the scope's **`LiveHubDO`** stateful edge
+object (when `LIVE_HUB` is bound), which fans it out to Live Content SSE clients
 (`GET /delivery/:space/:env/live`). A live-publish failure is logged and never blocks dispatch.
 
 On `entry.published`, on-publish agents run when `AGENTS_ENRICH` / `AGENTS_MODERATE` are enabled.
@@ -160,31 +160,31 @@ its `published` is true: ingest of a draft changes nothing Delivery serves. A fa
 (`contentworker_purge_enqueue_errors_total`) and not retried: responses then go stale for their
 60 s `max-age`.
 
-The delivery Worker drains the queue at concurrency 1 (`drain`, `@contentworker/platform/purge`): up to 100
-tags per purge call, a 12 s pause after each (Cloudflare allows 5 calls a minute), at most 40 calls
-per batch; the rest, or a refused call, goes back with exponential backoff. After 10 retries a
-message lands in `contentworker-purge-dlq`, whose consumer (the delivery Worker) logs the tags,
-counts `contentworker_purge_dead_letters_total` and drops it. Those responses age out on their
+The delivery worker drains the queue at concurrency 1 (`drain`, `@contentworker/platform/purge`): up
+to 100 tags per purge call, a 12 s pause after each (the platform allows 5 calls a minute), at most
+40 calls per batch; the rest, or a refused call, goes back with exponential backoff. After 10
+retries a message lands in `contentworker-purge-dlq`, whose consumer (the delivery worker) logs the
+tags, counts `contentworker_purge_dead_letters_total` and drops it. Those responses age out on their
 `max-age` plus stale-while-revalidate. The cache layers these purges feed are described in
 [Consistency & guarantees](./consistency.md#delivery-cache).
 
 ### Media purges and the gate
 
-Workers Caching is per Worker, so the media Worker's published files have their own queue. The
-same batch plans them (`planPurges`): `asset.published` purges `cwa:<space>:<env>:<id>` (a
-republish can move the focal point, and so a crop, under the same URL), and revokes it when it
-carries `replacedVersion` (the republish put a new file in place of the old one, whose URLs must
-stop working); `asset.unpublished`, `asset.deleted` and `asset.rights_changed` (an expiry caps how
-long a file may be cached) revoke that tag, `asset_renditions.changed` revokes `cwr:<space>:<name>`, and
-`environment.deleted` revokes `cwe:<space>:<env>`. Share pages have tags too: `asset_collection.changed` purges
-`cwc:<space>:<env>:<collection>`; `asset.published`, `asset.unpublished` and `asset.rights_changed` purge the
-`cwc:` tag of each collection holding the asset (at most 100, `MAX_COLLECTIONS_PURGED`); and
-`asset_share.revoked` revokes `cws:<space>:<env>:<link>`. Everything goes in one message on
-`contentworker-media-purge`; what was revoked goes again with `delaySeconds: 90`
-(`REVOCATION_REPURGE_SECONDS`), once KV's 60 s read cache and replica lag have passed, so a colo
-that re-cached a file from a stale gate read loses it too. The media Worker drains it with the same
-`drain`; dead letters land in `contentworker-media-purge-dlq` and are logged
-(`contentworker_media_purge_dead_letters_total`).
+The edge cache is per worker, so the media worker's published files have their own queue. The same
+batch plans them (`planPurges`): `asset.published` purges `cwa:<space>:<env>:<id>` (a republish can
+move the focal point, and so a crop, under the same URL), and revokes it when it carries
+`replacedVersion` (the republish put a new file in place of the old one, whose URLs must stop
+working); `asset.unpublished`, `asset.deleted` and `asset.rights_changed` (an expiry caps how long a
+file may be cached) revoke that tag, `asset_renditions.changed` revokes `cwr:<space>:<name>`, and
+`environment.deleted` revokes `cwe:<space>:<env>`. Share pages have tags too:
+`asset_collection.changed` purges `cwc:<space>:<env>:<collection>`; `asset.published`,
+`asset.unpublished` and `asset.rights_changed` purge the `cwc:` tag of each collection holding the
+asset (at most 100, `MAX_COLLECTIONS_PURGED`); and `asset_share.revoked` revokes
+`cws:<space>:<env>:<link>`. Everything goes in one message on `contentworker-media-purge`; what was
+revoked goes again with `delaySeconds: 90` (`REVOCATION_REPURGE_SECONDS`), once the key-value
+store's 60 s read cache and replica lag have passed, so a location that re-cached a file from a
+stale gate read loses it too. The media worker drains it with the same `drain`; dead letters land in
+`contentworker-media-purge-dlq` and are logged (`contentworker_media_purge_dead_letters_total`).
 
 Before that, `dispatchEvent` runs `syncAssetGate` for `asset.published`, `asset.unpublished`,
 `asset.deleted` and `asset.rights_changed` when `assetGate` is bound: it reads the current published snapshot and writes
@@ -349,10 +349,10 @@ Domain events (`packages/domain/src/events.ts`):
 ## Queue adapter
 
 `createCfQueueProducer` (`@contentworker/adapters/queue-cf`) implements the producer side of the
-`Queue` port over Cloudflare Queues bindings, one binding per topic. Retries, backoff and
+`Queue` port over queue bindings, one binding per topic. Retries, backoff and
 dead-lettering are queue configuration in `apps/engine/wrangler.jsonc` and
 `apps/delivery/wrangler.jsonc` and `apps/media/wrangler.jsonc` (`max_retries`, `retry_delay`, `dead_letter_queue`), not code.
-Cloudflare Queues has no producer-side dedupe, so consumers stay idempotent on the event id.
+The platform's queues have no producer-side dedupe, so consumers stay idempotent on the event id.
 
 | Queue                       | Producer    | Consumer | Batch / concurrency / retries  |
 | --------------------------- | ----------- | -------- | ------------------------------ |

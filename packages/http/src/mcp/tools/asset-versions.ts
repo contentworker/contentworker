@@ -357,7 +357,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     {
       description:
         'Create a draft video asset and get a one-time direct upload URL on the video host ' +
-        '(Cloudflare Stream). The client POSTs the file as multipart field `fileField` to ' +
+        'at the edge. The client POSTs the file as multipart field `fileField` to ' +
         '`uploadUrl`; then call asset_video_refresh until file.video.status is ready.',
       inputSchema: toolSchema('asset_video_create', () =>
         z.object({

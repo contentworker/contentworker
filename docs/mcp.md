@@ -1,9 +1,9 @@
 # MCP server
 
-The api Worker serves contentworker's capabilities to agents over MCP, through the same use-cases,
+The api worker serves contentworker's capabilities to agents over MCP, through the same use-cases,
 scopes and validation as the HTTP API.
 
-The MCP server is served by the api Worker, at **`/mcp`** (`https://api.<domain>/mcp`, and on the
+The MCP server is served by the api worker, at **`/mcp`** (`https://api.<domain>/mcp`, and on the
 admin origin through the web gateway).
 It is a **stateless streamable-HTTP** server built on the v2 TypeScript SDK
 (`@modelcontextprotocol/server`): tools are defined one file per area in
@@ -23,7 +23,7 @@ it also requires an explicit `MCP_TOKEN`; the in-memory store falls back to `dev
 `http://localhost:5173/mcp`. Every tool calls `authorize(principal, scope, space)`
 before delegating to a use-case, and `space`/`environment` default to the seeded values when
 omitted. Request bodies are capped at 32 MiB, which fits the importers' 20 MB payload limit after
-JSON escaping. The SDK answers internal failures with a bare 500, so the Worker logs them through
+JSON escaping. The SDK answers internal failures with a bare 500, so the worker logs them through
 the handler's `onerror`.
 
 **Errors and audit, once for every tool.** `buildServer` wraps `registerTool`, so every tool's
@@ -121,7 +121,7 @@ list skills with `skills/list` and read them as `skill://contentworker/<name>/SK
 | `author-and-publish` | Finding and editing entries, versions, releases, scheduling, workflow runs and approvals |
 | `import-content`     | Field mapping, `identityField`, analyze → execute, publishing the result                 |
 
-The sources live in `packages/http/skills/<name>/`. A Worker has no filesystem, so the files
+The sources live in `packages/http/skills/<name>/`. An edge worker has no filesystem, so the files
 are embedded into `packages/http/src/mcp/skills.generated.ts`, the same approach as the docs. The embed
 is gitignored: `pnpm install` and turbo's `generate` task (before every check-types, test, build
 and dev) rebuild it from the skill files. The catalog is loaded with `strict: true`, so a malformed skill fails loudly instead

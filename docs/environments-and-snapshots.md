@@ -148,9 +148,9 @@ naming the caller (on both surfaces, so a deletion never commits unrecorded), ap
 vectors and purges the delivery cache. Search results only ever include entries published now, so
 an index document that outlives its entry is never served.
 
-The rows themselves go afterwards, in bounded steps, because D1 refuses one statement that modifies
-hundreds of thousands of rows. Each step deletes at most 500 rows from each of the environment's
-tables (`PURGE_ROWS_PER_TABLE`), and each `environment.purge_due` runs up to 20 steps
+The rows themselves go afterwards, in bounded steps, because the database refuses one statement that
+modifies hundreds of thousands of rows. Each step deletes at most 500 rows from each of the
+environment's tables (`PURGE_ROWS_PER_TABLE`), and each `environment.purge_due` runs up to 20 steps
 (`PURGE_STEPS_PER_EVENT`) before handing on to the next. When nothing is left, the environment's
 asset files go from the blob store (keeping any another environment's asset records still point at,
 as a clone's do; a space created before reserved space ids were refused, and named like one of
@@ -353,4 +353,5 @@ counts work it will refuse reads as slower than it is.
 Chunk work is staged in the blob store at plan time, once. Every chunk re-reading and re-parsing the
 source file would make a 40,000-row import quadratic. **A consumer without a blob store leaves import
 chunks claimable** rather than reporting an import that did not run, visible as a job that does not
-progress. On a deployment that means `MEDIA_BUCKET` (R2), where chunks are staged under `imports/`.
+progress. On a deployment that means `MEDIA_BUCKET` (object storage), where chunks are staged under
+`imports/`.

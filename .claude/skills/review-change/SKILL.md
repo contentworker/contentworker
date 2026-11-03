@@ -38,8 +38,8 @@ Uncommitted:
    - Docs: `git diff --name-only <base>...HEAD | .claude/hooks/docs-map.sh` lists documented
      surfaces; check whether their pages changed in the same diff.
    - The `Check` commands in the contentworker-conventions invariants for the sections the diff
-     touches (dependency greps, migrations only added, DO tags appended, generated files
-     regenerated).
+     touches (dependency greps, migrations only added, stateful-object tags appended, generated
+     files regenerated).
 4. **Merge.** De-duplicate findings that point at the same line and cause. Drop anything that
    isn't tied to a line in this diff, or that is style Biome already enforces. Keep a finding only
    when you can state the failure scenario; mark the ones you couldn't confirm.

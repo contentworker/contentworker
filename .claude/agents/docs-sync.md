@@ -1,6 +1,6 @@
 ---
 name: docs-sync
-description: Keeps contentworker's docs (the published Starlight site in apps/docs and the maintainer docs in docs/, embedded for MCP) in sync with the code. Delegate after a change to a documented surface (workflow nodes and templates, scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the fleet, Ledger tokens), when the docs-drift hook fires, or for a docs audit of one section. It maps changes to pages, verifies every claim against the source, edits the prose, regenerates the embed and rebuilds the site.
+description: Keeps contentworker's docs (the published Starlight site in apps/docs and the maintainer docs in docs/, embedded for MCP) in sync with the code. Delegate after a change to a documented surface (workflow nodes and templates, scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, database schema, wrangler config, the fleet, Ledger tokens), when the docs-drift hook fires, or for a docs audit of one section. It maps changes to pages, verifies every claim against the source, edits the prose, regenerates the embed and rebuilds the site.
 tools: Bash, Read, Grep, Glob, Edit, Write
 model: sonnet
 color: blue
@@ -39,7 +39,7 @@ instead. Never deploy the docs.
 
 ## How to be right
 
-- Grep before you write. Identifiers, defaults, routes, status codes, scopes, node types, D1
+- Grep before you write. Identifiers, defaults, routes, status codes, scopes, node types, database
   columns and env vars are what these docs get wrong, and nothing checks prose mechanically.
 - Read the diff, not just the file list: a renamed field or a new route is a sentence somewhere.
 - Prefer a component over restating an enum the domain exports.

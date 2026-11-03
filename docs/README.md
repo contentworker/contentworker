@@ -1,16 +1,17 @@
 # contentworker documentation
 
 These are the maintainer docs: how contentworker is built and how to run, extend and integrate
-with it. They are not published; the public site is `apps/docs`. contentworker runs entirely on
-Cloudflare, one isolated stack per customer: five Workers (`apps/web`, `apps/api`,
-`apps/delivery`, `apps/media`, `apps/engine`) on D1, with R2, KV, Queues, Durable Objects, Workflows,
-Vectorize, Workers AI through AI Gateway, Images, Stream, Email Sending and Worker Loader.
+with it. They are not published; the public site is `apps/docs`. contentworker runs entirely at
+the edge, one isolated stack per customer: five edge workers (`apps/web`, `apps/api`,
+`apps/delivery`, `apps/media`, `apps/engine`) on an edge SQL database, with object storage, a
+key-value cache, queues, stateful edge objects, durable workflows, a vector index, edge inference
+through an AI gateway, edge image transforms, video streaming, edge email and plugin isolates.
 
 ## Contents
 
-1. **[Architecture](./architecture.md)**: the Workers and why they are split, data placement,
+1. **[Architecture](./architecture.md)**: the workers and why they are split, data placement,
    the hexagonal layers and package map, request and event flow, editorial workflow runs, assets
-   and the media Worker, and the hook seam.
+   and the media worker, and the hook seam.
 2. **[Reference architecture](./reference-architecture.md)**: one diagram of a whole deployment
    with numbered callouts, then the publish-to-deliver, delivery-read and asset paths, each with a
    text equivalent.
@@ -22,32 +23,32 @@ Vectorize, Workers AI through AI Gateway, Images, Stream, Email Sending and Work
 5. **[Auth & RBAC](./auth-and-rbac.md)**: web sign-in (passwords, passkeys, TOTP, OIDC, SCIM,
    setup), the signed web principal, API key kinds, scopes, roles, OAuth 2.1, and the `authorize`
    decision.
-6. **[AI, agents & search](./ai-agents-and-search.md)**: Workers AI and model tiers, the AI
-   budget, hybrid search (FTS5 search shards + Vectorize), Coworker and the agent runtime.
+6. **[AI, agents & search](./ai-agents-and-search.md)**: edge inference and model tiers, the AI
+   budget, hybrid search (FTS5 search shards + the vector index), Coworker and the agent runtime.
 7. **[MCP server](./mcp.md)**: transport, auth, per-request cost, connecting a client, the tool
    catalog by area, and skills.
 8. **[Events & webhooks](./events-and-webhooks.md)**: the transactional outbox, lease-claimed
    relay, the engine's queue consumers, delivery cache purges and their pacing, webhooks and
    event payloads.
-9. **[Consistency & guarantees](./consistency.md)**: the D1 unit of work, read replicas and the
-   `x-cw-bookmark` header, D1 limits, optimistic concurrency (`expectedVersion`), the delivery
-   cache and its staleness bounds, and durable state that isn't derived.
-10. **[Configuration](./configuration.md)**: every binding, var and secret, and which Worker uses
+9. **[Consistency & guarantees](./consistency.md)**: the database unit of work, read replicas and
+   the `x-cw-bookmark` header, database limits, optimistic concurrency (`expectedVersion`), the
+   delivery cache and its staleness bounds, and durable state that isn't derived.
+10. **[Configuration](./configuration.md)**: every binding, var and secret, and which worker uses
     it.
 11. **[Deployment](./deployment.md)**: the fleet registry, provisioning, secrets, the CI pipeline
     (migrate, deploy engine → media → api → delivery → web, smoke, rollback) and admin recovery.
 12. **[Environments & snapshots](./environments-and-snapshots.md)**: export, import and clone,
     their background jobs, environment delete and purge, and importing from other formats.
-13. **[Backup & restore](./backup-and-restore.md)**: what holds state, D1 Time Travel, environment
-    snapshots, outbox replay and the restore runbook.
+13. **[Backup & restore](./backup-and-restore.md)**: what holds state, point-in-time recovery,
+    environment snapshots, outbox replay and the restore runbook.
 14. **[Development](./development.md)**: running the stack locally, test suites, conventions,
-    adding a use-case, changing the D1 schema, and the schema reference.
-15. **[Admin UI](./admin-ui.md)**: the React Router admin on the web Worker, sign-in routes,
+    adding a use-case, changing the database schema, and the schema reference.
+15. **[Admin UI](./admin-ui.md)**: the React Router admin on the web worker, sign-in routes,
     layout, features and its tests.
 16. **[SDKs](./sdks.md)**: the one published package `@contentworker/sdk`: the Delivery clients
     (core, react, vue, edge, react-native), the Management client (`/management`), rich text,
     webhooks, codegen and the `contentworker` CLI, and how it is bundled and released.
-17. **[Plugins](./plugins.md)**: sandboxed write-path plugins on Worker Loader isolates:
+17. **[Plugins](./plugins.md)**: sandboxed write-path plugins in isolated edge workers:
     manifests, capabilities, hooks and distribution policy.
 18. **[Developer tooling](./developer-tooling.md)**: the `contentworker` CLI (`packages/cli`) and
     the developer agent skills (`skills/`): design, output contract, tests and publishing.

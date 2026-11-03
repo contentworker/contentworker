@@ -13,7 +13,7 @@ from the tarball, and publishes it on an `sdk-v<version>` tag.
 Five modules target the read-only **Delivery API**, one, `@contentworker/sdk/management`,
 targets the **Management API** for programmatic authoring, and `@contentworker/sdk/codegen`
 generates typed field shapes. Point Delivery clients at the delivery host, `https://cdn.<domain>`
-(cached; served by the delivery Worker), and the Management client and codegen at the api host,
+(cached; served by the delivery worker), and the Management client and codegen at the api host,
 `https://api.<domain>`. A Delivery client in `preview: true` mode reads `/preview/*`, which only the
 api serves, so give it the api host. The Delivery clients share a model (`DeliveredEntry`,
 `SearchHit`) but differ in surface and footprint.
@@ -541,10 +541,10 @@ route runs (the 413, a request-rate 429). The full list is in the
 
 ## Read-your-writes
 
-The api answers every request with `x-cw-bookmark`, the D1 Sessions bookmark after its queries,
-and a request that sends one back reads a database at least that fresh, even from a read replica
-([Consistency](./consistency.md#d1-sessions-and-replicas)). The Management client and a Delivery
-client in `preview: true` mode do this for you:
+The api answers every request with `x-cw-bookmark`, the database session's bookmark after its
+queries, and a request that sends one back reads a database at least that fresh, even from a read
+replica ([Consistency](./consistency.md#database-sessions-and-replicas)). The Management client and
+a Delivery client in `preview: true` mode do this for you:
 
 - Each client instance keeps the newest bookmark it has been answered with (bookmarks sort oldest
   to newest as strings, so a late response to an earlier request never moves it back, and a
@@ -552,7 +552,7 @@ client in `preview: true` mode do this for you:
 - It goes only to, and is taken only from, the origin of `baseUrl` (a relative `baseUrl` is the
   page's own origin); a response redirected elsewhere is ignored.
 - `client.bookmark` reads it, and assigning replaces it (`undefined` clears it). `bookmark` in the
-  options seeds it. A value that isn't shaped like a D1 bookmark is dropped, as the api would.
+  options seeds it. A value that isn't shaped like a database bookmark is dropped, as the api would.
 - `readYourWrites: false` turns it off: nothing is kept or sent, and `bookmark` stays `undefined`.
 
 To carry it from a write on the server to a reader in the browser, hand the bookmark across:

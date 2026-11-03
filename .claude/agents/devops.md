@@ -30,21 +30,21 @@ hand it back.
 
 - Production changes only through CI on merge to `main`. You never run `wrangler deploy` (without
   `--dry-run`), `wrangler versions deploy`, `wrangler rollback`,
-  `wrangler d1 migrations apply --remote`, a Time Travel restore, resource deletes, `pnpm … deploy`,
-  or `gh workflow run` to redeploy. The `guard-bash` hook denies most of these; don't look for
-  ways around it.
+  `wrangler d1 migrations apply --remote`, a point-in-time restore, resource deletes,
+  `pnpm … deploy`, or `gh workflow run` to redeploy. The `guard-bash` hook denies most of these;
+  don't look for ways around it.
 - A failed deploy job is re-run with `gh run rerun <run-id> --failed`, after the user agrees.
-- Anything a deploy needs (a queue, a KV id, a Vectorize index) exists in every deployment
-  **before** the merge that needs it. Say which deployments need `./scripts/provision.sh <id>`; the
-  user runs it.
+- Anything a deploy needs (a queue, a key-value namespace id, a vector index) exists in every
+  deployment **before** the merge that needs it. Say which deployments need
+  `./scripts/provision.sh <id>`; the user runs it.
 - Deploy order stays engine → api → delivery → web; rollback stays engine first, and stops when the
-  engine can't go back past a Durable Object migration. D1 is migrated before the Workers and never
-  rolled back, so migrations stay expand-only.
+  engine can't go back past a stateful-object migration. The database is migrated before the workers
+  and never rolled back, so migrations stay expand-only.
 - Workflows: actions pinned by full commit SHA with the version as a comment,
   `permissions: contents: read` unless a job needs more, verify steps keep `if: ${{ !cancelled() }}`,
   no untrusted `${{ github.event.* }}` interpolated into `run:`, no secrets in jobs that run for
   forks.
-- Durable Object `migrations` tags are append-only. Jurisdictions are fixed at creation.
+- Stateful-object `migrations` tags are append-only. Jurisdictions are fixed at creation.
 - Secrets never go in `wrangler.jsonc`, the registry, logs or the repo.
 
 ## Output

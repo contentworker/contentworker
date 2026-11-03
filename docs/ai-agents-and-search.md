@@ -31,9 +31,9 @@ interface GenerateResult {
 
 A `tool` message answers an assistant `ToolCall` by its `id`.
 
-### The Workers AI adapter
+### The edge inference adapter
 
-`@contentworker/adapters/ai-workers` is the only provider. It runs through the Worker's `AI`
+`@contentworker/adapters/ai-workers` is the only provider. It runs through the worker's `AI`
 binding, so it needs no credentials, and maps tier → model (overridable per tier with
 `WORKERS_AI_MODEL_FLAGSHIP` / `_BALANCED` / `_FAST`):
 
@@ -44,7 +44,7 @@ binding, so it needs no credentials, and maps tier → model (overridable per ti
 | `fast`     | `@cf/zai-org/glm-4.7-flash`                |
 
 With `AI_GATEWAY_ID` set (the fleet renders one gateway per deployment), calls route through
-Cloudflare AI Gateway via the binding's `gateway` option; the gateway applies its rate limit,
+the AI gateway via the binding's `gateway` option; the gateway applies its rate limit,
 retries and, when `aiGatewayLogs` is on, request logging. Without the `AI` binding the stub
 provider answers with placeholder values, which the fail-closed adapter guard refuses on a
 persistent deployment. `AI_MODE=mock` (local dev, demos, tests) answers every `generateJson` from
@@ -64,8 +64,8 @@ There's no text to parse, so no schema to check and no off-menu answer. The prob
 model's, not a number it writes, so they can carry thresholds. Hostile content in the state can
 still sway an answer, but it can't make the model answer outside the options.
 
-`createWorkersAIDecisionModel` runs Cloudflare's Clef models over the same `AI` binding and AI
-Gateway settings as generation: `@cf/cloudflare/clef` for `flagship` and `balanced`, and
+`createWorkersAIDecisionModel` runs the platform's Clef models over the same `AI` binding and AI
+gateway settings as generation: `@cf/cloudflare/clef` for `flagship` and `balanced`, and
 `@cf/cloudflare/clef-flash` (much faster and cheaper) for `fast`. Clef bills input tokens only.
 Calls go through `decide()` (`ai-decide.ts`), with the same guarantees as `generateJson`:
 - `decideWithBudget` meters input tokens against the space's AI budget;
@@ -100,7 +100,7 @@ without asking. Gating nodes fail closed exactly as before: an
 answer the model couldn't give flags (moderation), takes the careful route (router) or goes to
 `unsure` (assess).
 
-Embeddings are a **separate port** (`EmbeddingsProvider`): Workers AI
+Embeddings are a **separate port** (`EmbeddingsProvider`): edge inference
 (`createWorkersAIEmbeddings`, `@cf/baai/bge-base-en-v1.5`, 768 dims by default), or the test-kit's
 deterministic `LocalEmbeddingsProvider` (`EMBEDDINGS_PROVIDER=local`) for development.
 
@@ -231,12 +231,12 @@ Read-only and two counts, so it is safe to poll from a monitor.
    the best-scoring chunk per entry).
 3. Returns `SearchHit[]` of `{ entryId, score, snippet }`.
 
-The `VectorStore` is Cloudflare Vectorize (`@contentworker/adapters/vector-vectorize`, bound via
-`VECTORIZE`; 768 dimensions, cosine, metadata-indexed on `spaceId` and `environmentId`). Vectorize
-indexes mutations asynchronously, so search-after-publish lags by a few seconds, and caps a query
+The `VectorStore` is the vector index (`@contentworker/adapters/vector-vectorize`, bound via
+`VECTORIZE`; 768 dimensions, cosine, metadata-indexed on `spaceId` and `environmentId`). The index
+applies mutations asynchronously, so search-after-publish lags by a few seconds, and caps a query
 at 50 matches (`MAX_TOP_K`, honored by the over-fetch). Without a `VECTORIZE` binding, or with
-`VECTOR_STORE=memory`, the Worker uses a per-isolate, non-durable in-memory vector store. The local
-stack sets `VECTOR_STORE=kv` instead: vectors live in `KV_CACHE`, which every Worker in the dev
+`VECTOR_STORE=memory`, the worker uses a per-isolate, non-durable in-memory vector store. The local
+stack sets `VECTOR_STORE=kv` instead: vectors live in `KV_CACHE`, which every worker in the dev
 session shares, so what the engine embeds the api can search (brute-force cosine; dev scale only).
 The fail-closed adapter guard refuses both on a persistent deployment unless `ALLOW_FAKE_ADAPTERS`
 includes `vectors`.
@@ -247,14 +247,14 @@ scores never need calibrating):
 
 - **Semantic**: `semanticSearch` above.
 - **Lexical**: the `SearchIndex` port, implemented by `SearchShardDO`
-  (`packages/platform/src/do/search-shard.ts`): FTS5 in Durable Objects, `SEARCH_SHARDS` (default
-  8) objects per space:environment, keyed `${spaceId}:${environmentId}:${n}`. An entry lives on
-  the shard its id hashes to; a query asks every shard for its best `topK` and merges. The
-  tokenizer folds accents (`unicode61 remove_diacritics 2`) with 2- and 3-character prefix
-  indexes; a `versions` table makes indexing idempotent and order-independent. BM25 is per shard,
-  which RRF tolerates. The events consumer keeps the shards fresh on publish and unpublish, and
-  reindex slices refresh them in bulk. Keeping FTS out of D1 keeps search writes off D1's single
-  writer (and D1 cannot export a database holding a virtual table). If a shard query fails, or no
+  (`packages/platform/src/do/search-shard.ts`): FTS5 in stateful edge objects, `SEARCH_SHARDS`
+  (default 8) objects per space:environment, keyed `${spaceId}:${environmentId}:${n}`. An entry
+  lives on the shard its id hashes to; a query asks every shard for its best `topK` and merges. The
+  tokenizer folds accents (`unicode61 remove_diacritics 2`) with 2- and 3-character prefix indexes;
+  a `versions` table makes indexing idempotent and order-independent. BM25 is per shard, which RRF
+  tolerates. The events consumer keeps the shards fresh on publish and unpublish, and reindex slices
+  refresh them in bulk. Keeping FTS out of the database keeps search writes off its single writer
+  (and a database holding a virtual table cannot be exported). If a shard query fails, or no
   `SEARCH` binding exists, the leg falls back to `EntryRepo.searchPublished`, a bounded
   term-prefiltered scan of the published read model. The in-memory test-kit store mirrors the
   semantics so hybrid search is testable.
@@ -265,19 +265,19 @@ selects one leg), the GraphQL `search` resolver, and the `content_search` MCP to
 
 ## Asset search
 
-Assets are searched apart from entries (`packages/application/src/asset-search.ts`), in two
-corpora (`AssetSearchCorpus`): the library, every asset as it is now, and the published assets,
-their published snapshots. Ingest writes one vector per asset and corpus into a Vectorize namespace
-of the corpus's own (`VectorStore.upsertAsset`, metadata `kind: 'asset'`, `spaceId`,
-`environmentId`, `assetId`) and one document into that corpus's shards of `SearchShardDO`
-(`space:env:assets:<n>`, `RagDeps.assetSearchIndex`; `space:env:pubassets:<n>`,
-`RagDeps.publishedAssetSearchIndex`), so `semanticSearch`, `relatedEntries` and RAG answers never
-return an asset or its text, and Delivery's candidates are published assets only. The indexed text
-is the file name, title, description, alt text, tag names and an excerpt of the text ingest
-extracted from the snapshot's own file version (1,500 characters embedded, 100,000 indexed). The
-published corpus is written on `asset.published` and by ingest of a published asset, and emptied
-for the asset on `asset.unpublished`. Embedding (documents and queries) happens only with
-`EMBEDDINGS_PROVIDER` set, decided once in `wireEdge` (`EdgeWired.assetSearch`).
+Assets are searched apart from entries (`packages/application/src/asset-search.ts`), in two corpora
+(`AssetSearchCorpus`): the library, every asset as it is now, and the published assets, their
+published snapshots. Ingest writes one vector per asset and corpus into a vector-index namespace of
+the corpus's own (`VectorStore.upsertAsset`, metadata `kind: 'asset'`, `spaceId`, `environmentId`,
+`assetId`) and one document into that corpus's shards of `SearchShardDO` (`space:env:assets:<n>`,
+`RagDeps.assetSearchIndex`; `space:env:pubassets:<n>`, `RagDeps.publishedAssetSearchIndex`), so
+`semanticSearch`, `relatedEntries` and RAG answers never return an asset or its text, and Delivery's
+candidates are published assets only. The indexed text is the file name, title, description, alt
+text, tag names and an excerpt of the text ingest extracted from the snapshot's own file version
+(1,500 characters embedded, 100,000 indexed). The published corpus is written on `asset.published`
+and by ingest of a published asset, and emptied for the asset on `asset.unpublished`. Embedding
+(documents and queries) happens only with `EMBEDDINGS_PROVIDER` set, decided once in `wireEdge`
+(`EdgeWired.assetSearch`).
 
 `searchAssets` (Management `GET …/assets/search`, scope `preview:read`) and
 `searchDeliveredAssets` (Delivery `GET …/assets?q=`) take `q` (1–256 characters), `limit`
@@ -298,24 +298,24 @@ existing vocabulary: ingest never creates a tag.
 
 ## MCP server
 
-The api Worker serves MCP at `/mcp`, with 198 tools and published agent skills. Transport, auth,
+The api worker serves MCP at `/mcp`, with 198 tools and published agent skills. Transport, auth,
 connecting a client, the tool catalog and skills are in [MCP server](./mcp.md). The assistant in the
 admin calls the same tools in-process (see [Coworker](#coworker-the-admins-assistant)).
 
 ## Coworker: the admin's assistant
 
 `AssistantAgent` (`packages/http/src/assistant/agent.ts`) is the chat panel in the admin, one
-Durable Object per person hosted by the engine (binding `ASSISTANT_AGENT`, reached at
-`/agents/assistant-agent/<person>` through the web Worker and the api). It is built on
+stateful edge object per person hosted by the engine (binding `ASSISTANT_AGENT`, reached at
+`/agents/assistant-agent/<person>` through the web worker and the api). It is built on
 `AIChatAgent`, so the conversation lives in the object's SQLite and a reply keeps streaming if the
 tab goes away. User-facing behaviour is in the
 [Coworker guide](https://docs.contentworker.app/guides/coworker/).
 
-- **Model.** `assistantModel` (`model.ts`) uses Workers AI's `flagship` tier (through AI Gateway
-  when `AI_GATEWAY_ID` is set), falls back to `fast`, and behind both sits a deterministic mock that
-  speaks the same tool protocol. The mock answers every turn when `AI_MODE=mock` or the `AI` binding
-  is absent, and takes over a turn when the models error or say nothing within 20 s. Gateway
-  requests carry `NO_LOG_PAYLOAD`, so the gateway keeps no prompt or answer.
+- **Model.** `assistantModel` (`model.ts`) uses edge inference's `flagship` tier (through the AI
+  gateway when `AI_GATEWAY_ID` is set), falls back to `fast`, and behind both sits a deterministic
+  mock that speaks the same tool protocol. The mock answers every turn when `AI_MODE=mock` or the
+  `AI` binding is absent, and takes over a turn when the models error or say nothing within 20 s.
+  Gateway requests carry `NO_LOG_PAYLOAD`, so the gateway keeps no prompt or answer.
 - **Tools are MCP tools, run in-process as the person** (`tools.ts`): each call is a JSON-RPC
   request to the handler `/mcp` serves, authenticated as the person's own principal and pinned to
   the page's space and environment, so the assistant can never do what an MCP client with their
@@ -328,7 +328,7 @@ tab goes away. User-facing behaviour is in the
   draft makes it a 409.
 - **Page edits skip the model.** `act` runs the exact tool call for what was pressed and joins the
   conversation as a tool call of its own (`direct_` ids); `resolve` answers its confirm card.
-- **Trust.** The object verifies the principal the web Worker signed for its path (the
+- **Trust.** The object verifies the principal the web worker signed for its path (the
   `ASSISTANT_PRINCIPAL_KEY`, see [Auth & RBAC](./auth-and-rbac.md)), re-checks the person (enabled,
   session live) on every frame, turn and `act`, and runs only tool calls it made itself (`model:`
   records) or `act` made (`direct:`). Tool results and page labels are wrapped with `wrapUntrusted`.
@@ -356,7 +356,7 @@ On-publish hooks (`AGENTS_ENRICH`, `AGENTS_MODERATE`) run `enrich` then `moderat
 the detached watcher that waits for a human decision (see
 [Human-in-the-loop reviews](#human-in-the-loop-reviews)); it is not recorded in the agent ledger.
 
-`AGENT_RUNTIME=cloudflare-workflows` (with the `AGENT_WF` Workflow binding) routes on-publish and
+`AGENT_RUNTIME=cloudflare-workflows` (with the `AGENT_WF` workflow binding) routes on-publish and
 scheduled agent runs through `CloudflareWorkflowsAgentRuntime` (`packages/platform/src/workflows.ts`),
 which starts instances of the durable `AgentWorkflow` (`apps/engine/src/workflows/agent-workflow.ts`). When
 `AGENTS_QUEUE` is bound, the events consumer forwards each `entry.published` to the
@@ -372,7 +372,7 @@ The crucial seam is `Activities` — the side-effecting operations (`loadEntry`,
 - **`InProcessAgentRuntime`** — directly in the calling isolate (dev, tests, and every
   synchronous on-demand action from the API or MCP, which need the result in the response). Not
   durable (no crash replay).
-- **Cloudflare Workflows** (production) — `AgentWorkflow` hosts `enrich`/`moderate`/`curate`/
+- **Durable workflows** (production) — `AgentWorkflow` hosts `enrich`/`moderate`/`curate`/
   `repurpose`, with each `Activities` call as a durable step. `CloudflareWorkflowsAgentRuntime`
   implements the same `AgentRuntime` interface — callers swap executors with no logic change.
 
@@ -458,7 +458,7 @@ use-case (validated, versioned) — **exactly once**, guarded by a CAS apply mar
 
 On durable runtimes the decision travels as a real signal: after a `needs_review` outcome
 the runtime arms a detached **review-watcher workflow** (instance id `review-<reviewId>`)
-that parks — for up to 7 days — until the decision arrives as a **Cloudflare Workflow event**
+that parks — for up to 7 days — until the decision arrives as a **durable workflow event**
 (`review-decision`), then applies/records durably. The
 decide use-case signals the watcher when one is armed and falls back to applying directly
 when it isn't (in-process runtime, watcher timed out, or signal delivery failed) — the CAS
@@ -493,7 +493,7 @@ Window semantics (`runDueAgentSchedules`, `packages/application/src/agent-schedu
   burst-replayed.
 
 Every scheduled run goes through the same `AgentRunner` as on-publish agents (in-process or
-Cloudflare Workflows) and is recorded in the agent ledger. `autoApply` is
+durable workflows) and is recorded in the agent ledger. `autoApply` is
 per-schedule: off routes proposals to human review.
 
 **Budget.** Scheduled runs are background spend. They count under a separate `agent:` counter
@@ -501,7 +501,8 @@ window on the per-space `CostGuardDO`, so batch spend can't exhaust the interact
 window enforces the `AI_AGENT_*` ceilings when set and the interactive `AI_*` ceilings otherwise.
 Durable `AgentWorkflow` runs are metered the same way. See [Configuration](./configuration.md).
 
-**Host.** The engine Worker runs due schedules on its 1-minute cron tick when `AGENTS_SCHEDULES=true`.
+**Host.** The engine worker runs due schedules on its 1-minute cron tick when
+`AGENTS_SCHEDULES=true`.
 
 **Surfaces.** CRUD on both, backed by the same use-cases: the Management API
 (`GET`/`POST …/agent-schedules`, `PATCH`/`DELETE …/agent-schedules/:id` — listing needs

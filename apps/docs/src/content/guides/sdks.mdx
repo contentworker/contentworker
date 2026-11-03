@@ -15,7 +15,7 @@ npm install @contentworker/sdk
 | `@contentworker/sdk`              | Delivery and Preview, in any JavaScript runtime. No dependencies      |
 | `@contentworker/sdk/rich-text`    | Render rich text to HTML, Markdown or plain text                      |
 | `@contentworker/sdk/webhooks`     | Verify a signed webhook delivery                                      |
-| `@contentworker/sdk/redirects`    | Apply the space's redirects in a front-door Worker                    |
+| `@contentworker/sdk/redirects`    | Apply the space's redirects in a front-door edge function             |
 | `@contentworker/sdk/react`        | React hooks and components, plus inline editing                       |
 | `@contentworker/sdk/vue`          | Vue 3 composables and components                                      |
 | `@contentworker/sdk/edge`         | A tiny single-locale Delivery client for edge functions               |
@@ -171,9 +171,9 @@ The management client changes an entry's SEO metadata with `cma.entries.setSeo(i
 
 `client.redirects()` returns the environment's enabled redirects and
 `client.resolveRedirect(path, { locale })` asks Delivery about one path (`null` when none matches).
-The subpath `@contentworker/sdk/redirects` applies them in a front-door Worker:
+The subpath `@contentworker/sdk/redirects` applies them in a front-door edge function:
 `createRedirectHandler`, `createRedirectMatcher` and `applyRedirects`. See
-[Redirects](/guides/redirects/#apply-redirects-in-a-worker). The management client has
+[Redirects](/guides/redirects/#apply-redirects-at-the-edge). The management client has
 `cma.redirects.{list, get, create, update, delete, import, resolve, analyze, collapseChains}`, and a
 content type draft takes `urlPattern`.
 

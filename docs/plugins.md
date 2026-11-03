@@ -125,9 +125,9 @@ A broken plugin must not make the CMS unwritable: failure means "did not run".
 
 ## The sandbox
 
-Plugins execute through `@contentworker/adapters/plugins-cf-loader`, backed by the Worker Loader
-(`PLUGIN_LOADER` binding): each plugin runs in its own
-dynamic Worker — a separate v8 isolate with no bindings and no ambient authority.
+Plugins execute through `@contentworker/adapters/plugins-cf-loader`, backed by the platform's
+worker loader (`PLUGIN_LOADER` binding): each plugin runs in its own dynamic edge worker — a
+separate v8 isolate with no bindings and no ambient authority.
 
 - `globalOutbound: null` severs the isolate from the network. `fetch()` inside it throws rather than
   escaping.
@@ -138,7 +138,7 @@ dynamic Worker — a separate v8 isolate with no bindings and no ambient authori
 - The plugin's compatibility date is pinned separately from the host's: a plugin should not change
   behaviour because the platform's date moved.
 - The host bounds how long it waits (default 2 s, so a plugin cannot hold an editor's save open);
-  workerd bounds CPU, memory and subrequests.
+  the runtime bounds CPU, memory and subrequests.
 - The adapter **re-derives** what the isolate receives from the invocation's effective grant. It
   does not trust the object the host passed in. For each method in the capability → method map,
   the plugin gets the host implementation only if the method's capability is granted _and_ the
@@ -153,9 +153,10 @@ manifest's `allowedHosts` before anything leaves. The sandbox adapter checks it 
 
 That is not the obvious design, because the obvious one does not work: filtering the isolate's own
 outbound needs `globalOutbound` to be a real `Fetcher` carrying a _per-plugin_ allowlist, and
-workerd offers no way to build one (a plain `{ fetch }` object, a dynamically loaded guard worker's
-entrypoint and a per-plugin parent entrypoint were all tried and refused). So network access arrives the way every other capability does: handed in as an RPC argument. Ambient
-`fetch` stays dead, which means there is nothing to bypass — a plugin cannot reach the network except
+the runtime offers no way to build one (a plain `{ fetch }` object, a dynamically loaded guard
+worker's entrypoint and a per-plugin parent entrypoint were all tried and refused). So network
+access arrives the way every other capability does: handed in as an RPC argument. Ambient `fetch`
+stays dead, which means there is nothing to bypass — a plugin cannot reach the network except
 through the method, and the method cannot reach a host nobody approved.
 
 **Reads only.** A POST to a third party is a side effect on someone else's system, which is a larger
@@ -253,10 +254,10 @@ A put is written when it is called, not with the write the hook is part of: a ke
 during `entry:beforePublish` stays even if a later plugin vetoes the publish. Store state that is
 harmless when the write it rode on never lands: a cache, a cursor, a counter that tolerates drift.
 
-The keys live in D1 (`plugin_kv`), next to everything else a plugin touches, because a plugin only
-ever runs on a write path, where the primary is already being written. They go with their
-environment when it is deleted, and with the plugin when it is uninstalled, so reinstalling the
-same id starts clean.
+The keys live in the database (`plugin_kv`), next to everything else a plugin touches, because a
+plugin only ever runs on a write path, where the primary is already being written. They go with
+their environment when it is deleted, and with the plugin when it is uninstalled, so reinstalling
+the same id starts clean.
 
 ## Settings
 

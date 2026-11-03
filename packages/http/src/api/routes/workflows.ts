@@ -94,12 +94,14 @@ function limitOf(value: string | undefined): number | undefined {
   return n;
 }
 
-/** Thrown by run actions when the deployment has no EDITORIAL_WF binding. */
+/** Thrown by run actions (HTTP and MCP) when the deployment has no EDITORIAL_WF binding. */
 export function requireWorkflowEngine(engine: WorkflowEngine | undefined): WorkflowEngine {
   if (engine) return engine;
+  // The caller sees a generic message; the operator log names the missing binding.
+  console.warn('workflows: no EDITORIAL_WF binding on this deployment; run actions refused');
   throw new NotConfiguredError(
     'workflows',
-    'Workflow runs need the EDITORIAL_WF Cloudflare Workflows binding on this deployment',
+    'Workflow runs need the durable workflow engine configured on this deployment',
   );
 }
 

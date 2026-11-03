@@ -1,7 +1,7 @@
 ---
 
 name: regen
-description: Rerun every code generator in contentworker (the docs embed, the MCP skills embed and the docs and diagram themes, which are gitignored build outputs, plus the committed web Worker's types) and show what drifted. Use before committing edits to docs/*.md, packages/http/skills/**, packages/design/src/tokens.ts or apps/web/wrangler.jsonc, or when a drift test (docs, http, design) fails in CI.
+description: Rerun every code generator in contentworker (the docs embed, the MCP skills embed and the docs and diagram themes, which are gitignored build outputs, plus the committed web worker's types) and show what drifted. Use before committing edits to docs/*.md, packages/http/skills/**, packages/design/src/tokens.ts or apps/web/wrangler.jsonc, or when a drift test (docs, http, design) fails in CI.
 ---
 
 # Regenerate generated files
@@ -9,7 +9,7 @@ description: Rerun every code generator in contentworker (the docs embed, the MC
 Regenerate every generated artifact and report drift. Never hand-edit the outputs (the
 `block-generated` hook denies it). The two embeds and the themes are gitignored: `pnpm install` and turbo's
 `generate` task (a dependency of `check-types`, `test`, `build` and `dev`) write them, so they
-never appear in a diff and never need committing. Only the Worker types are committed.
+never appear in a diff and never need committing. Only the worker types are committed.
 
 | Output                                                   | Source                                            | Command                                        | Drift test                                     |
 | -------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------- |

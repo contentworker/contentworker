@@ -345,6 +345,6 @@ describe('MCP workflow tools', () => {
   it('refuses run actions when no workflow engine is bound', async () => {
     const { call } = await connect(ADMIN, { ...deps, workflowEngine: undefined });
     const res = await call('workflow_run_start', { entryId, workflowId: 'w' });
-    expect(res.error).toMatch(/EDITORIAL_WF/);
+    expect(res.error).toMatch(/workflow engine/);
   });
 });

@@ -22,7 +22,6 @@ import {
 } from '@contentworker/application';
 import {
   describeDiff,
-  NotConfiguredError,
   principalActorId,
   SCOPES,
   ValidationError,
@@ -31,19 +30,14 @@ import {
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { requireWorkflowEngine } from '../../api/routes/workflows';
 import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerWorkflowTools(server: McpServer, t: ToolContext): void {
   const { deps, ctx, ai, principal, guard } = t;
   // --- editorial workflows (graphs, versions, runs, tasks) -----------------
   // Same use-cases and scope checks as the HTTP routes in api/routes/workflows.ts.
-  const workflowEngine = () => {
-    if (deps.workflowEngine) return deps.workflowEngine;
-    throw new NotConfiguredError(
-      'workflows',
-      'Workflow runs need the EDITORIAL_WF Cloudflare Workflows binding on this deployment',
-    );
-  };
+  const workflowEngine = () => requireWorkflowEngine(deps.workflowEngine);
 
   server.registerTool(
     'workflow_list',

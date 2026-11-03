@@ -5,38 +5,39 @@ The rules every change to contentworker keeps, for people and for every coding a
 
 ## What this is
 
-`contentworker` is an API-first, AI-agentic-first headless CMS that runs **entirely on
-Cloudflare**: D1 is the system of record, with Workers, Queues, KV, R2, Durable Objects,
-Workflows, Vectorize, Workers AI (through AI Gateway), Images, Stream, Email Sending and Worker
-Loader. Content is **structured, not serialized HTML**: rich text is a typed document tree
+`contentworker` is an API-first, AI-agentic-first headless CMS that runs **entirely at
+the edge**, on edge workers: an edge SQL database is the system of record, with queues, a
+key-value store, object storage, stateful edge objects, durable workflows, a vector index, edge
+inference (through an AI gateway), edge image transforms, video streaming, edge email and plugin
+isolates. Content is **structured, not serialized HTML**: rich text is a typed document tree
 (`RichTextDocument`), and every channel renders it for itself. It is a pnpm + Turborepo monorepo with a **ports & adapters (hexagonal)** core, deployed
 as one isolated stack per customer (`deployments/*.jsonc`, rendered by `scripts/fleet.ts`); spaces
-and environments live inside a deployment's D1. Shipped and planned work is in `ROADMAP.md`.
+and environments live inside a deployment's database. Shipped and planned work is in `ROADMAP.md`.
 
-## Workers (split by traffic profile)
+## Edge workers (split by traffic profile)
 
-| App             | Role                                                                                      | Notes                                                                                                                                                                                                 |
-| --------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`      | Admin UI (React Router 8 SSR) + human auth (passwords, passkeys, TOTP, OIDC, SCIM, setup) | Fronts `apps/api` over the `API` service binding, signing the signed-in person into `x-cw-principal`; sends bearer `/delivery/*` calls to `apps/delivery` over `DELIVERY`                             |
-| `apps/api`      | Management + Preview REST, MCP, OAuth, media, live                                        | HTTP only. Smart Placement (near the D1 primary)                                                                                                                                                      |
-| `apps/delivery` | Public Content Delivery API                                                               | Uncached gateway (auth on every request, KV-cached principal) → cached `Delivery` entrypoint (Workers Caching, keyed by visibility profile). Reads D1 replicas. Drains the purge queue                |
-| `apps/media`    | Published asset files at `media.<domain>`                                                 | Uncached gateway (canonical URL, format from `Accept`, signed draft reads) → cached `Media` entrypoint (Workers Caching, immutable). KV gate written only by the engine. Drains the media purge queue |
-| `apps/engine`   | Queue consumers, cron, every Durable Object and Workflow                                  | No route. api/delivery bind its classes by `script_name`                                                                                                                                              |
-| `apps/docs`     | Public docs (Astro Starlight, static assets)                                              |                                                                                                                                                                                                       |
+| App             | Role                                                                                      | Notes                                                                                                                                                                                                       |
+| --------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`      | Admin UI (React Router 8 SSR) + human auth (passwords, passkeys, TOTP, OIDC, SCIM, setup) | Fronts `apps/api` over the `API` service binding, signing the signed-in person into `x-cw-principal`; sends bearer `/delivery/*` calls to `apps/delivery` over `DELIVERY`                                   |
+| `apps/api`      | Management + Preview REST, MCP, OAuth, media, live                                        | HTTP only. Placed near the primary database                                                                                                                                                                 |
+| `apps/delivery` | Public Content Delivery API                                                               | Uncached gateway (auth on every request, principal cached in the key-value store) → cached `Delivery` entrypoint (edge cache, keyed by visibility profile). Reads database replicas. Drains the purge queue |
+| `apps/media`    | Published asset files at `media.<domain>`                                                 | Uncached gateway (canonical URL, format from `Accept`, signed draft reads) → cached `Media` entrypoint (edge cache, immutable). Key-value gate written only by the engine. Drains the media purge queue     |
+| `apps/engine`   | Queue consumers, cron, every stateful edge object and durable workflow                    | No route. api/delivery bind its classes by `script_name`                                                                                                                                                    |
+| `apps/docs`     | Public docs (Astro Starlight, static assets)                                              |                                                                                                                                                                                                             |
 
 Apps are thin composition entries. Shared code lives in packages, never in another app:
-`@contentworker/platform` (env, config, `wireEdge`, ids, metrics, queue messages, DO classes and
-clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, auth, OpenAPI, MCP),
-`@contentworker/db` (D1 schema, migrations, the D1 `ContentStore`), `@contentworker/adapters`
-(Cloudflare implementations of the ports, one subpath each), and the pure core:
-`domain` → `ports` → `application`.
+`@contentworker/platform` (env, config, `wireEdge`, ids, metrics, queue messages, stateful-object
+classes and clients, durable-workflow clients), `@contentworker/http` (the Hono surface: routes,
+auth, OpenAPI, MCP), `@contentworker/db` (SQL schema, migrations, the SQL `ContentStore`),
+`@contentworker/adapters` (edge-platform implementations of the ports, one subpath each), and the
+pure core: `domain` → `ports` → `application`.
 
 ## Rules
 
-- **Branch in a worktree; merging is releasing.** Never push `main`; open a PR. CI migrates D1
-  and deploys every Worker ring by ring. Nobody deploys from an agent session (`wrangler deploy`
-  without `--dry-run`, `versions deploy`, `rollback`, `pnpm … deploy`); `wrangler deploy
-  --dry-run` checks a bundle.
+- **Branch in a worktree; merging is releasing.** Never push `main`; open a PR. CI migrates the
+  database and deploys every edge worker ring by ring. Nobody deploys from an agent session
+  (`wrangler deploy` without `--dry-run`, `versions deploy`, `rollback`, `pnpm … deploy`); `wrangler
+  deploy --dry-run` checks a bundle.
 - **Never migrate a remote database by hand.** `wrangler d1 migrations apply DB --local` only.
 - **Migrations are hand-written SQL, expand-only, and never edited once applied**
   (`packages/db/migrations/NNNN_*.sql`, mirrored in `packages/db/src/schema.ts`). Add a column
@@ -44,16 +45,17 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
 - **The dependency rule.** `domain` depends on nothing; `ports` holds interfaces; `application`
   orchestrates domain + ports; only `@contentworker/platform`'s `wire.ts` and the app entries bind
   adapters to ports. No SQL, ORM or driver type crosses a port.
-- **`withTransaction` is a unit of work, not an interactive transaction** (D1 commits a batch).
-  Read everything first, then write; a read inside the unit does not see its own writes. A
+- **`withTransaction` is a unit of work, not an interactive transaction** (the database commits a
+  batch). Read everything first, then write; a read inside the unit does not see its own writes. A
   compare-and-set inside a unit reports its outcome only at commit, as `TransactionConflictError`;
   callers retry or treat the lost race as a no-op. The outbox row always rides in the same unit.
-- **D1 limits are design inputs:** at most 100 bound parameters per statement (use `chunked` /
+- **Database limits are design inputs:** at most 100 bound parameters per statement (use `chunked` /
   `selectChunked` / a JSON parameter with `json_each`), one writer per database (no per-request
-  writes on read paths: e.g. `lastUsedAt` is throttled), 10 GB per database (append-heavy data
-  goes to R2, derived indexes to Durable Objects). Statements per request are snapshotted in
-  `packages/db/test/query-counts.json`: Delivery read counts may only go down, and a PR that
-  raises one states why (`pnpm --filter @contentworker/db test:query-counts:update` rewrites it).
+  writes on read paths: e.g. `lastUsedAt` is throttled), 10 GB per database (append-heavy data goes
+  to object storage, derived indexes to stateful edge objects). Statements per request are
+  snapshotted in `packages/db/test/query-counts.json`: Delivery read counts may only go down, and a
+  PR that raises one states why (`pnpm --filter @contentworker/db test:query-counts:update` rewrites
+  it).
 - **Structured content, not serialized HTML.** Content is stored, validated, versioned and
   delivered as typed fields and `RichTextDocument` trees (`packages/domain/src/rich-text`), never
   as an HTML (or Markdown) string. HTML is converted at the edge on the way in
@@ -79,12 +81,12 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
   (`packages/http/src/mcp/skills.generated.ts`, from `packages/http/skills/**`). All are
   gitignored: `pnpm install` writes them, and turbo's `generate` task rewrites them before every
   `check-types`, `test`, `build` and `dev` (`pnpm generate` by hand).
-- **Durable Object migration tags only ever append** (`apps/engine/wrangler.jsonc` and
+- **Stateful-object migration tags only ever append** (`apps/engine/wrangler.jsonc` and
   `scripts/do-migrations.test.ts`, in the same change). Never `deleted_classes` without a plan
   for the data.
 - **Trust boundaries:** the api believes `x-cw-principal` only when signed with `PRINCIPAL_KEY`,
   bound to the request method and path and under 60 s old; the delivery `Delivery` entrypoint trusts its
-  principal header only because nothing outside the Worker can reach it. Never add a trusted
+  principal header only because nothing outside the worker can reach it. Never add a trusted
   header to a publicly routed handler.
 - Never use a trailing "z" in endpoint names (`/health`, `/ready`, not `/healthz`).
 - Never name a competing CMS in code, comments, docs or plans; say "the surveyed CMS".
@@ -96,8 +98,8 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
 ```sh
 pnpm install
 pnpm check-types && pnpm test && pnpm lint      # what CI's verify job runs (turbo, cached)
-pnpm --filter @contentworker/db test            # the D1 store, in workerd against Miniflare D1
-pnpm --filter @contentworker/engine test        # Durable Objects + Workflows, in workerd
+pnpm --filter @contentworker/db test            # the SQL store, against a local database
+pnpm --filter @contentworker/engine test        # stateful objects + durable workflows, locally
 pnpm --filter @contentworker/http test          # HTTP API + MCP against in-memory fakes (node)
 pnpm --filter @contentworker/application test   # use-cases against test-kit fakes
 node --test scripts/*.test.ts                   # fleet + DO-migration golden tests
@@ -117,10 +119,11 @@ pnpm docs:build
 - Biome formats: single quotes, semicolons, trailing commas, 2-space indent, width 100.
 - New use-case: take `AppContext`, thread `Scope`, add a test in `packages/application/test/`
   with `@contentworker/test-kit` fakes. New store behavior: a contract test in
-  `packages/db/test/` that runs against D1.
-- Code runs on workerd (`nodejs_compat`): no filesystem, no long-lived sockets, no Node servers.
-- AI callers pick a `ModelTier` (`flagship` | `balanced` | `fast`); the Workers AI adapter maps
-  tier → model and routes through AI Gateway when `AI_GATEWAY_ID` is set.
+  `packages/db/test/` that runs against the local database.
+- Code runs on the edge-worker runtime (`nodejs_compat`): no filesystem, no long-lived sockets, no
+  Node servers.
+- AI callers pick a `ModelTier` (`flagship` | `balanced` | `fast`); the edge inference adapter maps
+  tier → model and routes through the AI gateway when `AI_GATEWAY_ID` is set.
 
 ## Design context
 

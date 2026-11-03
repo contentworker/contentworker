@@ -9,12 +9,12 @@ describe the code when they were written, and the code wins.
 **Rule.** `packages/domain` imports nothing from the workspace. `packages/ports` holds interfaces
 in domain types. `packages/application` imports domain + ports. `packages/test-kit` and
 `packages/agent-runtime` follow the application's restrictions. Adapters are bound to ports only
-in `packages/platform/src/wire.ts` and the app entries. No SQL, Drizzle, D1 or driver type crosses
-a port. Public SDKs (`packages/sdk/*`) import only `@contentworker/sdk-*`.
+in `packages/platform/src/wire.ts` and the app entries. No SQL, Drizzle, database binding or
+driver type crosses a port. Public SDKs (`packages/sdk/*`) import only `@contentworker/sdk-*`.
 
-**Why.** It is what lets every use-case run against the in-memory test-kit store in Node and the D1
-store in workerd, and what keeps the core testable without bindings. One adapter import in an
-inner package drags a Cloudflare binding type into every runtime.
+**Why.** It is what lets every use-case run against the in-memory test-kit store in Node and the
+SQL store in the local runtime, and what keeps the core testable without bindings. One adapter
+import in an inner package drags a platform binding type into every runtime.
 
 **Check.**
 - `grep -rn "from '@contentworker/" packages/domain/src`
@@ -61,10 +61,10 @@ see it.
 ## The unit of work
 
 **Rule.** `withTransaction` (`packages/ports/src/content-store.ts`) is a unit of work, not an
-interactive transaction: D1 commits a batch. Read everything first, then write; a read inside the
-unit does not see its own writes. A compare-and-set inside the unit reports its outcome only at
-commit, as `TransactionConflictError`; callers retry or treat the lost race as a no-op. A write that
-emits a domain event appends its outbox row in the same unit.
+interactive transaction: the database commits a batch. Read everything first, then write; a read
+inside the unit does not see its own writes. A compare-and-set inside the unit reports its outcome
+only at commit, as `TransactionConflictError`; callers retry or treat the lost race as a no-op. A
+write that emits a domain event appends its outbox row in the same unit.
 
 **Why.** Code written as if it were an interactive transaction reads stale values mid-unit and
 decides wrong. The event exists if and only if the commit did.
@@ -72,15 +72,15 @@ decides wrong. The event exists if and only if the commit did.
 **Check.** In the diff, no read after a write inside one `withTransaction` callback whose result
 depends on that write; every caller of a conditional write handles `TransactionConflictError`.
 The test-kit store (`packages/test-kit/src/in-memory-store.ts`) must keep the same semantics, and a
-contract test in `packages/db/test/` proves the D1 store does.
+contract test in `packages/db/test/` proves the SQL store does.
 
-## D1 limits
+## Database limits
 
 **Rule.** At most 100 bound parameters per statement (`chunked` / `selectChunked` in
 `packages/db/src/exec.ts`, or one JSON parameter with `json_each`); one writer per database, so no
 per-request writes on read paths (`lastUsedAt` refreshes are throttled, `packages/application/src/auth.ts`);
-10 GB per database (append-heavy data goes to R2, derived indexes to Durable Objects such as
-`SearchShardDO`).
+10 GB per database (append-heavy data goes to object storage, derived indexes to stateful edge
+objects such as `SearchShardDO`).
 
 **Why.** A list query that binds one parameter per id works in a test with five ids and fails in
 production with 200. Writes on the delivery path serialize behind the single writer.
@@ -101,37 +101,37 @@ fails the unit and asserts no event, and one that delivers an event twice.
 
 ## Workflows and agents
 
-**Rule.** Cloudflare Workflows (`apps/engine/src/workflows/`) do effects, clock reads and model
+**Rule.** Durable workflows (`apps/engine/src/workflows/`) do effects, clock reads and model
 calls only inside `step.do`, and step names never change once deployed. `packages/agent-runtime`
 workflow functions do every side effect through the `Activities` interface.
 
 **Why.** A durable engine replays the workflow function: anything outside a step runs again, and a
 renamed step misses its cached result for every running instance.
 
-## D1 migrations
+## Database migrations
 
 **Rule.** `packages/db/migrations/NNNN_*.sql`, hand-written SQL, mirrored column for column in
 `packages/db/src/schema.ts` (or `auth-schema.ts`). Expand-only: add a column or table now; drop or
 rename only in a later change once no deployed code reads it. A migration on `origin/main` has been
 applied by CI to every deployment and is never edited. Remote databases are migrated only by CI
-(`deploy.yml`: bookmark, `wrangler d1 migrations apply DB --remote`, then the Workers).
+(`deploy.yml`: bookmark, `wrangler d1 migrations apply DB --remote`, then the workers).
 
-**Why.** CI migrates before it deploys and never rolls D1 back, so the old code runs on the new
-schema during every deploy and after any Worker rollback.
+**Why.** CI migrates before it deploys and never rolls the database back, so the old code runs on
+the new schema during every deploy and after any worker rollback.
 
 **Check.** `git diff --name-status origin/main...HEAD -- packages/db/migrations` shows only `A`
-lines; `pnpm --filter @contentworker/db test` applies every migration to a fresh D1.
+lines; `pnpm --filter @contentworker/db test` applies every migration to a fresh local database.
 
-## Durable Object migrations
+## Stateful-object migrations
 
-**Rule.** In `apps/engine/wrangler.jsonc` (the owner of every DO class), `migrations` tags only
-ever append; no `deleted_classes`, `renamed_classes` or `transferred_classes` without a plan for
-the class's data. A new class appends its tag in the config and in `APPLIED` in
+**Rule.** In `apps/engine/wrangler.jsonc` (the owner of every stateful-object class), `migrations`
+tags only ever append; no `deleted_classes`, `renamed_classes` or `transferred_classes` without a
+plan for the class's data. A new class appends its tag in the config and in `APPLIED` in
 `scripts/do-migrations.test.ts`, in the same change; api and delivery bind it by `script_name`.
 
-**Why.** Cloudflare applies a tag once and remembers it; editing it only desyncs the config, and a
-delete destroys every object of the class. The engine also can't roll back past a DO migration
-(`deploy.yml` stops the rollback there).
+**Why.** The platform applies a tag once and remembers it; editing it only desyncs the config, and
+a delete destroys every object of the class. The engine also can't roll back past a stateful-object
+migration (`deploy.yml` stops the rollback there).
 
 **Check.** `pnpm test:fleet` (runs `node --test scripts/*.test.ts`, including do-migrations).
 
@@ -152,7 +152,7 @@ and `apps/docs/src/generated/openapi.json` (written on every docs build).
 request path and under 60 s old (`packages/security/src/principal.ts`, checked in
 `packages/http/src/api/auth.ts`; signed by `apps/web/app/lib/gateway.server.ts`). The delivery
 `Delivery` entrypoint (`apps/delivery/src/delivery.ts`) trusts `x-cw-delivery-principal` only
-because nothing outside the Worker can reach it. Never add a trusted header to a publicly routed
+because nothing outside the worker can reach it. Never add a trusted header to a publicly routed
 handler. Details: the `security-model` skill.
 
 ## Environment parity

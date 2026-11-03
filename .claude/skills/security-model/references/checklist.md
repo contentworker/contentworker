@@ -19,7 +19,7 @@ candidate finding that still needs a concrete attacker before it is reported.
 ## Delivery
 
 - Is the `Delivery` entrypoint still reachable only from the gateway in `apps/delivery/src/index.ts`
-  (no route, no `services` binding to it from another Worker)?
+  (no route, no `services` binding to it from another worker)?
 - Does the gateway authenticate **every** request before the cache, and is the cached principal
   invalidated when a key is revoked or a role changes (`invalidateCachedPrincipals`)?
 - Does the canonical cache URL include everything that changes the response (visibility profile,
@@ -61,7 +61,7 @@ candidate finding that still needs a concrete attacker before it is reported.
   again before it is fetched? Can a space admin point a webhook or function at the deployment's own
   hosts and have it act with platform authority?
 - Are outbound webhooks signed, and is the signing secret sealed at rest?
-- Inbound webhooks (Stream): signature verified on the raw body before parsing
+- Inbound webhooks (video streaming service): signature verified on the raw body before parsing
   (`verifyStreamWebhook`), with a replay tolerance.
 
 ## Plugins and functions
@@ -77,7 +77,7 @@ candidate finding that still needs a concrete attacker before it is reported.
   through a `DATA_KEY_PREVIOUS` rotation (`secrets-at-rest.test.ts`)?
 - Does anything log, return in a response, or put in an error message a secret, a token, a session
   id or a password hash? Does it pass through `packages/redaction` first?
-- New wrangler `vars`: no secrets there (secrets come from the GitHub environment via
+- New `vars` in `wrangler.jsonc`: no secrets there (secrets come from the GitHub environment via
   `scripts/fleet.ts secrets`).
 
 ## Models and untrusted input
