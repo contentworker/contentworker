@@ -129,3 +129,134 @@ Everything below is built and tested on v2.
   Open before step 2: package operations in MCP without one tool per operation per install, a
   deployment-level install for per-company credentials, and the 2 s sync cap against provider
   token exchanges.
+
+### Parity milestones
+
+Gaps in what a headless CMS is expected to do, checked against this codebase and grouped into
+milestones that each ship on their own. Every item is a use-case with an HTTP route and an MCP
+tool. Not taken, by design: hierarchical tenancy, external AI providers, an SMTP mailer, an
+in-browser model, page-per-language translation, and rich text or styles stored as markup.
+
+#### M1. Quick wins
+
+- [ ] **Field guidance.** `help`, `placeholder` and `description` on every field; `in` options as
+  `{value, label}`; a custom `message` on each validation rule. Agents read them from the model.
+- [ ] **Self-service password reset.** An emailed single-use code (hashed, expiring, attempt-capped,
+  uniform responses), throttled like sign-in. Replaces "ask an admin to reset it".
+- [ ] **Webhook resend and test.** Re-enqueue a stored delivery; send a `webhook.test` ping.
+- [ ] **Validate without saving.** `POST /entries/validate` and its tool, for agents and editors.
+- [ ] **API keys on MCP.** Key tools, or a written reason they stay REST-only.
+- [ ] **Bulk trash, restore and purge, and trash retention.** New bulk job actions; a cron sweep
+  through `purgeEntry` after a per-space retention window.
+- [ ] **Finer content actions.** `delete` and `unpublish` alongside `read`, `write` and `publish`,
+  implied by today's grants so no stored role changes.
+
+#### M2. Model and query parity
+
+- [ ] **Filter by referenced entry.** `fields.<link>[ref]=<id>` and `links_to_entry=<id>`, pushed
+  down as a join on the reference edges with one bound parameter.
+- [ ] **Conditional field rules.** `rules` on a field (hide or disable when a sibling matches),
+  evaluated in the domain so a hidden field skips `required` on every surface.
+- [ ] **Singleton types.** At most one entry; Delivery `GET /singletons/:apiId`; the admin opens the
+  editor directly.
+- [ ] **Delete and clone a content type.** Delete refuses while entries exist or runs as a resumable
+  trash-then-purge job; clone copies the definition under a new `apiId`.
+- [ ] **Authorship.** `created_by`, `modified_by` and `first_published_at` on entries and versions
+  (expand-only), served as `sys` fields, filterable and sortable.
+- [ ] **Richer queries.** `startsWith` and `between`, OR and AND groups in a `where` JSON parameter,
+  component subfield paths through `json_each`, distinct field values.
+- [ ] **Saved views.** Named filters, sort and columns per content type, personal or shared.
+- [ ] **Model ergonomics.** Groups, description and icon on content types; editor-only tabs and
+  field groups; date, time and datetime formats with `dateRange`; lists of any scalar; asset MIME
+  rules on asset links; named pattern presets.
+- [ ] **Delivery locales.** A per-locale "delivered" flag (editable but unpublished locales, with
+  `hreflang` following it) and text direction.
+
+#### M3. Collaboration
+
+- [ ] **Entry locks.** A stateful edge object per entry: a heartbeat lease, request-unlock, admin
+  takeover and a kick pushed over WebSockets; saves check the lock without a database write; agents
+  take locks too. Appends a migration tag.
+- [ ] **Notifications.** A per-person inbox written from the outbox dispatcher (never on a read
+  path), an unread badge over the live stream, read and archive, a retention prune.
+- [ ] **Anchored comments.** Comments pinned to a field path or rich-text block, with @mentions
+  (feeding notifications), a due date and resolve.
+- [ ] **Audit log, finished.** Filters by actor, action, target and date with keyset paging; an
+  activity tab per entry; a structured `detail` of changed field paths (never bodies); rows past a
+  per-deployment window archived to object storage as NDJSON and pruned, so the log stops growing in
+  the database.
+
+#### M4. Access
+
+- [ ] **Teams.** People in many teams, team roles per space, grants unioned; SCIM groups map to
+  teams instead of collapsing to one role.
+- [ ] **Own entries only.** An `own` flag on a content-type grant, pushed down as a filter on
+  `created_by` (needs M2 authorship).
+- [ ] **Per-type model management.** A `manage` action on content-type grants instead of the
+  space-wide `content:manage`.
+- [ ] **View as a role.** A space admin previews the admin as another role; the web worker signs the
+  assumed role into `x-cw-principal`, and access can only narrow. Security review first.
+- [ ] **Config as code, wider.** `contentworker model apply` also covers roles, webhooks and menus
+  (never key secrets).
+
+#### M5. AI context
+
+- [ ] **AI projects.** Reusable instructions, reader and writer personas, and reference assets (their
+  extracted text), with a tool to read a reference file; selectable in generation, canvas and agents.
+- [ ] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
+  built-in prompt.
+- [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
+  diff.
+
+#### M6. Visual editing
+
+Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text stays a
+`RichTextDocument`; styling is design tokens and enum props, never raw CSS.
+
+- [ ] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
+  frontend and pushes unsaved form state as patches; clicks select fields back.
+- [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
+  by codegen.
+- [ ] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
+  agents and the editor alike.
+- [ ] **Layout-aware generation.** Generation that knows a field's block catalog and resolves images
+  through asset search.
+- [ ] **Layout model.** Slots, deeper nesting than three levels, `allowedParents` and
+  `allowedChildren`, and per-breakpoint overrides of token props.
+- [ ] **Blocks from code.** `contentworker blocks push` maps component manifests to Blocks variants.
+- [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
+- [ ] **Frontend SDK extras.** `client.live()` and `useLiveEntry`, a Next.js draft-mode helper, a
+  preview URL template per content type, and a "connect a frontend" screen that mints a delivery key
+  and prints its config.
+
+#### M7. Organization and assets
+
+- [ ] **Entry folders.** Generalize asset folders with a `kind` and give entries a folder.
+- [ ] **Folder permissions.** Owner, editor, viewer and no-access per team or person, inherited down
+  the tree with no-access winning, enforced in use-cases; denied prefixes passed as one JSON
+  parameter.
+- [ ] **Capture metadata.** EXIF and IPTC read in the ingest workflow; credit and copyright pre-fill
+  usage rights; camera and capture date become facets.
+- [ ] **Typed asset fields.** A per-space schema for asset custom fields, validated, with bulk edit.
+- [ ] **Private published assets.** An `access: private` media gate that requires a short-lived
+  signed URL issued to an authorized key.
+- [ ] **Upload scanning.** A scan step in ingest and a `quarantined` status that blocks publish and
+  the media gate.
+
+#### M8. Platform
+
+- [ ] **Space lifecycle.** Rename, disable, and delete as a purge workflow.
+- [ ] **One jobs view.** `jobs_list` and `job_cancel` across bulk, import, snapshot and zip jobs.
+- [ ] **Workflow bypass.** An audited emergency publish for space admins.
+- [ ] **External references.** An `ExternalRef` field (`provider`, `id`, `snapshot`) whose provider
+  is a sandboxed plugin with `search` and `get`; resolved by Delivery, pickable by agents. Rides on
+  the extension runtime.
+- [ ] **More extension points.** `beforeUnpublish`, `asset:beforeDelete` and
+  `contentType:beforeSave` hooks; `page` and `dashboard-widget` admin targets with a per-person
+  dashboard layout.
+- [ ] **Developer setup.** `contentworker mcp setup --client <name>`; developer skills for building a
+  plugin, integrating a frontend and configuring SSO; a debug header on the api for principals with a
+  debug grant.
+- [ ] **Admin branding.** Title and logo per deployment; accents stay within the design tokens.
+- [ ] **Experiments.** A/B variants of an entry, bucketed at the edge by cookie without varying the
+  cache key, with a workflow that graduates the winner.
