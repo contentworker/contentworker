@@ -4,6 +4,8 @@ import {
   type AssetStatus,
   assetKind,
   type DeliveredAsset,
+  isLocaleDelivered,
+  type LocaleConfig,
   type LocalizedValue,
   type Scope,
   ValidationError,
@@ -16,7 +18,11 @@ import type {
   SearchIndex,
   VectorStore,
 } from '@contentworker/ports';
-import { assetProjectionContext, projectPublishedAsset } from './asset-delivery';
+import {
+  type AssetProjectionContext,
+  assetProjectionContext,
+  projectPublishedAsset,
+} from './asset-delivery';
 import { assetTextKey } from './assets';
 import type { AppContext } from './context';
 import type { RagDeps } from './rag';
@@ -328,9 +334,70 @@ const scanTexts = (a: {
 ];
 
 /**
+ * The space's locale config when it turns a locale off for Delivery, else undefined (nothing to
+ * hide): from a locale-flattened read's config, or an all-locale read's.
+ */
+function hidingConfig(pc: AssetProjectionContext): LocaleConfig | undefined {
+  const config = pc.locale?.config ?? pc.delivered;
+  if (!config?.localeSettings) return undefined;
+  return Object.keys(config.localeSettings).some((l) => !isLocaleDelivered(config, l))
+    ? config
+    : undefined;
+}
+
+type AssetText = Parameters<typeof scanTexts>[0];
+
+/** The localized text of an asset split into what Delivery serves and what it hides. */
+function splitByDelivery(a: AssetText, config: LocaleConfig) {
+  const pick = (v: LocalizedValue | undefined, delivered: boolean): LocalizedValue =>
+    Object.fromEntries(
+      Object.entries(v ?? {}).filter(([l]) => isLocaleDelivered(config, l) === delivered),
+    );
+  const side = (delivered: boolean): AssetText => ({
+    file: a.file,
+    title: pick(a.title, delivered),
+    description: pick(a.description, delivered),
+    metadata: { ...a.metadata, altText: pick(a.metadata.altText, delivered) },
+  });
+  const hidden = side(false);
+  return {
+    delivered: scanTexts(side(true)),
+    hidden: [
+      ...localized(hidden.title),
+      ...localized(hidden.description),
+      ...localized(hidden.metadata.altText),
+    ],
+  };
+}
+
+/**
+ * Whether a Delivery search candidate may stand when the space hides a locale. The indexes hold
+ * every locale's title, caption and alt text (one lexical document, one embedding per asset), so
+ * a hit may have come from hidden text alone. A term found only in hidden text drops it; every
+ * term in delivered text keeps it. Otherwise the lexical index matched on text no locale owns (the
+ * file's extracted text, tag names) and the hit stands, while a hit from the vector leg alone
+ * cannot say which locale drew it, and goes.
+ */
+function deliveredCandidate(
+  a: AssetText,
+  config: LocaleConfig,
+  queryTerms: readonly string[],
+  lexical: boolean,
+): boolean {
+  const { delivered, hidden } = splitByDelivery(a, config);
+  if (hidden.length === 0) return true;
+  const shown = delivered.join('\n').toLowerCase();
+  const kept = hidden.join('\n').toLowerCase();
+  if (queryTerms.some((t) => !shown.includes(t) && kept.includes(t))) return false;
+  if (queryTerms.every((t) => shown.includes(t))) return true;
+  return lexical;
+}
+
+/**
  * The fused candidate ids of one corpus, best first. The lexical leg is that corpus's asset
  * shards (falling back to `scan` when unbound or unreachable, as entry search falls back to its
- * store scan); the semantic leg embeds the query and asks that corpus's asset vectors.
+ * store scan); the semantic leg embeds the query and asks that corpus's asset vectors. `lexicalOut`,
+ * when given, collects the ids the lexical leg found.
  */
 async function candidates(
   deps: AssetSearchDeps,
@@ -338,6 +405,7 @@ async function candidates(
   q: string,
   corpus: AssetSearchCorpus,
   scan: () => Promise<string[]>,
+  lexicalOut?: Set<string>,
 ): Promise<string[]> {
   const index = corpus === 'library' ? deps.index : deps.publishedIndex;
   const lexical = async (): Promise<string[]> => {
@@ -365,6 +433,7 @@ async function candidates(
     return hits.map((h) => h.assetId);
   };
   const [lex, sem] = await Promise.all([lexical(), semantic()]);
+  for (const id of lex) lexicalOut?.add(id);
   const fused = new Map<string, number>();
   const add = (ids: readonly string[]) =>
     ids.forEach((id, rank) => {
@@ -463,24 +532,45 @@ export async function searchDeliveredAssets(
   const { q, limit } = checkQuery(query);
   const filters = query.filters ?? {};
   const queryTerms = terms(q);
-  const ids = await candidates(deps, scope, q, 'published', async () => {
-    const page = await ctx.store.assets.listPublished(scope, { limit: ASSET_SCAN_LIMIT });
-    return page.items
-      .map((p) => ({ id: p.assetId, score: matches(scanTexts(p), queryTerms) }))
-      .filter((h) => h.score > 0)
-      .sort((x, y) => y.score - x.score)
-      .map((h) => h.id);
-  });
-  const [published, rows, pc] = await Promise.all([
+  // The space's locale settings decide what the candidates may match on, so they're read
+  // alongside the legs rather than after them.
+  const projection = assetProjectionContext(ctx, scope, opts);
+  const lexical = new Set<string>();
+  const [ids, pc] = await Promise.all([
+    candidates(
+      deps,
+      scope,
+      q,
+      'published',
+      async () => {
+        const [page, context] = await Promise.all([
+          ctx.store.assets.listPublished(scope, { limit: ASSET_SCAN_LIMIT }),
+          projection,
+        ]);
+        const config = hidingConfig(context);
+        const text = (p: PublishedAsset) =>
+          config ? splitByDelivery(p, config).delivered : scanTexts(p);
+        return page.items
+          .map((p) => ({ id: p.assetId, score: matches(text(p), queryTerms) }))
+          .filter((h) => h.score > 0)
+          .sort((x, y) => y.score - x.score)
+          .map((h) => h.id);
+      },
+      lexical,
+    ),
+    projection,
+  ]);
+  const [published, rows] = await Promise.all([
     ctx.store.assets.getPublishedMany(scope, ids),
     ctx.store.assets.getMany(scope, ids),
-    assetProjectionContext(ctx, scope, opts),
   ]);
   const snapshot = new Map(published.map((p) => [p.assetId, p]));
   const folderOf = new Map(rows.map((a) => [a.id, a.folderId ?? null]));
+  const hiding = hidingConfig(pc);
   const hits = ids
     .map((id) => snapshot.get(id))
     .filter((p): p is PublishedAsset => p !== undefined)
+    .filter((p) => !hiding || deliveredCandidate(p, hiding, queryTerms, lexical.has(p.assetId)))
     .map((p) => ({
       item: p,
       f: {

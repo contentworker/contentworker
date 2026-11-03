@@ -567,11 +567,14 @@ each fallback is re-pointed past them (`fr-CA → fr → en` with `fr` off is `f
 render, sitemap alternate, menu or label reaches their values; `withoutUndeliveredLocales` drops
 them from all-locale maps (entry fields, taxonomy labels, and asset title, description and alt
 text, alone or embedded by `include`). The same holds on every other Delivery output: GraphQL's
-`localize` answers `null` for an undelivered locale; list filters, ordering and `query=` skip
-their values (`hiddenLocales` on the store query, so the any-locale fallback never compares one);
-Delivery search (`deliveredSearch`, REST `/search` and GraphQL `search`) drops a vector chunk in
-an undelivered locale and re-checks and re-ranks each lexical hit on its delivered text alone,
-quoting only that in snippets; and the queue consumer strips undelivered locales from an
+`localize` answers `null` for an undelivered locale; list filters, `where` trees, ordering and
+`query=` skip their values (`hiddenLocales` on the store query, so the any-locale fallback never
+compares one); Delivery search (`deliveredSearch`, REST `/search` and GraphQL `search`) drops a
+vector chunk in an undelivered locale and re-checks and re-ranks each lexical hit on its delivered
+text alone, quoting only that in snippets; Delivery asset search (`searchDeliveredAssets`, whose
+indexes hold every locale in one document and one embedding per asset) scans delivered text only
+and drops a hit any query term finds only in undelivered title, caption or alt text, and a
+vector-only hit on an asset that has undelivered text; and the queue consumer strips undelivered locales from an
 `entry.published` before the LiveHub fans it out to live subscribers (`liveEventOf`; the object
 holds no store, so the consumer writes the filtered copy once). A request naming an undelivered locale is a `NotFoundError` (404),
 rather than a fallback, so a front end leaves the route out instead of serving another language

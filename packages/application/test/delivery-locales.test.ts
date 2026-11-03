@@ -13,6 +13,7 @@ import {
   InMemoryCache,
   InMemoryContentStore,
   InMemoryEventBus,
+  InMemorySearchIndex,
   InMemoryVectorStore,
   LocalEmbeddingsProvider,
   RecordingWebhookSender,
@@ -22,6 +23,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
   addToAssetCollection,
+  assetTextKey,
   consumeEvent,
   createAsset,
   createAssetCollection,
@@ -38,6 +40,7 @@ import {
   getPreviewAsset,
   getPreviewEntry,
   getPublishedEntry,
+  indexAssetForSearch,
   indexEntryEmbeddings,
   listDeliveredAssets,
   listDeliveredSitemap,
@@ -46,6 +49,7 @@ import {
   publishAsset,
   publishContentType,
   publishEntry,
+  searchDeliveredAssets,
   setAssetMetadata,
   setLocaleSettings,
 } from '../src/index';
@@ -297,6 +301,40 @@ describe('every Delivery output with a locale turned off', () => {
       NotFoundError,
     );
     expect((await getPreviewAsset(ctx, blob, scope, id)).title).toHaveProperty('fr', 'Héros');
+  });
+
+  it('finds no asset by the locale’s text: the scan, the lexical index or the vectors', async () => {
+    const { id, blob } = await frenchAsset();
+    // Text read out of the file belongs to no locale: a hit on it stands.
+    await blob.put(assetTextKey(scope, id, 1) as string, 'fromage', 'text/plain');
+    const indexed = {
+      embeddings: new LocalEmbeddingsProvider(4096),
+      vectors: new InMemoryVectorStore(),
+      publishedIndex: new InMemorySearchIndex(),
+    };
+    await indexAssetForSearch(ctx, indexed, blob, scope, id);
+    const found = async (q: string, deps = {}) =>
+      (await searchDeliveredAssets(ctx, deps, scope, { q })).items.map((a) => a.id);
+    expect(await found('héros')).toEqual([id]);
+    expect(await found('héros', indexed)).toEqual([id]);
+
+    await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
+    // French title and alt text: the scan, the index and the vector leg all leave it out.
+    expect(await found('héros')).toEqual([]);
+    expect(await found('héros', indexed)).toEqual([]);
+    expect(await found('un héros', indexed)).toEqual([]);
+    expect(
+      await found('héros', { embeddings: indexed.embeddings, vectors: indexed.vectors }),
+    ).toEqual([]);
+    // What it delivers still finds it, and so does its file's own text.
+    expect(await found('hero')).toEqual([id]);
+    expect(await found('hero', indexed)).toEqual([id]);
+    expect(await found('بطل', indexed)).toEqual([id]);
+    expect(await found('fromage', indexed)).toEqual([id]);
+    // Flattened to a delivered locale, the same rule holds.
+    const en = (q: string) => searchDeliveredAssets(ctx, indexed, scope, { q }, { locale: 'en' });
+    expect((await en('hero')).items.map((a) => a.id)).toEqual([id]);
+    expect((await en('héros')).items).toEqual([]);
   });
 
   it('gives GraphQL nothing for the locale: no asset text, no fallback under its name', async () => {
