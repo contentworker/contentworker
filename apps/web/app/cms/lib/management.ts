@@ -720,6 +720,33 @@ export interface InstalledPluginSummary {
   readonly installedBy?: string;
 }
 
+/** One setting a plugin's manifest declares, as the settings API returns it. */
+export interface PluginSettingField {
+  readonly key: string;
+  readonly label: string;
+  readonly type: 'string' | 'number' | 'boolean' | 'select';
+  readonly description?: string;
+  readonly required?: boolean;
+  /** Write-only: its value never reaches the browser, only whether one is set. */
+  readonly secret?: boolean;
+  readonly options?: readonly string[];
+  readonly default?: string | number | boolean;
+}
+
+/** A plugin's settings as an operator may see them (`GET …/plugins/:id/settings`). */
+export interface PluginSettingsView {
+  readonly pluginId: string;
+  readonly fields: readonly PluginSettingField[];
+  /** Non-secret values, defaults applied. */
+  readonly values: Readonly<Record<string, string | number | boolean>>;
+  /** Secret fields that hold a value. */
+  readonly secretsSet: readonly string[];
+  /** 0 before the first save; sent back as `expectedVersion`. */
+  readonly version: number;
+  readonly updatedAt?: string;
+  readonly updatedBy?: string;
+}
+
 /** One entry, reduced to what a chooser shows. */
 export interface EntrySuggestion {
   readonly id: string;
@@ -1937,6 +1964,19 @@ export function createManagementClient(
     },
     setPluginEnabled(id: string, enabled: boolean): Promise<InstalledPluginSummary> {
       return req('POST', `${spaceBase}/plugins/${encodeURIComponent(id)}/enabled`, { enabled });
+    },
+    getPluginSettings(id: string): Promise<PluginSettingsView> {
+      return req('GET', `${spaceBase}/plugins/${encodeURIComponent(id)}/settings`);
+    },
+    /** A patch: each key set (null clears it), keys left out kept, so a secret is never resent. */
+    setPluginSettings(
+      id: string,
+      input: {
+        values: Record<string, string | number | boolean | null>;
+        expectedVersion: number;
+      },
+    ): Promise<PluginSettingsView> {
+      return req('PATCH', `${spaceBase}/plugins/${encodeURIComponent(id)}/settings`, input);
     },
     uninstallPlugin(id: string): Promise<void> {
       return req('DELETE', `${spaceBase}/plugins/${encodeURIComponent(id)}`);

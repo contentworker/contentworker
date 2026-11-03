@@ -156,6 +156,17 @@ version never asked for are marked _New_ and pre-checked. Earlier decisions carr
 capability stays checked and a declined one stays unchecked. If the upgrade would grow the grant,
 the button reads _Upgrade disabled_.
 
+**Settings** (named for the plugin, "SEO helper settings") opens a sheet with a form drawn from the
+fields the installed manifest declares: a text input for a `string`, a numeric one for a `number`,
+a switch for a `boolean`, a select for a `select` (with _Not set_, or _Default (…)_ when the field
+has one). Each field's description and default are its hint, and a required one is marked. A
+secret is write-only: the sheet says _Set_ or _Not set_ and offers **Set** or **Replace** (an
+empty password input) and **Clear** (undone in place before saving); no secret value ever reaches the browser, so
+there is none to show. Saving sends only the fields that changed, against the `version` the sheet
+loaded. A 422 puts each issue beside its field (`aria-invalid`, tied by `aria-describedby`) and
+moves focus to the first; a 409 says someone saved first and offers **Reload settings**; a role
+without `space:admin` is told so in place of the form.
+
 ## Testing
 
 ```bash

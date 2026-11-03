@@ -88,6 +88,13 @@ function fakeClient(initial: InstalledPluginSummary[] = []) {
       bundleBytes: 1234,
     })),
     installPluginFromUrl: vi.fn(async () => plugin()),
+    getPluginSettings: vi.fn(async (id: string) => ({
+      pluginId: id,
+      fields: [{ key: 'apiKey', label: 'API key', type: 'string', secret: true }],
+      values: {},
+      secretsSet: ['apiKey'],
+      version: 1,
+    })),
   } as unknown as ManagementClient & {
     inspectPluginPackage: ReturnType<typeof vi.fn>;
     installPluginFromUrl: ReturnType<typeof vi.fn>;
@@ -127,6 +134,17 @@ const openInstall = async (manifest: unknown = MANIFEST) => {
   upload(/bundle/i, fileOf('index.js', 'export class Plugin {}', 'text/javascript'));
   await screen.findByText('It is asking to:');
 };
+
+describe('plugin settings', () => {
+  it('opens a plugin’s settings from its row, named for that plugin', async () => {
+    const client = fakeClient([plugin()]);
+    renderWith(<Plugins client={client} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'SEO helper settings' }));
+    const sheet = await screen.findByRole('dialog', { name: 'SEO helper settings' });
+    expect(await within(sheet).findByRole('button', { name: 'Replace API key' })).toBeTruthy();
+    expect(within(sheet).getByText('Set')).toBeTruthy();
+  });
+});
 
 describe('what the list tells an operator', () => {
   it('says what a plugin runs on, in the operator’s words', async () => {

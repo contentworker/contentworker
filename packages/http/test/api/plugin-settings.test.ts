@@ -89,6 +89,44 @@ describe('plugin settings over HTTP', () => {
     expect((await send('PATCH', PATH, { values: { apiKey: { nested: true } } })).status).toBe(422);
   });
 
+  // The admin's form puts each refusal beside its field, so the issue must name the setting.
+  it('names the refused setting in each 422 issue', async () => {
+    const res = await send('PATCH', PATH, { values: { apiKey: 'sk', maxLength: 'x' } });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { issues: { field: string }[] } };
+    expect(body.error.issues.map((i) => i.field)).toEqual(['maxLength']);
+
+    const missing = await send('PATCH', PATH, { values: { maxLength: 3 } });
+    expect(missing.status).toBe(422);
+    const issues = ((await missing.json()) as { error: { issues: { field: string }[] } }).error
+      .issues;
+    expect(issues.map((i) => i.field)).toEqual(['apiKey']);
+  });
+
+  it('clears a secret with null, and reports it unset', async () => {
+    const optional = {
+      ...MANIFEST,
+      id: 'com.example.opt',
+      settings: [{ key: 'token', label: 'Token', type: 'string', secret: true }],
+    };
+    expect(
+      (
+        await send('POST', '/spaces/s1/plugins', {
+          manifest: optional,
+          bundle: 'export class Plugin {}',
+          approvedCapabilities: [],
+        })
+      ).status,
+    ).toBe(201);
+    const path = '/spaces/s1/plugins/com.example.opt/settings';
+    expect(await (await send('PATCH', path, { values: { token: 'tk_1' } })).json()).toMatchObject({
+      secretsSet: ['token'],
+    });
+    const cleared = await send('PATCH', path, { values: { token: null }, expectedVersion: 1 });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toMatchObject({ secretsSet: [], version: 2 });
+  });
+
   it('refuses a stale expectedVersion with 409', async () => {
     await send('PATCH', PATH, { values: { apiKey: 'sk' } });
     const res = await send('PATCH', PATH, { values: { maxLength: 1 }, expectedVersion: 0 });
