@@ -37,10 +37,12 @@ export interface CreateApiKeyInput {
   /** The OAuth client that obtained the token, when `issuance` is `oauth`. */
   readonly clientId?: string;
   /**
-   * Who is minting it, when a caller is (the routes and tools; not the OAuth and PAT flows, which
-   * mint delegated tokens themselves). A delegated bearer is refused: see {@link assertMayMintKeys}.
+   * Who is minting it: the caller's principal (the routes and tools), or `system` for the flows
+   * that mint delegated tokens themselves (an OAuth grant, a personal access token). Required, so
+   * no caller skips the check by leaving it out. A delegated bearer is refused: see
+   * {@link assertMayMintKeys}.
    */
-  readonly issuer?: Principal;
+  readonly issuer: KeyIssuer;
 }
 
 /**
@@ -49,9 +51,12 @@ export interface CreateApiKeyInput {
  * must not turn itself into one that outlives it. A signed-in person, an operator key and the
  * admin token may.
  */
-export function assertMayMintKeys(issuer: Principal | undefined): void {
-  if (issuer && isDelegatedBearer(issuer)) throw new DelegatedKeyMintError();
+export function assertMayMintKeys(issuer: KeyIssuer): void {
+  if (issuer !== 'system' && isDelegatedBearer(issuer)) throw new DelegatedKeyMintError();
 }
+
+/** Who mints or changes a key: a caller's principal, or the platform's own flows (`system`). */
+export type KeyIssuer = Principal | 'system';
 
 /** Token prefix by issuance, so operators can identify a token on sight. */
 function tokenPrefix(issuance: TokenIssuance, kind: ApiKeyKind): string {

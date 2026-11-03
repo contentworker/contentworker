@@ -106,6 +106,7 @@ describe('API key tools over MCP', () => {
   it("changes a key's role by preset name or id, and unbinds it with null", async () => {
     // Another administrator, so demoting this key leaves the space one.
     await createApiKey(deps.ctx, hasher, {
+      issuer: 'system',
       spaceId: SPACE,
       kind: 'cma',
       roleId: await presetRoleId(deps.ctx, SPACE, 'admin'),
@@ -127,6 +128,7 @@ describe('API key tools over MCP', () => {
   it("refuses revoking or demoting the space's last administrator, as REST does", async () => {
     const adminRole = await presetRoleId(deps.ctx, SPACE, 'admin');
     const only = await createApiKey(deps.ctx, hasher, {
+      issuer: 'system',
       spaceId: SPACE,
       kind: 'cma',
       roleId: adminRole,
@@ -146,7 +148,11 @@ describe('API key tools over MCP', () => {
 
   it("404s revoking another space's key", async () => {
     await createSpace(deps.ctx, { spaceId: 'space-2', name: 'T', defaultLocale: 'en-US' });
-    const foreign = await createApiKey(deps.ctx, hasher, { spaceId: 'space-2', kind: 'cda' });
+    const foreign = await createApiKey(deps.ctx, hasher, {
+      issuer: 'system',
+      spaceId: 'space-2',
+      kind: 'cda',
+    });
     const res = await call('api_key_revoke', { id: foreign.apiKey.id });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toContain('was not found');
@@ -181,7 +187,12 @@ describe('API key tools over MCP', () => {
 
   it('refuses a personal access token or an OAuth token minting or widening a key', async () => {
     const roleId = await presetRoleId(deps.ctx, SPACE, 'viewer');
-    const key = await createApiKey(deps.ctx, hasher, { spaceId: SPACE, kind: 'cma', roleId });
+    const key = await createApiKey(deps.ctx, hasher, {
+      issuer: 'system',
+      spaceId: SPACE,
+      kind: 'cma',
+      roleId,
+    });
     for (const delegated of [
       { ...spaceAdmin, subject: 'ada@example.com', issuance: 'pat' as const },
       { ...spaceAdmin, subject: 'ada@example.com', clientId: 'app', issuance: 'oauth' as const },
@@ -190,6 +201,13 @@ describe('API key tools over MCP', () => {
       const mint = await agent.callTool({ name: 'api_key_create', arguments: { kind: 'cma' } });
       expect(mint.isError).toBe(true);
       expect(JSON.stringify(mint.content)).toContain("can't mint an API key");
+      // Nor through the role the key holds.
+      const widened = await agent.callTool({
+        name: 'role_update',
+        arguments: { id: roleId, name: 'Viewer', scopes: Object.values(SCOPES) },
+      });
+      expect(widened.isError).toBe(true);
+      expect(JSON.stringify(widened.content)).toContain("can't mint an API key or widen one");
       for (const name of ['api_key_update', 'role_preset_assign'] as const) {
         const args =
           name === 'api_key_update'

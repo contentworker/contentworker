@@ -103,6 +103,7 @@ describe('granular RBAC: roles', () => {
       contentGrants: [{ contentTypeApiId: 'post', actions: ['read'] }],
     });
     const { token } = await createApiKey(c, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cpa',
       roleId: role.id,
@@ -126,7 +127,7 @@ describe('granular RBAC: roles', () => {
   it('minting a key against a missing role fails', async () => {
     const c = ctx();
     await expect(
-      createApiKey(c, hasher, { spaceId: 's1', kind: 'cma', roleId: 'nope' }),
+      createApiKey(c, hasher, { issuer: 'system', spaceId: 's1', kind: 'cma', roleId: 'nope' }),
     ).rejects.toThrow(/Role/);
   });
 
@@ -134,6 +135,7 @@ describe('granular RBAC: roles', () => {
     const c = ctx();
     const role = await createRole(c, 's1', { name: 'Held', scopes: ['preview:read'] });
     const { apiKey } = await createApiKey(c, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cpa',
       roleId: role.id,

@@ -87,6 +87,7 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
             contentGrants: args.contentGrants,
           },
           deps.accessPolicy,
+          t.principal,
         ),
       );
     },

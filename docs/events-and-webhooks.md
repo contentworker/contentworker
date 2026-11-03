@@ -338,7 +338,10 @@ than dropped. The outbox and the delivery log are trimmed on the same retention 
 (`pruneEventHistory`) but by different clocks (relay time, attempt time), so a delivery still in
 the log can already have lost its event: that resend is a **409**. A hook deleted (or scoped
 away) before the engine gets to it gets nothing; a redelivered request sends again, with the same
-event id.
+event id. During a mixed-version deploy or an engine rollback, a test or resend can be accepted
+(202) by the api and then dropped by an engine without the send-request branch, with no log row.
+A resend whose hook no longer covers the event's environment (rescoped since) is logged as a
+failed attempt.
 
 ### Event payloads
 

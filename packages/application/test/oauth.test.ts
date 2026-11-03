@@ -719,6 +719,7 @@ describe('OAuth: personal access tokens', () => {
   it('mints a PAT that authenticates as its owner', async () => {
     const c = ctx();
     const { token } = await createPersonalAccessToken(c, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       subject: 'me@example.com',
       name: 'ci',
@@ -735,6 +736,7 @@ describe('OAuth: personal access tokens', () => {
   it('silently drops scopes the issuer does not hold', async () => {
     const c = ctx();
     const { token } = await createPersonalAccessToken(c, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       subject: 'me@example.com',
       name: 'ci',
@@ -749,6 +751,7 @@ describe('OAuth: personal access tokens', () => {
     const c = ctx();
     await expect(
       createPersonalAccessToken(c, hasher, {
+        issuer: 'system',
         spaceId: 's1',
         subject: 'me@example.com',
         name: 'ci',
@@ -761,6 +764,7 @@ describe('OAuth: personal access tokens', () => {
   it('expires when asked to', async () => {
     const c = ctx();
     const { token } = await createPersonalAccessToken(c, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       subject: 'me@example.com',
       name: 'ci',
@@ -851,6 +855,7 @@ describe('OAuth: delegated tokens treat consented scopes as a ceiling', () => {
       contentGrants: [],
     });
     const { token } = await createApiKey(c, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cma',
       roleId: 'r1',

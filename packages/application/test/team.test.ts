@@ -111,13 +111,17 @@ describe('role presets', () => {
   });
 
   it('binds a key to a preset, resolved live like any role', async () => {
-    const { apiKey, token } = await createApiKey(ctx, hasher, { spaceId: 's1', kind: 'cda' });
-    await assignRolePreset(ctx, 's1', { keyId: apiKey.id }, 'approver', NO_SSO);
+    const { apiKey, token } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cda',
+    });
+    await assignRolePreset(ctx, 's1', { keyId: apiKey.id }, 'approver', NO_SSO, 'system');
     const principal = await authenticate(ctx, hasher, token);
     expect(principal.scopes).toContain(SCOPES.workflowApprove);
     expect(principal.scopes).not.toContain(SCOPES.contentWrite);
     // Unbinding falls back to the kind's defaults.
-    await assignApiKeyRole(ctx, 's1', apiKey.id, null, NO_SSO);
+    await assignApiKeyRole(ctx, 's1', apiKey.id, null, NO_SSO, 'system');
     expect((await authenticate(ctx, hasher, token)).scopes).toEqual([
       SCOPES.deliveryRead,
       SCOPES.searchRead,
@@ -137,19 +141,29 @@ describe('the last administrator', () => {
 
   it('can’t be revoked or demoted while they are the only one', async () => {
     const adminRole = await presetRoleId(ctx, 's1', 'admin');
-    const a = await createApiKey(ctx, hasher, { spaceId: 's1', kind: 'cma', roleId: adminRole });
+    const a = await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      roleId: adminRole,
+    });
     await expect(revokeApiKey(ctx, 's1', a.apiKey.id)).rejects.toBeInstanceOf(LastAdminError);
     await expect(
-      assignRolePreset(ctx, 's1', { keyId: a.apiKey.id }, 'editor', NO_SSO),
+      assignRolePreset(ctx, 's1', { keyId: a.apiKey.id }, 'editor', NO_SSO, 'system'),
     ).rejects.toBeInstanceOf(LastAdminError);
     // A second admin makes the first one revocable.
-    await createApiKey(ctx, hasher, { spaceId: 's1', kind: 'cma' });
+    await createApiKey(ctx, hasher, { issuer: 'system', spaceId: 's1', kind: 'cma' });
     await revokeApiKey(ctx, 's1', a.apiKey.id);
   });
 
   it('keeps the admin role’s space:admin while it is all that makes anyone an admin', async () => {
     const adminRole = await presetRoleId(ctx, 's1', 'admin');
-    await createApiKey(ctx, hasher, { spaceId: 's1', kind: 'cma', roleId: adminRole });
+    await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      roleId: adminRole,
+    });
     await expect(
       updateRole(ctx, 's1', adminRole, { name: 'Administrator', scopes: [SCOPES.previewRead] }),
     ).rejects.toBeInstanceOf(LastAdminError);
@@ -157,9 +171,15 @@ describe('the last administrator', () => {
 
   it('ignores short-lived and revoked keys: they are not seats', async () => {
     const adminRole = await presetRoleId(ctx, 's1', 'admin');
-    const a = await createApiKey(ctx, hasher, { spaceId: 's1', kind: 'cma', roleId: adminRole });
+    const a = await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      roleId: adminRole,
+    });
     // An SSO session key with an expiry doesn't count as a second admin.
     await createApiKey(ctx, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cma',
       name: 'oidc:someone',
@@ -189,8 +209,15 @@ describe('the last administrator', () => {
 
   it('lists the team with roles and the admin count', async () => {
     const adminRole = await presetRoleId(ctx, 's1', 'admin');
-    await createApiKey(ctx, hasher, { spaceId: 's1', kind: 'cma', roleId: adminRole, name: 'ci' });
     await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      roleId: adminRole,
+      name: 'ci',
+    });
+    await createApiKey(ctx, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cma',
       name: 'oidc:x',
@@ -237,6 +264,7 @@ describe('SSO people and SSO-only sign-in', () => {
     await findMemberForSignIn(ctx, 's1', 'ada@example.com', 'ada@example.com');
     const adminRole = await presetRoleId(ctx, 's1', 'admin');
     const { token } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cma',
       roleId: adminRole,

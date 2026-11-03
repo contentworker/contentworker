@@ -563,6 +563,7 @@ describe('D1 store (contract)', () => {
 
     const hasher = { hash: (v: string) => createHash('sha256').update(v).digest('hex') };
     const { token } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
       spaceId,
       kind: 'cma',
       roleId: role.id,
@@ -611,8 +612,19 @@ describe('D1 store (contract)', () => {
 
     // Rebinding a key changes its role and scope snapshot.
     const hasher = { hash: (v: string) => createHash('sha256').update(v).digest('hex') };
-    const { apiKey, token } = await createApiKey(ctx, hasher, { spaceId, kind: 'cda' });
-    await assignRolePreset(ctx, spaceId, { keyId: apiKey.id }, 'approver', { sso: false });
+    const { apiKey, token } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId,
+      kind: 'cda',
+    });
+    await assignRolePreset(
+      ctx,
+      spaceId,
+      { keyId: apiKey.id },
+      'approver',
+      { sso: false },
+      'system',
+    );
     const bound = (await store.auth.list(spaceId)).find((k) => k.id === apiKey.id);
     expect(bound?.roleId).toBe(seeded[1]?.id);
     expect((await authenticate(ctx, hasher, token)).scopes).toContain('workflow:approve');

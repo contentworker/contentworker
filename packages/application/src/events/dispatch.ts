@@ -1,4 +1,5 @@
 import {
+  coversEnvironment,
   type DomainEvent,
   deliveredEventOf,
   type EntriesPublishedBulkEvent,
@@ -596,8 +597,8 @@ export async function redeliverWebhook(
  * in its log and never retried (they can ask again). A resend reads its event back from the outbox
  * now and sends it with the same id, signed at the time it is sent; a bulk chunk goes to a
  * per-entry subscriber entry by entry, from the entries' published snapshots as they are now, as a
- * retry does. An event swept since, or a chunk with no entry still published, is logged as a failed
- * attempt rather than dropped. A webhook deleted since, or no longer visible where it was asked
+ * retry does. An event swept since, one from an environment the webhook no longer covers, or a
+ * chunk with no entry still published, is logged as a failed attempt rather than dropped. A webhook deleted since, or no longer visible where it was asked
  * for, gets nothing (`null`). A redelivered request sends again; the event id is the same, so a
  * receiver that dedupes on it sees one.
  */
@@ -629,6 +630,12 @@ export async function deliverWebhookRequest(
     return { delivered: false };
   };
   if (!event) return refused('The event is past the event retention; nothing was sent');
+  // Rescoped since (to another environment): it no longer receives this event's environment.
+  if (!coversEnvironment(webhook, event.scope.environmentId)) {
+    return refused(
+      `The webhook no longer receives events from "${event.scope.environmentId}"; nothing was sent`,
+    );
+  }
   const sent = { timestamp: ctx.clock.now().toISOString(), resendOf: deliveryId };
   if (
     event.type === 'entries.published_bulk' &&

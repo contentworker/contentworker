@@ -31,7 +31,12 @@ function ctx(): AppContext & { store: InMemoryContentStore } {
 describe('authenticateCached', () => {
   it('serves a repeat authentication from cache without reading the key again', async () => {
     const c = ctx();
-    const { token } = await createApiKey(c, hasher, { spaceId: 's1', kind: 'cda', name: 'site' });
+    const { token } = await createApiKey(c, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cda',
+      name: 'site',
+    });
     const first = await authenticateCached(c, hasher, token);
     const findByHash = vi.spyOn(c.store.auth, 'findByHash');
     const second = await authenticateCached(c, hasher, token);
@@ -42,6 +47,7 @@ describe('authenticateCached', () => {
   it('stops serving a revoked key immediately (the space tag is invalidated)', async () => {
     const c = ctx();
     const { apiKey, token } = await createApiKey(c, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cda',
       name: 'site',
@@ -90,7 +96,12 @@ describe('authenticateCached', () => {
 describe('lastUsedAt throttling', () => {
   it('writes last-used at most once per resolution window', async () => {
     const c = ctx();
-    const { token } = await createApiKey(c, hasher, { spaceId: 's1', kind: 'cda', name: 'site' });
+    const { token } = await createApiKey(c, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cda',
+      name: 'site',
+    });
     const touch = vi.spyOn(c.store.auth, 'touchLastUsed');
     await authenticate(c, hasher, token);
     await new Promise((r) => setTimeout(r, 0));

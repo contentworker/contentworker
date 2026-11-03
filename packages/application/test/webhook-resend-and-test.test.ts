@@ -335,6 +335,29 @@ describe('webhook resends', () => {
     expect(sender.sent[0]?.event.scope).toEqual(staging);
   });
 
+  it("logs a failed resend when the hook no longer covers the event's environment", async () => {
+    const h = harness();
+    // Space-wide when the staging event went out.
+    const hookAll = await createWebhook(h.c, scope, { ...hook, allEnvironments: true });
+    await h.store.outbox.append(unpublished('evt-staging', staging));
+    await h.relay(new RecordingWebhookSender());
+    const [original] = await listWebhookDeliveries(h.c, scope, hookAll.id);
+    if (!original) throw new Error('no delivery');
+    // Scoped to main since: still visible (and resendable) from main, but staging's events are no
+    // longer its to receive.
+    await updateWebhook(h.c, scope, hookAll.id, { allEnvironments: false });
+    await resendWebhookDelivery(h.c, scope, hookAll.id, original.id);
+    const sender = new RecordingWebhookSender();
+    await h.relay(sender);
+    expect(sender.sent).toEqual([]);
+    expect((await listWebhookDeliveries(h.c, scope, hookAll.id))[0]).toMatchObject({
+      eventId: 'evt-staging',
+      status: 'failed',
+      resendOf: original.id,
+      error: expect.stringMatching(/no longer receives events from "staging"/),
+    });
+  });
+
   it('sends nothing when the hook is scoped away before the engine gets to it', async () => {
     const h = harness();
     const { target, original } = await delivered(h, new RecordingWebhookSender());

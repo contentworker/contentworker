@@ -580,6 +580,36 @@ describe('Personal access tokens', () => {
       body: JSON.stringify({ role: 'admin' }),
     });
     expect(widen.status).toBe(403);
+    // Nor through the role the key holds, nor by minting another personal access token.
+    await app.request(`/spaces/s1/api-keys/${id}/role`, {
+      method: 'PUT',
+      headers: as({ Cookie: cookie }),
+      body: JSON.stringify({ role: null }),
+    });
+    const role = (await (
+      await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: as({ Cookie: cookie }),
+        body: JSON.stringify({ name: 'Build', scopes: [SCOPES.deliveryRead] }),
+      })
+    ).json()) as { id: string };
+    await app.request(`/spaces/s1/api-keys/${id}/role`, {
+      method: 'PUT',
+      headers: as({ Cookie: cookie }),
+      body: JSON.stringify({ role: role.id }),
+    });
+    const widenRole = await app.request(`/spaces/s1/roles/${role.id}`, {
+      method: 'PUT',
+      headers: as({ Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ name: 'Build', scopes: [SCOPES.deliveryRead, SCOPES.spaceAdmin] }),
+    });
+    expect(widenRole.status).toBe(403);
+    const patFromPat = await app.request('/spaces/s1/personal-access-tokens', {
+      method: 'POST',
+      headers: as({ Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ name: 'forever', scopes: [SCOPES.spaceAdmin] }),
+    });
+    expect(patFromPat.status).toBe(403);
   });
 
   it('drops scopes the caller does not hold', async () => {

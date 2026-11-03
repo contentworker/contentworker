@@ -24,6 +24,7 @@ describe('RBAC: API keys + authorization', () => {
   it('mints a key, stores only the hash, and authenticates the raw token', async () => {
     const c = ctx();
     const { apiKey, token } = await createApiKey(c, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cma',
       name: 'k',
@@ -40,7 +41,11 @@ describe('RBAC: API keys + authorization', () => {
 
   it('mints a high-entropy token with no embedded structure', async () => {
     const c = ctx();
-    const { token } = await createApiKey(c, hasher, { spaceId: 's1', kind: 'cma' });
+    const { token } = await createApiKey(c, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+    });
     const secret = token.replace('cwk_cma_', '');
     // base64url charset, long enough for a 32-byte CSPRNG secret, and NOT the old
     // 64-hex-char (concatenated-UUID) shape.
@@ -52,7 +57,11 @@ describe('RBAC: API keys + authorization', () => {
   it('mints a key without a name (name is optional)', async () => {
     const c = ctx();
     // The admin labels the field "Name (optional)"; omitting it must not fail.
-    const { apiKey, token } = await createApiKey(c, hasher, { spaceId: 's1', kind: 'cda' });
+    const { apiKey, token } = await createApiKey(c, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cda',
+    });
     expect(apiKey.name).toBeUndefined();
     const principal = await authenticate(c, hasher, token);
     expect(principal.kind).toBe('cda');
@@ -61,7 +70,11 @@ describe('RBAC: API keys + authorization', () => {
   it('revokes a key so its token no longer authenticates', async () => {
     const c = ctx();
     // A delivery key: the space's last administrator can't be revoked (see team.test.ts).
-    const { apiKey, token } = await createApiKey(c, hasher, { spaceId: 's1', kind: 'cda' });
+    const { apiKey, token } = await createApiKey(c, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cda',
+    });
     await expect(authenticate(c, hasher, token)).resolves.toBeTruthy();
     await revokeApiKey(c, 's1', apiKey.id);
     await expect(authenticate(c, hasher, token)).rejects.toBeInstanceOf(UnauthorizedError);
@@ -83,7 +96,12 @@ describe('RBAC: API keys + authorization', () => {
       ids: new SequenceIdGenerator('k'),
     };
     const expiresAt = new Date(clock.now().getTime() + 60_000).toISOString();
-    const { token } = await createApiKey(c, hasher, { spaceId: 's1', kind: 'cma', expiresAt });
+    const { token } = await createApiKey(c, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      expiresAt,
+    });
     // Valid before expiry...
     await expect(authenticate(c, hasher, token)).resolves.toBeTruthy();
     // ...and rejected once the clock passes expiresAt.

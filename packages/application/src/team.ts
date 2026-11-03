@@ -440,7 +440,7 @@ export async function assignApiKeyRole(
   keyId: string,
   roleRef: string | null,
   policy: AccessPolicy,
-  issuer?: Principal,
+  issuer: Principal | 'system',
 ): Promise<ApiKey> {
   const keys = await ctx.store.auth.list(spaceId);
   const key = keys.find((k) => k.id === keyId);
@@ -457,7 +457,7 @@ export async function assignApiKeyRole(
   const role = roleRef ? await resolveRoleRef(ctx, spaceId, roleRef) : undefined;
   // Unbinding falls back to the kind's defaults, as an unbound key always has.
   const scopes = role ? role.scopes : scopesForKind(key.kind);
-  if (issuer && isDelegatedBearer(issuer)) {
+  if (issuer !== 'system' && isDelegatedBearer(issuer)) {
     const current = key.roleId ? await ctx.store.roles.get(spaceId, key.roleId) : null;
     const held = current ? current.scopes : key.scopes;
     const widens =
@@ -488,7 +488,7 @@ export async function assignRolePreset(
   target: PresetTarget,
   preset: RolePreset,
   policy: AccessPolicy,
-  issuer?: Principal,
+  issuer: Principal | 'system',
 ): Promise<ApiKey | SpaceMember> {
   if (!isRolePreset(preset)) {
     throw new ValidationError([{ field: 'preset', message: `Unknown role preset "${preset}"` }]);

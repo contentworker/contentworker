@@ -43,7 +43,8 @@ The raw token is in the response **once**. contentworker stores only a hash of i
 can't be recovered: revoke it and mint another. An agent with `space:admin` does the same over
 [MCP](/guides/mcp/): `api_keys_list`, `api_key_create` (the token is in its result, once),
 `api_key_update` (the key's role) and `api_key_revoke`. A personal access token or an app
-connected with OAuth can't mint a key, or widen one's role (403), whatever its scopes: a token
+connected with OAuth can't mint a key, widen one's role, or widen the role a key holds (403),
+whatever its scopes: a token
 someone handed to a program never turns itself into one that outlives it. Tokens start with `cwk_` and the kind, so a leaked
 one is easy to recognize and scan for.
 
@@ -101,7 +102,7 @@ which you can assign, edit and clone like your own; see [Team and roles](/guides
 A **personal access token** acts for a person rather than an integration: it carries their
 identity in the audit log and can never do more than they can. Use one for a script or CI job.
 
-Minting one needs both `space:admin` and a signed-in person. API keys and OAuth-connected apps are
+Minting one needs both `space:admin` and a signed-in person. API keys, OAuth-connected apps and other personal access tokens are
 refused (403): a credential must not be able to mint a longer-lived one for itself, and there is no
 MCP tool for it. In the admin, create one under **Settings → Access → Connected apps**; over the API,
 a signed-in administrator calls `POST /spaces/{space}/personal-access-tokens` with a `name`, a

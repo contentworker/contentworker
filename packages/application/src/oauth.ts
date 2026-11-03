@@ -19,7 +19,7 @@ import {
   verifyPkce,
 } from '@contentworker/domain';
 import type { Hasher, OAuthGrantRecord } from '@contentworker/ports';
-import { createApiKey } from './auth';
+import { assertMayMintKeys, createApiKey, type KeyIssuer } from './auth';
 import type { AppContext } from './context';
 import { invalidateCachedPrincipals } from './principal-cache';
 import { randomSecret, randomUserCode, sha256Base64Url } from './token-crypto';
@@ -598,6 +598,8 @@ async function issueTokens(
   const expiresAt = new Date(now.getTime() + config.accessTokenTtlSeconds * 1000);
 
   const { apiKey, token } = await createApiKey(ctx, hasher, {
+    // The grant a person approved, minting its own token.
+    issuer: 'system',
     spaceId: grant.spaceId,
     kind: kindForScopes(grant.scopes),
     name: `oauth:${grant.clientId}`,
@@ -873,6 +875,11 @@ export interface CreatePatInput {
   readonly expiresInDays?: number;
   /** The issuing human's scopes — a PAT can never exceed them. */
   readonly issuerScopes: readonly string[];
+  /**
+   * Who asks: refused when it is itself a delegated bearer (an OAuth or personal access token), so
+   * a token can't mint another, perhaps never-expiring, one.
+   */
+  readonly issuer: KeyIssuer;
 }
 
 /**
@@ -885,6 +892,7 @@ export async function createPersonalAccessToken(
   hasher: Hasher,
   input: CreatePatInput,
 ): Promise<{ id: string; token: string; expiresAt?: string }> {
+  assertMayMintKeys(input.issuer);
   const scopes = input.scopes.filter((s) => input.issuerScopes.includes(s));
   if (scopes.length === 0) {
     throw new OAuthError('invalid_scope', 'A token cannot exceed your own permissions');
@@ -904,6 +912,8 @@ export async function createPersonalAccessToken(
     : undefined;
 
   const { apiKey, token } = await createApiKey(ctx, hasher, {
+    // Checked above, against the caller.
+    issuer: 'system',
     spaceId: input.spaceId,
     kind: kindForScopes(scopes),
     name: input.name,

@@ -56,6 +56,7 @@ export function rolesRoutes(deps: AuthDeps): Hono<AuthVars> {
           c.req.param('id'),
           await parseBody(c, roleBody),
           deps.accessPolicy,
+          c.get('principal'),
         ),
       ),
   );

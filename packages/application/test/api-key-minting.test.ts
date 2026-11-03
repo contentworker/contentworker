@@ -9,8 +9,10 @@ import {
   authenticate,
   createApiKey,
   createPersonalAccessToken,
+  createRole,
   createSpace,
   presetRoleId,
+  updateRole,
 } from '../src/index';
 
 const hasher = { hash: (v: string) => `h:${v}` };
@@ -43,6 +45,7 @@ describe('minting and widening API keys', () => {
     await ctx.store.members.save({ ...member, subject: 'ada@example.com' });
     // A real personal access token, resolved as every request resolves it.
     const minted = await createPersonalAccessToken(ctx, hasher, {
+      issuer: 'system',
       spaceId: S,
       subject: 'ada@example.com',
       name: 'ci',
@@ -78,6 +81,7 @@ describe('minting and widening API keys', () => {
     const viewer = await presetRoleId(ctx, S, 'viewer');
     const key = (
       await createApiKey(ctx, hasher, {
+        issuer: 'system',
         spaceId: S,
         kind: 'cma',
         roleId: await presetRoleId(ctx, S, 'manager'),
@@ -99,5 +103,103 @@ describe('minting and widening API keys', () => {
     // The person may do any of it.
     await expect(assignApiKeyRole(ctx, S, key.id, viewer, NO_SSO, operator)).resolves.toBeDefined();
     await expect(assignApiKeyRole(ctx, S, key.id, 'admin', NO_SSO, person)).resolves.toBeDefined();
+  });
+
+  it('refuses a delegated bearer widening a key through the role it holds, not narrowing it', async () => {
+    const role = await createRole(ctx, S, {
+      name: 'Build',
+      scopes: [SCOPES.previewRead, SCOPES.deliveryRead],
+      contentGrants: [{ contentTypeApiId: 'article', actions: ['read'] }],
+    });
+    const edit = (scopes: string[], contentGrants = role.contentGrants) => ({
+      name: 'Build',
+      scopes,
+      contentGrants,
+    });
+    // No key holds it yet: a role is just a definition, and the bearer may shape it.
+    await expect(
+      updateRole(
+        ctx,
+        S,
+        role.id,
+        edit([SCOPES.previewRead, SCOPES.deliveryRead, SCOPES.contentWrite]),
+        NO_SSO,
+        pat,
+      ),
+    ).resolves.toBeDefined();
+    await updateRole(
+      ctx,
+      S,
+      role.id,
+      edit([SCOPES.previewRead, SCOPES.deliveryRead]),
+      NO_SSO,
+      person,
+    );
+    await createApiKey(ctx, hasher, { issuer: 'system', spaceId: S, kind: 'cda', roleId: role.id });
+
+    for (const bearer of [pat, oauth]) {
+      // New scopes.
+      await expect(
+        updateRole(
+          ctx,
+          S,
+          role.id,
+          edit([SCOPES.previewRead, SCOPES.deliveryRead, SCOPES.spaceAdmin]),
+          NO_SSO,
+          bearer,
+        ),
+      ).rejects.toThrow(/widen/);
+      // Content grants dropped (an empty list is unrestricted) or changed.
+      await expect(
+        updateRole(
+          ctx,
+          S,
+          role.id,
+          edit([SCOPES.previewRead, SCOPES.deliveryRead], []),
+          NO_SSO,
+          bearer,
+        ),
+      ).rejects.toThrow(/widen/);
+    }
+    // Narrower scopes, same grants: allowed.
+    await expect(
+      updateRole(ctx, S, role.id, edit([SCOPES.deliveryRead]), NO_SSO, pat),
+    ).resolves.toMatchObject({ scopes: [SCOPES.deliveryRead] });
+    // A signed-in person may widen it.
+    await expect(
+      updateRole(
+        ctx,
+        S,
+        role.id,
+        edit([SCOPES.deliveryRead, SCOPES.contentWrite], []),
+        NO_SSO,
+        person,
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('refuses a personal access token or an OAuth token minting a personal access token', async () => {
+    for (const issuer of [pat, oauth]) {
+      await expect(
+        createPersonalAccessToken(ctx, hasher, {
+          issuer,
+          spaceId: S,
+          subject: 'ada@example.com',
+          name: 'forever',
+          scopes: [SCOPES.spaceAdmin],
+          issuerScopes: [SCOPES.spaceAdmin],
+        }),
+      ).rejects.toThrow(/can't mint/);
+    }
+    await expect(
+      createPersonalAccessToken(ctx, hasher, {
+        issuer: person,
+        spaceId: S,
+        subject: 'ada@example.com',
+        name: 'ci',
+        scopes: [SCOPES.spaceAdmin],
+        issuerScopes: [SCOPES.spaceAdmin],
+      }),
+    ).resolves.toMatchObject({ token: expect.stringMatching(/^cwpat_/) });
   });
 });
