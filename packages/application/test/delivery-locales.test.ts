@@ -375,7 +375,7 @@ describe('every Delivery output with a locale turned off', () => {
     expect((await graph.search('fromage')).map((h) => h.entryId)).toEqual([both]);
   });
 
-  it('never filters, orders or matches `query=` on the locale’s values', async () => {
+  it('never filters (in `filters` or `where`), orders or matches `query=` on the locale’s values', async () => {
     const hello = await seed();
     const zed = (
       await createEntry(ctx, scope, {
@@ -394,11 +394,22 @@ describe('every Delivery output with a locale turned off', () => {
       listPublishedEntries(ctx, scope, { contentTypeApiId: 'page', ...where });
     const byTitle = { filters: [{ field: 'title', op: 'eq' as const, value: 'Seulement' }] };
     expect((await filtered(byTitle)).map((e) => e.id)).toEqual([entry.id]);
+    // The same predicate inside a `where` group, beside one that matches nothing.
+    const inWhere = {
+      where: {
+        or: [
+          { field: 'title', op: 'eq' as const, value: 'Nowhere' },
+          { and: [{ field: 'title', op: 'startsWith' as const, value: 'Seul' }] },
+        ],
+      },
+    };
+    expect((await filtered(inWhere)).map((e) => e.id)).toEqual([entry.id]);
     const ascending = { order: [{ field: 'title', direction: 'asc' as const }] };
     expect((await filtered(ascending)).map((e) => e.id)).toEqual([hello, entry.id, zed]);
 
     await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
     expect(await filtered(byTitle)).toEqual([]);
+    expect(await filtered(inWhere)).toEqual([]);
     expect(await filtered({ search: 'seulement' })).toEqual([]);
     const exists = { filters: [{ field: 'title', op: 'exists' as const, value: false }] };
     expect((await filtered(exists)).map((e) => e.id)).toEqual([entry.id]);

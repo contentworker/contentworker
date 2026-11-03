@@ -255,7 +255,10 @@ describe('entries_query over MCP', () => {
       }),
     ) as { entry: { id: string } };
     const id = created.entry.id;
-    const trashed = await author.callTool({ name: 'entries_trash', arguments: { space: SPACE, id } });
+    const trashed = await author.callTool({
+      name: 'entries_trash',
+      arguments: { space: SPACE, id },
+    });
     expect(trashed.isError).toBeFalsy();
 
     const reads = async (client: Client) => ({
