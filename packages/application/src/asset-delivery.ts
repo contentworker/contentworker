@@ -18,6 +18,7 @@ import {
 import type {
   AssetFilters,
   BlobStore,
+  DeliveryReadResult,
   ImageTransformSpec,
   PublishedAsset,
   PublishedAssetQuery,
@@ -152,20 +153,36 @@ export async function getDeliveredAsset(
   id: string,
   opts: AssetReadOptions = {},
 ): Promise<DeliveredAsset> {
-  // The snapshot, the renditions and the space config (its locales): one round trip.
+  // The snapshot, the renditions and the locales it needs: one round trip.
   const reads = opts.reads ?? deliveryReads(ctx);
-  const { asset, renditions, config } = await reads.read(scope, {
-    assetId: id,
-    renditions: true,
-    config: true,
-  });
-  if (!asset) throw new NotFoundError('PublishedAsset', id);
-  return projectPublishedAsset(
-    ctx,
-    scope,
-    asset,
-    projectionContextOf(scope, renditions ?? [], opts.locale, config, reads.everyLocale),
-  );
+  const r = await reads.read(scope, { assetId: id, renditions: true, ...localeParts(opts, reads) });
+  if (!r.asset) throw new NotFoundError('PublishedAsset', id);
+  return projectPublishedAsset(ctx, scope, r.asset, ownContextOf(scope, r, opts, reads));
+}
+
+/**
+ * What a single-asset or asset-page read asks for to project its text: with `?locale=`, the space
+ * config (to flatten and to refuse an undelivered locale); without, on Delivery, only the per-locale
+ * settings, which ride the asset statement itself (`assetLocales`) instead of costing one more.
+ */
+const localeParts = (opts: AssetReadOptions, reads: DeliveryReads) =>
+  opts.locale !== undefined ? { config: true } : reads.everyLocale ? {} : { assetLocales: true };
+
+function ownContextOf(
+  scope: Scope,
+  r: DeliveryReadResult,
+  opts: AssetReadOptions,
+  reads: DeliveryReads,
+): AssetProjectionContext {
+  const renditions = r.renditions ?? [];
+  if (opts.locale !== undefined || reads.everyLocale) {
+    return projectionContextOf(scope, renditions, opts.locale, r.config, reads.everyLocale);
+  }
+  const settings = r.assetLocales;
+  if (!settings || Object.keys(settings).length === 0) return { renditions };
+  // The settings alone decide: the default locale is never turned off (`assertLocaleSettings`), so
+  // a locale is undelivered exactly when its settings say `delivered: false`.
+  return { renditions, delivered: { defaultLocale: '', locales: [], localeSettings: settings } };
 }
 
 export interface DeliveredAssetPage {
@@ -180,21 +197,15 @@ export async function listDeliveredAssets(
   query: PublishedAssetQuery = {},
   opts: AssetReadOptions = {},
 ): Promise<DeliveredAssetPage> {
-  // The page, the renditions and the space config (its locales): one round trip.
+  // The page, the renditions and the locales it needs: one round trip.
   const reads = opts.reads ?? deliveryReads(ctx);
   const r = await reads.read(scope, {
     assetPage: query,
     renditions: true,
-    config: true,
+    ...localeParts(opts, reads),
   });
   const page = r.assetPage ?? { items: [] };
-  const pc = projectionContextOf(
-    scope,
-    r.renditions ?? [],
-    opts.locale,
-    r.config,
-    reads.everyLocale,
-  );
+  const pc = ownContextOf(scope, r, opts, reads);
   return {
     items: page.items.map((s) => projectPublishedAsset(ctx, scope, s, pc)),
     ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),

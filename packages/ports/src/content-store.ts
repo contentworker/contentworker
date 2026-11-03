@@ -1475,6 +1475,12 @@ export interface Environment {
 export interface DeliveryReadRequest {
   /** The space's configuration (locales, fallbacks). */
   readonly config?: boolean;
+  /**
+   * With `assetId` or `assetPage`: the space's per-locale settings, read on that statement rather
+   * than one of their own, as `assetLocales` (what an all-locale asset read needs to leave out the
+   * locales the space doesn't deliver). Present when the asset or page holds anything.
+   */
+  readonly assetLocales?: boolean;
   /** Every content type in the scope. */
   readonly contentTypes?: boolean;
   /** The space's rendition presets. */
@@ -1559,6 +1565,8 @@ export interface MenuRead {
  */
 export interface DeliveryReadResult {
   readonly config?: SpaceConfig | null;
+  /** The space's per-locale settings (`{}` for none), when asked and the asset read found rows. */
+  readonly assetLocales?: Readonly<Record<LocaleCode, LocaleSettings>>;
   readonly contentTypes?: ContentType[];
   readonly renditions?: AssetRendition[];
   readonly entry?: PublishedEntry | null;

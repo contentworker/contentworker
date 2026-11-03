@@ -1748,6 +1748,10 @@ export class InMemoryContentStore implements ContentStore {
         ...(renditions ? { renditions } : {}),
         ...(request.entryId !== undefined ? { entry: entry ?? null } : {}),
         ...(request.assetId !== undefined ? { asset: asset ?? null } : {}),
+        // As D1, where the settings ride the asset statement: present when it found anything.
+        ...(request.assetLocales && (asset || assetPage?.items.length)
+          ? { assetLocales: { ...(this.spaceConfigs.get(scope.spaceId)?.localeSettings ?? {}) } }
+          : {}),
         ...(entries ? { entries } : {}),
         ...(assets ? { assets } : {}),
         ...(assetPage ? { assetPage } : {}),

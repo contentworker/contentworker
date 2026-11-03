@@ -22,6 +22,7 @@ import {
   entrySysOf,
   type InstalledPlugin,
   isWebhookSendRequest,
+  type LocaleSettings,
   type MemberInvite,
   type Menu,
   matchesTopic,
@@ -1677,7 +1678,12 @@ function makeAssetRepo(x: Exec): AssetRepo {
  * Published assets in publish order, filtered and paged: the statement and how to read its rows,
  * apart, so `delivery.read` can send it in a batch.
  */
-function publishedAssetPage(db: Db, scope: Scope, query: PublishedAssetQuery) {
+function publishedAssetPage(
+  db: Db,
+  scope: Scope,
+  query: PublishedAssetQuery,
+  opts: { readonly withLocales?: boolean } = {},
+) {
   const p = schema.assetPublished;
   const a = schema.assets;
   const filters = query.filters ?? {};
@@ -1703,8 +1709,7 @@ function publishedAssetPage(db: Db, scope: Scope, query: PublishedAssetQuery) {
     conds.push(sql`(${p.publishedAt}, ${p.assetId}) > (${value}, ${id})`);
   }
   return {
-    query: db
-      .select()
+    query: assetSelection(db, scope, Boolean(opts.withLocales))
       .from(p)
       .where(and(...conds))
       .orderBy(asc(p.publishedAt), asc(p.assetId))
@@ -6541,9 +6546,42 @@ const publishedEntriesQuery = (db: Db, scope: Scope, ids: readonly string[]) =>
     );
 
 /** At most `100 - RESERVED` ids: callers chunk. */
-const publishedAssetsQuery = (db: Db, scope: Scope, ids: readonly string[]) =>
-  db
-    .select()
+/**
+ * The space's `locale_settings`, as a column an asset statement can carry: a constant subquery,
+ * which SQLite evaluates once per statement, so an all-locale asset read costs no statement of
+ * its own for the config it needs.
+ */
+const spaceLocalesColumn = (scope: Scope) =>
+  sql<
+    string | null
+  >`(SELECT ${schema.spaces.localeSettings} FROM ${schema.spaces} WHERE ${schema.spaces.id} = ${scope.spaceId})`.as(
+    'space_locale_settings',
+  );
+
+/** The settings an asset row carried (see {@link spaceLocalesColumn}), `{}` for none. */
+const localesOfRow = (row: { spaceLocaleSettings?: string | null }) =>
+  row.spaceLocaleSettings
+    ? (JSON.parse(row.spaceLocaleSettings) as Record<string, LocaleSettings>)
+    : {};
+
+const assetSelection = (db: Db, scope: Scope, withLocales: boolean) =>
+  withLocales
+    ? db.select({
+        ...getTableColumns(schema.assetPublished),
+        spaceLocaleSettings: spaceLocalesColumn(scope),
+      })
+    : db.select({
+        ...getTableColumns(schema.assetPublished),
+        spaceLocaleSettings: sql<string | null>`NULL`.as('space_locale_settings'),
+      });
+
+const publishedAssetsQuery = (
+  db: Db,
+  scope: Scope,
+  ids: readonly string[],
+  opts: { readonly withLocales?: boolean } = {},
+) =>
+  assetSelection(db, scope, Boolean(opts.withLocales))
     .from(schema.assetPublished)
     .where(
       and(
@@ -6648,8 +6686,12 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         });
       }
       if (request.assetId !== undefined) {
-        add(publishedAssetsQuery(db, scope, [request.assetId]), ([row]) => {
+        const query = request.assetLocales
+          ? publishedAssetsQuery(db, scope, [request.assetId], { withLocales: true })
+          : publishedAssetsQuery(db, scope, [request.assetId]);
+        add(query, ([row]) => {
           result.asset = row ? toPublishedAsset(row) : null;
+          if (row && request.assetLocales) result.assetLocales = localesOfRow(row);
         });
       }
       if (request.entryIds) {
@@ -6671,9 +6713,13 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         }
       }
       if (request.assetPage) {
-        const page = publishedAssetPage(db, scope, request.assetPage);
+        const page = publishedAssetPage(db, scope, request.assetPage, {
+          withLocales: Boolean(request.assetLocales),
+        });
         add(page.query, (rows) => {
           result.assetPage = page.of(rows);
+          const [first] = rows;
+          if (first && request.assetLocales) result.assetLocales = localesOfRow(first);
         });
       }
       if (request.tags) {

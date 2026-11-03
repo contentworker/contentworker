@@ -1,18 +1,22 @@
 import {
   type AppContext,
+  createAsset,
   createContentType,
   createEntry,
   createSpace,
+  getDeliveredAsset,
   getLocaleSettings,
   getPublishedEntry,
+  listDeliveredAssets,
   listPublishedEntries,
+  publishAsset,
   publishContentType,
   publishEntry,
   setLocaleSettings,
 } from '@contentworker/application';
 import { type FieldDefinition, NotFoundError, type Principal, SCOPES } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
-import { FixedClock } from '@contentworker/test-kit';
+import { FakeBlobStore, FixedClock } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createD1Store } from '../src/store';
 import { testDb } from './env';
@@ -103,6 +107,32 @@ describe('locale settings on D1', () => {
     const view = await setLocaleSettings(ctx, admin, scope, { fr: { delivered: true } });
     expect(view.localeSettings.fr?.delivered).toBe(true);
     expect(view.localeSettings.ar?.direction).toBe('ltr');
+  });
+
+  it('leaves an undelivered locale out of asset text, the settings riding the asset statement', async () => {
+    const { ctx, scope } = await space();
+    const blob = new FakeBlobStore();
+    const { asset } = await createAsset(ctx, blob, scope, {
+      fileName: 'a.jpg',
+      contentType: 'image/jpeg',
+      title: { en: 'Hero', fr: 'Héros', ar: 'بطل' },
+    });
+    await store.assets.save(scope, { ...asset, file: { ...asset.file, size: 1, width: 1 } });
+    await publishAsset(ctx, scope, asset.id);
+    expect((await getDeliveredAsset(ctx, scope, asset.id)).title).toHaveProperty('fr');
+
+    await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
+    expect((await getDeliveredAsset(ctx, scope, asset.id)).title).toEqual({
+      en: 'Hero',
+      ar: 'بطل',
+    });
+    const [listed] = (await listDeliveredAssets(ctx, scope)).items;
+    expect(listed?.title).toEqual({ en: 'Hero', ar: 'بطل' });
+    const read = await store.delivery.read(scope, { assetPage: {}, assetLocales: true });
+    expect(read.assetLocales).toEqual({ fr: { delivered: false } });
+    // Nothing found, nothing carried: the empty answer needs no settings.
+    const missing = await store.delivery.read(scope, { assetId: 'nope', assetLocales: true });
+    expect(missing).toEqual({ asset: null });
   });
 
   it('serves no undelivered locale through Delivery', async () => {
