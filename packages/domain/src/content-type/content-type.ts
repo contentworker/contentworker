@@ -132,7 +132,7 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
  * new, so a type stored before a check existed can still be revised.
  */
 export function reviseContentType(current: ContentType, changes: ContentTypeChanges): ContentType {
-  const fields = compilePatternPresets(changes.fields ?? [...current.fields]);
+  const fields = compilePatternPresets(changes.fields ?? [...current.fields], current.fields);
   const displayField = changes.displayField ?? current.displayField;
   assertFieldsValid(fields, displayField, current.fields);
   // Checked against the revised fields too: removing the slug a kept pattern names is refused.
@@ -166,7 +166,8 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
  * keeps the current value, `null` or blank text clears it. A value stored as it stands passes
  * unchecked, so a type saved before a check existed stays editable. The layout is checked against
  * the fields as revised: a field the revision removes leaves the layout quietly (there is nothing
- * left to draw), and a kept layout naming a field that is no longer there is pruned the same way.
+ * left to draw), and a name the stored layout already held without a field is pruned the same way,
+ * whether the layout is kept or sent back.
  */
 function typeDetails(
   input: ContentTypeChanges,
@@ -205,19 +206,23 @@ function typeDetails(
   text('icon');
 
   const known = new Set(fields.map((f) => f.apiId));
+  // Names the stored layout carries that no revised field answers: stale already, or removed now.
+  const stale = new Set(
+    (current?.layout?.tabs ?? []).flatMap((t) =>
+      (t.groups ?? []).flatMap((g) => (g.fields ?? []).filter((f) => !known.has(f))),
+    ),
+  );
   if (input.layout === undefined) {
     // Carried over: whatever no longer names a field goes, so a kept layout never blocks a save.
-    const stale = new Set(
-      (current?.layout?.tabs ?? []).flatMap((t) =>
-        (t.groups ?? []).flatMap((g) => (g.fields ?? []).filter((f) => !known.has(f))),
-      ),
-    );
     const layout = current?.layout ? checkLayout(current.layout, fields, stale) : undefined;
     if (layout) out.layout = layout;
   } else if (input.layout !== null) {
-    const removed = new Set(
-      (current?.fields ?? []).map((f) => f.apiId).filter((apiId) => !known.has(apiId)),
-    );
+    // Sent: a field the revision removes, or a name the stored layout already held without a
+    // field (a client sending back what it read), goes quietly. A new name for no field is refused.
+    const removed = new Set([
+      ...stale,
+      ...(current?.fields ?? []).map((f) => f.apiId).filter((apiId) => !known.has(apiId)),
+    ]);
     const layout = checkLayout(input.layout, fields, removed);
     if (layout) out.layout = layout;
   }
@@ -227,27 +232,41 @@ function typeDetails(
 /**
  * Writes each named pattern preset's `pattern` and `flags` into its rule, at every depth, so the
  * stored rule is a plain screened pattern every reader enforces. An unknown preset is left for
- * the checks to refuse by name.
+ * the checks to refuse by name. Only a rule that is new or changed against `before` (the stored
+ * fields, on a revision) is compiled: a stored rule rides along as it is, so a revision that
+ * touches something else never rewrites it, even after a preset's pattern has changed.
  */
-function compilePatternPresets(fields: readonly FieldDefinition[]): FieldDefinition[] {
-  const rules = (v: FieldValidations | undefined): FieldValidations | undefined => {
+function compilePatternPresets(
+  fields: readonly FieldDefinition[],
+  before?: readonly FieldDefinition[],
+): FieldDefinition[] {
+  const rules = (
+    v: FieldValidations | undefined,
+    was: FieldValidations | undefined,
+  ): FieldValidations | undefined => {
     const preset = v?.regexp?.preset;
     if (!v || !isPatternPreset(preset)) return v;
+    if (was?.regexp && sameJson(v.regexp, was.regexp)) return v;
     const compiled = presetRegexp(preset);
     return sameJson(v.regexp, compiled) ? v : { ...v, regexp: compiled };
   };
   // Each level is rebuilt only when something under it changed, as withoutBlankGuidance does.
-  const list = (defs: readonly FieldDefinition[] | undefined) => {
-    const next = defs && compilePatternPresets(defs);
+  const list = (
+    defs: readonly FieldDefinition[] | undefined,
+    was: readonly FieldDefinition[] | undefined,
+  ) => {
+    const next = defs && compilePatternPresets(defs, was);
     return next?.some((g, i) => g !== defs?.[i]) ? next : defs;
   };
   return fields.map((f) => {
-    const validations = rules(f.validations);
-    const nested = list(f.fields);
-    const itemRules = rules(f.items?.validations);
-    const itemFields = list(f.items?.fields);
+    const old = before?.find((b) => b.apiId === f.apiId);
+    const validations = rules(f.validations, old?.validations);
+    const nested = list(f.fields, old?.fields);
+    const itemRules = rules(f.items?.validations, old?.items?.validations);
+    const itemFields = list(f.items?.fields, old?.items?.fields);
     const variants = f.items?.variants?.map((v) => {
-      const vf = list(v.fields) ?? v.fields;
+      const wasVariant = old?.items?.variants?.find((w) => w.apiId === v.apiId);
+      const vf = list(v.fields, wasVariant?.fields) ?? v.fields;
       return vf === v.fields ? v : { ...v, fields: vf };
     });
     const variantsChanged = variants?.some((v, i) => v !== f.items?.variants?.[i]) ?? false;

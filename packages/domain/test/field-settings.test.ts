@@ -334,6 +334,23 @@ describe('pattern presets', () => {
       ),
     ).toMatch(/Unknown pattern preset "iban"/);
   });
+  it('a stored rule rides along a revision that leaves it alone, and compiles once changed', () => {
+    // As an earlier release compiled it: the preset's name beside a pattern it has since changed.
+    const earlier = { preset: 'email', pattern: '^old@pattern$' } as const;
+    const ct = stored(field('email', { position: 1, validations: { regexp: earlier } }));
+    const renamed = reviseContentType(ct, { name: 'Renamed', fields: [...ct.fields] });
+    expect(renamed.fields[1]?.validations?.regexp).toEqual(earlier);
+    const changed = reviseContentType(ct, {
+      fields: [
+        ct.fields[0] as FieldDefinition,
+        field('email', { position: 1, validations: { regexp: { preset: 'email' } } }),
+      ],
+    });
+    expect(changed.fields[1]?.validations?.regexp).toEqual({
+      pattern: PATTERN_PRESETS.email.pattern,
+      preset: 'email',
+    });
+  });
 });
 
 describe('normalizeLegacyFields and the new settings', () => {

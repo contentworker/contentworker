@@ -704,3 +704,5 @@ schema generated from your content types at `POST /delivery/:space/:env/graphql`
 `delivery:read`). It needs no SDK — use any GraphQL client with a CDA token. `asset(id)` is a
 typed `Asset` with `url(rendition, width)`, `srcset`, `placeholder`, per-field `locale` arguments and `video`. See
 [API reference → GraphQL Delivery](./api-reference.md#graphql-delivery).
+**Breaking (GraphQL):** a list of `Symbol` values is now typed `[String]`, not `JSON`; regenerate
+client types made from the schema.

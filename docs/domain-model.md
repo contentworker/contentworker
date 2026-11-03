@@ -132,6 +132,12 @@ repeater is unchanged: its elements carry neither key.
   scan (`removedContentInUse` in `packages/application/src/content-types.ts`) serves both checks
   and the promotion risk check. There is no override, as for variants: clear the values, publish
   the entries whose published snapshot holds them, purge them from the trash, then remove it.
+- **Tightening a rule** on a top-level field (its `format`, `dateRange` or `assetMimeTypes`,
+  or its list items') is saved, never refused: `tightenedRulesInUse` judges each changed field
+  alone against the current version of every entry out of the trash (keyset pages of 100, a
+  page's linked assets read together, only when such a rule changed) and the save answers with
+  `warnings: [{ field, entries, message }]`, counting the entries the new rule refuses and the old
+  one took. Each such entry is refused on its next save until the value changes.
 
 **GraphQL** gives a blocks field a union named like a component in that place (`LandingPageBody`)
 with one object type per variant (`LandingPageBodyHero`), each exposing `_type`, `_key` and the
@@ -364,6 +370,10 @@ anything but an asset link, `items.format` on a non-Date list) and checked only 
 the stored field. Snapshot import and clone drop the ones a field can't use
 (`normalizeLegacyFields`).
 
+**Breaking (GraphQL):** a list of `Symbol` values (`Array` with `items.type: 'Symbol'`) was typed
+`JSON` and is now `[String]`, like every list of scalars (`[Int]`, `[Float]`, `[String]`); a
+query that selected it as a JSON scalar keeps working, but generated client types change.
+
 **Rollout.** A time-only Date (`format: 'time'`, or `items.format: 'time'`) and a list of `Text`,
 `Integer`, `Number` or `Date` are read by this release (validation, the entry form, codegen,
 GraphQL) but refused on write, because the release before it reads them wrongly: its validator
@@ -467,8 +477,14 @@ translation and the agent runtime skip them. SDK codegen makes a required field 
 hide optional.
 
 Rules shipped without a reader-first step: a release from before them ignores `rules`, so after a
-rollback a hidden required field is required again (an editor fills it) and a disabled field is
-editable. Nothing breaks and nothing is lost.
+rollback a hidden required field is required again and a disabled field is editable. Nothing
+stored is lost, but two things change for writers:
+
+- An entry saved while a required field was hidden and empty is refused on its next save by the
+  older release, until an editor fills the field.
+- The older release's MCP field schema strips the keys it doesn't know, so a content type revised
+  through MCP after a rollback loses its fields' `rules` and `format` (a revision through the admin
+  or the REST API keeps them, since its HTTP field schema stores unknown keys).
 
 ## The validation engine
 

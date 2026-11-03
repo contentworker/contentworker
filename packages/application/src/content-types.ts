@@ -1,10 +1,13 @@
 import {
+  assetMimeChecks,
   ConflictError,
   type ContentType,
   type ContentTypeChanges,
   type ContentTypeDraft,
   defineContentType,
   type EntryFields,
+  type FieldDefinition,
+  mimeTypeAllowed,
   NotFoundError,
   removedFields,
   removedFieldUses,
@@ -14,16 +17,32 @@ import {
   type Scope,
   singletonClaim,
   uniqueClaims,
+  validateEntryFields,
 } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
+
+/**
+ * A field whose revision tightened a rule (`format`, `dateRange`, `assetMimeTypes`) that values
+ * entries already hold now break. The save goes ahead; each such entry is refused on its next save
+ * until the value is changed.
+ */
+export interface ContentTypeWarning {
+  readonly field: string;
+  /** How many entries (current versions, out of the trash) hold a value the new rule refuses. */
+  readonly entries: number;
+  readonly message: string;
+}
+
+/** A saved content type, with what its revision means for the entries that hold it. */
+export type SavedContentType = ContentType & { readonly warnings?: readonly ContentTypeWarning[] };
 
 /** Creates a new content type definition (status "draft", version 1). */
 export async function createContentType(
   ctx: AppContext,
   scope: Scope,
   draft: ContentTypeDraft,
-): Promise<ContentType> {
+): Promise<SavedContentType> {
   // An existing type is revised, not defined afresh: a revision is checked against what is
   // stored, so a definition saved before a check existed can still be edited.
   const existing = await ctx.store.contentTypes.get(scope, draft.apiId);
@@ -41,13 +60,107 @@ export async function updateContentType(
   scope: Scope,
   apiId: string,
   changes: ContentTypeChanges,
-): Promise<ContentType> {
+): Promise<SavedContentType> {
   const current = await ctx.store.contentTypes.get(scope, apiId);
   if (!current) throw new NotFoundError('ContentType', apiId);
   const revised = reviseContentType(current, changes);
   await assertNoRemovedContentInUse(ctx, scope, current, revised);
+  const warnings = await tightenedRulesInUse(ctx, scope, current, revised);
   await saveContentTypeOver(ctx, scope, current, revised);
-  return revised;
+  return warnings.length > 0 ? { ...revised, warnings } : revised;
+}
+
+/** The rules a revision can tighten under values entries already hold, by field. */
+const TIGHTENING = (f: FieldDefinition | undefined) =>
+  JSON.stringify([
+    f?.format,
+    f?.items?.format,
+    f?.validations?.dateRange,
+    f?.items?.validations?.dateRange,
+    f?.validations?.assetMimeTypes,
+    f?.items?.validations?.assetMimeTypes,
+  ]);
+
+/**
+ * The top-level fields whose `format`, `dateRange` or `assetMimeTypes` the revision adds or
+ * changes, each with how many entries hold a value the new rule refuses and the old one took
+ * (`ContentTypeWarning`). It never refuses: the rule is the author's to tighten, and the count says
+ * what that costs, as `removedContentInUse` does for removals.
+ *
+ * Only reads when such a rule changed. Each field is judged alone (its other rules, `required`
+ * and its conditional rules aside), against the current version of every entry out of the trash,
+ * a page at a time; a page's linked assets are read together.
+ */
+export async function tightenedRulesInUse(
+  ctx: AppContext,
+  scope: Scope,
+  current: ContentType,
+  revised: ContentType,
+): Promise<ContentTypeWarning[]> {
+  const was = new Map(current.fields.map((f) => [f.apiId, f]));
+  const tightened = revised.fields.filter(
+    (f) => was.has(f.apiId) && TIGHTENING(f) !== TIGHTENING(was.get(f.apiId)),
+  );
+  if (tightened.length === 0) return [];
+  const config = await ctx.store.spaces.getConfig(scope);
+  if (!config) return [];
+  const vctx = { defaultLocale: config.defaultLocale, locales: config.locales };
+  // One field at a time, as a type of its own: nothing else it says can fail the value.
+  const alone = (f: FieldDefinition): ContentType => ({
+    ...revised,
+    fields: [{ ...f, required: false, rules: undefined }],
+  });
+  const pairs = tightened.map((f) => ({
+    apiId: f.apiId,
+    before: alone(was.get(f.apiId) as FieldDefinition),
+    after: alone(f),
+  }));
+  const failing = new Map<string, number>();
+  for (let after = ''; ; ) {
+    const page = await ctx.store.entries.list(scope, {
+      contentTypeApiId: current.apiId,
+      archived: false,
+      limit: REMOVAL_SCAN_PAGE,
+      afterEntryId: after,
+    });
+    const assetIds = new Set<string>();
+    for (const e of page) {
+      for (const p of pairs) {
+        for (const c of assetMimeChecks(p.after, e.fields)) assetIds.add(c.assetId);
+      }
+    }
+    const mimeOf = new Map(
+      assetIds.size > 0
+        ? (await ctx.store.assets.getMany(scope, [...assetIds])).map((a) => [
+            a.id,
+            a.file.contentType,
+          ])
+        : [],
+    );
+    const fails = (type: ContentType, values: EntryFields) =>
+      validateEntryFields(type, values, vctx).length > 0 ||
+      assetMimeChecks(type, values).some((c) => {
+        const mime = mimeOf.get(c.assetId);
+        return mime !== undefined && !mimeTypeAllowed(mime, c.allowed);
+      });
+    for (const e of page) {
+      for (const p of pairs) {
+        const values = { [p.apiId]: e.fields[p.apiId] ?? {} };
+        if (fails(p.after, values) && !fails(p.before, values)) {
+          failing.set(p.apiId, (failing.get(p.apiId) ?? 0) + 1);
+        }
+      }
+    }
+    if (page.length < REMOVAL_SCAN_PAGE) break;
+    after = page[page.length - 1]?.entry.id ?? after;
+  }
+  return [...failing].map(([field, entries]) => ({
+    field,
+    entries,
+    message:
+      `${entries} ${entries === 1 ? 'entry holds' : 'entries hold'} a value for ${field} that ` +
+      'its new rules refuse; each is refused on its next save until that value is changed.',
+  }));
 }
 
 /** Entry ids a refusal to make a type a singleton names; the details carry the same. */

@@ -120,6 +120,23 @@ describe('content type layout', () => {
     expect(reviseContentType(ct, { layout: null })).not.toHaveProperty('layout');
   });
 
+  it('prunes a name the stored layout held without a field when it is sent back, and refuses a new one', () => {
+    // As stored by hand, or before the checks: a layout naming a field the type no longer has.
+    const ct = {
+      ...define(),
+      layout: { tabs: [{ apiId: 'main', name: 'Main', groups: [{ fields: ['title', 'gone'] }] }] },
+    };
+    const sentBack = reviseContentType(ct, { name: 'Renamed', layout: ct.layout });
+    expect(sentBack.layout?.tabs[0]?.groups[0]?.fields).toEqual(['title']);
+    expect(
+      refusal(() =>
+        reviseContentType(ct, {
+          layout: { tabs: [{ apiId: 'main', name: 'Main', groups: [{ fields: ['typo'] }] }] },
+        }),
+      ),
+    ).toMatch(/typo/);
+  });
+
   it('layoutTabs puts every unplaced field at the end of the first tab', () => {
     const ct = define({ layout: LAYOUT });
     const tabs = layoutTabs(ct.fields, ct.layout);

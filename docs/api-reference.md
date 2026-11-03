@@ -891,6 +891,10 @@ with content grants reads no assets (lists are empty, gets are 403, embeds stay 
   `placeholder { thumbhash dominantColor }` (type `AssetPlaceholder`, nullable),
   `focalPoint { x y }`, `video { status hlsUrl dashUrl thumbnailUrl durationSeconds }`,
   `rights { credit license }`, `file`.
+- A list of scalars is a GraphQL list of that scalar: `[String]` for `Symbol`, `Text` and `Date`,
+  `[Int]` for `Integer`, `[Float]` for `Number`. A list of links or components stays `JSON`.
+  **Breaking (schema):** a list of `Symbol` values was `JSON` before; client types generated from
+  the schema change from a JSON scalar to `[String]`.
 
 ### Live Content (SSE)
 

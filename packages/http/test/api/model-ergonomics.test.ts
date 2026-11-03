@@ -156,6 +156,28 @@ describe('model ergonomics over HTTP', () => {
     expect(list.status).toBe(422);
   });
 
+  it('saves a tightened Date format, and answers with how many entries it now refuses', async () => {
+    const { send } = setup();
+    const loose = {
+      ...event,
+      layout: null,
+      fields: [event.fields[0], sym('at', 1, { type: 'Date' })],
+    };
+    await send(`${M}/content-types`, 'POST', loose);
+    await send(`${M}/content-types/event/published`, 'POST');
+    const made = await send(`${M}/entries`, 'POST', {
+      contentTypeApiId: 'event',
+      fields: { title: { 'en-US': 'Launch' }, at: { 'en-US': '2026-11-03T10:00' } },
+    });
+    expect(made.status, await made.clone().text()).toBe(201);
+    const res = await send(`${M}/content-types`, 'POST', {
+      ...loose,
+      fields: [event.fields[0], sym('at', 1, { type: 'Date', format: 'date' })],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    expect(await res.json()).toMatchObject({ version: 2, warnings: [{ field: 'at', entries: 1 }] });
+  });
+
   it('documents the settings in OpenAPI', async () => {
     const { send } = setup();
     const spec = JSON.stringify(await (await send('/openapi.json', 'GET')).json());

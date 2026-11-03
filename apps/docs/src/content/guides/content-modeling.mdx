@@ -338,6 +338,10 @@ Generated TypeScript types make a required field that a rule can hide optional.
   (`details.fieldsInUse`). There is no override. Clear the value in those entries (save them
   without it), publish the ones that are live so the published version drops it too, and purge any
   in the trash; then remove the field.
+- **Tightening a rule** (a Date's `format` or `dateRange`, an asset link's `assetMimeTypes`) is
+  saved even when entries already hold values it refuses, and the response says how many under
+  `warnings` (`{ field, entries, message }`). Each of those entries is refused on its next save
+  until the value is changed.
 - **Renaming** a field's name is safe; its `apiId` is what code depends on, so treat that as
   permanent.
 - **Keep the model in a file.** `contentworker model export` writes it out, and `contentworker

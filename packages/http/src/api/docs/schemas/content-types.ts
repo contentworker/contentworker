@@ -256,6 +256,20 @@ export const contentType = z.object({
   layout: contentTypeLayout.optional(),
   version: z.int(),
   status: z.enum(['draft', 'published']),
+  warnings: z
+    .array(
+      z.object({
+        field: z.string(),
+        entries: z.int().describe('Entries holding a value the new rule refuses'),
+        message: z.string(),
+      }),
+    )
+    .optional()
+    .describe(
+      'On a save only: fields whose new format, dateRange or assetMimeTypes refuses values ' +
+        'entries already hold. The save went ahead; each such entry is refused on its next ' +
+        'save until the value is changed.',
+    ),
 });
 
 /** A published content type's place on the site, as Delivery serves it (`GET …/routes`). */

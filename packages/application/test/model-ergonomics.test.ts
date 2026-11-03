@@ -18,6 +18,7 @@ import {
   exportSnapshot,
   getContentType,
   importSnapshot,
+  updateContentType,
   updateEntry,
   validateEntry,
 } from '../src/index';
@@ -181,5 +182,84 @@ describe('content type details through the use-cases', () => {
       | { properties: Record<string, { description: string }> }
       | undefined;
     expect(schema?.properties.day?.description).toContain('a date, YYYY-MM-DD');
+  });
+});
+
+describe('a revision that tightens a rule under values entries hold', () => {
+  beforeEach(async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'event',
+      name: 'Event',
+      displayField: 'title',
+      fields: [
+        field('title'),
+        field('day', { type: 'Date', position: 1 }),
+        field('poster', { type: 'Link', linkType: 'Asset', position: 2 }),
+        field('note', { position: 3 }),
+      ],
+    });
+  });
+
+  const fields = async () => (await getContentType(ctx, scope, 'event')).fields;
+  const withField = async (apiId: string, over: Partial<FieldDefinition>) =>
+    (await fields()).map((f) => (f.apiId === apiId ? { ...f, ...over } : f));
+
+  it('saves, and counts the entries whose value the new format or file types refuse', async () => {
+    const pdf = (
+      await createAsset(ctx, blob, scope, { fileName: 'a.pdf', contentType: 'application/pdf' })
+    ).asset.id;
+    const make = (day: string, poster?: string) =>
+      createEntry(ctx, scope, {
+        contentTypeApiId: 'event',
+        fields: {
+          title: { en: 'E' },
+          day: { en: day },
+          ...(poster ? { poster: { en: { id: poster, linkType: 'Asset' } } } : {}),
+        },
+      });
+    await make('2026-11-03T10:00', pdf);
+    await make('2026-11-03T11:00');
+    await make('2026-11-04');
+
+    const dated = await updateContentType(ctx, scope, 'event', {
+      fields: await withField('day', { format: 'date' }),
+    });
+    expect(dated.version).toBe(2);
+    expect(dated.warnings).toEqual([
+      {
+        field: 'day',
+        entries: 2,
+        message:
+          '2 entries hold a value for day that its new rules refuse; each is refused on its ' +
+          'next save until that value is changed.',
+      },
+    ]);
+    // Saved, and the warnings are the save's answer, not part of the stored type.
+    expect((await fields()).find((f) => f.apiId === 'day')?.format).toBe('date');
+    expect(await getContentType(ctx, scope, 'event')).not.toHaveProperty('warnings');
+
+    const images = await updateContentType(ctx, scope, 'event', {
+      fields: await withField('poster', { validations: { assetMimeTypes: ['image/*'] } }),
+    });
+    expect(images.warnings).toMatchObject([{ field: 'poster', entries: 1 }]);
+  });
+
+  it('says nothing, and reads no entries, when no such rule changed', async () => {
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'event',
+      fields: { title: { en: 'E' }, day: { en: '2026-11-03T10:00' } },
+    });
+    let listed = 0;
+    const list = ctx.store.entries.list.bind(ctx.store.entries);
+    ctx.store.entries.list = (s, q) => {
+      listed += 1;
+      return list(s, q);
+    };
+    const renamed = await updateContentType(ctx, scope, 'event', {
+      name: 'Happening',
+      fields: await withField('note', { name: 'Note' }),
+    });
+    expect(renamed).not.toHaveProperty('warnings');
+    expect(listed).toBe(0);
   });
 });
