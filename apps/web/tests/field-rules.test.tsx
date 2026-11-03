@@ -116,8 +116,13 @@ describe('conditional field rules on the entry form', () => {
     type('Status', 'sold');
     type(/^Sold to/, 'Ada');
     const reference = screen.getByLabelText('Reference') as HTMLInputElement;
-    // Disabled by its fieldset, which is how every widget of the field is reached.
-    expect(reference.matches(':disabled')).toBe(true);
+    // Read-only, not disabled: it stays in the tab order and reads its reason on focus.
+    expect(reference.matches(':disabled')).toBe(false);
+    expect(reference.readOnly).toBe(true);
+    expect(reference.getAttribute('aria-readonly')).toBe('true');
+    expect(reference.value).toBe('REF-1');
+    // Typing into it changes nothing.
+    type('Reference', 'REF-3');
     expect(reference.value).toBe('REF-1');
     const why = screen.getByText('Read-only while Status is "sold"');
     expect(reference.getAttribute('aria-describedby')).toContain(why.id);
@@ -125,6 +130,46 @@ describe('conditional field rules on the entry form', () => {
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({ reference: { 'en-US': 'REF-1' }, status: { 'en-US': 'sold' } }),
     );
+  });
+
+  it('tells a screen reader which fields an edit showed, hid or locked', () => {
+    renderForm({ title: { 'en-US': 'Flat' }, status: { 'en-US': 'open' } });
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('');
+    type('Status', 'sold');
+    expect(status.textContent).toBe('Sold to shown. Reference read-only.');
+    type('Status', 'open');
+    expect(status.textContent).toBe('Sold to hidden. Reference editable.');
+  });
+
+  it('disables a button-like widget its rules lock, by the fieldset around it', () => {
+    render(
+      <EntryForm
+        contentType={{
+          ...LISTING,
+          fields: [
+            field({ apiId: 'title', name: 'Title' }),
+            field({ apiId: 'status', name: 'Status', position: 1 }),
+            field({
+              apiId: 'featured',
+              name: 'Featured',
+              type: 'Boolean',
+              position: 2,
+              rules: [
+                { action: 'disable', when: { field: 'status', operator: 'eq', value: 'sold' } },
+              ],
+            }),
+          ],
+        }}
+        initial={{ title: { 'en-US': 'T' }, status: { 'en-US': 'sold' } }}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        pickers={{ entries: [], assets: [] }}
+        onSave={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByRole('checkbox').matches(':disabled')).toBe(true);
   });
 
   it('names a hidden field that still holds a value, so two fields hiding each other can be cleared', () => {

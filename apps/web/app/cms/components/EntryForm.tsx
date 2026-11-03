@@ -164,6 +164,29 @@ function withDisabledKept(
   return out;
 }
 
+/**
+ * The fields whose state an edit changed, in words: "Sold to shown. Price read-only." Empty when
+ * nothing changed. A field that went from hidden to read-only says both.
+ */
+export function describeRuleChanges(
+  fields: readonly FieldDefinition[],
+  before: ReadonlyMap<string, FieldState>,
+  after: ReadonlyMap<string, FieldState>,
+): string {
+  const said: string[] = [];
+  for (const f of fields) {
+    const was = before.get(f.apiId);
+    const now = after.get(f.apiId);
+    if (Boolean(was?.hidden) !== Boolean(now?.hidden)) {
+      said.push(`${f.name} ${now?.hidden ? 'hidden' : 'shown'}.`);
+    }
+    if (Boolean(was?.disabled) !== Boolean(now?.disabled) && !now?.hidden) {
+      said.push(`${f.name} ${now?.disabled ? 'read-only' : 'editable'}.`);
+    }
+  }
+  return said.join(' ');
+}
+
 /** A rule's sibling path in field names: `Hero › Style` for `hero.style`. */
 function siblingName(siblings: readonly FieldDefinition[], path: string): string {
   const names: string[] = [];
@@ -399,6 +422,19 @@ export function EntryForm(props: {
     [contentType, shown, activeLocale, defaultLocale],
   );
 
+  // What an edit did to other fields, said once for a screen reader: a field appearing,
+  // disappearing or turning read-only moves the form under a reader who can't see it move.
+  const [ruleNews, setRuleNews] = useState('');
+  const lastStates = useRef({ locale: activeLocale, states });
+  useEffect(() => {
+    const before = lastStates.current;
+    lastStates.current = { locale: activeLocale, states };
+    // A locale switch redraws the form; it is not an edit's consequence.
+    if (before.locale !== activeLocale || before.states === states) return;
+    const news = describeRuleChanges(contentType.fields, before.states, states);
+    if (news) setRuleNews(news);
+  }, [states, activeLocale, contentType.fields]);
+
   // The layout's tabs and groups; without one, a single tab of every field (drawn without a bar).
   const tabs = useMemo(
     () => layoutTabs(contentType.fields, contentType.layout),
@@ -568,6 +604,12 @@ export function EntryForm(props: {
       ),
     );
 
+  /** The custom editor extension a top-level field of this type is edited with, if any. */
+  const editorFor = (f: FieldDefinition) =>
+    fieldEditors?.find(
+      (e) => !e.fieldTypes || e.fieldTypes.length === 0 || e.fieldTypes.includes(f.type),
+    );
+
   /** The values the top-level rules read in one locale (a shared field's in the default one). */
   const rulesValues = (locale: string) =>
     Object.fromEntries(
@@ -628,7 +670,7 @@ export function EntryForm(props: {
             </span>
           )}
         </Label>
-        <DisabledBy state={state}>
+        <DisabledBy state={state} field={f} hasEditor={Boolean(editorFor(f))}>
           <FieldInput
             id={id}
             field={f}
@@ -638,9 +680,7 @@ export function EntryForm(props: {
             errorId={err ? `${id}-error` : undefined}
             hintId={[helpId, ruleId].filter(Boolean).join(' ') || undefined}
             pickers={props.pickers}
-            editor={fieldEditors?.find(
-              (e) => !e.fieldTypes || e.fieldTypes.length === 0 || e.fieldTypes.includes(f.type),
-            )}
+            editor={editorFor(f)}
             editorContext={props.entryContext}
             locale={locale}
             path={f.apiId}
@@ -705,15 +745,18 @@ export function EntryForm(props: {
                 onOpenChange={(next) => toggleGroup(key, next)}
                 className="space-y-4 border-t pt-4"
               >
-                <CollapsibleTrigger asChild>
-                  <Button type="button" variant="ghost" size="sm" className="-ml-2 gap-1.5">
-                    <ChevronRight
-                      aria-hidden="true"
-                      className={cn('size-4 transition-transform', open && 'rotate-90')}
-                    />
-                    <span className="section-title">{g.name}</span>
-                  </Button>
-                </CollapsibleTrigger>
+                {/* A heading like an open group's, so a reader moving by headings finds it. */}
+                <h3 className="m-0">
+                  <CollapsibleTrigger asChild>
+                    <Button type="button" variant="ghost" size="sm" className="-ml-2 gap-1.5">
+                      <ChevronRight
+                        aria-hidden="true"
+                        className={cn('size-4 transition-transform', open && 'rotate-90')}
+                      />
+                      <span className="section-title">{g.name}</span>
+                    </Button>
+                  </CollapsibleTrigger>
+                </h3>
                 <CollapsibleContent className="space-y-5">{drawn}</CollapsibleContent>
               </Collapsible>
             );
@@ -734,6 +777,9 @@ export function EntryForm(props: {
   return (
     <form id={props.formId} onSubmit={submit} className="max-w-2xl space-y-4">
       <DirectionsContext.Provider value={props.directions}>
+        <p role="status" aria-live="polite" className="sr-only">
+          {ruleNews}
+        </p>
         {hasLocalized && locales.length > 1 && (
           // Locale switcher: a segmented row of <button>s (role=button) — component
           // tests select a locale via getByRole('button', { name: 'de-DE' }).
@@ -760,17 +806,7 @@ export function EntryForm(props: {
                       </span>
                     </>
                   )}
-                  {errCount > 0 && (
-                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-2xl bg-destructive/15 px-1 text-xs text-destructive">
-                      {errCount}
-                      {/* A bare <span> has no role, and `aria-label` on a roleless
-                        element is ignored — the count was announced as a naked
-                        number. Visually-hidden text is read instead. */}
-                      <span className="sr-only">
-                        {` validation ${errCount === 1 ? 'error' : 'errors'}`}
-                      </span>
-                    </span>
-                  )}
+                  <ErrorCount count={errCount} />
                 </Button>
               );
             })}
@@ -779,20 +815,13 @@ export function EntryForm(props: {
 
         {tabs.length > 1 ? (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList aria-label="Sections of the entry">
+            <TabsList aria-label="Sections of the entry" className="w-full overflow-x-auto">
               {tabs.map((t) => {
                 const count = errorsByTab.get(t.apiId) ?? 0;
                 return (
                   <TabsTrigger key={t.apiId} value={t.apiId} className="px-3">
                     {t.name}
-                    {count > 0 && (
-                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-2xl bg-destructive/15 px-1 text-xs text-destructive">
-                        {count}
-                        <span className="sr-only">
-                          {` validation ${count === 1 ? 'error' : 'errors'}`}
-                        </span>
-                      </span>
-                    )}
+                    <ErrorCount count={count} />
                   </TabsTrigger>
                 );
               })}
@@ -821,7 +850,12 @@ export function EntryForm(props: {
               {Object.entries(fieldErrors).map(([key, message]) => {
                 const [apiId = '', loc = defaultLocale] = key.split(':');
                 const tab = tabOf.get(topLevel(apiId));
-                const here = loc === activeLocale && (tab === undefined || tab === activeTab);
+                // In view: this locale and tab, and not inside a group that is closed.
+                const group = groupOf.get(topLevel(apiId));
+                const here =
+                  loc === activeLocale &&
+                  (tab === undefined || tab === activeTab) &&
+                  (group === undefined || openGroups.has(group));
                 return (
                   <li key={key} className="text-destructive">
                     {here ? (
@@ -834,7 +868,7 @@ export function EntryForm(props: {
                         className="underline underline-offset-2"
                         onClick={() => {
                           setActiveLocale(loc);
-                          if (tab !== undefined) showField(topLevel(apiId));
+                          if (tab !== undefined || group !== undefined) showField(topLevel(apiId));
                         }}
                       >
                         {fieldName(apiId, loc)} ({loc}): {message}
@@ -862,12 +896,28 @@ export function EntryForm(props: {
   );
 }
 
+/**
+ * How many validation errors a locale or tab holds, as a pill beside its name; nothing for none.
+ * A bare <span> has no role, and `aria-label` on a roleless element is ignored (the count was
+ * announced as a naked number), so visually hidden text is read instead.
+ */
+function ErrorCount(props: { count: number }) {
+  if (props.count <= 0) return null;
+  return (
+    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-2xl bg-destructive/15 px-1 text-xs text-destructive">
+      {props.count}
+      <span className="sr-only">{` validation ${props.count === 1 ? 'error' : 'errors'}`}</span>
+    </span>
+  );
+}
+
 function FieldInput(props: {
   id: string;
   field: FieldDefinition;
   value: unknown;
-  /** Read-only by the field's rules: the input is disabled by its `DisabledBy` fieldset, and a
-   *  widget a fieldset can't reach (rich text) is told here. */
+  /** Read-only by the field's rules. A text, number, date or select control is made read-only
+   *  here (focusable, its reason read on focus); a button-like widget is disabled by its
+   *  `DisabledBy` fieldset; rich text and an extension are told here. */
   disabled?: boolean;
   invalid?: boolean;
   /** id of the error message element, wired to aria-describedby when invalid. */
@@ -893,7 +943,14 @@ function FieldInput(props: {
   const writing = useWritingIn(locale);
   const inputClass = invalid ? 'border-destructive focus-visible:ring-destructive/30' : undefined;
   const describedBy = [errorId, props.hintId].filter(Boolean).join(' ') || undefined;
-  const aria = { 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy };
+  const readOnly = props.disabled === true;
+  const aria = {
+    'aria-invalid': invalid || undefined,
+    'aria-describedby': describedBy,
+    'aria-readonly': readOnly || undefined,
+  };
+  // A read-only control keeps focus and its value; what it would change is dropped.
+  const change = readOnly ? () => {} : onChange;
 
   // A custom field editor extension takes over the input entirely (sandboxed iframe).
   if (editor) {
@@ -908,8 +965,9 @@ function FieldInput(props: {
           contentType: editorContext?.contentType,
           field: { apiId: field.apiId, type: field.type, locale },
           value,
+          readOnly,
         }}
-        onChange={onChange}
+        onChange={change}
       />
     );
   }
@@ -1057,7 +1115,7 @@ function FieldInput(props: {
         value={value}
         required={field.required}
         aria={aria}
-        onChange={onChange}
+        onChange={change}
       />
     );
   }
@@ -1082,9 +1140,10 @@ function FieldInput(props: {
         className={inputClass}
         {...aria}
         type="number"
+        readOnly={readOnly}
         placeholder={field.placeholder}
         value={value === undefined || value === null ? '' : String(value)}
-        onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+        onChange={(e) => change(e.target.value === '' ? undefined : Number(e.target.value))}
       />
     );
   }
@@ -1094,9 +1153,10 @@ function FieldInput(props: {
         id={id}
         className={inputClass}
         aria={aria}
+        readOnly={readOnly}
         format={field.format}
         value={value}
-        onChange={onChange}
+        onChange={change}
       />
     );
   }
@@ -1108,9 +1168,10 @@ function FieldInput(props: {
         {...aria}
         {...writing}
         rows={4}
+        readOnly={readOnly}
         placeholder={field.placeholder}
         value={typeof value === 'string' ? value : ''}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => change(e.target.value)}
       />
     );
   }
@@ -1122,9 +1183,10 @@ function FieldInput(props: {
         {...aria}
         // Not normalized as you type: rewriting the value mid-keystroke fights
         // the cursor. The server normalizes on save and returns what it stored.
+        readOnly={readOnly}
         placeholder={field.placeholder ?? 'my-post-title'}
         value={typeof value === 'string' ? value : ''}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => change(e.target.value)}
       />
     );
   }
@@ -1135,9 +1197,10 @@ function FieldInput(props: {
         className={inputClass}
         {...aria}
         {...writing}
+        readOnly={readOnly}
         placeholder={field.placeholder}
         value={typeof value === 'string' ? value : ''}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => change(e.target.value)}
       />
     );
   }
@@ -1154,6 +1217,8 @@ function FieldInput(props: {
         itemType={field.items.type}
         format={field.items.format}
         aria={aria}
+        path={props.path ?? field.apiId}
+        errorFor={props.errorFor}
         value={value}
         onChange={onChange}
       />
@@ -1161,7 +1226,14 @@ function FieldInput(props: {
   }
   // Complex types (Array of Links, JSON, Location): raw JSON editor for the MVP.
   return (
-    <JsonFieldInput id={id} inputClass={inputClass} aria={aria} value={value} onChange={onChange} />
+    <JsonFieldInput
+      id={id}
+      inputClass={inputClass}
+      aria={aria}
+      readOnly={readOnly}
+      value={value}
+      onChange={change}
+    />
   );
 }
 
@@ -1178,7 +1250,7 @@ function OptionsInput(props: {
   options: readonly FieldOption[];
   value: unknown;
   required: boolean;
-  aria: { 'aria-invalid'?: boolean; 'aria-describedby'?: string };
+  aria: { 'aria-invalid'?: boolean; 'aria-describedby'?: string; 'aria-readonly'?: boolean };
   onChange: (v: unknown) => void;
 }) {
   const { id, options, value, required, aria, onChange } = props;
@@ -1256,13 +1328,48 @@ const asObject = (value: unknown): Record<string, unknown> =>
  * says so to assistive technology. Rich text, which no fieldset reaches, is told through
  * `FieldInput`'s `disabled`. Open fields render without a wrapper.
  */
-function DisabledBy(props: { state: FieldState | undefined; children: React.ReactNode }) {
-  if (!props.state?.disabled) return <>{props.children}</>;
+function DisabledBy(props: {
+  state: FieldState | undefined;
+  field: FieldDefinition;
+  hasEditor?: boolean;
+  children: React.ReactNode;
+}) {
+  if (!props.state?.disabled || locksInPlace(props.field, props.hasEditor)) {
+    return <>{props.children}</>;
+  }
   return (
     <fieldset disabled className="m-0 min-w-0 border-0 p-0">
       {props.children}
     </fieldset>
   );
+}
+
+/**
+ * Whether `FieldInput` draws this field as one text, number, date or select control, which it
+ * makes read-only itself: it stays in the tab order and reads its reason on focus, where a
+ * disabled control is skipped. Button-like widgets (a checkbox, a picker, a list with Add and
+ * Remove, nested fields) are disabled by the fieldset instead; an extension is told in its context.
+ */
+function locksInPlace(field: FieldDefinition, hasEditor = false): boolean {
+  if (hasEditor) return true;
+  switch (field.type) {
+    case 'Component':
+    case 'Seo':
+    case 'Link':
+    case 'Boolean':
+    case 'RichText':
+      return false;
+    case 'Array':
+      // A list drawn as raw JSON locks in place; every list editor has buttons.
+      return !(
+        blockVariants(field) ||
+        field.items?.type === 'Component' ||
+        field.items?.type === 'Symbol' ||
+        (field.items && LIST_ITEM_TYPES.has(field.items.type))
+      );
+    default:
+      return true;
+  }
 }
 
 /**
@@ -1299,7 +1406,7 @@ function ComponentInput(
               {f.name}
               {f.required && <RequiredMark />}
             </Label>
-            <DisabledBy state={state}>
+            <DisabledBy state={state} field={f}>
               <FieldInput
                 id={nestedId}
                 field={f}
@@ -1694,6 +1801,7 @@ function DateInput(props: {
   className?: string;
   aria: Record<string, string | boolean | undefined>;
   'aria-label'?: string;
+  readOnly?: boolean;
   format: DateFormat | undefined;
   value: unknown;
   onChange: (v: unknown) => void;
@@ -1706,6 +1814,7 @@ function DateInput(props: {
       className={props.className}
       {...props.aria}
       aria-label={props['aria-label']}
+      readOnly={props.readOnly}
       type={type}
       // Seconds are kept when typed or stored; the picker offers minutes.
       step={props.format === 'time' || props.format === 'datetime' ? 60 : undefined}
@@ -1729,6 +1838,9 @@ function ScalarListInput(props: {
   itemType: ArrayItemType;
   format: DateFormat | undefined;
   aria: Record<string, string | boolean | undefined>;
+  /** The list's path, so each row finds its own error (`sizes[1]`). */
+  path: string;
+  errorFor?: (path: string) => string | undefined;
   value: unknown;
   onChange: (v: unknown) => void;
 }) {
@@ -1748,58 +1860,97 @@ function ScalarListInput(props: {
     props.onChange(value.length > 0 ? value : undefined);
   };
   const numeric = itemType === 'Integer' || itemType === 'Number';
+  const rowId = (i: number) => (i === 0 ? id : `${id}-${i}`);
+  // Where focus goes once the rows have redrawn: the added row, the row that took a removed one's
+  // place, or Add when there is none after it.
+  const addRef = useRef<HTMLButtonElement>(null);
+  const focusNext = useRef<number | 'add' | null>(null);
+  useEffect(() => {
+    const target = focusNext.current;
+    if (target === null) return;
+    focusNext.current = null;
+    if (target === 'add') addRef.current?.focus();
+    else document.getElementById(rowId(target))?.focus();
+  });
+  const fieldDescribedBy = props.aria['aria-describedby'] as string | undefined;
   return (
     <div className="space-y-2">
       {rows.map((item, i) => {
         const name = `${label} item ${i + 1}`;
         const change = (v: unknown) => emit(rows.map((r, j) => (j === i ? v : r)));
+        // Each row carries its own error, and the list's error and help beside it.
+        const err = props.errorFor?.(`${props.path}[${i}]`);
+        const errId = err ? `${rowId(i)}-error` : undefined;
+        const rowAria = {
+          'aria-invalid': Boolean(err) || Boolean(props.aria['aria-invalid']) || undefined,
+          'aria-describedby': [errId, fieldDescribedBy].filter(Boolean).join(' ') || undefined,
+        };
         return (
-          <div key={i} className="flex items-start gap-2">
-            {itemType === 'Date' ? (
-              <DateInput
-                id={i === 0 ? id : `${id}-${i}`}
-                aria={{}}
-                aria-label={name}
-                format={format}
-                value={item}
-                onChange={change}
-              />
-            ) : itemType === 'Text' ? (
-              <Textarea
-                id={i === 0 ? id : `${id}-${i}`}
-                aria-label={name}
-                rows={2}
-                value={typeof item === 'string' ? item : ''}
-                onChange={(e) => change(e.target.value)}
-              />
-            ) : (
-              <Input
-                id={i === 0 ? id : `${id}-${i}`}
-                aria-label={name}
-                type="number"
-                step={itemType === 'Integer' ? 1 : 'any'}
-                value={typeof item === 'number' ? String(item) : ''}
-                onChange={(e) => change(e.target.value === '' ? undefined : Number(e.target.value))}
-              />
+          // biome-ignore lint/suspicious/noArrayIndexKey: a row is its place in the list; values repeat and may be empty
+          <div key={i} className="space-y-1">
+            <div className="flex items-start gap-2">
+              {itemType === 'Date' ? (
+                <DateInput
+                  id={rowId(i)}
+                  aria={rowAria}
+                  aria-label={name}
+                  format={format}
+                  value={item}
+                  onChange={change}
+                />
+              ) : itemType === 'Text' ? (
+                <Textarea
+                  id={rowId(i)}
+                  {...rowAria}
+                  aria-label={name}
+                  rows={2}
+                  value={typeof item === 'string' ? item : ''}
+                  onChange={(e) => change(e.target.value)}
+                />
+              ) : (
+                <Input
+                  id={rowId(i)}
+                  {...rowAria}
+                  aria-label={name}
+                  type="number"
+                  step={itemType === 'Integer' ? 1 : 'any'}
+                  value={typeof item === 'number' ? String(item) : ''}
+                  onChange={(e) =>
+                    change(e.target.value === '' ? undefined : Number(e.target.value))
+                  }
+                />
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={`Remove ${name}`}
+                onClick={() => {
+                  focusNext.current = i < rows.length - 1 ? i : 'add';
+                  emit(rows.filter((_, j) => j !== i));
+                }}
+              >
+                Remove
+              </Button>
+            </div>
+            {err && (
+              <p id={errId} className="text-xs text-destructive">
+                {err}
+              </p>
             )}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label={`Remove ${name}`}
-              onClick={() => emit(rows.filter((_, j) => j !== i))}
-            >
-              Remove
-            </Button>
           </div>
         );
       })}
       <Button
+        ref={addRef}
         type="button"
         variant="outline"
         size="sm"
-        aria-describedby={props.aria['aria-describedby'] as string | undefined}
-        onClick={() => setRows([...rows, numeric ? undefined : ''])}
+        aria-describedby={fieldDescribedBy}
+        onClick={() => {
+          focusNext.current = rows.length;
+          setRows([...rows, numeric ? undefined : '']);
+        }}
       >
         <Plus className="size-4" /> Add item
       </Button>
@@ -1815,6 +1966,7 @@ function JsonFieldInput(props: {
   id: string;
   inputClass?: string;
   aria: Record<string, string | boolean | undefined>;
+  readOnly?: boolean;
   value: unknown;
   onChange: (v: unknown) => void;
 }) {
@@ -1839,6 +1991,7 @@ function JsonFieldInput(props: {
         id={props.id}
         className={props.inputClass}
         {...props.aria}
+        readOnly={props.readOnly}
         rows={3}
         placeholder='JSON, e.g. {"lat": 52.52, "lon": 13.4}'
         value={text}

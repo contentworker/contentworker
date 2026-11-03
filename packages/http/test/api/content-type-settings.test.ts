@@ -69,7 +69,7 @@ function setup() {
   return { send, ctx };
 }
 
-describe('model ergonomics over HTTP', () => {
+describe('content type details, layout and field settings over HTTP', () => {
   it('stores a type’s group, description, icon and layout, and a field’s format and settings', async () => {
     const { send } = setup();
     const res = await send(`${M}/content-types`, 'POST', event);

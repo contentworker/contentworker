@@ -5,7 +5,9 @@ import type { AppExtension } from '../lib/management';
  * Message protocol between the admin (host) and a UI extension (guest iframe):
  *
  *  guest → host  `{ type: 'contentworker-extension:ready' }`             — guest mounted, request context
- *  host  → guest `{ type: 'contentworker-extension:init', context }`     — editing context (+ field value)
+ *  host  → guest `{ type: 'contentworker-extension:init', context }`     — editing context (+ field value,
+ *                                                                          and `readOnly` while the field's rules
+ *                                                                          disable it: a setValue is then ignored)
  *  guest → host  `{ type: 'contentworker-extension:setValue', value }`   — field-editor value update
  *  guest → host  `{ type: 'contentworker-extension:resize', height }`    — request a new iframe height
  *
@@ -27,6 +29,11 @@ export interface ExtensionContext {
   readonly field?: { readonly apiId: string; readonly type: string; readonly locale: string };
   /** For `field-editor`: the current field value. */
   readonly value?: unknown;
+  /**
+   * For `field-editor`: true while the field's rules make it read-only. The editor should show the
+   * value without letting it change; the host ignores a `setValue` meanwhile.
+   */
+  readonly readOnly?: boolean;
 }
 
 /**
@@ -59,7 +66,8 @@ export function ExtensionFrame(props: {
       if (data?.type === READY) {
         post({ type: INIT, context: contextRef.current });
       } else if (data?.type === SET_VALUE) {
-        onChange?.(data.value);
+        // A read-only field takes no value, whatever the guest posts.
+        if (!contextRef.current.readOnly) onChange?.(data.value);
       } else if (data?.type === RESIZE && typeof data.height === 'number') {
         if (frameRef.current) frameRef.current.style.height = `${Math.max(40, data.height)}px`;
       }

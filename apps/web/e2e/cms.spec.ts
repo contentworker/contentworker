@@ -16,6 +16,7 @@ import {
   seedIngestFindings,
   seedLaidOutType,
   seedRuledType,
+  seedVenueType,
   statusOf,
   stubLocales,
   uploadAssetBytes,
@@ -1442,4 +1443,47 @@ test('a laid-out type: filed under its group, its entry form in tabs, a date fie
   await expect(page.getByText('Entry created')).toBeVisible();
   await page.getByRole('tab', { name: 'When' }).click();
   await expect(page.getByLabel('Day')).toHaveValue('2026-11-03');
+});
+
+test('entry tabs move with the arrow keys', async ({ page, request }) => {
+  await seedVenueType(request);
+  await openCms(page, '/content/venue/new');
+  const main = page.getByRole('tab', { name: 'Main' });
+  const contact = page.getByRole('tab', { name: 'Contact' });
+  await expect(main).toBeVisible(EDITOR_READY);
+  await main.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(contact).toBeFocused();
+  await expect(contact).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('button', { name: 'Booking' })).toBeVisible();
+  await page.keyboard.press('ArrowLeft');
+  await expect(main).toBeFocused();
+  await expect(main).toHaveAttribute('aria-selected', 'true');
+});
+
+test('a rejected save opens the tab and the closed group holding the field it names', async ({
+  page,
+  request,
+}) => {
+  await seedVenueType(request);
+  await openCms(page, '/content/venue/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByLabel('Title').fill(`Venue ${Date.now()}`);
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByRole('tab', { name: /Contact/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel(/Booking email/)).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('Field is required');
+});
+
+test('an images-only asset link offers images only', async ({ page, request }) => {
+  const stamp = Date.now();
+  await seedVenueType(request);
+  await seedAsset(request, `Poster art ${stamp}`);
+  await seedAsset(request, `Floor plan ${stamp}`, { contentType: 'application/pdf' });
+  await openCms(page, '/content/venue/new');
+  const picker = page.getByRole('combobox', { name: /Poster/ });
+  await expect(picker).toBeVisible(EDITOR_READY);
+  await picker.fill(String(stamp));
+  await expect(page.getByRole('option', { name: `Poster art ${stamp}` })).toBeVisible();
+  await expect(page.getByRole('option', { name: `Floor plan ${stamp}` })).toHaveCount(0);
 });

@@ -992,8 +992,35 @@ export function ContentTypeDialog(props: {
             </p>
           </div>
 
-          <fieldset className="space-y-2">
-            <legend className="font-medium text-sm">Layout</legend>
+          {/* Drawn as Fields is: its title beside its Add button. */}
+          <fieldset className="space-y-2" aria-labelledby="ct-layout-title">
+            <div className="flex items-center justify-between">
+              <span id="ct-layout-title" className="font-medium text-sm leading-none">
+                Layout
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={tabs.length >= LAYOUT_LIMITS.tabs}
+                onClick={() => {
+                  const name = tabs.length === 0 ? 'Content' : `Tab ${tabs.length + 1}`;
+                  setTabs((prev) => [
+                    ...prev,
+                    {
+                      apiId: tabApiId(
+                        name,
+                        prev.map((x) => x.apiId),
+                      ),
+                      name,
+                    },
+                  ]);
+                  setLayoutTouched(true);
+                }}
+              >
+                <Plus className="size-4" /> Add tab
+              </Button>
+            </div>
             <p className="max-w-measure text-muted-foreground text-ui">
               Arrange the entry form into tabs, then pick each field’s tab and group above. Only
               editors see it. Fields on no tab follow on the first.
@@ -1029,28 +1056,6 @@ export function ContentTypeDialog(props: {
                 </Button>
               </div>
             ))}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={tabs.length >= LAYOUT_LIMITS.tabs}
-              onClick={() => {
-                const name = tabs.length === 0 ? 'Content' : `Tab ${tabs.length + 1}`;
-                setTabs((prev) => [
-                  ...prev,
-                  {
-                    apiId: tabApiId(
-                      name,
-                      prev.map((x) => x.apiId),
-                    ),
-                    name,
-                  },
-                ]);
-                setLayoutTouched(true);
-              }}
-            >
-              <Plus className="size-4" /> Add tab
-            </Button>
           </fieldset>
 
           {error && <p className="text-sm text-destructive">{error}</p>}

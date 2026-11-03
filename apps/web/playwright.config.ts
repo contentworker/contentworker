@@ -30,8 +30,9 @@ export default defineConfig({
   projects: [
     {
       name: 'iphone',
-      // The editor's action bar sits above the tab bar only on a phone: measured here too.
-      testMatch: ['shell.spec.ts', 'editor-action-bar.spec.ts'],
+      // The editor's action bar sits above the tab bar only on a phone: measured here too, with
+      // the entry form's tabs.
+      testMatch: ['shell.spec.ts', 'editor-action-bar.spec.ts', 'entry-tabs.spec.ts'],
       use: { ...devices['iPhone 15'] },
     },
     {
@@ -39,7 +40,11 @@ export default defineConfig({
       testMatch: 'shell.spec.ts',
       use: { ...devices['iPhone 15 landscape'] },
     },
-    { name: 'ipad', testMatch: 'shell.spec.ts', use: { ...devices['iPad (gen 7)'] } },
+    {
+      name: 'ipad',
+      testMatch: ['shell.spec.ts', 'entry-tabs.spec.ts'],
+      use: { ...devices['iPad (gen 7)'] },
+    },
     {
       name: 'ipad-landscape',
       testMatch: 'shell.spec.ts',

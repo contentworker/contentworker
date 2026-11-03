@@ -141,6 +141,42 @@ describe('the entry form with a layout', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it('names a collapsed group by a heading, and offers to open it from the error summary', async () => {
+    renderForm();
+    fireEvent.submit(screen.getByLabelText('Title').closest('form') as HTMLFormElement);
+    await waitFor(() => expect(screen.getByLabelText(/Email/)).toBeTruthy());
+    const heading = screen.getByRole('heading', { level: 3, name: 'Contact' });
+    // Closed again by hand: the summary's line becomes a button that reopens it.
+    fireEvent.click(within(heading).getByRole('button', { name: 'Contact' }));
+    await waitFor(() => expect(screen.queryByLabelText(/Email/)).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: /Email \(en-US\): Field is required/ }));
+    await waitFor(() => expect(screen.getByLabelText(/Email/)).toBeTruthy());
+  });
+
+  it('moves focus with the list: to an added row, then the next row or Add after a remove', () => {
+    renderForm(EVENT, { sizes: { 'en-US': [1, 2] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
+    expect(document.activeElement).toBe(screen.getByLabelText('Sizes item 3'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Sizes item 1' }));
+    // The row that took its place, now item 1, holding 2.
+    expect(document.activeElement).toBe(screen.getByLabelText('Sizes item 1'));
+    expect((document.activeElement as HTMLInputElement).value).toBe('2');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Sizes item 2' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add item' }));
+  });
+
+  it('marks the row a rejected save names, and links it to its message', () => {
+    renderForm(EVENT, { email: { 'en-US': 'a@b.co' }, sizes: { 'en-US': [1, 1.5] } });
+    fireEvent.submit(screen.getByLabelText('Title').closest('form') as HTMLFormElement);
+    const second = screen.getByLabelText('Sizes item 2');
+    expect(second.getAttribute('aria-invalid')).toBe('true');
+    const message = document.getElementById(
+      second.getAttribute('aria-describedby')?.split(' ')[0] ?? '',
+    );
+    expect(message?.textContent).toBe('Expected an integer');
+    expect(screen.getByLabelText('Sizes item 1').getAttribute('aria-invalid')).toBeNull();
+  });
+
   it('takes a date and time, a time of day and a list of numbers, saved as numbers', () => {
     const onSave = renderForm(EVENT, { email: { 'en-US': 'a@b.co' } });
     fireEvent.change(screen.getByLabelText('Day'), { target: { value: '2026-11-03' } });

@@ -282,11 +282,16 @@ export async function asFreshDeployment(page: Page, keep: (id: string) => boolea
 export async function seedAsset(
   request: APIRequestContext,
   title: string,
-  opts: { readonly folderId?: string; readonly publish?: boolean } = {},
+  opts: {
+    readonly folderId?: string;
+    readonly publish?: boolean;
+    readonly contentType?: string;
+  } = {},
 ): Promise<string> {
+  const contentType = opts.contentType ?? 'image/png';
   const res = await api(request, 'POST', `${MGMT}/assets`, {
-    fileName: `${title.replace(/\W+/g, '-')}.png`,
-    contentType: 'image/png',
+    fileName: `${title.replace(/\W+/g, '-')}.${contentType.split('/')[1] ?? 'bin'}`,
+    contentType,
     title: { 'en-US': title },
     ...(opts.folderId ? { folderId: opts.folderId } : {}),
   });
@@ -501,4 +506,47 @@ export async function seedLaidOutType(request: APIRequestContext) {
   });
   if (![200, 201].includes(res.status())) throw new Error(await res.text());
   await api(request, 'POST', `${MGMT}/content-types/happening/published`);
+}
+
+/**
+ * A type laid out in two tabs with a required field in a collapsed group on the second, and an
+ * asset link that takes images only: what the entry form's tab keys, a rejected save's jump and
+ * the file-type-filtered asset picker are exercised on.
+ */
+export async function seedVenueType(request: APIRequestContext) {
+  const field = (apiId: string, name: string, position: number, extra: object = {}) => ({
+    apiId,
+    name,
+    type: 'Symbol',
+    localized: false,
+    required: false,
+    position,
+    ...extra,
+  });
+  const res = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'venue',
+    name: 'Venue',
+    displayField: 'title',
+    layout: {
+      tabs: [
+        { apiId: 'main', name: 'Main', groups: [{ fields: ['title', 'poster'] }] },
+        {
+          apiId: 'contact',
+          name: 'Contact',
+          groups: [{ name: 'Booking', fields: ['email'], collapsed: true }],
+        },
+      ],
+    },
+    fields: [
+      field('title', 'Title', 0, { required: true }),
+      field('poster', 'Poster', 1, {
+        type: 'Link',
+        linkType: 'Asset',
+        validations: { assetMimeTypes: ['image/*'] },
+      }),
+      field('email', 'Booking email', 2, { required: true }),
+    ],
+  });
+  if (![200, 201].includes(res.status())) throw new Error(await res.text());
+  await api(request, 'POST', `${MGMT}/content-types/venue/published`);
 }

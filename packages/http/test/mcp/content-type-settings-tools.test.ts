@@ -53,7 +53,7 @@ async function connect() {
   return { client, call };
 }
 
-describe('model ergonomics through the MCP model tools', () => {
+describe('content type details, layout and field settings through the MCP model tools', () => {
   it('keeps a type’s details and a field’s format and preset, as the route does', async () => {
     const { call } = await connect();
     const layout = {

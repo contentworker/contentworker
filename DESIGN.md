@@ -480,6 +480,45 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   locale Delivery doesn't serve keeps a **"Not delivered"** stamp on its button, in words and
   ruled in the button's own colour so it reads on the chosen ink and the muted row alike, and
   the same words beside it in the header's locale switcher: it is still written and previewed.
+- **The content nav** (`cms/routes/ContentLayout.tsx`): beside a type's entries once the page is
+  40rem wide, drawn as the Settings section nav is. The "Content types" caption, the ungrouped
+  types, then each group under its name (an h3 `caption`, ids by the group's place, never a slug)
+  naming its list. Each link has its type's icon (`size-4`; a type without one keeps the empty
+  slot, so names line up) and a `StatusDot` when not published. The open link takes the accent
+  fill and tick, and its icon alone goes `text-brand`.
+- **The entry form's layout** (`cms/components/EntryForm.tsx`): a type's layout draws the form as
+  tabs ("Sections of the entry", a `TabsList` at full width that scrolls sideways itself, so a
+  phone or tablet never scrolls the page), each tab one `Card`. A named group is a `section-title`
+  h3 over a hairline (`border-t`); a collapsed one is the same h3 holding a ghost trigger with a
+  turning chevron. Tabs and locales carry one `ErrorCount` pill each (destructive tint, the count
+  read as "2 validation errors"). A rejected save opens the first tab with an error and opens its
+  group; in the error summary, a field out of view (another locale, tab, or a closed group) is a
+  button that brings it into view.
+- **Fields under rules:** a field its rules hide isn't drawn. One that still holds a value is a
+  quiet line in its place (`bg-secondary/40`, "Sold to is hidden while Status is not "sold", but
+  still holds a value") with an outline "Clear Sold to". A field its rules make read-only keeps
+  its place and value: a text, number, date or select control is `readOnly` with `aria-readonly`,
+  stays in the tab order, and its reason ("Read-only while Status is "sold"", muted `text-xs`) is
+  read on focus through `aria-describedby`; a button-like widget (a checkbox, a picker, a list's
+  Add and Remove, nested fields) is disabled by a fieldset; an extension is told `readOnly`. When
+  an edit shows, hides or locks other fields, a polite sr-only line says so ("Sold to shown.
+  Reference read-only.").
+- **Dates and lists:** a Date's input follows its format: a date picker, `datetime-local`, or a
+  `time` input (minutes; seconds kept when stored). A list of Text, Integer, Number or Date
+  values is one row per value, each named "<Field> item N" with its own input and a ghost Remove,
+  then an outline Add item; focus goes to an added row, and after a Remove to the row that took
+  its place (or Add). A row's own error sits under it, marked `aria-invalid` and linked. A list of
+  Symbols keeps its chips.
+- **The content type dialog** (`cms/components/ContentTypeDialog.tsx`): the type's Group, Icon (a
+  select of the icons the admin draws; a stored name it can't draw is kept as "name (not drawn
+  here)") and Description beside its name. Each field row has Guidance, Rules and Settings
+  buttons; each opens a panel under the row (`bg-secondary/40`, `rounded-xl`, a fieldset with an
+  sr-only legend naming the field, "Rules for Price"). Rules are rows of action, sibling, operator
+  and value. Settings hold what the type means: a Date's Format (Date and time, Date, Any ISO
+  date; Time of day only where the field already holds one) with its earliest and latest value, a
+  text field's Pattern preset, an asset link's allowed file types. **Layout** is drawn as Fields
+  is, its title beside Add tab; each tab a row (its name, a ghost Remove), and each field row gains
+  Tab and Group selects once a tab exists.
 - **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the
   noun), then cards or a stacked table.
 - **Assets** (`cms/components/AssetLibrary.tsx`, `cms/components/assets/`): `PageHeader` with
