@@ -5,9 +5,10 @@ import {
   consumeEvent,
   createEnvironment,
   createSpace,
+  deliverWebhookRequest,
   setEnvironmentAlias,
 } from '@contentworker/application';
-import { type Principal, SCOPES, scopesForKind } from '@contentworker/domain';
+import { isWebhookSendRequest, type Principal, SCOPES, scopesForKind } from '@contentworker/domain';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -185,9 +186,12 @@ describe('webhook tools over MCP', () => {
     let consumed = 0;
     const engine = async () => {
       const sender = new RecordingWebhookSender();
-      const events = store.allEvents().slice(consumed);
+      const events = store.allOutbox().slice(consumed);
       consumed += events.length;
-      for (const e of events) await consumeEvent(deps.ctx, { sender }, e);
+      for (const e of events) {
+        if (isWebhookSendRequest(e)) await deliverWebhookRequest(deps.ctx, { sender }, e);
+        else await consumeEvent(deps.ctx, { sender }, e);
+      }
       return sender;
     };
     expect((await engine()).sent.map((s) => s.event.type)).toEqual(['webhook.test']);
@@ -228,7 +232,7 @@ describe('webhook tools over MCP', () => {
     ] as const) {
       expect((await editor.callTool({ name, arguments: args })).isError).toBe(true);
     }
-    expect((deps.ctx.store as InMemoryContentStore).allEvents()).toEqual([]);
+    expect((deps.ctx.store as InMemoryContentStore).allOutbox()).toEqual([]);
     await call('webhook_delete', { id: mine.id });
     const other = await connect(deps, {
       spaceId: 'space-2',

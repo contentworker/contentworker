@@ -83,7 +83,7 @@ describe('cloning an environment as a job on D1', () => {
     const ran = new Set<string>();
     for (let round = 0; round < 10; round++) {
       const due = (await store.outbox.readPending(1000)).filter(
-        (e): e is BulkChunkDueEvent => e.type === 'bulk.chunk_due' && !ran.has(e.id),
+        (e): e is BulkChunkDueEvent => 'type' in e && e.type === 'bulk.chunk_due' && !ran.has(e.id),
       );
       if (due.length === 0) break;
       for (const event of due) {

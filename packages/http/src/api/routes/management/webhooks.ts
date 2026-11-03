@@ -126,9 +126,11 @@ export function webhooksRoutes(deps: AuthDeps): Hono<AuthVars> {
     `${BASE}/webhooks/:id/deliveries/:deliveryId/resend`,
     doc('Webhooks', 'Resend a delivery', {
       description:
-        "Queues the delivery's event for this webhook again: the same event and id, signed afresh " +
-        'with the time it is sent. The new attempt names this one in `resendOf`. One attempt, ' +
-        'never retried. 409 once the event is older than the event retention (7 days by default).',
+        "Queues the delivery's event for this webhook again: the same event id, signed afresh " +
+        'with the time it is sent (a bulk chunk from its entries as published now). The new ' +
+        'attempt names this one in `resendOf`. One attempt, never retried. 409 once the event ' +
+        'has passed the event retention (7 days by default), which can be a little before the ' +
+        'delivery itself leaves the log.',
       ok: webhookDocs.queuedWebhookDelivery,
       status: 202,
     }),

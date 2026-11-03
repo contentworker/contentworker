@@ -527,6 +527,28 @@ describe('D1 store (contract)', () => {
     expect(await store.outbox.get(scope, uuidv7())).toBeNull();
   });
 
+  it('carries a webhook send request with no `type` in its payload, typed by its kind', async () => {
+    const request = {
+      kind: 'webhook.send' as const,
+      id: uuidv7(),
+      scope,
+      occurredAt: clock.now().toISOString(),
+      webhookId: 'wh-1',
+      resend: { deliveryId: 3, eventId: 'evt-x' },
+    };
+    await store.outbox.append(request);
+    expect(await store.outbox.get(scope, request.id)).toEqual(request);
+    const pending = await store.outbox.readPending(10_000);
+    expect(pending.find((e) => e.id === request.id)).toEqual(request);
+    await store.outbox.markRelayed(pending.map((e) => e.id));
+    const rows = await testDb
+      .prepare('SELECT type, payload FROM outbox WHERE id = ?')
+      .bind(request.id)
+      .all<{ type: string; payload: string }>();
+    expect(rows.results[0]?.type).toBe('webhook.send');
+    expect(JSON.parse(rows.results[0]?.payload ?? '{}')).not.toHaveProperty('type');
+  });
+
   it('round-trips roles and role-bound API keys (granular RBAC)', async () => {
     const role = await createRole(ctx, spaceId, {
       name: 'Editor',

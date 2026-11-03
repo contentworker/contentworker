@@ -1,4 +1,4 @@
-import type { DomainEvent } from '@contentworker/domain';
+import { isWebhookSendRequest, type OutboxEntry } from '@contentworker/domain';
 import type { Queue } from '@contentworker/ports';
 import type { AppContext } from '../context';
 
@@ -12,10 +12,11 @@ export const EVENTS_TOPIC = 'contentworker.events';
  */
 export const BULK_TOPIC = 'contentworker.bulk';
 
-/** Default topic router: bulk chunk work → bulk topic, everything else →
- *  events. Hosts without a bulk queue binding pass `routeTopic: () =>
+/** Default topic router: bulk chunk work → bulk topic, everything else (webhook send requests
+ *  too) → events. Hosts without a bulk queue binding pass `routeTopic: () =>
  *  EVENTS_TOPIC` to keep single-topic operation. */
-export function defaultRouteTopic(event: DomainEvent): string {
+export function defaultRouteTopic(event: OutboxEntry): string {
+  if (isWebhookSendRequest(event)) return EVENTS_TOPIC;
   return event.type === 'bulk.chunk_due' || event.type === 'environment.purge_due'
     ? BULK_TOPIC
     : EVENTS_TOPIC;
@@ -24,7 +25,7 @@ export function defaultRouteTopic(event: DomainEvent): string {
 export interface RelayOptions {
   readonly batchSize?: number;
   /** Maps each event to its queue topic (default {@link defaultRouteTopic}). */
-  readonly routeTopic?: (event: DomainEvent) => string;
+  readonly routeTopic?: (event: OutboxEntry) => string;
 }
 
 /**
@@ -52,7 +53,7 @@ export async function relayOutbox(
     // support producer-side dedupe collapse the
     // crash-between-enqueue-and-commit redelivery; queues that don't
     // (Cloudflare Queues) ignore it — consumers stay idempotent.
-    const byTopic = new Map<string, DomainEvent[]>();
+    const byTopic = new Map<string, OutboxEntry[]>();
     for (const event of batch) {
       const topic = routeTopic(event);
       const list = byTopic.get(topic) ?? [];

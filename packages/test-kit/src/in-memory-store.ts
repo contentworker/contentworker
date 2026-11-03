@@ -23,11 +23,13 @@ import {
   type EntryWorkflowState,
   type InstalledPlugin,
   inviteStatus,
+  isWebhookSendRequest,
   type MemberInvite,
   type Menu,
   matchesTopic,
   menuTargets,
   type OAuthClient,
+  type OutboxEntry,
   type PluginSettings,
   type Promotion,
   projectFields,
@@ -200,7 +202,7 @@ export class InMemoryContentStore implements ContentStore {
     return { ...v, fields: JSON.parse(raw) as EntryFields };
   }
   private readonly publishedData = new Map<string, PublishedEntry>();
-  private readonly outboxData: { event: DomainEvent; relayed: boolean; relayedAt?: number }[] = [];
+  private readonly outboxData: { event: OutboxEntry; relayed: boolean; relayedAt?: number }[] = [];
 
   private readonly environmentData = new Map<string, { id: string; name: string }[]>();
   private readonly purgeData = new Map<
@@ -1537,7 +1539,9 @@ export class InMemoryContentStore implements ContentStore {
       const cutoff = before.toISOString();
       let deleted = 0;
       for (let i = this.webhookDeliveries.length - 1; i >= 0 && deleted < limit; i--) {
-        if ((this.webhookDeliveries[i]?.createdAt ?? '') < cutoff) {
+        const record = this.webhookDeliveries[i];
+        if (record && record.createdAt < cutoff) {
+          this.deliverySpace.delete(record.id);
           this.webhookDeliveries.splice(i, 1);
           deleted += 1;
         }
@@ -3148,8 +3152,13 @@ export class InMemoryContentStore implements ContentStore {
     this.apiKeyData.set(key.id, key);
   }
 
-  /** Returns all outbox events appended so far (relayed or not). */
+  /** Returns all outbox events appended so far (relayed or not); webhook send requests aside. */
   allEvents(): DomainEvent[] {
+    return this.outboxData.flatMap((r) => (isWebhookSendRequest(r.event) ? [] : [r.event]));
+  }
+
+  /** Every outbox row appended so far, in order: events and webhook send requests. */
+  allOutbox(): OutboxEntry[] {
     return this.outboxData.map((r) => r.event);
   }
 }

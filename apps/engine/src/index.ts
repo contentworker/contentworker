@@ -14,6 +14,7 @@ import {
   type ConsumeDeps,
   consumeEvent,
   createHasher,
+  deliverWebhookRequest,
   drainOutbox,
   pruneEventHistory,
   redeliverWebhook,
@@ -31,7 +32,7 @@ import {
   sweepAbandonedUploads,
   sweepExpiredZips,
 } from '@contentworker/application';
-import type { Scope } from '@contentworker/domain';
+import { isWebhookSendRequest, type Scope } from '@contentworker/domain';
 import { isResealTick } from '@contentworker/platform/data-key';
 import { CostGuardDO, doAgentCostGuardFromEnv } from '@contentworker/platform/do/cost-guard';
 import { createDoEventBus, LiveHubDO } from '@contentworker/platform/do/live-hub';
@@ -103,8 +104,8 @@ const EVENT_LANES = 6;
  */
 function eventLane(msg: Message<unknown>): string {
   const body = payloadOf(msg);
-  // A webhook retry touches that webhook only: its own lane.
-  if (isWebhookRetryMessage(body)) return `webhook:${body.webhookId}`;
+  // A webhook retry, test or resend touches that webhook only: its own lane.
+  if (isWebhookRetryMessage(body) || isWebhookSendRequest(body)) return `webhook:${body.webhookId}`;
   const event = body as {
     scope?: { spaceId?: string; environmentId?: string };
     entryId?: unknown;
@@ -187,6 +188,22 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
         msg.ack();
       } catch (err) {
         console.error('webhook retry failed; retrying', err);
+        msg.retry();
+      }
+      return;
+    }
+    // An administrator's webhook test or resend. Not a domain event (no `type`), so an engine
+    // without this branch drops it below as malformed instead of fanning it out by topic.
+    if (isWebhookSendRequest(body)) {
+      try {
+        const outcome = await deliverWebhookRequest(wired.ctx, deps, body);
+        metrics.count('contentworker_webhook_requests_total', 1, {
+          kind: body.test ? 'test' : 'resend',
+          outcome: outcome === null ? 'dropped' : outcome.delivered ? 'delivered' : 'failed',
+        });
+        msg.ack();
+      } catch (err) {
+        console.error('webhook send request failed; retrying', err);
         msg.retry();
       }
       return;

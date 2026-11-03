@@ -21,7 +21,7 @@ import {
   publishContentType,
   runBulkChunk,
 } from '@contentworker/application';
-import type { BulkChunkDueEvent, DomainEvent, Scope } from '@contentworker/domain';
+import type { BulkChunkDueEvent, Scope } from '@contentworker/domain';
 import type { BlobStore } from '@contentworker/ports';
 import type { InMemoryContentStore } from '@contentworker/test-kit';
 
@@ -75,7 +75,7 @@ export async function drainImportJobs(ctx: AppContext, blob: BlobStore) {
   const ran = new Set<string>();
   for (let round = 0; round < 20; round++) {
     const due = (await store.outbox.readPending(10_000)).filter(
-      (e: DomainEvent): e is BulkChunkDueEvent => e.type === 'bulk.chunk_due' && !ran.has(e.id),
+      (e): e is BulkChunkDueEvent => 'type' in e && e.type === 'bulk.chunk_due' && !ran.has(e.id),
     );
     if (due.length === 0) return;
     for (const event of due) {

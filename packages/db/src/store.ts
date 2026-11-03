@@ -20,10 +20,12 @@ import {
   type EntryVersion,
   type EventType,
   type InstalledPlugin,
+  isWebhookSendRequest,
   type MemberInvite,
   type Menu,
   matchesTopic,
   type OAuthClient,
+  type OutboxEntry,
   type PluginSettings,
   type Promotion,
   projectFields,
@@ -2732,7 +2734,7 @@ export const OUTBOX_LEASE_MS = 60_000;
 
 function makeOutboxRepo(x: Exec): OutboxRepo {
   const db = x.db;
-  const appendMany = async (events: readonly DomainEvent[]): Promise<void> => {
+  const appendMany = async (events: readonly OutboxEntry[]): Promise<void> => {
     if (events.length === 0) return;
     await writeAll(
       x,
@@ -2740,8 +2742,10 @@ function makeOutboxRepo(x: Exec): OutboxRepo {
         db.insert(schema.outbox).values(
           chunk.map((event) => ({
             id: event.id,
-            type: event.type,
-            payload: event,
+            // A send request has no `type` (so no engine takes it for an event); its row is typed
+            // by its `kind`.
+            type: isWebhookSendRequest(event) ? event.kind : event.type,
+            payload: event as DomainEvent,
             occurredAt: new Date(event.occurredAt),
           })),
         ),
@@ -2784,7 +2788,7 @@ function makeOutboxRepo(x: Exec): OutboxRepo {
         .returning();
       return rows
         .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())
-        .map((r) => r.payload as DomainEvent);
+        .map((r) => r.payload as OutboxEntry);
     },
     async markRelayed(eventIds) {
       if (eventIds.length === 0) return;
@@ -2796,12 +2800,12 @@ function makeOutboxRepo(x: Exec): OutboxRepo {
         ),
       );
     },
-    async get(scope, eventId) {
+    async get(scope, id) {
       const [row] = await db
         .select({ payload: schema.outbox.payload })
         .from(schema.outbox)
-        .where(eq(schema.outbox.id, eventId));
-      const event = row?.payload as DomainEvent | undefined;
+        .where(eq(schema.outbox.id, id));
+      const event = row?.payload as OutboxEntry | undefined;
       // The outbox has no space column: the event's own scope says whose it is.
       return event?.scope?.spaceId === scope.spaceId ? event : null;
     },

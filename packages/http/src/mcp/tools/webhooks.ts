@@ -151,9 +151,10 @@ export function registerWebhookTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Resend a stored delivery (deliveryId from webhook_deliveries) to its webhook: the same ' +
-        'event and id, signed afresh with the time it is sent, recorded as a new attempt whose ' +
-        'resendOf names the original. One attempt, never retried. Refused (conflict) once the ' +
-        'event is past the event retention (7 days by default).',
+        'event id, signed afresh with the time it is sent (a bulk chunk from its entries as ' +
+        'published now), recorded as a new attempt whose resendOf names the original. One ' +
+        'attempt, never retried. Refused (conflict) once the event has passed the event retention ' +
+        '(7 days by default), which can be a little before the delivery leaves the log.',
       inputSchema: toolSchema('webhook_resend', () =>
         z.object({
           id: z.string().describe('the webhook id'),

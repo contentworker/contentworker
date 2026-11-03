@@ -50,18 +50,22 @@ describe('createWebhookSender', () => {
     expect(headers['x-contentworker-signature']).toBe(`sha256=${expected}`);
     expect(headers['x-contentworker-timestamp']).toBe(event.occurredAt);
     expect(headers['x-contentworker-event']).toBe('entry.published');
+    expect(headers['x-contentworker-event-id']).toBe(event.id);
+    expect(headers).not.toHaveProperty('x-contentworker-resend-of');
     expect(headers['x-custom']).toBe('yes');
     expect(JSON.parse(body)).toEqual(event);
   });
 
-  it('signs at the given timestamp (a resend), leaving the event as it was', async () => {
+  it('signs a resend at the given timestamp and names the delivery it repeats', async () => {
     const { impl, calls } = fakeFetch(() => new Response('ok', { status: 200 }));
     const at = '2026-03-01T12:00:00.000Z';
-    await createWebhookSender(impl).send(webhook, event, { timestamp: at });
+    await createWebhookSender(impl).send(webhook, event, { timestamp: at, resendOf: 7 });
     const headers = calls[0]?.init.headers as Record<string, string>;
     const body = calls[0]?.init.body as string;
     const expected = createHmac('sha256', webhook.secret).update(`${at}.${body}`).digest('hex');
     expect(headers['x-contentworker-timestamp']).toBe(at);
+    expect(headers['x-contentworker-event-id']).toBe(event.id);
+    expect(headers['x-contentworker-resend-of']).toBe('7');
     expect(headers['x-contentworker-signature']).toBe(`sha256=${expected}`);
     expect(JSON.parse(body)).toEqual(event);
   });

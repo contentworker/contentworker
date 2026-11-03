@@ -1,9 +1,11 @@
 import {
   ConflictError,
   type DomainEvent,
+  isWebhookSendRequest,
   NotFoundError,
+  type OutboxEntry,
   ValidationError,
-  type WebhookResendRequestedEvent,
+  type WebhookSendRequest,
 } from '@contentworker/domain';
 import {
   FixedClock,
@@ -16,6 +18,7 @@ import {
   type AppContext,
   consumeEvent,
   createWebhook,
+  deliverWebhookRequest,
   listWebhookDeliveries,
   resendWebhookDelivery,
   sendWebhookTest,
@@ -38,13 +41,21 @@ function harness() {
   const clock = new FixedClock();
   const c: AppContext = { store, clock, ids: new SequenceIdGenerator('w') };
   const retries: WebhookRetry[] = [];
-  const consume = (sender: RecordingWebhookSender, event: DomainEvent) =>
-    consumeEvent(c, { sender, scheduleWebhookRetry: async (r) => void retries.push(r) }, event);
-  /** The engine's relay: every outbox event not yet consumed, in order. */
-  let relayed = 0;
+  /** The engine's events consumer: a send request goes to its webhook, an event to dispatch. */
+  const consume = async (sender: RecordingWebhookSender, entry: OutboxEntry) => {
+    if (isWebhookSendRequest(entry))
+      return void (await deliverWebhookRequest(c, { sender }, entry));
+    await consumeEvent(
+      c,
+      { sender, scheduleWebhookRetry: async (r) => void retries.push(r) },
+      entry,
+    );
+  };
+  /** The engine's relay: every outbox row not yet consumed, in order. */
+  const relayed = new Set<string>();
   const relay = async (sender: RecordingWebhookSender) => {
-    const events = store.allEvents().slice(relayed);
-    relayed += events.length;
+    const events = store.allOutbox().filter((e) => !relayed.has(e.id));
+    for (const e of events) relayed.add(e.id);
     for (const e of events) await consume(sender, e);
     return events;
   };
@@ -68,15 +79,26 @@ describe('webhook test deliveries', () => {
 
     const queued = await sendWebhookTest(h.c, scope, target.id);
     expect(queued).toMatchObject({ webhookId: target.id, eventType: 'webhook.test' });
-    // Nothing is sent from the request: it waits in the outbox for the engine.
-    const [event] = h.store.allEvents();
-    expect(event).toMatchObject({
+    // Nothing is sent from the request: it waits in the outbox for the engine, as a send request
+    // (no `type`, so no topic fan-out ever sees it), not as an event.
+    expect(h.store.allEvents()).toEqual([]);
+    const [request] = h.store.allOutbox();
+    expect(request).toEqual({
+      kind: 'webhook.send',
       id: queued.eventId,
-      type: 'webhook.test',
       scope,
+      occurredAt: expect.any(String),
       webhookId: target.id,
-      message: WEBHOOK_TEST_MESSAGE,
+      test: {
+        id: queued.eventId,
+        type: 'webhook.test',
+        scope,
+        occurredAt: expect.any(String),
+        webhookId: target.id,
+        message: WEBHOOK_TEST_MESSAGE,
+      },
     });
+    expect(request).not.toHaveProperty('type');
 
     const sender = new RecordingWebhookSender();
     await h.relay(sender);
@@ -172,13 +194,15 @@ describe('webhook resends', () => {
       eventType: 'entry.unpublished',
       resendOf: original.id,
     });
-    const request = h.store.allEvents().at(-1) as WebhookResendRequestedEvent;
+    // The request names the event; it doesn't carry it (a queue message stays small).
+    const request = h.store.allOutbox().at(-1) as WebhookSendRequest;
     expect(request).toMatchObject({
-      type: 'webhook.resend_requested',
+      kind: 'webhook.send',
       webhookId: target.id,
-      deliveryId: original.id,
-      event: { id: 'evt-1' },
+      resend: { deliveryId: original.id, eventId: 'evt-1' },
     });
+    expect(request).not.toHaveProperty('type');
+    expect(JSON.stringify(request)).not.toContain('contentTypeApiId');
 
     // The engine sends it later still: the signature covers the time it is sent.
     h.clock.advance(60_000);
@@ -187,6 +211,7 @@ describe('webhook resends', () => {
     expect(sender.sent).toHaveLength(1);
     expect(sender.sent[0]?.event).toEqual(unpublished('evt-1'));
     expect(sender.sent[0]?.timestamp).toBe(h.clock.now().toISOString());
+    expect(sender.sent[0]?.resendOf).toBe(original.id);
     const [resent] = await listWebhookDeliveries(h.c, scope, target.id);
     expect(resent).toMatchObject({
       eventId: 'evt-1',
@@ -242,7 +267,7 @@ describe('webhook resends', () => {
     const h = harness();
     const { target, original } = await delivered(h, new RecordingWebhookSender());
     await resendWebhookDelivery(h.c, scope, target.id, original.id);
-    const request = h.store.allEvents().at(-1) as DomainEvent;
+    const request = h.store.allOutbox().at(-1) as OutboxEntry;
     const sender = new RecordingWebhookSender();
     await h.consume(sender, request);
     await h.consume(sender, request);
@@ -275,7 +300,26 @@ describe('webhook resends', () => {
     await expect(resendWebhookDelivery(h.c, scope, target.id, original.id)).rejects.toBeInstanceOf(
       ConflictError,
     );
-    expect(h.store.allEvents()).toEqual([]);
+    expect(h.store.allOutbox()).toEqual([]);
+  });
+
+  it('logs a failed attempt when the event is swept between the request and the send', async () => {
+    const h = harness();
+    h.store.nowMs = () => h.clock.now().getTime();
+    const { target, original } = await delivered(h, new RecordingWebhookSender());
+    await resendWebhookDelivery(h.c, scope, target.id, original.id);
+    await h.store.outbox.markRelayed(['evt-1']);
+    h.clock.advance(8 * 24 * 3_600_000);
+    await h.store.outbox.deleteRelayedBefore(new Date(h.clock.now().getTime() - 1000), 1);
+    const sender = new RecordingWebhookSender();
+    await h.relay(sender);
+    expect(sender.sent).toEqual([]);
+    expect((await listWebhookDeliveries(h.c, scope, target.id))[0]).toMatchObject({
+      eventId: 'evt-1',
+      status: 'failed',
+      resendOf: original.id,
+      error: expect.stringMatching(/retention/),
+    });
   });
 
   it("resends a space-wide hook's delivery from another environment, in the event's own scope", async () => {
@@ -328,5 +372,41 @@ describe('webhook resends', () => {
       ['entry.unpublished', 'job-1:chunk-1:b'],
     ]);
     expect((await listWebhookDeliveries(h.c, scope, target.id))[0]?.resendOf).toBe(original.id);
+  });
+
+  it('logs a failed attempt, not silence, when no entry of a publish chunk is still published', async () => {
+    const h = harness();
+    const target = await createWebhook(h.c, scope, { ...hook, topics: ['entry.published'] });
+    const bulk: DomainEvent = {
+      id: 'bulk-2',
+      type: 'entries.published_bulk',
+      scope,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      jobId: 'job-2',
+      chunkId: 'chunk-1',
+      action: 'publish',
+      entryIds: ['gone'],
+    };
+    await h.store.outbox.append(bulk);
+    // The original found nothing published either, so it was never logged; stand in for a log
+    // line from when it was.
+    await h.store.webhooks.recordDelivery(scope, {
+      webhookId: target.id,
+      eventId: 'bulk-2',
+      status: 'success',
+      attempts: 1,
+      eventType: 'entries.published_bulk',
+    });
+    const [original] = await listWebhookDeliveries(h.c, scope, target.id);
+    if (!original) throw new Error('no delivery');
+    await resendWebhookDelivery(h.c, scope, target.id, original.id);
+    const sender = new RecordingWebhookSender();
+    await h.relay(sender);
+    expect(sender.sent).toEqual([]);
+    expect((await listWebhookDeliveries(h.c, scope, target.id))[0]).toMatchObject({
+      status: 'failed',
+      resendOf: original.id,
+      error: expect.stringMatching(/still published/),
+    });
   });
 });

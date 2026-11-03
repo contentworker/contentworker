@@ -1,3 +1,4 @@
+import { isWebhookSendRequest, type WebhookSendRequest } from '@contentworker/domain';
 import { isAgentJob, isDomainEvent } from '@contentworker/platform/messages';
 import { describe, expect, it } from 'vitest';
 
@@ -56,5 +57,49 @@ describe('isAgentJob', () => {
         scope,
       }),
     ).toBe(false);
+  });
+});
+
+describe('webhook send requests on the events queue', () => {
+  // What `sendWebhookTest` and `resendWebhookDelivery` append to the outbox, as the relay sends it.
+  const test: WebhookSendRequest = {
+    kind: 'webhook.send',
+    id: 'evt-test',
+    scope,
+    occurredAt: '2026-01-01T00:00:00.000Z',
+    webhookId: 'wh-1',
+    test: {
+      id: 'evt-test',
+      type: 'webhook.test',
+      scope,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      webhookId: 'wh-1',
+      message: 'test',
+    },
+  };
+  const resend: WebhookSendRequest = {
+    kind: 'webhook.send',
+    id: 'req-1',
+    scope,
+    occurredAt: '2026-01-01T00:00:00.000Z',
+    webhookId: 'wh-1',
+    resend: { deliveryId: 7, eventId: 'evt-1' },
+  };
+
+  it('is no domain event, so an engine without the send-request branch drops it unsent', () => {
+    // `isDomainEvent` is the gate every engine's events consumer applies before dispatch (and is
+    // unchanged by the change that added send requests): a rolled-back engine acks these as
+    // malformed instead of fanning them out to every "*" webhook.
+    for (const request of [test, resend]) {
+      const queued = JSON.parse(JSON.stringify(request)) as unknown;
+      expect(isDomainEvent(queued)).toBe(false);
+      expect(isWebhookSendRequest(queued)).toBe(true);
+    }
+  });
+
+  it('is not mistaken for one by a domain event, however it is shaped', () => {
+    expect(isWebhookSendRequest(test.test)).toBe(false);
+    expect(isWebhookSendRequest({ ...resend, resend: undefined })).toBe(false);
+    expect(isWebhookSendRequest({ ...resend, kind: 'webhook.retry' })).toBe(false);
   });
 });

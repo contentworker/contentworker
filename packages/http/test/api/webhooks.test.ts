@@ -1,4 +1,10 @@
-import { consumeEvent, createEnvironment, setEnvironmentAlias } from '@contentworker/application';
+import {
+  consumeEvent,
+  createEnvironment,
+  deliverWebhookRequest,
+  setEnvironmentAlias,
+} from '@contentworker/application';
+import { isWebhookSendRequest } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { type InMemoryContentStore, RecordingWebhookSender } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -140,16 +146,18 @@ describe('webhooks under an environment', () => {
 describe('webhook tests and resends', () => {
   let app: ReturnType<typeof createApp>;
   let ctx: ReturnType<typeof wire>['ctx'];
-  const scope = { spaceId: 's1', environmentId: 'main' };
   const post = (path: string, headers: Record<string, string> = cma) =>
     app.request(path, { method: 'POST', headers });
   /** The engine: consumes every outbox event this test has not consumed yet. */
   let consumed = 0;
   const engine = async (sender = new RecordingWebhookSender()) => {
     const store = ctx.store as InMemoryContentStore;
-    const events = store.allEvents().slice(consumed);
+    const events = store.allOutbox().slice(consumed);
     consumed += events.length;
-    for (const e of events) await consumeEvent(ctx, { sender }, e);
+    for (const e of events) {
+      if (isWebhookSendRequest(e)) await deliverWebhookRequest(ctx, { sender }, e);
+      else await consumeEvent(ctx, { sender }, e);
+    }
     return sender;
   };
   const deliveries = async (id: string) =>
@@ -163,7 +171,7 @@ describe('webhook tests and resends', () => {
     const wired = wire(config);
     ctx = wired.ctx;
     app = createApp(ctx, config, wired.rag, wired.blob, wired.ai);
-    consumed = (ctx.store as InMemoryContentStore).allEvents().length;
+    consumed = (ctx.store as InMemoryContentStore).allOutbox().length;
   });
 
   it('queues a test (202), which the engine sends and logs as webhook.test', async () => {
@@ -207,7 +215,7 @@ describe('webhook tests and resends', () => {
 
     // The event swept by retention while its delivery record remains: 409.
     const store = ctx.store as InMemoryContentStore;
-    await store.outbox.markRelayed(store.allEvents().map((e) => e.id));
+    await store.outbox.markRelayed(store.allOutbox().map((e) => e.id));
     await store.outbox.deleteRelayedBefore(new Date(Date.now() + 60_000), 1000);
     expect(
       (await post(`${env('main')}/${created.id}/deliveries/${original.id}/resend`)).status,
@@ -221,10 +229,8 @@ describe('webhook tests and resends', () => {
     const cda = { Authorization: 'Bearer cda' };
     expect((await post(`${env('main')}/${created.id}/test`, cda)).status).toBe(403);
     expect((await post(`${env('main')}/${created.id}/deliveries/1/resend`, cda)).status).toBe(403);
-    expect(
-      (ctx.store as InMemoryContentStore)
-        .allEvents()
-        .filter((e) => e.scope.spaceId === scope.spaceId && e.type === 'webhook.test'),
-    ).toEqual([]);
+    expect((ctx.store as InMemoryContentStore).allOutbox().filter(isWebhookSendRequest)).toEqual(
+      [],
+    );
   });
 });

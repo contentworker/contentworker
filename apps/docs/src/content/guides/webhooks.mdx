@@ -135,11 +135,13 @@ only if the change happened, never for a publish that was rolled back.
 
 ## Verify the signature
 
-Each delivery carries three headers:
+Each delivery carries these headers (and any you set on the webhook):
 
 | Header                       | Value                                              |
 | ---------------------------- | -------------------------------------------------- |
 | `x-contentworker-event`      | The event type                                     |
+| `x-contentworker-event-id`   | The event's `id`: dedupe on it (a retry and a resend carry the same one) |
+| `x-contentworker-resend-of`  | On a resend only: the delivery it repeats          |
 | `x-contentworker-timestamp`  | The event's `occurredAt`; for a resend, when it was sent |
 | `x-contentworker-signature`  | `sha256=` and the hex HMAC-SHA256 of `timestamp.body` with your secret |
 
@@ -190,10 +192,12 @@ you can try a receiver before turning it on. It carries `webhookId` and a fixed 
 signed like any delivery, and shows up in the delivery log under the `eventId` the call returns.
 
 **Resend** on a delivery (or `POST …/webhooks/{id}/deliveries/{deliveryId}/resend`,
-`webhook_resend`) sends that delivery's event again: the same event and `id`, signed with the time
-it is sent, so it passes your freshness window. The new attempt is logged with `resendOf` naming
-the one it repeats. A receiver that deduplicates by `id` treats it as already handled. Events are
-kept as long as the delivery log (7 days by default); an older one can't be resent (409).
+`webhook_resend`) sends that delivery's event again: the same `id`, signed with the time it is
+sent, so it passes your freshness window, with `x-contentworker-resend-of` naming the delivery it
+repeats. A bulk publish's entries are sent as they are published now. The new attempt is logged
+with `resendOf`. A receiver that deduplicates by `id` treats it as already handled. Events are kept
+for the event retention (7 days by default); one past it can't be resent (409), and that can
+happen a little before its delivery leaves the log.
 
 Both are queued (202), sent once and never retried; send again if one fails.
 
