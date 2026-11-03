@@ -185,10 +185,17 @@ export async function runBulk(
   return { done, failed: failures.length, failures };
 }
 
-/** "Published 3 assets", or "Published 2 of 3 assets; 1 failed". */
-export function bulkSummary(verb: string, outcome: BulkOutcome): string {
+/**
+ * "Published 3 assets", or "Published 2 of 3 assets; 1 failed". `nouns` names what was acted on
+ * (singular, plural): assets unless said otherwise.
+ */
+export function bulkSummary(
+  verb: string,
+  outcome: BulkOutcome,
+  nouns: readonly [string, string] = ['asset', 'assets'],
+): string {
   const total = outcome.done + outcome.failed;
-  const noun = total === 1 ? 'asset' : 'assets';
+  const noun = total === 1 ? nouns[0] : nouns[1];
   if (outcome.failed === 0) return `${verb} ${total} ${noun}`;
   return `${verb} ${outcome.done} of ${total} ${noun}; ${outcome.failed} failed`;
 }

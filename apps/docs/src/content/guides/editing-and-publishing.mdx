@@ -124,6 +124,13 @@ never straight to published.
 only on an entry already in the trash. It is refused with a `409` that names the published entries
 still linking to it, unless you pass `?force=true`.
 
+To trash, restore or delete many entries, tick them in the list (or in the trash) and use the bar
+that appears; **Delete permanently** asks first and names what it will delete. Over the API these
+are [background jobs](#change-many-entries-at-once) with the actions `trash`, `restore` and
+`purge`. Each entry goes through the same rules as one at a time, and an entry a rule refuses (one
+not in the trash, one published entries link to, one whose unique value was taken since) fails as
+its own item in the job's report. A job never forces a purge.
+
 ## Comment and assign tasks
 
 Each entry has a comment thread and a task list, in the editor's collaboration panel. Comment to
@@ -165,7 +172,8 @@ clicking it opens that field in the editor. See [SDKs](/guides/sdks/#inline-edit
 
 ## Change many entries at once
 
-In the entries list, select rows and press **Publish selected** or **Unpublish selected**. Over
+In the entries list, select rows and press **Publish selected**, **Unpublish selected** or **Move
+to trash**. Over
 the API, the synchronous routes take up to 1,000 entries per request:
 
 - `POST …/bulk/entries` creates entries (`content:write`).
@@ -180,7 +188,8 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/bulk/jobs" \
   -d '{ "action": "publish", "entryIds": ["…", "…"] }'
 ```
 
-A job takes 1 to 250,000 ids and answers `202`. Starting, cancelling and reading the report of a
+`action` is `publish`, `unpublish`, `trash`, `restore` or `purge`. A job takes 1 to 250,000 ids
+and answers `202`. Starting, cancelling and reading the report of a
 job need `content:publish` on a role with no per-content-type restrictions. Follow it at
 `GET …/bulk/jobs/{id}`, read per-entry failures at `…/bulk/jobs/{id}/report` and stop it with
 `POST …/bulk/jobs/{id}/cancel`. The MCP tools are `bulk_job_start`, `bulk_job_status`,

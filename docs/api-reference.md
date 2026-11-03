@@ -418,7 +418,7 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 | POST   | `…/bulk/entries`                          | `content:write`   | Bulk create/update                                                          |
 | POST   | `…/bulk/entries/publish`                  | `content:publish` | Bulk publish                                                                |
 | POST   | `…/bulk/entries/unpublish`                | `content:publish` | Bulk unpublish                                                              |
-| POST   | `…/bulk/jobs`                             | `content:publish` | Start a durable bulk job `{ action: publish\|unpublish, entryIds }` (`202`) |
+| POST   | `…/bulk/jobs`                             | `content:publish` | Start a durable bulk job `{ action: publish\|unpublish\|trash\|restore\|purge, entryIds }` (`202`); trash, restore and purge run each entry through its single-entry rules (purge only from the trash, never under a published link), refusals reported per entry |
 | GET    | `…/bulk/jobs`                             | `content:write`   | List jobs (`?limit`)                                                        |
 | GET    | `…/bulk/jobs/:id`                         | `content:write`   | Job progress                                                                |
 | GET    | `…/bulk/jobs/:id/report`                  | `content:write`   | Per-item failures                                                           |

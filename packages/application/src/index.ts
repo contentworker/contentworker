@@ -39,6 +39,7 @@ export * from './delivery-reads';
 export * from './embeds';
 export * from './entries';
 export * from './entry-query';
+export * from './entry-trash-bulk';
 export * from './environment-purge';
 export * from './events/consume';
 export * from './events/dispatch';

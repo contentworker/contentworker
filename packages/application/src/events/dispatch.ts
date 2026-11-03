@@ -24,6 +24,7 @@ import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import type { AppContext } from '../context';
+import { entryTrashChunkRunner } from '../entry-trash-bulk';
 import { runEnvironmentPurge } from '../environment-purge';
 import { invokeFunctionsForEvent } from '../functions';
 import { importChunkRunner } from '../import-jobs';
@@ -138,6 +139,7 @@ export async function dispatchEvent(
   if (event.type === 'bulk.chunk_due') {
     await runBulkChunk(ctx, event, {
       assetBulkChunk: assetBulkChunkRunner(ctx),
+      entryTrashChunk: entryTrashChunkRunner(ctx, deps.blob ? { blob: deps.blob } : {}),
       ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob, deps.remoteFetcher) } : {}),
       ...(deps.assetIngest
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }

@@ -225,12 +225,13 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     'bulk_job_start',
     {
       description:
-        'Start a durable bulk publish/unpublish job for a large entry-id set. ' +
-        'Processed in chunked transactions on the queue; poll bulk_job_status ' +
+        'Start a durable bulk job over a large entry-id set: publish, unpublish, trash, ' +
+        'restore, or purge (permanent: only entries already in the trash, never one that ' +
+        'published entries link to). Processed in chunks on the queue; poll bulk_job_status ' +
         'for progress and bulk_job_report for the per-item compliance report.',
       inputSchema: toolSchema('bulk_job_start', () =>
         z.object({
-          action: z.enum(['publish', 'unpublish']),
+          action: z.enum(['publish', 'unpublish', 'trash', 'restore', 'purge']),
           entryIds: z.array(z.string()).min(1).max(BULK_JOB_MAX_ITEMS),
           ...scopeArgs,
         }),

@@ -810,6 +810,9 @@ export interface BulkJobSummary {
   readonly action:
     | 'publish'
     | 'unpublish'
+    | 'trash'
+    | 'restore'
+    | 'purge'
     | 'import'
     | 'asset_reindex'
     | 'asset_move'
@@ -844,6 +847,14 @@ export interface BulkJobReport {
       readonly name?: string;
     }[];
   }[];
+}
+
+/** What a bulk job over entries does to each one (`POST …/bulk/jobs`). */
+export type EntryBulkJobAction = 'publish' | 'unpublish' | 'trash' | 'restore' | 'purge';
+
+/** The space's trash retention: days an entry stays in the trash, or null to keep it (off). */
+export interface TrashSettings {
+  readonly retentionDays: number | null;
 }
 
 /** What `POST …/assets/bulk` runs over a selection of assets, as a job. */
@@ -1926,6 +1937,14 @@ export function createManagementClient(
     }> {
       return req('POST', `${mgmt}/imports/space-export`, input);
     },
+    /**
+     * Acts on many entries as a resumable job on the server (an unrestricted content:publish
+     * role): follow it with {@link getBulkJob}, and read what failed with {@link getBulkJobReport}.
+     * Purging takes only entries already in the trash, and refuses one published entries link to.
+     */
+    startEntryBulkJob(action: EntryBulkJobAction, entryIds: string[]): Promise<BulkJobSummary> {
+      return req('POST', `${mgmt}/bulk/jobs`, { action, entryIds });
+    },
     getBulkJob(id: string): Promise<BulkJobSummary> {
       return req('GET', `${mgmt}/bulk/jobs/${encodeURIComponent(id)}`);
     },
@@ -2757,6 +2776,13 @@ export function createManagementClient(
     },
     setWorkflowSettings(input: { separateDuties: boolean }): Promise<{ separateDuties: boolean }> {
       return req('PUT', `${mgmt}/workflow-settings`, input);
+    },
+    getTrashSettings(): Promise<TrashSettings> {
+      return req('GET', `${mgmt}/trash-settings`);
+    },
+    /** Sets how long trashed entries are kept before the hourly sweep deletes them (space:admin). */
+    setTrashSettings(input: TrashSettings): Promise<TrashSettings> {
+      return req('PUT', `${mgmt}/trash-settings`, input);
     },
 
     /** The entry's current workflow step, or null if it hasn't entered one. */

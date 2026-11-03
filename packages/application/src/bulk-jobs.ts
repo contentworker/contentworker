@@ -33,10 +33,11 @@ export interface StartBulkJobInput {
 }
 
 /**
- * Starts a durable bulk publish/unpublish job: persists the job and its
- * chunks, then appends one `bulk.chunk_due` control event per chunk to the
- * outbox. The relay routes those onto the bulk topic; consumers CAS-claim
- * each chunk and run it through the batched publish transaction. Progress
+ * Starts a durable bulk job over entry (or asset) ids: persists the job and its chunks, then
+ * appends one `bulk.chunk_due` control event per chunk to the outbox. The relay routes those onto
+ * the bulk topic; consumers CAS-claim each chunk and run it: publish and unpublish through the
+ * batched publish transaction, trash, restore and purge through each entry's single-entry
+ * use-case (`entry-trash-bulk.ts`). Progress
  * and the per-item compliance report live in the store, never in memory —
  * a crash anywhere resumes via the stall sweep.
  */
@@ -182,6 +183,15 @@ export interface BulkChunkDeps {
     job: BulkJob,
     chunk: BulkJobChunk,
   ) => Promise<BulkChunkOutcome>;
+  /**
+   * Runs an entry trash job's chunk (`entry-trash-bulk.ts`), injected because purging needs the
+   * blob store its archived versions live in. Absent, the chunk stays claimable.
+   */
+  readonly entryTrashChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
 }
 
 export async function runBulkChunk(
@@ -230,6 +240,10 @@ export async function runBulkChunk(
   // An asset reindex chunk hands its assets to ingest: nothing is written here but the report.
   if (job.action === 'asset_reindex') {
     return runChunkAndFold(ctx, deps.assetReindexChunk, scope, job, chunk);
+  }
+  // Trash, restore or purge: each entry through its single-entry use-case.
+  if (job.action === 'trash' || job.action === 'restore' || job.action === 'purge') {
+    return runChunkAndFold(ctx, deps.entryTrashChunk, scope, job, chunk);
   }
   // An asset library action: each asset through its own use-case, failures reported by name.
   if (job.action !== 'publish' && job.action !== 'unpublish') {
@@ -481,7 +495,7 @@ export async function cancelBulkJob(
 }
 
 /**
- * Runs an import or asset reindex chunk and folds its outcome into the job.
+ * Runs an import, asset or entry trash chunk and folds its outcome into the job.
  *
  * Mirrors the publish path's bookkeeping exactly — claim, run, complete,
  * finalize — so progress, cancellation, the stall sweep and the per-item

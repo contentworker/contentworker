@@ -22,6 +22,7 @@ import { type InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import { BulkJobProgress } from '~/cms/components/bulk-job-progress';
 import { EntryFilterBar } from '~/cms/components/EntryFilterBar';
 import {
   LoadingStatus,
@@ -40,15 +41,19 @@ import {
 } from '../components/entries/EntriesTable';
 import { EntryBulkBar } from '../components/entries/EntryBulkBar';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
+import { bulkSummary, jobFailures, jobOutcome } from '../lib/assets';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
 import { plural } from '../lib/format';
-import type {
-  EntryAggregate,
-  EntryListQuery,
-  EntryOrder,
-  EntryPage,
-  PreviewEntry,
+import {
+  ApiError,
+  apiErrorMessage,
+  type BulkJobSummary,
+  type EntryAggregate,
+  type EntryListQuery,
+  type EntryOrder,
+  type EntryPage,
+  type PreviewEntry,
 } from '../lib/management';
 import {
   useDebouncedValue,
@@ -83,6 +88,63 @@ const isLive = (status: string) => status === 'published' || status === 'changed
 /** How many titles a bulk confirm names before counting the rest. */
 const NAMED = 5;
 
+/** How often a running bulk job is asked how far it has got (as the asset library's are). */
+const BULK_JOB_POLL_MS = 2000;
+
+/** What the trash's bulk actions run as a job on the server: the list's, and the trash's two. */
+type TrashJobAction = 'trash' | 'restore' | 'purge';
+
+/** A trash job's words, done and under way, for its card and toasts ("Trashed 3 entries"). */
+const JOB_VERBS: Record<TrashJobAction, { readonly done: string; readonly doing: string }> = {
+  trash: { done: 'Trashed', doing: 'Trashing' },
+  restore: { done: 'Restored', doing: 'Restoring' },
+  purge: { done: 'Permanently deleted', doing: 'Permanently deleting' },
+};
+
+/** What a bulk confirm asks about: publishing, or the trash's two that need asking. */
+type BulkConfirm = 'publish' | 'unpublish' | 'trash' | 'purge';
+
+/** Each confirm's question, what it says will happen, and its button. */
+const CONFIRM_COPY: Record<
+  BulkConfirm,
+  {
+    /** The question, given how many: "Publish 3 entries?". */
+    readonly title: (count: string) => string;
+    readonly says: string;
+    readonly button: string;
+    readonly keep: string;
+  }
+> = {
+  publish: {
+    title: (n) => `Publish ${n}?`,
+    says: 'The current draft of each selected entry goes live on the delivery API.',
+    button: 'Publish entries',
+    keep: 'Keep as is',
+  },
+  unpublish: {
+    title: (n) => `Unpublish ${n}?`,
+    says: 'Each selected entry is removed from the delivery API and returns to draft.',
+    button: 'Unpublish entries',
+    keep: 'Keep as is',
+  },
+  trash: {
+    title: (n) => `Move ${n} to the trash?`,
+    says:
+      'Live entries are unpublished first, so the delivery API stops serving them. ' +
+      'You can restore any of them from the trash.',
+    button: 'Move to trash',
+    keep: 'Keep as is',
+  },
+  purge: {
+    title: (n) => `Permanently delete ${n}?`,
+    says:
+      'This deletes each selected entry and its entire version history. It can’t be undone. ' +
+      'An entry other published entries link to is kept, so their links don’t break.',
+    button: 'Delete permanently',
+    keep: 'Keep in trash',
+  },
+};
+
 /**
  * Entries table for one content type, with bulk publishing and a draft/published diff.
  *
@@ -113,7 +175,13 @@ export function EntriesList() {
   const publishAsked = useRef<string | null>(null);
   // Bulk action awaiting confirmation (bulk selections are tedious to rebuild,
   // so the whole batch is confirmed once before it runs).
-  const [confirmBulk, setConfirmBulk] = useState<'publish' | 'unpublish' | null>(null);
+  const [confirmBulk, setConfirmBulk] = useState<BulkConfirm | null>(null);
+  // A trash, restore or permanent delete of the ticked entries, running as a job on the server.
+  const [entryJob, setEntryJob] = useState<{
+    readonly action: TrashJobAction;
+    readonly job: BulkJobSummary;
+  } | null>(null);
+  const [cancellingJob, setCancellingJob] = useState(false);
   // Per-item failures from the last bulk action, with resolved titles so the
   // editor knows WHICH entries failed, not just how many.
   const [bulkFailures, setBulkFailures] = useState<
@@ -135,6 +203,7 @@ export function EntriesList() {
     setConfirmPublish(null);
     setConfirmBulk(null);
     setBulkFailures(null);
+    setEntryJob(null);
   }
   const query = filterState.typeId === typeId ? filterState.query : {};
   const setQuery = (q: EntryListQuery) => setFilterState({ typeId, query: q });
@@ -183,6 +252,68 @@ export function EntriesList() {
       return next.size === prev.size ? prev : next;
     });
   }, [listKey, entriesQuery.data, entriesQuery.isPlaceholderData]);
+
+  // Polls a running trash job, and stops once it has finished.
+  const runningJob = entryJob?.job.status === 'running' ? entryJob.job.id : null;
+  useEffect(() => {
+    if (!runningJob) return;
+    const timer = setInterval(() => {
+      client
+        .getBulkJob(runningJob)
+        // Never backwards: a poll that left before a Stop came back must not undo the stop.
+        .then((job) =>
+          setEntryJob((current) =>
+            current?.job.id === job.id && current.job.status === 'running'
+              ? { ...current, job }
+              : current,
+          ),
+        )
+        .catch((e) => {
+          // A refusal won't pass by itself: stop watching and free the bar. Anything else is
+          // transient, and the next tick tries again.
+          if (!(e instanceof ApiError) || e.status < 400 || e.status >= 500) return;
+          setEntryJob(null);
+          toast.error(
+            `Stopped following the bulk job: ${apiErrorMessage(e)}. It goes on running; reload to see what it did.`,
+          );
+        });
+    }, BULK_JOB_POLL_MS);
+    return () => clearInterval(timer);
+  }, [runningJob, client]);
+  // Once it has finished: say so, reload the list, and keep what failed ticked, named from the
+  // job's report. Once per finished job (polling stops, so the object no longer changes).
+  const finishedJob = entryJob && entryJob.job.status !== 'running' ? entryJob : null;
+  useEffect(() => {
+    if (!finishedJob) return;
+    const { action, job } = finishedJob;
+    const said = bulkSummary(JOB_VERBS[action].done, jobOutcome(job), ['entry', 'entries']);
+    (job.failed ? toast.error : toast.success)(
+      job.status === 'cancelled' ? `Stopped: ${said}` : said,
+    );
+    // A stopped job left some entries as they were: the selection stays, to run it again.
+    if (job.failed === 0 && job.status !== 'cancelled') setPicked(new Set());
+    // Read before the list reloads: what succeeded leaves this view.
+    const titles = new Map(entries.map((e) => [e.id, titleOf(e.id)]));
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: keys.entriesRoot }),
+      queryClient.invalidateQueries({ queryKey: keys.entryRoot }),
+    ]);
+    if (job.failed === 0) return;
+    client
+      .getBulkJobReport(job.id)
+      .then((report) => {
+        const failures = jobFailures(report, titles);
+        setPicked(new Set(failures.map((f) => f.id)));
+        setBulkFailures(
+          failures.map((f) => ({
+            id: f.id,
+            title: titles.get(f.id) ?? 'Untitled entry',
+            error: f.error,
+          })),
+        );
+      })
+      .catch((e) => toast.error(`The failures couldn’t be read: ${apiErrorMessage(e)}`));
+  }, [finishedJob]);
 
   const pick = (ids: readonly string[], value: boolean) =>
     setPicked((prev) => {
@@ -386,6 +517,32 @@ export function EntriesList() {
     });
   };
 
+  // The trash's bulk actions run as a job on the server over everything ticked, and this tab
+  // watches it, as the asset library does. Moving to the trash and deleting for good confirm in
+  // the page's own dialog first (the assistant has no card for a bulk job); restoring runs at
+  // once, as a row's Restore does. The bar waits while a job runs.
+  const startJob = (action: TrashJobAction) => {
+    const ids = [...picked];
+    if (ids.length === 0) return;
+    setBulkFailures(null);
+    return run(async () => {
+      const job = await client.startEntryBulkJob(action, ids);
+      setEntryJob({ action, job });
+    });
+  };
+  const jobRunning = entryJob?.job.status === 'running';
+  const cancelJob = async (id: string) => {
+    setCancellingJob(true);
+    try {
+      const job = await client.cancelBulkJob(id);
+      setEntryJob((current) => (current?.job.id === id ? { ...current, job } : current));
+    } catch (e) {
+      toast.error(`The job wasn’t stopped: ${apiErrorMessage(e)}`);
+    } finally {
+      setCancellingJob(false);
+    }
+  };
+
   // Partial failures are surfaced by entry, not as a count, and stay ticked so the editor can
   // try them again; an all-live unpublish offers Undo.
   const reportBulk = (
@@ -567,8 +724,14 @@ export function EntriesList() {
     const order = nextOrder(query.order?.[0], field);
     setQuery({ ...query, order: order ? [order] : undefined });
   };
-  const bulkBar = picked.size > 0 && !viewingTrash;
-  const confirmIds = confirmBulk ? bulkIds(confirmBulk) : [];
+  const bulkBar = picked.size > 0;
+  const confirmIds =
+    confirmBulk === 'publish' || confirmBulk === 'unpublish'
+      ? bulkIds(confirmBulk)
+      : confirmBulk
+        ? [...picked]
+        : [];
+  const confirmCopy = confirmBulk ? CONFIRM_COPY[confirmBulk] : null;
   // The total is known only for the whole type: filters and the trash count what was read, with a
   // "+" while more may follow.
   const total =
@@ -622,24 +785,46 @@ export function EntriesList() {
           under the shell's header; the table's sticky header sits under it (`--sticky-above`). */}
       {bulkBar ? (
         <div className="sticky top-(--shell-h) z-20 -my-2 bg-background py-2">
-          <EntryBulkBar
-            count={picked.size}
-            publishable={bulkIds('publish').length}
-            unpublishable={bulkIds('unpublish').length}
-            busy={busy}
-            onPublish={() => void requestBulk('publish')}
-            onUnpublish={() => void requestBulk('unpublish')}
-            onClear={() => setPicked(new Set())}
-          />
+          {viewingTrash ? (
+            <EntryBulkBar
+              count={picked.size}
+              busy={busy || jobRunning}
+              onRestore={() => void startJob('restore')}
+              // Deleting for good is always asked first, by name: there is no way back.
+              onPurge={() => setConfirmBulk('purge')}
+              onClear={() => setPicked(new Set())}
+            />
+          ) : (
+            <EntryBulkBar
+              count={picked.size}
+              publishable={bulkIds('publish').length}
+              unpublishable={bulkIds('unpublish').length}
+              busy={busy || jobRunning}
+              onPublish={() => void requestBulk('publish')}
+              onUnpublish={() => void requestBulk('unpublish')}
+              onTrash={() => setConfirmBulk('trash')}
+              onClear={() => setPicked(new Set())}
+            />
+          )}
         </div>
       ) : (
         <EntryFilterBar type={selectedType} value={query} onChange={setQuery} />
       )}
       <p className="sr-only" aria-live="polite">
-        {picked.size > 0 && !viewingTrash
-          ? `${plural(picked.size, 'entry', 'entries')} selected`
-          : ''}
+        {picked.size > 0 ? `${plural(picked.size, 'entry', 'entries')} selected` : ''}
       </p>
+
+      {entryJob && (
+        <BulkJobProgress
+          job={entryJob.job}
+          verbs={JOB_VERBS[entryJob.action]}
+          nouns={['entry', 'entries']}
+          where="the list"
+          onDismiss={() => setEntryJob(null)}
+          onCancel={() => void cancelJob(entryJob.job.id)}
+          cancelling={cancellingJob}
+        />
+      )}
 
       {bulkFailures && bulkFailures.length > 0 && (
         <Alert variant="destructive">
@@ -749,14 +934,9 @@ export function EntriesList() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmBulk === 'publish' ? 'Publish' : 'Unpublish'}{' '}
-              {plural(confirmIds.length, 'entry', 'entries')}?
+              {confirmCopy?.title(plural(confirmIds.length, 'entry', 'entries'))}
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              {confirmBulk === 'publish'
-                ? 'The current draft of each selected entry goes live on the delivery API.'
-                : 'Each selected entry is removed from the delivery API and returns to draft.'}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{confirmCopy?.says}</AlertDialogDescription>
           </AlertDialogHeader>
           {/* What the batch changes, by name: the first few, then how many more. */}
           <ul className="space-y-0.5 text-sm">
@@ -771,17 +951,19 @@ export function EntriesList() {
             ) : null}
           </ul>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep as is</AlertDialogCancel>
+            <AlertDialogCancel>{confirmCopy?.keep}</AlertDialogCancel>
             <AlertDialogAction
+              variant={confirmBulk === 'purge' ? 'destructive' : 'default'}
               disabled={busy}
               onClick={() => {
                 const action = confirmBulk;
                 setConfirmBulk(null);
                 if (action === 'publish') void bulk('publish', 'Published', 'published');
                 else if (action === 'unpublish') void bulk('unpublish', 'Unpublished', 'draft');
+                else if (action) void startJob(action);
               }}
             >
-              {confirmBulk === 'publish' ? 'Publish entries' : 'Unpublish entries'}
+              {confirmCopy?.button}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

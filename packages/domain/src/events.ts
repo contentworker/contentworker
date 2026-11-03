@@ -340,11 +340,15 @@ export interface BulkJobCompletedEvent extends BaseEvent {
   readonly jobId: string;
   /**
    * Which kind of job finished. An import creates drafts; it publishes nothing. An asset reindex
-   * sent assets through ingest again.
+   * sent assets through ingest again. Trash, restore and purge moved entries into, out of, or
+   * permanently out of the trash.
    */
   readonly action:
     | 'publish'
     | 'unpublish'
+    | 'trash'
+    | 'restore'
+    | 'purge'
     | 'import'
     | 'asset_reindex'
     | 'asset_move'

@@ -2010,14 +2010,25 @@ export interface StoredSecretRepo {
 
 /**
  * `asset_reindex`: the chunk's ids are assets, each sent through ingest again. The other `asset_*`
- * actions are the asset library's bulk actions ({@link ASSET_BULK_ACTIONS}), over asset ids.
+ * actions are the asset library's bulk actions ({@link ASSET_BULK_ACTIONS}), over asset ids;
+ * `trash`, `restore` and `purge` are the entry trash's ({@link ENTRY_TRASH_BULK_ACTIONS}).
  */
 export type BulkJobAction =
   | 'publish'
   | 'unpublish'
   | 'import'
   | 'asset_reindex'
+  | EntryTrashBulkJobAction
   | AssetBulkJobAction;
+
+/** What an entry trash bulk job does to each entry: each through its single-entry use-case. */
+export type EntryTrashBulkJobAction = 'trash' | 'restore' | 'purge';
+
+export const ENTRY_TRASH_BULK_ACTIONS: readonly EntryTrashBulkJobAction[] = [
+  'trash',
+  'restore',
+  'purge',
+];
 
 /** What an asset bulk job does to each asset of the selection. */
 export type AssetBulkJobAction =

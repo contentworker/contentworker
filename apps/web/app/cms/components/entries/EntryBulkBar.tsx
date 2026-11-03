@@ -1,20 +1,26 @@
 import { Button } from '@contentworker/ui/button';
-import { CircleSlash, Send, X } from 'lucide-react';
+import { ArchiveRestore, CircleSlash, Send, Trash2, X } from 'lucide-react';
 
 /**
  * What can be done to the ticked entries at once, in place of the filter bar while anything is
  * ticked, and held under the shell's header as the list scrolls. It offers only what applies:
  * Publish while a ticked entry isn't live as it is (a draft or changed), Unpublish while one is
- * live. Labelled as the asset library's bar is ("2 selected", "Publish selected").
+ * live, Move to trash for any. In the trash it offers Restore and Delete permanently instead.
+ * Labelled as the asset library's bar is ("2 selected", "Publish selected").
  */
 export function EntryBulkBar(props: {
   count: number;
   /** How many ticked entries each action would change. */
-  publishable: number;
-  unpublishable: number;
+  publishable?: number;
+  unpublishable?: number;
   busy: boolean;
-  onPublish: () => void;
-  onUnpublish: () => void;
+  onPublish?: () => void;
+  onUnpublish?: () => void;
+  /** The list's bar: move the ticked entries to the trash. */
+  onTrash?: () => void;
+  /** The trash's bar: bring them back as drafts, or delete them for good. */
+  onRestore?: () => void;
+  onPurge?: () => void;
   onClear: () => void;
 }) {
   return (
@@ -25,13 +31,13 @@ export function EntryBulkBar(props: {
       className="flex min-h-12 flex-wrap items-center gap-2 rounded-2xl bg-muted px-3 py-2 animate-arrive"
     >
       <span className="text-muted-foreground text-sm">{props.count} selected</span>
-      {props.publishable > 0 ? (
+      {props.onPublish && (props.publishable ?? 0) > 0 ? (
         <Button type="button" size="sm" disabled={props.busy} onClick={props.onPublish}>
           <Send aria-hidden="true" />
           Publish selected
         </Button>
       ) : null}
-      {props.unpublishable > 0 ? (
+      {props.onUnpublish && (props.unpublishable ?? 0) > 0 ? (
         <Button
           type="button"
           size="sm"
@@ -41,6 +47,42 @@ export function EntryBulkBar(props: {
         >
           <CircleSlash aria-hidden="true" />
           Unpublish selected
+        </Button>
+      ) : null}
+      {props.onTrash ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={props.busy}
+          onClick={props.onTrash}
+        >
+          <Trash2 aria-hidden="true" />
+          Move to trash
+        </Button>
+      ) : null}
+      {props.onRestore ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={props.busy}
+          onClick={props.onRestore}
+        >
+          <ArchiveRestore aria-hidden="true" />
+          Restore selected
+        </Button>
+      ) : null}
+      {props.onPurge ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="destructive"
+          disabled={props.busy}
+          onClick={props.onPurge}
+        >
+          <Trash2 aria-hidden="true" />
+          Delete permanently…
         </Button>
       ) : null}
       <Button

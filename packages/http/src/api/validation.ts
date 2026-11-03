@@ -457,7 +457,7 @@ export const idsBody = z.object({ ids: zIdList.optional() });
 // routes (the practical ceiling is the request body limit, then chunked
 // server-side); the shared application cap keeps both surfaces in lockstep.
 export const bulkJobBody = z.object({
-  action: z.enum(['publish', 'unpublish']),
+  action: z.enum(['publish', 'unpublish', 'trash', 'restore', 'purge']),
   entryIds: z.array(zId).min(1).max(BULK_JOB_MAX_ITEMS),
 });
 export const auditBody = z.object({

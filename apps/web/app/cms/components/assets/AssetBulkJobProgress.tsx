@@ -1,25 +1,8 @@
-import { Button } from '@contentworker/ui/button';
-import { Progress } from '@contentworker/ui/progress';
-import { useEffect, useRef } from 'react';
-import { ConfirmButton } from '~/cms/components/InlineConfirm';
-import { StatusBadge, ToneBadge } from '~/cms/components/status';
-import { type AssetBulkAction, BULK_VERBS, bulkSummary, jobOutcome } from '~/cms/lib/assets';
-import { plural } from '~/cms/lib/format';
+import { BulkJobProgress } from '~/cms/components/bulk-job-progress';
+import { type AssetBulkAction, BULK_VERBS } from '~/cms/lib/assets';
 import type { BulkJobSummary } from '~/cms/lib/management';
 
-/**
- * A bulk action running as a job, shown the way an import job is: batches, not assets, because
- * batches are what complete (a count that moved a chunk at a time would look stuck between
- * jumps), in the upload queue's Progress bar, with the reassurance that it keeps going if the tab
- * closes. A job that ended with failures is stamped as waiting on a person, never as done. The
- * summary line is a polite live region, so its end is heard. What failed is named beside it, by
- * the library's failures Alert, once the report is read.
- *
- * A running job can be stopped (confirmed in place). A stop is a stop to new batches, not a
- * rollback: batches done stay done, and one under way when it came may still finish, so the card
- * says how far it had got and that the library shows what changed (it reloads as the job ends).
- * When the job ends, focus that was on its Stop (now gone) moves to Dismiss.
- */
+/** An asset library bulk action running as a job (`BulkJobProgress`, counted in assets). */
 export function AssetBulkJobProgress(props: {
   action: AssetBulkAction;
   job: BulkJobSummary;
@@ -29,82 +12,13 @@ export function AssetBulkJobProgress(props: {
   /** A stop is on its way to the server. */
   cancelling?: boolean;
 }) {
-  const { job } = props;
-  const verbs = BULK_VERBS[props.action];
-  const running = job.status === 'running';
-  const cancelled = job.status === 'cancelled';
-  const dismiss = useRef<HTMLButtonElement>(null);
-  const card = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (running) return;
-    // Its Stop (or the confirm in its place) went with the job: don't drop focus on the page.
-    const at = document.activeElement;
-    if (!at || at === document.body || card.current?.contains(at)) dismiss.current?.focus();
-  }, [running]);
-  const summary = running
-    ? `${verbs.doing} ${plural(job.totalItems, 'asset')}…`
-    : cancelled
-      ? `Stopped: ${bulkSummary(verbs.done, jobOutcome(job))}`
-      : bulkSummary(verbs.done, jobOutcome(job));
+  const { action, ...rest } = props;
   return (
-    <section ref={card} aria-label="Bulk job" className="card space-y-3 p-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <p className="section-title" role="status">
-          {summary}
-        </p>
-        {!running && job.status !== 'cancelled' && job.failed > 0 ? (
-          <ToneBadge tone="wait" label="Finished with failures" />
-        ) : (
-          <StatusBadge status={job.status} />
-        )}
-        {running && props.onCancel && (
-          <ConfirmButton
-            message="Stop this bulk job?"
-            note={`Batches already done stay ${verbs.done.toLowerCase()}, and one under way may still finish; the rest are left as they are.`}
-            cancelLabel="Keep running"
-            confirmLabel="Stop job"
-            busy={props.cancelling}
-            onConfirm={props.onCancel}
-          >
-            {(ask) => (
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                className="ml-auto"
-                disabled={props.cancelling}
-                onClick={ask}
-              >
-                {props.cancelling ? 'Stopping…' : 'Stop'}
-              </Button>
-            )}
-          </ConfirmButton>
-        )}
-        {!running && (
-          <Button
-            ref={dismiss}
-            type="button"
-            size="xs"
-            variant="ghost"
-            className="ml-auto"
-            onClick={props.onDismiss}
-          >
-            Dismiss
-          </Button>
-        )}
-      </div>
-      <Progress
-        value={Math.round((job.completedChunks / Math.max(1, job.totalChunks)) * 100)}
-        aria-label="Bulk job progress"
-        className="h-1.5"
-      />
-      <p className="text-muted-foreground text-xs">
-        {running
-          ? `${job.completedChunks} of ${plural(job.totalChunks, 'batch', 'batches')} done; this keeps running if you close the tab.`
-          : cancelled
-            ? `Stopped after ${job.completedChunks} of ${plural(job.totalChunks, 'batch', 'batches')}. A batch under way when you stopped may still finish; the library shows what changed.`
-            : `${plural(job.totalChunks, 'batch', 'batches')} done.`}
-      </p>
-    </section>
+    <BulkJobProgress
+      {...rest}
+      verbs={BULK_VERBS[action]}
+      nouns={['asset', 'assets']}
+      where="the library"
+    />
   );
 }
