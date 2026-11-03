@@ -21,7 +21,8 @@ publishing does.
 ## Write
 
 - Read the type first (`model_get_content_type`). A field's `description` says what belongs in it
-  and its `help` how to write it; follow both.
+  and its `help` how to write it; follow both. Where `validations.in` lists `{ value, label }`
+  options, write the `value`, never the label.
 - Field values are always **locale-keyed**: `{ "title": { "en-US": "Hello" } }`. That applies to
   non-localized fields too, under the space's default locale.
 - `entries_create` makes a draft. `entries_update` saves a **new draft version** whose fields are

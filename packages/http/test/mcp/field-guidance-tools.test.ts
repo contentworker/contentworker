@@ -62,7 +62,7 @@ const status = {
   placeholder: 'open',
   description: 'Drives the badge on the listing card.',
   validations: {
-    in: ['open', 'let'],
+    in: [{ value: 'open', label: 'Open for viewings' }, 'let'],
     messages: { in: 'Pick a status from the list' },
   },
 };
@@ -92,7 +92,7 @@ describe('field guidance through the MCP model tools', () => {
     // An entry written through the same surface is held to the option values and the message.
     const bad = await call('entries_create', {
       contentType: 'listing',
-      fields: { title: { 'en-US': 'Flat' }, status: { 'en-US': 'closed' } },
+      fields: { title: { 'en-US': 'Flat' }, status: { 'en-US': 'Open for viewings' } },
     });
     expect(bad.isError).toBe(true);
     expect(bad.text).toContain('Pick a status from the list');

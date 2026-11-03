@@ -22,8 +22,9 @@ Delivery API serves only entries whose content type is published.
      `required`, `unique`, `defaultValue`, `validations`.
    - Guidance on each field, for the editors and agents who fill it: `description` (what the
      field means), `help` (how to fill it; shown under the input), `placeholder` (an example in
-     the empty input). Replace a rule's default error with `validations.messages`, e.g.
-     `{ regexp: 'Enter a five-digit ZIP code' }`.
+     the empty input). Give allowed values labels with `validations.in: [{ value: 'draft', label:
+     'Draft' }]` (entries store the `value`), and replace a rule's default error with
+     `validations.messages`, e.g. `{ regexp: 'Enter a five-digit ZIP code' }`.
    - `urlPattern` (optional) — where the type's entries live on the site, e.g. `/blog/{slug}`;
      placeholders are `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields
      (`null` clears it). When a publish changes a slug it names, contentworker writes a `301` from

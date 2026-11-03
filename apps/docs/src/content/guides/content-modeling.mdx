@@ -162,7 +162,7 @@ deleted until those links are removed.
 
 | Validation          | Applies to                 | Checks                                       |
 | ------------------- | -------------------------- | -------------------------------------------- |
-| `in`                | Symbol, Text, Integer, Number | The value is one of a list               |
+| `in`                | Symbol, Text, Integer, Number | The value is one of a list (bare values, or `{ value, label }`) |
 | `regexp`            | Symbol, Text               | The value matches a pattern                  |
 | `range`             | Integer, Number            | The value is between a min and a max         |
 | `size`              | Symbol, Text, Array        | Length, or number of items, is within bounds |
@@ -171,8 +171,9 @@ deleted until those links are removed.
 Validations run on every write, from every surface: the admin, the API, imports, AI drafting and
 agents. An AI agent can't save an entry a person couldn't.
 
-Editors pick an `in` field's value from a select. A listed value can't be empty, and `'1'` and `1`
-count as the same value. To replace a rule's
+Give `in` options labels and an entry still stores the value: editors pick by label from a select,
+and relabelling an option never invalidates content. Bare values and labelled options mix in one
+list; a value can't be empty, and `'1'` and `1` count as the same value. To replace a rule's
 default error, add `messages`, keyed by rule (`in`, `regexp`, `range`, `size`); a message for a rule
 the field doesn't declare is refused, and so is one on a list's elements (`items`), whose rules
 aren't enforced per element yet.

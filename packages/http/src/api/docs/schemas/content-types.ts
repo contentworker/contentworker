@@ -11,14 +11,33 @@ const nestedFields = z
   .array(z.object({}).loose())
   .describe('Nested field definitions (this same shape), for a component');
 
-const option = z.union([z.string().min(1), z.number()]).describe('An allowed value, listed once');
+const option = z
+  .union([
+    z.string().min(1),
+    z.number(),
+    z.object({
+      value: z
+        .union([z.string().min(1), z.number()])
+        .describe('What an entry stores and is checked against'),
+      label: z
+        .string()
+        .max(FIELD_GUIDANCE_LIMITS.optionLabel)
+        .describe('What an editor picks it by'),
+    }),
+  ])
+  .describe('An allowed value, bare or labelled, listed once');
 
 const range = z.object({ min: z.number().optional(), max: z.number().optional() });
 
 /** A field's validation rules. Every rule is optional; an absent rule is not enforced. */
 export const fieldValidations = z
   .object({
-    in: z.array(option).optional().describe('Allowed values (Symbol, Text, Integer, Number)'),
+    in: z
+      .array(option)
+      .optional()
+      .describe(
+        'Allowed values (Symbol, Text, Integer, Number). A labelled option stores its `value`',
+      ),
     regexp: z
       .object({ pattern: z.string(), flags: z.string().optional() })
       .optional()

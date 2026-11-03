@@ -134,20 +134,7 @@ describe('field guidance: help, placeholder and description', () => {
   });
 });
 
-/**
- * A type as stored, unchecked: labelled options are read by this version but written only by a
- * later one, so the readers are tested against what that version will store.
- */
-const stored = (...fields: FieldDefinition[]): ReturnType<typeof typeWith> => ({
-  apiId: 'thing',
-  name: 'Thing',
-  displayField: fields[0]?.apiId ?? 'status',
-  fields,
-  version: 1,
-  status: 'draft',
-});
-
-describe('field guidance: `in` options', () => {
+describe('field guidance: labelled `in` options', () => {
   const labelled = field({
     validations: {
       in: [
@@ -159,7 +146,7 @@ describe('field guidance: `in` options', () => {
   });
 
   it('compares on the value, never the label', () => {
-    const ct = stored(labelled);
+    const ct = typeWith(labelled);
     expect(issues(ct, 'status', 'live')).toEqual([]);
     expect(issues(ct, 'status', 'archived')).toEqual([]);
     expect(issues(ct, 'status', 'Live on the site')).toEqual([
@@ -168,7 +155,7 @@ describe('field guidance: `in` options', () => {
   });
 
   it('works for numbers', () => {
-    const ct = stored(
+    const ct = typeWith(
       field({ type: 'Integer', validations: { in: [{ value: 1, label: 'One' }, 2] } }),
     );
     expect(issues(ct, 'status', 1)).toEqual([]);
@@ -188,13 +175,17 @@ describe('field guidance: `in` options', () => {
     expect(optionLabel({ value: 'x', label: 'Ex' })).toBe('Ex');
   });
 
-  it('refuses a labelled, malformed or repeated option on write', () => {
+  it('refuses a malformed, unlabelled or repeated option', () => {
     const withIn = (opts: unknown) =>
       refusal(() => typeWith(field({ validations: { in: opts as never } })));
-    // Read, but not yet written: a reader deployed before labels would choke on one.
-    expect(withIn([{ value: 'a', label: 'A' }])).toMatch(/a string or a number/);
+    expect(withIn([{ value: 'a' }])).toMatch(/needs a label/);
+    expect(withIn([{ value: 'a', label: '  ' }])).toMatch(/needs a label/);
+    expect(withIn([{ label: 'A' }])).toMatch(/string, a number or \{ value, label \}/);
     expect(withIn([true])).toMatch(/string, a number/);
-    expect(withIn(['a', 'a'])).toMatch(/listed twice/);
+    expect(withIn(['a', { value: 'a', label: 'A' }])).toMatch(/listed twice/);
+    expect(
+      withIn([{ value: 'a', label: 'x'.repeat(FIELD_GUIDANCE_LIMITS.optionLabel + 1) }]),
+    ).toMatch(/at most 200/);
     expect(withIn('a')).toMatch(/must be a list/);
     // The empty choice of a select is '', so no option may be.
     expect(withIn(['', 'a'])).toMatch(/cannot be empty/);
@@ -322,9 +313,8 @@ describe('field guidance: `in` options', () => {
         fields: [field({ apiId: 'tone', validations: { in: ['x', 'x'] } })],
       }),
     ]);
-    // A labelled option keeps its value (options are written bare for now), and of '1' and 1 the
-    // Symbol keeps the string, the one a value can match.
-    expect(fields[0]?.validations?.in).toEqual(['a', '1', 'b']);
+    // Of '1' and 1 the Symbol keeps the string, the one a value can match; labels are kept.
+    expect(fields[0]?.validations?.in).toEqual(['a', '1', { value: 'b', label: 'B' }]);
     expect(fields[1]?.fields?.[0]?.validations?.in).toEqual(['x']);
     expect(() => typeWith(...fields.map((f, i) => ({ ...f, position: i })))).not.toThrow();
   });
@@ -429,10 +419,10 @@ describe('field guidance: custom validation messages', () => {
         typeWith(
           field({
             type: 'Array',
-            items: { type: 'Symbol', validations: { in: [true as never] } },
+            items: { type: 'Symbol', validations: { in: [{ value: 'a' } as never] } },
           }),
         ),
       ),
-    ).toMatch(/status items: each validations.in option is a string, a number/);
+    ).toMatch(/status items: option "a" needs a label/);
   });
 });

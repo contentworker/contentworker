@@ -325,11 +325,11 @@ after the field's name, labelled as describing the field and inside `<user_conte
 with `UNTRUSTED_CONTENT_GUARD` in the system prompt. AI drafting, canvas, autofill, the `ai.enrich`
 node and the agent runtime's enrich, improve and repurpose agents all describe fields this way.
 
-An `in` option is written as a string or a finite number, never `''` (the entry form's select
-uses it for its empty choice), and values are unique by their text, so `'1'` and `1` clash. Every
-reader (validation, the entry form's select, codegen, AI drafting) also accepts a labelled
-`{ value, label }` option, compared and stored by its `value`, so that a later release can write
-them without breaking a reader still deployed; until then a write refuses them.
+An `in` option is a bare value or `{ value, label }`; both forms mix in one list, so definitions
+stored before labels still validate. An entry stores and is checked against the `value`; the label
+is what an editor picks it by (the form draws a select), so relabelling never invalidates content.
+A value is a string or a finite number, never `''` (the select's empty choice); values are unique
+by their text, so `'1'` and `1` clash; a label is non-empty.
 
 Nothing was checked before guidance existed, so a stored definition may hold a duplicate or
 non-scalar option, a non-text or oversize guidance value, or a message for a rule it lacks. A

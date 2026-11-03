@@ -604,6 +604,11 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   **Breaking (types):** the management SDK's `FieldDefinition.validations` was typed as an array
   of records; it is now the `FieldValidations` object the API returns (with `in: FieldOption[]`
   and `messages`). Code that indexed it as an array reads the rule by name instead.
+  **Breaking (codegen):** an `in` list may hold `{ value, label }` objects. A codegen release from
+  before labelled options throws on one. Upgrade
+  `@contentworker/sdk` before a content type gains a labelled option, regenerate the types, and
+  read an option with `typeof o === 'object' ? o.value : o` wherever your code walks
+  `validations.in` itself.
   When rendering `RichTextDocument` values, handle the full node vocabulary (headings, lists,
   code blocks, tables, hyperlinks, embeds — see the domain model doc) and skip unrecognized
   `nodeType`s defensively; writes are validated against the vocabulary, but it can grow without an
