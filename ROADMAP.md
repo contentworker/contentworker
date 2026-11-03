@@ -210,8 +210,10 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 - [ ] **Model ergonomics.** Groups, description and icon on content types; editor-only tabs and
   field groups; date, time and datetime formats with `dateRange`; lists of any scalar; asset MIME
   rules on asset links; named pattern presets.
-- [ ] **Delivery locales.** A per-locale "delivered" flag (editable but unpublished locales, with
-  `hreflang` following it) and text direction.
+- [x] **Delivery locales.** A per-locale "delivered" flag (0025, `locale_settings` beside
+  `locales`): an undelivered locale is edited and previewed, while Delivery answers 404 for it,
+  fallbacks skip it and the sitemap's `hreflang` alternates leave it out; and a text direction,
+  served on the space config and set as `dir` on the admin's inputs.
 
 #### M3. Collaboration
 

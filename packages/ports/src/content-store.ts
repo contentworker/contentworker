@@ -29,6 +29,7 @@ import type {
   InstalledPlugin,
   InviteStatus,
   LocaleCode,
+  LocaleSettings,
   LocalizedValue,
   MemberInvite,
   Menu,
@@ -1271,7 +1272,7 @@ export interface SchedulerJobRepo {
 /** The transactional view of the store handed to `withTransaction`. */
 export interface ContentStoreTx {
   /** Only the purge's progress mark, which commits with the event that continues the purge. */
-  readonly spaces: Pick<SpaceRepo, 'markEnvironmentPurgeProgress'>;
+  readonly spaces: Pick<SpaceRepo, 'markEnvironmentPurgeProgress' | 'setLocaleSettings'>;
   readonly contentTypes: ContentTypeRepo;
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
@@ -1446,6 +1447,8 @@ export interface SpaceConfig {
   readonly locales: readonly LocaleCode[];
   /** locale -> fallback locale (null = none). Defaults to the default locale. */
   readonly fallbacks?: Readonly<Record<LocaleCode, LocaleCode | null>>;
+  /** Per-locale settings (delivered, direction); a locale absent takes the defaults. */
+  readonly localeSettings?: Readonly<Record<LocaleCode, LocaleSettings>>;
   /**
    * The space's default for workflow approvals whose node leaves `separateDuties` unset: when
    * true, whoever started a run can't decide its approvals. Absent means false.
@@ -1596,6 +1599,11 @@ export interface SpaceRepo {
   setWorkflowSeparateDuties(spaceId: string, value: boolean): Promise<void>;
   /** Sets how many days the space keeps trashed entries; null turns retention off. */
   setTrashRetentionDays(spaceId: string, days: number | null): Promise<void>;
+  /** Replaces the space's per-locale settings (an empty object: the defaults for every locale). */
+  setLocaleSettings(
+    spaceId: string,
+    settings: Readonly<Record<LocaleCode, LocaleSettings>>,
+  ): Promise<void>;
   /** Where the trash retention sweep resumes in this environment; null is from the oldest. */
   getTrashSweepCursor(scope: Scope): Promise<ExpiredTrashEntry | null>;
   setTrashSweepCursor(scope: Scope, cursor: ExpiredTrashEntry | null): Promise<void>;

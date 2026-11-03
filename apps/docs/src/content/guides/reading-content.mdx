@@ -43,7 +43,10 @@ asset. A link to something unpublished, or beyond the depth, stays `{ "id": …,
 | `since`        | `since=2026-10-01T00:00:00Z`    | Only entries changed since then, for delta sync            |
 
 Without `locale`, each field is keyed by locale (`{ "title": { "en-US": "…" } }`); with it, each
-field is a plain value, with the [fallback chain](/start/concepts/#locales) applied.
+field is a plain value, with the [fallback chain](/start/concepts/#locales) applied. A locale the
+space doesn't deliver is never served: naming it answers `404` (on entries, menus, taxonomy and
+assets alike), the fallback chain skips it, and it is left out of every per-locale map and of the
+sitemap's alternates. A locale the space doesn't have at all still resolves to the default.
 
 ### Filters
 

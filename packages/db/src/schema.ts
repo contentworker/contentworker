@@ -65,6 +65,11 @@ export const spaces = sqliteTable('spaces', {
   defaultLocale: text('default_locale').notNull(),
   locales: text('locales', { mode: 'json' }).$type<string[]>().notNull(),
   fallbacks: text('fallbacks', { mode: 'json' }).$type<Record<string, string | null>>(),
+  /** Per-locale settings, `{ delivered?, direction? }` by locale; null: the defaults for every
+   *  locale (0025_locale_settings). */
+  localeSettings: text('locale_settings', { mode: 'json' }).$type<
+    Record<string, { delivered?: boolean; direction?: 'ltr' | 'rtl' }>
+  >(),
   /** Default separation of duties for workflow approvals that leave it unset. */
   workflowSeparateDuties: integer('workflow_separate_duties', { mode: 'boolean' })
     .notNull()

@@ -369,7 +369,17 @@ export interface SpaceConfig {
   readonly defaultLocale: string;
   readonly locales: readonly string[];
   readonly fallbacks?: Readonly<Record<string, string | null>>;
+  /**
+   * Every locale's settings, resolved by the api: whether Delivery serves it (an undelivered one
+   * is still edited and previewed) and which way its text runs, the `dir` of its inputs.
+   */
+  readonly localeSettings?: Readonly<
+    Record<string, { readonly delivered: boolean; readonly direction: TextDirection }>
+  >;
 }
+
+/** Which way a locale's text runs. */
+export type TextDirection = 'ltr' | 'rtl';
 
 /** A published entry as served by the Delivery API (locale-collapsed, links embedded). */
 export interface DeliveredEntry {

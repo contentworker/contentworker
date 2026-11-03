@@ -35,6 +35,13 @@ export function ContentLayout() {
     locales: cfg?.locales ?? [conn.locale],
     defaultLocale: cfg?.defaultLocale ?? conn.locale,
     fallbacks: cfg?.fallbacks,
+    ...(cfg?.localeSettings
+      ? {
+          directions: Object.fromEntries(
+            Object.entries(cfg.localeSettings).map(([l, s]) => [l, s.direction]),
+          ),
+        }
+      : {}),
     reload,
   };
 

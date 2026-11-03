@@ -527,6 +527,7 @@ interface LocaleConfig {
   defaultLocale: LocaleCode;
   locales: readonly LocaleCode[];
   fallbacks?: Record<LocaleCode, LocaleCode | null>; // locale → fallback (null = stop)
+  localeSettings?: Record<LocaleCode, { delivered?: boolean; direction?: 'ltr' | 'rtl' }>;
 }
 ```
 
@@ -537,6 +538,22 @@ interface LocaleConfig {
   defined value.
 - `resolveFieldsForLocale(fields, config, requested)` — flattens an entry's fields to a single
   locale with fallback applied; used by Delivery/Preview when `?locale=` is given.
+
+**Delivered locales and direction.** `localeSettings` (stored beside `locales`,
+`0025_locale_settings`) says per locale whether Delivery serves it (`isLocaleDelivered`: the
+default always, any other unless `delivered: false`) and which way its text runs
+(`localeDirection`: as set, else `rtl` for a right-to-left language or script, `rtlByLanguage`).
+`assertLocaleSettings` refuses a locale the space lacks, an undelivered default and unknown keys.
+Delivery reads the space through `deliveredLocaleConfig`: undelivered locales leave `locales`, and
+each fallback is re-pointed past them (`fr-CA → fr → en` with `fr` off is `fr-CA → en`), so no
+render, sitemap alternate, menu or label reaches their values; `withoutUndeliveredLocales` drops
+them from all-locale maps. A request naming an undelivered locale is a `NotFoundError` (404),
+rather than a fallback, so a front end leaves the route out instead of serving another language
+under it; a locale the space doesn't have still resolves through the default, as before. Preview
+and Management read every locale. `setLocaleSettings` (`space:admin`) writes the settings and a
+`space_locales.changed` event in one unit; the engine purges every environment of the space.
+GET `…/space-config` serves each locale's settings resolved; the admin sets `dir` on each
+locale's inputs from `direction`.
 
 ## Assets
 

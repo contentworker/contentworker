@@ -9,6 +9,7 @@ import {
   canAccessContentType,
   deniedFieldsFor,
   fallbackChain,
+  isLocaleDelivered,
   MAX_RICH_TEXT_DEPTH,
   maskDeniedFields,
   NotFoundError,
@@ -23,7 +24,7 @@ import {
   DEFAULT_DELIVERY_CACHE_TTL_SECONDS,
   DEFAULT_DELIVERY_LIST_TTL_SECONDS,
 } from './context';
-import { type DeliveryReads, deliveryReads } from './delivery-reads';
+import { assertDeliveredLocale, type DeliveryReads, deliveryReads } from './delivery-reads';
 import { usesReferenceFilters } from './entry-query';
 import { cacheTag, contentTypeTag, epochTag } from './events/dispatch';
 import { hasSlugFilters, resolveSlugFilters, slugFilterSlugs } from './taxonomy-delivery';
@@ -66,6 +67,7 @@ const toLocaleConfig = (s: SpaceConfig): LocaleConfig => ({
   defaultLocale: s.defaultLocale,
   locales: s.locales,
   fallbacks: s.fallbacks,
+  localeSettings: s.localeSettings,
 });
 
 function isEntryLink(value: unknown): value is { id: string; linkType: 'Entry' } {
@@ -233,7 +235,10 @@ function render(
       if (resolved !== undefined) fields[apiId] = resolve(resolved);
     } else {
       const perLocale: Record<string, unknown> = {};
-      for (const [loc, v] of Object.entries(localized)) perLocale[loc] = resolve(v);
+      for (const [loc, v] of Object.entries(localized)) {
+        // A locale the space doesn't deliver is edited and previewed, never served.
+        if (isLocaleDelivered(localeCfg, loc)) perLocale[loc] = resolve(v);
+      }
       fields[apiId] = perLocale;
     }
   }
@@ -274,9 +279,10 @@ export async function getPublishedEntry(
   // The snapshot and the space config: one round trip.
   const reads = opts.reads ?? deliveryReads(ctx);
   const read = await reads.read(scope, { entryId: id, config: true });
+  const config = spaceConfig(scope, read.config);
+  assertDeliveredLocale(config, opts.locale);
   const snapshot = read.entry;
   if (!snapshot) throw new NotFoundError('PublishedEntry', id);
-  const config = spaceConfig(scope, read.config);
   const collected = new Set<string>();
   const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts, reads, config);
   const result = render(scope, snapshot, config, opts, depth, new Set([id]), collected, fetched);
@@ -393,6 +399,8 @@ export async function listPublishedEntries(
     ...(slugs?.concepts.length ? { concepts: { slugs: slugs.concepts } } : {}),
   });
   const config = spaceConfig(scope, first.config);
+  assertDeliveredLocale(config, opts.locale);
+  assertDeliveredLocale(config, requested.locale);
   const query = slugs
     ? resolveSlugFilters(requested, { tags: first.tags ?? [], concepts: first.concepts ?? [] })
     : requested;

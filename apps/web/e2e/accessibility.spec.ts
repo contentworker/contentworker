@@ -752,6 +752,29 @@ test('an entry’s authorship and the Mine filter have no accessibility violatio
   await scan(page, testInfo);
 });
 
+test('an entry written right to left has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const id = await createDraft(request, `RTL ${Date.now()}`);
+  // The space's one locale, written right to left for this test and put back after it.
+  const set = (direction: 'ltr' | 'rtl') =>
+    api(request, 'PUT', `${MGMT}/locale-settings`, {
+      localeSettings: { 'en-US': { direction } },
+    });
+  expect((await set('rtl')).ok()).toBe(true);
+  try {
+    await openCms(page, `/content/article/${id}`);
+    const title = page.getByRole('textbox', { name: /Title/ });
+    await expect(title).toBeVisible();
+    // The value's direction, set around the input; the label keeps the admin's.
+    await expect(title.locator('xpath=ancestor::*[@dir][1]')).toHaveAttribute('dir', 'rtl');
+    await scan(page, testInfo);
+  } finally {
+    await set('ltr');
+  }
+});
+
 test('a blocks field’s editor has no accessibility violations', async ({ page, request }, info) => {
   test.skip(info.project.name.startsWith('iphone'), 'the editor is review-only on a phone');
   const leaf = (apiId: string, name: string) => ({

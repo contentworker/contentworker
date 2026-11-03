@@ -1,4 +1,10 @@
-import type { Scope } from '@contentworker/domain';
+import {
+  deliveredLocaleConfig,
+  isLocaleDelivered,
+  type LocaleConfig,
+  NotFoundError,
+  type Scope,
+} from '@contentworker/domain';
 import type { DeliveryReadRequest, DeliveryReadResult } from '@contentworker/ports';
 import type { AppContext } from './context';
 
@@ -15,6 +21,8 @@ import type { AppContext } from './context';
  */
 export interface DeliveryReads {
   read(scope: Scope, request: DeliveryReadRequest): Promise<DeliveryReadResult>;
+  /** Preview's reads (`previewReads`): the config keeps every locale, delivered or not. */
+  readonly everyLocale?: boolean;
 }
 
 /** The parts read once per request. */
@@ -24,13 +32,24 @@ type Remembered = (typeof REMEMBERED)[number];
 const asksForAnything = (request: DeliveryReadRequest): boolean =>
   Object.values(request).some((v) => v !== undefined && v !== false);
 
-export function deliveryReads(ctx: Pick<AppContext, 'store'>): DeliveryReads {
+/**
+ * The same reads for Preview, which serves what editors write: every locale, delivered or not
+ * (the space config as stored).
+ */
+export const previewReads = (ctx: Pick<AppContext, 'store'>): DeliveryReads =>
+  deliveryReads(ctx, { everyLocale: true });
+
+export function deliveryReads(
+  ctx: Pick<AppContext, 'store'>,
+  opts: { readonly everyLocale?: boolean } = {},
+): DeliveryReads {
   // In flight or settled, so two fields resolving at once share one read.
   const remembered = new Map<string, Promise<unknown>>();
   const keyOf = (part: Remembered, scope: Scope) =>
     `${part}\u0000${scope.spaceId}\u0000${scope.environmentId}`;
 
   return {
+    ...(opts.everyLocale ? { everyLocale: true } : {}),
     async read(scope, request) {
       const ask: { -readonly [K in keyof DeliveryReadRequest]: DeliveryReadRequest[K] } = {
         ...request,
@@ -43,9 +62,14 @@ export function deliveryReads(ctx: Pick<AppContext, 'store'>): DeliveryReads {
           delete ask[part];
         }
       }
-      const fresh = asksForAnything(ask)
-        ? ctx.store.delivery.read(scope, ask)
-        : Promise.resolve<DeliveryReadResult>({});
+      // The space as Delivery sees it: its undelivered locales gone from `locales` and skipped by
+      // every fallback, so nothing downstream (renders, sitemap alternates, menus, labels) can
+      // reach their values.
+      const fresh = (
+        asksForAnything(ask) ? ctx.store.delivery.read(scope, ask) : Promise.resolve({})
+      ).then((r: DeliveryReadResult) =>
+        r.config && !opts.everyLocale ? { ...r, config: deliveredLocaleConfig(r.config) } : r,
+      );
       for (const part of REMEMBERED) {
         if (!ask[part]) continue;
         const key = keyOf(part, scope);
@@ -61,4 +85,14 @@ export function deliveryReads(ctx: Pick<AppContext, 'store'>): DeliveryReads {
       return result as DeliveryReadResult;
     },
   };
+}
+
+/**
+ * Refuses a Delivery read that names a locale the space doesn't deliver: 404, as for anything
+ * else Delivery doesn't serve. A locale the space doesn't have at all is not refused (it resolves
+ * through the default locale, as it always has); only one an editor turned off is, so a front end
+ * leaves its route out rather than serving another language's content under it.
+ */
+export function assertDeliveredLocale(config: LocaleConfig, locale: string | undefined): void {
+  if (locale && !isLocaleDelivered(config, locale)) throw new NotFoundError('Locale', locale);
 }

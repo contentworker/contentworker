@@ -219,7 +219,21 @@ export class InMemoryContentStore implements ContentStore {
     getConfig: async (scope) => this.spaceConfigs.get(scope.spaceId) ?? null,
     list: async () => [...this.spaceConfigs.values()],
     create: async (config) => {
-      this.spaceConfigs.set(config.spaceId, config);
+      // As D1: re-creating a space keeps its locale settings unless the config names its own.
+      const kept = this.spaceConfigs.get(config.spaceId)?.localeSettings;
+      this.spaceConfigs.set(
+        config.spaceId,
+        !config.localeSettings && kept ? { ...config, localeSettings: kept } : config,
+      );
+    },
+    setLocaleSettings: async (spaceId, settings) => {
+      const config = this.spaceConfigs.get(spaceId);
+      if (!config) return;
+      const { localeSettings: _was, ...rest } = config;
+      this.spaceConfigs.set(
+        spaceId,
+        Object.keys(settings).length > 0 ? { ...rest, localeSettings: { ...settings } } : rest,
+      );
     },
     getTrashSweepCursor: async (scope) => this.trashSweepCursors.get(scopeKey(scope)) ?? null,
     setTrashSweepCursor: async (scope, cursor) => {

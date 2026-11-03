@@ -25,7 +25,12 @@ import type {
 } from '@contentworker/ports';
 import { getPublishedAsset, READ_URL_TTL_SECONDS, withReadUrl } from './assets';
 import type { AppContext } from './context';
-import { type DeliveryReads, deliveryReads } from './delivery-reads';
+import {
+  assertDeliveredLocale,
+  type DeliveryReads,
+  deliveryReads,
+  previewReads,
+} from './delivery-reads';
 
 export interface AssetReadOptions {
   /** Flattens title, description and alt text to this locale (with the space's fallbacks). */
@@ -48,11 +53,12 @@ export async function assetProjectionContext(
   scope: Scope,
   opts: AssetReadOptions = {},
 ): Promise<AssetProjectionContext> {
-  const { renditions, config } = await (opts.reads ?? deliveryReads(ctx)).read(scope, {
+  const reads = opts.reads ?? deliveryReads(ctx);
+  const { renditions, config } = await reads.read(scope, {
     renditions: true,
     config: opts.locale !== undefined,
   });
-  return projectionContextOf(scope, renditions ?? [], opts.locale, config);
+  return projectionContextOf(scope, renditions ?? [], opts.locale, config, reads.everyLocale);
 }
 
 /**
@@ -64,9 +70,12 @@ export function projectionContextOf(
   renditions: readonly AssetRendition[],
   locale: string | undefined,
   config: SpaceConfig | null | undefined,
+  everyLocale = false,
 ): AssetProjectionContext {
   if (locale === undefined) return { renditions };
   if (!config) throw new NotFoundError('Space', scope.spaceId);
+  // Delivery serves no locale the space has turned off; Preview reads them all.
+  if (!everyLocale) assertDeliveredLocale(config, locale);
   return {
     renditions,
     locale: {
@@ -284,7 +293,8 @@ export async function getPreviewAsset(
 ): Promise<DeliveredAsset> {
   const [asset, pc] = await Promise.all([
     ctx.store.assets.get(scope, id),
-    assetProjectionContext(ctx, scope, opts),
+    // Preview reads every locale, delivered or not: editors preview what they write.
+    assetProjectionContext(ctx, scope, { ...opts, reads: opts.reads ?? previewReads(ctx) }),
   ]);
   if (!asset || asset.status === 'archived') throw new NotFoundError('Asset', id);
   return projectDraft(ctx, blob, scope, asset, pc);
@@ -309,7 +319,7 @@ export async function listPreviewAssets(
       filters: { ...query.filters },
       sort: { field: 'createdAt', direction: 'asc' },
     }),
-    assetProjectionContext(ctx, scope, opts),
+    assetProjectionContext(ctx, scope, { ...opts, reads: opts.reads ?? previewReads(ctx) }),
   ]);
   return {
     items: await Promise.all(page.items.map((a) => projectDraft(ctx, blob, scope, a, pc))),

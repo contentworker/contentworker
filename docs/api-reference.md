@@ -323,7 +323,8 @@ principal) may call it; the web app does when it ends a person's access (see
 
 | Method | Path                               | Scope             | Description                        |
 | ------ | ---------------------------------- | ----------------- | ---------------------------------- |
-| GET    | `…/space-config`                   | `preview:read`    | Space settings for the environment |
+| GET    | `…/space-config`                   | `preview:read`    | Space settings for the environment, with `localeSettings` resolved per locale (`delivered`, `direction`) |
+| PUT    | `…/locale-settings`                | `space:admin`     | `{ localeSettings: { <locale>: { delivered?, direction? } } }`: a locale not delivered is edited and previewed, never served by Delivery; the default locale is always delivered; answers the space config |
 | GET    | `…/content-types`                  | `preview:read`    | List content types                 |
 | POST   | `…/content-types`                  | `content:manage`  | Create/update content type         |
 | GET    | `…/content-types/entry-counts`     | `preview:read`    | Entries per type, by status        |

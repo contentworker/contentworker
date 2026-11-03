@@ -196,6 +196,8 @@ export function EntryForm(props: {
   locales: readonly string[];
   defaultLocale: string;
   fallbacks?: Readonly<Record<string, string | null>>;
+  /** Each locale's text direction: its inputs take it as `dir` (Arabic and Hebrew run `rtl`). */
+  directions?: Readonly<Record<string, 'ltr' | 'rtl'>>;
   pickers: Pickers;
   /** Installed custom field editors; the first matching a field's type replaces its input. */
   fieldEditors?: readonly AppExtension[];
@@ -422,28 +424,32 @@ export function EntryForm(props: {
                     </span>
                   )}
                 </Label>
-                <FieldInput
-                  id={id}
-                  field={f}
-                  value={values[f.apiId]?.[locale]}
-                  invalid={Boolean(err)}
-                  errorId={err ? `${id}-error` : undefined}
-                  hintId={helpId}
-                  pickers={props.pickers}
-                  editor={fieldEditors?.find(
-                    (e) =>
-                      !e.fieldTypes || e.fieldTypes.length === 0 || e.fieldTypes.includes(f.type),
-                  )}
-                  editorContext={props.entryContext}
-                  locale={locale}
-                  path={f.apiId}
-                  onSearchEntries={props.onSearchEntries}
-                  errorFor={(p) => fieldErrors[errorKey(p, locale)]}
-                  // A nested edit clears its own error, not the whole
-                  // component's: fixing card 1 must not make card 2 look fine.
-                  onEdited={(p) => clearError(p, locale)}
-                  onChange={(v) => set(f.apiId, locale, v)}
-                />
+                {/* The value's direction, not the label's: the admin reads left to right, the
+                    locale being written may not. */}
+                <div dir={props.directions?.[locale]}>
+                  <FieldInput
+                    id={id}
+                    field={f}
+                    value={values[f.apiId]?.[locale]}
+                    invalid={Boolean(err)}
+                    errorId={err ? `${id}-error` : undefined}
+                    hintId={helpId}
+                    pickers={props.pickers}
+                    editor={fieldEditors?.find(
+                      (e) =>
+                        !e.fieldTypes || e.fieldTypes.length === 0 || e.fieldTypes.includes(f.type),
+                    )}
+                    editorContext={props.entryContext}
+                    locale={locale}
+                    path={f.apiId}
+                    onSearchEntries={props.onSearchEntries}
+                    errorFor={(p) => fieldErrors[errorKey(p, locale)]}
+                    // A nested edit clears its own error, not the whole
+                    // component's: fixing card 1 must not make card 2 look fine.
+                    onEdited={(p) => clearError(p, locale)}
+                    onChange={(v) => set(f.apiId, locale, v)}
+                  />
+                </div>
                 {f.help && (
                   <p id={helpId} className="max-w-measure text-muted-foreground text-xs">
                     {f.help}

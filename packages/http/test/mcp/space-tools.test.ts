@@ -157,3 +157,51 @@ describe('space tools over MCP', () => {
     expect(list.items).toEqual([{ id: 'space-1', name: 'One' }]);
   });
 });
+
+describe('locale settings over MCP', () => {
+  it('reads every locale resolved and sets them for a space admin only, as the API does', async () => {
+    const deps = makeDeps();
+    await createSpace(deps.ctx, {
+      spaceId: 'space-1',
+      name: 'One',
+      defaultLocale: 'en-US',
+      locales: ['en-US', 'he'],
+    });
+    const reader: Principal = {
+      spaceId: 'space-1',
+      kind: 'cpa',
+      scopes: [...scopesForKind('cpa')],
+    };
+    const editor: Principal = {
+      spaceId: 'space-1',
+      kind: 'cma',
+      scopes: [...scopesForKind('cma')],
+    };
+
+    const read = await (await connect(deps, reader)).callTool({
+      name: 'locale_settings_get',
+      arguments: { space: 'space-1' },
+    });
+    expect(text(read).localeSettings).toEqual({
+      'en-US': { delivered: true, direction: 'ltr' },
+      he: { delivered: true, direction: 'rtl' },
+    });
+    const refused = await (await connect(deps, reader)).callTool({
+      name: 'locale_settings_set',
+      arguments: { space: 'space-1', localeSettings: { he: { delivered: false } } },
+    });
+    expect(refused.isError).toBe(true);
+
+    const set = await (await connect(deps, editor)).callTool({
+      name: 'locale_settings_set',
+      arguments: { space: 'space-1', localeSettings: { he: { delivered: false } } },
+    });
+    expect(set.isError).toBeFalsy();
+    expect(text(set).localeSettings.he).toEqual({ delivered: false, direction: 'rtl' });
+    const invalid = await (await connect(deps, editor)).callTool({
+      name: 'locale_settings_set',
+      arguments: { space: 'space-1', localeSettings: { 'en-US': { delivered: false } } },
+    });
+    expect(invalid.isError).toBe(true);
+  });
+});

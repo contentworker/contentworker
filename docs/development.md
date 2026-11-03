@@ -335,6 +335,11 @@ where the retention sweep resumes in that environment; NULL is from the oldest) 
 updated_at, id) WHERE status = 'archived'`, which the engine's trash retention sweep reads. Nothing
 is backfilled (see [Architecture](./architecture.md)).
 
+`0025_locale_settings.sql` adds the nullable JSON `spaces.locale_settings` (`{ delivered?,
+direction? }` by locale) beside `locales`, which stays the string array older code reads; NULL,
+every existing space's value, means every locale is delivered in its language's direction.
+Nothing is backfilled (see [Domain model](./domain-model.md#locales--fallback)).
+
 `0024_entry_authorship.sql` adds nullable authorship columns: `entries.created_at`, `created_by`,
 `modified_by` and `first_published_at`, `entry_versions.created_by`, and
 `entry_published.first_published_at` (the read model's copy, so Delivery sorts by it without a

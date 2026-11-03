@@ -54,6 +54,12 @@ example `fr-CA` → `fr` → the default). Field values are stored per locale:
 this shape, with one value under the default locale, so reading and writing look the same for
 every field. Ask the Delivery API for one locale and it resolves the fallback chain for you.
 
+Each locale can also be **not delivered**: editors write and preview it, and Delivery leaves it
+out (a request naming it is `404`, fallback chains skip it, the sitemap lists no alternate for it)
+until it is turned on. A locale also has a text **direction**, `ltr` or `rtl` (from its language
+unless set), which the editor uses for its inputs. Both are set with `PUT …/locale-settings`
+(`space:admin`) or the `locale_settings_set` tool; the default locale is always delivered.
+
 ## Assets and references
 
 An **asset** is a file (an image, a PDF, a video) with a localized title and description. Files go

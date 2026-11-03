@@ -805,3 +805,27 @@ export const schedulerAlertsBody = z.object({
     .max(SCHEDULER_ALERT_MAX_RECIPIENTS)
     .describe('Email addresses; an empty list turns the emails off'),
 });
+
+/**
+ * Per-locale settings to change, by locale; a locale left out keeps its own. Shapes are checked
+ * here, and again (with the space's own locales and default) by the use-case.
+ */
+export const localeSettingsBody = z.object({
+  localeSettings: z
+    .record(
+      z.string().min(2).max(35).describe('One of the space’s locales'),
+      z
+        .object({
+          delivered: z
+            .boolean()
+            .optional()
+            .describe('false: editable and previewable, never delivered (not the default locale)'),
+          direction: z
+            .enum(['ltr', 'rtl'])
+            .optional()
+            .describe('Which way its text runs; absent: from the language'),
+        })
+        .strict(),
+    )
+    .describe('Settings by locale'),
+});

@@ -151,12 +151,13 @@ collection's published members), `taxonomy.changed` (Delivery serves tags and co
 `redirects.changed` (Delivery serves the enabled redirects), `menus.changed` (Delivery serves each
 menu resolved), `content_type.published` (Delivery
 serves each published type's `urlPattern` at `…/routes`, the sitemap built from it, and GraphQL's schema), `release.published`,
-`environment_alias.changed`, `environment.deleted`. The sitemap (`…/sitemap`, `…/sitemap.xml`) has no
+`environment_alias.changed`, `environment.deleted`, `space_locales.changed`. The sitemap (`…/sitemap`, `…/sitemap.xml`) has no
 event of its own: it is a delivery read under the scope's tag, so the publishes that change it purge it. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
-path's environment and the one it resolves to. `asset_renditions.changed` adds the tag of every
-environment of the space (presets belong to the space). `asset.ingested` adds the tag only when
+path's environment and the one it resolves to. `asset_renditions.changed` and
+`space_locales.changed` add the tag of every environment of the space (presets and locale settings
+belong to the space). `asset.ingested` adds the tag only when
 its `published` is true: ingest of a draft changes nothing Delivery serves. A failed enqueue is logged, counted
 (`contentworker_purge_enqueue_errors_total`) and not retried: responses then go stale for their
 60 s `max-age`.
@@ -360,6 +361,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset.expired`                                                                    | `assetId`, `expiresAt` (the expiry sweep unpublished it; sent with `asset.unpublished`)                                                                                                                              |
 | `asset.ingested`                                                                   | `assetId`, `version`, `published`, `contentHash` (absent over 512 MiB), `duplicateOf` (ingest finished a file version: hashed, measured, enriched where empty, indexed)                                              |
 | `asset_renditions.changed`                                                         | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged; `scope` is the environment it was changed through, so other environments' scoped hooks don't hear it) |
+| `space_locales.changed`                                                            | `undelivered` (the locales Delivery no longer serves; a space's locale settings changed, and every environment of the space is purged, in Delivery's cache and at the edge) |
 | `asset_collection.changed`                                                         | `collectionId` (a collection was created, renamed or deleted, or its members were added, removed or reordered; also sent for each collection a deleted asset leaves; Delivery's collection read and every share page that shows it are purged) |
 | `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the media origin reads the link's row itself; a revoke purges its cached page, now and after 90 s) |
 | `taxonomy.changed`                                                                 | `termKind` (`tag` or `concept`), `termId` (a tag or concept was created, changed or deleted; Delivery's taxonomy reads are purged with the scope's tag) |

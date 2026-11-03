@@ -973,6 +973,26 @@ export interface SpaceRef {
   readonly name: string;
 }
 
+/** Which way a locale's text runs. */
+export type TextDirection = 'ltr' | 'rtl';
+
+/** What is set for one locale; absent keys take the defaults (delivered, the language's direction). */
+export interface LocaleSettings {
+  /** False: editors write and preview it, Delivery never serves it. Never the default locale. */
+  readonly delivered?: boolean;
+  readonly direction?: TextDirection;
+}
+
+/** A space's locales, each with its settings resolved. */
+export interface SpaceLocales {
+  readonly spaceId: string;
+  readonly name: string;
+  readonly defaultLocale: string;
+  readonly locales: readonly string[];
+  readonly fallbacks?: Readonly<Record<string, string | null>>;
+  readonly localeSettings: Readonly<Record<string, Required<LocaleSettings>>>;
+}
+
 /** `sample` installs sample content into the new space's first environment; `empty` doesn't. */
 export type SpaceStarter = 'empty' | 'sample';
 
@@ -1938,6 +1958,19 @@ export function createManagementClient(opts: ManagementClientOptions) {
       list: () => items(get<{ items: SpaceRef[] }>(`${root}/spaces`)),
       /** Creates a space, optionally with sample content. Deployment administrators only. */
       create: (input: CreateSpaceInput) => post<CreatedSpace>(`${root}/spaces`, input),
+    },
+
+    /** The space's locales and what is set per locale (the client's space and environment). */
+    locales: {
+      /** The space config, every locale's settings resolved (delivered, direction). */
+      get: () => get<SpaceLocales>(`${envBase}/space-config`),
+      /**
+       * Changes the named locales' settings; the others keep theirs. `delivered: false` takes a
+       * locale out of Delivery (404 when asked for, skipped by fallbacks and the sitemap) while
+       * editors keep writing it. Needs `space:admin`.
+       */
+      set: (localeSettings: Readonly<Record<string, LocaleSettings>>) =>
+        put<SpaceLocales>(`${envBase}/locale-settings`, { localeSettings }),
     },
 
     environments: {

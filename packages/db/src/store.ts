@@ -4146,6 +4146,9 @@ function toSpaceConfig(row: SpaceRow): SpaceConfig {
     defaultLocale: row.defaultLocale,
     locales: row.locales,
     ...(row.fallbacks ? { fallbacks: row.fallbacks } : {}),
+    ...(row.localeSettings && Object.keys(row.localeSettings).length > 0
+      ? { localeSettings: row.localeSettings }
+      : {}),
     ...(row.workflowSeparateDuties ? { workflowSeparateDuties: true } : {}),
     ...(row.trashRetentionDays !== null ? { trashRetentionDays: row.trashRetentionDays } : {}),
   };
@@ -4173,6 +4176,7 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
             defaultLocale: config.defaultLocale,
             locales: [...config.locales],
             fallbacks: config.fallbacks ?? null,
+            localeSettings: config.localeSettings ? { ...config.localeSettings } : null,
             workflowSeparateDuties: config.workflowSeparateDuties ?? false,
             trashRetentionDays: config.trashRetentionDays ?? null,
           })
@@ -4183,6 +4187,8 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
               defaultLocale: config.defaultLocale,
               locales: [...config.locales],
               fallbacks: config.fallbacks ?? null,
+              // Kept unless the config names its own: re-creating a space keeps what was set.
+              ...(config.localeSettings ? { localeSettings: { ...config.localeSettings } } : {}),
             },
           }),
       );
@@ -4209,6 +4215,14 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
         db
           .update(schema.spaces)
           .set({ trashRetentionDays: days })
+          .where(eq(schema.spaces.id, spaceId)),
+      );
+    },
+    async setLocaleSettings(spaceId, settings) {
+      await x.write(
+        db
+          .update(schema.spaces)
+          .set({ localeSettings: Object.keys(settings).length > 0 ? { ...settings } : null })
           .where(eq(schema.spaces.id, spaceId)),
       );
     },
@@ -6769,7 +6783,10 @@ export interface D1StoreOptions {
 /** The repos `withTransaction` hands out, built over one unit of work. */
 function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentStoreTx {
   return {
-    spaces: { markEnvironmentPurgeProgress: makeSpaceRepo(x).markEnvironmentPurgeProgress },
+    spaces: (({ markEnvironmentPurgeProgress, setLocaleSettings }) => ({
+      markEnvironmentPurgeProgress,
+      setLocaleSettings,
+    }))(makeSpaceRepo(x)),
     contentTypes: makeContentTypeRepo(x),
     entries: makeEntryRepo(x, scanLimit, versionBodies),
     assets: makeAssetRepo(x),
