@@ -4,7 +4,7 @@ description: The three things any frontend needs to show ContentWorker content â
 ---
 
 ContentWorker serves content, not pages, so your site can be built with anything: Next.js, Astro,
-Remix, SvelteKit, a Worker, or plain HTML generated at build time. A frontend needs three things,
+Remix, SvelteKit, an edge worker, or plain HTML generated at build time. A frontend needs three things,
 each a few lines with one package. To skip building one, start from the
 [ready-made frontend](#or-start-from-the-ready-made-frontend).
 
@@ -99,8 +99,8 @@ Everything else is optional and works the same in any stack:
 
 ## Or start from the ready-made frontend
 
-`@contentworker/frontend` is a complete site for Cloudflare Workers, built on the same SDK. A site
-is a `package.json` and a `wrangler.jsonc` whose `main` is
+`@contentworker/frontend` is a complete site that runs on edge workers, built on the same SDK. A
+site is a `package.json` and a `wrangler.jsonc` whose `main` is
 `node_modules/@contentworker/frontend/src/entry.ts`. It renders pages from the Delivery API,
 serves them from the edge cache and purges them on publish. It also handles preview, redirects
 and URL patterns from your content types, and serves sitemaps, `robots.txt`, `llms.txt` and a
