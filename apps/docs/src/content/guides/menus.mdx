@@ -153,10 +153,10 @@ resolves to. The whole menu is read in one database round trip.
 
 ## Render a menu
 
-`@contentworker/sdk-core` reads menus with `menus()` and `menu(handle, { locale })`:
+`@contentworker/sdk` reads menus with `menus()` and `menu(handle, { locale })`:
 
 ```ts
-import { createDeliveryClient, type DeliveredMenuItem } from '@contentworker/sdk-core';
+import { createDeliveryClient, type DeliveredMenuItem } from '@contentworker/sdk';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',
@@ -176,11 +176,11 @@ console.log(render(main.items).join('\n'));
 ```
 
 `menu()` throws a `DeliveryError` with status `404` for a handle no menu has.
-`@contentworker/sdk-management` manages them under `menus`: `list`, `get`, `preview`, `create`,
-`update`, `moveItem` and `delete`.
+`@contentworker/sdk/management` manages them under `menus`: `list`, `get`, `preview`, `resolve`,
+`create`, `update`, `moveItem` and `delete`.
 
 ```ts
-import { createManagementClient } from '@contentworker/sdk-management';
+import { createManagementClient } from '@contentworker/sdk/management';
 
 const cma = createManagementClient({
   baseUrl: 'https://api.your-workspace.contentworker.app',
