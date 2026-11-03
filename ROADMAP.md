@@ -79,7 +79,7 @@ Everything below is built and tested on v2.
   recovery codes, self-service password reset by an emailed code, with the person forwarded to the
   api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a stateful edge object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (184 tools, plus skills and the docs
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (234 tools, plus skills and the docs
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached at the edge) in front of an edge-cached entrypoint keyed by visibility profile, with ETags,
