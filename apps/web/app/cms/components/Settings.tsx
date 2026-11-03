@@ -764,7 +764,12 @@ export function Webhooks(props: { client: ManagementClient }) {
   const [everywhere, setEverywhere] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<WebhookSummary | null>(null);
-  const [deliveriesFor, setDeliveriesFor] = useState<WebhookSummary | null>(null);
+  // The hook whose log is open, and the test just queued for it, which the log waits to see.
+  const [deliveriesFor, setDeliveriesFor] = useState<{
+    webhook: WebhookSummary;
+    awaitEventId?: string;
+  } | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
 
   const hooks = useScopedQuery(['webhooks'], () => client.listWebhooks()).data ?? [];
   const reload = () => invalidate(['webhooks']);
@@ -779,13 +784,17 @@ export function Webhooks(props: { client: ManagementClient }) {
     }
   };
 
-  // Queued, not sent: the engine sends it like any delivery, and it shows up under Deliveries.
+  // Queued, not sent: the engine sends it like any delivery. The log opens and waits for it.
   const sendTest = async (h: WebhookSummary) => {
+    setTesting(h.id);
     try {
-      await client.sendWebhookTest(h.id);
-      toast.success('Test event queued. It shows up under Deliveries once sent.');
+      const queued = await client.sendWebhookTest(h.id);
+      toast.success('Test event queued.');
+      setDeliveriesFor({ webhook: h, awaitEventId: queued.eventId });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTesting(null);
     }
   };
 
@@ -924,17 +933,24 @@ export function Webhooks(props: { client: ManagementClient }) {
                   <StatusBadge status={h.active ? 'active' : 'paused'} />
                 </TableCell>
                 <TableCell>
-                  <div className="flex items-center justify-end gap-1">
+                  <div className="flex flex-wrap items-center justify-end gap-1">
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setDeliveriesFor(h)}
+                      onClick={() => setDeliveriesFor({ webhook: h })}
                     >
                       Deliveries
                     </Button>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => sendTest(h)}>
-                      Send test
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={testing === h.id}
+                      aria-label={`${testing === h.id ? 'Sending test' : 'Send test'} to ${h.url}`}
+                      onClick={() => sendTest(h)}
+                    >
+                      {testing === h.id ? 'Sending test…' : 'Send test'}
                     </Button>
                     <Button type="button" variant="ghost" size="sm" onClick={() => toggleActive(h)}>
                       {h.active ? 'Pause' : 'Resume'}
@@ -968,10 +984,11 @@ export function Webhooks(props: { client: ManagementClient }) {
       )}
       {deliveriesFor && (
         <WebhookDeliveriesSheet
-          key={deliveriesFor.id}
+          key={`${deliveriesFor.webhook.id}:${deliveriesFor.awaitEventId ?? ''}`}
           open
           onOpenChange={(o) => !o && setDeliveriesFor(null)}
-          webhook={deliveriesFor}
+          webhook={deliveriesFor.webhook}
+          {...(deliveriesFor.awaitEventId ? { awaitEventId: deliveriesFor.awaitEventId } : {})}
         />
       )}
     </Card>

@@ -124,13 +124,28 @@ describe('Settings → Webhooks', () => {
 });
 
 describe('Settings → Webhooks: tests', () => {
-  it('queues a test event for the one webhook and says where it will show up', async () => {
+  it('queues a test for the one webhook, once, and opens its log waiting for it', async () => {
     const client = fakeClient([scoped, everywhere]);
+    let release: () => void = () => {};
+    client.sendWebhookTest.mockImplementation(
+      (id: string) =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({ webhookId: id, eventId: 'evt-test', eventType: 'webhook.test' });
+        }),
+    );
+    contextClient = { webhookDeliveries: vi.fn(async () => []) };
     renderWebhooks(client);
-    const row = (await screen.findByText(everywhere.url)).closest('tr') as HTMLElement;
-    fireEvent.click(within(row).getByRole('button', { name: 'Send test' }));
-    await waitFor(() => expect(client.sendWebhookTest).toHaveBeenCalledWith(everywhere.id));
-    expect(await screen.findByText(/shows up under Deliveries/)).toBeTruthy();
+    const button = await screen.findByRole('button', { name: `Send test to ${everywhere.url}` });
+    fireEvent.click(button);
+    // Busy while it queues: a second press can't queue a second test.
+    const busy = screen.getByRole('button', { name: `Sending test to ${everywhere.url}` });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(busy);
+    release();
+    await waitFor(() => expect(client.sendWebhookTest).toHaveBeenCalledTimes(1));
+    expect(client.sendWebhookTest).toHaveBeenCalledWith(everywhere.id);
+    expect(await screen.findByText('Waiting for the engine to send it…')).toBeTruthy();
   });
 });
 
@@ -146,51 +161,94 @@ describe('Webhook deliveries sheet', () => {
     createdAt: '2026-01-01T00:00:00.000Z',
   };
   const resent = { ...original, id: 8, status: 'success' as const, attempts: 1, resendOf: 7 };
+  const open = (pollMs = 5) =>
+    render(
+      <ToastProvider>
+        <WebhookDeliveriesSheet webhook={scoped} open onOpenChange={() => {}} pollMs={pollMs} />
+      </ToastProvider>,
+    );
 
-  it("shows each attempt's event, resends one, and reads the log again on refresh", async () => {
+  it('resends one and reads the log again until the new attempt is there', async () => {
     let log: WebhookDeliveryRecord[] = [original];
     const client = {
       webhookDeliveries: vi.fn(async () => log),
-      resendWebhookDelivery: vi.fn(async () => ({
-        webhookId: scoped.id,
-        eventId: 'evt-1',
-        eventType: 'entry.published',
-        resendOf: 7,
-      })),
+      resendWebhookDelivery: vi.fn(async () => {
+        // The engine sends it a moment later.
+        setTimeout(() => {
+          log = [resent, original];
+        }, 12);
+        return {
+          webhookId: scoped.id,
+          eventId: 'evt-1',
+          eventType: 'entry.published',
+          resendOf: 7,
+        };
+      }),
     };
     contextClient = client;
-    render(
-      <ToastProvider>
-        <WebhookDeliveriesSheet webhook={scoped} open onOpenChange={() => {}} />
-      </ToastProvider>,
-    );
+    open();
     expect(await screen.findByText('entry.published')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Resend delivery #7' }));
     await waitFor(() =>
       expect(client.resendWebhookDelivery).toHaveBeenCalledWith(scoped.id, original.id),
     );
-    expect(await screen.findByText(/Resend queued/)).toBeTruthy();
+    // No Refresh pressed: the log is read again until the resend shows, naming the one it repeats.
+    expect(await screen.findByText(/#8, resend of #7/)).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.queryByText('Waiting for the engine to send it…')).toBeNull(),
+    );
+  });
 
-    log = [resent, original];
+  it('keeps the rows on screen while it reloads', async () => {
+    let finish: (d: WebhookDeliveryRecord[]) => void = () => {};
+    const client = {
+      webhookDeliveries: vi
+        .fn()
+        .mockResolvedValueOnce([original])
+        .mockImplementationOnce(() => new Promise((r) => (finish = r))),
+    };
+    contextClient = client;
+    open();
+    await screen.findByText('entry.published');
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(await screen.findByText('resend of #7')).toBeTruthy();
-    expect(client.webhookDeliveries).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(screen.getByRole('table', { name: 'Deliveries' }).getAttribute('aria-busy')).toBe(
+        'true',
+      ),
+    );
+    expect(screen.getByText('entry.published')).toBeTruthy();
+    finish([resent, original]);
+    expect(await screen.findByText(/resend of #7/)).toBeTruthy();
+  });
+
+  it('shows a failed load as an error with Retry, not as an empty log', async () => {
+    const client = {
+      webhookDeliveries: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce([original]),
+    };
+    contextClient = client;
+    open();
+    expect(await screen.findByText('The delivery log didn’t load')).toBeTruthy();
+    expect(screen.queryByText('No deliveries yet')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('entry.published')).toBeTruthy();
+    expect(screen.queryByText('The delivery log didn’t load')).toBeNull();
   });
 
   it('reports a resend the api refuses (its event is past retention)', async () => {
     contextClient = {
       webhookDeliveries: vi.fn(async () => [original]),
       resendWebhookDelivery: vi.fn(async () => {
-        throw new Error("Delivery 7's event is no longer kept, so it can't be sent again");
+        throw new Error(
+          "Delivery 7's event is past the event retention, so it can't be sent again",
+        );
       }),
     };
-    render(
-      <ToastProvider>
-        <WebhookDeliveriesSheet webhook={scoped} open onOpenChange={() => {}} />
-      </ToastProvider>,
-    );
+    open();
     fireEvent.click(await screen.findByRole('button', { name: 'Resend delivery #7' }));
-    expect(await screen.findByText(/no longer kept/)).toBeTruthy();
+    expect(await screen.findByText(/past the event retention/)).toBeTruthy();
   });
 });
 

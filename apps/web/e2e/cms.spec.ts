@@ -308,6 +308,28 @@ test('settings lists the space’s API keys, and the space access section', asyn
   await expect(page.getByText(name)).toBeVisible();
 });
 
+test('a webhook is sent a test, and its delivery is resent from the log', async ({ page }) => {
+  await openCms(page, '/settings/webhooks');
+  // A public address: the engine sends to it for real, so the attempt may succeed or fail (offline);
+  // either way it is logged.
+  const url = `https://example.com/cw-e2e-${Date.now()}`;
+  await page.getByPlaceholder('https://example.com/hooks/cms').fill(url);
+  await page.getByPlaceholder('Signing secret').fill('e2e-secret');
+  await page.getByRole('button', { name: 'Add webhook' }).click();
+  await page.getByRole('button', { name: `Send test to ${url}` }).click();
+  // The log opens on its own and waits for the engine to send the test.
+  const log = page.getByRole('dialog', { name: 'Deliveries' });
+  await expect(log).toBeVisible();
+  await expect(log.getByRole('cell', { name: /webhook\.test/ }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await log
+    .getByRole('button', { name: /^Resend delivery #\d+$/ })
+    .first()
+    .click();
+  await expect(log.getByText(/resend of #\d+/)).toBeVisible({ timeout: 30_000 });
+});
+
 test('an unknown settings section lands on the first one', async ({ page }) => {
   await openCms(page, '/settings/connection');
   await expect(page).toHaveURL(/\/settings\/team$/);

@@ -480,6 +480,22 @@ test('the webhook dialog has no accessibility violations', async ({ page }, test
   await scan(page, testInfo);
 });
 
+test('the webhook deliveries sheet, with a row, has no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/webhooks');
+  const url = `https://example.com/a11y-log-${Date.now()}`;
+  await page.getByPlaceholder('https://example.com/hooks/cms').fill(url);
+  await page.getByPlaceholder('Signing secret').fill('a11y-secret');
+  await page.getByRole('button', { name: 'Add webhook' }).click();
+  await page.getByRole('button', { name: `Send test to ${url}` }).click();
+  const log = page.getByRole('dialog', { name: 'Deliveries' });
+  await expect(log.getByRole('button', { name: /^Resend delivery #\d+$/ }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await scan(page, testInfo);
+});
+
 test('the redirect and import dialogs have no accessibility violations', async ({
   page,
 }, testInfo) => {
