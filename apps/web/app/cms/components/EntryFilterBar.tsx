@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from '@contentworker/ui/select';
 import { ListFilter, Plus, Search, UserRound, X } from 'lucide-react';
-import { useId, useState } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import { statusLabel } from '../lib/format';
 import type { EntryFilter, EntryListQuery } from '../lib/management';
 
@@ -180,6 +180,10 @@ export function EntryFilterBar(props: {
   type: ContentType;
   value: EntryListQuery;
   onChange: (query: EntryListQuery) => void;
+  /** Before the search (the views menu). */
+  leading?: ReactNode;
+  /** After Filters and Clear (the column picker). */
+  trailing?: ReactNode;
 }) {
   const { type, value, onChange } = props;
   const [open, setOpen] = useState(false);
@@ -205,13 +209,16 @@ export function EntryFilterBar(props: {
   const removeFilter = (i: number) =>
     onChange({ ...value, filters: filters.filter((_, j) => j !== i) });
 
-  const activeCount = filters.length + (value.search ? 1 : 0);
+  // A `where` tree (from a saved view or a link) counts as one: the bar doesn't edit its groups.
+  const grouped = value.where !== undefined;
+  const activeCount = filters.length + (value.search ? 1 : 0) + (grouped ? 1 : 0);
   // "Mine" is a toggle of its own, beside the panel's filters; Clear clears it with them.
   const clearable = activeCount > 0 || value.mine === true;
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
+        {props.leading}
         <div className="relative flex-1 sm:max-w-xs">
           <Search
             aria-hidden="true"
@@ -264,7 +271,13 @@ export function EntryFilterBar(props: {
             size="sm"
             // Filters and search only: the sort and the trash view aren't filters.
             onClick={() =>
-              onChange({ ...value, filters: undefined, search: undefined, mine: undefined })
+              onChange({
+                ...value,
+                filters: undefined,
+                search: undefined,
+                where: undefined,
+                mine: undefined,
+              })
             }
             className="text-muted-foreground"
           >
@@ -272,12 +285,29 @@ export function EntryFilterBar(props: {
             Clear
           </Button>
         )}
+        {props.trailing && <div className="ml-auto">{props.trailing}</div>}
       </div>
 
       {open && (
         <div id={panelId} className="card space-y-3 p-3">
-          {filters.length === 0 && (
+          {filters.length === 0 && !grouped && (
             <p className="text-muted-foreground text-sm">No filters. Add one to narrow the list.</p>
+          )}
+          {grouped && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">
+                Also grouped conditions (and, or) from the saved view or link, kept as they are.
+              </span>
+              <Button
+                type="button"
+                variant="link"
+                size="xs"
+                className="px-0"
+                onClick={() => onChange({ ...value, where: undefined })}
+              >
+                Remove them
+              </Button>
+            </div>
           )}
           {filters.map((filter, i) => {
             const option = optionFor(filter.field);

@@ -416,13 +416,22 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   into cards; a content type's
   entries beside the list of types (from md): `PageHeader` with the real total ("250 entries",
   "Showing 100 of 250 entries" while more pages wait; filtered or in the trash, what was read,
-  "100+"), then the filter bar (search, named "Search entries", and Filters, `aria-expanded`, whose
-  panel holds filters only, status values in the status words; then **Mine**, a toggle,
-  `aria-pressed`, an outline pill at rest and the ink fill while pressed, with no tooltip since its
-  word says it: only the entries the signed-in person created, `sys.createdBy=me`, which Clear
-  clears with the filters), then the table: checkbox, the
-  title linking to the editor, Status, Updated (`Ago`, the full time in its tooltip; on a phone
-  beside the status), the row's quiet Publish (ghost `xs`, shown on hover, focus, the J/K row, a
+  "100+"), then the filter bar: **Views** first (an outline `sm` pill with a bookmark, the open
+  view's name, "· edited" in muted once the list has moved off it, and a chevron; its menu is a
+  radio group, All entries, then "Your views" and "Shared with the space" under menu labels, then
+  Save as new view…, Save changes, Rename…, Share with the space or Stop sharing, and a destructive
+  Delete view… confirmed in an alert dialog; naming a view is a small dialog with Name and, with
+  `content:manage`, a Share with the space switch whose hint says each person sees only what their
+  role allows), the search, named "Search entries", Filters (`aria-expanded`, whose panel holds
+  filters only, status values in the status words, and a muted line with a link-button to remove
+  grouped conditions a view or link brought), **Mine**, a toggle, `aria-pressed`, an outline pill at
+  rest and the ink fill while pressed, with no tooltip since its word says it: only the entries the
+  signed-in person created, `sys.createdBy=me`, which Clear clears with the filters, and **Columns** at the row's end (an outline `sm`
+  pill; a checkbox menu that stays open: Status, Updated and the type's fields). The filters,
+  search, sort, columns and view are the page's URL. Then the table: checkbox, the title linking
+  to the editor, then the picked columns, by default Status and Updated (`Ago`, the full time in
+  its tooltip; on a phone beside the status; a field column is one muted truncated line, hidden
+  on a phone, and sorts from its header like the rest), the row's quiet Publish (ghost `xs`, shown on hover, focus, the J/K row, a
   ticked row, and always on touch), and the ⋯ menu. Title, Status and Updated sort from their
   headers; Updated flips between newest first and the default, least recently changed first.
   **Ticking** anything swaps the filter bar for a bulk bar (`role="group"`, "2 selected · Publish

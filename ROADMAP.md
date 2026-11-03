@@ -212,7 +212,10 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 - [x] **Richer queries.** `startsWith` and `between`, OR and AND groups in a `where` JSON parameter
   (≤ 4 deep, ≤ 20 predicates), component subfield paths through `json_tree` with bound keys, and
   distinct field values (`…/content-types/:apiId/fields/:field/values`, `entries_field_values`).
-- [ ] **Saved views.** Named filters, sort and columns per content type, personal or shared.
+- [x] **Saved views.** Named filters, `where` trees, sort and columns per content type (or every
+  type), personal or shared with the space (`content:manage`); space-scoped (`0029_saved_views`),
+  validated by the live query's checks, run with the viewer's own grants; HTTP, MCP `views_*`,
+  `cma.savedViews`, and the admin's views menu, URL list state and column picker.
 - [x] **Delivery locales.** A per-locale "delivered" flag (0025, `locale_settings` beside
   `locales`): an undelivered locale is edited and previewed, while Delivery answers 404 for it,
   fallbacks skip it and the sitemap's `hreflang` alternates leave it out; and a text direction,

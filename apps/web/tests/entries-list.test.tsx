@@ -45,6 +45,7 @@ const client = {
   })),
   cancelBulkJob: vi.fn(),
   getSpaceAccess: vi.fn(async () => fullAccess),
+  listSavedViews: vi.fn(async () => []),
 };
 
 /** The session's access in the space: an unrestricted publisher unless a test says otherwise. */
@@ -76,6 +77,14 @@ vi.mock('~/cms/lib/client-context', () => ({
     conn: { space: 's', environment: 'main', locale: 'en-US' },
     busy: false,
     // Like the real runner: a failure is surfaced, never rethrown.
+    run: async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+      } catch {}
+    },
+  }),
+  useLocalRun: () => ({
+    busy: false,
     run: async (fn: () => Promise<void>) => {
       try {
         await fn();

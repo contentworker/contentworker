@@ -84,5 +84,6 @@
 ^packages/(domain/src/redirect/|application/src/redirects\.ts$|sdk/core/src/redirects\.ts$|db/migrations/0017_redirects\.sql$)	guides/redirects docs/domain-model.md docs/api-reference.md	prose
 ^packages/(domain/src/seo/|application/src/seo\.ts$|http/src/api/sitemap-xml\.ts$|http/src/(api/routes/management|mcp/tools)/seo\.ts$)	guides/seo docs/domain-model.md docs/api-reference.md	prose
 ^packages/(domain/src/menu/|application/src/menus\.ts$|http/src/mcp/tools/menus\.ts$|http/src/api/routes/management/menus\.ts$|db/migrations/0020_menus\.sql$)	guides/menus docs/domain-model.md docs/api-reference.md docs/mcp.md	prose
+^(packages/(domain/src/saved-view/|application/src/saved-views\.ts$|http/src/mcp/tools/saved-views\.ts$|http/src/api/routes/management/saved-views\.ts$|db/migrations/0029_saved_views\.sql$)|apps/web/app/cms/(components/entries/(SavedViewsMenu|ColumnPicker)\.tsx|lib/entry-url\.ts)$)	guides/saved-views docs/domain-model.md docs/api-reference.md docs/mcp.md docs/admin-ui.md	prose
 ^packages/sdk/(core/src/webhooks\.ts|rich-text/src/)	guides/your-own-frontend guides/webhooks guides/sdks docs/sdks.md	prose
 ^(scripts/sdk-packages\.ts|\.github/workflows/sdk-(packages|release)\.yml)$	docs/deployment.md docs/development.md	prose

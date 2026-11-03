@@ -21,7 +21,7 @@ import {
   Tr as TableRow,
 } from '@contentworker/ui/table';
 import { MoreHorizontalIcon } from 'lucide-react';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { StatusBadge } from '~/cms/components/status';
@@ -62,6 +62,29 @@ export interface EntryRowActions {
 export const SORT_STATUS = 'sys.status';
 export const SORT_UPDATED = 'sys.updatedAt';
 
+/** What a list shows besides the title when nobody picked: the status, then when it changed. */
+export const DEFAULT_COLUMNS: readonly string[] = [SORT_STATUS, SORT_UPDATED];
+
+/**
+ * A field's value as one line of a cell: text as it is, numbers, Yes or No, a list joined, and a
+ * count for links. Anything richer (rich text, a component, JSON) is a dash: the editor shows it.
+ */
+export function fieldCellText(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  const isLink = (v: unknown) =>
+    !!v && typeof v === 'object' && 'linkType' in (v as Record<string, unknown>);
+  if (isLink(value)) return '1 link';
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    if (value.every(isLink)) return `${value.length} links`;
+    if (value.every((v) => typeof v === 'string' || typeof v === 'number')) return value.join(', ');
+  }
+  return '—';
+}
+
 export interface EntriesTableProps {
   readonly type: ContentType;
   readonly entries: readonly PreviewEntry[];
@@ -86,6 +109,11 @@ export interface EntriesTableProps {
   readonly empty?: ReactNode;
   /** Skeleton rows to draw after the entries: the first page, before it has arrived. */
   readonly pending?: number;
+  /**
+   * The columns after the title, in order: `sys.status`, `sys.updatedAt` or a field's apiId (the
+   * column picker's choice, which a saved view keeps). Absent is {@link DEFAULT_COLUMNS}.
+   */
+  readonly columns?: readonly string[];
 }
 
 /** The entry's display-field value in `locale`, or null when it has none. */
@@ -97,8 +125,8 @@ export function entryTitle(type: ContentType, entry: PreviewEntry, locale: strin
 
 export const needsPublish = (status: string) => status === 'draft' || status === 'changed';
 
-/** The columns: checkbox, title, status, updated, the contextual action, the menu. */
-const COLUMNS = 6;
+/** The columns around the picked ones: checkbox, title, the contextual action, the menu. */
+const FIXED_COLUMNS = 4;
 
 // Below md each row is a card: the checkbox and title on the first line, the
 // status, when it changed and the actions beneath. The header stays for screen
@@ -140,6 +168,11 @@ export function EntriesTable(props: EntriesTableProps) {
 
   const fieldName = type.fields.find((f) => f.apiId === type.displayField)?.name;
   const titleHeader = fieldName ?? type.displayField;
+  // A column naming a field the type no longer has (a view saved before it was removed) is left out.
+  const columns = (props.columns ?? DEFAULT_COLUMNS).filter(
+    (c) => c === SORT_STATUS || c === SORT_UPDATED || type.fields.some((f) => f.apiId === c),
+  );
+  const columnCount = FIXED_COLUMNS + columns.length;
   const pickedHere = entries.filter((e) => picked.has(e.id)).length;
   const allState =
     entries.length > 0 && pickedHere === entries.length
@@ -263,8 +296,17 @@ export function EntriesTable(props: EntriesTableProps) {
                 />
               </TableHead>
               {header(type.displayField, titleHeader)}
-              {header(SORT_STATUS, 'Status', 'w-28')}
-              {header(SORT_UPDATED, 'Updated', 'w-28')}
+              {columns.map((c) =>
+                c === SORT_STATUS ? (
+                  <Fragment key={c}>{header(SORT_STATUS, 'Status', 'w-28')}</Fragment>
+                ) : c === SORT_UPDATED ? (
+                  <Fragment key={c}>{header(SORT_UPDATED, 'Updated', 'w-28')}</Fragment>
+                ) : (
+                  <Fragment key={c}>
+                    {header(c, type.fields.find((f) => f.apiId === c)?.name ?? c)}
+                  </Fragment>
+                ),
+              )}
               <TableHead role="columnheader" scope="col" className="w-24">
                 <span className="sr-only">Action</span>
               </TableHead>
@@ -325,15 +367,32 @@ export function EntriesTable(props: EntriesTableProps) {
                       </Link>
                     )}
                   </TableCell>
-                  <TableCell role="cell" className={`${CELL_STACK} max-md:col-start-2`}>
-                    <StatusBadge status={e.status} />
-                  </TableCell>
-                  <TableCell
-                    role="cell"
-                    className={`${CELL_STACK} whitespace-nowrap text-muted-foreground text-xs`}
-                  >
-                    {e.updatedAt ? <Ago at={e.updatedAt} /> : null}
-                  </TableCell>
+                  {columns.map((c) =>
+                    c === SORT_STATUS ? (
+                      <TableCell key={c} role="cell" className={`${CELL_STACK} max-md:col-start-2`}>
+                        <StatusBadge status={e.status} />
+                      </TableCell>
+                    ) : c === SORT_UPDATED ? (
+                      <TableCell
+                        key={c}
+                        role="cell"
+                        className={`${CELL_STACK} whitespace-nowrap text-muted-foreground text-xs`}
+                      >
+                        {e.updatedAt ? <Ago at={e.updatedAt} /> : null}
+                      </TableCell>
+                    ) : (
+                      // A phone's row card keeps to the title, status and actions.
+                      <TableCell
+                        key={c}
+                        role="cell"
+                        className="max-w-64 truncate text-muted-foreground max-md:hidden"
+                      >
+                        {fieldCellText(
+                          (e.fields[c] as Record<string, unknown> | undefined)?.[locale],
+                        )}
+                      </TableCell>
+                    ),
+                  )}
                   <TableCell role="cell" className={`${CELL_STACK} text-right`}>
                     {viewingTrash ? (
                       <Button
@@ -411,16 +470,16 @@ export function EntriesTable(props: EntriesTableProps) {
               );
             })}
             {entries.length === 0 && props.empty ? (
-              <TableEmpty colSpan={COLUMNS}>{props.empty}</TableEmpty>
+              <TableEmpty colSpan={columnCount}>{props.empty}</TableEmpty>
             ) : null}
             {Array.from({ length: props.pending ?? 0 }, (_, i) => (
-              <EntryRowSkeleton key={i} index={i} viewingTrash={viewingTrash} />
+              <EntryRowSkeleton key={i} index={i} viewingTrash={viewingTrash} columns={columns} />
             ))}
           </TableBody>
           {props.onLoadMore ? (
             <TableFoot className="max-md:block">
               <TableRow className="border-t max-md:block">
-                <TableCell colSpan={COLUMNS} className="py-2 text-center max-md:block">
+                <TableCell colSpan={columnCount} className="py-2 text-center max-md:block">
                   <Button
                     type="button"
                     variant="ghost"
@@ -463,7 +522,15 @@ const TITLE_WIDTHS = ['58%', '42%', '71%', '50%', '64%', '37%'];
  * A row still on its way, laid out by the real row's classes so nothing moves when it arrives:
  * the checkbox, the title, a status pill, when it changed, and Restore on each trashed row.
  */
-function EntryRowSkeleton({ index, viewingTrash }: { index: number; viewingTrash: boolean }) {
+function EntryRowSkeleton({
+  index,
+  viewingTrash,
+  columns,
+}: {
+  index: number;
+  viewingTrash: boolean;
+  columns: readonly string[];
+}) {
   return (
     <TableRow role="row" aria-hidden="true" className={ROW_STACK}>
       <TableCell
@@ -475,12 +542,21 @@ function EntryRowSkeleton({ index, viewingTrash }: { index: number; viewingTrash
       <TableCell role="cell" className={`${CELL_STACK} max-md:col-span-4`}>
         <SkeletonText width={TITLE_WIDTHS[index % TITLE_WIDTHS.length]} />
       </TableCell>
-      <TableCell role="cell" className={`${CELL_STACK} max-md:col-start-2`}>
-        <SkeletonPill className={index % 3 === 1 ? 'w-[5.5rem]' : 'w-[4.5rem]'} />
-      </TableCell>
-      <TableCell role="cell" className={`${CELL_STACK} text-xs`}>
-        <SkeletonText width="3.5rem" />
-      </TableCell>
+      {columns.map((c) =>
+        c === SORT_STATUS ? (
+          <TableCell key={c} role="cell" className={`${CELL_STACK} max-md:col-start-2`}>
+            <SkeletonPill className={index % 3 === 1 ? 'w-[5.5rem]' : 'w-[4.5rem]'} />
+          </TableCell>
+        ) : (
+          <TableCell
+            key={c}
+            role="cell"
+            className={c === SORT_UPDATED ? `${CELL_STACK} text-xs` : 'max-md:hidden'}
+          >
+            <SkeletonText width={c === SORT_UPDATED ? '3.5rem' : '5rem'} />
+          </TableCell>
+        ),
+      )}
       <TableCell role="cell" className={`${CELL_STACK} text-right`}>
         {/* The row's Publish is hidden at rest; Restore, in the trash, always shows. */}
         {viewingTrash ? <SkeletonPill className="h-6 w-[4.25rem]" /> : null}

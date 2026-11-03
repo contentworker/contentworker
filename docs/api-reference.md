@@ -767,6 +767,41 @@ field never becomes a label, and a denied slug field drops the item. Every write
 `menus.changed`. MCP: `menus_list`, `menus_get`, `menus_preview`, `menus_resolve` (`preview:read`),
 `menus_create`, `menus_update`, `menus_move_item`, `menus_delete` (`content:manage`).
 
+### Saved views
+
+A saved view is a named entries-list query (`filters`, a `where` tree, `order`, `search`) and the
+columns to show, for one content type or (`contentTypeApiId: null`) every type. Views belong to
+the space, not an environment: every environment lists the same views, and the path's environment
+is only where a run lists entries and a new view's type and columns are checked. See
+[Domain model](./domain-model.md#saved-views).
+
+| Method | Path                        | Scope          | Notes                                                                                                                                                                       |
+| ------ | --------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/saved-views`             | `preview:read` | `?content_type=` → `{ items, total }`: the space's shared views and the caller's personal ones, by name (that type's and the every-type ones)                               |
+| POST   | `…/saved-views`             | `preview:read` | Create `{ name, contentTypeApiId?, visibility?, query?, columns? }` (`201`); `shared` also needs `content:manage` (`403`); `422` naming each bad part (`query.where.or[1]`) |
+| GET    | `…/saved-views/:id`         | `preview:read` | The view; columns naming a field the caller's role hides are left out                                                                                                       |
+| GET    | `…/saved-views/:id/entries` | `preview:read` | `?limit=&cursor=&locale=` → `{ view, items, total, nextCursor?, ignored? }`: one page of the Preview list for the view's query, as the caller                               |
+| PATCH  | `…/saved-views/:id`         | `preview:read` | `name`, `visibility`, `query` (replaced whole), `columns` (`null`: the default); the type is fixed; with `revision`, a view saved since is `409`                            |
+| DELETE | `…/saved-views/:id`         | `preview:read` | `?revision=` optional (`409` when stale)                                                                                                                                    |
+
+`visibility` is `personal` (the default, the creator's alone; only a person has personal views, so
+an API key's create without `visibility: "shared"` is a `422`) or `shared` (everyone in the space who
+can read the view's type). Creating, changing, sharing, unsharing or deleting a shared view needs
+`content:manage`. A view is a `404` (on every route, never a `403`) to anyone but the owner of a
+personal view, to a role that can't read its type, and to a role whose field rules hide a field its
+query filters, sorts or (with `search`) searches; such a view is also left out of the list, and a
+role can't save one either (`403`, as the same query would be on the Preview list). A run applies
+the caller's grants and masks the caller's denied fields, whoever saved the view, so a shared view
+never widens what anyone sees. The query is checked by the live query's validators, strictly: top
+level filters get the `where` tree's checks too (`match` needs a needle, `in` lists at most 100
+values), values are JSON scalars or lists of them, at most 4 component paths across filters and the
+tree, at most 3 sort keys. Keys a newer client sends go in `query.extra` (at most 10, 2 KB of JSON):
+kept verbatim, never applied, and named in a run's `ignored`. `columns` are `sys.status`,
+`sys.updatedAt` or the type's own top-level fields (a view over every type, `sys.*` only), at most
+20. A person keeps at most 50 personal views in a space, and a space at most 100 shared views.
+Writes are audited. MCP: `views_list`, `views_get`, `views_run`, `views_create`, `views_update`,
+`views_delete`.
+
 ### Platform configuration
 
 | Method | Path                   | Scope            | Description                         |

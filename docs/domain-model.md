@@ -1117,6 +1117,43 @@ cover is `hidden` (dropped on delivery) and, on a write, doesn't exist; a denied
 never becomes a label and a denied slug field drops the item, as `maskDeliveredFields` hides them
 on an entry read.
 
+## Saved views
+
+```ts
+interface SavedView {
+  id: string;
+  name: string;
+  contentTypeApiId: string | null; // null: the entries of every type
+  visibility: 'personal' | 'shared';
+  createdBy: string; // as the audit log names the creator; a personal view's owner
+  query: SavedViewQuery; // { filters?, where?, order?, search?, extra? }
+  columns?: string[]; // after the display field; absent: sys.status, sys.updatedAt
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+A saved view (`packages/domain/src/saved-view/saved-view.ts`) is a named entries-list query and
+the columns to show. Its query is the structured form a live query parses into (`QueryFilter`s and
+a `QueryNode` tree), never a query string, read by `checkSavedViewQuery` with the live query's own
+validators (`queryFilterIssues` strictly, `parseQueryWhere`), so a stored view is never one the
+Preview list would refuse for its shape. `extra` keeps query keys this version doesn't apply (a
+newer client's), verbatim and never applied (`savedViewEntryQuery` leaves it out).
+
+Views are **space-scoped**: how people work through the content, not content. Every environment of
+a space shows the same views, and none rides a snapshot, clone, merge or the environment purge; a
+view runs in whichever environment asks, where a field that environment's type lacks matches
+nothing. `canSeeSavedView` decides who sees one: a personal view only its owner (a person:
+`isPersonPrincipal`), any view only a role that can read its type, and no role whose field rules
+hide a field the query names or which `search` would reach (`assertQueryRespectsFieldRules`).
+`savedViewFor` drops columns naming a hidden field. The use-cases
+(`packages/application/src/saved-views.ts`) run a view as the caller's own Preview list query
+(`listPreviewEntryPage` with the caller's `readable` grant, then `maskDeniedFields`), ask
+`content:manage` of anything shared, and cap views at `MAX_PERSONAL_VIEWS` (50) per person and
+`MAX_SHARED_VIEWS` (100) per space, a check rather than a guarantee under a race, as menus' cap is.
+A write is a compare-and-set on `revision` (no event: nothing outside the admin reacts to a view).
+
 ## Webhooks
 
 ```ts

@@ -80,6 +80,7 @@ export default defineConfig({
           items: [
             { label: 'Content modeling', slug: 'guides/content-modeling' },
             { label: 'Editing and publishing', slug: 'guides/editing-and-publishing' },
+            { label: 'Saved views', slug: 'guides/saved-views' },
             { label: 'Media and assets', slug: 'guides/media' },
             { label: 'Share assets with a link', slug: 'guides/share-links' },
             { label: 'Releases and scheduling', slug: 'guides/releases-and-scheduling' },
