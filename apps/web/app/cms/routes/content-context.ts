@@ -12,6 +12,8 @@ export interface ContentOutlet {
   readonly fallbacks?: Readonly<Record<string, string | null>>;
   /** Each locale's text direction (`dir` on its inputs); absent until the config loads. */
   readonly directions?: Readonly<Record<string, TextDirection>>;
+  /** Whether Delivery serves each locale ("Not delivered" on its tab); absent until it loads. */
+  readonly delivered?: Readonly<Record<string, boolean>>;
   reload(): void;
 }
 

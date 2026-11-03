@@ -14,6 +14,7 @@ import {
   seedCms,
   seedGuidedType,
   seedIngestFindings,
+  stubLocales,
   uploadAssetBytes,
   useCmsScope,
   withoutAssistant,
@@ -757,22 +758,31 @@ test('an entry written right to left has no accessibility violations', async ({
   request,
 }, testInfo) => {
   const id = await createDraft(request, `RTL ${Date.now()}`);
-  // The space's one locale, written right to left for this test and put back after it.
-  const set = (direction: 'ltr' | 'rtl') =>
-    api(request, 'PUT', `${MGMT}/locale-settings`, {
-      localeSettings: { 'en-US': { direction } },
-    });
-  expect((await set('rtl')).ok()).toBe(true);
-  try {
-    await openCms(page, `/content/article/${id}`);
-    const title = page.getByRole('textbox', { name: /Title/ });
-    await expect(title).toBeVisible();
-    // The value's direction, set around the input; the label keeps the admin's.
-    await expect(title.locator('xpath=ancestor::*[@dir][1]')).toHaveAttribute('dir', 'rtl');
-    await scan(page, testInfo);
-  } finally {
-    await set('ltr');
-  }
+  // The space as if it had an Arabic locale, written right to left and not yet delivered: the
+  // config is stubbed in the browser, so nothing is written to the shared server.
+  await stubLocales(page, { ar: { delivered: false, direction: 'rtl' } });
+  await openCms(page, `/content/article/${id}`);
+  await page.getByRole('button', { name: 'ar Not delivered' }).click();
+  const title = page.getByRole('textbox', { name: /Title/ });
+  await expect(title).toBeVisible();
+  // On the input holding the words: the label and the field's chrome keep the admin's direction.
+  await expect(title).toHaveAttribute('dir', 'rtl');
+  await expect(title).toHaveAttribute('lang', 'ar');
+  await expect(
+    page.getByText('Title', { exact: true }).locator('xpath=ancestor::*[@dir]'),
+  ).toHaveCount(0);
+  await scan(page, testInfo);
+});
+
+test('Settings → Locales has no accessibility violations', async ({ page }, testInfo) => {
+  await stubLocales(page, { ar: { delivered: true, direction: 'rtl' } });
+  await openCms(page, '/settings/locales');
+  await expect(page.getByRole('switch', { name: 'Deliver ar' })).toBeEnabled();
+  await scan(page, testInfo);
+  // The question asked in place before Delivery stops serving a locale.
+  await page.getByRole('switch', { name: 'Deliver ar' }).click();
+  await expect(page.getByRole('alertdialog', { name: 'Stop delivering ar?' })).toBeVisible();
+  await scan(page, testInfo);
 });
 
 test('a blocks field’s editor has no accessibility violations', async ({ page, request }, info) => {

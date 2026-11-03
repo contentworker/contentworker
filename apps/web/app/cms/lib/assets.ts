@@ -273,29 +273,6 @@ export const BULK_VERBS: Record<
   archive: { done: 'Archived', doing: 'Archiving' },
 };
 
-/**
- * Who a version's file came from, as a person reads it: a teammate by name or email when the team
- * is known (only administrators can read it), else what kind of caller it was. Never a raw id.
- */
-export function versionAuthor(
-  createdBy: string,
-  people: readonly { readonly id: string; readonly email: string; readonly name?: string }[] = [],
-): string {
-  const person = people.find((p) => p.id === createdBy);
-  if (person) return person.name?.trim() || person.email;
-  if (createdBy === 'admin-token' || createdBy === 'admin') return 'the admin token';
-  if (
-    createdBy === 'cma' ||
-    createdBy === 'cda' ||
-    createdBy === 'cpa' ||
-    createdBy === 'api_key'
-  ) {
-    return 'an API key';
-  }
-  // An email recorded as itself reads fine; any other id is a teammate the reader can't look up.
-  return createdBy.includes('@') ? createdBy : 'a teammate';
-}
-
 // --- usage rights ---------------------------------------------------------------
 
 /**

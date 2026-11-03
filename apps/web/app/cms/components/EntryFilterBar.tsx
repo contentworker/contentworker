@@ -248,10 +248,10 @@ export function EntryFilterBar(props: {
         </Button>
         <Button
           type="button"
-          variant={value.mine ? 'secondary' : 'outline'}
+          // Pressed reads as the ink fill, so on and off differ by more than a tint.
+          variant={value.mine ? 'default' : 'outline'}
           size="sm"
           aria-pressed={value.mine === true}
-          title="Only entries you created"
           onClick={() => onChange({ ...value, mine: value.mine ? undefined : true })}
         >
           <UserRound aria-hidden="true" className="size-4" />

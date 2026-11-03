@@ -15,6 +15,7 @@ import {
   seedGuidedType,
   seedIngestFindings,
   statusOf,
+  stubLocales,
   uploadAssetBytes,
   useCmsScope,
   withoutAssistant,
@@ -344,6 +345,46 @@ test('Settings → Trash: turning retention on asks in place before it saves', a
   await expect(page.getByText('Delete trashed entries after 3650 days?')).toBeHidden();
   await page.reload();
   await expect(page.getByRole('radio', { name: 'Keep until deleted' })).toBeChecked();
+});
+
+test('Settings → Locales: a direction saves at once, turning delivery off asks first', async ({
+  page,
+}) => {
+  // Stubbed in the browser (see stubLocales): the shared space's settings never change.
+  const sent = await stubLocales(page, { ar: { delivered: true, direction: 'ltr' } });
+  await openCms(page, '/settings/locales');
+  // The default locale can't stop being delivered, and says why.
+  const en = page.getByRole('switch', { name: 'Deliver en-US' });
+  await expect(en).toBeDisabled();
+  await expect(en).toHaveAccessibleDescription(/every fallback ends here/);
+
+  await page
+    .getByRole('radiogroup', { name: 'Text direction of ar' })
+    .getByRole('radio', {
+      name: 'Right to left',
+    })
+    .click();
+  await expect.poll(() => sent).toEqual([{ localeSettings: { ar: { direction: 'rtl' } } }]);
+  await expect(
+    page.getByRole('radiogroup', { name: 'Text direction of ar' }).getByRole('radio', {
+      name: 'Right to left',
+    }),
+  ).toBeChecked();
+
+  const ar = page.getByRole('switch', { name: 'Deliver ar' });
+  await ar.click();
+  await expect(page.getByRole('alertdialog', { name: 'Stop delivering ar?' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Keep delivering' })).toBeFocused();
+  await page.getByRole('button', { name: 'Keep delivering' }).click();
+  await expect(ar).toBeChecked();
+  expect(sent).toHaveLength(1);
+  await ar.click();
+  await page.getByRole('button', { name: 'Stop delivering' }).click();
+  await expect(ar).not.toBeChecked();
+  expect(sent.at(-1)).toEqual({ localeSettings: { ar: { delivered: false } } });
+  // The header's locale switcher reads the same config, refreshed by the save.
+  await page.getByRole('combobox', { name: 'Locale' }).click();
+  await expect(page.getByRole('option', { name: 'ar Not delivered' })).toBeVisible();
 });
 
 test('duplicates an entry into a new draft marked as a copy', async ({ page, request }) => {
@@ -1213,7 +1254,8 @@ test('the editor names who created and last edited an entry, and Mine lists one�
   // The person reads as "You", never as their id; the creation time is a <time>.
   await expect(pane.getByText('Created by').locator('+ dd')).toContainText('You');
   await expect(pane.getByText('Created by').locator('+ dd time')).toHaveCount(1);
-  await expect(pane.getByText('Last edited by').locator('+ dd')).toHaveText('You');
+  await expect(pane.getByText('Last edited by').locator('+ dd')).toContainText(/^You · /);
+  await expect(pane.getByText('Last edited by').locator('+ dd time')).toHaveCount(1);
 
   await openCms(page, '/content/article');
   const mine = page.getByRole('button', { name: 'Mine' });

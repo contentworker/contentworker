@@ -21,6 +21,9 @@ export function RichTextEditor(props: {
   ariaLabelledBy?: string;
   /** ids of the help line and error under the field, read after its name. */
   ariaDescribedBy?: string;
+  /** The locale the document is written in, and its direction: on the editable text only. */
+  lang?: string;
+  dir?: 'ltr' | 'rtl';
   value: unknown;
   pickers: Pickers;
   onChange: (value: RichTextDocument | undefined) => void;
@@ -57,10 +60,14 @@ export function RichTextEditor(props: {
         'aria-multiline': 'true',
         ...(props.ariaLabelledBy ? { 'aria-labelledby': props.ariaLabelledBy } : {}),
         ...(props.ariaDescribedBy ? { 'aria-describedby': props.ariaDescribedBy } : {}),
+        // The words' language and direction, not the toolbar's: the admin's chrome reads its way.
+        ...(props.lang ? { lang: props.lang } : {}),
+        ...(props.dir ? { dir: props.dir } : {}),
       },
     }),
-    // Changes only when an error comes or goes, not per keystroke.
-    [props.ariaLabelledBy, props.ariaDescribedBy],
+    // Changes only when an error comes or goes (or the space config says a direction), not per
+    // keystroke.
+    [props.ariaLabelledBy, props.ariaDescribedBy, props.lang, props.dir],
   );
 
   const editor = useEditor({

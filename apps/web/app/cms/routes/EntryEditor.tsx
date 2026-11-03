@@ -84,7 +84,7 @@ export function EntryEditor() {
   const navigate = useNavigate();
   const toast = useToast();
   const { client, conn, busy, run } = useClient();
-  const { types, locales, defaultLocale, fallbacks, directions } = useContentOutlet();
+  const { types, locales, defaultLocale, fallbacks, directions, delivered } = useContentOutlet();
   const queryClient = useQueryClient();
   const keys = useQueryKeys();
   const edit = useAssistantEdit();
@@ -673,6 +673,7 @@ export function EntryEditor() {
               defaultLocale={defaultLocale}
               fallbacks={fallbacks}
               directions={directions}
+              delivered={delivered}
               pickers={pickers}
               onSearchEntries={searchEntries}
               fieldEditors={extensions.filter((e) => e.target === 'field-editor')}
@@ -749,6 +750,7 @@ export function EntryEditor() {
               fields={draft?.fields ?? initial ?? {}}
               locale={draft?.locale ?? defaultLocale}
               localeConfig={localeConfig}
+              direction={directions?.[draft?.locale ?? defaultLocale]}
               pickers={pickers}
             />
           ) : null}

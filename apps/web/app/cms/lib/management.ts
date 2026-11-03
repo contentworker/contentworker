@@ -1328,6 +1328,17 @@ export function createManagementClient(
     getSpaceConfig(): Promise<SpaceConfig> {
       return req('GET', `${mgmt}/space-config`);
     },
+    /**
+     * Sets locales' settings (`delivered`, `direction`); a locale left out keeps its own. Answers
+     * the space config with every locale resolved. Needs `space:admin`.
+     */
+    setLocaleSettings(
+      localeSettings: Readonly<
+        Record<string, { readonly delivered?: boolean; readonly direction?: TextDirection }>
+      >,
+    ): Promise<SpaceConfig> {
+      return req('PUT', `${mgmt}/locale-settings`, { localeSettings });
+    },
     /** Spaces the current token can reach (admin → all; a scoped key → its own). */
     async listSpaces(): Promise<SpaceRef[]> {
       const r = await req<{ items: SpaceRef[] }>('GET', `${root}/spaces`);

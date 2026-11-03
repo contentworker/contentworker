@@ -518,8 +518,12 @@ describe('EntriesList Mine filter', () => {
     setup();
     const mine = await screen.findByRole('button', { name: 'Mine' }, { timeout: FIRST_RENDER_MS });
     expect(mine.getAttribute('aria-pressed')).toBe('false');
+    // Off is an outline pill, on the ink fill; the words say what it does, so no tooltip.
+    expect(mine.getAttribute('data-variant')).toBe('outline');
+    expect(mine.hasAttribute('title')).toBe(false);
     fireEvent.click(mine);
     expect(mine.getAttribute('aria-pressed')).toBe('true');
+    expect(mine.getAttribute('data-variant')).toBe('default');
     await waitFor(() =>
       expect(client.listEntryPage).toHaveBeenLastCalledWith(
         'article',

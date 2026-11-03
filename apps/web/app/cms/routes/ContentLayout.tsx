@@ -40,6 +40,9 @@ export function ContentLayout() {
           directions: Object.fromEntries(
             Object.entries(cfg.localeSettings).map(([l, s]) => [l, s.direction]),
           ),
+          delivered: Object.fromEntries(
+            Object.entries(cfg.localeSettings).map(([l, s]) => [l, s.delivered]),
+          ),
         }
       : {}),
     reload,

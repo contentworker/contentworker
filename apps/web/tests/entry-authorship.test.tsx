@@ -4,7 +4,6 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { EntryAuthorship } from '~/cms/components/entries/EntryAuthorship';
-import { actorLabel } from '~/cms/lib/authorship';
 import { entryQueryParams } from '~/cms/lib/management';
 
 afterEach(cleanup);
@@ -14,41 +13,31 @@ const people = [
   { id: 'u-grace', email: 'grace@example.com' },
 ];
 
-describe('actorLabel', () => {
-  it('reads every kind of writer as words', () => {
-    const dir = { me: 'u-me', people };
-    expect(actorLabel('u-me', dir)).toBe('You');
-    expect(actorLabel('u-ada', dir)).toBe('Ada Lovelace');
-    expect(actorLabel('u-grace', dir)).toBe('grace@example.com');
-    expect(actorLabel('u-unknown', dir)).toBe('A teammate');
-    expect(actorLabel('admin-token')).toBe('The admin token');
-    expect(actorLabel('cma')).toBe('An API key');
-    expect(actorLabel('agent:enrich')).toBe('The enrich agent');
-    expect(actorLabel('workflow:0190-wf')).toBe('A workflow');
-    expect(actorLabel('plugin:seo')).toBe('A plugin');
-    expect(actorLabel('system')).toBe('A schedule');
-    expect(actorLabel(null)).toBe('Unknown');
-  });
-});
-
 describe('EntryAuthorship', () => {
-  it('names who created the entry, when, and who changed it last', () => {
+  it('names who created the entry and when, and who changed it last and how long ago', () => {
     render(
       <EntryAuthorship
         authorship={{
           createdAt: '2026-05-01T09:00:00.000Z',
           createdBy: 'u-ada',
           updatedBy: 'u-me',
+          updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
         }}
         directory={{ me: 'u-me', people }}
       />,
     );
     const list = screen.getByText('Created by').closest('dl') as HTMLElement;
-    expect(within(list).getByText('Created by').nextElementSibling?.textContent).toMatch(
-      /^Ada Lovelace · /,
-    );
-    expect(within(list).getByText('2026', { exact: false }).tagName).toBe('TIME');
-    expect(within(list).getByText('Last edited by').nextElementSibling?.textContent).toBe('You');
+    const created = within(list).getByText('Created by').nextElementSibling as HTMLElement;
+    expect(created.textContent).toMatch(/^Ada Lovelace · /);
+    expect(created.querySelector('time')?.textContent).toContain('2026');
+    const edited = within(list).getByText('Last edited by').nextElementSibling as HTMLElement;
+    expect(edited.textContent).toMatch(/^You · 3h ago$/);
+    expect(edited.querySelector('time')?.getAttribute('title')).toBeTruthy();
+    // A long name wraps rather than being clipped.
+    expect(list.querySelector('.truncate')).toBeNull();
+    // Its own card, not a fold-away panel.
+    expect(list.closest('[data-slot="card"]')).not.toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
   it('says Unknown for an entry from before authorship was recorded, with no date', () => {

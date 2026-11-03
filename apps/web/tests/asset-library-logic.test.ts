@@ -23,7 +23,6 @@ import {
   runsAsJob,
   shareExpiresAt,
   timeUntil,
-  versionAuthor,
   zipPercent,
   zipRunning,
   zipSummary,
@@ -257,15 +256,6 @@ describe('asset bulk jobs', () => {
       'Hero',
       'a2',
     ]);
-  });
-
-  it('says who uploaded a version by name, or by kind, never by a raw id', () => {
-    const people = [{ id: 'u1', email: 'ada@example.com', name: 'Ada' }];
-    expect(versionAuthor('u1', people)).toBe('Ada');
-    expect(versionAuthor('u1', [{ id: 'u1', email: 'ada@example.com' }])).toBe('ada@example.com');
-    expect(versionAuthor('cma')).toBe('an API key');
-    expect(versionAuthor('admin-token')).toBe('the admin token');
-    expect(versionAuthor('0193f1e2-7c4a-7000-8000-000000000000')).toBe('a teammate');
   });
 });
 
