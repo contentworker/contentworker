@@ -3,6 +3,8 @@
  * model: a content type is an ordered list of typed, validated fields.
  */
 
+import type { FieldRule } from './field-rules';
+
 export const FIELD_TYPES = [
   'Symbol', // short text (single line)
   'Slug', // URL-safe identifier (normalized; usually unique)
@@ -230,6 +232,12 @@ export interface FieldDefinition {
    */
   readonly defaultValue?: unknown;
   readonly validations?: FieldValidations;
+  /**
+   * Hide or disable the field while a sibling's value matches (see `field-rules.ts`). A hidden
+   * field is not required; a disabled one keeps its stored value and refuses a change. Evaluated
+   * in the domain, so the admin, the API, MCP and generation all agree.
+   */
+  readonly rules?: readonly FieldRule[];
   /** For Link fields: whether it links an Entry or Asset. */
   readonly linkType?: LinkType;
   /** For Array fields: the element definition. */

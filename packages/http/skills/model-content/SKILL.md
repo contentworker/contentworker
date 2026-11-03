@@ -25,6 +25,11 @@ Delivery API serves only entries whose content type is published.
      the empty input). Give allowed values labels with `validations.in: [{ value: 'draft', label:
      'Draft' }]` (entries store the `value`), and replace a rule's default error with
      `validations.messages`, e.g. `{ regexp: 'Enter a five-digit ZIP code' }`.
+   - `rules` (optional) — hide or disable a field while a sibling matches:
+     `[{ action: 'hide', when: { field: 'status', operator: 'ne', value: 'sold' } }]`. Operators
+     are `eq`, `ne`, `in` (a list), `empty`, `notEmpty`, and `gt`/`lt` for a number sibling;
+     `field` may be a dot path into a sibling component (`hero.style`). A hidden field is not
+     required; a disabled one keeps its stored value. Inside a list of components, `hide` only.
    - `urlPattern` (optional) — where the type's entries live on the site, e.g. `/blog/{slug}`;
      placeholders are `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields
      (`null` clears it). When a publish changes a slug it names, contentworker writes a `301` from

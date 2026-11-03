@@ -8,6 +8,7 @@ import {
   optionValue,
   type Scope,
   ValidationError,
+  withoutClosedFields,
 } from '@contentworker/domain';
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
@@ -88,6 +89,23 @@ function constraintsFor(field: FieldDefinition): Record<string, unknown> {
   };
 }
 
+/**
+ * A model's values as entry fields under the default locale, without a value for any field the
+ * type's rules hide or disable given the rest of the draft: the schema asks for every field (strict
+ * structured output requires it), so the rules are applied to the answer.
+ */
+function draftedFields(
+  ct: ContentType,
+  generated: Record<string, unknown>,
+  defaultLocale: string,
+): EntryFields {
+  const fields: EntryFields = {};
+  for (const [apiId, value] of Object.entries(generated)) {
+    if (value !== null && value !== undefined) fields[apiId] = { [defaultLocale]: value };
+  }
+  return withoutClosedFields(ct.fields, fields, defaultLocale);
+}
+
 export interface DraftEntryInput {
   readonly contentTypeApiId: string;
   /** Natural-language instructions describing what to generate. */
@@ -138,13 +156,7 @@ export async function draftEntry(
   }
 
   // Wrap each generated scalar into the localized shape under the default locale.
-  const generated = result.object as Record<string, unknown>;
-  const fields: EntryFields = {};
-  for (const [apiId, value] of Object.entries(generated)) {
-    if (value !== null && value !== undefined) {
-      fields[apiId] = { [config.defaultLocale]: value };
-    }
-  }
+  const fields = draftedFields(ct, result.object as Record<string, unknown>, config.defaultLocale);
 
   // Validation gate — identical to the human write path.
   assertEntryFieldsValid(ct, fields, {
@@ -214,13 +226,7 @@ export async function canvasToEntry(
     throw new ValidationError([{ field: '', message: 'Model did not return structured output' }]);
   }
 
-  const mapped = result.object as Record<string, unknown>;
-  const fields: EntryFields = {};
-  for (const [apiId, value] of Object.entries(mapped)) {
-    if (value !== null && value !== undefined) {
-      fields[apiId] = { [config.defaultLocale]: value };
-    }
-  }
+  const fields = draftedFields(ct, result.object as Record<string, unknown>, config.defaultLocale);
 
   assertEntryFieldsValid(ct, fields, {
     defaultLocale: config.defaultLocale,

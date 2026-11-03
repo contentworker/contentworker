@@ -44,7 +44,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         'Create or update a content type definition. A field can carry guidance for whoever ' +
         'fills it: `description` (what it means), `help` (how to fill it, shown under the ' +
         'input), `placeholder` (an example), labelled options in `validations.in` as ' +
-        '{ value, label }, and `validations.messages` to replace a rule’s default error text.',
+        '{ value, label }, and `validations.messages` to replace a rule’s default error text. ' +
+        '`rules` hide or disable a field while a sibling matches: a hidden field is not ' +
+        'required, and a disabled one keeps its stored value.',
       inputSchema: toolSchema('model_create_content_type', () =>
         z.object({
           apiId: z.string(),

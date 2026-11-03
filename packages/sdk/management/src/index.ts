@@ -83,6 +83,20 @@ export interface FieldValidations {
   };
 }
 
+/**
+ * Hide or disable a field while a sibling's value matches. A hidden field is not required; a
+ * disabled one keeps its stored value, and a write that changes it is refused.
+ */
+export interface FieldRule {
+  readonly action: 'hide' | 'disable';
+  readonly when: {
+    /** A sibling field's apiId, or a dot path into a sibling component (`hero.style`). */
+    readonly field: string;
+    readonly operator: 'eq' | 'ne' | 'in' | 'empty' | 'notEmpty' | 'gt' | 'lt';
+    readonly value?: string | number | boolean | readonly (string | number)[];
+  };
+}
+
 export interface FieldDefinition {
   readonly apiId: string;
   readonly name: string;
@@ -96,6 +110,7 @@ export interface FieldDefinition {
   /** What the field means, for agents and API readers. */
   readonly description?: string;
   readonly validations?: FieldValidations;
+  readonly rules?: readonly FieldRule[];
   readonly [key: string]: unknown;
 }
 

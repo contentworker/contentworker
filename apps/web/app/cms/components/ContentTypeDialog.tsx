@@ -5,8 +5,12 @@ import {
   FIELD_GUIDANCE_LIMITS,
   FIELD_TYPES,
   type FieldDefinition,
+  type FieldRule,
   type FieldType,
   isValidApiId,
+  MAX_FIELD_RULES,
+  type RuleAction,
+  type RuleOperator,
   UNIQUE_FIELD_TYPES,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
@@ -21,6 +25,7 @@ import {
 } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
+import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import {
   Select,
   SelectContent,
@@ -55,6 +60,17 @@ interface FieldRow {
   description: string;
   /** Whether the guidance inputs are shown; open from the start when there is guidance. */
   guidanceOpen: boolean;
+  /** The rules this dialog can draw, one row each (see {@link RuleRow}). */
+  rules: RuleRow[];
+  /** Rules it can't draw (a dot path into a component), kept as they are on every save. */
+  keptRules: FieldRule[];
+  /** Whether the rules editor is shown; open from the start when the field has rules. */
+  rulesOpen: boolean;
+  /**
+   * Whether a rule row was edited. Untouched, the field's stored rules are saved as they were,
+   * so opening and closing the editor never rewrites them.
+   */
+  rulesTouched: boolean;
   /**
    * Set when the field is a blocks field: an `Array` of `Component` whose
    * elements take one of these shapes. Offered in the type menu as "Blocks".
@@ -90,7 +106,79 @@ const UNBUILDABLE_TYPES: readonly FieldType[] = ['Component'];
  */
 const BLOCKS = 'Blocks';
 
-const NO_GUIDANCE = { help: '', placeholder: '', description: '', guidanceOpen: false };
+const NO_GUIDANCE = {
+  help: '',
+  placeholder: '',
+  description: '',
+  guidanceOpen: false,
+  rules: [] as RuleRow[],
+  keptRules: [] as FieldRule[],
+  rulesOpen: false,
+  rulesTouched: false,
+};
+
+/**
+ * One rule as the dialog edits it: the sibling it reads by apiId, and its value as typed (a list
+ * for `in` is comma-separated), parsed by the sibling's type on save.
+ */
+interface RuleRow {
+  action: RuleAction;
+  field: string;
+  operator: RuleOperator;
+  value: string;
+}
+
+/** The operators in an editor's words. `gt` and `lt` are offered for number siblings only. */
+const OPERATOR_LABELS: Record<RuleOperator, string> = {
+  eq: 'is',
+  ne: 'is not',
+  in: 'is one of',
+  empty: 'is empty',
+  notEmpty: 'is not empty',
+  gt: 'is more than',
+  lt: 'is less than',
+};
+const NUMERIC: readonly FieldType[] = ['Integer', 'Number'];
+const takesValue = (op: RuleOperator) => op !== 'empty' && op !== 'notEmpty';
+
+/** A stored rule as a row, or null when the dialog can't draw it (a path into a component). */
+function ruleRowFrom(rule: FieldRule): RuleRow | null {
+  const when = rule?.when;
+  if (typeof when?.field !== 'string' || when.field.includes('.')) return null;
+  const v = when.value;
+  return {
+    action: rule.action,
+    field: when.field,
+    operator: when.operator,
+    value: Array.isArray(v) ? v.join(', ') : v === undefined ? '' : String(v),
+  };
+}
+
+/** A typed value as the sibling holds it: a number for a number field, true/false for a Boolean. */
+function parseRuleValue(text: string, type: FieldType | undefined): string | number | boolean {
+  const t = text.trim();
+  if (type && NUMERIC.includes(type) && t !== '' && Number.isFinite(Number(t))) return Number(t);
+  if (type === 'Boolean' && (t === 'true' || t === 'false')) return t === 'true';
+  return t;
+}
+
+/** A row as the rule the API takes, reading the sibling's type from the rows being edited. */
+function ruleFromRow(row: RuleRow, siblings: readonly FieldRow[]): FieldRule {
+  const type = siblings.find((f) => f.apiId === row.field)?.type;
+  const when = !takesValue(row.operator)
+    ? { field: row.field, operator: row.operator }
+    : row.operator === 'in'
+      ? {
+          field: row.field,
+          operator: row.operator,
+          value: row.value
+            .split(',')
+            .filter((part) => part.trim() !== '')
+            .map((part) => parseRuleValue(part, type) as string | number),
+        }
+      : { field: row.field, operator: row.operator, value: parseRuleValue(row.value, type) };
+  return { action: row.action, when };
+}
 
 const newField = (): FieldRow => ({
   name: '',
@@ -106,6 +194,10 @@ const newField = (): FieldRow => ({
 const hasGuidance = (row: Pick<FieldRow, 'help' | 'placeholder' | 'description'>): boolean =>
   Boolean(row.help.trim() || row.placeholder.trim() || row.description.trim());
 
+/** Whether a row carries rules (what the collapsed Rules button marks). */
+const hasRules = (row: Pick<FieldRow, 'rules' | 'keptRules'>): boolean =>
+  row.rules.length + row.keptRules.length > 0;
+
 /** A guidance text as saved: trimmed, and left out when empty so clearing it removes it. */
 const guidance = (text: string): string | undefined => text.trim() || undefined;
 
@@ -118,13 +210,20 @@ const guidance = (text: string): string | undefined => text.trim() || undefined;
  * old type, and carrying `items` onto a Symbol (or nested `fields` onto
  * anything but a component) is refused by the domain anyway.
  */
-function toDefinition(row: FieldRow, position: number): FieldDefinition {
+function toDefinition(
+  row: FieldRow,
+  position: number,
+  siblings: readonly FieldRow[],
+): FieldDefinition {
   // Turning a list into blocks (or back) is a change of type too: the old
   // `items` described elements of the other kind.
   const wasBlocks = row.source ? blockVariants(row.source) !== undefined : false;
   const retyped =
     row.source && (row.source.type !== row.type || wasBlocks !== (row.blocks !== undefined));
-  const { linkType, items, fields, validations, defaultValue, ...rest } = row.source ?? {};
+  const { linkType, items, fields, validations, defaultValue, rules, ...rest } = row.source ?? {};
+  // Rows rebuild the rules only once one was edited; the rules this dialog can't draw ride along.
+  const edited = [...row.rules.map((r) => ruleFromRow(r, siblings)), ...row.keptRules];
+  const savedRules = row.rulesTouched ? edited : rules;
   const blocksItems = row.blocks
     ? {
         ...(retyped ? {} : { validations: items?.validations }),
@@ -147,6 +246,8 @@ function toDefinition(row: FieldRow, position: number): FieldDefinition {
     help: guidance(row.help),
     placeholder: guidance(row.placeholder),
     description: guidance(row.description),
+    // Left out when there are none, so clearing the last rule removes them.
+    rules: savedRules?.length ? savedRules : undefined,
     position,
   } as FieldDefinition;
 }
@@ -167,6 +268,10 @@ function fromContentType(ct: ContentType): { name: string; apiId: string; fields
       placeholder: f.placeholder ?? '',
       description: f.description ?? '',
       guidanceOpen: Boolean(f.help || f.placeholder || f.description),
+      rules: (f.rules ?? []).map(ruleRowFrom).filter((r): r is RuleRow => r !== null),
+      keptRules: (f.rules ?? []).filter((r) => ruleRowFrom(r) === null),
+      rulesOpen: Boolean(f.rules?.length),
+      rulesTouched: false,
       ...(blockVariants(f) ? { blocks: variantRowsFrom(blockVariants(f) ?? []) } : {}),
       source: f,
     })),
@@ -252,7 +357,7 @@ export function ContentTypeDialog(props: {
         apiId: finalApiId,
         name: name.trim(),
         displayField,
-        fields: namedFields.map(toDefinition),
+        fields: namedFields.map((f, i) => toDefinition(f, i, namedFields)),
         // Cleared with null: left out, a saved pattern would stay.
         urlPattern: urlPattern.trim() || null,
         singleton,
@@ -439,6 +544,24 @@ export function ContentTypeDialog(props: {
                   <Button
                     type="button"
                     variant="ghost"
+                    size="sm"
+                    aria-expanded={f.rulesOpen}
+                    aria-controls={`ct-field-${i}-rules`}
+                    aria-label={`Rules for ${f.name || f.apiId || `field ${i + 1}`}${
+                      !f.rulesOpen && hasRules(f) ? ', set' : ''
+                    }`}
+                    onClick={() => setField(i, { rulesOpen: !f.rulesOpen })}
+                  >
+                    Rules
+                    {!f.rulesOpen && hasRules(f) && (
+                      <span aria-hidden="true" className="text-muted-foreground">
+                        · set
+                      </span>
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
                     size="icon"
                     aria-label="Remove field"
                     onClick={() => setFields((prev) => prev.filter((_, idx) => idx !== i))}
@@ -451,6 +574,15 @@ export function ContentTypeDialog(props: {
                       fieldLabel={f.name || f.apiId || `field ${i + 1}`}
                       row={f}
                       onChange={(patch) => setField(i, patch)}
+                    />
+                  )}
+                  {f.rulesOpen && (
+                    <FieldRules
+                      id={`ct-field-${i}-rules`}
+                      fieldLabel={f.name || f.apiId || `field ${i + 1}`}
+                      row={f}
+                      siblings={namedFields.filter((g) => g !== f)}
+                      onChange={(rules) => setField(i, { rules, rulesTouched: true })}
                     />
                   )}
                   {f.blocks && (
@@ -597,6 +729,133 @@ function FieldGuidance(props: {
           What the field means. Agents read it from the model with the help text.
         </p>
       </div>
+    </fieldset>
+  );
+}
+
+/**
+ * The rules that hide or disable a field while a sibling matches, under its row: one line per
+ * rule, read as a sentence ("Hide when Status is sold"). Every control names its field and rule
+ * number, since rows and rules both repeat. Rules the dialog can't draw are counted, not dropped.
+ */
+function FieldRules(props: {
+  id: string;
+  fieldLabel: string;
+  row: Pick<FieldRow, 'rules' | 'keptRules'>;
+  /** The other fields of the type, by the rows being edited. */
+  siblings: readonly FieldRow[];
+  onChange: (rules: RuleRow[]) => void;
+}) {
+  const { id, fieldLabel, row, siblings, onChange } = props;
+  const named = siblings.filter((f) => f.apiId && f.name);
+  const set = (index: number, patch: Partial<RuleRow>) =>
+    onChange(row.rules.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  const full = row.rules.length + row.keptRules.length >= MAX_FIELD_RULES;
+  return (
+    <fieldset id={id} className="basis-full space-y-2 rounded-xl bg-secondary/40 p-3">
+      <legend className="sr-only">Rules for {fieldLabel}</legend>
+      {row.rules.length === 0 && row.keptRules.length === 0 && (
+        <p className="max-w-measure text-muted-foreground text-xs">
+          Hide this field, or make it read-only, while another field has a given value.
+        </p>
+      )}
+      {row.rules.map((rule, r) => {
+        const name = `${fieldLabel} rule ${r + 1}`;
+        const sibling = named.find((f) => f.apiId === rule.field);
+        const numeric = sibling ? NUMERIC.includes(sibling.type) : false;
+        const operators = (Object.keys(OPERATOR_LABELS) as RuleOperator[]).filter(
+          (op) => numeric || (op !== 'gt' && op !== 'lt'),
+        );
+        return (
+          <div key={r} className="flex flex-wrap items-center gap-2">
+            <NativeSelect
+              size="sm"
+              aria-label={`Action for ${name}`}
+              value={rule.action}
+              onChange={(e) => set(r, { action: e.target.value as RuleAction })}
+            >
+              <NativeSelectOption value="hide">Hide</NativeSelectOption>
+              <NativeSelectOption value="disable">Make read-only</NativeSelectOption>
+            </NativeSelect>
+            <span className="text-muted-foreground text-xs">when</span>
+            <NativeSelect
+              size="sm"
+              aria-label={`Field read by ${name}`}
+              value={rule.field}
+              onChange={(e) => {
+                const next = named.find((f) => f.apiId === e.target.value);
+                const keepsOperator =
+                  (rule.operator !== 'gt' && rule.operator !== 'lt') ||
+                  (next !== undefined && NUMERIC.includes(next.type));
+                set(r, { field: e.target.value, ...(keepsOperator ? {} : { operator: 'eq' }) });
+              }}
+            >
+              {!sibling && (
+                <NativeSelectOption value={rule.field}>
+                  {rule.field ? `${rule.field} (not a field)` : 'Choose a field'}
+                </NativeSelectOption>
+              )}
+              {named.map((f) => (
+                <NativeSelectOption key={f.apiId} value={f.apiId}>
+                  {f.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            <NativeSelect
+              size="sm"
+              aria-label={`Comparison for ${name}`}
+              value={rule.operator}
+              onChange={(e) => set(r, { operator: e.target.value as RuleOperator })}
+            >
+              {operators.map((op) => (
+                <NativeSelectOption key={op} value={op}>
+                  {OPERATOR_LABELS[op]}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            {takesValue(rule.operator) && (
+              <Input
+                aria-label={`Value for ${name}`}
+                className="h-8 w-40"
+                value={rule.value}
+                placeholder={rule.operator === 'in' ? 'a, b, c' : 'Value'}
+                onChange={(e) => set(r, { value: e.target.value })}
+              />
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Remove ${name}`}
+              onClick={() => onChange(row.rules.filter((_, i) => i !== r))}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        );
+      })}
+      {row.keptRules.length > 0 && (
+        <p className="max-w-measure text-muted-foreground text-xs">
+          {row.keptRules.length === 1
+            ? '1 rule reads a field inside a component; it is kept as it is.'
+            : `${row.keptRules.length} rules read fields inside a component; they are kept as they are.`}
+        </p>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={full || named.length === 0}
+        aria-label={`Add rule to ${fieldLabel}`}
+        onClick={() =>
+          onChange([
+            ...row.rules,
+            { action: 'hide', field: named[0]?.apiId ?? '', operator: 'eq', value: '' },
+          ])
+        }
+      >
+        <Plus className="size-4" /> Add rule
+      </Button>
     </fieldset>
   );
 }

@@ -14,6 +14,7 @@ import {
   seedCms,
   seedGuidedType,
   seedIngestFindings,
+  seedRuledType,
   statusOf,
   stubLocales,
   uploadAssetBytes,
@@ -1392,4 +1393,28 @@ test('a content type is cloned, then deleted with its entries, from its menu', a
   expect((await api(request, 'GET', `${MGMT}/content-types/${copyId}`)).status()).toBe(404);
   // Its row is gone: focus moves to the next row's menu button, or the page's heading.
   await expect.poll(focused).toMatch(/^(More actions for “(?!Copy \d+”).*”|H1)$/);
+});
+
+test('a field its rules hide appears and goes as its sibling changes, and the entry saves', async ({
+  page,
+  request,
+}) => {
+  await seedRuledType(request);
+  await openCms(page, '/content/ruled/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByLabel('Title').fill(`Ruled ${Date.now()}`);
+  const soldTo = page.getByLabel('Sold to');
+  await expect(soldTo).toHaveCount(0);
+  await page.getByLabel('Status').fill('sold');
+  await expect(soldTo).toBeVisible();
+  // Read-only while sold, and saying why.
+  await expect(page.getByLabel('Reference')).toBeDisabled();
+  await expect(page.getByLabel('Reference')).toHaveAccessibleDescription(
+    'Read-only while Status is "sold"',
+  );
+  await page.getByLabel('Status').fill('open');
+  await expect(soldTo).toHaveCount(0);
+  // Hidden, so not required: the save goes through.
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
 });

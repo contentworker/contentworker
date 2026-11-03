@@ -1,6 +1,6 @@
 ---
 title: Content modeling
-description: Content types, the thirteen field types, components, repeaters and blocks, validations, field guidance, and how to change a model safely.
+description: Content types, the thirteen field types, components, repeaters and blocks, validations, field guidance, conditional field rules, and how to change a model safely.
 ---
 
 A content model is the set of content types in a space. You define it in the admin (**Content →
@@ -225,6 +225,37 @@ Set them in the admin from a field's **Guidance** button in the content type dia
 field definition through the API or MCP (`model_create_content_type`). Agents get them with the
 rest of the definition from `model_get_content_type`, and AI drafting and autofill write to them.
 Generated TypeScript types carry a field's description (or help) as its doc comment.
+
+## Conditional field rules
+
+A field's `rules` hide or disable it while another field matches. A shipping address can show only
+when the delivery method is `post`; a price can lock once the status is `sold`:
+
+```json
+{
+  "apiId": "price",
+  "name": "Price",
+  "type": "Number",
+  "rules": [{ "action": "disable", "when": { "field": "status", "operator": "eq", "value": "sold" } }]
+}
+```
+
+- **`hide`**: the field leaves the entry form and isn't required. A value it already holds is kept,
+  and comes back into view when the rule stops matching.
+- **`disable`**: the field is read-only and keeps its stored value; a write that changes it is
+  refused. A new entry's disabled field keeps its default (or stays empty).
+
+`when.field` names a field beside this one, or a field inside a component beside it with a dot path
+(`hero.style`). The operators are `eq` and `ne` (equal or not to a string, number or boolean), `in`
+(one of a list), `empty` and `notEmpty`, and `gt` and `lt` (for a number field). Any matching rule
+applies, up to ten per field. Inside a list of components, a field can be hidden per item but not
+disabled.
+
+Rules are judged on the values being written, the same way everywhere: the entry form hides and
+locks fields as you type, and the API, MCP agents and AI drafting are held to them on save. AI
+drafting and autofill never write a hidden or disabled field. Add rules in the admin from a field's
+**Rules** button in the content type dialog, or on the field definition over the API and MCP.
+Generated TypeScript types make a required field that a rule can hide optional.
 
 ## Changing a model
 

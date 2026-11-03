@@ -17,6 +17,7 @@ import {
   UNIQUE_FIELD_TYPES,
   unsafeRegexReason,
 } from './field';
+import { MAX_FIELD_RULES, ruleProblem, ruleTarget } from './field-rules';
 
 /**
  * A content type: the schema for a class of entries. Definitions are versioned
@@ -116,7 +117,7 @@ function assertFieldsValid(
   displayField: string,
   previous: readonly FieldDefinition[] | undefined,
 ): void {
-  const seen = assertFieldSetValid(fields, '', 0, previous);
+  const seen = assertFieldSetValid(fields, '', 0, previous, false);
   if (fields.length > 0 && !seen.has(displayField)) {
     throw new ValidationError([
       { field: 'displayField', message: `displayField "${displayField}" is not a defined field` },
@@ -130,13 +131,15 @@ function assertFieldsValid(
  * `path` prefixes every message so an author editing a deep group is told which
  * field is wrong, not merely that something is. `depth` counts components
  * entered so far; 0 is the content type's own field list. `previous` is the
- * same level of the definition being revised, if any.
+ * same level of the definition being revised, if any. `inList` says this level is part of an
+ * Array's element (directly or through a component), which a `disable` rule cannot reach.
  */
 function assertFieldSetValid(
   fields: readonly FieldDefinition[],
   path: string,
   depth: number,
   previous: readonly FieldDefinition[] | undefined,
+  inList: boolean,
 ): Set<string> {
   const seen = new Set<string>();
   const at = (f: FieldDefinition) => (path ? `${path}.${f.apiId}` : f.apiId);
@@ -152,6 +155,7 @@ function assertFieldSetValid(
     seen.add(f.apiId);
     const before = previous?.find((p) => p.apiId === f.apiId);
     assertGuidanceValid(f, where, before);
+    assertRulesValid(f, fields, where, before, inList);
     const rx = f.validations?.regexp;
     if (rx) {
       const reason = unsafeRegexReason(rx.pattern, rx.flags);
@@ -203,7 +207,7 @@ function assertFieldSetValid(
       continue;
     }
     const nestedBefore = before?.type === 'Component' ? before.fields : before?.items?.fields;
-    assertFieldSetValid(nested ?? [], where, depth + 1, nestedBefore);
+    assertFieldSetValid(nested ?? [], where, depth + 1, nestedBefore, inList || f.type === 'Array');
   }
   return seen;
 }
@@ -253,7 +257,7 @@ function assertVariantsValid(
       fail('A variant must define at least one field', at);
     }
     const variantBefore = before?.items?.variants?.find((b) => b.apiId === apiId);
-    assertFieldSetValid(v.fields, at, depth + 1, variantBefore?.fields);
+    assertFieldSetValid(v.fields, at, depth + 1, variantBefore?.fields, true);
   }
 }
 
@@ -298,6 +302,43 @@ function assertGuidanceValid(
     `${where} items`,
     fail,
   );
+}
+
+/**
+ * A field's `rules`: a list of at most {@link MAX_FIELD_RULES}, each usable (`ruleProblem`)
+ * against the field's siblings as revised. Rules stored as they stand are let through, except
+ * that a revision cannot remove the sibling a kept rule reads: the rule would then read nothing,
+ * and `empty` would match for good.
+ */
+function assertRulesValid(
+  f: FieldDefinition,
+  siblings: readonly FieldDefinition[],
+  where: string,
+  before: FieldDefinition | undefined,
+  inList: boolean,
+): void {
+  const rules: unknown = f.rules;
+  if (rules === undefined) return;
+  const fail = (message: string): never => {
+    throw new ValidationError([{ field: where, message }]);
+  };
+  if (sameJson(rules, before?.rules)) {
+    for (const rule of Array.isArray(rules) ? rules : []) {
+      const path: unknown = (rule as { when?: { field?: unknown } } | null)?.when?.field;
+      if (typeof path === 'string' && !ruleTarget(siblings, path)) {
+        fail(`a rule reads "${path}", which this change removes; change the rule first`);
+      }
+    }
+    return;
+  }
+  if (!Array.isArray(rules)) fail('rules must be a list');
+  if ((rules as unknown[]).length > MAX_FIELD_RULES) {
+    fail(`a field has at most ${MAX_FIELD_RULES} rules`);
+  }
+  for (const rule of rules as unknown[]) {
+    const problem = ruleProblem(rule, f, siblings, inList);
+    if (problem) fail(problem);
+  }
 }
 
 /** Equal as stored JSON: for the scalars and small objects a revision may carry over unchanged. */
@@ -429,9 +470,14 @@ function withoutBlankGuidance(f: FieldDefinition): FieldDefinition {
  *   and goes when none is left, since an empty list would refuse every value;
  * - guidance that is not text, or over its cap, goes;
  * - a message goes unless it is text within its cap for a rule the field
- *   declares; an Array element's messages go, as nothing enforces them.
+ *   declares; an Array element's messages go, as nothing enforces them;
+ * - each unusable rule goes (one reading a sibling that is not there, say), and
+ *   `rules` with it when none is left.
  */
-export function normalizeLegacyFields(fields: readonly FieldDefinition[]): FieldDefinition[] {
+export function normalizeLegacyFields(
+  fields: readonly FieldDefinition[],
+  inList = false,
+): FieldDefinition[] {
   const rules = (
     v: FieldValidations | undefined,
     type: FieldDefinition['type'],
@@ -467,20 +513,27 @@ export function normalizeLegacyFields(fields: readonly FieldDefinition[]): Field
     }
     return out;
   };
+  const usableRules = (f: FieldDefinition) =>
+    Array.isArray(f.rules)
+      ? f.rules
+          .filter((rule) => ruleProblem(rule, f, fields, inList) === null)
+          .slice(0, MAX_FIELD_RULES)
+      : [];
   return fields.map((f) => {
-    const { help: _h, placeholder: _p, description: _d, validations: _v, ...rest } = f;
+    const { help: _h, placeholder: _p, description: _d, validations: _v, rules: _r, ...rest } = f;
+    const kept = usableRules(f);
     const validations = rules(f.validations, f.type, false);
     const itemRules = rules(f.items?.validations, f.items?.type ?? 'Symbol', true);
     const { validations: _iv, ...itemRest } = f.items ?? {};
     const items = f.items && {
       ...(itemRest as NonNullable<FieldDefinition['items']>),
       ...(itemRules ? { validations: itemRules } : {}),
-      ...(f.items.fields ? { fields: normalizeLegacyFields(f.items.fields) } : {}),
+      ...(f.items.fields ? { fields: normalizeLegacyFields(f.items.fields, true) } : {}),
       ...(f.items.variants
         ? {
             variants: f.items.variants.map((v) => ({
               ...v,
-              fields: normalizeLegacyFields(v.fields),
+              fields: normalizeLegacyFields(v.fields, true),
             })),
           }
         : {}),
@@ -489,7 +542,8 @@ export function normalizeLegacyFields(fields: readonly FieldDefinition[]): Field
       ...rest,
       ...guidance(f),
       ...(validations ? { validations } : {}),
-      ...(f.fields ? { fields: normalizeLegacyFields(f.fields) } : {}),
+      ...(kept.length > 0 ? { rules: kept } : {}),
+      ...(f.fields ? { fields: normalizeLegacyFields(f.fields, inList) } : {}),
       ...(items ? { items } : {}),
     };
   });

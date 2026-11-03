@@ -78,6 +78,17 @@ export const fieldSchema = z.object({
         'regexp?: { pattern, flags? }, range?: { min?, max? }, size?: { min?, max? }, ' +
         'linkContentTypes?, messages?: { in|regexp|range|size: error text replacing the default } }',
     ),
+  // Shaped by the domain, which names what is wrong with a rule; described here so an agent can
+  // write one.
+  rules: z
+    .array(z.record(z.string(), z.any()))
+    .optional()
+    .describe(
+      'hide or disable this field while a sibling matches: [{ action: "hide"|"disable", when: ' +
+        '{ field: sibling apiId or dot path into a sibling component, operator: ' +
+        'eq|ne|in|empty|notEmpty|gt|lt, value? } }]. A hidden field is not required; a disabled ' +
+        'one keeps its stored value, and a write that changes it is refused',
+    ),
   linkType: z.enum(['Entry', 'Asset']).optional(),
   items: z
     .record(z.string(), z.any())

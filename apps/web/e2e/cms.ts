@@ -429,3 +429,38 @@ export async function seedGuidedType(request: APIRequestContext) {
   if (![200, 201].includes(res.status())) throw new Error(await res.text());
   await api(request, 'POST', `${MGMT}/content-types/guided/published`);
 }
+
+/**
+ * A content type whose fields carry conditional rules: "Sold to" is hidden (and so not required)
+ * until Status is "sold", and "Reference" turns read-only once it is. Created or updated by apiId,
+ * so it is safe to run per test.
+ */
+export async function seedRuledType(request: APIRequestContext) {
+  const field = (apiId: string, name: string, position: number, extra: object = {}) => ({
+    apiId,
+    name,
+    type: 'Symbol',
+    localized: false,
+    required: false,
+    position,
+    ...extra,
+  });
+  const res = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'ruled',
+    name: 'Ruled',
+    displayField: 'title',
+    fields: [
+      field('title', 'Title', 0, { required: true }),
+      field('status', 'Status', 1),
+      field('soldTo', 'Sold to', 2, {
+        required: true,
+        rules: [{ action: 'hide', when: { field: 'status', operator: 'ne', value: 'sold' } }],
+      }),
+      field('reference', 'Reference', 3, {
+        rules: [{ action: 'disable', when: { field: 'status', operator: 'eq', value: 'sold' } }],
+      }),
+    ],
+  });
+  if (![200, 201].includes(res.status())) throw new Error(await res.text());
+  await api(request, 'POST', `${MGMT}/content-types/ruled/published`);
+}

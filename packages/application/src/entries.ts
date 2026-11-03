@@ -30,6 +30,14 @@ import { runHook, runPureHook } from './hooks';
 import { unpublishEntryTx } from './publishing';
 import { versionBodyPrefix } from './version-archive';
 
+/**
+ * A create judged as an edit of the type's defaults: a field its rules disable starts at its
+ * default (or empty) and cannot be given another value.
+ */
+function asCreate(contentType: ContentType, vctx: ValidationContext): ValidationContext {
+  return { ...vctx, previous: applyDefaults(contentType, {}, vctx.locales, vctx.defaultLocale) };
+}
+
 /** Loads the validation context (locales) for a scope. */
 async function loadValidationContext(ctx: AppContext, scope: Scope): Promise<ValidationContext> {
   const config = await ctx.store.spaces.getConfig(scope);
@@ -83,7 +91,7 @@ export async function createEntry(
     ctx,
     scope,
     contentType,
-    vctx,
+    asCreate(contentType, vctx),
     { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
     'save',
   );
@@ -255,7 +263,15 @@ export async function updateEntry(
   if (!found) throw new NotFoundError('Entry', id);
   const contentType = await requireContentType(ctx, scope, found.entry.contentTypeApiId);
   const vctx = await loadValidationContext(ctx, scope);
-  return saveEntryDraft(ctx, scope, found.entry, contentType, vctx, fields);
+  // The stored version is what a disabled field must keep.
+  return saveEntryDraft(
+    ctx,
+    scope,
+    found.entry,
+    contentType,
+    { ...vctx, previous: found.fields },
+    fields,
+  );
 }
 
 /**
@@ -357,7 +373,7 @@ export async function validateEntry(
       ctx,
       scope,
       contentType,
-      vctx,
+      { ...vctx, previous: found.fields },
       {
         contentTypeApiId: found.entry.contentTypeApiId,
         entryId: input.entryId,
@@ -382,7 +398,7 @@ export async function validateEntry(
     ctx,
     scope,
     contentType,
-    vctx,
+    asCreate(contentType, vctx),
     { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
     'dry-run',
   );

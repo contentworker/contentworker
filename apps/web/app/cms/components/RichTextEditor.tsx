@@ -24,6 +24,8 @@ export function RichTextEditor(props: {
   /** The locale the document is written in, and its direction: on the editable text only. */
   lang?: string;
   dir?: 'ltr' | 'rtl';
+  /** Shown but not editable: a field its rules make read-only. */
+  readOnly?: boolean;
   value: unknown;
   pickers: Pickers;
   onChange: (value: RichTextDocument | undefined) => void;
@@ -73,6 +75,7 @@ export function RichTextEditor(props: {
   const editor = useEditor({
     extensions,
     content: initialContent,
+    editable: !props.readOnly,
     editorProps,
     onUpdate: ({ editor: e }) => {
       const doc = toDocument(e.getJSON());
@@ -80,6 +83,11 @@ export function RichTextEditor(props: {
       props.onChange(doc);
     },
   });
+
+  useEffect(() => {
+    if (!editor || editor.isEditable === !props.readOnly) return;
+    editor.setEditable(!props.readOnly, false);
+  }, [editor, props.readOnly]);
 
   useEffect(() => {
     if (!editor) return;

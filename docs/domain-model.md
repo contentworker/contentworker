@@ -283,6 +283,7 @@ interface FieldDefinition {
   required: boolean;
   position: number; // ascending order within the type
   validations?: FieldValidations;
+  rules?: readonly FieldRule[]; // hide or disable it while a sibling matches (≤ 10)
   linkType?: 'Entry' | 'Asset'; // for Link fields
   items?: {
     // for Array fields
@@ -355,6 +356,59 @@ defined, and so is any `messages` on an Array's `items.validations`: element rul
 not yet enforced per element (per-element `in` is planned). Content types are stored as JSON
 definitions, so none of this needs a migration.
 
+### Conditional field rules
+
+A field's `rules` hide or disable it while a sibling's value matches
+(`packages/domain/src/content-type/field-rules.ts`):
+
+```ts
+interface FieldRule {
+  action: 'hide' | 'disable';
+  when: {
+    field: string; // a sibling's apiId, or a dot path into a sibling Component (`hero.style`)
+    operator: 'eq' | 'ne' | 'in' | 'empty' | 'notEmpty' | 'gt' | 'lt';
+    value?: string | number | boolean | readonly (string | number)[]; // a list for `in`; none for empty/notEmpty
+  };
+}
+```
+
+Any matching rule applies. `eq`, `ne` and `in` compare strictly (`'2'` is not `2`); `empty` means
+absent, null, blank text or an empty list or object; `gt` and `lt` compare numbers and are refused
+on a sibling that is not an Integer or Number. A rule names a sibling at its own level: a top-level
+field reads top-level fields, a component's field reads the fields beside it in that component.
+
+`fieldState(field, values)` gives `{ hidden, disabled }` from the values being written, never from
+what was stored, so the admin's form (live, as the editor types) and the save judge the same thing.
+A condition reads a sibling's raw value whether or not that sibling is itself hidden, so rules
+never chase each other in a cycle. A top-level field's localized sibling is read in the same
+locale; one that is not localized, in the default locale.
+
+- **Hidden:** not shown in the entry form and not required. A value it holds is kept and still
+  validated, so switching the sibling back brings it back.
+- **Disabled:** read-only. Given the values the write replaces (`ValidationContext.previous`: the
+  stored version on an update, the type's defaults on a create), a value that differs from them is
+  refused ("Field is read-only while its rules disable it; it keeps its stored value"). A write
+  that stops the rule matching opens the field in the same write. Readers judging stored content
+  rather than an edit (snapshots, imports, merges, the workflow `validate` node) leave `previous`
+  out. `disable` is refused on a field inside an Array's element: elements are added, removed and
+  reordered, so an element has no stored value to keep. `hide` works per element.
+
+A rule must be usable when it is written (`ruleProblem`): a known action and operator, a sibling
+that exists (not the field itself, not a whole component), a value of the operator's shape (text
+at most 200 characters; an `in` list of 1 to 100). A revision cannot remove the sibling a kept rule
+reads. Snapshot import and clone drop unusable rules (`normalizeLegacyFields`).
+
+Generation never fills a hidden or disabled field: `describeFieldForModel` names the field's rules
+(`describeFieldRules`, in words) inside its delimited `<user_content>` span, since a rule quotes
+author values, and `withoutClosedFields` leaves the values of fields the draft's own values close
+out of a draft or canvas result. Autofill refuses a hidden or disabled field, and `ai.enrich`,
+translation and the agent runtime skip them. SDK codegen makes a required field that a rule can
+hide optional.
+
+Rules shipped without a reader-first step: a release from before them ignores `rules`, so after a
+rollback a hidden required field is required again (an editor fills it) and a disabled field is
+editable. Nothing breaks and nothing is lost.
+
 ## The validation engine
 
 `validateEntryFields(contentType, fields, ctx)` returns a `FieldIssue[]` (empty when valid).
@@ -365,7 +419,8 @@ Rules applied:
 
 1. **Unknown fields** — any key not in the content type is rejected.
 2. **Required** — enforced on the default locale only; other locales resolve via fallback at
-   delivery time.
+   delivery time. A field its [rules](#conditional-field-rules) hide is not required, and a value
+   for a field they disable must equal the value it replaces.
 3. **Type checks** — per the table above (string/integer/number/boolean/valid ISO date/`{lat,lon}`
    /object/`{id,linkType}`/array-of-items).
 4. **Size** — `size.min`/`size.max` against string length or array item count.

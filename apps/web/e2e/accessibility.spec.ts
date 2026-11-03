@@ -14,6 +14,7 @@ import {
   seedCms,
   seedGuidedType,
   seedIngestFindings,
+  seedRuledType,
   stubLocales,
   uploadAssetBytes,
   useCmsScope,
@@ -483,6 +484,34 @@ test('an entry with help, a placeholder and an options select has no accessibili
   await openCms(page, '/content/guided/new');
   await expect(page.getByText('Lead with the neighbourhood.')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByLabel('Status')).toBeVisible();
+  await scan(page, info);
+});
+
+test('the content type dialog’s rules panel has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  await seedRuledType(request);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Ruled”' }).click();
+  // Open on a field that has rules; one added by hand on a field that has none.
+  await expect(page.getByRole('group', { name: 'Rules for Sold to' })).toBeVisible();
+  await page.getByRole('button', { name: 'Rules for Title' }).click();
+  await page.getByRole('button', { name: 'Add rule to Title' }).click();
+  await expect(page.getByLabel('Field read by Title rule 1')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('an entry with a field its rules make read-only has no accessibility violations', async ({
+  page,
+  request,
+}, info) => {
+  test.skip(info.project.name.startsWith('iphone'), 'the editor is review-only on a phone');
+  await seedRuledType(request);
+  await openCms(page, '/content/ruled/new');
+  await page.getByLabel('Status').fill('sold', { timeout: 15_000 });
+  await expect(page.getByLabel('Reference')).toBeDisabled();
+  await expect(page.getByLabel('Sold to')).toBeVisible();
   await scan(page, info);
 });
 

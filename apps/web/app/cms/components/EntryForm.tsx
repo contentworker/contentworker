@@ -10,13 +10,21 @@ import {
   BLOCK_KEY,
   BLOCK_TYPE_KEY,
   blockVariants,
+  conditionMatches,
+  describeCondition,
+  type FieldState,
   fallbackChain,
+  fieldState,
+  fieldStates,
   nestedFieldsFor,
   normalizeOptions,
   optionLabel,
   optionValue,
   resolveLocalizedValue,
+  ruleTarget,
+  ruleValueAt,
   SEO_FIELDS,
+  sameFieldValue,
   validateEntryFields,
   variantOf,
 } from '@contentworker/domain';
@@ -103,6 +111,76 @@ function fieldsFromValues(
     if (Object.keys(cleaned).length > 0) out[f.apiId] = cleaned;
   }
   return out;
+}
+
+/**
+ * The values the form shows and sends: a field its rules disable shows, and saves, its stored
+ * value, which is all the server accepts for it. The edit underneath is kept, so a field that opens
+ * again shows what was typed. Applied twice, since restoring a value can open or close another
+ * field's rule; two passes settle every rule set that is not a cycle.
+ */
+function withDisabledKept(
+  contentType: ContentType,
+  values: Values,
+  stored: EntryFields,
+  locales: readonly string[],
+  defaultLocale: string,
+): Values {
+  if (!contentType.fields.some((f) => f.rules?.length)) return values;
+  let out = values;
+  for (let pass = 0; pass < 2; pass++) {
+    let next: Values | undefined;
+    for (const locale of locales) {
+      const states = fieldStates(contentType.fields, out, locale, defaultLocale);
+      for (const f of contentType.fields) {
+        if (!f.localized && locale !== defaultLocale) continue;
+        if (!states.get(f.apiId)?.disabled) continue;
+        const kept = stored[f.apiId]?.[locale];
+        if (sameFieldValue((next ?? out)[f.apiId]?.[locale], kept)) continue;
+        next ??= { ...out };
+        next[f.apiId] = { ...next[f.apiId], [locale]: kept };
+      }
+    }
+    if (!next) break;
+    out = next;
+  }
+  return out;
+}
+
+/** A rule's sibling path in field names: `Hero › Style` for `hero.style`. */
+function siblingName(siblings: readonly FieldDefinition[], path: string): string {
+  const names: string[] = [];
+  let level: readonly FieldDefinition[] | undefined = siblings;
+  for (const segment of path.split('.')) {
+    const found: FieldDefinition | undefined = level?.find((f) => f.apiId === segment);
+    names.push(found?.name ?? segment);
+    level = found?.type === 'Component' ? found.fields : undefined;
+  }
+  return names.join(' › ');
+}
+
+/**
+ * Why a field is read-only, for the helper line under it: the disabling conditions that hold, in
+ * the names an editor sees ("Read-only while Status is "sold"").
+ */
+function disabledReason(
+  field: FieldDefinition,
+  siblings: readonly FieldDefinition[],
+  values: Readonly<Record<string, unknown>>,
+): string {
+  const held = (field.rules ?? [])
+    .filter(
+      (r) => r.action === 'disable' && conditionMatches(r.when, ruleValueAt(values, r.when.field)),
+    )
+    .map((r) =>
+      describeCondition({
+        ...r.when,
+        field: ruleTarget(siblings, r.when.field)
+          ? siblingName(siblings, r.when.field)
+          : r.when.field,
+      }),
+    );
+  return held.length ? `Read-only while ${held.join(' and ')}` : 'Read-only';
 }
 
 function issuesToErrors(
@@ -279,6 +357,18 @@ export function EntryForm(props: {
 
   const hasLocalized = useMemo(() => contentType.fields.some((f) => f.localized), [contentType]);
 
+  // What the form shows and sends, with every field its rules disable at its stored value.
+  const shown = useMemo(
+    () => withDisabledKept(contentType, values, props.initial, locales, defaultLocale),
+    [contentType, values, props.initial, locales, defaultLocale],
+  );
+  // Each top-level field's state in the locale on screen (a non-localized field is only shown
+  // on the default locale's tab, where its siblings are read in that locale too).
+  const states = useMemo(
+    () => fieldStates(contentType.fields, shown, activeLocale, defaultLocale),
+    [contentType, shown, activeLocale, defaultLocale],
+  );
+
   const localeConfig = useMemo<LocaleConfig>(
     () => ({ defaultLocale, locales, fallbacks }),
     [defaultLocale, locales, fallbacks],
@@ -322,8 +412,8 @@ export function EntryForm(props: {
   // The preview follows the form: values and the locale tab, as a save would send them.
   const onValuesChange = props.onValuesChange;
   useEffect(() => {
-    onValuesChange?.(fieldsFromValues(contentType, values, locales, defaultLocale), activeLocale);
-  }, [onValuesChange, contentType, values, locales, defaultLocale, activeLocale]);
+    onValuesChange?.(fieldsFromValues(contentType, shown, locales, defaultLocale), activeLocale);
+  }, [onValuesChange, contentType, shown, locales, defaultLocale, activeLocale]);
 
   // Bumped per rejected submit; scrolls the error summary into view once the
   // errors have rendered (not on every fieldErrors change — typing edits those).
@@ -339,10 +429,12 @@ export function EntryForm(props: {
     // Guard double-submits (rapid ⌘S / Enter): a second createEntry in flight
     // would duplicate the entry.
     if (props.busy) return;
-    const out = fieldsFromValues(contentType, values, locales, defaultLocale);
+    const out = fieldsFromValues(contentType, shown, locales, defaultLocale);
+    // Judged as the server will: against the stored values, which a disabled field keeps.
     const issues = validateEntryFields(contentType, out, {
       defaultLocale,
       locales,
+      previous: props.initial,
     });
     if (issues.length > 0) {
       const errors = issuesToErrors(issues, defaultLocale);
@@ -377,7 +469,7 @@ export function EntryForm(props: {
       contentType.fields,
       path,
       Object.fromEntries(
-        Object.entries(values).map(([apiId, byLocale]) => [apiId, byLocale[locale]]),
+        Object.entries(shown).map(([apiId, byLocale]) => [apiId, byLocale[locale]]),
       ),
     );
 
@@ -443,13 +535,17 @@ export function EntryForm(props: {
               // Non-localized fields are only editable on the default-locale tab.
               const locale = f.localized ? activeLocale : defaultLocale;
               if (!f.localized && activeLocale !== defaultLocale) return null;
+              // A field its rules hide is not drawn at all; its value stays and is still sent.
+              const state = states.get(f.apiId);
+              if (state?.hidden) return null;
               const id = `field-${f.apiId}`;
               const err = fieldErrors[errorKey(f.apiId, locale)];
               const hint =
                 f.localized && locales.length > 1
-                  ? fallbackHint(f, values, locale, localeConfig)
+                  ? fallbackHint(f, shown, locale, localeConfig)
                   : undefined;
               const helpId = f.help ? `${id}-help` : undefined;
+              const ruleId = state?.disabled ? `${id}-rule` : undefined;
               return (
                 <div className="space-y-1.5" key={f.apiId}>
                   <Label id={`${id}-label`} htmlFor={id} className="gap-1">
@@ -461,31 +557,50 @@ export function EntryForm(props: {
                       </span>
                     )}
                   </Label>
-                  <FieldInput
-                    id={id}
-                    field={f}
-                    value={values[f.apiId]?.[locale]}
-                    invalid={Boolean(err)}
-                    errorId={err ? `${id}-error` : undefined}
-                    hintId={helpId}
-                    pickers={props.pickers}
-                    editor={fieldEditors?.find(
-                      (e) =>
-                        !e.fieldTypes || e.fieldTypes.length === 0 || e.fieldTypes.includes(f.type),
-                    )}
-                    editorContext={props.entryContext}
-                    locale={locale}
-                    path={f.apiId}
-                    onSearchEntries={props.onSearchEntries}
-                    errorFor={(p) => fieldErrors[errorKey(p, locale)]}
-                    // A nested edit clears its own error, not the whole
-                    // component's: fixing card 1 must not make card 2 look fine.
-                    onEdited={(p) => clearError(p, locale)}
-                    onChange={(v) => set(f.apiId, locale, v)}
-                  />
+                  <DisabledBy state={state}>
+                    <FieldInput
+                      id={id}
+                      field={f}
+                      value={shown[f.apiId]?.[locale]}
+                      disabled={state?.disabled}
+                      invalid={Boolean(err)}
+                      errorId={err ? `${id}-error` : undefined}
+                      hintId={[helpId, ruleId].filter(Boolean).join(' ') || undefined}
+                      pickers={props.pickers}
+                      editor={fieldEditors?.find(
+                        (e) =>
+                          !e.fieldTypes ||
+                          e.fieldTypes.length === 0 ||
+                          e.fieldTypes.includes(f.type),
+                      )}
+                      editorContext={props.entryContext}
+                      locale={locale}
+                      path={f.apiId}
+                      onSearchEntries={props.onSearchEntries}
+                      errorFor={(p) => fieldErrors[errorKey(p, locale)]}
+                      // A nested edit clears its own error, not the whole
+                      // component's: fixing card 1 must not make card 2 look fine.
+                      onEdited={(p) => clearError(p, locale)}
+                      onChange={(v) => set(f.apiId, locale, v)}
+                    />
+                  </DisabledBy>
                   {f.help && (
                     <p id={helpId} className="max-w-measure text-muted-foreground text-xs">
                       {f.help}
+                    </p>
+                  )}
+                  {ruleId && (
+                    <p id={ruleId} className="max-w-measure text-muted-foreground text-xs">
+                      {disabledReason(
+                        f,
+                        contentType.fields,
+                        Object.fromEntries(
+                          contentType.fields.map((g) => [
+                            g.apiId,
+                            shown[g.apiId]?.[g.localized ? locale : defaultLocale],
+                          ]),
+                        ),
+                      )}
                     </p>
                   )}
                   {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}
@@ -554,6 +669,9 @@ function FieldInput(props: {
   id: string;
   field: FieldDefinition;
   value: unknown;
+  /** Read-only by the field's rules: the input is disabled by its `DisabledBy` fieldset, and a
+   *  widget a fieldset can't reach (rich text) is told here. */
+  disabled?: boolean;
   invalid?: boolean;
   /** id of the error message element, wired to aria-describedby when invalid. */
   errorId?: string;
@@ -716,6 +834,7 @@ function FieldInput(props: {
         ariaDescribedBy={describedBy}
         lang={writing.lang}
         dir={writing.dir}
+        readOnly={props.disabled}
         value={value}
         pickers={pickers}
         onChange={onChange}
@@ -917,6 +1036,21 @@ const asObject = (value: unknown): Record<string, unknown> =>
     : {};
 
 /**
+ * Disables every control of a field its rules make read-only, whatever the widget: a disabled
+ * fieldset reaches inputs, selects and buttons alike (a picker, a checkbox, a list's Add), and
+ * says so to assistive technology. Rich text, which no fieldset reaches, is told through
+ * `FieldInput`'s `disabled`. Open fields render without a wrapper.
+ */
+function DisabledBy(props: { state: FieldState | undefined; children: React.ReactNode }) {
+  if (!props.state?.disabled) return <>{props.children}</>;
+  return (
+    <fieldset disabled className="m-0 min-w-0 border-0 p-0">
+      {props.children}
+    </fieldset>
+  );
+}
+
+/**
  * The nested fields of one component, edited in place.
  *
  * Nested fields carry no locale of their own — the component field decides
@@ -935,33 +1069,49 @@ function ComponentInput(
   return (
     <div className="space-y-4 rounded-xl bg-secondary/40 p-4">
       {fields.map((f) => {
+        // Rules read the siblings inside this component value. Inside a list's element only
+        // `hide` can apply: the domain refuses `disable` there.
+        const state = fieldState(f, current);
+        if (state.hidden) return null;
         const at = `${path}.${f.apiId}`;
         const nestedId = `${props.id}-${f.apiId}`;
         const err = errorFor?.(at);
         const help = hint?.(f.apiId, current[f.apiId]) ?? f.help;
+        const ruleId = state.disabled ? `${nestedId}-rule` : undefined;
         return (
           <div key={f.apiId} className="space-y-1.5">
             <Label id={`${nestedId}-label`} htmlFor={nestedId} className="gap-1">
               {f.name}
               {f.required && <RequiredMark />}
             </Label>
-            <FieldInput
-              id={nestedId}
-              field={f}
-              value={current[f.apiId]}
-              invalid={Boolean(err)}
-              errorId={err ? `${nestedId}-error` : undefined}
-              hintId={help ? `${nestedId}-hint` : undefined}
-              pickers={pickers}
-              locale={locale}
-              path={at}
-              errorFor={errorFor}
-              onEdited={onEdited}
-              onChange={(v) => {
-                onEdited?.(at);
-                onChange({ ...current, [f.apiId]: v });
-              }}
-            />
+            <DisabledBy state={state}>
+              <FieldInput
+                id={nestedId}
+                field={f}
+                value={current[f.apiId]}
+                disabled={state.disabled}
+                invalid={Boolean(err)}
+                errorId={err ? `${nestedId}-error` : undefined}
+                hintId={
+                  [help ? `${nestedId}-hint` : undefined, ruleId].filter(Boolean).join(' ') ||
+                  undefined
+                }
+                pickers={pickers}
+                locale={locale}
+                path={at}
+                errorFor={errorFor}
+                onEdited={onEdited}
+                onChange={(v) => {
+                  onEdited?.(at);
+                  onChange({ ...current, [f.apiId]: v });
+                }}
+              />
+            </DisabledBy>
+            {ruleId && (
+              <p id={ruleId} className="max-w-measure text-muted-foreground text-xs">
+                {disabledReason(f, fields, current)}
+              </p>
+            )}
             {help && (
               <p
                 id={`${nestedId}-hint`}

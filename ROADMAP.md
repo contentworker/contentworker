@@ -30,7 +30,8 @@ Everything below is built and tested on v2.
 
 - **Content.** Spaces, environments (create, delete) and aliases; locales with fallback chains; typed fields with
   validations (labelled `in` options, custom messages), guidance for editors and agents (`help`,
-  `placeholder`, `description`), components and unique values; the entry lifecycle (draft → published → archived,
+  `placeholder`, `description`), conditional field rules (hide or disable a field while a sibling
+  matches, judged in the domain on every surface), components and unique values; the entry lifecycle (draft → published → archived,
   trash, purge, duplicate); versions with a readable diff (per field and locale, by type: words,
   rich-text blocks, list moves) and restore; references and `include`; rich text
   with HTML import; slugs; redirects (delivery data a front end or edge worker applies: exact and
@@ -192,8 +193,6 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 - [x] **Filter by referenced entry.** `fields.<link>[ref]=<id>` (`[refIn]` for several) and
   `links_to_entry=<id>` on Delivery, Preview, GraphQL and `entries_query`; Delivery pushes them down
   as an `IN` over the reference edges with one JSON parameter, Preview scans the draft's fields.
-- [ ] **Conditional field rules.** `rules` on a field (hide or disable when a sibling matches),
-  evaluated in the domain so a hidden field skips `required` on every surface.
 - [x] **Singleton types.** At most one entry outside the trash, held by a unique claim on every
   create path; Delivery and Preview `GET /singletons/:apiId`, a GraphQL root without `id`,
   `singleton_get`, the SDK's `getSingleton`; the admin opens the editor directly.

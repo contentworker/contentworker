@@ -107,6 +107,7 @@ export async function setEntrySeo(
     {
       defaultLocale: config.defaultLocale,
       locales: config.locales,
+      previous: fields,
     },
     next,
   );

@@ -20,6 +20,7 @@ import {
   describeAnswers,
   type EntryFields,
   eventTypeFor,
+  fieldStates,
   interpolate,
   logicHolds,
   RateLimitedError,
@@ -815,8 +816,16 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       const v = i.run.entry.fields?.[apiId]?.[locale];
       return typeof v === 'string' && v.trim() !== '';
     };
-    // The enrich agent's rule: fill the text fields that are still empty.
-    const empty = ct.fields.filter((f) => TEXT_TYPES.has(f.type) && !filled(f.apiId));
+    // The enrich agent's rule: fill the text fields that are still empty, and that the type's
+    // rules neither hide nor disable.
+    const states = fieldStates(ct.fields, i.run.entry.fields ?? {}, locale, locale);
+    const open = (apiId: string) => {
+      const s = states.get(apiId);
+      return !s?.hidden && !s?.disabled;
+    };
+    const empty = ct.fields.filter(
+      (f) => TEXT_TYPES.has(f.type) && !filled(f.apiId) && open(f.apiId),
+    );
     const settled = awaitReview ? 'approved' : 'applied';
     if (!empty.length) {
       return { branches: [settled], output: { proposed: {} }, summary: 'Nothing to enrich' };

@@ -336,6 +336,23 @@ for (const node of article.body?.content ?? []) {
 });
 
 describe('@contentworker/sdk-codegen CLI', () => {
+  it('makes a required field a rule can hide optional, and notes its rules', () => {
+    const out = generateTypes([
+      {
+        apiId: 'card',
+        fields: [
+          { apiId: 'kind', type: 'Symbol', required: true },
+          { apiId: 'url', type: 'Symbol', required: true, rules: [{ action: 'hide' }] },
+          { apiId: 'ref', type: 'Symbol', required: true, rules: [{ action: 'disable' }] },
+        ],
+      },
+    ]);
+    expect(out).toContain('  kind: string;');
+    expect(out).toContain('  url?: string;');
+    expect(out).toContain('  ref: string;');
+    expect(out).toContain('conditional: hide by rules');
+  });
+
   it('parses flags and rejects unknown ones', () => {
     expect(parseArgs(['--url', 'https://x', '--space', 's1', '--token', 't'])).toEqual({
       url: 'https://x',

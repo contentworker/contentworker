@@ -1,4 +1,9 @@
-import { FIELD_GUIDANCE_LIMITS } from '@contentworker/domain';
+import {
+  FIELD_GUIDANCE_LIMITS,
+  MAX_FIELD_RULES,
+  RULE_ACTIONS,
+  RULE_OPERATORS,
+} from '@contentworker/domain';
 import { z } from 'zod';
 
 /**
@@ -64,6 +69,29 @@ export const fieldValidations = z
   })
   .loose();
 
+/** A conditional rule: hide or disable the field while a sibling's value matches. */
+export const fieldRule = z.object({
+  action: z
+    .enum(RULE_ACTIONS)
+    .describe(
+      '`hide`: not shown and not required. `disable`: read-only, keeping its stored value; a write that changes it is refused',
+    ),
+  when: z.object({
+    field: z
+      .string()
+      .describe(
+        'The sibling read: another field at the same level, or a dot path into a sibling component (`hero.style`)',
+      ),
+    operator: z
+      .enum(RULE_OPERATORS)
+      .describe('`gt` and `lt` compare a number sibling; `empty` and `notEmpty` take no value'),
+    value: z
+      .union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number()]))])
+      .optional()
+      .describe('What the sibling is compared with: a list for `in`'),
+  }),
+});
+
 export const field = z.object({
   apiId: z.string(),
   name: z.string(),
@@ -93,6 +121,13 @@ export const field = z.object({
   unique: z.boolean().optional(),
   defaultValue: z.unknown().optional(),
   validations: fieldValidations.optional(),
+  rules: z
+    .array(fieldRule)
+    .max(MAX_FIELD_RULES)
+    .optional()
+    .describe(
+      'Hide or disable the field while a sibling matches; any matching rule applies. Rules read the values being written, on every surface',
+    ),
   linkType: z.enum(['Entry', 'Asset']).optional(),
   fields: nestedFields.optional().describe('Component: the nested field definitions'),
   items: z

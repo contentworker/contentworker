@@ -18,6 +18,7 @@ import {
 import {
   agentActor,
   type EntryFields,
+  fieldStates,
   InvalidStateError,
   NotFoundError,
   type Scope,
@@ -67,8 +68,11 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
       const ct = await ctx.store.contentTypes.get(scope, found.entry.contentTypeApiId);
       if (!ct) return null;
       const locale = await defaultLocale(scope);
+      // Fields the type's rules hide or disable take no generated value.
+      const states = fieldStates(ct.fields, found.fields, locale, locale);
       const textFields = ct.fields
         .filter((f) => TEXT_TYPES.has(f.type))
+        .filter((f) => !states.get(f.apiId)?.hidden && !states.get(f.apiId)?.disabled)
         .map((f) => ({
           apiId: f.apiId,
           name: f.name,
