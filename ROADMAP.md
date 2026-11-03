@@ -131,6 +131,36 @@ Everything below is built and tested on v2.
   Open before step 2: package operations in MCP without one tool per operation per install, a
   deployment-level install for per-company credentials, and the 2 s sync cap against provider
   token exchanges.
+- [ ] **Plugin copilot: plugins from a prompt.** Describe a rule in plain language ("refuse to
+  publish an article without a hero image and alt text") and get a draft plugin (manifest, bundle,
+  an explanation and suggested test cases) to test against real entries and install through the
+  existing consent screen. Like the workflow copilot it only proposes: it never installs, enables
+  or saves, and generated code is one more untrusted author for the sandbox, the grant and the
+  checksum. Scope is what plugins already do (logic on the five write hooks); new operations,
+  screens and scheduled jobs wait for apps as packages. Five PRs, each usable on its own:
+  1. **Install on MCP, and provenance.** `plugin_install` (REST has it, MCP doesn't: a gap in
+     both surfaces today), and an expand-only `source` on installed plugins (`generated`, prompt
+     id, model, prompt hash, drafted by).
+  2. **Draft.** `draftPlugin` (`POST /spaces/:space/plugins/drafts`, `plugin_draft`): a brief
+     built from the hooks, the capability → method map and the chosen content types' fields, on
+     the `flagship` tier under the space's AI budget with the untrusted-content guard. Capabilities
+     are set from the `caps.*` calls the bundle actually makes, not the model's claims; revising
+     passes the draft back; `AI_MODE=mock` and off-schema answers fall back to a template.
+  3. **Dry run.** `testPluginDraft` (`…/plugins/drafts/test`, `plugin_draft_test`): the draft in
+     the real sandbox, keyed `draft:<checksum>`; reads are real as the caller, writes, publish, KV
+     and tags are recorded rather than made, network is opt-in within `allowedHosts`. Returns
+     pass, mutate or veto with before and after, the call log and the time against the 2 s hook
+     budget. A test proves the store sees no write.
+  4. **Admin.** "Describe a plugin" on the Plugins screen: code with a diff per revision, the
+     manifest, each capability with a plain-language reason, the test panel, install (disabled),
+     and "Change with AI" on a generated plugin through `upgradePlugin`'s re-approval rules.
+  5. **Docs, skill and eval.** A plugin-authoring MCP skill (so outside coding agents can write
+     plugins too), the docs, and an eval set of about 20 prompts scored by the dry run, which
+     decides whether the `flagship` tier writes good enough plugins to ship or ship as beta.
+
+  Open before step 2: whether enabling a generated plugin needs a signed-in person (safer, but the
+  first deliberate break from both surfaces), and whether to wait and launch it with apps as
+  packages.
 
 ### Parity milestones
 
