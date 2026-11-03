@@ -165,6 +165,24 @@ describe('dispatching to plugins', () => {
     });
     expect(onError).toHaveBeenCalledOnce();
   });
+
+  it('runs only capability-free plugins on a dry run, and names the rest', async () => {
+    await installEnabled({ id: 'com.example.pure', capabilities: [] }, []);
+    await installEnabled({ id: 'com.example.writer', capabilities: ['content:write'] });
+    const runtime = fakeRuntime((inv) => ({
+      payload: { seen: [...((inv.payload as { seen?: string[] }).seen ?? []), inv.pluginId] },
+    }));
+    const d = createPluginHookDispatcher(ctx, blob, runtime, { principal: admin });
+
+    expect(await d.dispatch('entry:beforeSave', { seen: [] }, scope, { pureOnly: true })).toEqual({
+      payload: { seen: ['com.example.pure'] },
+      skipped: ['com.example.writer'],
+    });
+    // A real save still runs both.
+    expect(await d.dispatch('entry:beforeSave', { seen: [] }, scope)).toEqual({
+      payload: { seen: ['com.example.pure', 'com.example.writer'] },
+    });
+  });
 });
 
 describe('what a plugin is handed', () => {

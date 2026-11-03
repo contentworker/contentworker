@@ -15,6 +15,7 @@ import type {
   AssetListQuery,
   BlobStore,
   HookDispatcher,
+  HookDispatchOptions,
   HookName,
   HookResult,
   PluginCapabilities,
@@ -273,13 +274,26 @@ export function createPluginHookDispatcher(
   const report = options.onError ?? (() => {});
 
   return {
-    async dispatch<T>(hook: HookName, payload: T, scope: Scope): Promise<HookResult<T>> {
+    async dispatch<T>(
+      hook: HookName,
+      payload: T,
+      scope: Scope,
+      dispatchOptions: HookDispatchOptions = {},
+    ): Promise<HookResult<T>> {
       const installed = (await ctx.store.plugins.list(scope.spaceId)).map(normalizeInstalledPlugin);
       // Ordered by id so the result does not depend on storage iteration order.
-      const relevant = installed
+      const registered = installed
         .filter((p) => p.enabled && p.manifest.hooks.includes(hook as never))
         .sort((a, b) => a.id.localeCompare(b.id));
-      if (relevant.length === 0) return { payload };
+      // A dry run runs only the plugins holding no capability: with nothing handed in, a plugin
+      // can compute an answer and nothing else.
+      const relevant = dispatchOptions.pureOnly
+        ? registered.filter((p) => grantOf(p).length === 0)
+        : registered;
+      const skipped = registered.filter((p) => !relevant.includes(p)).map((p) => p.id);
+      const done = (result: T): HookResult<T> =>
+        skipped.length > 0 ? { payload: result, skipped } : { payload: result };
+      if (relevant.length === 0) return done(payload);
 
       let current: unknown = payload;
       for (const plugin of relevant) {
@@ -287,7 +301,7 @@ export function createPluginHookDispatcher(
         if (outcome && 'veto' in outcome) return outcome as HookResult<T>;
         if (outcome) current = outcome.payload;
       }
-      return { payload: current as T };
+      return done(current as T);
     },
   };
 

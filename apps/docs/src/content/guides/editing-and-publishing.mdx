@@ -64,6 +64,26 @@ The diff is structured data, never HTML: render it as you render the content. Fi
 not read are left out. Over MCP, `entries_diff_versions` takes the same `from` and `to` and
 returns the same shape.
 
+## Validate without saving
+
+To check fields before saving them, send them to `POST …/entries/validate` (`content:write`) or
+the MCP tool `entries_validate`. Give `contentTypeApiId` (`contentType` over MCP) to judge them as a
+new entry, or `entryId` (`id`) to judge them as a new version of that entry:
+
+```sh
+curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/validate" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "contentTypeApiId": "post", "fields": { "title": { "en-US": "Hello" } } }'
+```
+
+It runs the checks the save would make, in the same order, and writes nothing. A pass answers `200`
+with `{ valid: true, fields, skippedHooks }`: `fields` as the save would store them (defaults
+applied on a new entry, slugs normalized). A failure answers exactly as the save would: `422` with
+the field issues, `409` for a unique value another entry holds, `400 invalid_state` for an entry in
+the trash. Link targets are checked when you publish, not when you save, so not here either.
+Plugins on `entry:beforeSave` run only when they hold no capabilities;
+`skippedHooks` names the ones that didn't run, which may still change or refuse the real save.
+
 ## Publish and unpublish
 
 **Publish** makes the entry's latest version the one delivery serves; **Unpublish** takes it off

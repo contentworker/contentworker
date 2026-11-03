@@ -7,6 +7,7 @@ import {
   publishEntry,
   unpublishEntry,
   updateEntry,
+  validateEntry,
 } from '@contentworker/application';
 import {
   assertWritableFields,
@@ -124,6 +125,46 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         assertWritableFields(principal, entry.contentType, args.fields ?? {});
       }
       return ok(await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields));
+    },
+  );
+
+  server.registerTool(
+    'entries_validate',
+    {
+      description:
+        'Validate entry fields without saving: exactly the checks entries_create (with ' +
+        'contentType) or entries_update (with id) would make, failing with the same errors. ' +
+        'Writes nothing. Answers the fields as they would be stored, and skippedHooks: plugins ' +
+        'that hold capabilities and so did not run (a real save may still rewrite or refuse).',
+      inputSchema: toolSchema('entries_validate', () =>
+        z
+          .object({
+            contentType: z.string().optional().describe('Validate as a new entry of this type'),
+            id: z.string().optional().describe('Validate as a new version of this entry'),
+            fields: entryFields,
+            ...scopeArgs,
+          })
+          .refine((a) => (a.contentType === undefined) !== (a.id === undefined), {
+            message: 'Give contentType (a new entry) or id (a new version), not both',
+          }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const fields = (args.fields ?? {}) as EntryFields;
+      if (args.id !== undefined) {
+        if (principal.contentGrants) {
+          const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
+          authorizeContent(principal, 'write', entry.contentType);
+          assertWritableFields(principal, entry.contentType, fields);
+        }
+        return ok(await validateEntry(ctx, scopeOf(args), { entryId: args.id, fields }));
+      }
+      const contentTypeApiId = args.contentType ?? '';
+      authorizeContent(principal, 'write', contentTypeApiId);
+      assertWritableFields(principal, contentTypeApiId, fields);
+      return ok(await validateEntry(ctx, scopeOf(args), { contentTypeApiId, fields }));
     },
   );
 

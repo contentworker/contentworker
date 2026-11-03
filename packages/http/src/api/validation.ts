@@ -364,6 +364,19 @@ export const previewLinkBody = z.object({
 });
 export const updateEntryBody = z.object({ fields: zFieldValues });
 /**
+ * A dry run of a save: `contentTypeApiId` judges the fields as a new entry, `entryId` as a new
+ * version of that entry.
+ */
+export const validateEntryBody = z
+  .object({
+    contentTypeApiId: zId.optional().describe('Validate as a new entry of this content type'),
+    entryId: zId.optional().describe('Validate as a new version of this entry'),
+    fields: zFieldValues.optional(),
+  })
+  .refine((b) => (b.contentTypeApiId === undefined) !== (b.entryId === undefined), {
+    message: 'Give contentTypeApiId (a new entry) or entryId (a new version), not both',
+  });
+/**
  * A change to one locale of an entry's SEO metadata (its type's Seo field): a part left out keeps
  * its value, null clears it. Shared with the MCP tool, so both take the same change.
  */

@@ -5,6 +5,7 @@ import {
   draftEntry,
   getEntry,
   resolveEmbed,
+  validateEntry,
 } from '@contentworker/application';
 import {
   assertWritableFields,
@@ -25,6 +26,7 @@ import {
   parseBody,
   previewLinkBody,
   resolveEmbedBody,
+  validateEntryBody,
 } from '../../validation';
 import { BASE, entryAccess, scopeOf } from './shared';
 
@@ -50,6 +52,42 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       assertWritableFields(principal, body.contentTypeApiId, body.fields ?? {});
       const view = await createEntry(ctx, scopeOf(c), body as Parameters<typeof createEntry>[2]);
       return c.json(view, 201);
+    },
+  );
+  // A dry run of a create or an update: the same checks, the same errors, nothing written. Gated
+  // like the save it stands in for, so it tells a caller nothing a save wouldn't.
+  app.post(
+    `${BASE}/entries/validate`,
+    doc('Entries', 'Validate an entry without saving it', {
+      body: validateEntryBody,
+      ok: entryDocs.entryValidation,
+      description:
+        'Runs exactly the checks a save makes, in the same order: with `contentTypeApiId`, those ' +
+        'of creating an entry (defaults applied); with `entryId`, those of saving a new version ' +
+        'of it. A pass answers 200 with the fields as they would be stored; a failure answers ' +
+        'exactly as the save would (422 with field issues or a plugin refusal, 409 for a unique ' +
+        'value another entry holds, 400 `invalid_state` for an entry in the trash, 404 for an ' +
+        'unknown type or entry). Nothing is written. ' +
+        'Plugins on `entry:beforeSave` run only when they hold no capabilities; the rest are ' +
+        'named in `skippedHooks`.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, validateEntryBody);
+      const principal = c.get('principal');
+      const fields = body.fields ?? {};
+      if (body.entryId !== undefined) {
+        if (principal.contentGrants) {
+          const { entry } = await getEntry(ctx, scopeOf(c), body.entryId);
+          authorizeContent(principal, 'write', entry.contentTypeApiId);
+          assertWritableFields(principal, entry.contentTypeApiId, fields);
+        }
+        return c.json(await validateEntry(ctx, scopeOf(c), { entryId: body.entryId, fields }));
+      }
+      const contentTypeApiId = body.contentTypeApiId ?? '';
+      authorizeContent(principal, 'write', contentTypeApiId);
+      assertWritableFields(principal, contentTypeApiId, fields);
+      return c.json(await validateEntry(ctx, scopeOf(c), { contentTypeApiId, fields }));
     },
   );
   // AI-draft an entry's fields. Generated values pass the same validators a

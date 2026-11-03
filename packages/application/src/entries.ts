@@ -21,9 +21,9 @@ import {
   uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
-import type { BlobStore, ContentStoreTx } from '@contentworker/ports';
+import type { BlobStore, EntryRepo } from '@contentworker/ports';
 import type { AppContext } from './context';
-import { runHook } from './hooks';
+import { runHook, runPureHook } from './hooks';
 import { unpublishEntryTx } from './publishing';
 import { versionBodyPrefix } from './version-archive';
 
@@ -70,18 +70,14 @@ export async function createEntry(
   // Defaults fill gaps, then slugs are normalized, and only then is the result
   // validated — so an editor is judged on what will actually be stored.
   const withDefaults = applyDefaults(contentType, input.fields, vctx.locales, vctx.defaultLocale);
-  // Hook before normalization and validation, so a hook that writes
-  // `slug: "Hello World"` still gets normalized, and nothing a hook produces
-  // escapes validation.
-  const hooked = await runHook(ctx, 'entry:beforeSave', scope, {
-    contentTypeApiId: input.contentTypeApiId,
-    fields: withDefaults,
-  });
-  // Blocks get their `_key` last, so a block a hook added is keyed too.
-  const fields = assignBlockKeys(contentType, normalizeSlugFields(contentType, hooked.fields), () =>
-    ctx.ids.newId(),
+  const { fields } = await prepareFields(
+    ctx,
+    scope,
+    contentType,
+    vctx,
+    { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
+    'save',
   );
-  assertEntryFieldsValid(contentType, fields, vctx);
 
   const id = input.id ?? ctx.ids.newId();
   const entry: Entry = {
@@ -106,11 +102,44 @@ export async function createEntry(
   // Claim and write together: the claim is the constraint, so a crash between
   // the two must not leave a value reserved by an entry that does not exist.
   await ctx.store.withTransaction(async (tx) => {
-    await assertClaimsFree(tx, scope, claims);
+    await assertClaimsFree(tx.entries, scope, claims);
     await tx.entries.create(scope, entry, version);
     await tx.entries.replaceUniqueClaims(scope, id, claims);
   });
   return { entry, fields };
+}
+
+/**
+ * What a save does to the fields it was given before it writes them: the `entry:beforeSave` hook,
+ * slug normalization, block keys, then validation. One function, so a dry run
+ * ({@link validateEntry}) judges exactly what a save would.
+ *
+ * `'dry-run'` runs the hook through its effect-free handlers only (`runPureHook`) and names the
+ * ones it left out.
+ */
+async function prepareFields(
+  ctx: AppContext,
+  scope: Scope,
+  contentType: ContentType,
+  vctx: ValidationContext,
+  payload: { readonly contentTypeApiId: string; readonly entryId?: string; fields: EntryFields },
+  mode: 'save' | 'dry-run',
+): Promise<{ readonly fields: EntryFields; readonly skippedHooks: readonly string[] }> {
+  // Hook before normalization and validation, so a hook that writes
+  // `slug: "Hello World"` still gets normalized, and nothing a hook produces
+  // escapes validation.
+  const hooked =
+    mode === 'save'
+      ? { payload: await runHook(ctx, 'entry:beforeSave', scope, payload), skipped: [] }
+      : await runPureHook(ctx, 'entry:beforeSave', scope, payload);
+  // Blocks get their `_key` last, so a block a hook added is keyed too.
+  const fields = assignBlockKeys(
+    contentType,
+    normalizeSlugFields(contentType, hooked.payload.fields),
+    () => ctx.ids.newId(),
+  );
+  assertEntryFieldsValid(contentType, fields, vctx);
+  return { fields, skippedHooks: hooked.skipped };
 }
 
 /**
@@ -121,12 +150,12 @@ export async function createEntry(
  * than a bare constraint violation.
  */
 async function assertClaimsFree(
-  tx: ContentStoreTx,
+  entries: Pick<EntryRepo, 'findUniqueConflicts'>,
   scope: Scope,
   claims: readonly UniqueClaim[],
   excludeEntryId?: string,
 ): Promise<void> {
-  const conflicts = await tx.entries.findUniqueConflicts(scope, claims, excludeEntryId);
+  const conflicts = await entries.findUniqueConflicts(scope, claims, excludeEntryId);
   if (conflicts.length === 0) return;
   throw new ConflictError(
     conflicts
@@ -172,17 +201,14 @@ export async function saveEntryDraft(
   // No defaults on update. The fields passed become the whole new version: an
   // omitted field is absent from it (nothing is merged from the previous
   // version), and a cleared one is empty. Re-applying a default would override both.
-  const hooked = await runHook(ctx, 'entry:beforeSave', scope, {
-    contentTypeApiId: current.contentTypeApiId,
-    entryId: id,
-    fields,
-  });
-  const normalized = assignBlockKeys(
+  const { fields: normalized } = await prepareFields(
+    ctx,
+    scope,
     contentType,
-    normalizeSlugFields(contentType, hooked.fields),
-    () => ctx.ids.newId(),
+    vctx,
+    { contentTypeApiId: current.contentTypeApiId, entryId: id, fields },
+    'save',
   );
-  assertEntryFieldsValid(contentType, normalized, vctx);
 
   const { entry, version } = saveDraft(current, normalized);
   // Keep status consistent with the published pointer.
@@ -198,12 +224,94 @@ export async function saveEntryDraft(
     return { entry: synced, fields: normalized };
   }
   await ctx.store.withTransaction(async (tx) => {
-    await assertClaimsFree(tx, scope, claims, id);
+    await assertClaimsFree(tx.entries, scope, claims, id);
     await tx.entries.saveVersion(scope, synced, stamped);
     // Replace rather than add: clearing a unique field has to free its value.
     await tx.entries.replaceUniqueClaims(scope, id, claims);
   });
   return { entry: synced, fields: normalized };
+}
+
+/**
+ * What to validate: new fields for a content type, judged as a create (defaults applied), or a
+ * whole new version of an existing entry, judged as an update (no defaults; its own unique values
+ * don't collide with themselves).
+ */
+export type ValidateEntryInput =
+  | { readonly contentTypeApiId: string; readonly fields: EntryFields }
+  | { readonly entryId: string; readonly fields: EntryFields };
+
+export interface EntryValidation {
+  readonly valid: true;
+  /**
+   * The fields as the save would store them: defaults applied (a create), slugs normalized,
+   * blocks keyed. A block `_key` minted here is not reserved; a save keeps the keys it is sent.
+   */
+  readonly fields: EntryFields;
+  /**
+   * Plugins registered for `entry:beforeSave` that did not run because they hold capabilities: on
+   * a real save they could still rewrite or refuse these fields. Empty when every one ran.
+   */
+  readonly skippedHooks: readonly string[];
+}
+
+/**
+ * Validates an entry without saving it: exactly the checks `createEntry` or `updateEntry` makes
+ * before it writes (field validation, unique values, an archived entry refused), in the same
+ * order, failing with the same errors, so an agent or an editor learns what a save would say
+ * without leaving a version behind.
+ *
+ * It writes nothing. Of the `entry:beforeSave` plugins it runs only those holding no capability
+ * (they can compute an answer and nothing else); a plugin that could write, store or fetch is
+ * skipped and named in `skippedHooks`. Link targets aren't checked here because a save doesn't
+ * check them either: the publish gate does.
+ */
+export async function validateEntry(
+  ctx: AppContext,
+  scope: Scope,
+  input: ValidateEntryInput,
+): Promise<EntryValidation> {
+  if ('entryId' in input) {
+    const found = await ctx.store.entries.get(scope, input.entryId);
+    if (!found) throw new NotFoundError('Entry', input.entryId);
+    const contentType = await requireContentType(ctx, scope, found.entry.contentTypeApiId);
+    const vctx = await loadValidationContext(ctx, scope);
+    const { fields, skippedHooks } = await prepareFields(
+      ctx,
+      scope,
+      contentType,
+      vctx,
+      {
+        contentTypeApiId: found.entry.contentTypeApiId,
+        entryId: input.entryId,
+        fields: input.fields,
+      },
+      'dry-run',
+    );
+    // The domain's own refusal (an archived entry can't take a new version), at the point a save
+    // meets it.
+    saveDraft(found.entry, fields);
+    const claims = uniqueClaims(contentType, fields);
+    if (claims.length > 0) {
+      await assertClaimsFree(ctx.store.entries, scope, claims, input.entryId);
+    }
+    return { valid: true, fields, skippedHooks };
+  }
+
+  const contentType = await requireContentType(ctx, scope, input.contentTypeApiId);
+  const vctx = await loadValidationContext(ctx, scope);
+  const withDefaults = applyDefaults(contentType, input.fields, vctx.locales, vctx.defaultLocale);
+  const { fields, skippedHooks } = await prepareFields(
+    ctx,
+    scope,
+    contentType,
+    vctx,
+    { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
+    'dry-run',
+  );
+  const claims = uniqueClaims(contentType, fields);
+  if (claims.length > 0) await assertClaimsFree(ctx.store.entries, scope, claims);
+  return { valid: true, fields, skippedHooks };
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +369,7 @@ export async function restoreEntry(ctx: AppContext, scope: Scope, id: string): P
   // Refusing with a message naming the holder is the honest outcome — silently
   // restoring a duplicate slug would break routing on the front end.
   await ctx.store.withTransaction(async (tx) => {
-    await assertClaimsFree(tx, scope, claims, id);
+    await assertClaimsFree(tx.entries, scope, claims, id);
     await tx.entries.saveAggregate(scope, restored);
     await tx.entries.replaceUniqueClaims(scope, id, claims);
   });

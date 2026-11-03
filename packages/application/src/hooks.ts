@@ -1,5 +1,5 @@
 import { HookRejectedError, type Scope, ValidationError } from '@contentworker/domain';
-import type { HookName } from '@contentworker/ports';
+import type { HookName, HookVeto } from '@contentworker/ports';
 import type { AppContext } from './context';
 
 /**
@@ -26,12 +26,31 @@ export async function runHook<T>(
   if (!ctx.hooks) return payload;
 
   const result = await ctx.hooks.dispatch(hook, payload, scope);
-  if ('veto' in result) {
-    const { veto } = result;
-    if (veto.issues?.length) {
-      throw new ValidationError(veto.issues);
-    }
-    throw new HookRejectedError(veto.hook, veto.reason);
-  }
+  if ('veto' in result) throwVeto(result.veto);
   return result.payload;
+}
+
+/**
+ * `runHook` for a dry run: only the handlers that can have no effect run (`pureOnly`), and the
+ * ones left out are named, so the caller can say that a real save might still be rewritten or
+ * refused by them. A veto raises exactly as it would on the real path.
+ */
+export async function runPureHook<T>(
+  ctx: AppContext,
+  hook: HookName,
+  scope: Scope,
+  payload: T,
+): Promise<{ readonly payload: T; readonly skipped: readonly string[] }> {
+  if (!ctx.hooks) return { payload, skipped: [] };
+
+  const result = await ctx.hooks.dispatch(hook, payload, scope, { pureOnly: true });
+  if ('veto' in result) throwVeto(result.veto);
+  return { payload: result.payload, skipped: result.skipped ?? [] };
+}
+
+function throwVeto(veto: HookVeto): never {
+  if (veto.issues?.length) {
+    throw new ValidationError(veto.issues);
+  }
+  throw new HookRejectedError(veto.hook, veto.reason);
 }

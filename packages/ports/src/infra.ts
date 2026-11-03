@@ -712,7 +712,25 @@ export interface HookVeto {
  * The outcome of dispatching one hook: either the (possibly rewritten) payload,
  * or a refusal.
  */
-export type HookResult<T> = { readonly payload: T } | { readonly veto: HookVeto };
+export type HookResult<T> =
+  | {
+      readonly payload: T;
+      /** Handlers left out by {@link HookDispatchOptions.pureOnly}, by id. */
+      readonly skipped?: readonly string[];
+    }
+  | { readonly veto: HookVeto };
+
+export interface HookDispatchOptions {
+  /**
+   * Run only the handlers that can have no effect beyond their answer, and skip the rest (named in
+   * the result's `skipped`). A dry run (validating an entry without saving it) asks for this: it
+   * must not write, so it cannot run a handler holding authority to write or to reach out, even
+   * though that handler might rewrite or refuse the payload on a real save. A plugin is pure when
+   * its effective grant is empty: ambient `fetch` is severed, so with no capability object it can
+   * only compute.
+   */
+  readonly pureOnly?: boolean;
+}
 
 /**
  * Runs registered handlers for a hook.
@@ -728,7 +746,12 @@ export type HookResult<T> = { readonly payload: T } | { readonly veto: HookVeto 
  * refusal.
  */
 export interface HookDispatcher {
-  dispatch<T>(hook: HookName, payload: T, scope: Scope): Promise<HookResult<T>>;
+  dispatch<T>(
+    hook: HookName,
+    payload: T,
+    scope: Scope,
+    options?: HookDispatchOptions,
+  ): Promise<HookResult<T>>;
 }
 
 // ---------------------------------------------------------------------------
