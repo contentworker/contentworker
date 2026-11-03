@@ -36,7 +36,11 @@ async function eventsOf(spaceId: string): Promise<{ rowid: number; event: Domain
 }
 
 describe('a content type delete job in the engine', () => {
-  it('trashes and purges every entry, then deletes the type and purges delivery, once', async () => {
+  // 55 creates, 28 publishes and every event consumed twice are hundreds of D1 round trips: 0.3 to
+  // 1 s locally, but past vitest's default 5 s on a loaded CI runner (PR #119), so it gets twenty.
+  it('trashes and purges every entry, then deletes the type and purges delivery, once', {
+    timeout: 20_000,
+  }, async () => {
     const ctx: AppContext = {
       store,
       clock: { now: () => new Date() },
