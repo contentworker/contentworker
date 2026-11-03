@@ -23,13 +23,13 @@ install, build, run dev servers or touch the network unless the user asked for a
    (`@AGENTS.md`): a rule written into `CLAUDE.md` instead is drift. The toolkit's skills, agents,
    rules and maps name real paths, scripts and identifiers (`pnpm test:toolkit` checks the maps'
    regexes and pages), and their descriptions say when to use them.
-3. **First hour.** From a clean clone: install, migrate the local database, `pnpm dev`, the first
-   test run, the first e2e run. Is every prerequisite stated (Node ≥ 22.18, the pnpm version in
+3. **First hour.** From a clean clone: install, migrate the local D1, `pnpm dev`, the first test
+   run, the first e2e run. Is every prerequisite stated (Node ≥ 22.18, the pnpm version in
    `packageManager`, `jq` for the hooks, Playwright browsers)? Does every env var a dev needs have a
    dev default (`LOCAL_STACK_VARS` in `apps/web/vite.config.ts`) or documentation?
 4. **Feedback loops.** How long until a contributor learns they broke something: hooks, scoped test
-   commands (`turbo --filter`), the local-runtime suites' startup, error messages that say what to
-   do next (in `fleet.ts`, `provision.sh`, `do-migrations.test.ts`, the hooks).
+   commands (`turbo --filter`), the workerd suites' startup, error messages that say what to do
+   next (in `fleet.ts`, `provision.sh`, `do-migrations.test.ts`, the hooks).
 5. **Toolkit hygiene.** `.claude/settings.json` hooks point at executable scripts; its permission
    allowlist names real `@contentworker/*` packages and scripts; hook messages are actionable;
    `pnpm test:toolkit` covers new hooks; skill bodies stay under ~500 lines with detail in

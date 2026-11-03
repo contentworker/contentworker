@@ -11,7 +11,7 @@ paths:
   `packages/ui`) before designing or restyling anything. Compose the existing tokens and
   components; never paste stock shadcn defaults. DESIGN.md's named rules and do's and don'ts are
   binding.
-- The web worker fronts the api over the `API` service binding (`app/lib/gateway.server.ts`): it
+- The web Worker fronts the api over the `API` service binding (`app/lib/gateway.server.ts`): it
   strips a caller-sent `x-cw-principal` and signs one for a same-origin request with a live
   session. Changes there, to sign-in (`auth`, `passkeys`, `sso`, `scim`, `two-factor`, `setup`) or
   to `csp.ts`, `origin.ts`, `next-path.ts` get a `security-reviewer` pass.
