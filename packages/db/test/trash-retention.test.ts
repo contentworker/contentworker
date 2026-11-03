@@ -17,7 +17,7 @@ import { createD1Store } from '../src/store';
 import { testDb } from './env';
 
 /**
- * Trash retention on D1 (0021_trash_retention): the space's setting, and the sweep's read of
+ * Trash retention on D1 (0023_trash_retention): the space's setting, and the sweep's read of
  * expired trash, oldest first, past published links, on the partial `entries_trashed` index. An
  * archived entry's `updated_at` is when it was trashed; the store stamps it with database time, so
  * the tests move it back by hand. Each test makes its own space: the file shares one database.

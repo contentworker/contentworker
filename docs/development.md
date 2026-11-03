@@ -329,7 +329,7 @@ resend repeated). Code older than the migration neither reads nor writes them, a
 before it keep NULL; nothing is backfilled (see
 [Events & webhooks](./events-and-webhooks.md#webhooks)).
 
-`0021_trash_retention.sql` adds the nullable `spaces.trash_retention_days` (NULL, every existing
+`0023_trash_retention.sql` adds the nullable `spaces.trash_retention_days` (NULL, every existing
 space's value, means off) and the partial index `entries_trashed` on `(space_id, environment_id,
 updated_at, id) WHERE status = 'archived'`, which the engine's trash retention sweep reads. Nothing
 is backfilled (see [Architecture](./architecture.md)).

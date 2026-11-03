@@ -1,4 +1,4 @@
--- 0021_trash_retention: how long a space keeps trashed entries. Mirrors `spaces` and `entries` in
+-- 0023_trash_retention: how long a space keeps trashed entries. Mirrors `spaces` and `entries` in
 -- packages/db/src/schema.ts.
 --
 -- A nullable column: existing spaces get NULL, which means off (trashed entries are kept until

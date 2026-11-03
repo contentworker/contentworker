@@ -505,7 +505,7 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   (row, `asset.deleted`, and the engine removes anything under the asset's storage prefix)
   (`removed`). A store or blob error leaves the draft for the next sweep (`failed`). The engine
   logs `abandoned uploads swept` and counts `contentworker_abandoned_uploads_total{outcome}`.
-- **Trash retention.** A space's `trash_retention_days` (migration `0021`; null, the default, is
+- **Trash retention.** A space's `trash_retention_days` (migration `0023`; null, the default, is
   off) is how long its trashed entries are kept. On the top-of-hour tick the engine runs
   `sweepExpiredTrash` (`packages/application/src/trash-retention.ts`, heartbeat job
   `trash-retention`): for every environment of every space with a window, the entries trashed
