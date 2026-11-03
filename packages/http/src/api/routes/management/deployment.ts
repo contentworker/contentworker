@@ -1,10 +1,16 @@
-import { getSchedulerStatus, revokeEverythingFor } from '@contentworker/application';
+import {
+  getSchedulerAlerts,
+  getSchedulerStatus,
+  revokeEverythingFor,
+  setSchedulerAlertRecipients,
+} from '@contentworker/application';
 import { ForbiddenError } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, principalMiddleware } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as authDocs from '../../docs/schemas/auth';
 import * as healthDocs from '../../docs/schemas/health';
+import { parseBody, schedulerAlertsBody } from '../../validation';
 
 export function deploymentRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
@@ -40,6 +46,35 @@ export function deploymentRoutes(deps: AuthDeps): Hono<AuthVars> {
         '`/health` says only `scheduler: ok|stale`. Deployment administrators only.',
     }),
     async (c) => c.json(await getSchedulerStatus(ctx, c.get('principal'))),
+  );
+  app.get(
+    '/deployment/scheduler/alerts',
+    doc('System', 'Report the scheduler alerts', {
+      ok: healthDocs.schedulerAlerts,
+      description:
+        'Who is emailed when a sweep goes stale, the sweeps stale now and the last resolved ' +
+        'episodes, each with how its emails went. A sweep is stale once it has gone two of its ' +
+        'runs without a success (five minutes for the every-minute ones); the cron emails once ' +
+        'per episode and once more when it recovers, and once when it ticks again after a gap. ' +
+        'Deployment administrators only.',
+    }),
+    async (c) => c.json(await getSchedulerAlerts(ctx, c.get('principal'))),
+  );
+  app.put(
+    '/deployment/scheduler/alerts',
+    doc('System', 'Set who the scheduler alerts email', {
+      body: schedulerAlertsBody,
+      ok: healthDocs.schedulerAlerts,
+      description:
+        'Replaces the recipients (at most 50; trimmed, lowercased, deduplicated). An empty list ' +
+        'turns the emails off: the engine still logs every episode. The emails need the ' +
+        "deployment's Email Sending sender (`email.from` in its registry entry). Deployment " +
+        'administrators only.',
+    }),
+    async (c) => {
+      const { recipients } = await parseBody(c, schedulerAlertsBody);
+      return c.json(await setSchedulerAlertRecipients(ctx, c.get('principal'), recipients));
+    },
   );
 
   /** Lightweight principal probe for admin connection UI and SSO sessions. */

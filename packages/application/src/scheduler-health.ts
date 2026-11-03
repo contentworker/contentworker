@@ -11,7 +11,8 @@ import type { AppContext } from './context';
  * the tick itself as the `tick` job, in one write at the end (`recordSchedulerTick`). The api's
  * `/health` reads the tick's age (`schedulerState`): stale once it is older than
  * {@link SCHEDULER_STALE_AFTER_MS}. Deployment administrators read every job's last success and
- * last error (`getSchedulerStatus`), over HTTP and MCP alike.
+ * last error (`getSchedulerStatus`), over HTTP and MCP alike. Telling someone when a sweep goes
+ * stale is `scheduler-alerts.ts`.
  */
 
 /** The job name of the cron tick itself. */

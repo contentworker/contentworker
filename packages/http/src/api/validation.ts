@@ -5,6 +5,7 @@ import {
   MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
   MAX_PART_URLS,
+  SCHEDULER_ALERT_MAX_RECIPIENTS,
 } from '@contentworker/application';
 import {
   MAX_ASSET_RIGHTS_TEXT,
@@ -660,4 +661,12 @@ export const tagPatchBody = z.object({ name: zShort.optional(), ...termFields })
 export const entryMetadataBody = z.object({
   tags: z.array(zId).max(1000).optional(),
   concepts: z.array(zId).max(1000).optional(),
+});
+
+/** PUT /deployment/scheduler/alerts: replaces who is emailed (the addresses are checked there). */
+export const schedulerAlertsBody = z.object({
+  recipients: z
+    .array(z.string().max(320))
+    .max(SCHEDULER_ALERT_MAX_RECIPIENTS)
+    .describe('Email addresses; an empty list turns the emails off'),
 });

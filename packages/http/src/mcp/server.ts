@@ -41,6 +41,7 @@ import { registerReadTools } from './tools/read';
 import { registerRedirectTools } from './tools/redirects';
 import { registerReleaseTools } from './tools/releases';
 import { registerRoleTools } from './tools/roles';
+import { registerSchedulerTools } from './tools/scheduler';
 import { DEFAULT_ENV, DEFAULT_SPACE, ok, type ToolContext } from './tools/shared';
 import { registerSnapshotTools } from './tools/snapshots';
 import { registerSpaceExportTools } from './tools/space-export';
@@ -111,6 +112,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerAssetVersionTools,
   registerEnvironmentMergeTools,
   registerInviteTools,
+  registerSchedulerTools,
   registerSpaceTools,
   registerPromotionTools,
   registerEnvironmentAliasTools,
