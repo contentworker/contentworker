@@ -179,10 +179,37 @@ describe('API key tools over MCP', () => {
     expect(await deps.ctx.store.auth.list(SPACE)).toHaveLength(before);
   });
 
+  it('refuses a personal access token or an OAuth token minting or widening a key', async () => {
+    const roleId = await presetRoleId(deps.ctx, SPACE, 'viewer');
+    const key = await createApiKey(deps.ctx, hasher, { spaceId: SPACE, kind: 'cma', roleId });
+    for (const delegated of [
+      { ...spaceAdmin, subject: 'ada@example.com', issuance: 'pat' as const },
+      { ...spaceAdmin, subject: 'ada@example.com', clientId: 'app', issuance: 'oauth' as const },
+    ]) {
+      const agent = await connect(deps, delegated);
+      const mint = await agent.callTool({ name: 'api_key_create', arguments: { kind: 'cma' } });
+      expect(mint.isError).toBe(true);
+      expect(JSON.stringify(mint.content)).toContain("can't mint an API key");
+      for (const name of ['api_key_update', 'role_preset_assign'] as const) {
+        const args =
+          name === 'api_key_update'
+            ? { id: key.apiKey.id, role: 'admin' }
+            : { keyId: key.apiKey.id, preset: 'admin' };
+        expect((await agent.callTool({ name, arguments: args })).isError).toBe(true);
+      }
+    }
+    expect(
+      (await deps.ctx.store.auth.list(SPACE)).find((k) => k.id === key.apiKey.id)?.roleId,
+    ).toBe(roleId);
+  });
+
   it('never writes the token to the audit trail', async () => {
     const created = payload(await call('api_key_create', { kind: 'cpa' })) as Created;
     const entries = JSON.stringify(await deps.ctx.store.audit.list(SPACE, {}));
     expect(entries).toContain('api_key_create');
     expect(entries).not.toContain(created.token);
+    // The row names the key it created.
+    const rows = await deps.ctx.store.audit.list(SPACE, {});
+    expect(rows.find((r) => r.action === 'MCP api_key_create')?.targetId).toBe(created.id);
   });
 });

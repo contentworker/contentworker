@@ -101,9 +101,13 @@ person mints for themselves, and the route refuses any caller holding an OAuth `
 token that expires in an hour can't issue itself one that never does
 ([Auth & RBAC](./auth-and-rbac.md#one-token-model-three-issuances)). API keys are on MCP like
 every other `space:admin` operation (`packages/http/src/mcp/tools/api-keys.ts`, on the routes'
-use-cases and body schemas): an OAuth grant never carries `space:admin` (`maxClientScopes` in
-`packages/application/src/oauth.ts`), so no delegated token reaches them over either surface, and
-any caller that does hold it can already mint a key over REST with the same bearer token. The webhook tools scope a hook the way the routes do
+use-cases and body schemas). The same rule holds for them in the use-cases, on both surfaces: a
+delegated bearer (an OAuth access token, or a personal access token) can't mint an operator key or
+widen one's role (`assertMayMintKeys` in `packages/application/src/auth.ts`, `assignApiKeyRole` in
+`team.ts`); a signed-in person, an operator key and the admin token can. (An OAuth grant never
+carries `space:admin` anyway, `maxClientScopes` in `oauth.ts`.)
+
+The webhook tools scope a hook the way the routes do
 ([Events & webhooks](./events-and-webhooks.md#webhooks)): to the `environment` argument, or
 space-wide with `allEnvironments: true`.
 

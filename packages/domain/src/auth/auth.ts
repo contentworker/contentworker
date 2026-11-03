@@ -195,6 +195,23 @@ export interface Principal {
   readonly sessionId?: string;
   /** The OAuth client acting on the subject's behalf, for audit attribution. */
   readonly clientId?: string;
+  /**
+   * How a person's bearer token was issued (`oauth`, `pat`, `setup`), when the principal came from
+   * one; absent for an operator key, the admin token and a signed-in person.
+   */
+  readonly issuance?: Exclude<TokenIssuance, 'key'>;
+}
+
+/**
+ * A bearer a person handed to a program: an OAuth access token or a personal access token. It may
+ * act for them, but never mint (or widen) a credential that outlives it.
+ */
+export function isDelegatedBearer(principal: Principal): boolean {
+  return (
+    principal.clientId !== undefined ||
+    principal.issuance === 'oauth' ||
+    principal.issuance === 'pat'
+  );
 }
 
 export class UnauthorizedError extends DomainError {
@@ -206,6 +223,20 @@ export class UnauthorizedError extends DomainError {
 export class ForbiddenError extends DomainError {
   constructor(scope: string) {
     super('forbidden', `Missing required scope "${scope}"`);
+  }
+}
+
+/**
+ * A delegated bearer (see {@link isDelegatedBearer}) tried to mint an API key or widen one. A 403,
+ * like a missing scope, but saying what to use instead.
+ */
+export class DelegatedKeyMintError extends DomainError {
+  constructor() {
+    super(
+      'forbidden',
+      "An OAuth or personal access token can't mint an API key or widen one; sign in to the " +
+        'admin, or use an operator key',
+    );
   }
 }
 

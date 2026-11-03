@@ -42,7 +42,9 @@ curl -s "$API/spaces/$SPACE/api-keys" \
 The raw token is in the response **once**. contentworker stores only a hash of it, so a lost token
 can't be recovered: revoke it and mint another. An agent with `space:admin` does the same over
 [MCP](/guides/mcp/): `api_keys_list`, `api_key_create` (the token is in its result, once),
-`api_key_update` (the key's role) and `api_key_revoke`. Tokens start with `cwk_` and the kind, so a leaked
+`api_key_update` (the key's role) and `api_key_revoke`. A personal access token or an app
+connected with OAuth can't mint a key, or widen one's role (403), whatever its scopes: a token
+someone handed to a program never turns itself into one that outlives it. Tokens start with `cwk_` and the kind, so a leaked
 one is easy to recognize and scan for.
 
 ## Scopes

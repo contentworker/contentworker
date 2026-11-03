@@ -80,8 +80,9 @@ through the same validation, versioning and events as a person's.
 | Docs | `docs_list`, `docs_read`, `docs_search` |
 
 A personal access token can't be minted over MCP: an agent can't mint itself a longer-lived
-credential. Mint one in the admin or over the REST API. The API key tools need `space:admin`, which
-an app connected with OAuth is never granted.
+credential. Mint one in the admin or over the REST API. For the same reason the API key tools
+refuse a personal access token or an OAuth token minting a key or widening one; they need
+`space:admin`, which an app connected with OAuth is never granted anyway.
 
 Every tool call that changes something is written to the space's audit log, like a REST write, as
 `MCP <tool>` (`MCP entries_update`) with who made it, the environment and the target id. Reads,

@@ -13,15 +13,14 @@ import { createApiKeyBody } from '../../api/validation';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerApiKeyTools(server: McpServer, t: ToolContext): void {
-  const { deps, ctx, guard } = t;
+  const { deps, ctx, guard, principal, auditTarget } = t;
   const policy = deps.accessPolicy ?? { sso: false };
   // --- API keys (admin) ----------------------------------------------------
   // The `/spaces/:space/api-keys` routes' twins (and `…/api-keys/:id/role`'s): the same
   // use-cases, the same space-admin check, the same body schemas and projections (never the stored
-  // hash). The key belongs to the `space` argument, the one the guard authorized. A delegated token
-  // can't mint itself a longer-lived key here any more than over REST: OAuth grants never carry
-  // `space:admin` (`maxClientScopes`).
-  // Minting a personal access token stays HTTP-only (see oauth-connections.ts).
+  // hash). The key belongs to the `space` argument, the one the guard authorized. Minting and
+  // widening refuse a delegated bearer (an OAuth or personal access token) in the use-case, on both
+  // surfaces: a token a person handed to a program never turns itself into one that outlives it.
 
   server.registerTool(
     'api_keys_list',
@@ -45,7 +44,8 @@ export function registerApiKeyTools(server: McpServer, t: ToolContext): void {
         'Mint an API key for a space: kind cma (management), cda (delivery) or cpa (preview), an ' +
         "optional name, and the kind's default scopes unless scopes or a roleId is given. The " +
         'secret token is shown ONCE, in this result, and never again (only its hash is stored): ' +
-        'hand it to whoever needs it now, or revoke the key. It does not expire.',
+        'hand it to whoever needs it now, or revoke the key. It does not expire. Refused to an ' +
+        'OAuth or personal access token.',
       inputSchema: toolSchema('api_key_create', () => createApiKeyBody.extend(scopeArgs)),
     },
     async (args) => {
@@ -56,7 +56,9 @@ export function registerApiKeyTools(server: McpServer, t: ToolContext): void {
         name: args.name,
         scopes: args.scopes,
         roleId: args.roleId,
+        issuer: principal,
       });
+      auditTarget.set(args, created.apiKey.id);
       return ok({ id: created.apiKey.id, kind: created.apiKey.kind, token: created.token });
     },
   );
@@ -67,14 +69,22 @@ export function registerApiKeyTools(server: McpServer, t: ToolContext): void {
       description:
         "Change an API key's role: a role id or preset name (viewer, approver, editor, manager, " +
         "admin), or null to unbind it to its kind's default scopes. Refused for a revoked key, " +
-        'an OAuth token, and when it would leave the space with no administrator.',
+        'an OAuth token, when it would leave the space with no administrator, and to an OAuth or ' +
+        'personal access token when it would widen the key.',
       inputSchema: toolSchema('api_key_update', () =>
         keyRoleBody.extend({ id: z.string(), ...scopeArgs }),
       ),
     },
     async (args) => {
       guard(SCOPES.spaceAdmin, scopeOf(args));
-      const key = await assignApiKeyRole(ctx, scopeOf(args).spaceId, args.id, args.role, policy);
+      const key = await assignApiKeyRole(
+        ctx,
+        scopeOf(args).spaceId,
+        args.id,
+        args.role,
+        policy,
+        principal,
+      );
       return ok({ id: key.id, roleId: key.roleId ?? null, scopes: key.scopes });
     },
   );

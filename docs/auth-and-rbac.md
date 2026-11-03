@@ -511,9 +511,14 @@ grants continue to resolve live in every case — only the coarse scopes are cap
 A delegated token also cannot mint a longer-lived one: `POST /spaces/:space/personal-access-tokens` refuses any
 caller carrying a `clientId` (i.e. an OAuth-issued token), so a credential that expires in an hour
 cannot promote itself into one that never does. That route is deliberately **not** exposed as an
-MCP tool for the same reason. Operator API keys are (`api_keys_list`, `api_key_create`,
-`api_key_update`, `api_key_revoke`): they need `space:admin`, which an OAuth grant never carries,
-so the same rule holds for them on both surfaces.
+MCP tool for the same reason. Operator API keys are on MCP (`api_keys_list`, `api_key_create`,
+`api_key_update`, `api_key_revoke`), and the same rule covers them on both surfaces: a delegated
+bearer (`isDelegatedBearer`: an OAuth or personal access token, which `authenticate` marks with
+the principal's `issuance`) gets **403** from `POST /spaces/:space/api-keys` and from a
+`PUT /spaces/:space/api-keys/:id/role` (or `role_preset_assign`) that would widen a key: new
+scopes it doesn't hold, a different role's content grants, or unbinding it from a role. Narrowing
+is allowed. A signed-in person, an operator key and the admin token are unaffected. Before this,
+a personal access token holding `space:admin` could mint a key over REST.
 
 ## Secrets at rest
 

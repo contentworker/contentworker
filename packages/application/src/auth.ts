@@ -1,6 +1,8 @@
 import {
   type ApiKey,
   type ApiKeyKind,
+  DelegatedKeyMintError,
+  isDelegatedBearer,
   NotFoundError,
   type Principal,
   scopesForKind,
@@ -34,6 +36,21 @@ export interface CreateApiKeyInput {
   readonly subject?: string;
   /** The OAuth client that obtained the token, when `issuance` is `oauth`. */
   readonly clientId?: string;
+  /**
+   * Who is minting it, when a caller is (the routes and tools; not the OAuth and PAT flows, which
+   * mint delegated tokens themselves). A delegated bearer is refused: see {@link assertMayMintKeys}.
+   */
+  readonly issuer?: Principal;
+}
+
+/**
+ * Refuses a delegated bearer (an OAuth access token, a personal access token) minting or widening
+ * an operator key, which never expires and acts for no one: a token a person handed to a program
+ * must not turn itself into one that outlives it. A signed-in person, an operator key and the
+ * admin token may.
+ */
+export function assertMayMintKeys(issuer: Principal | undefined): void {
+  if (issuer && isDelegatedBearer(issuer)) throw new DelegatedKeyMintError();
 }
 
 /** Token prefix by issuance, so operators can identify a token on sight. */
@@ -65,6 +82,7 @@ export async function createApiKey(
   hasher: Hasher,
   input: CreateApiKeyInput,
 ): Promise<CreatedApiKey> {
+  assertMayMintKeys(input.issuer);
   if (!input.spaceId || input.spaceId === '*') {
     // Only the deployment's root tokens act across spaces; a stored key never does.
     throw new ValidationError([{ field: 'spaceId', message: 'A key belongs to one space' }]);
@@ -135,7 +153,12 @@ export async function authenticate(
   // principal so audit attributes the action to the person, not the key kind.
   const delegated = key.issuance === 'oauth' || key.issuance === 'pat' || key.issuance === 'setup';
   const identity = delegated
-    ? { kind: 'user' as const, subject: key.subject, clientId: key.clientId }
+    ? {
+        kind: 'user' as const,
+        subject: key.subject,
+        clientId: key.clientId,
+        issuance: key.issuance as 'oauth' | 'pat' | 'setup',
+      }
     : { kind: key.kind };
 
   if (delegated) {

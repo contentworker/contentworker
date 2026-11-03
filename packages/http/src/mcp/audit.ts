@@ -62,6 +62,8 @@ export interface ToolAuditInput {
   readonly principal: Principal;
   readonly defaultSpace: string;
   readonly defaultEnvironment: string;
+  /** What the call created, when its arguments can't name it (`api_key_create`'s new key). */
+  readonly targetId?: string;
 }
 
 /**
@@ -85,7 +87,7 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
         : undefined,
       actor: auditActor(input.principal),
       action: `MCP ${tool}`,
-      targetId: str(args.id) ?? str(args.apiId) ?? str(args.alias),
+      targetId: input.targetId ?? str(args.id) ?? str(args.apiId) ?? str(args.alias),
       status: 200,
     });
   } catch {

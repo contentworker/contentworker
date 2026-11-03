@@ -258,6 +258,8 @@ The body, the analysis report and the format notes are in
 | DELETE | `/spaces/:space/api-keys/:id`             | `space:admin` | Revoke a key (also how a personal access token or OAuth token is revoked)                    |
 
 MCP: `api_keys_list`, `api_key_create`, `api_key_update` (the key's role), `api_key_revoke`.
+Minting a key, and a role change that widens one, answer 403 to a personal access token or an
+OAuth token (see [Auth & RBAC](./auth-and-rbac.md#one-token-model-three-issuances)).
 | POST   | `/spaces/:space/personal-access-tokens`   | `space:admin` | Mint a personal access token `{ name, scopes, expiresInDays? }` (1 to 365); raw `token` once |
 | GET    | `/spaces/:space/personal-access-tokens`   | `space:admin` | List personal access tokens                                                                  |
 | GET    | `/spaces/:space/oauth/connections`        | `space:admin` | List applications connected through OAuth                                                    |

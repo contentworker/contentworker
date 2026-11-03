@@ -126,7 +126,8 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
       body: keyRoleBody,
       description:
         'A role id or preset name; `null` unbinds the key (its kind’s default scopes). Refused ' +
-        'with 409 `last_admin` when it would leave the space with no administrator.',
+        'with 409 `last_admin` when it would leave the space with no administrator, and with 403 ' +
+        'to a personal access token or an OAuth token when it would widen the key.',
     }),
     admin,
     async (c) => {
@@ -137,6 +138,7 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
         c.req.param('id'),
         body.role,
         policy,
+        c.get('principal'),
       );
       return c.json({ id: key.id, roleId: key.roleId ?? null, scopes: key.scopes });
     },

@@ -33,7 +33,9 @@ export function apiKeysRoutes(deps: AuthDeps): Hono<AuthVars> {
       body: createApiKeyBody,
       ok: authDocs.apiKeyCreated,
       status: 201,
-      description: 'The raw token is returned once; only its SHA-256 hash is stored.',
+      description:
+        'The raw token is returned once; only its SHA-256 hash is stored. 403 to a personal ' +
+        'access token or an OAuth token: a delegated bearer never mints a key that outlives it.',
     }),
     requireScope(SCOPES.spaceAdmin),
     async (c) => {
@@ -47,6 +49,7 @@ export function apiKeysRoutes(deps: AuthDeps): Hono<AuthVars> {
         name: body.name,
         scopes: body.scopes,
         roleId: body.roleId,
+        issuer: c.get('principal'),
       });
       // Return the raw token once; only its hash is stored.
       return c.json(
