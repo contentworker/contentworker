@@ -154,7 +154,13 @@ interface DraftEntryInput {
 - It builds a strict JSON Schema (`additionalProperties: false`) from the content type's
   **scalar** fields (`Symbol`, `Text`, `Integer`, `Number`, `Boolean`, `Date` — not links or
   rich text), asks the provider for structured output, then **validates the result against the
-  content model** with the same `validateEntryFields` path as human writes.
+  content model** with the same `validateEntryFields` path as human writes. Each property's
+  `description` is `describeFieldForModel(field)`: the name, then the field's guidance as one
+  capped line, labelled as describing the field and wrapped in `<user_content>` (delimiter tags in
+  it, spaced or nested, are stripped until none is left: `stripDelimiters`; the system prompt
+  carries `UNTRUSTED_CONTENT_GUARD`). Its rules become JSON Schema constraints (`in` as an `enum`
+  of option values). Autofill, the `ai.enrich` node and the agent runtime describe fields the same
+  way.
 - Generated values are wrapped in the space's default locale.
 - Returns `{ contentTypeApiId, fields, usage }`. Pair it with `createEntry` to actually author.
 

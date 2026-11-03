@@ -37,7 +37,9 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'model_list_content_types',
     {
-      description: 'List the content types defined in a space/environment.',
+      description:
+        'List the content types defined in a space/environment, each field with its guidance ' +
+        '(`description`, `help`, `placeholder`, validation `messages`).',
       inputSchema: toolSchema('model_list_content_types', () => z.object(scopeArgs)),
       annotations: { readOnlyHint: true },
     },
@@ -50,7 +52,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'model_get_content_type',
     {
-      description: 'Get a single content type definition by its apiId.',
+      description:
+        'Get a single content type definition by its apiId. Each field carries the guidance ' +
+        'its author wrote: `description` (what it means), `help` (how to fill it), ' +
+        '`placeholder` (an example), and `validations.messages` (the error text a broken rule ' +
+        'reports). Read them ' +
+        'before writing an entry.',
       inputSchema: toolSchema('model_get_content_type', () =>
         z.object({ apiId: z.string(), ...scopeArgs }),
       ),

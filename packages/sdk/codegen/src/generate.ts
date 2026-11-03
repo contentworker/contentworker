@@ -12,21 +12,31 @@ export interface ContentTypeInput {
   readonly fields: readonly FieldInput[];
 }
 
+/** An allowed value of an `in` rule: bare, or with the label an editor picks it by. */
+export type OptionInput =
+  | string
+  | number
+  | { readonly value: string | number; readonly label?: string };
+
 export interface FieldInput {
   readonly apiId: string;
   readonly name?: string;
   readonly type: string;
   readonly localized?: boolean;
   readonly required?: boolean;
+  /** What the field means; emitted as the property's doc comment. */
+  readonly description?: string;
+  /** How to fill it; emitted as the property's doc comment when there is no description. */
+  readonly help?: string;
   readonly validations?: {
-    readonly in?: readonly (string | number)[];
+    readonly in?: readonly OptionInput[];
     readonly linkContentTypes?: readonly string[];
   };
   readonly linkType?: 'Entry' | 'Asset';
   readonly items?: {
     readonly type: string;
     readonly linkType?: 'Entry' | 'Asset';
-    readonly validations?: { readonly in?: readonly (string | number)[] };
+    readonly validations?: { readonly in?: readonly OptionInput[] };
     readonly fields?: readonly FieldInput[];
     /** For a blocks field (Array-of-Component): the shapes an element may take. */
     readonly variants?: readonly VariantInput[];
@@ -276,10 +286,10 @@ function blockType(variant: VariantInput, opts: { delivered?: boolean } = {}): s
   return `{ _type: ${literal(variant.apiId)}; _key: string${rows ? `; ${rows}` : ''} }`;
 }
 
-/** An `in` validation becomes a literal union (`'a' | 'b'`); absent → null. */
-function literalUnion(values: readonly (string | number)[] | undefined): string | null {
-  if (!values || values.length === 0) return null;
-  return values.map(literal).join(' | ');
+/** An `in` validation becomes a literal union of its stored values (`'a' | 'b'`); absent → null. */
+function literalUnion(options: readonly OptionInput[] | undefined): string | null {
+  if (!Array.isArray(options) || options.length === 0) return null;
+  return options.map((o) => literal(typeof o === 'object' ? o.value : o)).join(' | ');
 }
 
 function literal(value: string | number): string {
@@ -307,6 +317,10 @@ function propertyKey(apiId: string): string {
 function fieldComment(field: FieldInput): string {
   const notes: string[] = [];
   if (field.name && field.name !== field.apiId) notes.push(escapeComment(field.name));
+  // One line of guidance: the description says what the field means, which is what someone
+  // reading a type wants; help is the fallback.
+  const guidance = (field.description ?? field.help)?.replace(/\s+/g, ' ').trim();
+  if (guidance) notes.push(escapeComment(guidance));
   if (field.localized) notes.push('localized');
   if (field.linkType || field.items?.linkType) {
     const allowed = field.validations?.linkContentTypes;

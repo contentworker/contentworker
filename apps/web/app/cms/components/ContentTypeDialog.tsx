@@ -2,6 +2,7 @@ import {
   blockVariants,
   type ContentType,
   type ContentTypeDraft,
+  FIELD_GUIDANCE_LIMITS,
   FIELD_TYPES,
   type FieldDefinition,
   type FieldType,
@@ -27,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
+import { Textarea } from '@contentworker/ui/textarea';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toApiId } from '../lib/api-id';
@@ -47,6 +49,12 @@ interface FieldRow {
   required: boolean;
   localized: boolean;
   unique?: boolean;
+  /** Guidance for whoever fills the field: `help`, `placeholder` and `description`. */
+  help: string;
+  placeholder: string;
+  description: string;
+  /** Whether the guidance inputs are shown; open from the start when there is guidance. */
+  guidanceOpen: boolean;
   /**
    * Set when the field is a blocks field: an `Array` of `Component` whose
    * elements take one of these shapes. Offered in the type menu as "Blocks".
@@ -82,6 +90,8 @@ const UNBUILDABLE_TYPES: readonly FieldType[] = ['Component'];
  */
 const BLOCKS = 'Blocks';
 
+const NO_GUIDANCE = { help: '', placeholder: '', description: '', guidanceOpen: false };
+
 const newField = (): FieldRow => ({
   name: '',
   apiId: '',
@@ -89,7 +99,15 @@ const newField = (): FieldRow => ({
   type: 'Symbol',
   required: false,
   localized: false,
+  ...NO_GUIDANCE,
 });
+
+/** Whether a row carries any guidance (what the collapsed Guidance button marks). */
+const hasGuidance = (row: Pick<FieldRow, 'help' | 'placeholder' | 'description'>): boolean =>
+  Boolean(row.help.trim() || row.placeholder.trim() || row.description.trim());
+
+/** A guidance text as saved: trimmed, and left out when empty so clearing it removes it. */
+const guidance = (text: string): string | undefined => text.trim() || undefined;
 
 /**
  * Builds the definition to save from an edited row.
@@ -126,6 +144,9 @@ function toDefinition(row: FieldRow, position: number): FieldDefinition {
     // Omitted rather than sent as false, so the payload stays the shape the API
     // documents for types that cannot be unique.
     unique: row.unique ? true : undefined,
+    help: guidance(row.help),
+    placeholder: guidance(row.placeholder),
+    description: guidance(row.description),
     position,
   } as FieldDefinition;
 }
@@ -142,6 +163,10 @@ function fromContentType(ct: ContentType): { name: string; apiId: string; fields
       required: f.required,
       localized: f.localized,
       unique: f.unique,
+      help: f.help ?? '',
+      placeholder: f.placeholder ?? '',
+      description: f.description ?? '',
+      guidanceOpen: Boolean(f.help || f.placeholder || f.description),
       ...(blockVariants(f) ? { blocks: variantRowsFrom(blockVariants(f) ?? []) } : {}),
       source: f,
     })),
@@ -173,6 +198,7 @@ export function ContentTypeDialog(props: {
             type: 'Symbol' as FieldType,
             required: true,
             localized: true,
+            ...NO_GUIDANCE,
           },
         ],
       };
@@ -391,12 +417,40 @@ export function ContentTypeDialog(props: {
                   <Button
                     type="button"
                     variant="ghost"
+                    size="sm"
+                    aria-expanded={f.guidanceOpen}
+                    aria-controls={`ct-field-${i}-guidance`}
+                    // Collapsed, the button still says the field has guidance, so it is
+                    // not mistaken for one without.
+                    aria-label={`Guidance for ${f.name || f.apiId || `field ${i + 1}`}${
+                      !f.guidanceOpen && hasGuidance(f) ? ', set' : ''
+                    }`}
+                    onClick={() => setField(i, { guidanceOpen: !f.guidanceOpen })}
+                  >
+                    Guidance
+                    {!f.guidanceOpen && hasGuidance(f) && (
+                      <span aria-hidden="true" className="text-muted-foreground">
+                        · set
+                      </span>
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
                     size="icon"
                     aria-label="Remove field"
                     onClick={() => setFields((prev) => prev.filter((_, idx) => idx !== i))}
                   >
                     <Trash2 className="size-4" />
                   </Button>
+                  {f.guidanceOpen && (
+                    <FieldGuidance
+                      id={`ct-field-${i}-guidance`}
+                      fieldLabel={f.name || f.apiId || `field ${i + 1}`}
+                      row={f}
+                      onChange={(patch) => setField(i, patch)}
+                    />
+                  )}
                   {f.blocks && (
                     <BlockVariantsEditor
                       fieldLabel={f.name || f.apiId || `field ${i + 1}`}
@@ -457,5 +511,73 @@ export function ContentTypeDialog(props: {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The guidance a field carries for whoever fills it, under its row: the help line and placeholder
+ * an editor sees on the entry form, and the description agents read from the model. Each input
+ * names the field it belongs to, since the rows repeat.
+ */
+function FieldGuidance(props: {
+  id: string;
+  fieldLabel: string;
+  row: Pick<FieldRow, 'help' | 'placeholder' | 'description'>;
+  onChange: (patch: Partial<Pick<FieldRow, 'help' | 'placeholder' | 'description'>>) => void;
+}) {
+  const { id, fieldLabel, row, onChange } = props;
+  return (
+    // A fieldset named for its field: the rows repeat, so the group says whose guidance it is.
+    <fieldset id={id} className="basis-full space-y-2 rounded-xl bg-secondary/40 p-3">
+      <legend className="sr-only">Guidance for {fieldLabel}</legend>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-help`} className="font-normal text-muted-foreground text-xs">
+            Help text
+          </Label>
+          <Input
+            id={`${id}-help`}
+            aria-label={`Help text for ${fieldLabel}`}
+            value={row.help}
+            maxLength={FIELD_GUIDANCE_LIMITS.help}
+            placeholder="Shown under the input"
+            onChange={(e) => onChange({ help: e.target.value })}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label
+            htmlFor={`${id}-placeholder`}
+            className="font-normal text-muted-foreground text-xs"
+          >
+            Placeholder
+          </Label>
+          <Input
+            id={`${id}-placeholder`}
+            aria-label={`Placeholder for ${fieldLabel}`}
+            value={row.placeholder}
+            maxLength={FIELD_GUIDANCE_LIMITS.placeholder}
+            placeholder="An example value"
+            onChange={(e) => onChange({ placeholder: e.target.value })}
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor={`${id}-description`} className="font-normal text-muted-foreground text-xs">
+          Description
+        </Label>
+        <Textarea
+          id={`${id}-description`}
+          aria-label={`Description for ${fieldLabel}`}
+          aria-describedby={`${id}-hint`}
+          rows={2}
+          value={row.description}
+          maxLength={FIELD_GUIDANCE_LIMITS.description}
+          onChange={(e) => onChange({ description: e.target.value })}
+        />
+        <p id={`${id}-hint`} className="max-w-measure text-muted-foreground text-xs">
+          What the field means. Agents read it from the model with the help text.
+        </p>
+      </div>
+    </fieldset>
   );
 }

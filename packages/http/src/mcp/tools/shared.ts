@@ -2,6 +2,7 @@ import {
   type Asset,
   AssetRightsError,
   type ContentAction,
+  FIELD_GUIDANCE_LIMITS,
   FIELD_TYPES,
   type PermissionScope,
   type Principal,
@@ -46,7 +47,37 @@ export const fieldSchema = z.object({
   // attribute would be silently dropped rather than rejected.
   unique: z.boolean().optional().describe('no two entries may share a value (per locale)'),
   defaultValue: z.any().optional().describe('applied on create when the field is omitted'),
-  validations: z.record(z.string(), z.any()).optional(),
+  // Untyped and uncapped here, as on the route: the domain checks them, and lets a value stored
+  // before guidance was checked through unchanged.
+  help: z
+    .unknown()
+    .optional()
+    .describe(
+      `how to fill the field (text, at most ${FIELD_GUIDANCE_LIMITS.help} characters): shown ` +
+        'under the editor input; follow it when writing values',
+    ),
+  placeholder: z
+    .unknown()
+    .optional()
+    .describe(
+      `an example shown in the empty input (text, at most ${FIELD_GUIDANCE_LIMITS.placeholder} ` +
+        'characters); never stored',
+    ),
+  description: z
+    .unknown()
+    .optional()
+    .describe(
+      `what the field means, for agents and API readers (text, at most ` +
+        `${FIELD_GUIDANCE_LIMITS.description} characters)`,
+    ),
+  validations: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe(
+      '{ in?: allowed values (strings or numbers, each once), ' +
+        'regexp?: { pattern, flags? }, range?: { min?, max? }, size?: { min?, max? }, ' +
+        'linkContentTypes?, messages?: { in|regexp|range|size: error text replacing the default } }',
+    ),
   linkType: z.enum(['Entry', 'Asset']).optional(),
   items: z
     .record(z.string(), z.any())

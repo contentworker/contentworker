@@ -4,12 +4,15 @@ import {
   type EntryFields,
   type FieldDefinition,
   NotFoundError,
+  normalizeOptions,
+  optionValue,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
+import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD } from './ai-prompt';
 import type { AppContext } from './context';
 
 /** Field types we ask the model to generate for a draft (scalars only). */
@@ -39,7 +42,12 @@ function schemaForContentType(ct: ContentType): { schema: JsonSchema; fields: Fi
 }
 
 function jsonTypeFor(field: FieldDefinition): Record<string, unknown> {
-  const base: Record<string, unknown> = { description: field.name, ...constraintsFor(field) };
+  // The field's guidance rides in the description, so a draft is written to the same brief an
+  // editor reads under the input.
+  const base: Record<string, unknown> = {
+    description: describeFieldForModel(field),
+    ...constraintsFor(field),
+  };
   switch (field.type) {
     case 'Integer':
       return { ...base, type: 'integer' };
@@ -48,7 +56,11 @@ function jsonTypeFor(field: FieldDefinition): Record<string, unknown> {
     case 'Boolean':
       return { ...base, type: 'boolean' };
     case 'Date':
-      return { ...base, type: 'string', description: `${field.name} (ISO-8601 date)` };
+      return {
+        ...base,
+        type: 'string',
+        description: `${describeFieldForModel(field)} (ISO-8601 date)`,
+      };
     default:
       return { ...base, type: 'string' };
   }
@@ -63,8 +75,11 @@ function constraintsFor(field: FieldDefinition): Record<string, unknown> {
   if (!v) return {};
   const numeric = field.type === 'Integer' || field.type === 'Number';
   const text = field.type === 'Symbol' || field.type === 'Text';
+  // Usable options only, once each: a list stored before options were checked may hold anything.
+  const options = normalizeOptions(v.in, field.type);
   return {
-    ...(v.in?.length ? { enum: [...v.in] } : {}),
+    // The stored values only: a label is what an editor picks by, not what is written.
+    ...(options.length ? { enum: options.map(optionValue) } : {}),
     ...(numeric && v.range?.min !== undefined ? { minimum: v.range.min } : {}),
     ...(numeric && v.range?.max !== undefined ? { maximum: v.range.max } : {}),
     ...(text && v.size?.min !== undefined ? { minLength: v.size.min } : {}),
@@ -105,7 +120,9 @@ export async function draftEntry(
   const { schema } = schemaForContentType(ct);
   const system =
     'You generate structured content entries. Return only values that satisfy the provided ' +
-    "JSON schema. Respect each field's meaning and keep text concise and natural.";
+    "JSON schema. Respect each field's meaning and keep text concise and natural. " +
+    // Field guidance in the schema descriptions is author text, delimited as data.
+    UNTRUSTED_CONTENT_GUARD;
   const prompt = `Content type: ${ct.name} (${ct.apiId}).\nInstructions: ${input.prompt}\nProduce values for every field in the schema.`;
 
   const result = await generateWithBudget(ctx, ai, scope, {
@@ -182,7 +199,7 @@ export async function canvasToEntry(
     'information from the prose and place it into the fields defined by the JSON schema, ' +
     "preserving the author's wording where it maps directly to a field. Infer concise " +
     'values for fields the prose implies but does not state outright. Return only values ' +
-    'that satisfy the schema.';
+    `that satisfy the schema. ${UNTRUSTED_CONTENT_GUARD}`;
   const prompt = `Content type: ${ct.name} (${ct.apiId}).\nProse:\n${input.prose}\nProduce values for every field in the schema.`;
 
   const result = await generateWithBudget(ctx, ai, scope, {

@@ -1,6 +1,6 @@
 ---
 title: Content modeling
-description: Content types, the thirteen field types, components, repeaters and blocks, validations, and how to change a model safely.
+description: Content types, the thirteen field types, components, repeaters and blocks, validations, field guidance, and how to change a model safely.
 ---
 
 A content model is the set of content types in a space. You define it in the admin (**Content →
@@ -170,6 +170,39 @@ deleted until those links are removed.
 
 Validations run on every write, from every surface: the admin, the API, imports, AI drafting and
 agents. An AI agent can't save an entry a person couldn't.
+
+Editors pick an `in` field's value from a select. A listed value can't be empty, and `'1'` and `1`
+count as the same value. To replace a rule's
+default error, add `messages`, keyed by rule (`in`, `regexp`, `range`, `size`); a message for a rule
+the field doesn't declare is refused, and so is one on a list's elements (`items`), whose rules
+aren't enforced per element yet.
+
+```json
+{
+  "apiId": "zip",
+  "name": "ZIP code",
+  "type": "Symbol",
+  "validations": {
+    "regexp": { "pattern": "^\\d{5}$" },
+    "messages": { "regexp": "Enter a five-digit ZIP code" }
+  }
+}
+```
+
+## Field guidance
+
+Every field can carry plain-text guidance for whoever fills it, editor or agent:
+
+| Attribute     | At most | Where it shows                                                        |
+| ------------- | ------- | --------------------------------------------------------------------- |
+| `help`        | 500     | Under the input on the entry form, and in the field's brief to AI     |
+| `placeholder` | 200     | In the empty input; never stored as a value                           |
+| `description` | 2000    | What the field means: read from the model by agents and API clients, and in the brief to AI |
+
+Set them in the admin from a field's **Guidance** button in the content type dialog, or on the
+field definition through the API or MCP (`model_create_content_type`). Agents get them with the
+rest of the definition from `model_get_content_type`, and AI drafting and autofill write to them.
+Generated TypeScript types carry a field's description (or help) as its doc comment.
 
 ## Changing a model
 

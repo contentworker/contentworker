@@ -343,3 +343,39 @@ export async function seedIngestFindings(request: APIRequestContext, stamp: numb
   expect(moved.ok(), await moved.text()).toBe(true);
   return { original, copy, broken, folder };
 }
+
+/**
+ * A content type whose fields carry guidance: help and a placeholder on its title, a plain field
+ * with none, and listed values on another (bare, so the type reads the same on every version of
+ * the api). Created or updated by apiId, so it is safe to run per test.
+ */
+export async function seedGuidedType(request: APIRequestContext) {
+  const field = (apiId: string, name: string, position: number, extra: object = {}) => ({
+    apiId,
+    name,
+    type: 'Symbol',
+    localized: false,
+    required: false,
+    position,
+    ...extra,
+  });
+  const res = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'guided',
+    name: 'Guided',
+    displayField: 'title',
+    fields: [
+      field('title', 'Title', 0, {
+        required: true,
+        help: 'Lead with the neighbourhood.',
+        placeholder: 'Sunny two-bed in Leith',
+        description: 'The headline of the listing.',
+      }),
+      field('subtitle', 'Subtitle', 1),
+      field('status', 'Status', 2, {
+        validations: { in: ['open', 'let'], messages: { in: 'Pick a status from the list' } },
+      }),
+    ],
+  });
+  if (![200, 201].includes(res.status())) throw new Error(await res.text());
+  await api(request, 'POST', `${MGMT}/content-types/guided/published`);
+}

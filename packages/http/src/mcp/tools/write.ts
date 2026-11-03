@@ -34,7 +34,11 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'model_create_content_type',
     {
-      description: 'Create or update a content type definition.',
+      description:
+        'Create or update a content type definition. A field can carry guidance for whoever ' +
+        'fills it: `description` (what it means), `help` (how to fill it, shown under the ' +
+        'input), `placeholder` (an example), and `validations.messages` to replace a rule’s ' +
+        'default error text.',
       inputSchema: toolSchema('model_create_content_type', () =>
         z.object({
           apiId: z.string(),

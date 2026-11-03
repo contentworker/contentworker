@@ -117,7 +117,7 @@ export async function enrichWorkflow(
   const { fields, usage } = await act.generateFields({
     scope: input.scope,
     contentTypeApiId: loaded.contentTypeApiId,
-    fields: empty.map((f) => ({ apiId: f.apiId, name: f.name })),
+    fields: empty.map(({ hasValue: _, ...f }) => f),
     context: loaded.text || '(no existing content)',
   });
 
@@ -194,7 +194,7 @@ export async function curateWorkflow(
   const { fields, usage } = await act.generateFields({
     scope: input.scope,
     contentTypeApiId: loaded.contentTypeApiId,
-    fields: filled.map((f) => ({ apiId: f.apiId, name: f.name })),
+    fields: filled.map(({ hasValue: _, ...f }) => f),
     context: loaded.text,
     instruction:
       'Improve the existing values: fix grammar, tighten wording, and keep meaning and facts unchanged. Return the full improved value for every field.',

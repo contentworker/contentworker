@@ -28,6 +28,7 @@ import {
   type Menu,
   type MenuItem,
   NotFoundError,
+  normalizeLegacyFields,
   type Redirect,
   redirectKey,
   redirectSetError,
@@ -386,7 +387,7 @@ export async function importSnapshot(
   snapshot: EnvironmentSnapshot,
   options: ImportOptions = {},
 ): Promise<ImportReport> {
-  snapshot = confineSnapshotFiles(target, snapshot, options.filesFrom);
+  snapshot = normalizeSnapshotModel(confineSnapshotFiles(target, snapshot, options.filesFrom));
   const { report, publishable } = await prepareSnapshotImport(ctx, target, snapshot, options);
   if (options.dryRun) return report;
   const publishing = options.publish !== false;
@@ -502,6 +503,23 @@ export async function prepareSnapshotImport(
       workflows: snapshot.workflows.length,
       skipped,
     },
+  };
+}
+
+/**
+ * The snapshot with its content model made writable: definitions stored before guidance and
+ * options were checked keep what is usable (`normalizeLegacyFields`) rather than failing the
+ * import. Done once, before the checks, so every entry is validated against the model that will
+ * be written: an entry holding a dropped option is refused before anything is written, not by
+ * `createEntry` halfway through.
+ */
+export function normalizeSnapshotModel(snapshot: EnvironmentSnapshot): EnvironmentSnapshot {
+  return {
+    ...snapshot,
+    contentTypes: snapshot.contentTypes.map((ct) => ({
+      ...ct,
+      fields: normalizeLegacyFields(ct.fields),
+    })),
   };
 }
 

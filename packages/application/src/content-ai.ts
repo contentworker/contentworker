@@ -10,7 +10,7 @@ import type { AIProvider, DecisionQuestion, ModelTier } from '@contentworker/por
 import { recordAgentRun } from './agent-audit';
 import { decideWithBudget, generateWithBudget } from './ai-budget';
 import { answerStrings, conformingAnswer } from './ai-json';
-import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import type { AppContext } from './context';
 import { getEntry, updateEntry } from './entries';
 import { createTag, getEntryMetadata, listTags, setEntryMetadata } from './taxonomy';
@@ -269,7 +269,7 @@ export async function autofillField(
     system: `You fill in a single missing field of a content entry based on its other fields. Return only the value, matching the requested type. ${UNTRUSTED_CONTENT_GUARD}`,
     prompt: [
       `Content type: ${ct.name}.`,
-      `Field to fill: ${def.name} (${def.type}).`,
+      `Field to fill: ${describeFieldForModel(def)} (${def.type}).`,
       input.instructions ? `Instructions: ${input.instructions}` : '',
       `Other fields:\n${context ? wrapUntrusted(context) : '(none)'}`,
     ]

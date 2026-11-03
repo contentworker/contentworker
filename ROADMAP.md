@@ -29,7 +29,8 @@ Removed in v2, and not coming back:
 Everything below is built and tested on v2.
 
 - **Content.** Spaces, environments (create, delete) and aliases; locales with fallback chains; typed fields with
-  validations, components and unique values; the entry lifecycle (draft → published → archived,
+  validations (custom messages), guidance for editors and agents (`help`,
+  `placeholder`, `description`), components and unique values; the entry lifecycle (draft → published → archived,
   trash, purge, duplicate); versions with a readable diff (per field and locale, by type: words,
   rich-text blocks, list moves) and restore; references and `include`; rich text
   with HTML import; slugs; redirects (delivery data a front end or edge worker applies: exact and

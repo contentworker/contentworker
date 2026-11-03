@@ -275,6 +275,9 @@ is stored whole rather than torn apart.
 interface FieldDefinition {
   apiId: string; // unique within the type; /[a-zA-Z][a-zA-Z0-9_]*/, ≤ 64 chars
   name: string; // human-facing label
+  help?: string; // how to fill it: under the editor's input, and given to a model (≤ 500)
+  placeholder?: string; // an example in the empty input; never stored (≤ 200)
+  description?: string; // what the field means, for agents and API readers (≤ 2000)
   type: FieldType;
   localized: boolean; // may values differ per locale?
   required: boolean;
@@ -297,13 +300,60 @@ interface FieldDefinition {
 
 ```ts
 interface FieldValidations {
-  in?: readonly (string | number)[]; // enumeration (Symbol/Text/Integer/Number)
+  in?: readonly FieldOption[]; // enumeration (Symbol/Text/Integer/Number)
   regexp?: { pattern: string; flags?: string }; // pattern match (Symbol/Text)
   range?: { min?: number; max?: number }; // numeric range, inclusive (Integer/Number)
   size?: { min?: number; max?: number }; // length (Symbol/Text) or item count (Array)
   linkContentTypes?: readonly string[]; // restrict Link targets to these content-type apiIds
+  messages?: { in?: string; regexp?: string; range?: string; size?: string }; // custom error text
 }
+type FieldOption = string | number | { value: string | number; label: string };
 ```
+
+### Field guidance
+
+`help`, `placeholder` and `description` are plain text for whoever fills the field, capped by
+`FIELD_GUIDANCE_LIMITS`; a blank one (empty or whitespace) is left out of the stored definition. The
+admin's entry form shows `help` under the input (wired to it with `aria-describedby`, the rich-text
+editor included) and `placeholder` in it; `description` is read from the model (MCP
+`model_get_content_type`, the API) rather than shown on every form.
+
+Guidance is author text (and imported text), so a prompt never carries it as instructions.
+`fieldGuidance` collapses a field's description and help to one line of at most
+`FIELD_GUIDANCE_LIMITS.brief` (600) characters, and `describeFieldForModel` (application) puts it
+after the field's name, labelled as describing the field and inside `<user_content>` delimiters,
+with `UNTRUSTED_CONTENT_GUARD` in the system prompt. AI drafting, canvas, autofill, the `ai.enrich`
+node and the agent runtime's enrich, improve and repurpose agents all describe fields this way.
+
+An `in` option is written as a string or a finite number, never `''` (the entry form's select
+uses it for its empty choice), and values are unique by their text, so `'1'` and `1` clash. Every
+reader (validation, the entry form's select, codegen, AI drafting) also accepts a labelled
+`{ value, label }` option, compared and stored by its `value`, so that a later release can write
+them without breaking a reader still deployed; until then a write refuses them.
+
+Nothing was checked before guidance existed, so a stored definition may hold a duplicate or
+non-scalar option, a non-text or oversize guidance value, or a message for a rule it lacks. A
+revision refuses such a value only when it is new: an option that occurs more often than in the
+stored list (options compared by type, text and label, never key order), or guidance or a message
+that differs from the stored one. A legacy type therefore stays editable, and `createContentType`
+on an existing apiId revises it for the same reason. The request schemas (HTTP and MCP) leave these
+keys to the domain for the same reason.
+
+An environment snapshot import or clone normalises the snapshot's model once, before its checks
+(`normalizeSnapshotModel` → `normalizeLegacyFields`), so every entry is validated against the model
+that will be written and one holding a dropped option refuses the import before any write.
+`normalizeOptions` drops unusable options and keeps each value once; of a clash by text (`'1'` and
+`1`) it keeps the one of the field's type (a number for Integer and Number, a string for Symbol
+and Text), and the entry form draws its select the same way. A list with nothing left goes, and so
+do guidance that isn't text within its cap, unusable messages and any message on an Array's
+elements. Readers treat a stored `in` that is not a list as no rule.
+
+`messages` replaces a rule's default error text, keyed by rule (`in`, `regexp`, `range`, `size`;
+at most 500 characters). It is a map rather than a key on each rule because `in` is a list. A
+message for a rule the field does not declare, or for an unknown rule, is refused when the type is
+defined, and so is any `messages` on an Array's `items.validations`: element rules are stored but
+not yet enforced per element (per-element `in` is planned). Content types are stored as JSON
+definitions, so none of this needs a migration.
 
 ## The validation engine
 
@@ -320,9 +370,12 @@ Rules applied:
    /object/`{id,linkType}`/array-of-items).
 4. **Size** — `size.min`/`size.max` against string length or array item count.
 5. **Range** — `range.min`/`range.max` against numeric value.
-6. **Enumeration** — value must be in `validations.in`.
+6. **Enumeration** — value must be the `value` of one of `validations.in`.
 7. **Regex** — `Symbol`/`Text` must match `validations.regexp`.
 8. **Localization** — non-localized fields must not carry values under non-default locales.
+
+A size, range, enumeration or regex issue reports `validations.messages[rule]` when the field sets
+one, else the default text.
 
 ```ts
 interface FieldIssue {

@@ -163,6 +163,37 @@ describe('@contentworker/sdk-codegen generator', () => {
     );
   });
 
+  it('types labelled options by their stored values and documents a field from its guidance', () => {
+    const out = generateTypes([
+      {
+        apiId: 'post',
+        fields: [
+          {
+            apiId: 'status',
+            name: 'Status',
+            type: 'Symbol',
+            required: true,
+            description: 'Where the post is in its life.\nNot the */ publish state.',
+            validations: { in: [{ value: 'draft', label: 'Draft' }, 'live'] },
+          },
+          {
+            apiId: 'stars',
+            type: 'Integer',
+            help: 'One to three.',
+            validations: { in: [1, { value: 2, label: 'Two' }] },
+          },
+        ],
+      },
+    ]);
+    expect(out).toContain("status: 'draft' | 'live';");
+    expect(out).toContain('stars?: 1 | 2;');
+    expect(out).toContain(
+      '/** Status — Where the post is in its life. Not the *\\/ publish state. */',
+    );
+    expect(out).toContain('/** One to three. */');
+    expect(out).not.toContain("'Draft'");
+  });
+
   it('types a component as its nested shape, not as unknown', () => {
     expect(edge).toContain('callout?: { heading: string; icon?: AssetLink | DeliveredAsset };');
   });

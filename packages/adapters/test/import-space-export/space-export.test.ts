@@ -74,14 +74,15 @@ describe('space export reader: content model', () => {
     ]);
 
     const category = space.contentTypes.find((t) => t.apiId === 'category');
-    expect(category?.fields.find((f) => f.apiId === 'slug')?.validations?.regexp).toEqual({
-      pattern: '^[a-z0-9-]+$',
+    // The rule's custom message comes with it.
+    expect(category?.fields.find((f) => f.apiId === 'slug')?.validations).toEqual({
+      regexp: { pattern: '^[a-z0-9-]+$' },
+      messages: { regexp: 'Lowercase letters, digits and hyphens' },
     });
     expect(space.findings.unmappedValidations).toEqual(
       expect.arrayContaining([
         'author.avatar: linkMimetypeGroup',
         'author.avatar: assetFileSize',
-        'category.slug: custom message',
         'blogPost.body: enabledMarks',
         'blogPost.body: enabledNodeTypes',
         'blogPost.publishDate: dateRange',
@@ -103,7 +104,7 @@ describe('space export reader: content model', () => {
     expect(entry(space, 'landing-home').contentTypeApiId).toBe('landing_page');
   });
 
-  it('reads the locales with their fallback chain, and counts the help text it drops', async () => {
+  it('reads the locales with their fallback chain', async () => {
     const space = await read();
     expect(space.defaultLocale).toBe('en-US');
     expect(space.locales.map((l) => [l.code, l.fallback, l.default])).toEqual([
@@ -111,8 +112,49 @@ describe('space export reader: content model', () => {
       ['de-DE', 'en-US', false],
       ['fr-FR', 'de-DE', false],
     ]);
+  });
+
+  it('keeps usable options once each, and reports a message on list elements', async () => {
+    const doc = spaceExportFixture();
+    const category = (doc.contentTypes as { sys: { id: string }; fields: object[] }[]).find(
+      (t) => t.sys.id === 'category',
+    );
+    category?.fields.push(
+      {
+        id: 'tone',
+        name: 'Tone',
+        type: 'Symbol',
+        validations: [{ in: ['calm', 'calm', '', 1, '1', true], message: 'Pick a tone' }],
+      },
+      {
+        id: 'moods',
+        name: 'Moods',
+        type: 'Array',
+        items: { type: 'Symbol', validations: [{ in: ['a'], message: 'Pick a mood' }] },
+      },
+    );
+    const space = await read(doc);
+    const fields = space.contentTypes.find((t) => t.apiId === 'category')?.fields ?? [];
+    expect(fields.find((f) => f.apiId === 'tone')?.validations).toEqual({
+      in: ['calm', 1],
+      messages: { in: 'Pick a tone' },
+    });
+    expect(fields.find((f) => f.apiId === 'moods')?.items?.validations).toEqual({ in: ['a'] });
+    expect(space.findings.unmappedValidations).toContain('category.moods[]: in custom message');
+  });
+
+  it('imports editor help text as the field’s help, and counts what has no field to go on', async () => {
+    const doc = spaceExportFixture();
+    const controls = (doc.editorInterfaces as { controls: object[] }[])[0]?.controls ?? [];
+    controls.push({ fieldId: 'sponsor', settings: { helpText: 'Not imported: no such field.' } });
+    const space = await read(doc);
+    const post = space.contentTypes.find((t) => t.apiId === 'blogPost');
+    expect(post?.fields.find((f) => f.apiId === 'title')?.help).toBe(
+      'Keep it under 60 characters.',
+    );
+    expect(post?.fields.find((f) => f.apiId === 'slug')?.help).toBe('Generated from the title.');
     expect(space.findings.warnings).toContain(
-      '2 field help text(s) from editor interfaces are not imported',
+      '1 field help text(s) from editor interfaces are not imported',
     );
   });
 

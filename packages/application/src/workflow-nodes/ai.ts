@@ -32,7 +32,7 @@ import type { AIProvider, DecisionAnswer, DecisionQuestion } from '@contentworke
 import { applyProposedFields, createAgentReview } from '../agent-reviews';
 import { decide } from '../ai-decide';
 import { generateJson } from '../ai-json';
-import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from '../ai-prompt';
+import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from '../ai-prompt';
 import { type AiProvenance, isUncheckedFallback } from '../ai-provenance';
 import { autofillField, suggestEntryTags, summarizeEntry, translateEntry } from '../content-ai';
 import { moderationQuestions, moderationThreshold, moderationVerdict } from '../moderation';
@@ -822,7 +822,8 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       return { branches: [settled], output: { proposed: {} }, summary: 'Nothing to enrich' };
     }
     const properties: Record<string, unknown> = {};
-    for (const f of empty) properties[f.apiId] = { type: 'string', description: f.name };
+    for (const f of empty)
+      properties[f.apiId] = { type: 'string', description: describeFieldForModel(f) };
     const text = entryText(i.run);
     const r = await generateJson<Record<string, unknown>>(
       i.ctx,

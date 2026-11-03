@@ -61,13 +61,41 @@ export type ScheduledEntityType = 'Entry' | 'Release';
 export type ScheduledActionStatus = 'pending' | 'completed' | 'canceled' | 'failed';
 export type ApiKeyKind = 'cma' | 'cda' | 'cpa';
 
+/** An allowed value of an `in` rule: bare, or with the label an editor picks it by. */
+export type FieldOption =
+  | string
+  | number
+  | { readonly value: string | number; readonly label: string };
+
+/** A field's validation rules. Entries store and are compared on an option's `value`. */
+export interface FieldValidations {
+  readonly in?: readonly FieldOption[];
+  readonly regexp?: { readonly pattern: string; readonly flags?: string };
+  readonly range?: { readonly min?: number; readonly max?: number };
+  readonly size?: { readonly min?: number; readonly max?: number };
+  readonly linkContentTypes?: readonly string[];
+  /** The error text a broken rule reports instead of the default, keyed by rule. */
+  readonly messages?: {
+    readonly in?: string;
+    readonly regexp?: string;
+    readonly range?: string;
+    readonly size?: string;
+  };
+}
+
 export interface FieldDefinition {
   readonly apiId: string;
   readonly name: string;
   readonly type: string;
   readonly localized?: boolean;
   readonly required?: boolean;
-  readonly validations?: readonly Record<string, unknown>[];
+  /** How to fill the field: shown under the editor's input and given to a model. */
+  readonly help?: string;
+  /** An example shown in the empty input. */
+  readonly placeholder?: string;
+  /** What the field means, for agents and API readers. */
+  readonly description?: string;
+  readonly validations?: FieldValidations;
   readonly [key: string]: unknown;
 }
 
