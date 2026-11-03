@@ -652,7 +652,19 @@ export interface WebhookDeliveryRecord {
   readonly statusCode?: number;
   readonly attempts: number;
   readonly error?: string;
+  /** The event it carried, e.g. `entry.published` or `webhook.test` (absent on old records). */
+  readonly eventType?: string;
+  /** The delivery this one resent. */
+  readonly resendOf?: number;
   readonly createdAt: string;
+}
+
+/** A test or resend the engine will send: its delivery is logged under `eventId`. */
+export interface QueuedWebhookDelivery {
+  readonly webhookId: string;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly resendOf?: number;
 }
 
 /** Which version a diff reads: a number, or the entry's current draft or published version. */
@@ -2481,6 +2493,17 @@ export function createManagementClient(
         `${mgmt}/webhooks/${encodeURIComponent(id)}/deliveries${qs}`,
       );
       return r.items;
+    },
+    /** Queues a signed `webhook.test` event for this webhook alone. */
+    sendWebhookTest(id: string): Promise<QueuedWebhookDelivery> {
+      return req('POST', `${mgmt}/webhooks/${encodeURIComponent(id)}/test`);
+    },
+    /** Sends a stored delivery's event again, signed afresh. */
+    resendWebhookDelivery(id: string, deliveryId: number): Promise<QueuedWebhookDelivery> {
+      return req(
+        'POST',
+        `${mgmt}/webhooks/${encodeURIComponent(id)}/deliveries/${deliveryId}/resend`,
+      );
     },
 
     // --- releases (bundled atomic publish) -------------------------------

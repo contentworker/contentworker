@@ -1,9 +1,13 @@
 import {
+  ConflictError,
+  deliveredEventOf,
   type EventType,
   NotFoundError,
   type Scope,
   ValidationError,
   type Webhook,
+  type WebhookSendRequest,
+  type WebhookTestEvent,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
 import { assertSafeExternalUrl } from './url-safety';
@@ -149,4 +153,98 @@ export async function listWebhookDeliveries(
   const current = await ctx.store.webhooks.get(scope, id);
   if (!current) throw new NotFoundError('Webhook', id);
   return ctx.store.webhooks.listDeliveries(scope, id, opts);
+}
+
+/** What a test delivery says, so a receiver can tell it from real traffic in its own logs. */
+export const WEBHOOK_TEST_MESSAGE = 'A test delivery from contentworker. Nothing changed.';
+
+/** A delivery asked for by an administrator: queued, and recorded in the log once sent. */
+export interface QueuedWebhookDelivery {
+  readonly webhookId: string;
+  /** The event it carries; its delivery log line has this `eventId`. */
+  readonly eventId: string;
+  readonly eventType: EventType;
+  /** The delivery a resend repeats. */
+  readonly resendOf?: number;
+}
+
+/**
+ * Sends one webhook a `webhook.test` event, whatever its topics and whether it is paused (so a
+ * hook can be tried before it is turned on). It rides the outbox to the engine in a
+ * `WebhookSendRequest`, so the engine sends it, signed as every delivery is, and records it in the
+ * hook's delivery log; it is sent once and never retried. The URL is screened again, as at create.
+ * 404 if the hook doesn't exist in this space, or is scoped to another environment.
+ */
+export async function sendWebhookTest(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+): Promise<QueuedWebhookDelivery> {
+  const webhook = await ctx.store.webhooks.get(scope, id);
+  if (!webhook) throw new NotFoundError('Webhook', id);
+  assertSafeExternalUrl(webhook.url);
+  const occurredAt = ctx.clock.now().toISOString();
+  const event: WebhookTestEvent = {
+    id: ctx.ids.newId(),
+    type: 'webhook.test',
+    scope,
+    occurredAt,
+    webhookId: webhook.id,
+    message: WEBHOOK_TEST_MESSAGE,
+  };
+  // The row's id is the test event's, so a resend of this test reads it back by its event id.
+  const request: WebhookSendRequest = {
+    kind: 'webhook.send',
+    id: event.id,
+    scope,
+    occurredAt,
+    webhookId: webhook.id,
+    test: event,
+  };
+  await ctx.store.outbox.append(request);
+  return { webhookId: webhook.id, eventId: event.id, eventType: event.type };
+}
+
+/**
+ * Sends a logged delivery's event to its webhook again, through the outbox and the engine: the
+ * same event id, signed afresh with the time it is sent, and recorded as a new attempt whose
+ * `resendOf` names this one. The engine reads the event back from the outbox when it sends; a bulk
+ * chunk goes to a per-entry subscriber as its entries are published then. One attempt, never
+ * retried. The outbox and the delivery log are swept on the same retention window but by different
+ * clocks (relay time, attempt time), so a delivery still listed can have lost its event: that is a
+ * 409. 404 if the hook or the delivery doesn't exist here.
+ */
+export async function resendWebhookDelivery(
+  ctx: AppContext,
+  scope: Scope,
+  webhookId: string,
+  deliveryId: number,
+): Promise<QueuedWebhookDelivery> {
+  const webhook = await ctx.store.webhooks.get(scope, webhookId);
+  if (!webhook) throw new NotFoundError('Webhook', webhookId);
+  const delivery = await ctx.store.webhooks.getDelivery(scope, webhookId, deliveryId);
+  if (!delivery) throw new NotFoundError('WebhookDelivery', String(deliveryId));
+  assertSafeExternalUrl(webhook.url);
+  const stored = await ctx.store.outbox.get(scope, delivery.eventId);
+  const original = stored ? deliveredEventOf(stored) : null;
+  if (!original) {
+    throw new ConflictError(
+      `Delivery ${deliveryId}'s event is past the event retention, so it can't be sent again`,
+    );
+  }
+  const request: WebhookSendRequest = {
+    kind: 'webhook.send',
+    id: ctx.ids.newId(),
+    scope,
+    occurredAt: ctx.clock.now().toISOString(),
+    webhookId: webhook.id,
+    resend: { deliveryId, eventId: original.id },
+  };
+  await ctx.store.outbox.append(request);
+  return {
+    webhookId: webhook.id,
+    eventId: original.id,
+    eventType: original.type,
+    resendOf: deliveryId,
+  };
 }

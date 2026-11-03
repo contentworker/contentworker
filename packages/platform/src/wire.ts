@@ -46,7 +46,7 @@ import {
   withSealedSecrets,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
-import { type ApiKeyKind, type DomainEvent, scopesForKind } from '@contentworker/domain';
+import { type ApiKeyKind, type OutboxEntry, scopesForKind } from '@contentworker/domain';
 import type {
   AIProvider,
   AssetGate,
@@ -130,7 +130,7 @@ export interface EdgeWired {
   readonly queue?: QueuePort;
   /** Relay topic router; set only when the deployment lacks a contentworker-bulk queue
    *  (falls everything back to the events topic). */
-  readonly routeTopic?: (event: DomainEvent) => string;
+  readonly routeTopic?: (event: OutboxEntry) => string;
   /**
    * Starts/signals/cancels editorial workflow runs on the EDITORIAL_WF binding; absent when the
    * binding is not set (run actions then answer 501).

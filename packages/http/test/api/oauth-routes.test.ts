@@ -541,6 +541,77 @@ describe('Personal access tokens', () => {
     expect(res.status).toBe(403);
   });
 
+  it('refuses to let a personal access token mint an API key or widen one, unlike the person', async () => {
+    const { app, ctx } = makeApp();
+    await createSpace(ctx, { spaceId: 's1', name: 'One', defaultLocale: 'en-US' }).catch(() => {});
+    const cookie = await sessionCookie(ctx, [SCOPES.spaceAdmin, SCOPES.deliveryRead]);
+    const minted = await app.request('/spaces/s1/personal-access-tokens', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'ci', scopes: [SCOPES.spaceAdmin], expiresInDays: 7 }),
+    });
+    const { token } = (await minted.json()) as { token: string };
+    const as = (headers: Record<string, string>) => ({
+      ...headers,
+      'Content-Type': 'application/json',
+    });
+    const mint = (headers: Record<string, string>) =>
+      app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: as(headers),
+        body: JSON.stringify({ kind: 'cma', name: 'forever' }),
+      });
+
+    const refused = await mint({ Authorization: `Bearer ${token}` });
+    expect(refused.status).toBe(403);
+    expect(JSON.stringify(await refused.json())).toContain("can't mint an API key");
+    // The person who holds the same scopes, signed in, still can.
+    const byPerson = await mint({ Cookie: cookie });
+    expect(byPerson.status).toBe(201);
+    const { id } = (await byPerson.json()) as { id: string };
+    await app.request(`/spaces/s1/api-keys/${id}/role`, {
+      method: 'PUT',
+      headers: as({ Cookie: cookie }),
+      body: JSON.stringify({ role: 'viewer' }),
+    });
+    const widen = await app.request(`/spaces/s1/api-keys/${id}/role`, {
+      method: 'PUT',
+      headers: as({ Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ role: 'admin' }),
+    });
+    expect(widen.status).toBe(403);
+    // Nor through the role the key holds, nor by minting another personal access token.
+    await app.request(`/spaces/s1/api-keys/${id}/role`, {
+      method: 'PUT',
+      headers: as({ Cookie: cookie }),
+      body: JSON.stringify({ role: null }),
+    });
+    const role = (await (
+      await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: as({ Cookie: cookie }),
+        body: JSON.stringify({ name: 'Build', scopes: [SCOPES.deliveryRead] }),
+      })
+    ).json()) as { id: string };
+    await app.request(`/spaces/s1/api-keys/${id}/role`, {
+      method: 'PUT',
+      headers: as({ Cookie: cookie }),
+      body: JSON.stringify({ role: role.id }),
+    });
+    const widenRole = await app.request(`/spaces/s1/roles/${role.id}`, {
+      method: 'PUT',
+      headers: as({ Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ name: 'Build', scopes: [SCOPES.deliveryRead, SCOPES.spaceAdmin] }),
+    });
+    expect(widenRole.status).toBe(403);
+    const patFromPat = await app.request('/spaces/s1/personal-access-tokens', {
+      method: 'POST',
+      headers: as({ Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ name: 'forever', scopes: [SCOPES.spaceAdmin] }),
+    });
+    expect(patFromPat.status).toBe(403);
+  });
+
   it('drops scopes the caller does not hold', async () => {
     const { app, ctx } = makeApp();
     await createSpace(ctx, { spaceId: 's1', name: 'One', defaultLocale: 'en-US' }).catch(() => {});

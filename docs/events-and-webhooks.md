@@ -116,10 +116,11 @@ locally). It calls `dispatchEvent(ctx, deps, event)` (`events/dispatch.ts`), whi
 5. **Lexical search index** (when `SEARCH` is bound) — the published entry's text is indexed into
    its `SearchShardDO` shard on publish and removed on unpublish.
 
-Four event types are control messages rather than facts: `search.reindex_requested` runs one
+Some event types are control messages rather than facts: `search.reindex_requested` runs one
 bounded reindex slice, `bulk.chunk_due` runs one bulk-job chunk, `environment.purge_due` runs a
-deleted environment's next purge steps, and `entries.published_bulk` replaces N per-entry fan-outs
-with one bulk-shaped fan-out.
+deleted environment's next purge steps, `entries.published_bulk` replaces N per-entry fan-outs
+with one bulk-shaped fan-out. An administrator's webhook test or resend is not an event at all but
+a `WebhookSendRequest` on the same queue (see [Webhooks](#webhooks)).
 
 `DispatchDeps` is `{ sender, cache?, rag?, invoker?, onWebhookDelivery?, scheduleWebhookRetry?,
 searchIndex?, blob?, invalidatedTags? }`; optional deps degrade gracefully. `onWebhookDelivery`
@@ -286,11 +287,15 @@ without its `secret` or `headers`; the secret is the caller's own and is never e
 | Update     | `PUT …/webhooks/:id` (partial; omitted fields are kept) | `webhook_update`     |
 | Delete     | `DELETE …/webhooks/:id` (204)                           | `webhook_delete`     |
 | Deliveries | `GET …/webhooks/:id/deliveries?limit=`                  | `webhook_deliveries` |
+| Test       | `POST …/webhooks/:id/test` (202)                        | `webhook_test`       |
+| Resend     | `POST …/webhooks/:id/deliveries/:deliveryId/resend` (202) | `webhook_resend`   |
 
 The `WebhookSender` (`createWebhookSender` in `@contentworker/adapters/http-effects`) signs
 `<timestamp>.<body>` with HMAC-SHA256 using the webhook's `secret` and POSTs the JSON payload with
 `x-contentworker-signature: sha256=<hex>`, `x-contentworker-timestamp`, and
-`x-contentworker-event` headers. Redirects are not followed and each attempt times out after 10 s.
+`x-contentworker-event` and `x-contentworker-event-id` headers (and `x-contentworker-resend-of` on
+a resend). Receivers should dedupe on the event id: a retry and a resend carry the same one.
+Redirects are not followed and each attempt times out after 10 s.
 The `secret` and every header value are encrypted at rest under `DATA_KEY` (see
 [Auth → Secrets at rest](./auth-and-rbac.md#secrets-at-rest)); the dispatcher reads them decrypted.
 Each attempt is logged as a `webhook_deliveries` row with its attempt number. A failed delivery
@@ -307,6 +312,36 @@ chunk, and a retry of **only the entries that failed**: the `webhook.retry` mess
 (skipping any unpublished since), sends each again with the same derived id
 (`${jobId}:${chunkId}:${entryId}`), and narrows the next retry to what still fails. A subscriber
 to `entries.published_bulk` itself gets the bulk event again.
+
+Each delivery row also records the event's `eventType` (null on rows from before migration 0022)
+and, for a resend, `resendOf`: the id of the row it resent.
+
+**Tests and resends** (`sendWebhookTest`, `resendWebhookDelivery` in
+`packages/application/src/webhooks.ts`) are what an administrator asks for. Both append a
+`WebhookSendRequest` (`packages/domain/src/webhook/webhook.ts`) to the outbox, and the request
+returns 202 with `{ webhookId, eventId, eventType, resendOf? }`. A send request is not a domain
+event: it has `kind: 'webhook.send'` and no `type` (its outbox row's `type` column is the kind), so
+the relay routes it to `contentworker-events` and the engine hands it to `deliverWebhookRequest`;
+an engine without that branch (a rollback) drops it at `isDomainEvent` as malformed, so it never
+reaches topic fan-out, functions or the live bus. Both screen the hook's URL again
+(`assertSafeExternalUrl`, as at create) and reach one hook only, whatever its topics and even
+while it is paused; each is **one attempt, never retried**. A test carries its `webhook.test`
+event (the hook's id and a fixed `message`), and the row's id is the event's. A resend carries
+only `{ deliveryId, eventId }`, so its queue message stays small: the engine reads the event back
+from the outbox when it sends (`OutboxRepo.get`, scoped to the space by the payload's own
+`scope`), sends it with the same `id`, signs it with the time it is sent (`WebhookSender.send`'s
+`timestamp`), adds `x-contentworker-resend-of: <deliveryId>`, and logs the attempt with
+`resendOf`. A bulk chunk goes to a per-entry subscriber entry by entry from the entries' published
+snapshots as they are now, as a retry does. An event swept between the request and the send, or
+a publish chunk none of whose entries is still published, is logged as a failed attempt rather
+than dropped. The outbox and the delivery log are trimmed on the same retention window
+(`pruneEventHistory`) but by different clocks (relay time, attempt time), so a delivery still in
+the log can already have lost its event: that resend is a **409**. A hook deleted (or scoped
+away) before the engine gets to it gets nothing; a redelivered request sends again, with the same
+event id. During a mixed-version deploy or an engine rollback, a test or resend can be accepted
+(202) by the api and then dropped by an engine without the send-request branch, with no log row.
+A resend whose hook no longer covers the event's environment (rescoped since) is logged as a
+failed attempt.
 
 ### Event payloads
 
@@ -344,6 +379,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `search.reindex_requested`                                                         | `contentTypeApiId?`, `afterEntryId?`, `entriesSoFar?` (control message; the last two only on self-enqueued continuation slices)                                                                                      |
 | `bulk.chunk_due`                                                                   | `jobId`, `chunkId` (control message, routed to `contentworker-bulk`)                                                                                                                                                 |
 | `environment.purge_due`                                                            | none: `scope` is the deleted environment (control message, routed to `contentworker-bulk`; runs its next purge steps)                                                                                                |
+| `webhook.test`                                                                     | `webhookId`, `message` (an administrator's test: sent to that webhook only, once; travels inside a `WebhookSendRequest`, never appended or fanned out on its own)                                                     |
 | `invite.email_due`                                                                 | `inviteId`, `version`, `origin` (control message: the engine emails the link when the deployment sends email; no token, no address, no webhooks; `scope` is `*`)                                                     |
 
 ## Queue adapter

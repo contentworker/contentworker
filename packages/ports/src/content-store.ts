@@ -35,6 +35,7 @@ import type {
   OAuthClient,
   OAuthGrantKind,
   OAuthGrantStatus,
+  OutboxEntry,
   PluginSettings,
   Promotion,
   PromotionStatus,
@@ -1937,6 +1938,8 @@ export interface WebhookRepo {
   update(scope: Scope, webhook: Webhook): Promise<void>;
   delete(scope: Scope, id: string): Promise<void>;
   recordDelivery(scope: Scope, delivery: WebhookDelivery): Promise<void>;
+  /** One recorded attempt at `webhookId`, in the scope's space, or null. */
+  getDelivery(scope: Scope, webhookId: string, id: number): Promise<WebhookDeliveryRecord | null>;
   /** Recent delivery attempts for a webhook, newest first. */
   listDeliveries(
     scope: Scope,
@@ -2158,18 +2161,26 @@ export interface OutboxRecord {
 }
 
 export interface OutboxRepo {
-  /** Appends an event; must be called within the same tx as the state change. */
-  append(event: DomainEvent): Promise<void>;
+  /**
+   * Appends an event (or a webhook send request); must be called within the same tx as the state
+   * change, when there is one.
+   */
+  append(event: OutboxEntry): Promise<void>;
   /** Batch {@link append}; the whole set commits atomically (as few statements as the backend's parameter cap allows). */
-  appendMany(events: readonly DomainEvent[]): Promise<void>;
+  appendMany(events: readonly OutboxEntry[]): Promise<void>;
   /**
    * Claims up to `limit` un-relayed events, oldest first. A claim is a lease: concurrent relayers
    * never receive the same event, and an event whose relayer died (never marked relayed) becomes
    * claimable again once the lease lapses. Runs immediately, even inside `withTransaction`.
    */
-  readPending(limit: number): Promise<DomainEvent[]>;
+  readPending(limit: number): Promise<OutboxEntry[]>;
   /** Marks events as relayed so they are not re-published. */
   markRelayed(eventIds: readonly string[]): Promise<void>;
+  /**
+   * One row of the scope's space by id (any of its environments: a space-wide webhook's
+   * deliveries span them), relayed or not, while the retention sweep keeps it; null otherwise.
+   */
+  get(scope: Scope, id: string): Promise<OutboxEntry | null>;
   /**
    * Deletes up to `limit` RELAYED rows older than `before` (retention sweep —
    * without it the outbox grows one row per event forever). Never touches

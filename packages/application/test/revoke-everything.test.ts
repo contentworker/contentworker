@@ -39,6 +39,7 @@ describe('revokeEverythingFor', () => {
   it('revokes a person’s tokens in every space and leaves everyone else’s', async () => {
     const { ctx, store } = setup();
     await createPersonalAccessToken(ctx, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       subject: 'usr_ann',
       name: 'cli',
@@ -46,6 +47,7 @@ describe('revokeEverythingFor', () => {
       issuerScopes: ['delivery:read'],
     });
     await createPersonalAccessToken(ctx, hasher, {
+      issuer: 'system',
       spaceId: 's2',
       subject: 'usr_ann',
       name: 'ci',
@@ -53,6 +55,7 @@ describe('revokeEverythingFor', () => {
       issuerScopes: ['delivery:read'],
     });
     await createPersonalAccessToken(ctx, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       subject: 'usr_bob',
       name: 'bob',
@@ -60,6 +63,7 @@ describe('revokeEverythingFor', () => {
       issuerScopes: ['delivery:read'],
     });
     const { apiKey: siteKey } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
       spaceId: 's1',
       kind: 'cda',
       name: 'site',

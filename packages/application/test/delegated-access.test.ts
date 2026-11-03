@@ -31,6 +31,7 @@ async function setup() {
   const member = await addMember(ctx, 's1', { email: ann.email, role: 'editor' });
   await findMemberForSignIn(ctx, 's1', ann.sub, ann.email);
   const { token } = await createPersonalAccessToken(ctx, hasher, {
+    issuer: 'system',
     spaceId: 's1',
     subject: ann.sub,
     name: 'cli',
@@ -73,9 +74,9 @@ describe('credentials are always bound to one real space', () => {
 
   it('never stores a key for `*`', async () => {
     const { ctx } = await setup();
-    await expect(createApiKey(ctx, hasher, { spaceId: '*', kind: 'cma' })).rejects.toBeInstanceOf(
-      ValidationError,
-    );
+    await expect(
+      createApiKey(ctx, hasher, { issuer: 'system', spaceId: '*', kind: 'cma' }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it('lets only team members grant long-lived credentials, admins included', async () => {

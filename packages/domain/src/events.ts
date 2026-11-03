@@ -36,7 +36,8 @@ export type DomainEvent =
   | EnvironmentPurgeDueEvent
   | InviteEmailDueEvent
   | RedirectsChangedEvent
-  | MenusChangedEvent;
+  | MenusChangedEvent
+  | WebhookTestEvent;
 
 export interface BaseEvent {
   readonly id: string;
@@ -418,6 +419,19 @@ export interface InviteEmailDueEvent extends BaseEvent {
   readonly inviteId: string;
   readonly version: number;
   readonly origin: string;
+}
+
+/**
+ * The body of a test delivery an administrator asked for, to one webhook (`webhookId`) whatever its
+ * topics, recorded in its delivery log like any other. Never appended to the outbox as an event: it
+ * rides there inside a `WebhookSendRequest`, which no topic fan-out, function or live subscriber
+ * sees. Sent once, never retried.
+ */
+export interface WebhookTestEvent extends BaseEvent {
+  readonly type: 'webhook.test';
+  readonly webhookId: string;
+  /** A fixed sentence, so a receiver can tell a test from real traffic in its own logs. */
+  readonly message: string;
 }
 
 export type EventType = DomainEvent['type'];

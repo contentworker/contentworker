@@ -1,11 +1,11 @@
 import { createHmac } from 'node:crypto';
 import type { DomainEvent, Webhook } from '@contentworker/domain';
-import type { WebhookSender, WebhookSendResult } from '@contentworker/ports';
+import type { WebhookSender, WebhookSendOptions, WebhookSendResult } from '@contentworker/ports';
 
 /**
  * HMAC-signing webhook sender. Posts the event as JSON with an
  * `X-CW-Signature: sha256=<hex>` header so receivers can verify authenticity,
- * plus a timestamp to bound replay. Network/HTTP errors surface as
+ * plus a timestamp to bound replay and the event id to dedupe on. Network/HTTP errors surface as
  * `delivered: false` so the queue can retry.
  *
  * Uses `node:crypto` — available on Node and on Cloudflare Workers via the
@@ -17,9 +17,13 @@ export function createWebhookSender(
 ): WebhookSender {
   const timeoutMs = opts.timeoutMs ?? 10_000;
   return {
-    async send(webhook: Webhook, payload: DomainEvent): Promise<WebhookSendResult> {
+    async send(
+      webhook: Webhook,
+      payload: DomainEvent,
+      opts: WebhookSendOptions = {},
+    ): Promise<WebhookSendResult> {
       const body = JSON.stringify(payload);
-      const timestamp = payload.occurredAt;
+      const timestamp = opts.timestamp ?? payload.occurredAt;
       const signature = createHmac('sha256', webhook.secret)
         .update(`${timestamp}.${body}`)
         .digest('hex');
@@ -31,6 +35,11 @@ export function createWebhookSender(
             'x-contentworker-signature': `sha256=${signature}`,
             'x-contentworker-timestamp': timestamp,
             'x-contentworker-event': payload.type,
+            // The id to dedupe on: a retry and a resend carry the same one.
+            'x-contentworker-event-id': payload.id,
+            ...(opts.resendOf !== undefined
+              ? { 'x-contentworker-resend-of': String(opts.resendOf) }
+              : {}),
             ...webhook.headers,
           },
           body,

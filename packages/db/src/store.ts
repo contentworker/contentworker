@@ -18,11 +18,14 @@ import {
   type EntryFields,
   type EntryMetadata,
   type EntryVersion,
+  type EventType,
   type InstalledPlugin,
+  isWebhookSendRequest,
   type MemberInvite,
   type Menu,
   matchesTopic,
   type OAuthClient,
+  type OutboxEntry,
   type PluginSettings,
   type Promotion,
   projectFields,
@@ -126,6 +129,7 @@ import type {
   StoredSecretRepo,
   TaskRepo,
   TaxonomyRepo,
+  WebhookDeliveryRecord,
   WebhookRepo,
   WorkflowGraphRecord,
   WorkflowGraphRepo,
@@ -2730,7 +2734,7 @@ export const OUTBOX_LEASE_MS = 60_000;
 
 function makeOutboxRepo(x: Exec): OutboxRepo {
   const db = x.db;
-  const appendMany = async (events: readonly DomainEvent[]): Promise<void> => {
+  const appendMany = async (events: readonly OutboxEntry[]): Promise<void> => {
     if (events.length === 0) return;
     await writeAll(
       x,
@@ -2738,8 +2742,10 @@ function makeOutboxRepo(x: Exec): OutboxRepo {
         db.insert(schema.outbox).values(
           chunk.map((event) => ({
             id: event.id,
-            type: event.type,
-            payload: event,
+            // A send request has no `type` (so no engine takes it for an event); its row is typed
+            // by its `kind`.
+            type: isWebhookSendRequest(event) ? event.kind : event.type,
+            payload: event as DomainEvent,
             occurredAt: new Date(event.occurredAt),
           })),
         ),
@@ -2782,7 +2788,7 @@ function makeOutboxRepo(x: Exec): OutboxRepo {
         .returning();
       return rows
         .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())
-        .map((r) => r.payload as DomainEvent);
+        .map((r) => r.payload as OutboxEntry);
     },
     async markRelayed(eventIds) {
       if (eventIds.length === 0) return;
@@ -2793,6 +2799,15 @@ function makeOutboxRepo(x: Exec): OutboxRepo {
           db.update(schema.outbox).set({ relayedAt: at }).where(inArray(schema.outbox.id, chunk)),
         ),
       );
+    },
+    async get(scope, id) {
+      const [row] = await db
+        .select({ payload: schema.outbox.payload })
+        .from(schema.outbox)
+        .where(eq(schema.outbox.id, id));
+      const event = row?.payload as OutboxEntry | undefined;
+      // The outbox has no space column: the event's own scope says whose it is.
+      return event?.scope?.spaceId === scope.spaceId ? event : null;
     },
     async deleteRelayedBefore(before, limit) {
       directOnly(x, 'outbox.deleteRelayedBefore');
@@ -2941,6 +2956,21 @@ const webhookVisibleIn = (scope: Scope) =>
     ),
   );
 
+function toDeliveryRecord(r: typeof schema.webhookDeliveries.$inferSelect): WebhookDeliveryRecord {
+  return {
+    id: r.id,
+    webhookId: r.webhookId,
+    eventId: r.eventId,
+    status: r.status,
+    statusCode: r.statusCode ?? undefined,
+    attempts: r.attempts,
+    error: r.error ?? undefined,
+    ...(r.eventType ? { eventType: r.eventType as EventType } : {}),
+    ...(r.resendOf !== null ? { resendOf: r.resendOf } : {}),
+    createdAt: r.createdAt.toISOString(),
+  };
+}
+
 function makeWebhookRepo(x: Exec): WebhookRepo {
   const db = x.db;
   return {
@@ -3003,8 +3033,23 @@ function makeWebhookRepo(x: Exec): WebhookRepo {
           statusCode: delivery.statusCode ?? null,
           attempts: delivery.attempts,
           error: delivery.error ?? null,
+          eventType: delivery.eventType ?? null,
+          resendOf: delivery.resendOf ?? null,
         }),
       );
+    },
+    async getDelivery(scope, webhookId, id) {
+      const [row] = await db
+        .select()
+        .from(schema.webhookDeliveries)
+        .where(
+          and(
+            eq(schema.webhookDeliveries.spaceId, scope.spaceId),
+            eq(schema.webhookDeliveries.webhookId, webhookId),
+            eq(schema.webhookDeliveries.id, id),
+          ),
+        );
+      return row ? toDeliveryRecord(row) : null;
     },
     async listDeliveries(scope, webhookId, opts) {
       const rows = await db
@@ -3018,16 +3063,7 @@ function makeWebhookRepo(x: Exec): WebhookRepo {
         )
         .orderBy(desc(schema.webhookDeliveries.createdAt))
         .limit(opts?.limit ?? 50);
-      return rows.map((r) => ({
-        id: r.id,
-        webhookId: r.webhookId,
-        eventId: r.eventId,
-        status: r.status,
-        statusCode: r.statusCode ?? undefined,
-        attempts: r.attempts,
-        error: r.error ?? undefined,
-        createdAt: r.createdAt.toISOString(),
-      }));
+      return rows.map(toDeliveryRecord);
     },
     async deleteDeliveriesBefore(before, limit) {
       directOnly(x, 'webhooks.deleteDeliveriesBefore');

@@ -77,11 +77,16 @@ describe('MCP role presets and team tools', () => {
   it('assigns a preset to a key, and refuses demoting the last admin', async () => {
     const adminRole = await presetRoleId(deps.ctx, SPACE, 'admin');
     const only = await createApiKey(deps.ctx, hasher, {
+      issuer: 'system',
       spaceId: SPACE,
       kind: 'cma',
       roleId: adminRole,
     });
-    const reader = await createApiKey(deps.ctx, hasher, { spaceId: SPACE, kind: 'cda' });
+    const reader = await createApiKey(deps.ctx, hasher, {
+      issuer: 'system',
+      spaceId: SPACE,
+      kind: 'cda',
+    });
     const client = await connect(deps, admin);
 
     const assigned = payload(

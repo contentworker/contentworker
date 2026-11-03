@@ -35,8 +35,9 @@ export async function consumeEvent(
   event: DomainEvent,
 ): Promise<PublishAgentRunSummary[]> {
   await dispatchEvent(ctx, deps, event);
-  // An invitation belongs to no space, so no live subscriber could be told about it.
-  if (event.type === 'invite.email_due') return [];
+  // An invitation belongs to no space, so no live subscriber could be told about it. A test event
+  // is for one webhook alone (and only ever arrives inside a WebhookSendRequest).
+  if (event.type === 'invite.email_due' || event.type === 'webhook.test') return [];
   if (deps.bus) {
     await deps.bus.publish(event).catch((err) => deps.onLiveError?.(err));
   }

@@ -205,4 +205,6 @@ export interface ToolContext {
   readonly authorizeEntryRead: (s: Scope, id: string) => Promise<string>;
   /** The `environment` each call named, before alias resolution, keyed by the resolved args. */
   readonly requestedEnvironment: WeakMap<object, string>;
+  /** What a call created, keyed by its args, for the audit row's target (when args can't say). */
+  readonly auditTarget: WeakMap<object, string>;
 }

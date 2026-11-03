@@ -33,7 +33,9 @@ export function apiKeysRoutes(deps: AuthDeps): Hono<AuthVars> {
       body: createApiKeyBody,
       ok: authDocs.apiKeyCreated,
       status: 201,
-      description: 'The raw token is returned once; only its SHA-256 hash is stored.',
+      description:
+        'The raw token is returned once; only its SHA-256 hash is stored. 403 to a personal ' +
+        'access token or an OAuth token: a delegated bearer never mints a key that outlives it.',
     }),
     requireScope(SCOPES.spaceAdmin),
     async (c) => {
@@ -47,6 +49,7 @@ export function apiKeysRoutes(deps: AuthDeps): Hono<AuthVars> {
         name: body.name,
         scopes: body.scopes,
         roleId: body.roleId,
+        issuer: c.get('principal'),
       });
       // Return the raw token once; only its hash is stored.
       return c.json(
@@ -65,9 +68,9 @@ export function apiKeysRoutes(deps: AuthDeps): Hono<AuthVars> {
    * counterpart to an OAuth grant, for CLI and CI clients that cannot run a
    * browser flow. It lists and revokes through the API-key routes above.
    *
-   * Deliberately NOT exposed as an MCP tool, and refused to OAuth-delegated
-   * callers: an access token that expires in an hour must not be able to mint
-   * itself a credential that never expires. PATs are issued by a human at a
+   * Deliberately NOT exposed as an MCP tool, and refused to delegated bearers
+   * (an OAuth or personal access token): a token that expires in an hour must
+   * not be able to mint itself a credential that never expires. PATs are issued by a human at a
    * keyboard, or by an operator key.
    */
   app.post(
@@ -82,8 +85,9 @@ export function apiKeysRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const principal = c.get('principal');
       // Minted by a person for themselves (it acts as them, checked against their membership on
-      // every use), never by a key or by a token another application holds.
-      if (principal.clientId || principal.kind !== 'user' || !principal.subject) {
+      // every use), never by a key. A token a person handed out (OAuth, or another PAT) is
+      // refused in the use-case.
+      if (principal.kind !== 'user' || !principal.subject) {
         throw new ForbiddenError('personal-access-token:create');
       }
       const body = await parseBody(c, createPatBody);
@@ -94,6 +98,7 @@ export function apiKeysRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopes: body.scopes,
         expiresInDays: body.expiresInDays,
         issuerScopes: principal.scopes,
+        issuer: principal,
       });
       return c.json({ id: created.id, token: created.token, expiresAt: created.expiresAt }, 201);
     },

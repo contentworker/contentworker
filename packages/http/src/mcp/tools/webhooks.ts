@@ -4,6 +4,8 @@ import {
   listWebhookDeliveries,
   listWebhooks,
   MAX_PAGE_LIMIT,
+  resendWebhookDelivery,
+  sendWebhookTest,
   updateWebhook,
 } from '@contentworker/application';
 import { SCOPES, type Webhook } from '@contentworker/domain';
@@ -124,6 +126,46 @@ export function registerWebhookTools(server: McpServer, t: ToolContext): void {
         limit: args.limit,
       });
       return ok({ items });
+    },
+  );
+
+  // A test and a resend go through the outbox and the engine like every delivery: the tool returns
+  // what was queued, and the attempt shows up in webhook_deliveries under the returned eventId.
+  server.registerTool(
+    'webhook_test',
+    {
+      description:
+        'Queue a signed webhook.test event for one webhook, whatever its topics and even while it ' +
+        'is paused. One attempt, never retried; its result appears in webhook_deliveries under ' +
+        'the returned eventId.',
+      inputSchema: toolSchema('webhook_test', () => z.object({ id: z.string(), ...scopeArgs })),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      return ok(await sendWebhookTest(ctx, scopeOf(args), args.id));
+    },
+  );
+
+  server.registerTool(
+    'webhook_resend',
+    {
+      description:
+        'Resend a stored delivery (deliveryId from webhook_deliveries) to its webhook: the same ' +
+        'event id, signed afresh with the time it is sent (a bulk chunk from its entries as ' +
+        'published now), recorded as a new attempt whose resendOf names the original. One ' +
+        'attempt, never retried. Refused (conflict) once the event has passed the event retention ' +
+        '(7 days by default), which can be a little before the delivery leaves the log.',
+      inputSchema: toolSchema('webhook_resend', () =>
+        z.object({
+          id: z.string().describe('the webhook id'),
+          deliveryId: z.number().int().min(1),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      return ok(await resendWebhookDelivery(ctx, scopeOf(args), args.id, args.deliveryId));
     },
   );
 }

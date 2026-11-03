@@ -256,6 +256,10 @@ The body, the analysis report and the format notes are in
 | GET    | `/spaces/:space/api-keys`                 | `space:admin` | List keys                                                                                    |
 | POST   | `/spaces/:space/api-keys`                 | `space:admin` | Mint key (`kind`, optional `roleId`); raw `token` returned once                              |
 | DELETE | `/spaces/:space/api-keys/:id`             | `space:admin` | Revoke a key (also how a personal access token or OAuth token is revoked)                    |
+
+MCP: `api_keys_list`, `api_key_create`, `api_key_update` (the key's role), `api_key_revoke`.
+Minting a key, and a role change that widens one, answer 403 to a personal access token or an
+OAuth token (see [Auth & RBAC](./auth-and-rbac.md#one-token-model-three-issuances)).
 | POST   | `/spaces/:space/personal-access-tokens`   | `space:admin` | Mint a personal access token `{ name, scopes, expiresInDays? }` (1 to 365); raw `token` once |
 | GET    | `/spaces/:space/personal-access-tokens`   | `space:admin` | List personal access tokens                                                                  |
 | GET    | `/spaces/:space/oauth/connections`        | `space:admin` | List applications connected through OAuth                                                    |
@@ -743,6 +747,8 @@ field never becomes a label, and a denied slug field drops the item. Every write
 | PUT    | `…/webhooks/:id`            | `space:admin` | Update webhook |
 | DELETE | `…/webhooks/:id`            | `space:admin` | Delete webhook |
 | GET    | `…/webhooks/:id/deliveries` | `space:admin` | Delivery log   |
+| POST   | `…/webhooks/:id/test`       | `space:admin` | Queue a `webhook.test` delivery (202) |
+| POST   | `…/webhooks/:id/deliveries/:deliveryId/resend` | `space:admin` | Resend a logged delivery's event, signed afresh (202; 409 once the event is past retention) |
 
 A webhook is scoped to the path's environment, or to every environment with
 `allEnvironments: true` in the create body; responses carry `environmentId` (`null` for

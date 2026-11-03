@@ -23,11 +23,13 @@ import {
   type EntryWorkflowState,
   type InstalledPlugin,
   inviteStatus,
+  isWebhookSendRequest,
   type MemberInvite,
   type Menu,
   matchesTopic,
   menuTargets,
   type OAuthClient,
+  type OutboxEntry,
   type PluginSettings,
   type Promotion,
   projectFields,
@@ -200,7 +202,7 @@ export class InMemoryContentStore implements ContentStore {
     return { ...v, fields: JSON.parse(raw) as EntryFields };
   }
   private readonly publishedData = new Map<string, PublishedEntry>();
-  private readonly outboxData: { event: DomainEvent; relayed: boolean; relayedAt?: number }[] = [];
+  private readonly outboxData: { event: OutboxEntry; relayed: boolean; relayedAt?: number }[] = [];
 
   private readonly environmentData = new Map<string, { id: string; name: string }[]>();
   private readonly purgeData = new Map<
@@ -1479,6 +1481,8 @@ export class InMemoryContentStore implements ContentStore {
     );
   }
   readonly webhookDeliveries: WebhookDeliveryRecord[] = [];
+  /** The space each delivery record belongs to (the records keep the port's shape). */
+  private readonly deliverySpace = new Map<number, string>();
   private deliverySeq = 0;
 
   readonly webhooks: WebhookRepo = {
@@ -1508,8 +1512,9 @@ export class InMemoryContentStore implements ContentStore {
         list.filter((w) => !(w.id === id && coversEnvironment(w, scope.environmentId))),
       );
     },
-    recordDelivery: async (_scope, delivery) => {
+    recordDelivery: async (scope, delivery) => {
       this.deliverySeq += 1;
+      this.deliverySpace.set(this.deliverySeq, scope.spaceId);
       this.webhookDeliveries.push({
         ...delivery,
         id: this.deliverySeq,
@@ -1518,16 +1523,25 @@ export class InMemoryContentStore implements ContentStore {
         createdAt: new Date(this.nowMs()).toISOString(),
       });
     },
-    listDeliveries: async (_scope, webhookId, opts) =>
+    getDelivery: async (scope, webhookId, id) =>
+      this.webhookDeliveries.find(
+        (d) =>
+          d.id === id &&
+          d.webhookId === webhookId &&
+          this.deliverySpace.get(d.id) === scope.spaceId,
+      ) ?? null,
+    listDeliveries: async (scope, webhookId, opts) =>
       this.webhookDeliveries
-        .filter((d) => d.webhookId === webhookId)
+        .filter((d) => d.webhookId === webhookId && this.deliverySpace.get(d.id) === scope.spaceId)
         .sort((a, b) => b.id - a.id)
         .slice(0, opts?.limit ?? 50),
     deleteDeliveriesBefore: async (before, limit) => {
       const cutoff = before.toISOString();
       let deleted = 0;
       for (let i = this.webhookDeliveries.length - 1; i >= 0 && deleted < limit; i--) {
-        if ((this.webhookDeliveries[i]?.createdAt ?? '') < cutoff) {
+        const record = this.webhookDeliveries[i];
+        if (record && record.createdAt < cutoff) {
+          this.deliverySpace.delete(record.id);
           this.webhookDeliveries.splice(i, 1);
           deleted += 1;
         }
@@ -2999,6 +3013,9 @@ export class InMemoryContentStore implements ContentStore {
         }
       }
     },
+    get: async (scope, eventId) =>
+      this.outboxData.find((r) => r.event.id === eventId && r.event.scope.spaceId === scope.spaceId)
+        ?.event ?? null,
     deleteRelayedBefore: async (before, limit) => {
       const cutoff = before.getTime();
       let deleted = 0;
@@ -3135,8 +3152,13 @@ export class InMemoryContentStore implements ContentStore {
     this.apiKeyData.set(key.id, key);
   }
 
-  /** Returns all outbox events appended so far (relayed or not). */
+  /** Returns all outbox events appended so far (relayed or not); webhook send requests aside. */
   allEvents(): DomainEvent[] {
+    return this.outboxData.flatMap((r) => (isWebhookSendRequest(r.event) ? [] : [r.event]));
+  }
+
+  /** Every outbox row appended so far, in order: events and webhook send requests. */
+  allOutbox(): OutboxEntry[] {
     return this.outboxData.map((r) => r.event);
   }
 }

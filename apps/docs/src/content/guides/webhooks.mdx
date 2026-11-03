@@ -11,7 +11,7 @@ a release ships.
 
 Managing webhooks needs `space:admin`, in the admin, over the REST API or with the
 [MCP tools](/guides/mcp/) (`webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`,
-`webhook_deliveries`), which take the same fields.
+`webhook_deliveries`, `webhook_test`, `webhook_resend`), which take the same fields.
 
 ## Subscribe
 
@@ -79,6 +79,8 @@ reliably.
 | `PUT /webhooks/{id}` | Change any of those fields; send only what changes |
 | `DELETE /webhooks/{id}` | Delete it (204) |
 | `GET /webhooks/{id}/deliveries` | The delivery log; `limit` up to 100 |
+| `POST /webhooks/{id}/test` | Queue a `webhook.test` event for this webhook (202) |
+| `POST /webhooks/{id}/deliveries/{deliveryId}/resend` | Send a logged delivery's event again (202) |
 
 ## Events
 
@@ -133,12 +135,14 @@ only if the change happened, never for a publish that was rolled back.
 
 ## Verify the signature
 
-Each delivery carries three headers:
+Each delivery carries these headers (and any you set on the webhook):
 
 | Header                       | Value                                              |
 | ---------------------------- | -------------------------------------------------- |
 | `x-contentworker-event`      | The event type                                     |
-| `x-contentworker-timestamp`  | The event's `occurredAt`                           |
+| `x-contentworker-event-id`   | The event's `id`: dedupe on it (a retry and a resend carry the same one) |
+| `x-contentworker-resend-of`  | On a resend only: the delivery it repeats          |
+| `x-contentworker-timestamp`  | The event's `occurredAt`; for a resend, when it was sent |
 | `x-contentworker-signature`  | `sha256=` and the hex HMAC-SHA256 of `timestamp.body` with your secret |
 
 `verifyWebhook(request, secret)` from `@contentworker/sdk/webhooks` does this for you and
@@ -176,9 +180,26 @@ delivery is logged as failed and given up. Because a delivery can be retried, ha
 `entry.published` or `entry.unpublished` delivery; if some of those fail, only the ones that failed
 are retried, with the same event ids.
 
-Every attempt is logged with its status and attempt number: **Settings → Webhooks → Deliveries**,
-or `GET …/webhooks/{id}/deliveries`. A webhook you deleted, paused or unsubscribed from the event
-gets no further retries.
+Every attempt is logged with its event type, status and attempt number: **Settings → Webhooks →
+Deliveries**, or `GET …/webhooks/{id}/deliveries`. A webhook you deleted, paused or unsubscribed
+from the event gets no further retries.
+
+## Test and resend
+
+**Send test** on a webhook (or `POST …/webhooks/{id}/test`, `webhook_test`) queues a
+`webhook.test` event for that webhook alone, whatever its topics and even while it is paused, so
+you can try a receiver before turning it on. It carries `webhookId` and a fixed `message`, is
+signed like any delivery, and shows up in the delivery log under the `eventId` the call returns.
+
+**Resend** on a delivery (or `POST …/webhooks/{id}/deliveries/{deliveryId}/resend`,
+`webhook_resend`) sends that delivery's event again: the same `id`, signed with the time it is
+sent, so it passes your freshness window, with `x-contentworker-resend-of` naming the delivery it
+repeats. A bulk publish's entries are sent as they are published now. The new attempt is logged
+with `resendOf`. A receiver that deduplicates by `id` treats it as already handled. Events are kept
+for the event retention (7 days by default); one past it can't be resent (409), and that can
+happen a little before its delivery leaves the log.
+
+Both are queued (202), sent once and never retried; send again if one fails.
 
 ## Next steps
 

@@ -374,7 +374,21 @@ export interface EmailSender {
 
 /** Signs and POSTs a webhook payload. Implemented by the worker (HMAC + fetch). */
 export interface WebhookSender {
-  send(webhook: Webhook, payload: DomainEvent): Promise<WebhookSendResult>;
+  /**
+   * `timestamp` is what the signature covers and the timestamp header carries: the event's
+   * `occurredAt` unless given (a resend gives the time it is sent, so a receiver's freshness
+   * window accepts it). `resendOf` names the logged delivery a resend repeats, sent as a header.
+   */
+  send(
+    webhook: Webhook,
+    payload: DomainEvent,
+    opts?: WebhookSendOptions,
+  ): Promise<WebhookSendResult>;
+}
+
+export interface WebhookSendOptions {
+  readonly timestamp?: string;
+  readonly resendOf?: number;
 }
 
 export interface FunctionInvokeResult {

@@ -87,6 +87,7 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
             contentGrants: args.contentGrants,
           },
           deps.accessPolicy,
+          t.principal,
         ),
       );
     },
@@ -164,7 +165,14 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
       }
       const target = args.keyId ? { keyId: args.keyId } : { memberId: args.memberId as string };
       return ok(
-        await assignRolePreset(ctx, scopeOf(args).spaceId, target, args.preset, accessPolicy),
+        await assignRolePreset(
+          ctx,
+          scopeOf(args).spaceId,
+          target,
+          args.preset,
+          accessPolicy,
+          t.principal,
+        ),
       );
     },
   );

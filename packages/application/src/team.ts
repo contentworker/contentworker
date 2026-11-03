@@ -10,12 +10,15 @@ import {
   type ApiKey,
   type ApiKeyKind,
   ConflictError,
+  DelegatedKeyMintError,
   grantsAdmin,
+  isDelegatedBearer,
   isEmail,
   isRolePreset,
   LastAdminError,
   NotFoundError,
   normalizeEmail,
+  type Principal,
   presetRole,
   ROLE_PRESET_DEFINITIONS,
   type Role,
@@ -426,13 +429,18 @@ export async function findMemberForSignIn(
 
 // ---- keys -----------------------------------------------------------------------------------------
 
-/** Binds a key to a role (or none). Keeps the last admin. */
+/**
+ * Binds a key to a role (or none). Keeps the last admin. A delegated bearer (`issuer`) may only
+ * narrow a key: to scopes it already has, never off a role (which may restrict its content) and
+ * never onto another role's grants.
+ */
 export async function assignApiKeyRole(
   ctx: AppContext,
   spaceId: string,
   keyId: string,
   roleRef: string | null,
   policy: AccessPolicy,
+  issuer: Principal | 'system',
 ): Promise<ApiKey> {
   const keys = await ctx.store.auth.list(spaceId);
   const key = keys.find((k) => k.id === keyId);
@@ -449,6 +457,18 @@ export async function assignApiKeyRole(
   const role = roleRef ? await resolveRoleRef(ctx, spaceId, roleRef) : undefined;
   // Unbinding falls back to the kind's defaults, as an unbound key always has.
   const scopes = role ? role.scopes : scopesForKind(key.kind);
+  if (issuer !== 'system' && isDelegatedBearer(issuer)) {
+    const current = key.roleId ? await ctx.store.roles.get(spaceId, key.roleId) : null;
+    const held = current ? current.scopes : key.scopes;
+    const widens =
+      scopes.some((s) => !held.includes(s)) ||
+      (key.roleId !== undefined &&
+        (!role ||
+          (role.id !== key.roleId &&
+            JSON.stringify(role.contentGrants) !== JSON.stringify(current?.contentGrants))));
+    // As `assertMayMintKeys` (auth.ts) refuses a delegated bearer minting a key.
+    if (widens) throw new DelegatedKeyMintError();
+  }
   const { roleId: _previous, ...unbound } = key;
   const next: ApiKey = role ? { ...key, roleId: role.id, scopes } : { ...unbound, scopes };
   await assertKeepsAnAdmin(ctx, spaceId, policy, {
@@ -468,12 +488,13 @@ export async function assignRolePreset(
   target: PresetTarget,
   preset: RolePreset,
   policy: AccessPolicy,
+  issuer: Principal | 'system',
 ): Promise<ApiKey | SpaceMember> {
   if (!isRolePreset(preset)) {
     throw new ValidationError([{ field: 'preset', message: `Unknown role preset "${preset}"` }]);
   }
   return 'keyId' in target
-    ? assignApiKeyRole(ctx, spaceId, target.keyId, preset, policy)
+    ? assignApiKeyRole(ctx, spaceId, target.keyId, preset, policy, issuer)
     : updateMember(ctx, spaceId, target.memberId, { role: preset }, policy);
 }
 

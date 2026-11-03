@@ -1,9 +1,12 @@
 import {
   type ContentTypeGrant,
+  DelegatedKeyMintError,
   grantsAdmin,
   IMPLIED_CONTENT_ACTIONS,
+  isDelegatedBearer,
   LISTED_CONTENT_ACTIONS,
   NotFoundError,
+  type Principal,
   type Role,
   SCOPES,
   ValidationError,
@@ -81,6 +84,20 @@ export async function createRole(
 }
 
 /**
+ * A delegated bearer (an OAuth or personal access token) can't widen an active API key by editing
+ * the role it is bound to, as it can't by re-roling the key (`assignApiKeyRole`): new scopes, or
+ * changed content grants, are refused while any such key holds the role. Narrowing scopes is not.
+ */
+async function refuseWideningKeys(ctx: AppContext, existing: Role, input: RoleInput) {
+  const widens =
+    input.scopes.some((s) => !existing.scopes.includes(s)) ||
+    JSON.stringify(input.contentGrants ?? []) !== JSON.stringify(existing.contentGrants ?? []);
+  if (!widens) return;
+  const keys = await ctx.store.auth.list(existing.spaceId);
+  if (keys.some((k) => k.roleId === existing.id && !k.revoked)) throw new DelegatedKeyMintError();
+}
+
+/**
  * Replaces a role's definition. Keys and people holding it pick the change up live. A preset
  * role stays that preset. Refused with `LastAdminError` when dropping `space:admin` would leave
  * the space with no administrator.
@@ -91,10 +108,12 @@ export async function updateRole(
   id: string,
   input: RoleInput,
   policy: AccessPolicy = NO_SSO,
+  editor?: Principal,
 ): Promise<Role> {
   validateRoleInput(input);
   const existing = await ctx.store.roles.get(spaceId, id);
   if (!existing) throw new NotFoundError('Role', id);
+  if (editor && isDelegatedBearer(editor)) await refuseWideningKeys(ctx, existing, input);
   const role: Role = {
     id,
     spaceId,

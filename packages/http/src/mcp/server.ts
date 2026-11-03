@@ -24,6 +24,7 @@ import type { McpDeps } from './deps';
 import { registerAgentTools } from './tools/agents';
 import { registerAiActionTools } from './tools/ai-actions';
 import { registerAiContentTools } from './tools/ai-content';
+import { registerApiKeyTools } from './tools/api-keys';
 import { registerAppExtensionTools } from './tools/app-extensions';
 import { registerAssetCollectionTools } from './tools/asset-collections';
 import { registerAssetVersionTools } from './tools/asset-versions';
@@ -92,6 +93,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerReadTools,
   registerAiContentTools,
   registerRoleTools,
+  registerApiKeyTools,
   registerPluginTools,
   registerImportTools,
   registerSpaceExportTools,
@@ -165,6 +167,8 @@ export function buildServer(
   // The `environment` each call named, before resolution, keyed by the resolved args object: a tool
   // that must not pin anything to an alias's current target (the webhook tools) reads it back.
   const requestedEnvironment = new WeakMap<object, string>();
+  // What a call created, set by the tool (`auditTarget`), so its audit row names it.
+  const auditTarget = new WeakMap<object, string>();
   const register = server.registerTool.bind(server);
   server.registerTool = ((name: string, config: unknown, handler: (...a: unknown[]) => unknown) => {
     const declared = declaredArgs((config as { inputSchema?: unknown }).inputSchema);
@@ -195,6 +199,7 @@ export function buildServer(
               principal,
               defaultSpace: DEFAULT_SPACE,
               defaultEnvironment: DEFAULT_ENV,
+              targetId: args && typeof args === 'object' ? auditTarget.get(args) : undefined,
             });
           }
           return result;
@@ -243,6 +248,7 @@ export function buildServer(
     guardTrash,
     authorizeEntryRead,
     requestedEnvironment,
+    auditTarget,
   };
   for (const registerArea of TOOL_AREAS) registerArea(server, t);
 

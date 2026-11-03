@@ -779,6 +779,10 @@ export const webhookDeliveries = sqliteTable(
     attempts: integer('attempts').notNull(),
     error: text('error'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** The event's type; NULL on records from before it was kept (0022). */
+    eventType: text('event_type'),
+    /** The delivery this attempt resent, when an administrator asked for it again (0022). */
+    resendOf: integer('resend_of'),
   },
   (t) => [
     index('webhook_deliveries_by_webhook').on(t.spaceId, t.webhookId),

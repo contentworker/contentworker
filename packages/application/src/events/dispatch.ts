@@ -1,4 +1,11 @@
-import type { DomainEvent, EntriesPublishedBulkEvent, Webhook } from '@contentworker/domain';
+import {
+  coversEnvironment,
+  type DomainEvent,
+  deliveredEventOf,
+  type EntriesPublishedBulkEvent,
+  type Webhook,
+  type WebhookSendRequest,
+} from '@contentworker/domain';
 import type {
   AssetGate,
   AssetIngestQueue,
@@ -173,6 +180,10 @@ export async function dispatchEvent(
     );
     return;
   }
+
+  // A test event only ever travels inside a WebhookSendRequest (`deliverWebhookRequest`); should
+  // one arrive on its own, it must not reach every "*" subscriber.
+  if (event.type === 'webhook.test') return;
 
   // Coalesced bulk fact: the bulk-shaped fan-out replaces N per-entry events.
   if (event.type === 'entries.published_bulk') {
@@ -410,6 +421,7 @@ async function deliverBulkPerEntry(
   event: EntriesPublishedBulkEvent,
   snapshotById: ReadonlyMap<string, { contentTypeApiId: string; version: number; fields: unknown }>,
   attempt: number,
+  sent: SendOptions = {},
 ): Promise<number> {
   const { scope } = event;
   const isPublish = event.action === 'publish';
@@ -448,7 +460,7 @@ async function deliverBulkPerEntry(
             contentTypeApiId: '',
           }
     ) as DomainEvent;
-    const result = await deps.sender.send(webhook, perEntryEvent);
+    const result = await deps.sender.send(webhook, perEntryEvent, sentAt(sent));
     deps.onWebhookDelivery?.({ delivered: result.delivered });
     if (!result.delivered) {
       failedIds.push(entryId);
@@ -467,6 +479,8 @@ async function deliverBulkPerEntry(
       failedIds.length === 0
         ? undefined
         : `${failedIds.length}/${entryIds.length} deliveries failed: ${lastError}`,
+    eventType: event.type,
+    ...(sent.resendOf !== undefined ? { resendOf: sent.resendOf } : {}),
   });
   if (failedIds.length > 0 && attempt < WEBHOOK_MAX_ATTEMPTS && deps.scheduleWebhookRetry) {
     await deps.scheduleWebhookRetry({
@@ -496,14 +510,29 @@ export interface WebhookRetry {
   readonly delaySeconds: number;
 }
 
+/** How an administrator's resend is sent: signed at `timestamp`, sent and logged as a resend. */
+interface SendOptions {
+  readonly timestamp?: string;
+  readonly resendOf?: number;
+}
+
+const sentAt = (sent: SendOptions) =>
+  sent.timestamp !== undefined || sent.resendOf !== undefined
+    ? {
+        ...(sent.timestamp !== undefined ? { timestamp: sent.timestamp } : {}),
+        ...(sent.resendOf !== undefined ? { resendOf: sent.resendOf } : {}),
+      }
+    : undefined;
+
 async function deliverWebhook(
   ctx: AppContext,
   deps: Pick<DispatchDeps, 'sender' | 'onWebhookDelivery' | 'scheduleWebhookRetry'>,
   webhook: Webhook,
   event: DomainEvent,
   attempt: number,
+  sent: SendOptions = {},
 ): Promise<boolean> {
-  const result = await deps.sender.send(webhook, event);
+  const result = await deps.sender.send(webhook, event, sentAt(sent));
   deps.onWebhookDelivery?.({ delivered: result.delivered });
   await ctx.store.webhooks.recordDelivery(event.scope, {
     webhookId: webhook.id,
@@ -512,6 +541,8 @@ async function deliverWebhook(
     statusCode: result.statusCode,
     attempts: attempt,
     error: result.error,
+    eventType: event.type,
+    ...(sent.resendOf !== undefined ? { resendOf: sent.resendOf } : {}),
   });
   if (!result.delivered && attempt < WEBHOOK_MAX_ATTEMPTS && deps.scheduleWebhookRetry) {
     await deps.scheduleWebhookRetry({
@@ -558,6 +589,66 @@ export async function redeliverWebhook(
   const webhook = current.find((w) => w.id === retry.webhookId);
   if (!webhook) return null;
   return { delivered: await deliverWebhook(ctx, deps, webhook, retry.event, retry.attempt) };
+}
+
+/**
+ * An administrator's test or resend (a `WebhookSendRequest`, which the engine takes off the
+ * events queue): one attempt at one webhook, whatever its topics and whether it is paused, recorded
+ * in its log and never retried (they can ask again). A resend reads its event back from the outbox
+ * now and sends it with the same id, signed at the time it is sent; a bulk chunk goes to a
+ * per-entry subscriber entry by entry, from the entries' published snapshots as they are now, as a
+ * retry does. An event swept since, one from an environment the webhook no longer covers, or a
+ * chunk with no entry still published, is logged as a failed attempt rather than dropped. A webhook deleted since, or no longer visible where it was asked
+ * for, gets nothing (`null`). A redelivered request sends again; the event id is the same, so a
+ * receiver that dedupes on it sees one.
+ */
+export async function deliverWebhookRequest(
+  ctx: AppContext,
+  deps: Pick<DispatchDeps, 'sender' | 'onWebhookDelivery'>,
+  request: WebhookSendRequest,
+): Promise<{ delivered: boolean } | null> {
+  const webhook = await ctx.store.webhooks.get(request.scope, request.webhookId);
+  if (!webhook) return null;
+  const once = { sender: deps.sender, onWebhookDelivery: deps.onWebhookDelivery };
+  if (request.test) {
+    return { delivered: await deliverWebhook(ctx, once, webhook, request.test, 1) };
+  }
+  if (!request.resend) return null;
+  const { deliveryId, eventId } = request.resend;
+  const stored = await ctx.store.outbox.get(request.scope, eventId);
+  const event = stored ? deliveredEventOf(stored) : null;
+  const refused = async (error: string) => {
+    await ctx.store.webhooks.recordDelivery(event?.scope ?? request.scope, {
+      webhookId: webhook.id,
+      eventId,
+      status: 'failed',
+      attempts: 1,
+      error,
+      ...(event ? { eventType: event.type } : {}),
+      resendOf: deliveryId,
+    });
+    return { delivered: false };
+  };
+  if (!event) return refused('The event is past the event retention; nothing was sent');
+  // Rescoped since (to another environment): it no longer receives this event's environment.
+  if (!coversEnvironment(webhook, event.scope.environmentId)) {
+    return refused(
+      `The webhook no longer receives events from "${event.scope.environmentId}"; nothing was sent`,
+    );
+  }
+  const sent = { timestamp: ctx.clock.now().toISOString(), resendOf: deliveryId };
+  if (
+    event.type === 'entries.published_bulk' &&
+    webhook.topics.some((t) => t === '*' || t === perEntryTypeOf(event))
+  ) {
+    const snapshots = await bulkSnapshots(ctx, event);
+    if (event.action === 'publish' && !event.entryIds.some((id) => snapshots.has(id))) {
+      return refused('No entry in the chunk is still published; nothing was sent');
+    }
+    const failed = await deliverBulkPerEntry(ctx, once, webhook, event, snapshots, 1, sent);
+    return { delivered: failed === 0 };
+  }
+  return { delivered: await deliverWebhook(ctx, once, webhook, event, 1, sent) };
 }
 
 /**

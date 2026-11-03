@@ -192,7 +192,8 @@ their role.
 | `PUT /spaces/:space/api-keys/:id/role` | Rebind a key `{ role }` (`null` unbinds it to its kind's defaults) |
 | `PUT /spaces/:space/access-settings`   | `{ ssoOnly }`                                                      |
 
-All need `space:admin`. MCP: `role_presets_list`, `team_list`, `role_preset_assign`. In the admin:
+All need `space:admin`. MCP: `role_presets_list`, `team_list`, `role_preset_assign`, and
+`api_key_update` for `PUT …/api-keys/:id/role`. In the admin:
 Settings → Access → Space access.
 
 ### The last administrator
@@ -508,9 +509,19 @@ token a human approved for less, while narrowing the role still takes effect imm
 grants continue to resolve live in every case — only the coarse scopes are capped.
 
 A delegated token also cannot mint a longer-lived one: `POST /spaces/:space/personal-access-tokens` refuses any
-caller carrying a `clientId` (i.e. an OAuth-issued token), so a credential that expires in an hour
-cannot promote itself into one that never does. That route is deliberately **not** exposed as an
-MCP tool for the same reason.
+delegated bearer (an OAuth-issued token, or another personal access token), so a credential that
+expires in an hour cannot promote itself into one that never does. That route is deliberately **not** exposed as an
+MCP tool for the same reason. Operator API keys are on MCP (`api_keys_list`, `api_key_create`,
+`api_key_update`, `api_key_revoke`), and the same rule covers them on both surfaces: a delegated
+bearer (`isDelegatedBearer`: an OAuth or personal access token, which `authenticate` marks with
+the principal's `issuance`) gets **403** from `POST /spaces/:space/api-keys` and from a
+`PUT /spaces/:space/api-keys/:id/role` (or `role_preset_assign`) that would widen a key: new
+scopes it doesn't hold, a different role's content grants, or unbinding it from a role. It is
+refused the same way editing a role an active key holds (`PUT /spaces/:space/roles/:id`,
+`role_update`) to add scopes or change its content grants, and minting a personal access token
+(a token can't mint another). Narrowing is allowed. The key use-cases take the issuer as a
+required argument (a principal, or `system` for the OAuth and personal access token flows). A signed-in person, an operator key and the admin token are unaffected. Before this,
+a personal access token holding `space:admin` could mint a key over REST.
 
 ## Secrets at rest
 
