@@ -5,6 +5,7 @@ import {
   MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
   MAX_PART_URLS,
+  MAX_TRASH_RETENTION_DAYS,
   SCHEDULER_ALERT_MAX_RECIPIENTS,
 } from '@contentworker/application';
 import {
@@ -753,6 +754,15 @@ export const decideWorkflowTaskBody = z.object({
   note: z.string().max(2000).optional(),
 });
 export const workflowSettingsBody = z.object({ separateDuties: z.boolean() });
+export const trashSettingsBody = z.object({
+  retentionDays: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_TRASH_RETENTION_DAYS)
+    .nullable()
+    .describe('Days a trashed entry is kept before it is deleted permanently; null is off'),
+});
 export const transitionBody = z.object({ workflowId: zId, toStepId: zId });
 export const schemeBody = z.object({ name: zShort });
 /** What a tag or concept carries beside its label (see `TermFieldsInput`). */

@@ -49,6 +49,7 @@ import { Redirects } from '~/cms/components/Redirects';
 import { RoleAccessSheet } from '~/cms/components/RoleAccessSheet';
 import { StatusBadge } from '~/cms/components/status';
 import { Team } from '~/cms/components/Team';
+import { TrashSettings } from '~/cms/components/TrashSettings';
 import { WebhookDeliveriesSheet } from '~/cms/components/WebhookDeliveriesSheet';
 import { WebhookDialog } from '~/cms/components/WebhookDialog';
 import { KEY_KINDS, keyKindApi, keyKindLabel } from '../lib/key-kinds';
@@ -81,6 +82,7 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   plugins: (client) => <Plugins client={client} />,
   redirects: (client) => <Redirects client={client} />,
   menus: (client) => <Menus client={client} />,
+  trash: (client) => <TrashSettings client={client} />,
   environments: (client) => <Environments client={client} />,
   'audit-log': (client) => <AuditLog client={client} />,
 };

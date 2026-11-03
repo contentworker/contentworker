@@ -1,8 +1,11 @@
 import {
   duplicateEntry,
+  getTrashSettings,
   listPreviewEntries,
+  MAX_TRASH_RETENTION_DAYS,
   purgeEntry,
   restoreEntry,
+  setTrashRetention,
   trashEntry,
 } from '@contentworker/application';
 import {
@@ -94,6 +97,44 @@ export function registerTrashTools(server: McpServer, t: ToolContext): void {
         ...(deps.blob ? { blob: deps.blob } : {}),
       });
       return ok({ purged: args.id });
+    },
+  );
+
+  server.registerTool(
+    'trash_settings_get',
+    {
+      description:
+        'Read the space’s trash retention: retentionDays, or null when off (the default: trashed ' +
+        'entries are kept until someone deletes them).',
+      inputSchema: toolSchema('trash_settings_get', () => z.object({ ...scopeArgs })),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await getTrashSettings(ctx, scopeOf(args)));
+    },
+  );
+
+  server.registerTool(
+    'trash_settings_set',
+    {
+      description:
+        'Set the space’s trash retention. Entries in the trash longer than retentionDays are ' +
+        'deleted PERMANENTLY by an hourly sweep, in every environment, including what is already ' +
+        'in the trash; entries published entries link to are kept. null turns it off. Needs ' +
+        'space:admin.',
+      inputSchema: toolSchema('trash_settings_set', () =>
+        z.object({
+          retentionDays: z.number().int().min(1).max(MAX_TRASH_RETENTION_DAYS).nullable(),
+          ...scopeArgs,
+        }),
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    async (args) => {
+      const s = scopeOf(args);
+      guard(SCOPES.spaceAdmin, s);
+      return ok(await setTrashRetention(ctx, principal, s, args.retentionDays));
     },
   );
 

@@ -96,6 +96,7 @@ describe('nav source', () => {
         'environments',
         'redirects',
         'menus',
+        'trash',
         'ai-actions',
         'functions',
         'extensions',

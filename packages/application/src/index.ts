@@ -89,6 +89,7 @@ export * from './taxonomy';
 export * from './taxonomy-delivery';
 export * from './team';
 export * from './token-crypto';
+export * from './trash-retention';
 export * from './url-safety';
 export * from './version-archive';
 export * from './versioning';

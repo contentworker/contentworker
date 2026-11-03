@@ -142,3 +142,26 @@ describe('bulk trash jobs (MCP), on the HTTP route’s use-case', () => {
     expect((await call('bulk_job_start', { action: 'trash', entryIds: ids })).isError).toBe(true);
   });
 });
+
+describe('trash retention (MCP), on the HTTP routes’ use-cases', () => {
+  it('reads and sets the window, off by default', async () => {
+    const { deps } = await setup();
+    const call = await connect(deps, admin);
+    expect((await call('trash_settings_get')).body).toEqual({ retentionDays: null });
+    expect((await call('trash_settings_set', { retentionDays: 14 })).body).toEqual({
+      retentionDays: 14,
+    });
+    expect((await call('trash_settings_get')).body).toEqual({ retentionDays: 14 });
+    expect((await call('trash_settings_set', { retentionDays: null })).body).toEqual({
+      retentionDays: null,
+    });
+    expect((await call('trash_settings_set', { retentionDays: 0 })).isError).toBe(true);
+  });
+
+  it('needs space:admin to set it', async () => {
+    const { deps } = await setup();
+    const call = await connect(deps, reader);
+    expect((await call('trash_settings_get')).isError).toBe(false);
+    expect((await call('trash_settings_set', { retentionDays: 7 })).isError).toBe(true);
+  });
+});

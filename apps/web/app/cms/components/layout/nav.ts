@@ -120,6 +120,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { id: 'environments', label: 'Environments' },
       { id: 'redirects', label: 'Redirects' },
       { id: 'menus', label: 'Menus' },
+      { id: 'trash', label: 'Trash' },
       { id: 'audit-log', label: 'Audit log' },
     ],
   },

@@ -217,6 +217,12 @@ export class InMemoryContentStore implements ContentStore {
     create: async (config) => {
       this.spaceConfigs.set(config.spaceId, config);
     },
+    setTrashRetentionDays: async (spaceId, days) => {
+      const config = this.spaceConfigs.get(spaceId);
+      if (!config) return;
+      const { trashRetentionDays: _was, ...rest } = config;
+      this.spaceConfigs.set(spaceId, days === null ? rest : { ...rest, trashRetentionDays: days });
+    },
     setWorkflowSeparateDuties: async (spaceId, value) => {
       const config = this.spaceConfigs.get(spaceId);
       if (config) this.spaceConfigs.set(spaceId, { ...config, workflowSeparateDuties: value });
@@ -489,6 +495,21 @@ export class InMemoryContentStore implements ContentStore {
     },
     saveAggregateMany: async (scope, entries) => {
       for (const entry of entries) this.setEntry(scope, entry);
+    },
+    listExpiredTrash: async (scope, before, limit) => {
+      const prefix = `${scopeKey(scope)}::`;
+      const linked = new Set(
+        [...this.referenceData.entries()]
+          .filter(([k]) => k.startsWith(prefix))
+          .flatMap(([, edges]) => edges.map((e) => e.toId)),
+      );
+      return [...this.entryData.entries()]
+        .filter(([k, e]) => k.startsWith(prefix) && e.status === 'archived' && !linked.has(e.id))
+        .map(([k, e]) => ({ id: e.id, at: this.entryTouched.get(k) ?? '' }))
+        .filter((e) => e.at < before.toISOString())
+        .sort((a, b) => (a.at === b.at ? (a.id < b.id ? -1 : 1) : a.at < b.at ? -1 : 1))
+        .slice(0, limit)
+        .map((e) => e.id);
     },
     delete: async (scope, id) => {
       this.entryData.delete(`${scopeKey(scope)}::${id}`);

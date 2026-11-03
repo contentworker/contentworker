@@ -329,6 +329,11 @@ resend repeated). Code older than the migration neither reads nor writes them, a
 before it keep NULL; nothing is backfilled (see
 [Events & webhooks](./events-and-webhooks.md#webhooks)).
 
+`0021_trash_retention.sql` adds the nullable `spaces.trash_retention_days` (NULL, every existing
+space's value, means off) and the partial index `entries_trashed` on `(space_id, environment_id,
+updated_at, id) WHERE status = 'archived'`, which the engine's trash retention sweep reads. Nothing
+is backfilled (see [Architecture](./architecture.md)).
+
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
 `archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)

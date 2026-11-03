@@ -1,9 +1,9 @@
 /**
  * The engine Worker: everything asynchronous and stateful. Queue consumers (domain events, bulk
  * chunks, agent jobs, dead letters), the cron sweeper (outbox relay, scheduled actions, asset
- * expiry, bulk-stall recovery, retention, secret reseal, agent schedules), and the owner of every Durable Object and
- * Workflow class (the admin's assistant among them). It has no public route; the api and delivery
- * Workers reach it through bindings.
+ * expiry, bulk-stall recovery, retention (event history, trash), secret reseal, agent schedules),
+ * and the owner of every Durable Object and Workflow class (the admin's assistant among them). It
+ * has no public route; the api and delivery Workers reach it through bindings.
  */
 import {
   createHttpFunctionInvoker,
@@ -30,6 +30,7 @@ import {
   startRequestedAssetIngest,
   sweepAbandonedMultipartUploads,
   sweepAbandonedUploads,
+  sweepExpiredTrash,
   sweepExpiredZips,
 } from '@contentworker/application';
 import { isWebhookSendRequest, type Scope } from '@contentworker/domain';
@@ -566,6 +567,25 @@ export default {
             }
           },
           (err) => console.error('expired zip sweep failed', redactCredentials(err)),
+        );
+        // Entries in the trash past their space's retention window, purged as "Delete
+        // permanently" would (never forced: a published link keeps one). Off unless a space set a
+        // window; bounded per tick, one purge at a time (one writer), and resumed next hour.
+        await sweep(
+          tick,
+          CRON_JOBS.trashRetention,
+          async () => {
+            const swept = await sweepExpiredTrash(wired.ctx, { blob: wired.blob });
+            if (swept.purged + swept.refused > 0) {
+              console.log(JSON.stringify({ msg: 'expired trash swept', ...swept }));
+              for (const outcome of ['purged', 'refused'] as const) {
+                if (swept[outcome] > 0) {
+                  metrics.count('contentworker_trash_purged_total', swept[outcome], { outcome });
+                }
+              }
+            }
+          },
+          (err) => console.error('trash retention sweep failed', redactCredentials(err)),
         );
         // Drafts whose presigned upload never landed, a day on (bounded per tick).
         await sweep(

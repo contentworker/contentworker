@@ -131,6 +131,16 @@ are [background jobs](#change-many-entries-at-once) with the actions `trash`, `r
 not in the trash, one published entries link to, one whose unique value was taken since) fails as
 its own item in the job's report. A job never forces a purge.
 
+### Empty the trash automatically
+
+By default the trash keeps entries until someone deletes them. A space admin can set a retention
+window instead, in **Settings → Trash**, with `PUT …/trash-settings` (`{ "retentionDays": 30 }`,
+1 to 3,650; `null` turns it off) or with the MCP tool `trash_settings_set` (`trash_settings_get`
+reads it). Once a window is set, an hourly sweep deletes permanently every entry that has been in
+the trash longer, in every environment of the space, including what was already there. It deletes
+only what **Delete permanently** could: an entry published entries link to stays in the trash, and
+nothing is forced.
+
 ## Comment and assign tasks
 
 Each entry has a comment thread and a task list, in the editor's collaboration panel. Comment to

@@ -111,7 +111,7 @@ names no job and no error, and each isolate reuses the answer for 30 s
 (`HEALTH_SCHEDULER_TTL_MS`). `GET /deployment/scheduler` (deployment administrators: the admin
 or MCP token; anyone else `403`) and the `scheduler_status` MCP tool return the detail:
 `{ scheduler, lastTickAt?, staleAfterSeconds, jobs: [{ job, lastRunAt, lastSuccessAt?, lastErrorAt?, lastError? }] }`,
-one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `abandoned-multipart-uploads`, `abandoned-uploads`, `expired-zips`, `event-history-prune`, `secrets-reseal`, `taxonomy-repair`,
+one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `abandoned-multipart-uploads`, `abandoned-uploads`, `expired-zips`, `trash-retention`, `event-history-prune`, `secrets-reseal`, `taxonomy-repair`,
 `bulk-resume`, `environment-purge-resume`, `version-archive`, `agent-schedules`), the error
 redacted and at most 500 characters.
 
@@ -332,12 +332,15 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 | POST   | `…/entries`                        | `content:write`   | Create draft `{ contentTypeApiId, fields }`                                                                    |
 | GET    | `…/entries/:id`                    | `preview:read`    | Get current entry (RBAC-filtered fields)                                                                       |
 | PUT    | `…/entries/:id`                    | `content:write`   | Save new draft version                                                                                         |
+| POST   | `…/entries/validate`               | `content:write`   | Validate without saving `{ contentTypeApiId \| entryId, fields }`: a create's or an update's checks and errors, no write; `200 { valid, fields, skippedHooks }` |
 | POST   | `…/entries/:id/published`          | `content:publish` | Publish                                                                                                        |
 | DELETE | `…/entries/:id/published`          | `content:publish` | Unpublish                                                                                                      |
 | GET    | `…/entries/:id/reverse-references` | `preview:read`    | Entries linking to this one                                                                                    |
 | DELETE | `…/entries/:id`                    | `content:write`   | Move to the trash (unpublishes first if live; idempotent)                                                      |
 | POST   | `…/entries/:id/restore`            | `content:write`   | Restore from the trash, as a draft                                                                             |
 | DELETE | `…/entries/:id/permanent`          | `content:publish` | **Irreversible** delete of a trashed entry. `?force=true` overrides the inbound-link guard                     |
+| GET    | `…/trash-settings`                 | `preview:read`    | `{ retentionDays }` (null: off, the default)                                                                   |
+| PUT    | `…/trash-settings`                 | `space:admin`     | `{ retentionDays: 1..3650 \| null }`: the hourly `trash-retention` sweep purges entries trashed longer ago, in every environment of the space, never one a published entry links to |
 | POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft                                                               |
 | POST   | `…/entries/:id/preview-link`       | `content:write`   | Mint a shareable preview link `{ ttlHours?, previewBaseUrl? }` (default 72 h); `201 { url, token, expiresAt }` |
 | POST   | `…/embeds/resolve`                 | `content:write`   | Resolve a media URL `{ url }` into a rich-text `embed` node's data; `200 { embed, resolved }`                  |
