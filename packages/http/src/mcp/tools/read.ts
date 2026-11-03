@@ -12,6 +12,7 @@ import {
   listPreviewEntryPage,
   MAX_FIELD_VALUES_PAGE,
   MAX_PAGE_LIMIT,
+  MAX_WHERE_LENGTH,
   relatedEntries,
   requestReindex,
   resolveEmbed,
@@ -22,6 +23,7 @@ import {
 } from '@contentworker/application';
 import {
   ANY_FIELD,
+  assertPathFilterBudget,
   assertQueryRespectsFieldRules,
   authorizeContent,
   canAccessContentType,
@@ -230,7 +232,14 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       ];
       const issues = filters.flatMap((f, i) => queryFilterIssues(f, `filters[${i}]`));
       if (issues.length) throw new ValidationError(issues);
+      // The REST parameter's length cap, measured on the same JSON, before the tree is walked.
+      if (args.where !== undefined && JSON.stringify(args.where).length > MAX_WHERE_LENGTH) {
+        throw new ValidationError([
+          { field: 'where', message: `where is at most ${MAX_WHERE_LENGTH} characters of JSON` },
+        ]);
+      }
       const where = args.where === undefined ? undefined : parseQueryWhere(args.where);
+      assertPathFilterBudget({ filters, ...(where ? { where } : {}) });
       assertQueryRespectsFieldRules(principal, {
         contentTypeApiId: args.contentType,
         filters,
@@ -274,7 +283,8 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
         'The distinct values a field holds across a content type’s entries (current versions, ' +
         'the trash left out), each with how many entries hold it: booleans, then numbers, then ' +
         'strings, ascending. Use it to learn what a filter can match (the tags in use, the ' +
-        'categories, the years) before writing one. Scalar fields and lists of Symbols only. ' +
+        'categories, the years) before writing one. Short scalar fields (not Text) and lists of ' +
+        'Symbols only; a very large type is refused as too broad. ' +
         'Returns one page; pass nextCursor back as cursor for the next.',
       inputSchema: toolSchema('entries_field_values', () =>
         z.object({

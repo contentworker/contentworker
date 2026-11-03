@@ -110,9 +110,10 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'The distinct values a field holds across the type’s entries (current versions, the trash ' +
         'left out), each with how many entries hold it: booleans, then numbers, then strings, ' +
-        'ascending. A list of Symbols contributes each element. Only scalar fields and lists of ' +
-        `Symbols have values to list (422 otherwise). At most ${MAX_FIELD_VALUES_PAGE} per page; ` +
-        'page with the response’s nextCursor.',
+        'ascending. A list of Symbols contributes each element. Only short scalar fields (not ' +
+        'Text) and lists of Symbols have values to list (422 otherwise), and a type with more ' +
+        'entries than the query scan cap is refused as too broad. ' +
+        `At most ${MAX_FIELD_VALUES_PAGE} per page; page with the response’s nextCursor.`,
       query: {
         locale: 'Only this locale’s values (every locale’s by default)',
         limit: `Page size (at most ${MAX_FIELD_VALUES_PAGE})`,

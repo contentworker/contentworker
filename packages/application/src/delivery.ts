@@ -24,6 +24,7 @@ import {
   DEFAULT_DELIVERY_LIST_TTL_SECONDS,
 } from './context';
 import { type DeliveryReads, deliveryReads } from './delivery-reads';
+import { usesReferenceFilters } from './entry-query';
 import { cacheTag, contentTypeTag, epochTag } from './events/dispatch';
 import { hasSlugFilters, resolveSlugFilters, slugFilterSlugs } from './taxonomy-delivery';
 
@@ -376,8 +377,12 @@ export async function listPublishedEntries(
   // A filter on a term's slug reads the terms it names alongside the config (same round trip),
   // and becomes a filter on their ids before anything else (the list cache key included) sees it.
   const slugs = hasSlugFilters(requested) ? slugFilterSlugs(requested) : null;
+  // A reference filter reads the content model in the same round trip: the store answers it from
+  // the links the model declares, as the reference edges do.
+  const refs = usesReferenceFilters(requested);
   const first = await reads.read(scope, {
     config: true,
+    ...(refs ? { contentTypes: true } : {}),
     ...(slugs?.tags.length ? { tags: { slugs: slugs.tags } } : {}),
     ...(slugs?.concepts.length ? { concepts: { slugs: slugs.concepts } } : {}),
   });
@@ -401,6 +406,7 @@ export async function listPublishedEntries(
 
   const rows = await ctx.store.entries.listPublished(scope, {
     ...query,
+    ...(refs ? { contentTypes: first.contentTypes ?? [] } : {}),
     locale,
     fallbackLocales: localeFallbackChain(config, locale),
   });

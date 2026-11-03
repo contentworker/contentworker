@@ -152,6 +152,20 @@ describe('distinct field values on D1', { timeout: 60_000 }, () => {
     ]);
   });
 
+  it('refuses a type with more entries than the scan cap, as too broad', async () => {
+    const tiny = createD1Store(testDb, { queryScanLimit: 2 });
+    await expect(
+      tiny.entries.distinctFieldValues(scope, { ...base, field: 'kind' }),
+    ).rejects.toMatchObject({ code: 'query_too_broad' });
+    // At the cap exactly, it answers: the other space's type holds one entry.
+    await expect(
+      createD1Store(testDb, { queryScanLimit: 1 }).entries.distinctFieldValues(other, {
+        ...base,
+        field: 'kind',
+      }),
+    ).resolves.toEqual([{ value: 'elsewhere', count: 1 }]);
+  });
+
   it('pages past 100 values with the use-case’s cursor, each value once', async () => {
     const seen: unknown[] = [];
     let cursor: string | undefined;

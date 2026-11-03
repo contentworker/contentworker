@@ -773,9 +773,11 @@ export class EntryQueryBuilder<F extends Fields> {
   }
   /**
    * Only entries whose link field links to one of these entries:
-   * `.references('author', authorId)`.
+   * `.references('author', authorId)`. Throws without an id.
    */
   references(field: string, ...ids: string[]): this {
+    // No ids would send an empty filter the API refuses: say so here, where the mistake is.
+    if (ids.length === 0) throw new TypeError(`references('${field}') needs at least one entry id`);
     return ids.length === 1 ? this.where(field, 'ref', ids[0]) : this.where(field, 'refIn', ids);
   }
   /** Only entries linking to one of these entries from any field: `.linksTo(entryId)`. */

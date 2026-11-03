@@ -74,6 +74,7 @@ async function seed(ctx: AppContext, s = scope) {
         required: false,
         position: 3,
       },
+      { ...sym('data', 4), type: 'JSON' },
     ],
   });
   await publishContentType(ctx, s, 'person');
@@ -103,6 +104,8 @@ async function seed(ctx: AppContext, s = scope) {
   await post('By Bob', { author: link(bob), related: [link(ann)] });
   await post('Mentions Ann', { body: doc(ann) });
   await post('Nobody', {});
+  // A link-shaped value in a JSON field is data, not a link: the reference edges skip it.
+  await post('JSON lookalike', { data: { nested: link(ann) } });
   return { ann, bob };
 }
 
@@ -136,9 +139,11 @@ describe('filter by referenced entry', () => {
   });
 
   it('refuses an empty id rather than matching nothing silently', () => {
-    for (const qs of ['fields.author[ref]=', 'links_to_entry=', 'fields.title[refIn]=,']) {
+    for (const qs of ['fields.author[ref]=', 'fields.title[refIn]=,', 'links_to_entry=a"b']) {
       expect(() => parseEntryQuery(new URLSearchParams(qs)), qs).toThrow(ValidationError);
     }
+    // An empty links_to_entry is no filter at all, as a tool call without linksToEntry is.
+    expect(parseEntryQuery(new URLSearchParams('links_to_entry=')).filters).toBeUndefined();
   });
 
   it('Delivery: a link field holding the entry, and any field for links_to_entry', async () => {

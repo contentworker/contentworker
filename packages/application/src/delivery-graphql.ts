@@ -15,7 +15,7 @@ import {
   visibleSearchHits,
 } from './delivery';
 import { type DeliveryReads, deliveryReads } from './delivery-reads';
-import { entryQueryFrom } from './entry-query';
+import { entryQueryFrom, mergeWhereJson } from './entry-query';
 import { hybridSearch, type RagDeps } from './rag';
 
 export interface DeliveryGraphDeps {
@@ -75,11 +75,14 @@ export function deliveryGraphResolvers(
       const groups: Record<string, unknown>[] = [];
       for (const [k, v] of Object.entries(args.where ?? {})) {
         if (k === 'and' || k === 'or') groups.push({ [k]: v });
+        // A whole tree under `where` (the REST parameter's JSON) joins the others.
+        else if (k === 'where' && v && typeof v === 'object')
+          groups.push(v as Record<string, unknown>);
         else raw.push([k, Array.isArray(v) ? v.join(',') : String(v)]);
       }
-      if (groups.length) {
-        raw.push(['where', JSON.stringify(groups.length === 1 ? groups[0] : { and: groups })]);
-      }
+      // Merged as REST merges repeated `where` parameters: `and`'s conditions join the root, so
+      // a `where` holding both keys spends the same depth as its REST spelling.
+      if (groups.length) raw.push(['where', JSON.stringify(mergeWhereJson(groups))]);
       if (args.order?.length) raw.push(['order', args.order.join(',')]);
       if (args.search) raw.push(['query', args.search]);
       const parsed = entryQueryFrom(raw);

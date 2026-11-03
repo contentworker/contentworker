@@ -1776,6 +1776,12 @@ export interface EntryQuery {
    * bounds its depth and size; a store trusts it as given.
    */
   readonly where?: QueryNode;
+  /**
+   * The content model, for `ref`/`refIn`: the engine then reads each row's links as the reference
+   * edges record them (the link-bearing fields its type declares). The use-cases pass it whenever
+   * a query has a reference filter.
+   */
+  readonly contentTypes?: readonly ContentType[];
   /** Sort keys, applied in order. */
   readonly order?: readonly QueryOrder[];
   /** Projection — return only these field apiIds. */
@@ -1838,7 +1844,8 @@ export interface EntryRepo {
    * The distinct scalar values one field holds across a content type's entries (current versions,
    * trash excluded), each with how many entries hold it, in the order {@link FieldValueKey}
    * describes. A list field contributes each of its elements; null, object and list values are
-   * skipped. At most `limit` rows, after `after`.
+   * skipped. At most `limit` rows, after `after`. Throws `QueryTooBroadError` when the type
+   * holds more entries than the store's query scan cap: every page groups the whole type.
    */
   distinctFieldValues(scope: Scope, query: FieldValuesQuery): Promise<FieldValueCount[]>;
   /** Persists a new entry and its first version. */

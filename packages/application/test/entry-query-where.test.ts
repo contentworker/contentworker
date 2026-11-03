@@ -8,6 +8,7 @@ import {
   listPreviewEntries,
   listPublishedEntries,
   MAX_WHERE_LENGTH,
+  mergeWhereJson,
   parseEntryQuery,
   publishContentType,
   publishEntry,
@@ -115,6 +116,48 @@ describe('richer queries from the query string', () => {
         expect((e as ValidationError).issues[0]?.field).toMatch(/^where/);
       }
     }
+  });
+
+  it('repeated where parameters AND together, within one budget', async () => {
+    const a = encodeURIComponent(
+      JSON.stringify({ field: 'fields.title', op: 'startsWith', value: 'A' }),
+    );
+    const b = encodeURIComponent(JSON.stringify({ field: 'fields.views', op: 'gte', value: 20 }));
+    expect(titles(await listPublishedEntries(ctx, scope, q(`where=${a}&where=${b}`)))).toEqual([
+      'Apricot',
+    ]);
+    // Twelve predicates each: under the cap alone, over it together.
+    const twelve = encodeURIComponent(
+      JSON.stringify({ or: Array(12).fill({ field: 'title', value: 'x' }) }),
+    );
+    expect(() => q(`where=${twelve}`)).not.toThrow();
+    expect(() => q(`where=${twelve}&where=${twelve}`)).toThrow(ValidationError);
+  });
+
+  it('merges trees without adding a level: an AND joins the root', () => {
+    const leaf = { field: 'title', value: 'x' };
+    expect(mergeWhereJson([{ or: [leaf] }])).toEqual({ or: [leaf] });
+    expect(mergeWhereJson([{ and: [leaf, leaf] }, { or: [leaf] }])).toEqual({
+      and: [leaf, leaf, { or: [leaf] }],
+    });
+  });
+
+  it('keeps what the API accepted before: an empty match, a long in list', async () => {
+    // `fields.x[match]=` is what the admin's filter bar and the SDK send for "has a value".
+    expect(titles(await listPublishedEntries(ctx, scope, q('fields.title[match]=')))).toEqual([
+      'Apple',
+      'Apricot',
+      'Banana',
+      'Cherry',
+    ]);
+    expect(titles(await listPreviewEntries(ctx, scope, q('fields.title[match]=')))).toHaveLength(4);
+    const ids = Array.from({ length: 150 }, (_, i) => `id-${i}`).join(',');
+    expect(q(`sys.id[in]=${ids}`).filters?.[0]?.value).toHaveLength(150);
+  });
+
+  it('refuses more than four component paths in one query', () => {
+    const five = Array.from({ length: 5 }, (_, i) => `fields.seo.f${i}=x`).join('&');
+    expect(() => q(five)).toThrow(ValidationError);
   });
 
   it('refuses a between without two bounds', () => {

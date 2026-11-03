@@ -121,8 +121,16 @@ describe('filter by referenced entry over HTTP', () => {
     ]);
   });
 
-  it('refuses a reference filter without an id (422), on Delivery and Preview', async () => {
-    for (const path of [`${D}/entries?fields.author[ref]=`, `${P}/entries?links_to_entry=`]) {
+  it('treats an empty links_to_entry as absent', async () => {
+    expect(await titles(app, `${D}/entries?content_type=article&links_to_entry=`)).toEqual([
+      'By Ann',
+      'By Bob',
+      'Nobody',
+    ]);
+  });
+
+  it('refuses a malformed reference filter (422), on Delivery and Preview', async () => {
+    for (const path of [`${D}/entries?fields.author[ref]=`, `${P}/entries?links_to_entry=a"b`]) {
       const res = await app.request(path, {
         headers: { Authorization: `Bearer ${path.startsWith(D) ? 'cda' : 'cpa'}` },
       });

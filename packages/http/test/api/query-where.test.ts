@@ -270,3 +270,179 @@ describe('distinct field values over HTTP', () => {
     expect((await get(app, `${values}/title/values`, token)).status).toBe(200);
   });
 });
+
+/** A key of `kind` bound to a role with these grants. */
+async function roleKey(
+  app: App,
+  kind: 'cda' | 'cma',
+  scopes: string[],
+  contentGrants: unknown[],
+): Promise<string> {
+  const roleRes = await app.request('/spaces/s1/roles', {
+    method: 'POST',
+    headers: admin,
+    body: JSON.stringify({ name: `Role ${kind}`, scopes, contentGrants }),
+  });
+  const role = (await roleRes.json()) as { id: string };
+  const keyRes = await app.request('/spaces/s1/api-keys', {
+    method: 'POST',
+    headers: admin,
+    body: JSON.stringify({ kind, roleId: role.id }),
+  });
+  return ((await keyRes.json()) as { token: string }).token;
+}
+
+const graphql = async (app: App, token: string, where: unknown) => {
+  const res = await app.request(`${D}/graphql`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: 'query ($where: JSON) { pageCollection(where: $where) { title } }',
+      variables: { where },
+    }),
+  });
+  return (await res.json()) as {
+    data?: { pageCollection: { title: string }[] } | null;
+    errors?: { message: string }[];
+  };
+};
+
+describe('what the API accepted before keeps working', () => {
+  let app: App;
+  beforeEach(async () => {
+    app = await seed();
+  });
+
+  it('an empty match still means "has a value", on Delivery, Preview and GraphQL', async () => {
+    const all = ['Apple', 'Apricot', 'Banana', 'Carrot'];
+    expect(await titles(app, `${D}/entries?content_type=page&fields.title[match]=`, 'cda')).toEqual(
+      all,
+    );
+    expect(await titles(app, `${P}/entries?content_type=page&fields.title[match]=`, 'cpa')).toEqual(
+      all,
+    );
+    // A field no entry holds matches nothing, as before.
+    expect(
+      await titles(app, `${D}/entries?content_type=page&fields.secret[match]=`, 'cda'),
+    ).toEqual([]);
+    const body = await graphql(app, 'cda', { 'fields.title[match]': '' });
+    expect(body.errors).toBeUndefined();
+    expect(body.data?.pageCollection.map((p) => p.title).sort()).toEqual(all);
+  });
+
+  it('an in list longer than 100 values still answers', async () => {
+    const res = await get(app, `${D}/entries?content_type=page&fields.title=Banana`, 'cda');
+    const [banana] = ((await res.json()) as { items: { id: string }[] }).items;
+    const ids = [...Array.from({ length: 150 }, (_, i) => `nobody-${i}`), banana?.id].join(',');
+    expect(await titles(app, `${D}/entries?content_type=page&sys.id[in]=${ids}`, 'cda')).toEqual([
+      'Banana',
+    ]);
+  });
+
+  it('an unknown operator is still ignored', async () => {
+    expect(
+      await titles(app, `${D}/entries?content_type=page&fields.title[like]=x`, 'cda'),
+    ).toHaveLength(4);
+  });
+});
+
+describe('where across parameters and GraphQL', () => {
+  let app: App;
+  beforeEach(async () => {
+    app = await seed();
+  });
+
+  it('repeated where parameters AND together', async () => {
+    const a = encodeURIComponent(
+      JSON.stringify({ field: 'fields.title', op: 'startsWith', value: 'A' }),
+    );
+    const b = encodeURIComponent(JSON.stringify({ field: 'fields.views', op: 'gte', value: 20 }));
+    expect(
+      await titles(app, `${D}/entries?content_type=page&where=${a}&where=${b}`, 'cda'),
+    ).toEqual(['Apricot']);
+  });
+
+  it('GraphQL: and and or together take no more depth than the REST spelling', async () => {
+    const leaf = { field: 'title', op: 'startsWith', value: 'Ap' };
+    // and(1) > or(2) > and(3) > or(4) > leaf: the deepest tree REST accepts.
+    const deep = { or: [{ and: [{ or: [leaf] }] }] };
+    const body = await graphql(app, 'cda', {
+      and: [deep],
+      or: [leaf, { field: 'views', value: 70 }],
+    });
+    expect(body.errors).toBeUndefined();
+    expect(body.data?.pageCollection.map((p) => p.title).sort()).toEqual(['Apple', 'Apricot']);
+  });
+});
+
+describe('field rules on the new query inputs', () => {
+  let app: App;
+  let token: string;
+  beforeEach(async () => {
+    app = await seed();
+    token = await roleKey(
+      app,
+      'cda',
+      ['delivery:read'],
+      [{ contentTypeApiId: 'page', actions: ['read'], deniedFields: ['secret'] }],
+    );
+  });
+
+  it('REST: where naming a hidden field, a path under it, or links_to_entry inside where → 403', async () => {
+    for (const where of [
+      {
+        or: [
+          { field: 'title', value: 'x' },
+          { field: 'fields.secret', value: 's' },
+        ],
+      },
+      { field: 'secret.inner', value: 's' },
+      { and: [{ field: '*', op: 'ref', value: 'some-id' }] },
+    ]) {
+      const res = await get(
+        app,
+        `${D}/entries?content_type=page&where=${encodeURIComponent(JSON.stringify(where))}`,
+        token,
+      );
+      expect(res.status, JSON.stringify(where)).toBe(403);
+    }
+    expect(
+      (await get(app, `${D}/entries?content_type=page&fields.secret.inner=s`, token)).status,
+    ).toBe(403);
+    // The same key may filter on what it can read.
+    expect(
+      (await get(app, `${D}/entries?content_type=page&fields.seo.title=Apricots`, token)).status,
+    ).toBe(200);
+  });
+
+  it('GraphQL: a where naming a hidden field is refused', async () => {
+    const body = await graphql(app, token, { or: [{ field: 'secret', value: 's' }] });
+    expect(body.errors?.length).toBeGreaterThan(0);
+    expect(body.data?.pageCollection ?? null).toBeNull();
+  });
+});
+
+describe('who may list field values', () => {
+  let app: App;
+  beforeEach(async () => {
+    app = await seed();
+  });
+  const values = `${M}/content-types/page/fields/title/values`;
+
+  it('a Delivery key, a role without the type, and a key of another space are refused (403)', async () => {
+    expect((await get(app, values, 'cda')).status).toBe(403);
+    const other = await roleKey(
+      app,
+      'cma',
+      ['preview:read'],
+      [{ contentTypeApiId: 'post', actions: ['read'] }],
+    );
+    expect((await get(app, values, other)).status).toBe(403);
+    const elsewhere = await get(
+      app,
+      '/spaces/s2/environments/main/content-types/page/fields/title/values',
+      'cma',
+    );
+    expect(elsewhere.status).toBe(403);
+  });
+});

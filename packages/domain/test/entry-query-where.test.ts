@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertPathFilterBudget,
   assertQueryRespectsFieldRules,
   type EntryFields,
   ForbiddenError,
+  MAX_FILTER_VALUES,
+  MAX_PATH_FILTERS,
   MAX_WHERE_CONDITIONS,
   MAX_WHERE_DEPTH,
   type Principal,
@@ -194,14 +197,67 @@ describe('parseQueryWhere', () => {
   });
 
   it('refuses a path segment that could read as an array index, and paths past 4 segments', () => {
-    expect(queryFilterIssues({ field: 'blocks.0', op: 'eq', value: 1 }, 'f')).not.toEqual([]);
-    expect(queryFilterIssues({ field: 'a.b.c.d.e', op: 'eq', value: 1 }, 'f')).not.toEqual([]);
-    expect(queryFilterIssues({ field: 'a.b.c.d', op: 'eq', value: 1 }, 'f')).toEqual([]);
+    const strict = { strict: true };
+    expect(queryFilterIssues({ field: 'blocks.0', op: 'eq', value: 1 }, 'f', strict)).not.toEqual(
+      [],
+    );
+    expect(queryFilterIssues({ field: 'a.b.c.d.e', op: 'eq', value: 1 }, 'f', strict)).not.toEqual(
+      [],
+    );
+    expect(queryFilterIssues({ field: 'a.b.c.d', op: 'eq', value: 1 }, 'f', strict)).toEqual([]);
   });
 
   it('refuses startsWith without a string and between without two bounds', () => {
     expect(queryFilterIssues({ field: 'a', op: 'startsWith', value: '' }, 'f')).not.toEqual([]);
     expect(queryFilterIssues({ field: 'a', op: 'between', value: [1, 2, 3] }, 'f')).not.toEqual([]);
+  });
+});
+
+describe('what was accepted before stays accepted', () => {
+  it('checks the filters the API always took only loosely: an empty match, a long in list', () => {
+    const long = Array.from({ length: MAX_FILTER_VALUES + 50 }, (_, i) => `v${i}`);
+    expect(queryFilterIssues({ field: 'title', op: 'match', value: '' }, 'f')).toEqual([]);
+    expect(queryFilterIssues({ field: 'sys.id', op: 'in', value: long }, 'f')).toEqual([]);
+    // Inside a where tree, which is new, they are checked strictly.
+    expect(() => parseQueryWhere({ field: 'title', op: 'match', value: '' })).toThrow(
+      ValidationError,
+    );
+    expect(() => parseQueryWhere({ field: 'sys.id', op: 'in', value: long })).toThrow(
+      ValidationError,
+    );
+  });
+
+  it('an empty match still means "has a value"', () => {
+    expect(run({ filters: [{ field: 'seo', op: 'match', value: '' }] })).toEqual(['alpha', 'beta']);
+  });
+});
+
+describe('the cost of a where tree', () => {
+  it('stops reading a huge tree at the condition cap', () => {
+    const leaves = Array.from({ length: 10_000 }, () => ({ field: 'title', value: 'x' }));
+    const message = (raw: unknown) => {
+      try {
+        parseQueryWhere(raw);
+        return '';
+      } catch (e) {
+        return (e as ValidationError).issues.map((i) => i.message).join('; ');
+      }
+    };
+    const started = Date.now();
+    expect(message({ or: leaves })).toMatch(/at most 20 conditions/);
+    expect(message({ and: [{ or: leaves.slice(0, 15) }, { or: leaves.slice(0, 15) }] })).toMatch(
+      /at most 20 conditions/,
+    );
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it(`refuses more than ${MAX_PATH_FILTERS} component paths in one query`, () => {
+    const path = (i: number): QueryFilter => ({ field: `seo.f${i}`, op: 'eq', value: 1 });
+    const filters = Array.from({ length: MAX_PATH_FILTERS }, (_, i) => path(i));
+    expect(() => assertPathFilterBudget({ filters })).not.toThrow();
+    expect(() =>
+      assertPathFilterBudget({ filters, where: { or: [path(9), { field: 'title', op: 'eq' }] } }),
+    ).toThrow(ValidationError);
   });
 });
 

@@ -155,10 +155,22 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 The D1 store pushes a superset of each predicate into SQL and the domain engine
 (`runEntryQuery`) decides exactly (`packages/db/src/query-pushdown.ts`). Reference filters on
 Delivery are an `IN` over the `references` edges table (by its `to_id` index), on Preview a
-`json_tree` scan of the current fields; component paths compare the path's last segment as a
-bound value; an `or` group is pushed only when every branch is. Prefilters spend at most
+`json_tree` walk of the current fields, after a cheap `instr` test for the quoted id (so ref ids
+are restricted to ASCII needing no JSON escape). The use-cases pass the content model with a
+reference filter (`EntryQuery.contentTypes`; on Delivery it rides the config read), and the
+engine then reads links exactly as `extractReferences` writes the edges: declared link-bearing
+fields only, any locale. Component paths compare the path's last segment as a bound value, at
+most `MAX_PATH_FILTERS` (4) per query; an `or` group is pushed only when every branch is; a field
+key holding `"` widens the scan instead of being walked. Prefilters spend at most
 `PREFILTER_PARAM_BUDGET` (64) bound parameters per statement; a predicate past it is left to the
 engine.
+
+Strict checks (`queryFilterIssues`, strict inside `where`) apply to the new inputs only: `ref`,
+`refIn`, `between`, `startsWith`, `*`, and every predicate of a `where` tree. An empty `match`
+("has a value"), an `in`/`nin` list past 100 values and an unknown operator behave as before.
+Repeated `where` parameters (and GraphQL's `and`, `or` and `where` keys) are merged with
+`mergeWhereJson` and checked as one tree: ≤ 4 deep, ≤ 20 predicates, ≤ 8,192 characters (MCP
+measures `JSON.stringify(where)`).
 
 ---
 
@@ -305,7 +317,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | POST   | `…/content-types`                  | `content:manage`  | Create/update content type         |
 | GET    | `…/content-types/entry-counts`     | `preview:read`    | Entries per type, by status        |
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
-| GET    | `…/content-types/:apiId/fields/:field/values` | `preview:read` | Distinct values of a scalar field (or list of Symbols) across current entries, trash excluded, each with its entry `count`; booleans, numbers, strings ascending; `locale`, `limit` (≤ 100), `cursor` → `{ items, nextCursor? }`. 422 for a structured field, 403 for a hidden one |
+| GET    | `…/content-types/:apiId/fields/:field/values` | `preview:read` | Distinct values of a short scalar field (not `Text`) or list of Symbols across current entries, trash excluded, each with its entry `count`; booleans, numbers, strings ascending; `locale`, `limit` (≤ 100), `cursor` → `{ items, nextCursor? }`. 422 for any other field, 403 for a hidden one, `query_too_broad` when the type holds more entries than the scan cap (5,000) |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 
 A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,

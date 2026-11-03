@@ -44,11 +44,11 @@ import * as schema from './schema';
  *
  * LINKS: `ref`/`refIn` on the published path are an `IN` over the reference
  * edges table (driven by its `(space, environment, to_id)` index), which every
- * publish rewrites in the same unit as the snapshot. The engine looks for a
- * `{ id, linkType: 'Entry' }` anywhere in the field, where the edges record the
- * links the content model types as links; the two agree for every value the
- * model validates. The draft path has no edges for drafts, so there a link
- * filter scans the field's JSON for an `id` member with the wanted value.
+ * publish rewrites in the same unit as the snapshot. Given the content model
+ * (`EntryQuery.contentTypes`, which the use-cases pass), the engine reads links
+ * exactly as the edges were extracted, so the two agree. The draft path has no
+ * edges for drafts: there a link filter first looks for the quoted id in the
+ * stored JSON (`instr`), and only then walks it for an `id` member holding it.
  *
  * CASE FOLDING: SQLite's LIKE folds ASCII only, while the engine uses JS
  * Unicode `toLowerCase`. {@link likePattern} therefore turns every needle
@@ -108,11 +108,20 @@ function fieldHas(fieldsCol: SQL, field: string, test: SQL): SQL {
       ? sql`SELECT 1 FROM json_each(fld.value) AS kv WHERE ${test}`
       : sql`SELECT 1 FROM json_tree(${fieldsCol}, fld.fullkey) AS kv
           WHERE kv.key = ${leaf} AND ${test}`;
+  // A key holding `"` widens the scan rather than being walked by its path (see {@link walkable}).
   return sql`EXISTS (
     SELECT 1 FROM json_each(${fieldsCol}) AS fld
-    WHERE fld.key = ${top} AND CASE WHEN fld.type = 'object' THEN EXISTS (${values}) ELSE 1 END
+    WHERE fld.key = ${top}
+      AND CASE WHEN fld.type = 'object' AND ${walkable} THEN EXISTS (${values}) ELSE 1 END
   )`;
 }
+
+/**
+ * True when the field's key has no `"`. A walk from `fld.fullkey` reads that key back as a path;
+ * the SQLite in workerd today escapes a quote there, but a field written straight to the store
+ * with one is no reason to bet a statement on it: such a field widens the scan instead.
+ */
+const walkable = sql.raw(`instr(fld.key, '"') = 0`);
 
 /**
  * Superset predicate for `eq`/`in` on a content field: SOME locale's value (or, on a path, some
@@ -213,11 +222,10 @@ function linksToPredicate(
   ids: readonly string[],
 ): SQL | null {
   if (ids.length === 0) return null;
-  const top = field === ANY_FIELD ? null : (fieldPath(field)[0] as string);
+  const top = field === ANY_FIELD ? null : field;
   const idList = JSON.stringify(ids);
   if (sys.edges) {
     const r = schema.references;
-    // Edges carry the top-level field, as a path's links are attributed to it.
     return sql`${sys.entryId} IN (
       SELECT ${r.fromEntryId} FROM ${r}
       WHERE ${r.spaceId} = ${sys.edges.spaceId} AND ${r.environmentId} = ${sys.edges.environmentId}
@@ -225,15 +233,22 @@ function linksToPredicate(
         ${top === null ? sql`` : sql`AND ${r.fromField} = ${top}`}
     )`;
   }
+  // A cheap test first: the stored JSON holds one of the ids, quoted (the domain admits only ids
+  // whose JSON form is the id in quotes). Only a row that passes is walked.
+  const mentions = sql`EXISTS (
+    SELECT 1 FROM json_each(${idList}) AS w WHERE instr(${fieldsCol}, json_quote(w.value)) > 0
+  )`;
   const idMember = sql`kv.key = 'id' AND kv.type = 'text'
     AND kv.atom IN (SELECT value FROM json_each(${idList}))`;
   if (top === null) {
-    return sql`EXISTS (SELECT 1 FROM json_tree(${fieldsCol}) AS kv WHERE ${idMember})`;
+    return sql`(${mentions} AND EXISTS (SELECT 1 FROM json_tree(${fieldsCol}) AS kv WHERE ${idMember}))`;
   }
-  return sql`EXISTS (
-    SELECT 1 FROM json_each(${fieldsCol}) AS fld, json_tree(${fieldsCol}, fld.fullkey) AS kv
-    WHERE fld.key = ${top} AND ${idMember}
-  )`;
+  return sql`(${mentions} AND EXISTS (
+    SELECT 1 FROM json_each(${fieldsCol}) AS fld
+    WHERE fld.key = ${top} AND CASE WHEN ${walkable} THEN EXISTS (
+      SELECT 1 FROM json_tree(${fieldsCol}, fld.fullkey) AS kv WHERE ${idMember}
+    ) ELSE 1 END
+  ))`;
 }
 
 /** Columns a `sys.*` pseudo-field maps to, when the row has a real column. */

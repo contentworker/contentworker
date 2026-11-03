@@ -632,6 +632,11 @@ describe('@contentworker/sdk-core taxonomy', () => {
     expect(two?.get('links_to_entry')).toBe('b1,b2');
   });
 
+  it('references() without an id throws rather than sending an empty filter', () => {
+    const client = createDeliveryClient({ ...base, fetch: fakeFetch(() => ({ items: [] })) });
+    expect(() => client.query().references('author')).toThrow(/at least one entry id/);
+  });
+
   it('sends startsWith, between, component paths and or() groups as the API spells them', async () => {
     const urls: string[] = [];
     const client = createDeliveryClient({

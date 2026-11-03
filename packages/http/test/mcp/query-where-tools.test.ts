@@ -183,4 +183,46 @@ describe('richer queries over MCP', () => {
     });
     expect(hidden.isError).toBe(true);
   });
+
+  it('keeps an empty match meaning "has a value"', async () => {
+    const client = await connect(deps, READER);
+    expect(
+      titles(await query(client, { filters: [{ field: 'title', op: 'match', value: '' }] })),
+    ).toEqual(['Apple', 'Apricot', 'Banana']);
+  });
+
+  it('refuses a 10,000-predicate where quickly, and any where past 8 KB of JSON', async () => {
+    const client = await connect(deps, READER);
+    const leaves = Array.from({ length: 10_000 }, () => ({ field: 'title', value: 'x' }));
+    const started = Date.now();
+    const huge = await query(client, { where: { or: leaves } });
+    expect(huge.isError).toBe(true);
+    expect(JSON.stringify(huge.content)).toMatch(/8192 characters/);
+    expect(Date.now() - started).toBeLessThan(2000);
+    // Under the length cap, the condition cap still holds.
+    const many = await query(client, { where: { or: leaves.slice(0, 21) } });
+    expect(many.isError).toBe(true);
+    expect(JSON.stringify(many.content)).toMatch(/at most 20 conditions/);
+  });
+
+  it('entries_field_values refuses a Delivery key, an ungranted type and another space', async () => {
+    const call = async (principal: Principal, args: Record<string, unknown> = {}) =>
+      (
+        await (
+          await connect(deps, principal)
+        ).callTool({
+          name: 'entries_field_values',
+          arguments: { space: SPACE, contentType: 'page', field: 'title', ...args },
+        })
+      ).isError;
+    const delivery: Principal = { spaceId: SPACE, kind: 'cda', scopes: [SCOPES.deliveryRead] };
+    const ungranted: Principal = {
+      ...READER,
+      contentGrants: [{ contentTypeApiId: 'post', actions: ['read'] }],
+    };
+    expect(await call(delivery)).toBe(true);
+    expect(await call(ungranted)).toBe(true);
+    expect(await call(READER, { space: 'space-2' })).toBe(true);
+    expect(await call(READER)).toBeFalsy();
+  });
 });

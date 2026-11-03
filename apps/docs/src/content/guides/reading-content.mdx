@@ -66,9 +66,14 @@ Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>
 | `links_to_entry=<entryId>`            | any field links to that entry (`<id>,<id>` for any of several) |
 | `sys.publishedAt[gt]=2026-10-01`      | system fields work the same way         |
 
-Delivery reads the links of the published version, Preview those of the current one, rich-text
-embeds and component members included. A key whose role hides a field cannot use
-`links_to_entry`, which looks inside every field.
+Delivery reads the links of the published version, Preview those of the current one, in any
+locale. A link counts where the content type declares one: a Link field, a list of links, a
+rich-text embed or a component's Link member; a lookalike `{ "id", "linkType" }` inside a JSON
+field does not. Entry ids in these filters are printable ASCII without `"` or `\`. An empty
+`links_to_entry=` is no filter. A key whose role hides a field cannot use `links_to_entry`,
+which looks inside every field.
+
+A component member is filtered by its path, `fields.seo.title`; a query names at most 4 paths.
 
 ### OR and AND groups
 
@@ -82,9 +87,22 @@ curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article" \
   -G -H "Authorization: Bearer $CDA"
 ```
 
-Groups nest at most 4 deep and hold at most 20 filters in all; a malformed tree is refused with
-`422`, naming where in it the problem is. Filter tags and concepts by id (`metadata.tags`) inside
-`where`; slugs work only as top-level parameters.
+Groups nest at most 4 deep and hold at most 20 filters in all, the parameter at most 8,192
+characters; a malformed tree is refused with `422`, naming where in it the problem is. Repeated
+`where` parameters are ANDed, sharing those limits. Filter tags and concepts by id
+(`metadata.tags`) inside `where`; slugs work only as top-level parameters.
+
+### Behaviour changes
+
+- A path filter such as `fields.seo.title=…` now filters by the component member. Before, a
+  dotted key was not a filter and was ignored.
+- `match` on a list field (a list of Symbols, or a path through a list of components) matches
+  when any element contains the text. Before, it never matched a list.
+- An empty `match` (`fields.title[match]=`) still means "has a value", and an `in` list may still
+  be longer than 100 values; the stricter checks apply to the new operators and to `where`.
+- During a rollback to a Worker from before these filters, it ignores the parameters it doesn't
+  know (`where`, `links_to_entry`, `[ref]`, `[startsWith]`, a path filter) and answers without
+  them: a wider list, not an error.
 
 Entries a role-bound key can't read are left out of lists, and denied fields are removed; see
 [Roles](/guides/api-keys/#roles).

@@ -22,13 +22,14 @@
 
 import {
   ANY_FIELD,
+  assertPathFilterBudget,
   FILTER_OPS,
   type FilterOp,
   parseQueryWhere,
   type QueryFilter,
-  type QueryNode,
   type QueryOrder,
   queryFilterIssues,
+  queryNodeFilters,
   ValidationError,
 } from '@contentworker/domain';
 import type { EntryQuery } from '@contentworker/ports';
@@ -93,20 +94,31 @@ function checked(filter: QueryFilter, key: string): QueryFilter {
   return filter;
 }
 
-/** Reads the `where` parameter: JSON, then the domain's checks on its shape and size. */
-function parseWhereParam(raw: string): QueryNode {
-  if (raw.length > MAX_WHERE_LENGTH) {
-    throw new ValidationError([
-      { field: 'where', message: `where is at most ${MAX_WHERE_LENGTH} characters` },
-    ]);
-  }
-  let json: unknown;
+/** Reads one `where` parameter as JSON; the domain checks the tree once they are merged. */
+function whereJson(raw: string): unknown {
   try {
-    json = JSON.parse(raw);
+    return JSON.parse(raw);
   } catch {
     throw new ValidationError([{ field: 'where', message: 'where must be JSON' }]);
   }
-  return parseQueryWhere(json);
+}
+
+const isAndGroup = (v: unknown): v is { and: unknown[] } =>
+  !!v &&
+  typeof v === 'object' &&
+  !Array.isArray(v) &&
+  Object.keys(v).length === 1 &&
+  Array.isArray((v as { and?: unknown }).and);
+
+/**
+ * ANDs several `where` trees (raw JSON, unchecked) into one without adding a level: an AND
+ * group's conditions join the root's, anything else becomes one of them. One tree comes back as
+ * it is. The result is what `parseQueryWhere` then checks, so repeated `where` parameters (or
+ * GraphQL's `and` and `or` keys) share one depth and size budget.
+ */
+export function mergeWhereJson(trees: readonly unknown[]): unknown {
+  if (trees.length === 1) return trees[0];
+  return { and: trees.flatMap((t) => (isAndGroup(t) ? t.and : [t])) };
 }
 
 function parseOrder(raw: string): QueryOrder[] {
@@ -133,7 +145,8 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
   let since: string | undefined;
   let locale: string | undefined;
   let archived: boolean | undefined;
-  let where: QueryNode | undefined;
+  const whereTrees: unknown[] = [];
+  let whereLength = 0;
 
   for (const [key, value] of entries) {
     if (key === 'order') {
@@ -179,11 +192,20 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
       continue;
     }
     if (key === 'where') {
-      where = parseWhereParam(value);
+      // Repeated `where` parameters AND together, within one length budget.
+      whereLength += value.length;
+      if (whereLength > MAX_WHERE_LENGTH) {
+        throw new ValidationError([
+          { field: 'where', message: `where is at most ${MAX_WHERE_LENGTH} characters` },
+        ]);
+      }
+      whereTrees.push(whereJson(value));
       continue;
     }
     if (key === 'links_to_entry') {
       const ids = list(value).filter(Boolean);
+      // Empty is absent, as an MCP call without `linksToEntry` is.
+      if (ids.length === 0) continue;
       filters.push(
         checked(
           ids.length === 1
@@ -201,6 +223,9 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
     }
   }
 
+  const where = whereTrees.length ? parseQueryWhere(mergeWhereJson(whereTrees)) : undefined;
+  assertPathFilterBudget({ filters, ...(where ? { where } : {}) });
+
   return {
     contentTypeApiId,
     limit,
@@ -214,6 +239,16 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
     select,
     search,
   };
+}
+
+/**
+ * Whether a query filters by referenced entry: the stores then need the content model
+ * (`EntryQuery.contentTypes`) to read links the way the reference edges record them.
+ */
+export function usesReferenceFilters(query: Pick<EntryQuery, 'filters' | 'where'>): boolean {
+  return [...(query.filters ?? []), ...queryNodeFilters(query.where)].some(
+    (f) => f.op === 'ref' || f.op === 'refIn',
+  );
 }
 
 /** Convenience: parse straight from a `URLSearchParams`. */

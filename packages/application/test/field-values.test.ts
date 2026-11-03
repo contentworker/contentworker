@@ -37,6 +37,7 @@ async function seed(ctx: AppContext, s = scope) {
       field('featured', 'Boolean', 3),
       field('tags', 'Array', 4, { items: { type: 'Symbol' } }),
       field('body', 'RichText', 5),
+      field('notes', 'Text', 6),
     ],
   });
   const make = (f: Record<string, unknown>) =>
@@ -121,10 +122,11 @@ describe('listFieldValues', () => {
     ]);
   });
 
-  it('refuses an unknown field, a structured field and a forged cursor', async () => {
+  it('refuses an unknown field, a structured or long-text field and a forged cursor', async () => {
     for (const [f, cursor] of [
       ['nope', undefined],
       ['body', undefined],
+      ['notes', undefined],
       ['title', 'not-a-cursor'],
     ] as const) {
       await expect(

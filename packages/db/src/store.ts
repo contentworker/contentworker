@@ -574,16 +574,21 @@ function makeEntryRepo(
     },
     async distinctFieldValues(scope, query) {
       const e = schema.entries;
-      // Every scalar value of the field in each entry's current version: a locale's value, or
-      // each element of a locale's list. The field name, locale and cursor are bound values.
-      const kinds = sql.raw(`('text', 'integer', 'real', 'true', 'false')`);
+      const ofType = and(
+        scopeFilter(e, scope),
+        eq(e.contentTypeApiId, query.contentTypeApiId),
+        ne(e.status, 'archived'),
+      );
+      // Grouping walks every entry of the type, so a type past the scan cap is refused, as a
+      // field query over it would be. The count stops at the cap.
+      const [counted] = await db.all<{ n: number }>(
+        sql`SELECT count(*) AS n FROM (SELECT 1 FROM ${e} WHERE ${ofType} LIMIT ${scanLimit + 1})`,
+      );
+      if (Number(counted?.n ?? 0) > scanLimit) throw new QueryTooBroadError(scanLimit);
+      // Every scalar value of the field in each entry's current version, in one pass: a locale's
+      // value, or each element of a locale's list (a scalar walks a one-row stand-in list). The
+      // field name, locale and cursor are bound values.
       const locale = query.locale === undefined ? sql`` : sql`AND kv.key = ${query.locale}`;
-      const from = sql`FROM ${e} JOIN ${schema.entryVersions} AS ${cv} ON ${currentVersionJoin},
-        json_each(${cv.fields}) AS fld,
-        json_each(fld.value) AS kv`;
-      const where = sql`${e.spaceId} = ${scope.spaceId} AND ${e.environmentId} = ${scope.environmentId}
-        AND ${e.contentTypeApiId} = ${query.contentTypeApiId} AND ${e.status} != 'archived'
-        AND fld.key = ${query.field} AND fld.type = 'object' ${locale}`;
       // The order: booleans (as 0/1), then numbers, then strings (BINARY collation).
       const after = query.after;
       const afterKey =
@@ -594,16 +599,19 @@ function makeEntryRepo(
             })`;
       const rows = await db.all<{ kind: number; atom: string | number; n: number }>(sql`
         WITH vals(entry_id, type, atom) AS (
-          SELECT ${e.id}, kv.type, kv.atom ${from} WHERE ${where} AND kv.type IN ${kinds}
-          UNION ALL
-          SELECT ${e.id}, el.type, el.atom ${from}, json_each(kv.value) AS el
-          WHERE ${where} AND kv.type = 'array' AND el.type IN ${kinds}
+          SELECT ${e.id},
+                 CASE WHEN kv.type = 'array' THEN el.type ELSE kv.type END,
+                 CASE WHEN kv.type = 'array' THEN el.atom ELSE kv.atom END
+          FROM ${e} JOIN ${schema.entryVersions} AS ${cv} ON ${currentVersionJoin},
+            json_each(${cv.fields}) AS fld, json_each(fld.value) AS kv,
+            json_each(CASE WHEN kv.type = 'array' THEN kv.value ELSE '[null]' END) AS el
+          WHERE ${ofType} AND fld.key = ${query.field} AND fld.type = 'object' ${locale}
         ),
         grouped(kind, atom, n) AS (
           SELECT CASE WHEN type IN ('true', 'false') THEN 0
                       WHEN type IN ('integer', 'real') THEN 1 ELSE 2 END,
                  atom, COUNT(DISTINCT entry_id)
-          FROM vals GROUP BY 1, 2
+          FROM vals WHERE type IN ('text', 'integer', 'real', 'true', 'false') GROUP BY 1, 2
         )
         SELECT kind, atom, n FROM grouped ${afterKey}
         ORDER BY kind, atom LIMIT ${Math.max(1, query.limit)}

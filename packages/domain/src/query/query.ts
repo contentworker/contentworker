@@ -9,7 +9,9 @@
  * non-localized fields uniform.
  */
 
+import type { ContentType } from '../content-type/content-type';
 import { ValidationError } from '../errors';
+import { extractReferences } from '../reference/references';
 import type { EntryFields, LocaleCode, LocalizedValue } from '../types';
 
 /** The comparison operators a field filter may use, in the order the docs list them. */
@@ -75,6 +77,20 @@ export const MAX_WHERE_CONDITIONS = 20;
 export const MAX_FILTER_VALUES = 100;
 /** A component path (`seo.title`, `blocks.card.heading`) has at most this many segments. */
 export const MAX_FIELD_PATH_SEGMENTS = 4;
+/**
+ * A query names at most this many component paths, top-level filters and `where` together: each
+ * is a JSON tree walk per candidate row in the store, so their number is the cost to bound.
+ */
+export const MAX_PATH_FILTERS = 4;
+
+/** The operators the query language gained with `where`: always checked strictly. */
+const NEW_OPS: ReadonlySet<string> = new Set(['between', 'startsWith', 'ref', 'refIn']);
+
+/**
+ * An entry id a reference filter may carry: printable ASCII with no `"` or `\`, so its JSON form
+ * is the id in quotes, which the store looks for in the stored JSON before walking it.
+ */
+const REF_ID = /^[\x20-\x21\x23-\x5b\x5d-\x7e]{1,128}$/;
 
 /**
  * A field a filter may name, once any `fields.` prefix is stripped: a content field apiId with up
@@ -110,10 +126,21 @@ type Issue = { readonly field: string; readonly message: string };
  * Checks one field predicate: a field the query language knows, an operator it supports, and a
  * comparand of the operator's shape. Returns the problems, empty when it is valid. `at` names the
  * predicate in the issues (`where.or[1]`, `fields.title[between]`).
+ *
+ * `strict` is for input that is new with this query language (a `where` tree): every check
+ * applies, `in`/`nin` lists are capped and `match` needs a needle. Otherwise only the new
+ * operators and {@link ANY_FIELD} are checked, so a filter the API always accepted (an empty
+ * `match`, which means "has a value"; a long `in` list, which travels as one JSON parameter)
+ * keeps working as it did.
  */
-export function queryFilterIssues(f: QueryFilter, at: string): Issue[] {
-  const issues: Issue[] = [];
+export function queryFilterIssues(
+  f: QueryFilter,
+  at: string,
+  { strict = false }: { strict?: boolean } = {},
+): Issue[] {
   const op = f.op as string;
+  if (!strict && !NEW_OPS.has(op) && f.field !== ANY_FIELD) return [];
+  const issues: Issue[] = [];
   if (!(FILTER_OPS as readonly string[]).includes(op)) {
     return [{ field: at, message: `op must be one of ${FILTER_OPS.join(', ')}` }];
   }
@@ -125,10 +152,10 @@ export function queryFilterIssues(f: QueryFilter, at: string): Issue[] {
   if (f.field === ANY_FIELD && !isRef) {
     issues.push({ field: at, message: `"${ANY_FIELD}" takes only ref and refIn` });
   }
-  if (isRef && !content) {
-    issues.push({ field: at, message: `${op} filters a content field, not ${f.field}` });
+  if (isRef && (!content || f.field.includes('.'))) {
+    issues.push({ field: at, message: `${op} filters a top-level content field, not ${f.field}` });
   }
-  const isId = (v: unknown) => typeof v === 'string' && v !== '' && v.length <= 128;
+  const isId = (v: unknown) => typeof v === 'string' && REF_ID.test(v);
   const list = (min: number) =>
     Array.isArray(f.value) && f.value.length >= min && f.value.length <= MAX_FILTER_VALUES;
   switch (op) {
@@ -161,6 +188,27 @@ export function queryFilterIssues(f: QueryFilter, at: string): Issue[] {
 }
 
 /**
+ * Refuses a query naming more than {@link MAX_PATH_FILTERS} component paths across its filters
+ * and `where` tree.
+ */
+export function assertPathFilterBudget(query: {
+  readonly filters?: readonly QueryFilter[];
+  readonly where?: QueryNode;
+}): void {
+  const paths = [...(query.filters ?? []), ...queryNodeFilters(query.where)].filter(
+    (f) => fieldPath(f.field).length > 1,
+  ).length;
+  if (paths > MAX_PATH_FILTERS) {
+    throw new ValidationError([
+      {
+        field: 'filters',
+        message: `a query names at most ${MAX_PATH_FILTERS} component paths (seo.title)`,
+      },
+    ]);
+  }
+}
+
+/**
  * Reads a `where` tree from untrusted JSON (a query-string parameter, a GraphQL argument, an MCP
  * tool's input): AND and OR groups (`{"and": [...]}`, `{"or": [...]}`) of field predicates
  * (`{"field": "fields.title", "op": "startsWith", "value": "A"}`), nested at most
@@ -172,6 +220,10 @@ export function queryFilterIssues(f: QueryFilter, at: string): Issue[] {
  * before the query runs, which it does for top-level filters only.
  */
 export function parseQueryWhere(raw: unknown): QueryNode {
+  const tooMany = () =>
+    new ValidationError([
+      { field: 'where', message: `where holds at most ${MAX_WHERE_CONDITIONS} conditions` },
+    ]);
   const issues: Issue[] = [];
   let conditions = 0;
   const walk = (value: unknown, at: string, depth: number): QueryNode | null => {
@@ -195,11 +247,15 @@ export function parseQueryWhere(raw: unknown): QueryNode {
         issues.push({ field: `${at}.${groupKey}`, message: 'expected a non-empty array' });
         return null;
       }
+      // A group with more children than the whole tree may hold is refused before it is read.
+      if (children.length > MAX_WHERE_CONDITIONS) throw tooMany();
       const nodes = children.map((c, i) => walk(c, `${at}.${groupKey}[${i}]`, depth + 1));
       if (nodes.some((n) => n === null)) return null;
       return groupKey === 'and' ? { and: nodes as QueryNode[] } : { or: nodes as QueryNode[] };
     }
     conditions += 1;
+    // Past the cap there is no answer worth computing: stop rather than walk a huge tree.
+    if (conditions > MAX_WHERE_CONDITIONS) throw tooMany();
     const field =
       typeof v.field === 'string' && v.field.startsWith('fields.')
         ? v.field.slice('fields.'.length)
@@ -213,17 +269,11 @@ export function parseQueryWhere(raw: unknown): QueryNode {
       issues.push({ field: at, message: 'filter tags and concepts by id inside where' });
       return null;
     }
-    const problems = queryFilterIssues(filter, at);
+    const problems = queryFilterIssues(filter, at, { strict: true });
     issues.push(...problems);
     return problems.length ? null : filter;
   };
   const root = walk(raw, 'where', 0);
-  if (conditions > MAX_WHERE_CONDITIONS) {
-    issues.push({
-      field: 'where',
-      message: `where holds at most ${MAX_WHERE_CONDITIONS} conditions`,
-    });
-  }
   if (issues.length || !root) throw new ValidationError(issues);
   return root;
 }
@@ -420,9 +470,9 @@ function resolveField(
 const MAX_LINK_DEPTH = 32;
 
 /**
- * Does `value` hold a link to one of `ids`? A link is a `{ id, linkType: 'Entry' }` object, found
- * wherever the content model puts one: a Link field, a list of links, a component's members, a
- * blocks element, or a rich-text document's embedded and inline entries (`data.target`).
+ * Does `value` hold a link to one of `ids`? A link is a `{ id, linkType: 'Entry' }` object,
+ * wherever it sits. Only the fallback for a query that carries no content model: with one, links
+ * are read the way the reference edges are ({@link linksToEntries}).
  */
 function linksTo(value: unknown, ids: ReadonlySet<string>, depth = 0): boolean {
   if (depth > MAX_LINK_DEPTH || !value || typeof value !== 'object') return false;
@@ -432,26 +482,52 @@ function linksTo(value: unknown, ids: ReadonlySet<string>, depth = 0): boolean {
   return Object.values(o).some((v) => linksTo(v, ids, depth + 1));
 }
 
+/** What evaluating a predicate needs beyond the row: the locale chain and the content model. */
+interface MatchContext {
+  readonly locale?: LocaleCode;
+  readonly fallbacks?: readonly LocaleCode[];
+  /** The content types by apiId, when the query carries them ({@link EntryQueryInput.contentTypes}). */
+  readonly types?: ReadonlyMap<string, ContentType>;
+}
+
+/**
+ * `ref`/`refIn`: does the entry link to one of the ids through `f.field` (any field for
+ * {@link ANY_FIELD}), in any locale? With the content model, the links are exactly the ones
+ * {@link extractReferences} records as the reference edges, so a link-shaped value in a JSON
+ * field, or in a field the type no longer declares, is not a link, and the store's edge pushdown
+ * agrees with this answer. Without it, any `{ id, linkType: 'Entry' }` in the field counts.
+ */
+function linksToEntries(
+  f: QueryFilter,
+  fields: EntryFields,
+  sys: Record<string, unknown>,
+  ctx: MatchContext,
+): boolean {
+  const wanted = f.op === 'ref' ? [f.value] : Array.isArray(f.value) ? f.value : [];
+  const ids = new Set(wanted.filter((v): v is string => typeof v === 'string'));
+  if (ctx.types) {
+    const type = ctx.types.get(String(sys.contentType));
+    if (!type) return false;
+    return extractReferences(String(sys.id ?? ''), fields, type).some(
+      (e) =>
+        e.toType === 'Entry' &&
+        ids.has(e.toId) &&
+        (f.field === ANY_FIELD || e.fromField === f.field),
+    );
+  }
+  const values = f.field === ANY_FIELD ? Object.values(fields) : [fields[f.field]];
+  return values.some((lv) => !!lv && Object.values(lv).some((v) => linksTo(v, ids)));
+}
+
 /** True if one field predicate matches the entry. */
 function matchesFilter(
   f: QueryFilter,
   fields: EntryFields,
   sys: Record<string, unknown>,
-  locale?: LocaleCode,
-  fallbacks?: readonly LocaleCode[],
+  ctx: MatchContext,
 ): boolean {
-  if (f.op === 'ref' || f.op === 'refIn') {
-    const wanted = f.op === 'ref' ? [f.value] : Array.isArray(f.value) ? f.value : [];
-    const ids = new Set(wanted.filter((v): v is string => typeof v === 'string'));
-    // Every field, each in the resolved locale, like any other field predicate.
-    if (f.field === ANY_FIELD) {
-      return Object.values(fields).some((lv) =>
-        linksTo(comparableValue(lv, locale, fallbacks), ids),
-      );
-    }
-    return linksTo(resolveField(f.field, fields, sys, locale, fallbacks), ids);
-  }
-  return matchOp(f.op, resolveField(f.field, fields, sys, locale, fallbacks), f.value);
+  if (f.op === 'ref' || f.op === 'refIn') return linksToEntries(f, fields, sys, ctx);
+  return matchOp(f.op, resolveField(f.field, fields, sys, ctx.locale, ctx.fallbacks), f.value);
 }
 
 /** True if a `where` condition (a predicate or a group of them) matches the entry. */
@@ -459,23 +535,11 @@ function matchesNode(
   node: QueryNode,
   fields: EntryFields,
   sys: Record<string, unknown>,
-  locale?: LocaleCode,
-  fallbacks?: readonly LocaleCode[],
+  ctx: MatchContext,
 ): boolean {
-  if ('and' in node) return node.and.every((n) => matchesNode(n, fields, sys, locale, fallbacks));
-  if ('or' in node) return node.or.some((n) => matchesNode(n, fields, sys, locale, fallbacks));
-  return matchesFilter(node, fields, sys, locale, fallbacks);
-}
-
-/** True if every filter matches the entry's fields. */
-function matchesFilters(
-  fields: EntryFields,
-  sys: Record<string, unknown>,
-  filters: readonly QueryFilter[],
-  locale?: LocaleCode,
-  fallbacks?: readonly LocaleCode[],
-): boolean {
-  return filters.every((f) => matchesFilter(f, fields, sys, locale, fallbacks));
+  if ('and' in node) return node.and.every((n) => matchesNode(n, fields, sys, ctx));
+  if ('or' in node) return node.or.some((n) => matchesNode(n, fields, sys, ctx));
+  return matchesFilter(node, fields, sys, ctx);
 }
 
 /** True if `search` (case-insensitive) appears in any string field value. */
@@ -550,6 +614,12 @@ export interface EntryQueryInput {
   readonly filters?: readonly QueryFilter[];
   /** AND and OR groups of predicates ({@link parseQueryWhere}); ANDed with `filters`. */
   readonly where?: QueryNode;
+  /**
+   * The content model, for reference filters: with it, `ref`/`refIn` read a row's links as the
+   * reference edges record them (its type's declared link-bearing fields). Rows expose their
+   * type as `sys.contentType` and their id as `sys.id`.
+   */
+  readonly contentTypes?: readonly ContentType[];
   readonly order?: readonly QueryOrder[];
   readonly search?: string;
   readonly skip?: number;
@@ -584,22 +654,20 @@ export function runEntryQuery<T>(
 ): T[] {
   let result = [...rows];
 
-  if (query.filters?.length) {
+  const ctx: MatchContext = {
+    locale: query.locale,
+    fallbacks: query.fallbackLocales,
+    ...(query.contentTypes ? { types: new Map(query.contentTypes.map((t) => [t.apiId, t])) } : {}),
+  };
+  const filters = query.filters ?? [];
+  if (filters.length) {
     result = result.filter((r) =>
-      matchesFilters(
-        fieldsOf(r),
-        sysOf(r),
-        query.filters as QueryFilter[],
-        query.locale,
-        query.fallbackLocales,
-      ),
+      filters.every((f) => matchesFilter(f, fieldsOf(r), sysOf(r), ctx)),
     );
   }
   if (query.where) {
     const where = query.where;
-    result = result.filter((r) =>
-      matchesNode(where, fieldsOf(r), sysOf(r), query.locale, query.fallbackLocales),
-    );
+    result = result.filter((r) => matchesNode(where, fieldsOf(r), sysOf(r), ctx));
   }
   if (query.search) {
     result = result.filter((r) =>

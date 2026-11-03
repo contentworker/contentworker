@@ -3,11 +3,13 @@ import type { FieldValueCount } from '@contentworker/ports';
 import { getContentType } from './content-types';
 import type { AppContext } from './context';
 
-/** The field types whose values are listed: scalars a filter compares, and lists of Symbols. */
+/**
+ * The field types whose values are listed: short scalars a filter compares, and lists of Symbols.
+ * Long text is left out: its values are prose, not choices, and each would be grouped whole.
+ */
 const VALUE_FIELD_TYPES: readonly FieldType[] = [
   'Symbol',
   'Slug',
-  'Text',
   'Integer',
   'Number',
   'Boolean',
@@ -51,8 +53,10 @@ function decodeCursor(cursor: string): string | number | boolean {
  * {@link MAX_FIELD_VALUES_PAGE}, walked with the returned cursor. A list of Symbols contributes
  * each element; `locale` narrows to that locale's values.
  *
- * Only scalar fields (and lists of Symbols) have values to list: a rich-text, JSON, link or
- * component field is refused, since its values are structures, not something to pick from.
+ * Only short scalar fields (and lists of Symbols) have values to list: a long-text, rich-text,
+ * JSON, link or component field is refused, since its values are prose or structures, not
+ * something to pick from. A type with more entries than the store's scan cap is refused too
+ * (`QueryTooBroadError`): each page groups the whole type.
  */
 export async function listFieldValues(
   ctx: AppContext,
@@ -74,7 +78,7 @@ export async function listFieldValues(
     throw new ValidationError([
       {
         field: 'field',
-        message: `${field} is a ${def.type} field; only scalar fields and lists of Symbols have values to list`,
+        message: `${field} is a ${def.type} field; only short scalar fields and lists of Symbols have values to list`,
       },
     ]);
   }

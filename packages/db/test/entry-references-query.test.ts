@@ -90,6 +90,7 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
             field({ apiId: 'person', type: 'Link', linkType: 'Entry', position: 1 }),
           ],
         }),
+        field({ apiId: 'data', type: 'JSON', position: 5 }),
       ],
     });
     await publishContentType(ctx, s, 'person');
@@ -110,6 +111,8 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
       { card: { heading: 'h', person: link(ids[4] as string) } },
       { author: link(ids[1] as string) },
       {},
+      // A link-shaped value in a JSON field: data, not a link, and the edges skip it.
+      { data: { nested: link(ids[0] as string) } },
     ];
     for (const [i, f] of posts.entries()) {
       const e = await createEntry(ctx, s, {
@@ -132,6 +135,18 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
       author: { 'en-US': link(ids[5] as string) },
     } as never);
     draftOnly = draft.entry.id;
+    // A snapshot holding a link in a field the type doesn't declare (as after the field was
+    // removed): it has no edge, and the engine, reading the model, doesn't count it either.
+    await ctx.store.entries.putPublished(s, {
+      entryId: `${s.spaceId}-legacy`,
+      contentTypeApiId: 'post',
+      version: 1,
+      fields: {
+        title: { 'en-US': 'Legacy' },
+        legacy: { 'en-US': link(ids[0] as string) },
+      } as never,
+      publishedAt: clock.now().toISOString(),
+    });
     return ids;
   }
 
@@ -140,7 +155,17 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
     await seed(memCtx, scope);
   });
 
+  // The model rides on every reference query, as the use-cases send it.
+  let model: EntryQuery['contentTypes'] = [];
   const queries = (): { name: string; q: EntryQuery }[] => [
+    {
+      name: 'links in a JSON field or an undeclared field are not links',
+      q: { filters: [{ field: '*', op: 'ref', value: people[0] }] },
+    },
+    {
+      name: 'ref on a JSON field',
+      q: { filters: [{ field: 'data', op: 'ref', value: people[0] }] },
+    },
     {
       name: 'ref on a link field',
       q: { filters: [{ field: 'author', op: 'ref', value: people[1] }] },
@@ -189,7 +214,9 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
   ];
 
   it('answers every reference query exactly as the in-memory engine does', async () => {
-    for (const { name, q } of queries()) {
+    model = await d1.contentTypes.list(scope);
+    for (const { name, q: bare } of queries()) {
+      const q = { ...bare, contentTypes: model };
       const [a, b] = await Promise.all([
         d1.entries.listPublished(scope, q),
         memCtx.store.entries.listPublished(scope, q),
@@ -204,6 +231,46 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
       expect(c.map((r) => r.entry.id).sort(), `draft: ${name}`).toEqual(
         d.map((r) => r.entry.id).sort(),
       );
+    }
+  });
+
+  it('without the model, a link-shaped value anywhere counts, so the edge pushdown alone is narrower', async () => {
+    const q: EntryQuery = { filters: [{ field: '*', op: 'ref', value: people[0] }] };
+    const withModel = await memCtx.store.entries.listPublished(scope, {
+      ...q,
+      contentTypes: await memCtx.store.contentTypes.list(scope),
+    });
+    const without = await memCtx.store.entries.listPublished(scope, q);
+    expect(without.length).toBe(withModel.length + 2);
+  });
+
+  it('a field key holding a quote widens the scan instead of failing the statement', async () => {
+    // Written straight to the store: validation would refuse such a key.
+    const id = `${scope.spaceId}-quoted`;
+    const fields = {
+      title: { 'en-US': 'Quoted' },
+      'we"ird': { 'en-US': link(people[0] as string) },
+    };
+    await d1.entries.putPublished(scope, {
+      entryId: id,
+      contentTypeApiId: 'post',
+      version: 1,
+      fields: fields as never,
+      publishedAt: clock.now().toISOString(),
+    });
+    await d1.entries.create(
+      scope,
+      { id, contentTypeApiId: 'post', status: 'draft', currentVersion: 1, publishedVersion: null },
+      { entryId: id, version: 1, fields: fields as never, createdAt: clock.now().toISOString() },
+    );
+    for (const filters of [
+      [{ field: 'author', op: 'ref' as const, value: people[0] }],
+      [{ field: '*', op: 'ref' as const, value: people[0] }],
+      [{ field: 'card.heading', op: 'eq' as const, value: 'h' }],
+      [{ field: 'card.heading', op: 'startsWith' as const, value: 'h' }],
+    ]) {
+      await expect(d1.entries.listPublished(scope, { filters })).resolves.toBeDefined();
+      await expect(d1.entries.list(scope, { filters })).resolves.toBeDefined();
     }
   });
 
