@@ -192,7 +192,8 @@ their role.
 | `PUT /spaces/:space/api-keys/:id/role` | Rebind a key `{ role }` (`null` unbinds it to its kind's defaults) |
 | `PUT /spaces/:space/access-settings`   | `{ ssoOnly }`                                                      |
 
-All need `space:admin`. MCP: `role_presets_list`, `team_list`, `role_preset_assign`. In the admin:
+All need `space:admin`. MCP: `role_presets_list`, `team_list`, `role_preset_assign`, and
+`api_key_update` for `PUT …/api-keys/:id/role`. In the admin:
 Settings → Access → Space access.
 
 ### The last administrator
@@ -510,7 +511,9 @@ grants continue to resolve live in every case — only the coarse scopes are cap
 A delegated token also cannot mint a longer-lived one: `POST /spaces/:space/personal-access-tokens` refuses any
 caller carrying a `clientId` (i.e. an OAuth-issued token), so a credential that expires in an hour
 cannot promote itself into one that never does. That route is deliberately **not** exposed as an
-MCP tool for the same reason.
+MCP tool for the same reason. Operator API keys are (`api_keys_list`, `api_key_create`,
+`api_key_update`, `api_key_revoke`): they need `space:admin`, which an OAuth grant never carries,
+so the same rule holds for them on both surfaces.
 
 ## Secrets at rest
 

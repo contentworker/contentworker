@@ -24,6 +24,7 @@ import type { McpDeps } from './deps';
 import { registerAgentTools } from './tools/agents';
 import { registerAiActionTools } from './tools/ai-actions';
 import { registerAiContentTools } from './tools/ai-content';
+import { registerApiKeyTools } from './tools/api-keys';
 import { registerAppExtensionTools } from './tools/app-extensions';
 import { registerAssetCollectionTools } from './tools/asset-collections';
 import { registerAssetVersionTools } from './tools/asset-versions';
@@ -92,6 +93,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerReadTools,
   registerAiContentTools,
   registerRoleTools,
+  registerApiKeyTools,
   registerPluginTools,
   registerImportTools,
   registerSpaceExportTools,

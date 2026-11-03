@@ -75,11 +75,13 @@ through the same validation, versioning and events as a person's.
 | Audit | `audit_log_list` |
 | Scheduler | `scheduler_status` (workspace admins: whether the engine's cron is ticking, and each sweep's last success and error), `scheduler_alerts` (who is emailed when a sweep goes stale, and what is stale now), `scheduler_alerts_set_recipients` |
 | Search | `content_search`, `content_semantic_search`, `content_related`, `content_duplicates`, `content_reindex_embeddings`, `search_index_health` |
+| API keys | `api_keys_list`, `api_key_create` (the token is in the result once, never again), `api_key_update` (the key's role), `api_key_revoke` (`space:admin`; see [API keys](/guides/api-keys/)) |
 | OAuth connections | `oauth_connections_list`, `oauth_connection_revoke` |
 | Docs | `docs_list`, `docs_read`, `docs_search` |
 
-API keys have no MCP tools, and a personal access token can't be minted over MCP: an agent can't
-mint itself a longer-lived credential. Manage those in the admin or over the REST API.
+A personal access token can't be minted over MCP: an agent can't mint itself a longer-lived
+credential. Mint one in the admin or over the REST API. The API key tools need `space:admin`, which
+an app connected with OAuth is never granted.
 
 Every tool call that changes something is written to the space's audit log, like a REST write, as
 `MCP <tool>` (`MCP entries_update`) with who made it, the environment and the target id. Reads,
