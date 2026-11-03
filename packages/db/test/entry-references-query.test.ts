@@ -3,8 +3,11 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  listPreviewEntries,
+  listPublishedEntries,
   publishContentType,
   publishEntry,
+  updateContentType,
   updateEntry,
 } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
@@ -319,6 +322,65 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
       [{ field: '*', op: 'ref' as const, value: 'elsewhere' }],
     ]) {
       expect(await d1.entries.listPublished(scope, { filters })).toEqual([]);
+    }
+  });
+
+  it('Delivery trusts the edges when the type was edited after publish; Preview reads today’s type', async () => {
+    const s2 = { spaceId: `ref-edit-${runId}`, environmentId: 'main' };
+    const ctx: AppContext = { store: d1, clock, ids: seqIds(`re-${runId}`) };
+    await createSpace(ctx, { spaceId: s2.spaceId, name: 'E', defaultLocale: 'en-US' });
+    const card = (person: boolean) =>
+      field({
+        apiId: 'card',
+        type: 'Component',
+        position: 1,
+        fields: [
+          field({ apiId: 'heading', type: 'Symbol' }),
+          person
+            ? field({ apiId: 'person', type: 'Link', linkType: 'Entry', position: 1 })
+            : field({ apiId: 'person', type: 'JSON', position: 1 }),
+        ],
+      });
+    await createContentType(ctx, s2, {
+      apiId: 'person',
+      name: 'Person',
+      displayField: 'name',
+      fields: [field({ apiId: 'name', type: 'Symbol' })],
+    });
+    await createContentType(ctx, s2, {
+      apiId: 'post',
+      name: 'Post',
+      displayField: 'title',
+      fields: [field({ apiId: 'title', type: 'Symbol' }), card(true)],
+    });
+    await publishContentType(ctx, s2, 'person');
+    await publishContentType(ctx, s2, 'post');
+    const ann = await createEntry(ctx, s2, {
+      contentTypeApiId: 'person',
+      fields: { name: { 'en-US': 'Ann' } },
+    });
+    await publishEntry(ctx, s2, ann.entry.id);
+    const post = await createEntry(ctx, s2, {
+      contentTypeApiId: 'post',
+      fields: {
+        title: { 'en-US': 'Card' },
+        card: { 'en-US': { heading: 'h', person: link(ann.entry.id) } },
+      } as never,
+    });
+    await publishEntry(ctx, s2, post.entry.id);
+    // The nested link field becomes a JSON field; the published snapshot and its edge remain.
+    await updateContentType(ctx, s2, 'post', {
+      fields: [field({ apiId: 'title', type: 'Symbol' }), card(false)],
+    });
+    await publishContentType(ctx, s2, 'post');
+    for (const filters of [
+      [{ field: 'card', op: 'ref' as const, value: ann.entry.id }],
+      [{ field: '*', op: 'refIn' as const, value: [ann.entry.id] }],
+    ]) {
+      const delivered = await listPublishedEntries(ctx, s2, { contentTypeApiId: 'post', filters });
+      expect(delivered.map((e) => e.id)).toEqual([post.entry.id]);
+      // Preview has no edges for drafts: it reads the type as it is now, which links nothing.
+      expect(await listPreviewEntries(ctx, s2, { contentTypeApiId: 'post', filters })).toEqual([]);
     }
   });
 });

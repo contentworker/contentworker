@@ -69,11 +69,15 @@ Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>
 Delivery reads the links of the published version, Preview those of the current one, in any
 locale. A link counts where the content type declares one: a Link field, a list of links, a
 rich-text embed or a component's Link member; a lookalike `{ "id", "linkType" }` inside a JSON
-field does not. Entry ids in these filters are printable ASCII without `"` or `\`. An empty
-`links_to_entry=` is no filter. A key whose role hides a field cannot use `links_to_entry`,
+field does not. Reference filters can't target an id containing `"`, `\` or a non-ASCII
+character (refused with `422`). An empty `links_to_entry=` is no filter. On Delivery a link counts
+as the type declared it when the entry was published, so editing the type later doesn't hide it. A key whose role hides a field cannot use `links_to_entry`,
 which looks inside every field.
 
-A component member is filtered by its path, `fields.seo.title`; a query names at most 4 paths.
+A component member is filtered by its path, `fields.seo.title`. A `where` tree names at most 4
+paths (`422` past that); top-level path filters have no cap, and past 4 the extra ones cost a
+wider scan rather than a refusal. A query-string key with more than 4 segments, or a numeric segment (`fields.blocks.0`), isn't a
+filter and is ignored, as before; the same path inside `where` is refused with `422`.
 
 ### OR and AND groups
 
@@ -89,7 +93,7 @@ curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article" \
 
 Groups nest at most 4 deep and hold at most 20 filters in all, the parameter at most 8,192
 characters; a malformed tree is refused with `422`, naming where in it the problem is. Repeated
-`where` parameters are ANDed, sharing those limits. Filter tags and concepts by id
+`where` parameters are ANDed, sharing those limits; an empty `where=` is no filter. Filter tags and concepts by id
 (`metadata.tags`) inside `where`; slugs work only as top-level parameters.
 
 ### Behaviour changes

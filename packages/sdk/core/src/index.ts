@@ -792,7 +792,15 @@ export class EntryQueryBuilder<F extends Fields> {
   or(...conditions: EntryWhere[]): this {
     const group: EntryWhere = { or: conditions };
     const where = this.q.where;
-    this.q = { ...this.q, where: where ? { and: [where, group] } : group };
+    // Each call joins one root AND rather than nesting another, so chaining `.or()` never
+    // deepens the tree past what the API accepts.
+    const root =
+      where && 'and' in where && Object.keys(where).length === 1
+        ? { and: [...where.and, group] }
+        : where
+          ? { and: [where, group] }
+          : group;
+    this.q = { ...this.q, where: root };
     return this;
   }
   /** Only entries carrying a tag with one of these slugs: `.tagged('news')`. */

@@ -89,6 +89,19 @@ const QUERIES: { name: string; q: EntryQuery }[] = [
   { name: 'path exists', q: { filters: [{ field: 'blocks.label', op: 'exists', value: true }] } },
   { name: 'path order', q: { order: [{ field: 'seo.rank', direction: 'desc' }] } },
   {
+    name: 'more component paths than SQL takes: the rest stay with the engine',
+    q: {
+      filters: [
+        { field: 'seo.title', op: 'exists', value: true },
+        { field: 'seo.rank', op: 'gte', value: 1 },
+        { field: 'seo.title', op: 'match', value: 'a' },
+        { field: 'blocks.heading', op: 'exists', value: false },
+        { field: 'seo.rank', op: 'lte', value: 2 },
+        { field: 'seo.title', op: 'startsWith', value: 'j' },
+      ],
+    },
+  },
+  {
     name: 'OR of pushable branches',
     q: {
       where: parseQueryWhere({
@@ -210,7 +223,7 @@ describe('richer queries on D1', { timeout: 60_000 }, () => {
     await expect(tiny.entries.listPublished(scope, broad)).rejects.toMatchObject({
       code: 'query_too_broad',
     });
-    for (const q of [QUERIES[0], QUERIES[7], QUERIES[10], QUERIES[13]]) {
+    for (const q of [QUERIES[0], QUERIES[7], QUERIES[10], QUERIES[14]]) {
       await expect(tiny.entries.listPublished(scope, q?.q as EntryQuery)).resolves.not.toHaveLength(
         0,
       );
@@ -218,7 +231,7 @@ describe('richer queries on D1', { timeout: 60_000 }, () => {
     }
     // An OR with a branch SQL cannot test is not pushed at all: it scans, and says so.
     await expect(
-      tiny.entries.listPublished(scope, QUERIES[14]?.q as EntryQuery),
+      tiny.entries.listPublished(scope, QUERIES[15]?.q as EntryQuery),
     ).rejects.toMatchObject({ code: 'query_too_broad' });
   });
 

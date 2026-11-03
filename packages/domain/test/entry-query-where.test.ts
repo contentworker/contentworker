@@ -251,13 +251,13 @@ describe('the cost of a where tree', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
-  it(`refuses more than ${MAX_PATH_FILTERS} component paths in one query`, () => {
+  it(`refuses more than ${MAX_PATH_FILTERS} component paths inside where only`, () => {
     const path = (i: number): QueryFilter => ({ field: `seo.f${i}`, op: 'eq', value: 1 });
-    const filters = Array.from({ length: MAX_PATH_FILTERS }, (_, i) => path(i));
-    expect(() => assertPathFilterBudget({ filters })).not.toThrow();
-    expect(() =>
-      assertPathFilterBudget({ filters, where: { or: [path(9), { field: 'title', op: 'eq' }] } }),
-    ).toThrow(ValidationError);
+    const four = Array.from({ length: MAX_PATH_FILTERS }, (_, i) => path(i));
+    expect(() => assertPathFilterBudget({ where: { and: four } })).not.toThrow();
+    expect(() => assertPathFilterBudget({ where: { and: [...four, path(9)] } })).toThrow(
+      ValidationError,
+    );
   });
 });
 

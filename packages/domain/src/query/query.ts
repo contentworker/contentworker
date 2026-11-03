@@ -78,8 +78,9 @@ export const MAX_FILTER_VALUES = 100;
 /** A component path (`seo.title`, `blocks.card.heading`) has at most this many segments. */
 export const MAX_FIELD_PATH_SEGMENTS = 4;
 /**
- * A query names at most this many component paths, top-level filters and `where` together: each
- * is a JSON tree walk per candidate row in the store, so their number is the cost to bound.
+ * Component paths: each is a JSON tree walk per candidate row in the store, so their number is
+ * the cost to bound. A `where` tree names at most this many; the store pushes at most this many
+ * of a query's paths into SQL, and the engine evaluates the rest.
  */
 export const MAX_PATH_FILTERS = 4;
 
@@ -188,21 +189,18 @@ export function queryFilterIssues(
 }
 
 /**
- * Refuses a query naming more than {@link MAX_PATH_FILTERS} component paths across its filters
- * and `where` tree.
+ * Refuses a `where` tree naming more than {@link MAX_PATH_FILTERS} component paths. Only `where`,
+ * which is new: top-level path filters were accepted before (and ignored), so any number of them
+ * still is; the store pushes at most {@link MAX_PATH_FILTERS} paths into SQL and leaves the rest
+ * to the engine.
  */
-export function assertPathFilterBudget(query: {
-  readonly filters?: readonly QueryFilter[];
-  readonly where?: QueryNode;
-}): void {
-  const paths = [...(query.filters ?? []), ...queryNodeFilters(query.where)].filter(
-    (f) => fieldPath(f.field).length > 1,
-  ).length;
+export function assertPathFilterBudget(query: { readonly where?: QueryNode }): void {
+  const paths = queryNodeFilters(query.where).filter((f) => fieldPath(f.field).length > 1).length;
   if (paths > MAX_PATH_FILTERS) {
     throw new ValidationError([
       {
-        field: 'filters',
-        message: `a query names at most ${MAX_PATH_FILTERS} component paths (seo.title)`,
+        field: 'where',
+        message: `where names at most ${MAX_PATH_FILTERS} component paths (seo.title)`,
       },
     ]);
   }

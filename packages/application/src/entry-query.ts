@@ -192,6 +192,8 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
       continue;
     }
     if (key === 'where') {
+      // Empty is absent, as it was before `where` existed.
+      if (value.trim() === '') continue;
       // Repeated `where` parameters AND together, within one length budget.
       whereLength += value.length;
       if (whereLength > MAX_WHERE_LENGTH) {
@@ -224,7 +226,7 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
   }
 
   const where = whereTrees.length ? parseQueryWhere(mergeWhereJson(whereTrees)) : undefined;
-  assertPathFilterBudget({ filters, ...(where ? { where } : {}) });
+  assertPathFilterBudget({ ...(where ? { where } : {}) });
 
   return {
     contentTypeApiId,

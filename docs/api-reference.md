@@ -156,11 +156,14 @@ The D1 store pushes a superset of each predicate into SQL and the domain engine
 (`runEntryQuery`) decides exactly (`packages/db/src/query-pushdown.ts`). Reference filters on
 Delivery are an `IN` over the `references` edges table (by its `to_id` index), on Preview a
 `json_tree` walk of the current fields, after a cheap `instr` test for the quoted id (so ref ids
-are restricted to ASCII needing no JSON escape). The use-cases pass the content model with a
+are restricted to printable ASCII: an id containing `"`, `\` or a non-ASCII character can't be
+targeted). On Delivery a top-level reference filter answered by the edge lookup is exact and is
+not rechecked against today's type, since the edges record the type as it was at publish. The use-cases pass the content model with a
 reference filter (`EntryQuery.contentTypes`; on Delivery it rides the config read), and the
 engine then reads links exactly as `extractReferences` writes the edges: declared link-bearing
 fields only, any locale. Component paths compare the path's last segment as a bound value, at
-most `MAX_PATH_FILTERS` (4) per query; an `or` group is pushed only when every branch is; a field
+most `MAX_PATH_FILTERS` (4) pushed per statement (the rest are left to the engine; only a `where`
+tree is refused, 422, past 4 paths, since top-level dotted keys were always accepted); an `or` group is pushed only when every branch is; a field
 key holding `"` widens the scan instead of being walked. Prefilters spend at most
 `PREFILTER_PARAM_BUDGET` (64) bound parameters per statement; a predicate past it is left to the
 engine.
@@ -170,7 +173,14 @@ Strict checks (`queryFilterIssues`, strict inside `where`) apply to the new inpu
 ("has a value"), an `in`/`nin` list past 100 values and an unknown operator behave as before.
 Repeated `where` parameters (and GraphQL's `and`, `or` and `where` keys) are merged with
 `mergeWhereJson` and checked as one tree: ≤ 4 deep, ≤ 20 predicates, ≤ 8,192 characters (MCP
-measures `JSON.stringify(where)`).
+measures `JSON.stringify(where)`); an empty `where=` is absent. A query-string key the parser
+doesn't recognise (more than 4 path segments, a numeric segment) is ignored as before; the same
+path inside `where` is refused with 422.
+
+In `packages/db/test/query-counts.json` the Delivery reference rows (`fields.author[ref]=`,
+`links_to_entry=`) record 3 statements to a plain list's 2: a reference filter reads the content
+types alongside the space config, in the same round trip, so the engine can read links as the
+edges do.
 
 ---
 

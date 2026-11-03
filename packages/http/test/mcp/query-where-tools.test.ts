@@ -184,6 +184,19 @@ describe('richer queries over MCP', () => {
     expect(hidden.isError).toBe(true);
   });
 
+  it('answers more than four top-level component paths, and caps them inside where', async () => {
+    const client = await connect(deps, READER);
+    const path = { field: 'seo.title', op: 'exists', value: true };
+    expect(
+      titles(
+        await query(client, {
+          filters: [...Array(4).fill(path), { field: 'seo.title', op: 'eq', value: 'Jam' }],
+        }),
+      ),
+    ).toEqual(['Apricot']);
+    expect((await query(client, { where: { and: Array(5).fill(path) } })).isError).toBe(true);
+  });
+
   it('keeps an empty match meaning "has a value"', async () => {
     const client = await connect(deps, READER);
     expect(

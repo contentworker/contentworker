@@ -239,7 +239,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
         ]);
       }
       const where = args.where === undefined ? undefined : parseQueryWhere(args.where);
-      assertPathFilterBudget({ filters, ...(where ? { where } : {}) });
+      assertPathFilterBudget({ ...(where ? { where } : {}) });
       assertQueryRespectsFieldRules(principal, {
         contentTypeApiId: args.contentType,
         filters,

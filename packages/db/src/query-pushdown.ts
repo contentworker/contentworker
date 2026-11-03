@@ -2,6 +2,7 @@ import {
   ANY_FIELD,
   fieldPath,
   isQueryGroup,
+  MAX_PATH_FILTERS,
   type QueryFilter,
   type QueryNode,
   type Scope,
@@ -368,13 +369,27 @@ function filterPredicate(f: QueryFilter, fieldsCol: SQL, sys: SysColumns): SQL |
  * Predicates are taken in order while they fit {@link PREFILTER_PARAM_BUDGET}; one that does not
  * fit is skipped (a wider scan), so a query with many predicates can never build a statement
  * past D1's parameter cap.
+ *
+ * `decided` collects the top-level reference filters pushed as edge lookups (with `sys.edges`):
+ * those are exact, not a superset, so the caller may leave them out of the engine's pass.
  */
 export function buildFilterPrefilter(
   query: { readonly filters?: readonly QueryFilter[]; readonly where?: QueryNode },
   fieldsCol: SQL,
   sys: SysColumns,
+  decided?: Set<QueryFilter>,
 ): SQL | null {
   let budget = PREFILTER_PARAM_BUDGET;
+  // Component paths each walk a JSON tree per row: at most MAX_PATH_FILTERS go into SQL, the
+  // rest stay with the engine (a wider scan, never a refused query).
+  let paths = 0;
+  const predicate = (f: QueryFilter): SQL | null => {
+    const isPath = fieldPath(f.field).length > 1;
+    if (isPath && paths >= MAX_PATH_FILTERS) return null;
+    const p = filterPredicate(f, fieldsCol, sys);
+    if (p && isPath) paths += 1;
+    return p;
+  };
   const spend = (p: SQL | null): SQL | null => {
     if (!p) return null;
     const n = paramsOf(p);
@@ -385,7 +400,7 @@ export function buildFilterPrefilter(
   // A group's predicate: AND keeps what pushes down; OR only when every branch does. Built whole
   // first, then spent, so an OR that does not fit is dropped as one.
   const nodePredicate = (node: QueryNode): SQL | null => {
-    if (!isQueryGroup(node)) return filterPredicate(node, fieldsCol, sys);
+    if (!isQueryGroup(node)) return predicate(node);
     if ('and' in node) {
       const parts = node.and.map(nodePredicate).filter((p): p is SQL => p !== null);
       return parts.length ? (and(...parts) as SQL) : null;
@@ -396,8 +411,10 @@ export function buildFilterPrefilter(
   };
   const conds: SQL[] = [];
   for (const f of query.filters ?? []) {
-    const p = spend(filterPredicate(f, fieldsCol, sys));
-    if (p) conds.push(p);
+    const p = spend(predicate(f));
+    if (!p) continue;
+    conds.push(p);
+    if (sys.edges && (f.op === 'ref' || f.op === 'refIn')) decided?.add(f);
   }
   if (query.where) {
     // The root AND's branches are spent one by one, like `filters`.

@@ -632,6 +632,24 @@ describe('@contentworker/sdk-core taxonomy', () => {
     expect(two?.get('links_to_entry')).toBe('b1,b2');
   });
 
+  it('chained or() groups join one root and, however many', async () => {
+    const urls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        urls.push(url);
+        return { items: [], total: 0 };
+      }),
+    });
+    let q = client.query();
+    for (let i = 0; i < 5; i++) q = q.or({ field: 'title', value: `t${i}` });
+    await q.fetch();
+    const where = JSON.parse(new URL(urls[0] ?? '').searchParams.get('where') ?? 'null');
+    expect(where).toEqual({
+      and: Array.from({ length: 5 }, (_, i) => ({ or: [{ field: 'title', value: `t${i}` }] })),
+    });
+  });
+
   it('references() without an id throws rather than sending an empty filter', () => {
     const client = createDeliveryClient({ ...base, fetch: fakeFetch(() => ({ items: [] })) });
     expect(() => client.query().references('author')).toThrow(/at least one entry id/);

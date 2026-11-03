@@ -29,6 +29,7 @@ import {
   type PluginSettings,
   type Promotion,
   projectFields,
+  type QueryFilter,
   QueryTooBroadError,
   type Redirect,
   type ReferenceEdge,
@@ -988,8 +989,12 @@ function makeEntryRepo(
         // Published rows are what the reference edges describe: a link filter reads them.
         edges: scope,
       };
+      // Reference filters answered exactly by the edge lookup. The edges record each link as the
+      // type declared it at publish, so the engine, which reads today's type, doesn't recheck
+      // them: an edited type must not hide an entry its published links still name.
+      const decided = new Set<QueryFilter>();
       if (advanced) {
-        const pre = buildFilterPrefilter(query, fieldsCol, sysCols);
+        const pre = buildFilterPrefilter(query, fieldsCol, sysCols, decided);
         if (pre) conditions.push(pre);
         if (query.search) {
           const pre = buildSearchPrefilter(query.search, fieldsCol);
@@ -1026,7 +1031,7 @@ function makeEntryRepo(
       }
       const filtered = runEntryQuery(
         published,
-        query,
+        decided.size ? { ...query, filters: query.filters?.filter((f) => !decided.has(f)) } : query,
         (r) => r.fields,
         (r) => ({
           id: r.entryId,

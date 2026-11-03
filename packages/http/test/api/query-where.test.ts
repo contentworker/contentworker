@@ -339,6 +339,38 @@ describe('what the API accepted before keeps working', () => {
     ]);
   });
 
+  it('more than four top-level component paths answer (200), filtered correctly', async () => {
+    const five = [
+      'fields.seo.title[match]=a',
+      'fields.seo.title[ne]=x',
+      'fields.seo.rank[gte]=2',
+      'fields.seo.rank[lte]=5',
+      'fields.seo.title[exists]=true',
+    ].join('&');
+    expect(await titles(app, `${D}/entries?content_type=page&${five}`, 'cda')).toEqual([
+      'Apricot',
+      'Banana',
+    ]);
+    expect(await titles(app, `${P}/entries?content_type=page&${five}`, 'cpa')).toEqual([
+      'Apricot',
+      'Banana',
+    ]);
+    const body = await graphql(app, 'cda', {
+      'fields.seo.title[match]': 'a',
+      'fields.seo.title[ne]': 'x',
+      'fields.seo.rank[gte]': 2,
+      'fields.seo.rank[lte]': 5,
+      'fields.seo.title[exists]': true,
+    });
+    expect(body.errors).toBeUndefined();
+    expect(body.data?.pageCollection.map((p) => p.title).sort()).toEqual(['Apricot', 'Banana']);
+    // Inside where, which is new, the cap holds.
+    const where = encodeURIComponent(
+      JSON.stringify({ and: Array(5).fill({ field: 'seo.title', op: 'exists' }) }),
+    );
+    expect((await get(app, `${D}/entries?where=${where}`, 'cda')).status).toBe(422);
+  });
+
   it('an unknown operator is still ignored', async () => {
     expect(
       await titles(app, `${D}/entries?content_type=page&fields.title[like]=x`, 'cda'),

@@ -134,6 +134,11 @@ describe('richer queries from the query string', () => {
     expect(() => q(`where=${twelve}&where=${twelve}`)).toThrow(ValidationError);
   });
 
+  it('an empty where is absent, as it was before where existed', () => {
+    expect(q('where=').where).toBeUndefined();
+    expect(q('where=%20&fields.title=Apple').filters).toHaveLength(1);
+  });
+
   it('merges trees without adding a level: an AND joins the root', () => {
     const leaf = { field: 'title', value: 'x' };
     expect(mergeWhereJson([{ or: [leaf] }])).toEqual({ or: [leaf] });
@@ -155,9 +160,20 @@ describe('richer queries from the query string', () => {
     expect(q(`sys.id[in]=${ids}`).filters?.[0]?.value).toHaveLength(150);
   });
 
-  it('refuses more than four component paths in one query', () => {
-    const five = Array.from({ length: 5 }, (_, i) => `fields.seo.f${i}=x`).join('&');
-    expect(() => q(five)).toThrow(ValidationError);
+  it('answers any number of top-level component paths, and caps them only inside where', async () => {
+    const five = [
+      'fields.seo.title[match]=a',
+      'fields.seo.title[ne]=x',
+      'fields.seo.rank[gte]=2',
+      'fields.seo.rank[lte]=5',
+      'fields.seo.title[exists]=true',
+    ].join('&');
+    expect(titles(await listPublishedEntries(ctx, scope, q(five)))).toEqual(['Apricot', 'Banana']);
+    expect(titles(await listPreviewEntries(ctx, scope, q(five)))).toEqual(['Apricot', 'Banana']);
+    const where = encodeURIComponent(
+      JSON.stringify({ and: Array(5).fill({ field: 'seo.title', op: 'exists' }) }),
+    );
+    expect(() => q(`where=${where}`)).toThrow(ValidationError);
   });
 
   it('refuses a between without two bounds', () => {
