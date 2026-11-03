@@ -36,7 +36,9 @@ export type DomainEvent =
   | EnvironmentPurgeDueEvent
   | InviteEmailDueEvent
   | RedirectsChangedEvent
-  | MenusChangedEvent;
+  | MenusChangedEvent
+  | WebhookTestEvent
+  | WebhookResendRequestedEvent;
 
 export interface BaseEvent {
   readonly id: string;
@@ -418,6 +420,32 @@ export interface InviteEmailDueEvent extends BaseEvent {
   readonly inviteId: string;
   readonly version: number;
   readonly origin: string;
+}
+
+/**
+ * A test delivery an administrator asked for, to one webhook (`webhookId`) whatever its topics,
+ * and recorded in its delivery log like any other. Appended to the outbox so the engine sends it
+ * as it sends every delivery; no other webhook, cache or index sees it. Sent once, never retried.
+ */
+export interface WebhookTestEvent extends BaseEvent {
+  readonly type: 'webhook.test';
+  readonly webhookId: string;
+  /** A fixed sentence, so a receiver can tell a test from real traffic in its own logs. */
+  readonly message: string;
+}
+
+/**
+ * A control event: send `event` (the event a stored delivery carried, as it was then) to one
+ * webhook again, with a fresh signature and timestamp, recording the attempt as a resend of
+ * delivery `deliveryId`. `scope` is where the administrator asked, where the webhook is visible;
+ * `event` keeps its own (a space-wide webhook's deliveries span environments). Sent once, never
+ * retried; nothing but that webhook sees it.
+ */
+export interface WebhookResendRequestedEvent extends BaseEvent {
+  readonly type: 'webhook.resend_requested';
+  readonly webhookId: string;
+  readonly deliveryId: number;
+  readonly event: DomainEvent;
 }
 
 export type EventType = DomainEvent['type'];

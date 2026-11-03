@@ -54,6 +54,18 @@ describe('createWebhookSender', () => {
     expect(JSON.parse(body)).toEqual(event);
   });
 
+  it('signs at the given timestamp (a resend), leaving the event as it was', async () => {
+    const { impl, calls } = fakeFetch(() => new Response('ok', { status: 200 }));
+    const at = '2026-03-01T12:00:00.000Z';
+    await createWebhookSender(impl).send(webhook, event, { timestamp: at });
+    const headers = calls[0]?.init.headers as Record<string, string>;
+    const body = calls[0]?.init.body as string;
+    const expected = createHmac('sha256', webhook.secret).update(`${at}.${body}`).digest('hex');
+    expect(headers['x-contentworker-timestamp']).toBe(at);
+    expect(headers['x-contentworker-signature']).toBe(`sha256=${expected}`);
+    expect(JSON.parse(body)).toEqual(event);
+  });
+
   it('reports non-2xx as undelivered with the status code', async () => {
     const { impl } = fakeFetch(() => new Response('nope', { status: 500 }));
     const result = await createWebhookSender(impl).send(webhook, event);

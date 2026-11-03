@@ -1,5 +1,6 @@
-import { createEnvironment, setEnvironmentAlias } from '@contentworker/application';
+import { consumeEvent, createEnvironment, setEnvironmentAlias } from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
+import { type InMemoryContentStore, RecordingWebhookSender } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -133,5 +134,97 @@ describe('webhooks under an environment', () => {
       body: JSON.stringify({ ...hook, url: 'http://10.0.0.1/hook' }),
     });
     expect(internal.status).toBe(422);
+  });
+});
+
+describe('webhook tests and resends', () => {
+  let app: ReturnType<typeof createApp>;
+  let ctx: ReturnType<typeof wire>['ctx'];
+  const scope = { spaceId: 's1', environmentId: 'main' };
+  const post = (path: string, headers: Record<string, string> = cma) =>
+    app.request(path, { method: 'POST', headers });
+  /** The engine: consumes every outbox event this test has not consumed yet. */
+  let consumed = 0;
+  const engine = async (sender = new RecordingWebhookSender()) => {
+    const store = ctx.store as InMemoryContentStore;
+    const events = store.allEvents().slice(consumed);
+    consumed += events.length;
+    for (const e of events) await consumeEvent(ctx, { sender }, e);
+    return sender;
+  };
+  const deliveries = async (id: string) =>
+    (
+      (await (await app.request(`${env('main')}/${id}/deliveries`, { headers: cma })).json()) as {
+        items: { id: number; eventId: string; eventType?: string; resendOf?: number }[];
+      }
+    ).items;
+
+  beforeEach(async () => {
+    const wired = wire(config);
+    ctx = wired.ctx;
+    app = createApp(ctx, config, wired.rag, wired.blob, wired.ai);
+    consumed = (ctx.store as InMemoryContentStore).allEvents().length;
+  });
+
+  it('queues a test (202), which the engine sends and logs as webhook.test', async () => {
+    const created = (await (
+      await app.request(env('main'), { method: 'POST', headers: cma, body: JSON.stringify(hook) })
+    ).json()) as Summary;
+    const res = await post(`${env('main')}/${created.id}/test`);
+    expect(res.status).toBe(202);
+    const queued = (await res.json()) as { eventId: string; eventType: string };
+    expect(queued.eventType).toBe('webhook.test');
+    const sender = await engine();
+    expect(sender.sent.map((s) => s.event.id)).toEqual([queued.eventId]);
+    expect(await deliveries(created.id)).toMatchObject([
+      { eventId: queued.eventId, eventType: 'webhook.test' },
+    ]);
+  });
+
+  it('resends a delivery (202), linked to the original, and 404s or 409s as it should', async () => {
+    const created = (await (
+      await app.request(env('main'), { method: 'POST', headers: cma, body: JSON.stringify(hook) })
+    ).json()) as Summary;
+    await post(`${env('main')}/${created.id}/test`);
+    await engine();
+    const [original] = await deliveries(created.id);
+    if (!original) throw new Error('no delivery');
+
+    const res = await post(`${env('main')}/${created.id}/deliveries/${original.id}/resend`);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ eventId: original.eventId, resendOf: original.id });
+    const sender = await engine();
+    expect(sender.sent.map((s) => s.event.id)).toEqual([original.eventId]);
+    expect((await deliveries(created.id))[0]).toMatchObject({ resendOf: original.id });
+
+    for (const bad of ['999999', 'abc', '0', '1.5']) {
+      expect((await post(`${env('main')}/${created.id}/deliveries/${bad}/resend`)).status).toBe(
+        404,
+      );
+    }
+    // Another environment's view of an environment-scoped hook: not found.
+    expect((await post(`${env('staging')}/${created.id}/test`)).status).toBe(404);
+
+    // The event swept by retention while its delivery record remains: 409.
+    const store = ctx.store as InMemoryContentStore;
+    await store.outbox.markRelayed(store.allEvents().map((e) => e.id));
+    await store.outbox.deleteRelayedBefore(new Date(Date.now() + 60_000), 1000);
+    expect(
+      (await post(`${env('main')}/${created.id}/deliveries/${original.id}/resend`)).status,
+    ).toBe(409);
+  });
+
+  it('needs space:admin, as managing webhooks does', async () => {
+    const created = (await (
+      await app.request(env('main'), { method: 'POST', headers: cma, body: JSON.stringify(hook) })
+    ).json()) as Summary;
+    const cda = { Authorization: 'Bearer cda' };
+    expect((await post(`${env('main')}/${created.id}/test`, cda)).status).toBe(403);
+    expect((await post(`${env('main')}/${created.id}/deliveries/1/resend`, cda)).status).toBe(403);
+    expect(
+      (ctx.store as InMemoryContentStore)
+        .allEvents()
+        .filter((e) => e.scope.spaceId === scope.spaceId && e.type === 'webhook.test'),
+    ).toEqual([]);
   });
 });

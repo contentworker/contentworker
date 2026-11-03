@@ -816,7 +816,8 @@ transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. Th
 `environment.deleted`, `promotion.awaiting_approval`, `environment.promoted`, `bulk.job_completed`,
 the `workflow_run.*` end states,
 `workflow.task_opened` and `workflow.webhook`, plus control messages for background work
-(`search.reindex_requested`, `bulk.chunk_due`, `environment.purge_due`). Every type and its payload
+(`search.reindex_requested`, `bulk.chunk_due`, `environment.purge_due`) and for an administrator's
+webhook test or resend (`webhook.test`, `webhook.resend_requested`). Every type and its payload
 is in [Events & webhooks](./events-and-webhooks.md#event-payloads).
 
 `EventType = DomainEvent['type']`. The stable `id` makes dispatch idempotent.

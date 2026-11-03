@@ -779,6 +779,16 @@ export function Webhooks(props: { client: ManagementClient }) {
     }
   };
 
+  // Queued, not sent: the engine sends it like any delivery, and it shows up under Deliveries.
+  const sendTest = async (h: WebhookSummary) => {
+    try {
+      await client.sendWebhookTest(h.id);
+      toast.success('Test event queued. It shows up under Deliveries once sent.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const remove = async (id: string) => {
     try {
       await client.deleteWebhook(id);
@@ -889,7 +899,7 @@ export function Webhooks(props: { client: ManagementClient }) {
               <TableHead>Topics</TableHead>
               <TableHead>Environments</TableHead>
               <TableHead className="w-24">Status</TableHead>
-              <TableHead className="w-64">
+              <TableHead className="w-80">
                 <span className="sr-only">Actions</span>
               </TableHead>
             </TableRow>
@@ -922,6 +932,9 @@ export function Webhooks(props: { client: ManagementClient }) {
                       onClick={() => setDeliveriesFor(h)}
                     >
                       Deliveries
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => sendTest(h)}>
+                      Send test
                     </Button>
                     <Button type="button" variant="ghost" size="sm" onClick={() => toggleActive(h)}>
                       {h.active ? 'Pause' : 'Resume'}

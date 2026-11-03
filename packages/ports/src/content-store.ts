@@ -1937,6 +1937,8 @@ export interface WebhookRepo {
   update(scope: Scope, webhook: Webhook): Promise<void>;
   delete(scope: Scope, id: string): Promise<void>;
   recordDelivery(scope: Scope, delivery: WebhookDelivery): Promise<void>;
+  /** One recorded attempt at `webhookId`, in the scope's space, or null. */
+  getDelivery(scope: Scope, webhookId: string, id: number): Promise<WebhookDeliveryRecord | null>;
   /** Recent delivery attempts for a webhook, newest first. */
   listDeliveries(
     scope: Scope,
@@ -2170,6 +2172,11 @@ export interface OutboxRepo {
   readPending(limit: number): Promise<DomainEvent[]>;
   /** Marks events as relayed so they are not re-published. */
   markRelayed(eventIds: readonly string[]): Promise<void>;
+  /**
+   * One event of the scope's space by id (any of its environments: a space-wide webhook's
+   * deliveries span them), relayed or not, while the retention sweep keeps it; null otherwise.
+   */
+  get(scope: Scope, eventId: string): Promise<DomainEvent | null>;
   /**
    * Deletes up to `limit` RELAYED rows older than `before` (retention sweep —
    * without it the outbox grows one row per event forever). Never touches

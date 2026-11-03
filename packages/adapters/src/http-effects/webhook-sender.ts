@@ -17,9 +17,13 @@ export function createWebhookSender(
 ): WebhookSender {
   const timeoutMs = opts.timeoutMs ?? 10_000;
   return {
-    async send(webhook: Webhook, payload: DomainEvent): Promise<WebhookSendResult> {
+    async send(
+      webhook: Webhook,
+      payload: DomainEvent,
+      opts: { readonly timestamp?: string } = {},
+    ): Promise<WebhookSendResult> {
       const body = JSON.stringify(payload);
-      const timestamp = payload.occurredAt;
+      const timestamp = opts.timestamp ?? payload.occurredAt;
       const signature = createHmac('sha256', webhook.secret)
         .update(`${timestamp}.${body}`)
         .digest('hex');

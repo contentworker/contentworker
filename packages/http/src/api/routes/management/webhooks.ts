@@ -5,9 +5,11 @@ import {
   listWebhookDeliveries,
   listWebhooks,
   MAX_PAGE_LIMIT,
+  resendWebhookDelivery,
+  sendWebhookTest,
   updateWebhook,
 } from '@contentworker/application';
-import { SCOPES } from '@contentworker/domain';
+import { NotFoundError, SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -90,13 +92,59 @@ export function webhooksRoutes(deps: AuthDeps): Hono<AuthVars> {
     await deleteWebhook(ctx, scopeOf(c), c.req.param('id'));
     return c.body(null, 204);
   });
-  app.get(`${BASE}/webhooks/:id/deliveries`, requireScope(SCOPES.spaceAdmin), async (c) => {
-    const limit = c.req.query('limit');
-    const items = await listWebhookDeliveries(ctx, scopeOf(c), c.req.param('id'), {
-      limit: clampCount(limit, MAX_PAGE_LIMIT, { min: 1 }),
-    });
-    return c.json({ items });
-  });
+  app.get(
+    `${BASE}/webhooks/:id/deliveries`,
+    doc('Webhooks', "List a webhook's deliveries", {
+      description: 'Recent delivery attempts, newest first (`?limit=`, default 50, at most 100).',
+      ok: webhookDocs.webhookDeliveryList,
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) => {
+      const limit = c.req.query('limit');
+      const items = await listWebhookDeliveries(ctx, scopeOf(c), c.req.param('id'), {
+        limit: clampCount(limit, MAX_PAGE_LIMIT, { min: 1 }),
+      });
+      return c.json({ items });
+    },
+  );
+  // A test and a resend are queued through the outbox, so the engine sends them as it sends every
+  // delivery (202): each is one attempt, recorded in the deliveries above, never retried.
+  app.post(
+    `${BASE}/webhooks/:id/test`,
+    doc('Webhooks', 'Send a test delivery', {
+      description:
+        'Queues a `webhook.test` event for this webhook alone, whatever its topics and even while ' +
+        "it is paused. It is signed like every delivery and appears in the webhook's deliveries " +
+        'with the returned `eventId`. One attempt, never retried.',
+      ok: webhookDocs.queuedWebhookDelivery,
+      status: 202,
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) => c.json(await sendWebhookTest(ctx, scopeOf(c), c.req.param('id')), 202),
+  );
+  app.post(
+    `${BASE}/webhooks/:id/deliveries/:deliveryId/resend`,
+    doc('Webhooks', 'Resend a delivery', {
+      description:
+        "Queues the delivery's event for this webhook again: the same event and id, signed afresh " +
+        'with the time it is sent. The new attempt names this one in `resendOf`. One attempt, ' +
+        'never retried. 409 once the event is older than the event retention (7 days by default).',
+      ok: webhookDocs.queuedWebhookDelivery,
+      status: 202,
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) => {
+      const raw = c.req.param('deliveryId');
+      const deliveryId = Number(raw);
+      if (!Number.isSafeInteger(deliveryId) || deliveryId < 1) {
+        throw new NotFoundError('WebhookDelivery', raw);
+      }
+      return c.json(
+        await resendWebhookDelivery(ctx, scopeOf(c), c.req.param('id'), deliveryId),
+        202,
+      );
+    },
+  );
 
   return app;
 }

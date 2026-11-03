@@ -82,6 +82,7 @@ export function sealedWebhookRepo(inner: WebhookRepo, sealer: SecretSealer): Web
     update: async (scope, webhook) => inner.update(scope, await seal(webhook)),
     delete: (scope, id) => inner.delete(scope, id),
     recordDelivery: (scope, delivery) => inner.recordDelivery(scope, delivery),
+    getDelivery: (scope, webhookId, id) => inner.getDelivery(scope, webhookId, id),
     listDeliveries: (scope, webhookId, opts) => inner.listDeliveries(scope, webhookId, opts),
     deleteDeliveriesBefore: (before, limit) => inner.deleteDeliveriesBefore(before, limit),
   };

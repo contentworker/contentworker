@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  consumeEvent,
   createEnvironment,
   createSpace,
   setEnvironmentAlias,
@@ -12,6 +13,7 @@ import {
   InMemoryContentStore,
   InMemoryVectorStore,
   LocalEmbeddingsProvider,
+  RecordingWebhookSender,
   SequenceIdGenerator,
   StubAIProvider,
 } from '@contentworker/test-kit';
@@ -176,6 +178,41 @@ describe('webhook tools over MCP', () => {
     expect(await ids('main')).toEqual([]);
   });
 
+  it('queues a test and a resend through the outbox, as REST', async () => {
+    const created = payload(await call('webhook_create', hook)) as Summary;
+    const test = payload(await call('webhook_test', { id: created.id })) as { eventId: string };
+    const store = deps.ctx.store as InMemoryContentStore;
+    let consumed = 0;
+    const engine = async () => {
+      const sender = new RecordingWebhookSender();
+      const events = store.allEvents().slice(consumed);
+      consumed += events.length;
+      for (const e of events) await consumeEvent(deps.ctx, { sender }, e);
+      return sender;
+    };
+    expect((await engine()).sent.map((s) => s.event.type)).toEqual(['webhook.test']);
+    const { items } = payload(await call('webhook_deliveries', { id: created.id })) as {
+      items: { id: number; eventId: string; eventType: string }[];
+    };
+    expect(items).toMatchObject([{ eventId: test.eventId, eventType: 'webhook.test' }]);
+    const original = items[0]?.id;
+
+    const resend = payload(
+      await call('webhook_resend', { id: created.id, deliveryId: original }),
+    ) as { resendOf: number };
+    expect(resend).toMatchObject({ eventId: test.eventId, resendOf: original });
+    expect((await engine()).sent.map((s) => s.event.id)).toEqual([test.eventId]);
+
+    const missing = await call('webhook_resend', { id: created.id, deliveryId: 999 });
+    expect(missing.isError).toBe(true);
+    // Another environment's view of a main-scoped hook: not found, as REST's 404.
+    const elsewhere = await call('webhook_test', { id: created.id, environment: 'staging' });
+    expect(elsewhere.isError).toBe(true);
+    expect(JSON.stringify(elsewhere.content)).toContain(
+      `Webhook \\"${created.id}\\" was not found`,
+    );
+  });
+
   it('refuses a key without space:admin, and one for another space', async () => {
     const editor = await connect(deps, {
       spaceId: SPACE,
@@ -184,6 +221,15 @@ describe('webhook tools over MCP', () => {
     });
     expect((await editor.callTool({ name: 'webhooks_list', arguments: {} })).isError).toBe(true);
     expect((await editor.callTool({ name: 'webhook_create', arguments: hook })).isError).toBe(true);
+    const mine = payload(await call('webhook_create', hook)) as Summary;
+    for (const [name, args] of [
+      ['webhook_test', { id: mine.id }],
+      ['webhook_resend', { id: mine.id, deliveryId: 1 }],
+    ] as const) {
+      expect((await editor.callTool({ name, arguments: args })).isError).toBe(true);
+    }
+    expect((deps.ctx.store as InMemoryContentStore).allEvents()).toEqual([]);
+    await call('webhook_delete', { id: mine.id });
     const other = await connect(deps, {
       spaceId: 'space-2',
       kind: 'user',

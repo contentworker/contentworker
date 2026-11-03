@@ -31,6 +31,10 @@ export interface WebhookDelivery {
   readonly statusCode?: number;
   readonly attempts: number;
   readonly error?: string;
+  /** The event's type (absent on records written before it was kept). */
+  readonly eventType?: EventType;
+  /** The delivery this attempt resent, when an administrator asked for it again. */
+  readonly resendOf?: number;
 }
 
 /** True if the webhook is space-wide or scoped to `environmentId`. */

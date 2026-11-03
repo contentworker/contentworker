@@ -323,6 +323,12 @@ published entries, tags and concepts its links name, through `json_tree` over th
 The environment purge clears it; nothing is backfilled (see
 [Domain model](./domain-model.md#menus)).
 
+`0021_webhook_delivery_resends.sql` adds two nullable columns to `webhook_deliveries`:
+`event_type` (the event a delivery carried) and `resend_of` (the delivery row an administrator's
+resend repeated). Code older than the migration neither reads nor writes them, and rows from
+before it keep NULL; nothing is backfilled (see
+[Events & webhooks](./events-and-webhooks.md#webhooks)).
+
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,
 `archived_at`, `rights`, backfilled from the `file` JSON, with indexes for filtering and sorting)

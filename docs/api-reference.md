@@ -743,6 +743,8 @@ field never becomes a label, and a denied slug field drops the item. Every write
 | PUT    | `…/webhooks/:id`            | `space:admin` | Update webhook |
 | DELETE | `…/webhooks/:id`            | `space:admin` | Delete webhook |
 | GET    | `…/webhooks/:id/deliveries` | `space:admin` | Delivery log   |
+| POST   | `…/webhooks/:id/test`       | `space:admin` | Queue a `webhook.test` delivery (202) |
+| POST   | `…/webhooks/:id/deliveries/:deliveryId/resend` | `space:admin` | Resend a logged delivery's event, signed afresh (202; 409 once the event is past retention) |
 
 A webhook is scoped to the path's environment, or to every environment with
 `allEnvironments: true` in the create body; responses carry `environmentId` (`null` for

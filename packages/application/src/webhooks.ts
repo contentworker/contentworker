@@ -1,9 +1,12 @@
 import {
+  ConflictError,
   type EventType,
   NotFoundError,
   type Scope,
   ValidationError,
   type Webhook,
+  type WebhookResendRequestedEvent,
+  type WebhookTestEvent,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
 import { assertSafeExternalUrl } from './url-safety';
@@ -149,4 +152,87 @@ export async function listWebhookDeliveries(
   const current = await ctx.store.webhooks.get(scope, id);
   if (!current) throw new NotFoundError('Webhook', id);
   return ctx.store.webhooks.listDeliveries(scope, id, opts);
+}
+
+/** What a test delivery says, so a receiver can tell it from real traffic in its own logs. */
+export const WEBHOOK_TEST_MESSAGE = 'A test delivery from contentworker. Nothing changed.';
+
+/** A delivery asked for by an administrator: queued, and recorded in the log once sent. */
+export interface QueuedWebhookDelivery {
+  readonly webhookId: string;
+  /** The event it carries; its delivery log line has this `eventId`. */
+  readonly eventId: string;
+  readonly eventType: EventType;
+  /** The delivery a resend repeats. */
+  readonly resendOf?: number;
+}
+
+/**
+ * Sends one webhook a `webhook.test` event, whatever its topics and whether it is paused (so a
+ * hook can be tried before it is turned on). The event goes through the outbox like every other,
+ * so the engine sends it, signed as every delivery is, and records it in the hook's delivery log;
+ * it is sent once and never retried. The URL is screened again, as at create. 404 if the hook
+ * doesn't exist in this space, or is scoped to another environment.
+ */
+export async function sendWebhookTest(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+): Promise<QueuedWebhookDelivery> {
+  const webhook = await ctx.store.webhooks.get(scope, id);
+  if (!webhook) throw new NotFoundError('Webhook', id);
+  assertSafeExternalUrl(webhook.url);
+  const event: WebhookTestEvent = {
+    id: ctx.ids.newId(),
+    type: 'webhook.test',
+    scope,
+    occurredAt: ctx.clock.now().toISOString(),
+    webhookId: webhook.id,
+    message: WEBHOOK_TEST_MESSAGE,
+  };
+  await ctx.store.outbox.append(event);
+  return { webhookId: webhook.id, eventId: event.id, eventType: event.type };
+}
+
+/**
+ * Sends a stored delivery's event to its webhook again, through the outbox and the engine as the
+ * original went: the same event (same id, so a receiver that dedupes on it can), signed afresh
+ * with the time it is sent, and recorded as a new attempt whose `resendOf` names this one. One
+ * attempt, never retried. The event is read back from the outbox, which keeps relayed events as
+ * long as the delivery log keeps its records; one already swept is a 409. 404 if the hook or the
+ * delivery doesn't exist here.
+ */
+export async function resendWebhookDelivery(
+  ctx: AppContext,
+  scope: Scope,
+  webhookId: string,
+  deliveryId: number,
+): Promise<QueuedWebhookDelivery> {
+  const webhook = await ctx.store.webhooks.get(scope, webhookId);
+  if (!webhook) throw new NotFoundError('Webhook', webhookId);
+  const delivery = await ctx.store.webhooks.getDelivery(scope, webhookId, deliveryId);
+  if (!delivery) throw new NotFoundError('WebhookDelivery', String(deliveryId));
+  assertSafeExternalUrl(webhook.url);
+  const original = await ctx.store.outbox.get(scope, delivery.eventId);
+  if (!original) {
+    throw new ConflictError(
+      `Delivery ${deliveryId}'s event is no longer kept, so it can't be sent again`,
+    );
+  }
+  const request: WebhookResendRequestedEvent = {
+    id: ctx.ids.newId(),
+    type: 'webhook.resend_requested',
+    scope,
+    occurredAt: ctx.clock.now().toISOString(),
+    webhookId: webhook.id,
+    deliveryId,
+    event: original,
+  };
+  await ctx.store.outbox.append(request);
+  return {
+    webhookId: webhook.id,
+    eventId: original.id,
+    eventType: original.type,
+    resendOf: deliveryId,
+  };
 }

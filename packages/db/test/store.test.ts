@@ -470,6 +470,63 @@ describe('D1 store (contract)', () => {
     expect(await store.webhooks.listDeliveries(otherScope, 'wh-sweep-b')).toEqual([]);
   });
 
+  it("reads one delivery back with its event type and resend link, only in its webhook's space", async () => {
+    const otherScope = { spaceId: `t-${uuidv7()}`, environmentId: 'main' };
+    const webhookId = `wh-${uuidv7()}`;
+    await store.webhooks.recordDelivery(scope, {
+      webhookId,
+      eventId: 'evt-old',
+      status: 'success',
+      attempts: 1,
+    });
+    const [plain] = await store.webhooks.listDeliveries(scope, webhookId);
+    if (!plain) throw new Error('no delivery');
+    // Written without the 0021 columns: neither comes back.
+    expect(plain).not.toHaveProperty('eventType');
+    expect(plain).not.toHaveProperty('resendOf');
+    await store.webhooks.recordDelivery(scope, {
+      webhookId,
+      eventId: 'evt-old',
+      status: 'failed',
+      statusCode: 502,
+      attempts: 1,
+      eventType: 'webhook.test',
+      resendOf: plain.id,
+    });
+    const [resent] = await store.webhooks.listDeliveries(scope, webhookId);
+    if (!resent) throw new Error('no resend');
+    expect(await store.webhooks.getDelivery(scope, webhookId, resent.id)).toEqual(resent);
+    expect(resent).toMatchObject({
+      eventType: 'webhook.test',
+      resendOf: plain.id,
+      statusCode: 502,
+    });
+    // Another webhook's, another space's: not found.
+    expect(await store.webhooks.getDelivery(scope, 'wh-other', resent.id)).toBeNull();
+    expect(await store.webhooks.getDelivery(otherScope, webhookId, resent.id)).toBeNull();
+  });
+
+  it("gets an outbox event by id, relayed or not, only in its own space's scope", async () => {
+    const event = {
+      id: uuidv7(),
+      type: 'webhook.test' as const,
+      scope,
+      occurredAt: clock.now().toISOString(),
+      webhookId: 'wh-1',
+      message: 'test',
+    };
+    await store.outbox.append(event);
+    expect(await store.outbox.get(scope, event.id)).toEqual(event);
+    // Any environment of the space: a space-wide webhook's deliveries span them.
+    expect(await store.outbox.get({ ...scope, environmentId: 'staging' }, event.id)).toEqual(event);
+    await store.outbox.markRelayed([event.id]);
+    expect(await store.outbox.get(scope, event.id)).toEqual(event);
+    expect(
+      await store.outbox.get({ spaceId: `t-${uuidv7()}`, environmentId: 'main' }, event.id),
+    ).toBeNull();
+    expect(await store.outbox.get(scope, uuidv7())).toBeNull();
+  });
+
   it('round-trips roles and role-bound API keys (granular RBAC)', async () => {
     const role = await createRole(ctx, spaceId, {
       name: 'Editor',

@@ -142,11 +142,15 @@ export class StubAIProvider implements AIProvider {
 
 /** A webhook sender that records calls instead of making HTTP requests. */
 export class RecordingWebhookSender implements WebhookSender {
-  readonly sent: { webhook: Webhook; event: DomainEvent }[] = [];
+  readonly sent: { webhook: Webhook; event: DomainEvent; timestamp: string }[] = [];
   constructor(private readonly result: WebhookSendResult = { delivered: true, statusCode: 200 }) {}
 
-  async send(webhook: Webhook, payload: DomainEvent): Promise<WebhookSendResult> {
-    this.sent.push({ webhook, event: payload });
+  async send(
+    webhook: Webhook,
+    payload: DomainEvent,
+    opts?: { readonly timestamp?: string },
+  ): Promise<WebhookSendResult> {
+    this.sent.push({ webhook, event: payload, timestamp: opts?.timestamp ?? payload.occurredAt });
     return this.result;
   }
 }

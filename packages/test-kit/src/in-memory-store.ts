@@ -1479,6 +1479,8 @@ export class InMemoryContentStore implements ContentStore {
     );
   }
   readonly webhookDeliveries: WebhookDeliveryRecord[] = [];
+  /** The space each delivery record belongs to (the records keep the port's shape). */
+  private readonly deliverySpace = new Map<number, string>();
   private deliverySeq = 0;
 
   readonly webhooks: WebhookRepo = {
@@ -1508,8 +1510,9 @@ export class InMemoryContentStore implements ContentStore {
         list.filter((w) => !(w.id === id && coversEnvironment(w, scope.environmentId))),
       );
     },
-    recordDelivery: async (_scope, delivery) => {
+    recordDelivery: async (scope, delivery) => {
       this.deliverySeq += 1;
+      this.deliverySpace.set(this.deliverySeq, scope.spaceId);
       this.webhookDeliveries.push({
         ...delivery,
         id: this.deliverySeq,
@@ -1518,9 +1521,16 @@ export class InMemoryContentStore implements ContentStore {
         createdAt: new Date(this.nowMs()).toISOString(),
       });
     },
-    listDeliveries: async (_scope, webhookId, opts) =>
+    getDelivery: async (scope, webhookId, id) =>
+      this.webhookDeliveries.find(
+        (d) =>
+          d.id === id &&
+          d.webhookId === webhookId &&
+          this.deliverySpace.get(d.id) === scope.spaceId,
+      ) ?? null,
+    listDeliveries: async (scope, webhookId, opts) =>
       this.webhookDeliveries
-        .filter((d) => d.webhookId === webhookId)
+        .filter((d) => d.webhookId === webhookId && this.deliverySpace.get(d.id) === scope.spaceId)
         .sort((a, b) => b.id - a.id)
         .slice(0, opts?.limit ?? 50),
     deleteDeliveriesBefore: async (before, limit) => {
@@ -2999,6 +3009,9 @@ export class InMemoryContentStore implements ContentStore {
         }
       }
     },
+    get: async (scope, eventId) =>
+      this.outboxData.find((r) => r.event.id === eventId && r.event.scope.spaceId === scope.spaceId)
+        ?.event ?? null,
     deleteRelayedBefore: async (before, limit) => {
       const cutoff = before.getTime();
       let deleted = 0;

@@ -32,11 +32,20 @@ vi.mock('~/cms/lib/queries', () => ({
   },
 }));
 
+// The deliveries sheet reads the client from context; here it is the test's fake.
+let contextClient: unknown;
+vi.mock('~/cms/lib/client-context', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useClient: () => ({ client: contextClient }),
+}));
+
 const { Webhooks } = await import('~/cms/components/Settings');
+const { WebhookDeliveriesSheet } = await import('~/cms/components/WebhookDeliveriesSheet');
 const { WebhookDialog } = await import('~/cms/components/WebhookDialog');
 const { ToastProvider } = await import('~/cms/lib/toast');
 type ManagementClient = import('~/cms/lib/management').ManagementClient;
 type WebhookSummary = import('~/cms/lib/management').WebhookSummary;
+type WebhookDeliveryRecord = import('~/cms/lib/management').WebhookDeliveryRecord;
 
 afterEach(() => {
   cleanup();
@@ -64,6 +73,11 @@ function fakeClient(hooks: WebhookSummary[]) {
     createWebhook: vi.fn(async (input: { url: string }) => ({ ...scoped, url: input.url })),
     updateWebhook: vi.fn(async () => scoped),
     deleteWebhook: vi.fn(async () => {}),
+    sendWebhookTest: vi.fn(async (id: string) => ({
+      webhookId: id,
+      eventId: 'evt-test',
+      eventType: 'webhook.test',
+    })),
   };
 }
 
@@ -106,6 +120,77 @@ describe('Settings → Webhooks', () => {
     add('https://hooks.example.com/two');
     await waitFor(() => expect(client.createWebhook).toHaveBeenCalledTimes(2));
     expect(client.createWebhook.mock.calls[1]?.[0]).toMatchObject({ allEnvironments: true });
+  });
+});
+
+describe('Settings → Webhooks: tests', () => {
+  it('queues a test event for the one webhook and says where it will show up', async () => {
+    const client = fakeClient([scoped, everywhere]);
+    renderWebhooks(client);
+    const row = (await screen.findByText(everywhere.url)).closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Send test' }));
+    await waitFor(() => expect(client.sendWebhookTest).toHaveBeenCalledWith(everywhere.id));
+    expect(await screen.findByText(/shows up under Deliveries/)).toBeTruthy();
+  });
+});
+
+describe('Webhook deliveries sheet', () => {
+  const original = {
+    id: 7,
+    webhookId: scoped.id,
+    eventId: 'evt-1',
+    eventType: 'entry.published',
+    status: 'failed' as const,
+    statusCode: 500,
+    attempts: 3,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+  const resent = { ...original, id: 8, status: 'success' as const, attempts: 1, resendOf: 7 };
+
+  it("shows each attempt's event, resends one, and reads the log again on refresh", async () => {
+    let log: WebhookDeliveryRecord[] = [original];
+    const client = {
+      webhookDeliveries: vi.fn(async () => log),
+      resendWebhookDelivery: vi.fn(async () => ({
+        webhookId: scoped.id,
+        eventId: 'evt-1',
+        eventType: 'entry.published',
+        resendOf: 7,
+      })),
+    };
+    contextClient = client;
+    render(
+      <ToastProvider>
+        <WebhookDeliveriesSheet webhook={scoped} open onOpenChange={() => {}} />
+      </ToastProvider>,
+    );
+    expect(await screen.findByText('entry.published')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Resend delivery #7' }));
+    await waitFor(() =>
+      expect(client.resendWebhookDelivery).toHaveBeenCalledWith(scoped.id, original.id),
+    );
+    expect(await screen.findByText(/Resend queued/)).toBeTruthy();
+
+    log = [resent, original];
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByText('resend of #7')).toBeTruthy();
+    expect(client.webhookDeliveries).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a resend the api refuses (its event is past retention)', async () => {
+    contextClient = {
+      webhookDeliveries: vi.fn(async () => [original]),
+      resendWebhookDelivery: vi.fn(async () => {
+        throw new Error("Delivery 7's event is no longer kept, so it can't be sent again");
+      }),
+    };
+    render(
+      <ToastProvider>
+        <WebhookDeliveriesSheet webhook={scoped} open onOpenChange={() => {}} />
+      </ToastProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Resend delivery #7' }));
+    expect(await screen.findByText(/no longer kept/)).toBeTruthy();
   });
 });
 

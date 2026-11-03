@@ -820,6 +820,31 @@ export interface CreateWebhookInput {
  */
 export type UpdateWebhookInput = Partial<CreateWebhookInput>;
 
+/** One recorded attempt at a webhook, newest first in `webhooks.deliveries`. */
+export interface WebhookDelivery {
+  readonly id: number;
+  readonly webhookId: string;
+  readonly eventId: string;
+  /** The event it carried, e.g. `entry.published` or `webhook.test` (absent on old records). */
+  readonly eventType?: string;
+  readonly status: 'success' | 'failed';
+  readonly statusCode?: number;
+  /** Which attempt this was (1 for the first). */
+  readonly attempts: number;
+  readonly error?: string;
+  /** The delivery this one resent. */
+  readonly resendOf?: number;
+  readonly createdAt: string;
+}
+
+/** A test or resend, queued: its delivery shows up in `webhooks.deliveries` under `eventId`. */
+export interface QueuedWebhookDelivery {
+  readonly webhookId: string;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly resendOf?: number;
+}
+
 export interface Release {
   readonly id: string;
   readonly title: string;
@@ -1792,8 +1817,15 @@ export function createManagementClient(opts: ManagementClientOptions) {
       delete: (id: string) => del<void>(`${envBase}/webhooks/${e(id)}`),
       deliveries: (id: string, o: { limit?: number } = {}) =>
         items(
-          get<{ items: unknown[] }>(`${envBase}/webhooks/${e(id)}/deliveries`, { limit: o.limit }),
+          get<{ items: WebhookDelivery[] }>(`${envBase}/webhooks/${e(id)}/deliveries`, {
+            limit: o.limit,
+          }),
         ),
+      /** Queues a signed `webhook.test` event for this webhook alone (one attempt). */
+      test: (id: string) => post<QueuedWebhookDelivery>(`${envBase}/webhooks/${e(id)}/test`),
+      /** Sends a stored delivery's event again, signed afresh (one attempt). */
+      resend: (id: string, deliveryId: number) =>
+        post<QueuedWebhookDelivery>(`${envBase}/webhooks/${e(id)}/deliveries/${deliveryId}/resend`),
     },
 
     releases: {

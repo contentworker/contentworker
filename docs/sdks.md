@@ -453,6 +453,7 @@ cma.redirects.import({ format: 'csv' | 'json', data, dryRun? }) / .resolve(path,
 cma.menus.list() / .get(id) / .preview(id, { locale? }) / .resolve(handle, { locale? }) / .create(input) / .update(id, changes) / .moveItem(id, move) / .delete(id, { revision? })
 
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
+  / .test(id) / .resend(id, deliveryId)
 cma.taxonomy.tags.list() / .create({ name, slug?, description?, labels? }) / .update(id, patch) / .delete(id)   // list: each with usage
 cma.taxonomy.schemes.list() / .create({ name }) / .delete(id)
 cma.taxonomy.concepts.list({ scheme? }) / .create(input) / .update(id, patch) / .setBroader(id, broaderId) / .delete(id)
