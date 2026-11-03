@@ -5,7 +5,8 @@ description: The three things any frontend needs to show ContentWorker content â
 
 ContentWorker serves content, not pages, so your site can be built with anything: Next.js, Astro,
 Remix, SvelteKit, a Worker, or plain HTML generated at build time. A frontend needs three things,
-each a few lines with one package.
+each a few lines with one package. To skip building one, start from the
+[ready-made frontend](#or-start-from-the-ready-made-frontend).
 
 ```sh
 npm install @contentworker/sdk
@@ -93,5 +94,29 @@ Everything else is optional and works the same in any stack:
 | Responsive images and art direction    | `imageProps` ([delivering assets](/guides/delivering-assets/))       |
 | The CMS's redirects, slug changes too  | `@contentworker/sdk/redirects` ([redirects](/guides/redirects/)) |
 | Header and footer navigation           | `client.menu(handle)` ([navigation menus](/guides/menus/))           |
-| Typed entry fields                     | `@contentworker/sdk/codegen` ([SDKs](/guides/sdks/))                 |
+| Typed entry fields                     | `contentworker types` ([SDKs](/guides/sdks/#typed-content))          |
 | Live updates without polling           | The live stream ([reading content](/guides/reading-content/))        |
+
+## Or start from the ready-made frontend
+
+`@contentworker/frontend` is a complete site for Cloudflare Workers, built on the same SDK. A site
+is a `package.json` and a `wrangler.jsonc` whose `main` is
+`node_modules/@contentworker/frontend/src/entry.ts`. It renders pages from the Delivery API,
+serves them from the edge cache and purges them on publish. It also handles preview, redirects
+and URL patterns from your content types, and serves sitemaps, `robots.txt`, `llms.txt` and a
+Markdown version of every page. It ships the common blocks (hero, cards, columns, FAQ, call to
+action, media, shared sections) with their styles.
+
+```sh
+npm install @contentworker/frontend
+npx contentworker-site seed --dry-run   # the content model and starter pages, in your space
+```
+
+| You change                 | With                                                                 |
+| -------------------------- | -------------------------------------------------------------------- |
+| The look                   | `public/styles/site.css`, which overrides the CSS tokens             |
+| A block, or a new one      | `npx contentworker-site new-block <name>`                            |
+| URLs                       | Each content type's URL pattern, or `defineSite({ routes })`         |
+
+[contentworker.site](https://contentworker.site) runs on it, and its
+[integration page](https://contentworker.site/integrate) walks through setup.
