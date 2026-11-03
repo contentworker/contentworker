@@ -481,7 +481,7 @@ describe('D1 store (contract)', () => {
     });
     const [plain] = await store.webhooks.listDeliveries(scope, webhookId);
     if (!plain) throw new Error('no delivery');
-    // Written without the 0021 columns: neither comes back.
+    // Written without the 0022 columns: neither comes back.
     expect(plain).not.toHaveProperty('eventType');
     expect(plain).not.toHaveProperty('resendOf');
     await store.webhooks.recordDelivery(scope, {

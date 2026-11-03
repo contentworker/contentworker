@@ -1,4 +1,4 @@
--- 0021_webhook_delivery_resends: which event a delivery carried, and which delivery it resent.
+-- 0022_webhook_delivery_resends: which event a delivery carried, and which delivery it resent.
 -- Mirrors `webhook_deliveries` in packages/db/src/schema.ts.
 --
 -- Two nullable columns, so the code already deployed, which neither reads nor writes them, keeps

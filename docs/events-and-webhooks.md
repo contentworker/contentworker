@@ -313,7 +313,7 @@ chunk, and a retry of **only the entries that failed**: the `webhook.retry` mess
 (`${jobId}:${chunkId}:${entryId}`), and narrows the next retry to what still fails. A subscriber
 to `entries.published_bulk` itself gets the bulk event again.
 
-Each delivery row also records the event's `eventType` (null on rows from before migration 0021)
+Each delivery row also records the event's `eventType` (null on rows from before migration 0022)
 and, for a resend, `resendOf`: the id of the row it resent.
 
 **Tests and resends** (`sendWebhookTest`, `resendWebhookDelivery` in
