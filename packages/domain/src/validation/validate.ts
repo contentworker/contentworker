@@ -10,6 +10,7 @@ import {
 import { isSlug } from '../content-type/slug';
 import { type FieldIssue, ValidationError } from '../errors';
 import { validateRichText } from '../rich-text/rich-text';
+import { canonicalUrlIssue, SEO_FIELDS } from '../seo/seo';
 import type { EntryFields, LocaleCode } from '../types';
 
 export interface ValidationContext {
@@ -192,6 +193,16 @@ function validateValue(
       break;
     case 'Component': {
       validateComponent(field.fields ?? [], value, locale, issues, path, push);
+      break;
+    }
+    case 'Seo': {
+      // A component of fixed shape; the canonical URL's form is the one rule a field can't say.
+      validateComponent(SEO_FIELDS, value, locale, issues, path, push);
+      const canonical = (value as { canonicalUrl?: unknown } | null)?.canonicalUrl;
+      if (typeof canonical === 'string') {
+        const issue = canonicalUrlIssue(canonical);
+        if (issue) issues.push({ field: `${path}.canonicalUrl`, locale, message: issue });
+      }
       break;
     }
     case 'Array': {

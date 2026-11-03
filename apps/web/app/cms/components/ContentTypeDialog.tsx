@@ -341,7 +341,12 @@ export function ContentTypeDialog(props: {
                       </SelectTrigger>
                       <SelectContent>
                         {FIELD_TYPES.filter(
-                          (t) => !UNBUILDABLE_TYPES.includes(t) || f.type === t,
+                          (t) =>
+                            (!UNBUILDABLE_TYPES.includes(t) || f.type === t) &&
+                            // A type has one Seo field: offered until another row is one.
+                            (t !== 'Seo' ||
+                              f.type === 'Seo' ||
+                              !fields.some((g) => g.type === 'Seo')),
                         ).map((t) => (
                           <SelectItem key={t} value={t}>
                             {t}

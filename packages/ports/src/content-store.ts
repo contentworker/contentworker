@@ -1465,6 +1465,44 @@ export interface DeliveryReadRequest {
     readonly schemeId?: string;
     readonly slugs?: readonly string[];
   };
+  /** A page of the sitemap's published entries. */
+  readonly sitemap?: SitemapQuery;
+}
+
+/**
+ * A page of published entries for the sitemap: those of `contentTypes`, by entry id, each carrying
+ * only `fields` of its body (the slugs a URL pattern names and the Seo field), so a page of
+ * thousands never reads a rich-text body.
+ */
+export interface SitemapQuery {
+  /** At least one; a JSON parameter, so any number. */
+  readonly contentTypes: readonly string[];
+  /** Field apiIds to read from each body; a JSON parameter, so any number. */
+  readonly fields: readonly string[];
+  /** The first entry id of the page (inclusive); from the start when absent. */
+  readonly from?: string;
+  /** The first entry id past the page (exclusive): the next page's first. To the end when absent. */
+  readonly before?: string;
+  readonly limit: number;
+  /** Also answer the first entry id of every page of this many entries: the sitemap index. */
+  readonly pageStarts?: number;
+}
+
+/** A published entry as the sitemap reads it. */
+export interface SitemapEntryRow {
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+  /** Only the fields the query named; one the entry has no value for is absent. */
+  readonly fields: EntryFields;
+  /** When the live version was published (ISO-8601): the sitemap's `lastmod`. */
+  readonly publishedAt: string;
+}
+
+export interface SitemapPage {
+  /** By entry id, at most `limit`. */
+  readonly items: SitemapEntryRow[];
+  /** When `pageStarts` was asked: each page's first entry id, in order (empty when none). */
+  readonly pageStarts?: string[];
 }
 
 /**
@@ -1486,6 +1524,7 @@ export interface DeliveryReadResult {
   readonly tags?: Tag[];
   readonly concepts?: Concept[];
   readonly termUsage?: TermUsage[];
+  readonly sitemap?: SitemapPage;
 }
 
 /** Delivery's reads, batched. Read-only: it never writes, so it is safe on a replica session. */

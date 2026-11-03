@@ -116,6 +116,8 @@ import type {
   SchedulerJobRepo,
   ScopedAgentSchedule,
   ScopedScheduledAction,
+  SitemapEntryRow,
+  SitemapQuery,
   SpaceConfig,
   SpaceRepo,
   StoredSecretRepo,
@@ -6280,6 +6282,61 @@ const publishedAssetsQuery = (db: Db, scope: Scope, ids: readonly string[]) =>
     );
 
 /**
+ * The sitemap's page of published entries: by entry id from `from` (up to `before`), each with
+ * only the named fields of its body, picked out in SQL so a page of thousands never ships a
+ * rich-text body. The content types and field names are one JSON parameter each, so the statement
+ * binds at most seven parameters however many there are. Field apiIds are identifiers (letters
+ * and digits), safe to quote into a JSON path.
+ */
+function sitemapPageQuery(db: Db, scope: Scope, query: SitemapQuery) {
+  const p = schema.entryPublished;
+  return db
+    .select({
+      entryId: p.entryId,
+      contentTypeApiId: p.contentTypeApiId,
+      publishedAt: p.publishedAt,
+      fields: sql<string | null>`(
+        SELECT json_group_object(f.value, json(${p.fields} -> ('$."' || f.value || '"')))
+        FROM json_each(${idList(query.fields)}) f
+        WHERE json_type(${p.fields}, '$."' || f.value || '"') IS NOT NULL)`,
+    })
+    .from(p)
+    .where(
+      and(
+        scopeFilter(p, scope),
+        sql`${p.contentTypeApiId} IN (SELECT value FROM json_each(${idList(query.contentTypes)}))`,
+        query.from !== undefined ? gte(p.entryId, query.from) : undefined,
+        query.before !== undefined ? lt(p.entryId, query.before) : undefined,
+      ),
+    )
+    .orderBy(asc(p.entryId))
+    .limit(Math.max(1, query.limit));
+}
+
+/** The first entry id of every page of `size` sitemap entries: what a sitemap index lists. */
+function sitemapPageStartsQuery(db: Db, scope: Scope, query: SitemapQuery, size: number) {
+  const p = schema.entryPublished;
+  const numbered = db
+    .select({
+      entryId: p.entryId,
+      n: sql<number>`row_number() OVER (ORDER BY ${p.entryId})`.as('n'),
+    })
+    .from(p)
+    .where(
+      and(
+        scopeFilter(p, scope),
+        sql`${p.contentTypeApiId} IN (SELECT value FROM json_each(${idList(query.contentTypes)}))`,
+      ),
+    )
+    .as('numbered');
+  return db
+    .select({ entryId: numbered.entryId })
+    .from(numbered)
+    .where(sql`(${numbered.n} - 1) % ${Math.max(1, size)} = 0`)
+    .orderBy(asc(numbered.entryId));
+}
+
+/**
  * Sends every read a Delivery step asked for as ONE `db.batch()`: one round trip, however many
  * statements (id lists still split under the 100-parameter cap, each chunk its own statement in
  * the same batch). Only reads, so the batch's implicit transaction changes nothing but latency,
@@ -6360,6 +6417,29 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         add(termUsageQuery(db, scope, request.termUsage), (rows) => {
           result.termUsage = rows.map(toTermUsage);
         });
+      }
+
+      if (request.sitemap) {
+        const query = request.sitemap;
+        const items: SitemapEntryRow[] = [];
+        result.sitemap = { items };
+        add(sitemapPageQuery(db, scope, query), (rows) => {
+          items.push(
+            ...rows.map((r) => ({
+              entryId: r.entryId,
+              contentTypeApiId: r.contentTypeApiId,
+              fields: r.fields ? (JSON.parse(r.fields) as EntryFields) : {},
+              publishedAt: r.publishedAt.toISOString(),
+            })),
+          );
+        });
+        if (query.pageStarts !== undefined) {
+          const starts: string[] = [];
+          result.sitemap = { items, pageStarts: starts };
+          add(sitemapPageStartsQuery(db, scope, query, query.pageStarts), (rows) => {
+            starts.push(...rows.map((r) => r.entryId));
+          });
+        }
       }
 
       if (queries.length === 0) return result;

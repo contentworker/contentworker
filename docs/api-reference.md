@@ -681,6 +681,18 @@ Every write appends `redirects.changed`. MCP: `redirects_list`, `redirects_get`,
 `redirects_create`, `redirects_update`, `redirects_delete`, `redirects_import`, `redirects_resolve`,
 `redirects_analyze`, `redirects_collapse_chains`; `model_create_content_type` takes `urlPattern`.
 
+### SEO and the sitemap
+
+An entry's SEO metadata is its type's `Seo` field ([Domain model](./domain-model.md#seo-and-the-sitemap)):
+it is also written with the entry's other fields (`PUT …/entries/:id`).
+
+| Method | Path                    | Scope           | Description                                                                                                                                                                       |
+| ------ | ----------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PATCH  | `…/entries/:id/seo`     | `content:write` | Change one locale `{ locale?, title?, description?, canonicalUrl?, noindex?, ogImage? }` (left out keeps, `null` clears) → the entry view, a new draft; `422` without a `Seo` field. A role's field rules apply to the `Seo` field (`403` when it is read-only or denied) |
+| GET    | `…/sitemap`             | `preview:read`  | What Delivery's `sitemap` serves: `from`, `limit` → `{ items, next }`                                                                                                              |
+
+MCP: `entries_set_seo` (audited) and `sitemap_list` (`readOnlyHint`, not audited).
+
 ### Platform configuration
 
 | Method | Path                   | Scope            | Description                         |
@@ -739,6 +751,8 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 | GET      | `/delivery/:space/:env/redirects`            | `delivery:read` | The environment's **enabled** redirects → `{ items, total }`, each `{ id, source, destination, status, locale? }`; cached under the scope's tag, purged by `redirects.changed` |
 | GET      | `/delivery/:space/:env/redirects/resolve`    | `delivery:read` | `?path=&locale=` → `{ redirect, status, location }`, or `404`. One request per path: to redirect every request, fetch the set once |
 | GET      | `/delivery/:space/:env/routes`               | `delivery:read` | Site routes: every **published** content type with a `urlPattern` → `{ items, total }`, each `{ contentType, urlPattern }`, sorted by `contentType`; a key with content grants sees only the types it may read. One statement through `DeliveryReads` (`listDeliveredRoutes`); cached under the scope's tag, purged by `content_type.published`. MCP: `model_list_content_types` returns each type's `urlPattern` and `status` |
+| GET      | `/delivery/:space/:env/sitemap`              | `delivery:read` | A page of the sitemap: published entries of every published type with a `urlPattern`, by entry id → `{ items, next }`, each `{ entryId, contentType, lastmod, urls: [{ path, locale }] }`; `noindex` entries and entries canonical elsewhere left out. `from` (a previous `next`), `limit` (1–5000, default 1000), `base` (the site's URL, to judge absolute canonicals). Content grants apply as for `routes`. Two round trips (`listDeliveredSitemap`); cached under the scope's tag, purged by any publish, unpublish or `content_type.published` |
+| GET      | `/delivery/:space/:env/sitemap.xml`          | `delivery:read` | `application/xml` for crawlers: a sitemaps.org `urlset` of `base` + path with `lastmod` and `hreflang` alternates, or past one file an index of `<base>/sitemap.xml?page=<token>` (each page's range of entry ids). `base` (an absolute `http(s)` URL, path prefix kept) is required (`422` otherwise); `page` serves one page. A site proxies its own `/sitemap.xml` here with the query string |
 | GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default**                                                                                                                                                                                                                                                                                                 |
 | GET      | `/delivery/:space/:env/live`                 | `delivery:read` | **SSE** Live Content stream                                                                                                                                                                                                                                                                                                   |
 | GET      | `/delivery/:space/:env/assets/:id/transform` | `delivery:read` | Deprecated: `301` to the media URL of the next width step at or above `w`, or `rendition` (cached); `302` to a signed transform when no media origin is set                                                                                                                                                                   |

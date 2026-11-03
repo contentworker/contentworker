@@ -153,6 +153,31 @@ describe('@contentworker/sdk-core delivery client', () => {
     expect(new Headers(calls[0]?.init?.headers).get('authorization')).toBe('Bearer cda-tok');
   });
 
+  it('reads a page of the sitemap with its query', async () => {
+    const page = {
+      items: [
+        {
+          entryId: 'e1',
+          contentType: 'article',
+          lastmod: '2026-01-01T00:00:00.000Z',
+          urls: [{ path: '/blog/hello', locale: 'en-US' }],
+        },
+      ],
+      next: 'e2',
+    };
+    const fetchImpl = fakeFetch((url, init) => {
+      calls.push({ url, init });
+      return page;
+    });
+    const client = createDeliveryClient({ ...base, fetch: fetchImpl });
+    expect(await client.sitemap({ from: 'e0', limit: 1, base: 'https://example.com' })).toEqual(
+      page,
+    );
+    expect(calls[0]?.url).toBe(
+      'https://cms.test/delivery/s1/main/sitemap?from=e0&limit=1&base=https%3A%2F%2Fexample.com',
+    );
+  });
+
   it('surfaces a refused routes read as a DeliveryError', async () => {
     const fetchImpl = fakeFetch(() => new Response('Unauthorized', { status: 401 }));
     const client = createDeliveryClient({ ...base, fetch: fetchImpl });

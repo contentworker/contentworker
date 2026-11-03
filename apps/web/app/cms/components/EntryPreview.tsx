@@ -11,6 +11,7 @@ import {
   isRichTextDocument,
   isWellFormedTable,
   resolveLocalizedValue,
+  SEO_FIELDS,
   variantOf,
 } from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
@@ -141,6 +142,8 @@ function FieldValue({
       );
     case 'Component':
       return <Nested fields={field.fields ?? []} value={value} pickers={pickers} />;
+    case 'Seo':
+      return <Nested fields={SEO_FIELDS} value={value} pickers={pickers} />;
     case 'Array': {
       const items = Array.isArray(value) ? value : [];
       const of = field.items;

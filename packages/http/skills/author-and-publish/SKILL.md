@@ -52,6 +52,10 @@ A publish that changes a slug named by its type's `urlPattern` writes a `301` fr
 the new one in the same step; check with `redirects_resolve` (path of the old URL). Manage other
 redirects with the `redirects_*` tools.
 
+To change only an entry's SEO metadata (its type's `Seo` field), call `entries_set_seo` with the
+parts to change (`null` clears one; `locale` for a localized field): it saves a draft, so publish
+afterwards. `sitemap_list` shows the published pages the sitemap lists.
+
 ## Editorial workflows
 
 A workflow is a published graph (approvals, waits for events, AI checks, publish). Runs act as

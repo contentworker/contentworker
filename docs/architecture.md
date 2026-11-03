@@ -146,7 +146,7 @@ bind them by `script_name`) and handles:
   (`entry.published`, `entry.unpublished`, `entries.published_bulk`, `asset.published`,
   `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed`,
   `taxonomy.changed`, `redirects.changed`, `content_type.published`, `release.published`,
-  `environment_alias.changed`, `environment.deleted`; `asset.ingested` only when `published`;
+  `environment_alias.changed`, `environment.deleted`; the sitemap is purged with the rest of the scope; `asset.ingested` only when `published`;
   `asset_renditions.changed` purges every environment of the space). Asset events also write or remove the media gate (`assetGate`, KV)
   and send the media Worker's tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`):
   see [Assets](#assets-r2-images-stream-and-the-media-worker).

@@ -178,6 +178,23 @@ export interface EntryView {
   readonly fields: EntryFields;
 }
 
+/**
+ * A change to one locale of an entry's SEO metadata (its type's `Seo` field): a part left out keeps
+ * its value, `null` clears it.
+ */
+export interface EntrySeoChange {
+  /** The locale to change; the default locale when left out (only a localized Seo field takes another). */
+  readonly locale?: string;
+  readonly title?: string | null;
+  readonly description?: string | null;
+  /** Where the canonical copy lives when not here: a site path or an absolute http(s) URL. */
+  readonly canonicalUrl?: string | null;
+  /** Keep the page out of search results and the sitemap. */
+  readonly noindex?: boolean | null;
+  /** The social sharing image. */
+  readonly ogImage?: { readonly id: string; readonly linkType: 'Asset' } | null;
+}
+
 export interface EntryVersion {
   readonly entryId: string;
   readonly version: number;
@@ -1233,6 +1250,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Saves a new draft version with these field values. */
       update: (id: string, fields: EntryFields) =>
         put<EntryView>(`${envBase}/entries/${e(id)}`, { fields }),
+      /**
+       * Changes one locale of the entry's SEO metadata and saves a new draft version (publish to put
+       * it live). 422 when its content type has no Seo field.
+       */
+      setSeo: (id: string, change: EntrySeoChange) =>
+        patch<EntryView>(`${envBase}/entries/${e(id)}/seo`, change),
       /**
        * Publishes the current draft. With `expectedVersion` (the `currentVersion` you read), a
        * draft saved since makes it a 409 that changes nothing.

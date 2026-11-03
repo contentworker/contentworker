@@ -130,6 +130,12 @@ function assertFieldSetValid(
     }
 
     if (depth > 0) assertNestedFieldAllowed(f, where);
+    if (f.type === 'Seo' && [...fields].filter((g) => g.type === 'Seo').length > 1) {
+      // The sitemap and every client read a page's SEO from its one Seo field.
+      throw new ValidationError([
+        { field: where, message: 'A content type has at most one Seo field' },
+      ]);
+    }
 
     const isComponent = f.type === 'Component' || f.items?.type === 'Component';
     if (!isComponent) {
@@ -234,6 +240,16 @@ function assertNestedFieldAllowed(f: FieldDefinition, where: string): void {
         message:
           'A Slug cannot live inside a component: slugs are normalized from the ' +
           "entry's top-level fields, so a nested one would never be normalized.",
+      },
+    ]);
+  }
+  if (f.type === 'Seo') {
+    throw new ValidationError([
+      {
+        field: where,
+        message:
+          'A Seo field cannot live inside a component: it describes the whole page, and the ' +
+          "sitemap reads it from the entry's top-level fields.",
       },
     ]);
   }

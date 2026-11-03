@@ -31,21 +31,27 @@ Delivery API serves only entries whose content type is published.
 
 ## Choosing field types
 
-| Need                                   | Type                                            |
-| -------------------------------------- | ----------------------------------------------- |
-| Title, name, short label               | `Symbol`                                        |
-| URL segment                            | `Slug` (usually `unique: true`)                 |
-| Plain long text                        | `Text`                                          |
-| Formatted body copy                    | `RichText`                                      |
-| Whole / decimal number                 | `Integer` / `Number`                            |
-| Flag                                   | `Boolean`                                       |
-| Date or timestamp                      | `Date` (ISO-8601)                               |
-| Coordinates                            | `Location` (`{ lat, lon }`)                     |
-| Reference to another entry or an asset | `Link` with `linkType: 'Entry' \| 'Asset'`      |
-| Reusable group of nested fields        | `Component`                                     |
-| List of tags, references or components | `Array` with `items`                            |
-| Page of mixed sections (blocks)        | `Array` with `items.variants` (see below)       |
-| Anything else                          | `JSON` (last resort: no field-level validation) |
+| Need                                                            | Type                                            |
+| --------------------------------------------------------------- | ----------------------------------------------- |
+| Title, name, short label                                        | `Symbol`                                        |
+| URL segment                                                     | `Slug` (usually `unique: true`)                 |
+| Plain long text                                                 | `Text`                                          |
+| Formatted body copy                                             | `RichText`                                      |
+| Whole / decimal number                                          | `Integer` / `Number`                            |
+| Flag                                                            | `Boolean`                                       |
+| Date or timestamp                                               | `Date` (ISO-8601)                               |
+| Coordinates                                                     | `Location` (`{ lat, lon }`)                     |
+| Reference to another entry or an asset                          | `Link` with `linkType: 'Entry' \| 'Asset'`      |
+| Reusable group of nested fields                                 | `Component`                                     |
+| Search title, description, canonical URL, noindex, social image | `Seo` (one per type, top level; fixed shape)    |
+| List of tags, references or components                          | `Array` with `items`                            |
+| Page of mixed sections (blocks)                                 | `Array` with `items.variants` (see below)       |
+| Anything else                                                   | `JSON` (last resort: no field-level validation) |
+
+A `Seo` field's value is `{ title?, description?, canonicalUrl?, noindex?, ogImage? }` (`ogImage` is
+an asset link; `canonicalUrl` a site path or an absolute http(s) URL). With a `urlPattern`, the
+type's published entries are listed in the sitemap (`sitemap_list`), except `noindex` ones and ones
+canonical elsewhere.
 
 `unique` is allowed only on `Symbol`, `Slug`, `Text`, `Integer`, `Number` and `Date`, and never on a
 field nested inside a `Component`.

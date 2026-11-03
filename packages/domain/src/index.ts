@@ -34,6 +34,7 @@ export * from './rich-text/rich-text-diff';
 export * from './scheduling/agent-schedule';
 export * from './scheduling/cron';
 export * from './scheduling/scheduled-action';
+export * from './seo/seo';
 export * from './taxonomy/taxonomy';
 export * from './types';
 export * from './validation/validate';

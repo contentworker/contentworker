@@ -40,6 +40,7 @@ A content type is an ordered list of typed, validated fields. The 13 field types
 | `Boolean`   | True/false                                          | boolean                        |
 | `Date`      | ISO-8601 date/time                                  | string                         |
 | `Location`  | Geographic point                                    | `{ lat: number, lon: number }` |
+| `Seo`       | Search engine metadata (see [SEO](#seo-and-the-sitemap)) | object of fixed shape     |
 | `JSON`      | Arbitrary JSON                                      | object                         |
 | `Link`      | Reference to an Entry or Asset                      | `{ id, linkType }`             |
 | `Component` | A group of nested typed fields                      | object keyed by nested apiId   |
@@ -685,6 +686,49 @@ to the new one, taking over a redirect already on that source; redirects that po
 path are repointed at the new one, so no chain forms; a redirect away from the new path is removed,
 so no loop forms. A localized slug writes a per-locale redirect. Nothing is written when the type
 has no pattern, a first publish, or when the set is at `MAX_REDIRECTS`.
+
+## SEO and the sitemap
+
+An entry's search engine metadata is a field of type `Seo` (`packages/domain/src/seo/seo.ts`): a
+component whose shape is fixed, `SEO_FIELDS`, so the sitemap, the admin and every client find a
+page's metadata without reading the model. Being a field, it is versioned with the draft, published
+with the entry, localized when the field is, and delivered with the entry's other fields. A content
+type opts in by declaring one.
+
+| Part           | Type                     | Rule                                                                                 |
+| -------------- | ------------------------ | ------------------------------------------------------------------------------------ |
+| `title`        | `Symbol`                 | at most `MAX_SEO_TITLE_LENGTH` (200)                                                 |
+| `description`  | `Text`                   | at most `MAX_SEO_DESCRIPTION_LENGTH` (500)                                           |
+| `canonicalUrl` | `Symbol`                 | a site path (`/…`, not `//…`) or an absolute `http(s)` URL (`canonicalUrlIssue`); at most 2,048 |
+| `noindex`      | `Boolean`                | keeps the page out of search results and the sitemap                                 |
+| `ogImage`      | `Link` (`Asset`)         | the social image; a reference edge like any link (integrity, purges)                 |
+
+A type declares at most one `Seo` field, at the top level only (never inside a component), and it
+cannot be `unique` or carry nested `fields`. Validation, reference extraction, GraphQL (an object
+type such as `ArticleSeo`) and codegen read it as a component of `SEO_FIELDS`. `setEntrySeo`
+(`packages/application/src/seo.ts`) changes one locale of it (a part left out keeps its value,
+`null` clears it) and saves a new draft through the same path as `updateEntry`; it is refused
+(`422`) for a type with no `Seo` field, and for a non-default locale on an unlocalized one.
+
+**The sitemap** lists published entries of every published content type with a `urlPattern`.
+`entrySitemapUrls` gives each entry its URLs: one per locale of the space when the pattern names
+`{locale}` or a localized slug, else the default locale only. Each locale reads the named slugs and
+the `Seo` value through the fallback chain, as Delivery does; a path two locales share is listed
+once, under the first. A locale is left out when its `Seo` value says `noindex`, or names a
+canonical URL whose path is not the entry's own. Paths compare in one spelling
+(`normalizeSitePath`: each segment percent-encoded, one trailing slash dropped). A path canonical is
+a site path, like the pattern's; an absolute one, given the site (`SiteLocation`: origin and path
+prefix, from `base`), is elsewhere on another origin or outside the prefix, and has the prefix taken
+off before comparing. The store reads only `sitemapFieldsOf` (the pattern's slugs and the `Seo` field) from
+each `entry_published` body, picked out in SQL, by entry id. `lastmod` is the live version's
+`publishedAt`. A sitemap file holds `sitemapPageSize(locales)` entries (at most 5,000, and few
+enough that one URL per locale stays under `SITEMAP_MAX_URLS`, 50,000); past one file, the XML
+sitemap is an index of pages, each named by a token for its range of entry ids (`<first>,<next
+page's first>`, the first page open at its start and the last at its end), so an entry published
+after the index was read still lands in a page. A key with content grants sees only the types it may
+read, and never a type whose pattern names a field it may not read; a type whose `Seo` field it may
+not read is listed as if it had none (no `noindex` or canonical exclusions, which would reveal the
+field's values).
 
 ## Webhooks
 

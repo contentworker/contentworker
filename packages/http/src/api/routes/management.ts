@@ -39,6 +39,7 @@ import { redirectsRoutes } from './management/redirects';
 import { releasesRoutes } from './management/releases';
 import { rolesRoutes } from './management/roles';
 import { semanticsRoutes } from './management/semantics';
+import { seoRoutes } from './management/seo';
 import { shareLinksRoutes } from './management/share-links';
 import { snapshotsRoutes } from './management/snapshots';
 import { spaceExportRoutes } from './management/space-export';
@@ -95,6 +96,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   workflowManagementRoutes,
   taxonomyRoutes,
   redirectsRoutes,
+  seoRoutes,
   entryTaxonomyRoutes,
 ];
 

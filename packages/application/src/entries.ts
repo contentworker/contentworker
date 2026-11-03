@@ -153,11 +153,27 @@ export async function updateEntry(
   if (!found) throw new NotFoundError('Entry', id);
   const contentType = await requireContentType(ctx, scope, found.entry.contentTypeApiId);
   const vctx = await loadValidationContext(ctx, scope);
+  return saveEntryDraft(ctx, scope, found.entry, contentType, vctx, fields);
+}
+
+/**
+ * `updateEntry` once its reads are done: for a use-case that already read the entry, its type and
+ * the locales to work out the new fields (a partial edit), so the save doesn't read them again.
+ */
+export async function saveEntryDraft(
+  ctx: AppContext,
+  scope: Scope,
+  current: Entry,
+  contentType: ContentType,
+  vctx: ValidationContext,
+  fields: EntryFields,
+): Promise<EntryView> {
+  const id = current.id;
   // No defaults on update. The fields passed become the whole new version: an
   // omitted field is absent from it (nothing is merged from the previous
   // version), and a cleared one is empty. Re-applying a default would override both.
   const hooked = await runHook(ctx, 'entry:beforeSave', scope, {
-    contentTypeApiId: found.entry.contentTypeApiId,
+    contentTypeApiId: current.contentTypeApiId,
     entryId: id,
     fields,
   });
@@ -168,7 +184,7 @@ export async function updateEntry(
   );
   assertEntryFieldsValid(contentType, normalized, vctx);
 
-  const { entry, version } = saveDraft(found.entry, normalized);
+  const { entry, version } = saveDraft(current, normalized);
   // Keep status consistent with the published pointer.
   const synced: Entry = {
     ...entry,
