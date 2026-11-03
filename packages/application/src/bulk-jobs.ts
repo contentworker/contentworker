@@ -10,6 +10,7 @@ import {
   type BulkJob,
   type BulkJobAction,
   type BulkJobChunk,
+  ENTRY_TRASH_BULK_ACTIONS,
   TransactionConflictError,
 } from '@contentworker/ports';
 import type { AppContext } from './context';
@@ -18,6 +19,20 @@ import { publishEntriesTx, unpublishEntriesTx } from './publishing';
 
 /** Entry ids processed per chunk (one transaction + one coalesced event each). */
 export const BULK_JOB_CHUNK_SIZE = 200;
+/**
+ * Entry ids per chunk of a trash, restore or purge job. Those run each entry through its own
+ * single-entry use-case, a unit of work and a few reads apiece, where a publish chunk is one
+ * batched transaction. Measured on D1 (packages/db/test/trash-retention.test.ts): a purge is 10
+ * statements in 5 round trips, so 200 would pass the 1,000 queries one invocation may send and
+ * the chunk would be retried into the dead-letter queue; 50 is about 500.
+ */
+export const ENTRY_TRASH_CHUNK_SIZE = 50;
+
+/** How many ids one chunk of `action` takes. */
+export const bulkChunkSizeOf = (action: BulkJobAction): number =>
+  (ENTRY_TRASH_BULK_ACTIONS as readonly string[]).includes(action)
+    ? ENTRY_TRASH_CHUNK_SIZE
+    : BULK_JOB_CHUNK_SIZE;
 /** Largest bulk job a single start call accepts. */
 export const BULK_JOB_MAX_ITEMS = 250_000;
 /** A chunk claimed longer than this is considered crashed and re-claimable. */
@@ -59,12 +74,13 @@ export async function startBulkJob(
   const jobId = ctx.ids.newId();
   const now = ctx.clock.now().toISOString();
   const chunks: BulkJobChunk[] = [];
-  for (let at = 0; at < ids.length; at += BULK_JOB_CHUNK_SIZE) {
+  const size = bulkChunkSizeOf(input.action);
+  for (let at = 0; at < ids.length; at += size) {
     chunks.push({
       jobId,
       // Zero-padded ordinal: sorts lexically in report order.
       chunkId: `c${String(chunks.length).padStart(5, '0')}`,
-      entryIds: ids.slice(at, at + BULK_JOB_CHUNK_SIZE),
+      entryIds: ids.slice(at, at + size),
       status: 'pending',
       attempts: 0,
       failures: [],

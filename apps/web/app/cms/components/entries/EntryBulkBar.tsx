@@ -1,5 +1,6 @@
 import { Button } from '@contentworker/ui/button';
 import { ArchiveRestore, CircleSlash, Send, Trash2, X } from 'lucide-react';
+import { useId } from 'react';
 
 /**
  * What can be done to the ticked entries at once, in place of the filter bar while anything is
@@ -7,6 +8,9 @@ import { ArchiveRestore, CircleSlash, Send, Trash2, X } from 'lucide-react';
  * Publish while a ticked entry isn't live as it is (a draft or changed), Unpublish while one is
  * live, Move to trash for any. In the trash it offers Restore and Delete permanently instead.
  * Labelled as the asset library's bar is ("2 selected", "Publish selected").
+ *
+ * Trash, restore and delete run as background jobs, which only a role with content:publish over
+ * every content type may start; for any other role `jobsRefusal` says why they are disabled.
  */
 export function EntryBulkBar(props: {
   count: number;
@@ -21,8 +25,15 @@ export function EntryBulkBar(props: {
   /** The trash's bar: bring them back as drafts, or delete them for good. */
   onRestore?: () => void;
   onPurge?: () => void;
+  /** Why the trash, restore and delete jobs can't be started here; absent when they can. */
+  jobsRefusal?: string;
+  /** While the session's access is still being read: the job actions wait, with no reason yet. */
+  jobsPending?: boolean;
   onClear: () => void;
 }) {
+  const reasonId = useId();
+  const jobsDisabled = props.busy || props.jobsPending || props.jobsRefusal !== undefined;
+  const described = props.jobsRefusal ? { 'aria-describedby': reasonId } : {};
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a form fieldset
     <div
@@ -54,8 +65,9 @@ export function EntryBulkBar(props: {
           type="button"
           size="sm"
           variant="outline"
-          disabled={props.busy}
+          disabled={jobsDisabled}
           onClick={props.onTrash}
+          {...described}
         >
           <Trash2 aria-hidden="true" />
           Move to trash
@@ -66,8 +78,9 @@ export function EntryBulkBar(props: {
           type="button"
           size="sm"
           variant="outline"
-          disabled={props.busy}
+          disabled={jobsDisabled}
           onClick={props.onRestore}
+          {...described}
         >
           <ArchiveRestore aria-hidden="true" />
           Restore selected
@@ -78,8 +91,9 @@ export function EntryBulkBar(props: {
           type="button"
           size="sm"
           variant="destructive"
-          disabled={props.busy}
+          disabled={jobsDisabled}
           onClick={props.onPurge}
+          {...described}
         >
           <Trash2 aria-hidden="true" />
           Delete permanently…
@@ -96,6 +110,11 @@ export function EntryBulkBar(props: {
         <X aria-hidden="true" />
         Clear
       </Button>
+      {props.jobsRefusal && (props.onTrash || props.onRestore || props.onPurge) ? (
+        <p id={reasonId} className="basis-full text-muted-foreground text-xs">
+          {props.jobsRefusal}
+        </p>
+      ) : null}
     </div>
   );
 }

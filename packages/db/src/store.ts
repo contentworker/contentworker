@@ -660,11 +660,11 @@ function makeEntryRepo(
     async releaseUniqueClaims(scope, entryId) {
       await x.write(deleteClaims(scope, entryId));
     },
-    async listExpiredTrash(scope, before, limit) {
+    async listExpiredTrash(scope, before, limit, after) {
       const e = schema.entries;
       const r = schema.references;
       const rows = await db
-        .select({ id: e.id })
+        .select({ id: e.id, updatedAt: e.updatedAt })
         .from(e)
         .where(
           and(
@@ -672,13 +672,20 @@ function makeEntryRepo(
             // A literal, not a bound value, so the planner can use the partial `entries_trashed`.
             sql`${e.status} = 'archived'`,
             lt(e.updatedAt, before),
+            // Keyset: strictly after the cursor in (updated_at, id) order.
+            after
+              ? or(
+                  gt(e.updatedAt, new Date(after.trashedAt)),
+                  and(eq(e.updatedAt, new Date(after.trashedAt)), gt(e.id, after.id)),
+                )
+              : undefined,
             // Not under a published link (edges are recorded at publish), on `references_reverse`.
             sql`NOT EXISTS (SELECT 1 FROM ${r} WHERE ${r.spaceId} = ${e.spaceId} AND ${r.environmentId} = ${e.environmentId} AND ${r.toId} = ${e.id})`,
           ),
         )
         .orderBy(asc(e.updatedAt), asc(e.id))
         .limit(limit);
-      return rows.map((row) => row.id);
+      return rows.map((row) => ({ id: row.id, trashedAt: row.updatedAt.toISOString() }));
     },
     async delete(scope, id) {
       // One atomic step (versions, claims, then the entry row).

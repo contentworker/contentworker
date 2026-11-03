@@ -129,7 +129,14 @@ that appears; **Delete permanently** asks first and names what it will delete. O
 are [background jobs](#change-many-entries-at-once) with the actions `trash`, `restore` and
 `purge`. Each entry goes through the same rules as one at a time, and an entry a rule refuses (one
 not in the trash, one published entries link to, one whose unique value was taken since) fails as
-its own item in the job's report. A job never forces a purge.
+its own item in the job's report. A job never forces a purge. An entry already where the action
+puts it counts as succeeded: one already in the trash for `trash`, one already out of it for
+`restore`, and, for `purge`, one already gone or an id that never existed. That is what lets a
+retried batch report the same totals as the first run. These jobs work through 50 entries per
+batch.
+
+Starting them needs `content:publish` on a role with no per-content-type restrictions, as every
+bulk job does; for any other role the admin disables these actions and says why.
 
 ### Empty the trash automatically
 

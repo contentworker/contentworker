@@ -496,7 +496,7 @@ export class InMemoryContentStore implements ContentStore {
     saveAggregateMany: async (scope, entries) => {
       for (const entry of entries) this.setEntry(scope, entry);
     },
-    listExpiredTrash: async (scope, before, limit) => {
+    listExpiredTrash: async (scope, before, limit, after) => {
       const prefix = `${scopeKey(scope)}::`;
       const linked = new Set(
         [...this.referenceData.entries()]
@@ -505,11 +505,18 @@ export class InMemoryContentStore implements ContentStore {
       );
       return [...this.entryData.entries()]
         .filter(([k, e]) => k.startsWith(prefix) && e.status === 'archived' && !linked.has(e.id))
-        .map(([k, e]) => ({ id: e.id, at: this.entryTouched.get(k) ?? '' }))
-        .filter((e) => e.at < before.toISOString())
-        .sort((a, b) => (a.at === b.at ? (a.id < b.id ? -1 : 1) : a.at < b.at ? -1 : 1))
-        .slice(0, limit)
-        .map((e) => e.id);
+        .map(([k, e]) => ({ id: e.id, trashedAt: this.entryTouched.get(k) ?? '' }))
+        .filter((e) => e.trashedAt < before.toISOString())
+        .filter(
+          (e) =>
+            !after ||
+            e.trashedAt > after.trashedAt ||
+            (e.trashedAt === after.trashedAt && e.id > after.id),
+        )
+        .sort((a, b) =>
+          a.trashedAt === b.trashedAt ? (a.id < b.id ? -1 : 1) : a.trashedAt < b.trashedAt ? -1 : 1,
+        )
+        .slice(0, limit);
     },
     delete: async (scope, id) => {
       this.entryData.delete(`${scopeKey(scope)}::${id}`);

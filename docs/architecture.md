@@ -511,9 +511,12 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   `trash-retention`): for every environment of every space with a window, the entries trashed
   before it (an archived entry's `updated_at` is its trashing), oldest first, leaving out any a
   published entry links to (`EntryRepo.listExpiredTrash`, on the partial index `entries_trashed`),
-  each through `purgeEntry` without `force`. At most `TRASH_SWEEP_LIMIT` (100) purges a tick, one
-  at a time, shared between the environments due; a purge a rule refuses (a plugin's veto, a race)
-  leaves the entry for the next tick. The engine logs `expired trash swept` and counts
+  each through `purgeEntry` without `force`. At most `TRASH_SWEEP_LIMIT` (40) purges a tick (a
+  purge is about 10 D1 statements, and the tick shares one invocation's query budget), one at a
+  time, shared evenly between the environments that have expired trash, which take turns going
+  first hour by hour. A purge a rule refuses (a plugin's veto, a race) uses no slot: the sweep
+  reads on past it with a keyset cursor on `(updated_at, id)`, up to
+  `TRASH_SWEEP_REFUSALS_PER_ENVIRONMENT` (10) refusals per environment, and retries it next tick. The engine logs `expired trash swept` and counts
   `contentworker_trash_purged_total{outcome}` (`purged`, `refused`).
 - **Search.** Assets are indexed apart from entries, in two corpora (`AssetSearchCorpus`): the
   library (every asset as it is now) and the published assets (their published snapshots, written

@@ -9,11 +9,11 @@ import {
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
-  BULK_JOB_CHUNK_SIZE,
   createContentType,
   createEntry,
   createSpace,
   dispatchEvent,
+  ENTRY_TRASH_CHUNK_SIZE,
   entryTrashChunkRunner,
   getBulkJob,
   getBulkJobReport,
@@ -107,7 +107,7 @@ describe('entry trash bulk jobs', () => {
 
   it('trashes a selection larger than one chunk, unpublishing what was live', async () => {
     const ids: string[] = [];
-    for (let i = 0; i < BULK_JOB_CHUNK_SIZE + 3; i++) ids.push((await post(h, `p${i}`)).id);
+    for (let i = 0; i < ENTRY_TRASH_CHUNK_SIZE + 3; i++) ids.push((await post(h, `p${i}`)).id);
     const live = ids[0] ?? '';
     await publishEntry(h.ctx, scope, live);
 

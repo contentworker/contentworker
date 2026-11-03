@@ -583,7 +583,11 @@ interface Principal {
   (`spaceId: '*'`, all CMA scopes). Use it only for provisioning/bootstrap.
 - **The web principal** (`x-cw-principal`) resolves to `kind: 'user'`; see
   [The web principal](#the-web-principal).
-- **`GET /auth/me`** returns the resolved principal summary.
+- **`GET /auth/me`** returns the resolved principal summary; **`GET /spaces/:space/auth/me`**
+  returns it resolved in that space (a person's role is per space), with `restricted` true when the
+  role is limited to some content types. The admin reads it before offering the bulk trash,
+  restore and delete jobs, which need an unrestricted `content:publish` role. Neither has an MCP
+  tool: an MCP client already knows its own token.
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through

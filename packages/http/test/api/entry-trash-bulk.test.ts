@@ -142,5 +142,14 @@ describe('bulk trash, restore and purge jobs over HTTP', () => {
     );
     const restricted = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
     expect((await h.start('trash', h.ids, restricted)).status).toBe(403);
+
+    // What the admin asks first, so it offers these actions only to a role that may take them.
+    const me = async (headers: Record<string, string>) =>
+      json<{ scopes: string[]; restricted: boolean }>(
+        await h.app.request('/spaces/s1/auth/me', { headers }),
+      );
+    expect(await me(restricted)).toMatchObject({ restricted: true });
+    expect(await me(cma)).toMatchObject({ restricted: false });
+    expect((await me(cma)).scopes).toContain('content:publish');
   });
 });

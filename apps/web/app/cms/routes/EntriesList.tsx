@@ -85,6 +85,12 @@ export function nextOrder(current: EntryOrder | undefined, field: string): Entry
 /** A live entry: published as it is, or changed since. */
 const isLive = (status: string) => status === 'published' || status === 'changed';
 
+/** Why a role can't start the trash, restore and delete jobs, said in the bulk bar. */
+const JOBS_REFUSAL =
+  'Moving many entries to the trash, restoring or deleting them runs as a background job, which ' +
+  'takes the Publish content permission on a role not limited to some content types. Use each ' +
+  'entry’s own menu instead, or ask a space administrator.';
+
 /** How many titles a bulk confirm names before counting the rest. */
 const NAMED = 5;
 
@@ -531,6 +537,17 @@ export function EntriesList() {
     });
   };
   const jobRunning = entryJob?.job.status === 'running';
+  // Trash, restore and delete run as bulk jobs, which the api starts only for a role with
+  // content:publish over every content type: anyone else is told why, not handed a 403.
+  const accessQuery = useScopedQuery(['space-access'], () => client.getSpaceAccess(), {
+    silent: true,
+  });
+  const access = accessQuery.data;
+  const jobsRefusal =
+    access && (access.restricted || !access.scopes.includes('content:publish'))
+      ? JOBS_REFUSAL
+      : undefined;
+  const jobsPending = access === undefined && !accessQuery.isError;
   const cancelJob = async (id: string) => {
     setCancellingJob(true);
     try {
@@ -789,6 +806,8 @@ export function EntriesList() {
             <EntryBulkBar
               count={picked.size}
               busy={busy || jobRunning}
+              jobsRefusal={jobsRefusal}
+              jobsPending={jobsPending}
               onRestore={() => void startJob('restore')}
               // Deleting for good is always asked first, by name: there is no way back.
               onPurge={() => setConfirmBulk('purge')}
@@ -803,6 +822,8 @@ export function EntriesList() {
               onPublish={() => void requestBulk('publish')}
               onUnpublish={() => void requestBulk('unpublish')}
               onTrash={() => setConfirmBulk('trash')}
+              jobsRefusal={jobsRefusal}
+              jobsPending={jobsPending}
               onClear={() => setPicked(new Set())}
             />
           )}

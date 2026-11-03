@@ -778,6 +778,12 @@ export interface PluginInvocation {
   readonly timeoutMs?: number;
   /** Where the hook fired — carried so a refused capability call can be audited. */
   readonly scope?: Scope;
+  /**
+   * A dry run ({@link HookDispatchOptions.pureOnly}): a capability call is refused as ever, but
+   * the refusal is not reported, because reporting it writes an audit row and a dry run writes
+   * nothing.
+   */
+  readonly dryRun?: boolean;
 }
 
 /**

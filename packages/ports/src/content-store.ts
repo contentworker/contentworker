@@ -1770,6 +1770,13 @@ export interface TextSearchHit {
   readonly score: number;
 }
 
+/** A trashed entry as the retention sweep reads it, and its keyset cursor. */
+export interface ExpiredTrashEntry {
+  readonly id: string;
+  /** When it was trashed (ISO). */
+  readonly trashedAt: string;
+}
+
 export interface EntryRepo {
   get(scope: Scope, id: string): Promise<EntryWithFields | null>;
   /**
@@ -1829,12 +1836,18 @@ export interface EntryRepo {
   /** Drops every claim held by an entry, freeing its values for reuse. */
   releaseUniqueClaims(scope: Scope, entryId: string): Promise<void>;
   /**
-   * Up to `limit` ids of trashed entries trashed before `before` (an archived entry's last change
-   * is its trashing), oldest first, leaving out any entry a published entry links to: those can't
-   * be purged without forcing, and the retention sweep never forces, so returning them would only
-   * stall it behind entries it can never delete.
+   * Up to `limit` trashed entries trashed before `before` (an archived entry's last change is its
+   * trashing), oldest first by `(trashedAt, id)` and strictly after `after` when given (a keyset
+   * cursor), leaving out any entry a published entry links to: those can't be purged without
+   * forcing, and the retention sweep never forces, so returning them would only stall it behind
+   * entries it can never delete.
    */
-  listExpiredTrash(scope: Scope, before: Date, limit: number): Promise<string[]>;
+  listExpiredTrash(
+    scope: Scope,
+    before: Date,
+    limit: number,
+    after?: ExpiredTrashEntry,
+  ): Promise<ExpiredTrashEntry[]>;
 
   /**
    * Lists every saved version of an entry, newest first. Versions whose body has moved to

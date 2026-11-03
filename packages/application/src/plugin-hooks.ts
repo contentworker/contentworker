@@ -297,7 +297,7 @@ export function createPluginHookDispatcher(
 
       let current: unknown = payload;
       for (const plugin of relevant) {
-        const outcome = await invokeOne(plugin, hook, current, scope);
+        const outcome = await invokeOne(plugin, hook, current, scope, !!dispatchOptions.pureOnly);
         if (outcome && 'veto' in outcome) return outcome as HookResult<T>;
         if (outcome) current = outcome.payload;
       }
@@ -310,6 +310,7 @@ export function createPluginHookDispatcher(
     hook: HookName,
     payload: unknown,
     scope: Scope,
+    dryRun: boolean,
   ): Promise<HookResult<unknown> | null> {
     try {
       // Verified on every load, not only at install: bytes that no longer match
@@ -327,6 +328,7 @@ export function createPluginHookDispatcher(
           allowedHosts: plugin.manifest.allowedHosts,
           timeoutMs: options.timeoutMs,
           scope,
+          ...(dryRun ? { dryRun: true } : {}),
         },
         buildCapabilities(
           ctx,

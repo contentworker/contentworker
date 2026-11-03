@@ -3,6 +3,8 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  ENTRY_TRASH_CHUNK_SIZE,
+  entryTrashChunkRunner,
   getTrashSettings,
   publishContentType,
   publishEntry,
@@ -15,6 +17,7 @@ import { FixedClock } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createD1Store } from '../src/store';
 import { testDb } from './env';
+import { countingD1 } from './query-counter';
 
 /**
  * Trash retention on D1 (0023_trash_retention): the space's setting, and the sweep's read of
@@ -118,8 +121,14 @@ describe('trash retention on D1', () => {
     await trashedAgo(h, linked, 400);
 
     const before = new Date(Date.now() - 30 * DAY);
-    expect(await store.entries.listExpiredTrash(h.scope, before, 200)).toEqual(expired);
-    expect(await store.entries.listExpiredTrash(h.scope, before, 3)).toEqual(expired.slice(0, 3));
+    const ids = async (limit: number, after?: { id: string; trashedAt: string }) =>
+      (await store.entries.listExpiredTrash(h.scope, before, limit, after)).map((e) => e.id);
+    expect(await ids(200)).toEqual(expired);
+    const page = await store.entries.listExpiredTrash(h.scope, before, 3);
+    expect(page.map((e) => e.id)).toEqual(expired.slice(0, 3));
+    // The keyset cursor reads on after the last row of a page.
+    const last = page.at(-1);
+    expect(await ids(200, last)).toEqual(expired.slice(3));
     // Scoped: another environment of the space sees none of it.
     expect(
       await store.entries.listExpiredTrash({ ...h.scope, environmentId: 'staging' }, before, 200),
@@ -148,4 +157,59 @@ describe('trash retention on D1', () => {
     // Other tests' spaces share the database; none of this space's entries go twice.
     expect(second.refused).toBe(0);
   });
+});
+
+describe('what an entry trash chunk costs on D1', () => {
+  it('stays inside one invocation’s query budget at its chunk size', async () => {
+    const h = await harness();
+    const counter = countingD1(testDb);
+    const counted: AppContext = { ...h.ctx, store: createD1Store(counter.d1) };
+    const ids: string[] = [];
+    for (let i = 0; i < ENTRY_TRASH_CHUNK_SIZE; i++) ids.push(await note(h, `c${i}`));
+
+    const one = await counter.measure(() => trashEntry(counted, h.scope, ids[0] ?? ''));
+    const trashRest = await counter.measure(() =>
+      entryTrashChunkRunner(counted)(h.scope, job('trash'), chunk(ids)),
+    );
+    const purgeOne = await counter.measure(async () => {
+      const { purgeEntry } = await import('@contentworker/application');
+      await purgeEntry(counted, h.scope, ids[0] ?? '');
+    });
+    const purgeAll = await counter.measure(() =>
+      entryTrashChunkRunner(counted)(h.scope, job('purge'), chunk(ids)),
+    );
+    console.log(
+      JSON.stringify({
+        chunk: ENTRY_TRASH_CHUNK_SIZE,
+        trashOne: { statements: one.statements, roundTrips: one.roundTrips },
+        trashChunk: { statements: trashRest.statements, roundTrips: trashRest.roundTrips },
+        purgeOne: { statements: purgeOne.statements, roundTrips: purgeOne.roundTrips },
+        purgeChunk: { statements: purgeAll.statements, roundTrips: purgeAll.roundTrips },
+      }),
+    );
+    // A Worker invocation may send D1 at most 1,000 queries; leave room for the claim, the
+    // completion and the finalize around the chunk.
+    expect(trashRest.statements).toBeLessThan(800);
+    expect(purgeAll.statements).toBeLessThan(800);
+  });
+});
+
+const chunk = (entryIds: string[]) => ({
+  jobId: 'j',
+  chunkId: 'c00000',
+  entryIds,
+  status: 'running' as const,
+  attempts: 1,
+  failures: [],
+});
+const job = (action: 'trash' | 'purge') => ({
+  id: 'j',
+  action,
+  status: 'running' as const,
+  totalItems: 1,
+  totalChunks: 1,
+  completedChunks: 0,
+  succeeded: 0,
+  failed: 0,
+  createdAt: new Date().toISOString(),
 });

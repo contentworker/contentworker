@@ -44,6 +44,15 @@ const client = {
     chunks: [] as { failures: { id: string; error: string }[] }[],
   })),
   cancelBulkJob: vi.fn(),
+  getSpaceAccess: vi.fn(async () => fullAccess),
+};
+
+/** The session's access in the space: an unrestricted publisher unless a test says otherwise. */
+const fullAccess = {
+  spaceId: 's1',
+  kind: 'web',
+  scopes: ['content:write', 'content:publish'],
+  restricted: false,
 };
 
 /** A bulk job as the API reports it: one batch, finished unless said otherwise. */
@@ -94,6 +103,7 @@ const { EntriesList } = await import('~/cms/routes/EntriesList');
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  client.getSpaceAccess.mockImplementation(async () => fullAccess);
   assistant.edit = null;
 });
 
@@ -641,6 +651,27 @@ describe('EntriesList trash jobs', () => {
     // The list reloads as the job ends, and the selection goes with what moved.
     await waitFor(() => expect(client.listEntryPage.mock.calls.length).toBeGreaterThan(before));
     expect(screen.queryByRole('group', { name: 'Selected entries' })).toBeNull();
+  });
+
+  it('disables the job actions, saying why, for a role limited to some content types', async () => {
+    client.getSpaceAccess.mockImplementation(async () => ({ ...fullAccess, restricted: true }));
+    setup(withTrash);
+    await tick('About us');
+    const trash = screen.getByRole('button', { name: 'Move to trash' }) as HTMLButtonElement;
+    await waitFor(() => expect(trash.disabled).toBe(true));
+    expect(trash.getAttribute('aria-describedby')).toBeTruthy();
+    expect(screen.getByText(/Publish content permission/)).toBeTruthy();
+    // Unpublishing doesn't run as a job, so it stays on offer.
+    expect(
+      (screen.getByRole('button', { name: 'Unpublish selected' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+
+    await openTrash();
+    await tick('Old promo');
+    for (const name of ['Restore selected', 'Delete permanently…']) {
+      expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
   });
 
   it('offers Restore and Delete permanently for what is ticked in the trash', async () => {

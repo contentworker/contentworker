@@ -170,6 +170,39 @@ describe('the retention sweep', () => {
     expect(await sweepExpiredTrash(ctx, { limit: 100 })).toEqual({ purged: 4, refused: 0 });
   });
 
+  it('reads on past refused entries to the expired ones behind, in every environment', async () => {
+    const held = new Set<string>();
+    ctx = {
+      ...ctx,
+      hooks: {
+        async dispatch<T>(hook: string, payload: T): Promise<HookResult<T>> {
+          const id = (payload as { entryId?: string }).entryId ?? '';
+          return hook === 'entry:beforePurge' && held.has(id)
+            ? { veto: { hook: 'com.example.hold', reason: 'Legal hold' } }
+            : { payload };
+        },
+      },
+    };
+    await setTrashRetention(ctx, admin, main, 1);
+    // Main's five oldest are on hold; three expired entries sit behind them.
+    for (let i = 0; i < 5; i++) held.add(await trashed(main, `held${i}`));
+    const behind = [
+      await trashed(main, 'b0'),
+      await trashed(main, 'b1'),
+      await trashed(main, 'b2'),
+    ];
+    const inStaging = await trashed(staging, 's');
+    // More environments of other spaces, all quiet: they must not shrink anyone's share.
+    for (let i = 0; i < 30; i++) await store.spaces.createEnvironment('s2', `quiet${i}`, `q${i}`);
+    await setTrashRetention(ctx, admin, otherSpace, 1);
+    clock.advance(2 * DAY);
+
+    expect(await sweepExpiredTrash(ctx, { limit: 10 })).toEqual({ purged: 4, refused: 5 });
+    for (const id of behind) expect(await exists(main, id)).toBe(false);
+    expect(await exists(staging, inStaging)).toBe(false);
+    for (const id of held) expect(await exists(main, id)).toBe(true);
+  });
+
   it('leaves an entry a plugin refuses to purge, and counts it', async () => {
     const hooks: HookDispatcher = {
       async dispatch<T>(hook: string, payload: T): Promise<HookResult<T>> {

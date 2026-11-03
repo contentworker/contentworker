@@ -178,10 +178,13 @@ describe('dispatching to plugins', () => {
       payload: { seen: ['com.example.pure'] },
       skipped: ['com.example.writer'],
     });
+    // Marked as a dry run, so the runtime reports no capability refusal (an audit write).
+    expect(runtime.calls[0]?.inv.dryRun).toBe(true);
     // A real save still runs both.
     expect(await d.dispatch('entry:beforeSave', { seen: [] }, scope)).toEqual({
       payload: { seen: ['com.example.pure', 'com.example.writer'] },
     });
+    expect(runtime.calls[1]?.inv.dryRun).toBeUndefined();
   });
 });
 
