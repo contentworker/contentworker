@@ -60,7 +60,7 @@ an ordinary API key — so an agent can still never exceed the scopes the approv
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 ## Tools
 
-The server exposes **229 tools**, one per major Management/Delivery capability (the canonical list
+The server exposes **232 tools**, one per major Management/Delivery capability (the canonical list
 is the `registerTool` calls in `packages/http/src/mcp/tools/<area>.ts`, registered in `TOOL_AREAS`
 order). Each calls `authorize` before delegating to the same use-case as the HTTP route. Every
 tool that changes nothing carries `readOnlyHint: true`, which is also what keeps it out of the
