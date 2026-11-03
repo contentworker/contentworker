@@ -51,6 +51,8 @@ export type LocalizedValue = Readonly<Record<string, unknown>>;
 export type EntryFields = Readonly<Record<string, LocalizedValue>>;
 
 export type EntryStatus = 'draft' | 'changed' | 'published' | 'archived';
+/** A version of an entry: its number, or its current draft or published version. */
+export type VersionRef = number | 'draft' | 'published';
 export type ContentTypeStatus = 'draft' | 'published';
 export type AssetStatus = 'draft' | 'published' | 'archived';
 export type ReleaseStatus = 'open' | 'published' | 'archived';
@@ -1254,8 +1256,11 @@ export function createManagementClient(opts: ManagementClientOptions) {
           items(get<{ items: EntryVersion[] }>(`${envBase}/entries/${e(id)}/versions`)),
         get: (id: string, version: number) =>
           get<EntryVersion>(`${envBase}/entries/${e(id)}/versions/${version}`),
-        /** Field-by-field diff between two versions. */
-        diff: (id: string, from: number, to: number) =>
+        /**
+         * A readable diff between two versions, per field and locale with detail by field type.
+         * Either side is a version number, `'draft'` or `'published'`.
+         */
+        diff: (id: string, from: VersionRef, to: VersionRef) =>
           get<unknown>(`${envBase}/entries/${e(id)}/versions/diff`, { from, to }),
         /**
          * Copies an old version's fields into a NEW draft version; `expectedVersion` (the draft

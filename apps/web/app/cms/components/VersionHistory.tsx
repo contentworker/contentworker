@@ -1,3 +1,4 @@
+import type { ContentType } from '@contentworker/domain';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,13 +11,13 @@ import {
 } from '@contentworker/ui/alert-dialog';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
-import { cn } from '@contentworker/ui/lib/utils';
 import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { History, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { Ago } from '~/cms/components/ago';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { LoadingStatus } from '~/cms/components/loading';
+import { RevisionDiff } from '~/cms/components/RevisionDiff';
 import { ToneBadge } from '~/cms/components/status';
 import { useAssistantEdit } from '../lib/assistant';
 import { useClient, useLocalRun } from '../lib/client-context';
@@ -24,11 +25,12 @@ import type { VersionDiff } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
-const show = (v: unknown): string =>
-  v === undefined || v === null ? '—' : typeof v === 'string' ? v : JSON.stringify(v);
+/** What a version is compared with: the current draft, or what delivery serves. */
+type Against = 'draft' | 'published';
 
 /**
- * Timeline of an entry's saved versions with diff-against-current and restore.
+ * Timeline of an entry's saved versions with a readable diff against the current draft (or, for an
+ * entry that is live, against the published version) and restore.
  * Restore appends a NEW version carrying the old fields, so history is never
  * rewritten — after it runs, the parent reloads the form via `onRestored`. It goes through the
  * assistant, as a confirm card in its panel; when the assistant can't be reached, it confirms in
@@ -42,6 +44,10 @@ export function VersionHistory(props: {
   currentVersion: number;
   /** Published version (if any), to flag "live". */
   publishedVersion?: number | null;
+  /** Whether a version is live, so a version can be compared with it (the server resolves which). */
+  isLive?: boolean;
+  /** The entry's content type, to name block variants in a diff. */
+  contentType?: ContentType;
   /** Whether the editor form holds unsaved edits — restoring discards them,
    * so the confirmation warns before that happens. */
   hasUnsavedChanges?: () => boolean;
@@ -58,20 +64,26 @@ export function VersionHistory(props: {
   const versions = versionsQuery.data ?? [];
   const [diff, setDiff] = useState<VersionDiff | null>(null);
   const [diffWith, setDiffWith] = useState<number | null>(null);
+  const [against, setAgainst] = useState<Against>('draft');
   // Version awaiting restore confirmation (restore reseeds the form, so it is
   // never a single-click action).
   const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
 
-  const toggleDiff = (version: number) =>
+  const compare = (version: number, side: Against) =>
     run(async () => {
-      if (diffWith === version) {
-        setDiff(null);
-        setDiffWith(null);
-        return;
-      }
-      setDiff(await client.diffVersions(props.entryId, version, props.currentVersion));
+      setDiff(await client.diffVersions(props.entryId, version, side));
       setDiffWith(version);
+      setAgainst(side);
     });
+
+  const toggleDiff = (version: number) => {
+    if (diffWith === version) {
+      setDiff(null);
+      setDiffWith(null);
+      return;
+    }
+    void compare(version, 'draft');
+  };
 
   // Asks through the assistant's card; without it, through this panel's own dialog.
   const requestRestore = (version: number) =>
@@ -162,10 +174,16 @@ export function VersionHistory(props: {
                         type="button"
                         variant="ghost"
                         size="sm"
+                        aria-expanded={diffWith === v.version}
+                        aria-label={
+                          diffWith === v.version
+                            ? `Hide changes since version ${v.version}`
+                            : `Compare version ${v.version}`
+                        }
                         onClick={() => toggleDiff(v.version)}
                         disabled={busy}
                       >
-                        {diffWith === v.version ? 'Hide diff' : 'Diff'}
+                        {diffWith === v.version ? 'Hide changes' : 'Compare'}
                       </Button>
                     )}
                     {!isCurrent && (
@@ -184,35 +202,34 @@ export function VersionHistory(props: {
                 </div>
 
                 {diffWith === v.version && diff && (
-                  <div className="mt-2 space-y-1 border-t pt-2">
-                    <p className="text-muted-foreground text-xs">
-                      v{diff.from} → v{diff.to} (current)
-                    </p>
-                    {diff.changes.filter((c) => c.kind !== 'unchanged').length === 0 ? (
-                      <p className="text-muted-foreground text-sm">No field changes.</p>
-                    ) : (
-                      diff.changes
-                        .filter((c) => c.kind !== 'unchanged')
-                        .map((c) => (
-                          <div key={c.field} className="text-sm">
-                            <span className="font-medium">{c.field}</span>{' '}
-                            <Badge variant="outline" className="capitalize">
-                              {c.kind}
-                            </Badge>
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              <span
-                                className={cn(
-                                  'truncate text-muted-foreground',
-                                  c.kind === 'removed' && 'text-destructive',
-                                )}
-                              >
-                                {show(c.before).slice(0, 120)}
-                              </span>
-                              <span className="truncate">{show(c.after).slice(0, 120)}</span>
-                            </div>
-                          </div>
-                        ))
-                    )}
+                  <div className="mt-2 space-y-3 border-t pt-2">
+                    {props.isLive ? (
+                      <fieldset className="flex flex-wrap items-center gap-1">
+                        <legend className="sr-only">Compare version {v.version} with</legend>
+                        <span aria-hidden="true" className="text-muted-foreground text-xs">
+                          Compare with
+                        </span>
+                        {(['draft', 'published'] as const).map((side) => (
+                          <Button
+                            key={side}
+                            type="button"
+                            variant={against === side ? 'secondary' : 'ghost'}
+                            size="xs"
+                            aria-pressed={against === side}
+                            disabled={busy}
+                            onClick={() => void compare(v.version, side)}
+                          >
+                            {side === 'draft' ? 'Current draft' : 'Live version'}
+                          </Button>
+                        ))}
+                      </fieldset>
+                    ) : null}
+                    <RevisionDiff
+                      diff={diff}
+                      contentType={props.contentType}
+                      fromLabel={`v${diff.from}`}
+                      toLabel={`v${diff.to} (${against === 'draft' ? 'current draft' : 'live'})`}
+                    />
                   </div>
                 )}
               </li>

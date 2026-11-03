@@ -1,4 +1,11 @@
-import { type EntryVersion, NotFoundError, type Scope } from '@contentworker/domain';
+import {
+  diffEntryFields,
+  type EntryVersion,
+  type FieldDiff,
+  InvalidStateError,
+  NotFoundError,
+  type Scope,
+} from '@contentworker/domain';
 import type { AppContext } from './context';
 import { type EntryView, updateEntry } from './entries';
 import { assertExpectedVersion, type ExpectedVersion } from './publishing';
@@ -25,52 +32,79 @@ export async function getVersion(
   return found;
 }
 
-export type FieldChangeKind = 'added' | 'removed' | 'changed' | 'unchanged';
+/**
+ * Which version a diff reads: a version number, or the entry's current draft or published
+ * version as it stands when the diff runs.
+ */
+export type VersionRef = number | 'draft' | 'published';
 
-/** A single field's difference between two versions (localized values compared whole). */
-export interface FieldChange {
-  readonly field: string;
-  readonly kind: FieldChangeKind;
-  readonly before: unknown;
-  readonly after: unknown;
+/** A version reference from a query string or tool argument; `null` when it is not one. */
+export function parseVersionRef(raw: unknown): VersionRef | null {
+  if (raw === 'draft' || raw === 'published') return raw;
+  const n =
+    typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/** A readable diff between two versions of an entry (see `diffEntryFields`). */
 export interface VersionDiff {
   readonly entryId: string;
+  readonly contentType: string;
+  /** The version numbers the references resolved to. */
   readonly from: number;
   readonly to: number;
-  readonly changes: readonly FieldChange[];
+  /** Every field either version holds, in the content type's order, unchanged ones included. */
+  readonly changes: readonly FieldDiff[];
 }
 
-const eq = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-
 /**
- * Diffs two versions of an entry field-by-field. `from` is the baseline and
- * `to` the comparand, so `kind` reads as the change applied going from→to.
+ * Diffs two versions of an entry per field and per locale, with detail by field type. `from` is
+ * the baseline and `to` the comparand, so `kind` reads as the change applied going from→to.
+ * Either side may name the current draft or the published version instead of a number; asking
+ * for `published` on an entry that has none is a 404. Fields are labelled from the content type
+ * as it is now. A read: nothing is written.
  */
 export async function diffVersions(
   ctx: AppContext,
   scope: Scope,
   entryId: string,
-  from: number,
-  to: number,
+  from: VersionRef,
+  to: VersionRef,
 ): Promise<VersionDiff> {
-  const [a, b] = await Promise.all([
-    getVersion(ctx, scope, entryId, from),
-    getVersion(ctx, scope, entryId, to),
+  const found = await ctx.store.entries.get(scope, entryId);
+  if (!found) throw new NotFoundError('Entry', entryId);
+  const { entry } = found;
+  const resolve = (ref: VersionRef): number => {
+    if (ref === 'draft') return entry.currentVersion;
+    if (ref === 'published') {
+      if (entry.publishedVersion === null) {
+        throw new NotFoundError('EntryVersion', `${entryId}@published`);
+      }
+      return entry.publishedVersion;
+    }
+    return ref;
+  };
+  const fromVersion = resolve(from);
+  const toVersion = resolve(to);
+  const [a, b, contentType] = await Promise.all([
+    getVersion(ctx, scope, entryId, fromVersion),
+    getVersion(ctx, scope, entryId, toVersion),
+    ctx.store.contentTypes.get(scope, entry.contentTypeApiId),
   ]);
-  const fields = new Set([...Object.keys(a.fields), ...Object.keys(b.fields)]);
-  const changes: FieldChange[] = [];
-  for (const field of fields) {
-    const before = a.fields[field];
-    const after = b.fields[field];
-    let kind: FieldChangeKind;
-    if (before === undefined) kind = 'added';
-    else if (after === undefined) kind = 'removed';
-    else kind = eq(before, after) ? 'unchanged' : 'changed';
-    changes.push({ field, kind, before, after });
+  // An archived body that could not be read back has empty fields: diffing it would report every
+  // field removed, which is not what happened.
+  for (const v of [a, b]) {
+    if (v.bodyUnavailable) {
+      throw new InvalidStateError(`Version ${v.version} of entry ${entryId} is unavailable`);
+    }
   }
-  return { entryId, from, to, changes };
+  return {
+    entryId,
+    contentType: entry.contentTypeApiId,
+    from: fromVersion,
+    to: toVersion,
+    changes: diffEntryFields(a.fields, b.fields, contentType ?? undefined),
+  };
 }
 
 /**

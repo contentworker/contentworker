@@ -15,6 +15,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
+const versionRef = z.union([z.number().int().positive(), z.enum(['draft', 'published'])]);
+
 export function registerVersionTools(server: McpServer, t: ToolContext): void {
   const { ctx, principal, guard, authorizeEntryRead } = t;
   // --- entry version history ---------------------------------------------
@@ -41,9 +43,19 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'entries_diff_versions',
     {
-      description: 'Diff two versions of an entry field-by-field (from → to).',
+      description:
+        'Compare two versions of an entry (from → to). Each side is a version number, "draft" ' +
+        '(the current draft) or "published". Returns every field with its kind (added, removed, ' +
+        'changed, unchanged) per locale, and for a change a typed detail: word-level text ' +
+        'segments, link targets by id, list elements matched by key with moves, or rich-text ' +
+        'blocks with word changes inside each changed block.',
       inputSchema: toolSchema('entries_diff_versions', () =>
-        z.object({ id: z.string(), from: z.number(), to: z.number(), ...scopeArgs }),
+        z.object({
+          id: z.string(),
+          from: versionRef.describe('The baseline: a version number, "draft" or "published"'),
+          to: versionRef.describe('The version compared against it'),
+          ...scopeArgs,
+        }),
       ),
       annotations: { readOnlyHint: true },
     },
@@ -51,6 +63,7 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.previewRead, scopeOf(args));
       const type = await authorizeEntryRead(scopeOf(args), args.id);
       const diff = await diffVersions(ctx, scopeOf(args), args.id, args.from, args.to);
+      // Drop denied fields from the diff so they can't leak via before/after.
       const allowed = maskDeniedFields(
         principal,
         type,
