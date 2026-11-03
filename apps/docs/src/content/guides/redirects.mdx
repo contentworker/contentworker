@@ -1,11 +1,11 @@
 ---
 title: Redirects
-description: Manage redirects in the admin, write patterns, redirect old paths automatically when a slug changes, import them in bulk, and apply them from Delivery in your front end or an edge Worker.
+description: Manage redirects in the admin, write patterns, redirect old paths automatically when a slug changes, import them in bulk, and apply them from Delivery in your front end or an edge function.
 ---
 
 A redirect sends a reader from one path on your site to another. contentworker serves no site, so
-a redirect is data: you keep the set here, Delivery hands it out, and your front end (or a Worker
-in front of it) answers the request. Each environment has its own set, and it travels with
+a redirect is data: you keep the set here, Delivery hands it out, and your front end (or an edge
+function in front of it) answers the request. Each environment has its own set, and it travels with
 [snapshots, exports and clones](/guides/environments/#export-and-import-a-snapshot).
 
 ## Before you start
@@ -129,7 +129,7 @@ and `GET …/redirects/export` returns the set as CSV in the same columns, ready
 Both are cached like other Delivery reads and purged when the set changes. To redirect every
 request, fetch the set once and match locally rather than calling `resolve` per request.
 
-## Apply redirects in a Worker
+## Apply redirects at the edge
 
 `@contentworker/sdk/redirects` matches requests against the set with the same rules as
 Delivery. `createRedirectHandler` is a front-door helper: it returns a redirect `Response` for a

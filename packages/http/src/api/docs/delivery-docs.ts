@@ -25,7 +25,7 @@ const DOCS = {
     doc('Delivery', 'Search published content', {
       ok: searchHits,
       description:
-        'Hybrid search by default: Vectorize ANN + the FTS5 SearchShard full-text index, fused with Reciprocal Rank Fusion.',
+        'Hybrid search by default: vector nearest-neighbour search + a full-text index, fused with Reciprocal Rank Fusion.',
       query: {
         q: 'Search query',
         mode: 'hybrid (default) | semantic | lexical',

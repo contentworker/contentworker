@@ -70,9 +70,9 @@ reporting progress ([SDKs](/guides/sdks/#writing-content)). All four calls need 
 
 ## Upload a video
 
-Video is hosted by Cloudflare Stream, not stored as a file, and plays as adaptive streaming with a
-poster frame. If the deployment has no video host, the API answers `501` and the admin stores the
-video as a plain file.
+Video is hosted by an edge streaming service, not stored as a file, and plays as adaptive streaming
+with a poster frame. If the deployment has no video host, the API answers `501` and the admin
+stores the video as a plain file.
 
 1. `POST …/assets/videos` with `fileName`, `contentType`, optional `title`, `description` and
    `maxDurationSeconds`. The response has `upload.uploadUrl` and `upload.fileField`.

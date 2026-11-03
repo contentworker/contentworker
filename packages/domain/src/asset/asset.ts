@@ -14,7 +14,7 @@ export interface AssetFile {
   /** What a reader shows while the image loads; ingest computes it from the pixels. */
   readonly placeholder?: AssetPlaceholder;
   /**
-   * Present on video assets hosted by a video service (Cloudflare Stream):
+   * Present on video assets hosted by the edge video service:
    * the bytes live there, not in the BlobStore, and playback is adaptive
    * streaming rather than a single download URL.
    */

@@ -99,7 +99,7 @@ export function requireWorkflowEngine(engine: WorkflowEngine | undefined): Workf
   if (engine) return engine;
   throw new NotConfiguredError(
     'workflows',
-    'Workflow runs need the EDITORIAL_WF Cloudflare Workflows binding on this deployment',
+    'Workflow runs need the durable workflow engine configured on this deployment',
   );
 }
 
