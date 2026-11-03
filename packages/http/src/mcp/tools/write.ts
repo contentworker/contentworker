@@ -21,6 +21,7 @@ import {
   type EntryFields,
   MAX_URL_PATTERN_LENGTH,
   SCOPES,
+  unwritableFieldsFor,
   ValidationError,
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -243,12 +244,16 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      let unwritable: readonly string[] = [];
       if (principal.contentGrants) {
         const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
         authorizeContent(principal, 'write', entry.contentType);
         assertWritableFields(principal, entry.contentType, args.fields ?? {});
+        unwritable = unwritableFieldsFor(principal, entry.contentType);
       }
-      return ok(await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields));
+      return ok(
+        await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields, { unwritable }),
+      );
     },
   );
 
@@ -278,12 +283,16 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.contentWrite, scopeOf(args));
       const fields = (args.fields ?? {}) as EntryFields;
       if (args.id !== undefined) {
+        let unwritable: readonly string[] = [];
         if (principal.contentGrants) {
           const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
           authorizeContent(principal, 'write', entry.contentType);
           assertWritableFields(principal, entry.contentType, fields);
+          unwritable = unwritableFieldsFor(principal, entry.contentType);
         }
-        return ok(await validateEntry(ctx, scopeOf(args), { entryId: args.id, fields }));
+        return ok(
+          await validateEntry(ctx, scopeOf(args), { entryId: args.id, fields }, { unwritable }),
+        );
       }
       const contentTypeApiId = args.contentType ?? '';
       authorizeContent(principal, 'write', contentTypeApiId);

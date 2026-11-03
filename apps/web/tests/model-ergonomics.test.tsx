@@ -100,6 +100,8 @@ describe('the content nav', () => {
       <>
         <ContentTypeIcon name="calendar" />
         <ContentTypeIcon name="no-such-icon" />
+        <ContentTypeIcon name="constructor" />
+        <ContentTypeIcon name="to-string" />
       </>,
     );
     const svgs = container.querySelectorAll('svg');
@@ -228,6 +230,13 @@ describe('the content type dialog', () => {
     expect(byId(draft, 'sizes').items).toEqual({ type: 'Integer' });
     expect(byId(draft, 'opens').format).toBe('time');
     expect(byId(draft, 'title').validations).toEqual(ARTICLE.fields[0]?.validations);
+  });
+
+  it('keeps an icon name it cannot draw, an inherited key included', async () => {
+    const draft = await saveDialog({ ...ARTICLE, icon: 'constructor' }, () => {
+      expect(screen.getByRole('option', { name: 'constructor (not drawn here)' })).toBeTruthy();
+    });
+    expect(draft.icon).toBe('constructor');
   });
 
   it('saves a group, description and icon', async () => {

@@ -83,6 +83,29 @@ export interface EntryWriteOptions {
    * an interactive write (the API, MCP, AI, plugins) leaves this unset. Not accepted over the API.
    */
   readonly copy?: boolean;
+  /**
+   * Top-level fields the caller's role denies or makes read-only (`unwritableFieldsFor`). The
+   * caller can neither send nor keep them, so a field among them that its rules disable is not
+   * held to its stored value: the same write gets the same answer whatever the field holds, and
+   * the answer says nothing about a value the caller may not read.
+   */
+  readonly unwritable?: readonly string[];
+}
+
+/**
+ * The stored values an edit is judged against: what a disabled field must keep. A field the
+ * caller may not write is judged against what the write sends for it, so its disabled check
+ * always passes.
+ */
+function editOf(stored: EntryFields, fields: EntryFields, options: EntryWriteOptions): EntryFields {
+  if (!options.unwritable?.length) return stored;
+  const out: EntryFields = { ...stored };
+  for (const apiId of options.unwritable) {
+    const sent = fields[apiId];
+    if (sent === undefined) delete out[apiId];
+    else out[apiId] = sent;
+  }
+  return out;
 }
 
 export interface EntryView {
@@ -214,7 +237,13 @@ async function prepareFields(
  * the one field check that reads: one batch for every linked asset, and none when no field has
  * the rule. An asset that does not exist is left to the publish gate, as any link is.
  */
-async function assertAssetMimeTypes(
+/**
+ * Refuses an asset link whose asset's declared file type (`file.contentType`, as uploaded) a MIME
+ * rule doesn't take. The message names the rule, never the asset's own type: the caller learns
+ * what the field takes, not what a file it may not read is. A link to an asset that isn't there is
+ * left to the publish gate.
+ */
+export async function assertAssetMimeTypes(
   ctx: AppContext,
   scope: Scope,
   contentType: ContentType,
@@ -232,7 +261,8 @@ async function assertAssetMimeTypes(
       field: c.field,
       locale: c.locale,
       message:
-        c.message ?? `Asset ${c.assetId} is ${mime}; this field takes ${c.allowed.join(', ')}`,
+        c.message ??
+        `Asset ${c.assetId} is not a file type this field takes (${c.allowed.join(', ')})`,
     });
   }
   if (issues.length > 0) throw new ValidationError(issues);
@@ -317,7 +347,7 @@ export async function updateEntry(
     scope,
     found.entry,
     contentType,
-    options.copy ? vctx : { ...vctx, previous: found.fields },
+    options.copy ? vctx : { ...vctx, previous: editOf(found.fields, fields, options) },
     fields,
   );
 }
@@ -411,6 +441,7 @@ export async function validateEntry(
   ctx: AppContext,
   scope: Scope,
   input: ValidateEntryInput,
+  options: Pick<EntryWriteOptions, 'unwritable'> = {},
 ): Promise<EntryValidation> {
   if ('entryId' in input) {
     const found = await ctx.store.entries.get(scope, input.entryId);
@@ -421,7 +452,7 @@ export async function validateEntry(
       ctx,
       scope,
       contentType,
-      { ...vctx, previous: found.fields },
+      { ...vctx, previous: editOf(found.fields, input.fields, options) },
       {
         contentTypeApiId: found.entry.contentTypeApiId,
         entryId: input.entryId,

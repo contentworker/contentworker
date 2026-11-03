@@ -18,6 +18,7 @@ import {
   exportSnapshot,
   getContentType,
   importSnapshot,
+  mergeEnvironments,
   updateContentType,
   updateEntry,
   validateEntry,
@@ -105,7 +106,7 @@ describe('asset MIME types on asset links', () => {
       images: { en: [{ id: pdf, linkType: 'Asset' }] },
     };
     const expected = [
-      `file: Asset ${png} is image/png; this field takes application/pdf`,
+      `file: Asset ${png} is not a file type this field takes (application/pdf)`,
       'images[0]: Images only',
     ];
     expect(
@@ -119,6 +120,27 @@ describe('asset MIME types on asset links', () => {
       fields: { title: { en: 'Brochure' } },
     });
     expect(await issuesOf(updateEntry(ctx, scope, entry.id, wrong))).toEqual(expected);
+  });
+
+  it('refuses a merge that brings an entry linking an asset the target’s rule refuses', async () => {
+    // The target's asset, linked from an entry written where the type has no MIME rule.
+    const png = await asset('a.png', 'image/png');
+    await createEnvironment(ctx, 's1', 'staging');
+    const staging = { spaceId: 's1', environmentId: 'staging' };
+    await createContentType(ctx, staging, {
+      apiId: 'doc',
+      name: 'Document',
+      displayField: 'title',
+      fields: [field('title'), field('file', { type: 'Link', linkType: 'Asset', position: 1 })],
+    });
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'doc',
+      fields: { title: { en: 'Brochure' }, file: { en: { id: png, linkType: 'Asset' } } },
+    });
+    expect(
+      await issuesOf(mergeEnvironments(ctx, 's1', 'staging', 'main', { entries: [entry.id] })),
+    ).toEqual([`file: Asset ${png} is not a file type this field takes (application/pdf)`]);
+    expect(await ctx.store.entries.get(scope, entry.id)).toBeNull();
   });
 
   it('leaves a link to a missing asset to the publish gate', async () => {

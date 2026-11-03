@@ -46,7 +46,7 @@ import { Textarea } from '@contentworker/ui/textarea';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toApiId } from '../lib/api-id';
-import { CONTENT_TYPE_ICONS } from '../lib/content-type-icons';
+import { CONTENT_TYPE_ICONS, contentTypeIcon } from '../lib/content-type-icons';
 import {
   BlockVariantsEditor,
   newVariant,
@@ -671,7 +671,7 @@ export function ContentTypeDialog(props: {
                     {iconLabel(n)}
                   </NativeSelectOption>
                 ))}
-                {icon && !CONTENT_TYPE_ICONS[icon] && (
+                {icon && !contentTypeIcon(icon) && (
                   <NativeSelectOption value={icon}>{`${icon} (not drawn here)`}</NativeSelectOption>
                 )}
               </NativeSelect>

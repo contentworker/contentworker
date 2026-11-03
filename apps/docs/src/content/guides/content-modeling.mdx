@@ -194,7 +194,8 @@ deleted until those links are removed.
 | `assetMimeTypes`    | Asset Link, Array of them  | The linked asset's file is one of these types (`image/*` for a family) |
 
 Validations run on every write, from every surface: the admin, the API, imports, AI drafting and
-agents. An AI agent can't save an entry a person couldn't.
+agents. An AI agent can't save an entry a person couldn't. `assetMimeTypes` checks the file type an
+asset was declared with when it was uploaded, not the file's contents.
 
 Give `in` options labels and an entry still stores the value: editors pick by label from a select,
 and relabelling an option never invalidates content. Bare values and labelled options mix in one
@@ -324,6 +325,11 @@ locks fields as you type, and the API, MCP agents and AI drafting are held to th
 drafting and autofill never write a hidden or disabled field. Add rules in the admin from a field's
 **Rules** button in the content type dialog, or on the field definition over the API and MCP.
 Generated TypeScript types make a required field that a rule can hide optional.
+
+Hide and disable are editorial aids, not access control: a hidden value is still stored and
+delivered, and anyone who can write the entry can open a disabled field by changing the value its
+rule reads. To keep a field from a role, use the role's field rules (denied or read-only fields,
+see [Roles](/guides/api-keys/#roles)).
 
 ## Changing a model
 

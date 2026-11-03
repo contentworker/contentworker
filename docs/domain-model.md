@@ -351,10 +351,12 @@ as a list of that scalar (`[Int]`), and codegen as `number[]` or `string[]`.
 asset may have, exactly (`application/pdf`) or by family (`image/*`); at most 50. The rule is on the
 field and the type on the asset, so it is checked on write by the use-case, not the validator:
 `assetMimeChecks` names every asset link under such a rule (any depth, every locale),
-`createEntry`, `updateEntry` and `validateEntry` read those assets in one batch (`assets.getMany`)
-and refuse one whose `file.contentType` doesn't match (`mimeTypeAllowed`), with the field's
-`messages.assetMimeTypes` when set. A link to an asset that doesn't exist is left to the publish
-gate, as any link is.
+`createEntry`, `updateEntry`, `validateEntry` and an environment merge (against the target's
+assets) read those assets in one batch (`assets.getMany`) and refuse one whose `file.contentType`
+doesn't match (`mimeTypeAllowed`), with the field's `messages.assetMimeTypes` when set; the
+default message names what the field takes, never the asset's own type. It checks the type the
+file was declared with on upload, not its bytes. A link to an asset that doesn't exist is left to
+the publish gate, as any link is.
 
 ### Pattern presets
 

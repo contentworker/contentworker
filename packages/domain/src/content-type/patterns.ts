@@ -10,7 +10,10 @@
 export const PATTERN_PRESETS = {
   email: {
     name: 'Email address',
-    pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$',
+    // The domain's first label excludes the dot, so `\.` can match in one place only and no two
+    // quantifiers compete for the same characters: linear on any input. (Letting the first part
+    // hold dots made it quadratic; a repeated `(\.label)+` group is refused by the regex screen.)
+    pattern: '^[^\\s@]+@[^\\s@.]+\\.[^\\s@]+$',
   },
   url: {
     name: 'Web address (http or https)',

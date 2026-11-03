@@ -40,6 +40,13 @@ const DISABLED_MESSAGE = 'Field is read-only while its rules disable it; it keep
 const MAX_JSON_FIELD_BYTES = 256 * 1024;
 
 /**
+ * The longest value a `regexp` rule is run against. Patterns are screened when a type is saved
+ * (`unsafeRegexReason`), but a backtracking engine can still go quadratic on a crafted value; past
+ * this length the value fails validation instead of being matched.
+ */
+export const MAX_REGEXP_INPUT = 10_000;
+
+/**
  * Validates a full set of entry field values against a content type. Returns
  * the issues found (empty when valid). This is the single source of truth used
  * by both human API writes and AI-generated content, so an agent can never
@@ -175,6 +182,9 @@ function validateValue(
         const reason = unsafeRegexReason(v.regexp.pattern, v.regexp.flags);
         if (reason) {
           push(`Invalid pattern: ${reason}`);
+        } else if (value.length > MAX_REGEXP_INPUT) {
+          // Bounds the cost of any pattern the screen let through, a stored one included.
+          push(`Too long to check against its pattern (at most ${MAX_REGEXP_INPUT} characters)`);
         } else if (!new RegExp(v.regexp.pattern, v.regexp.flags).test(value)) {
           push(ruleMessage(v, 'regexp') ?? `Does not match pattern /${v.regexp.pattern}/`);
         }

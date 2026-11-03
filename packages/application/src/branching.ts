@@ -18,7 +18,12 @@ import {
 } from '@contentworker/domain';
 import { saveContentTypeOver } from './content-types';
 import { type AppContext, actorOf } from './context';
-import { assertClaimsFree, assertSingletonFree, writeNewEntry } from './entries';
+import {
+  assertAssetMimeTypes,
+  assertClaimsFree,
+  assertSingletonFree,
+  writeNewEntry,
+} from './entries';
 import { allPages } from './paging';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
 
@@ -202,6 +207,8 @@ export async function mergeEnvironments(
         );
       }
       assertEntryFieldsValid(targetCt, found.fields, vctx);
+      // Judged against the target's assets, as a save there would be.
+      await assertAssetMimeTypes(ctx, tgt, targetCt, found.fields);
       const existing = (await ctx.store.entries.get(tgt, entryId))?.entry ?? null;
       // An entry the target holds in its trash stays there (as a promotion leaves it), so it
       // claims nothing: the trash released its values.

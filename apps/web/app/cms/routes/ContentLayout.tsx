@@ -112,7 +112,13 @@ export function ContentLayout() {
                           )}
                         >
                           <span className="flex min-w-0 items-center gap-2">
-                            <ContentTypeIcon name={t.icon} />
+                            {/* The brand accent marks where you are, on the icon alone; a
+                                  type without an icon keeps its slot so the names line up. */}
+                            <ContentTypeIcon
+                              name={t.icon}
+                              reserve
+                              className={cn('size-4 shrink-0', active && 'text-brand')}
+                            />
                             <span className="truncate">{t.name}</span>
                           </span>
                           {t.status !== 'published' ? <StatusDot status={t.status} /> : null}

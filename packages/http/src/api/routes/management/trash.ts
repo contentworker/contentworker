@@ -14,6 +14,7 @@ import {
   authorizeContent,
   ENTRY_OPERATION_ACTIONS,
   SCOPES,
+  unwritableFieldsFor,
 } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
@@ -133,13 +134,17 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, updateEntryBody);
       const principal = c.get('principal');
+      let unwritable: readonly string[] = [];
       if (principal.contentGrants) {
         const { entry } = await getEntry(ctx, scopeOf(c), c.req.param('id'));
         authorizeContent(principal, 'write', entry.contentTypeApiId);
         assertWritableFields(principal, entry.contentTypeApiId, body.fields ?? {});
+        unwritable = unwritableFieldsFor(principal, entry.contentTypeApiId);
       }
       return c.json(
-        await updateEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'), body.fields),
+        await updateEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'), body.fields, {
+          unwritable,
+        }),
       );
     },
   );

@@ -5,6 +5,7 @@ import {
   dateSortKey,
   defineContentType,
   type FieldDefinition,
+  MAX_REGEXP_INPUT,
   mimeTypeAllowed,
   normalizeLegacyFields,
   PATTERN_PRESETS,
@@ -317,6 +318,45 @@ describe('pattern presets', () => {
     expect(test('phone', '+14155550123')).toBe(true);
     expect(test('hexColor', '#ABCDEF')).toBe(true);
     expect(test('usZipCode', '12345-6789')).toBe(true);
+  });
+
+  it('every preset stays fast on a 100,000-character value built to make it backtrack', () => {
+    const n = 100_000;
+    const hostile = [
+      `a@${'a.'.repeat(n / 2)}@`,
+      `a@${'.'.repeat(n)} `,
+      `${'a'.repeat(n)}!`,
+      `http://${'a'.repeat(n)} `,
+      `https://a/${'?'.repeat(n)} `,
+      `${'a-'.repeat(n / 2)}-`,
+      `${'-'.repeat(n)}a`,
+      `+1${'1'.repeat(n)}`,
+      `#${'a'.repeat(n)}`,
+      `${'1'.repeat(n)}-`,
+    ];
+    for (const [name, p] of Object.entries(PATTERN_PRESETS)) {
+      const re = new RegExp(p.pattern, 'flags' in p ? p.flags : undefined);
+      const started = performance.now();
+      for (const value of hostile) re.test(value);
+      // Linear patterns take well under a millisecond each here; a quadratic one takes seconds.
+      expect(performance.now() - started, name).toBeLessThan(250);
+    }
+  });
+
+  it('refuses a value too long to run its pattern against, before matching it', () => {
+    const ct = stored(field('code', { position: 1, validations: { regexp: { pattern: '^a+$' } } }));
+    expect(issues(ct, { title: 'x', code: 'a'.repeat(MAX_REGEXP_INPUT) })).toEqual([]);
+    expect(issues(ct, { title: 'x', code: 'a'.repeat(MAX_REGEXP_INPUT + 1) })).toEqual([
+      `code: Too long to check against its pattern (at most ${MAX_REGEXP_INPUT} characters)`,
+    ]);
+  });
+
+  it('the email preset takes ordinary addresses, and needs a dot after a named domain', () => {
+    const re = new RegExp(PATTERN_PRESETS.email.pattern);
+    expect(re.test('ada.lovelace+cw@mail.example.co.uk')).toBe(true);
+    expect(re.test('ada@example')).toBe(false);
+    expect(re.test('ada@.example.com')).toBe(false);
+    expect(re.test('ada lovelace@example.com')).toBe(false);
   });
 
   it('a preset wins over a stale pattern, and an unknown one is refused by name', () => {

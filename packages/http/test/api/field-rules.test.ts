@@ -104,6 +104,70 @@ describe('conditional field rules over HTTP', () => {
     expect(text).toContain('read-only while its rules disable it');
   });
 
+  it('answers a writer the same whether a disabled field it may not write is empty or filled', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app = createApp(ctx, config, rag, blob, ai);
+    const as =
+      (headers: Record<string, string>) => (path: string, method: string, body?: unknown) =>
+        app.request(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    const send = as(cma);
+    await send(`${M}/content-types`, 'POST', listing);
+    await send(`${M}/content-types/listing/published`, 'POST');
+    // Two sold listings: one holds a price (set while open, kept as it sold), one never had one.
+    const sold = async (price?: number) => {
+      const made = (await (
+        await send(`${M}/entries`, 'POST', {
+          contentTypeApiId: 'listing',
+          fields: {
+            title: { 'en-US': 'Flat' },
+            ...(price === undefined ? {} : { price: { 'en-US': price } }),
+          },
+        })
+      ).json()) as { entry: { id: string }; fields: Record<string, unknown> };
+      const res = await send(`${M}/entries/${made.entry.id}`, 'PUT', {
+        fields: { ...made.fields, status: { 'en-US': 'sold' }, soldTo: { 'en-US': 'Ada' } },
+      });
+      expect(res.status, await res.clone().text()).toBe(200);
+      return made.entry.id;
+    };
+    const filled = await sold(250_000);
+    const empty = await sold();
+
+    const role = (await (
+      await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Listing writer',
+          scopes: ['content:write', 'preview:read'],
+          contentGrants: [
+            { contentTypeApiId: 'listing', actions: ['read', 'write'], readOnlyFields: ['price'] },
+          ],
+        }),
+      })
+    ).json()) as { id: string };
+    const { token } = (await (
+      await app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'cma', roleId: role.id }),
+      })
+    ).json()) as { token: string };
+    const writer = as({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' });
+
+    const edit = {
+      title: { 'en-US': 'Flat, renamed' },
+      status: { 'en-US': 'sold' },
+      soldTo: { 'en-US': 'Ada' },
+    };
+    for (const id of [filled, empty]) {
+      const checked = await writer(`${M}/entries/validate`, 'POST', { entryId: id, fields: edit });
+      expect(checked.status, await checked.clone().text()).toBe(200);
+      const saved = await writer(`${M}/entries/${id}`, 'PUT', { fields: edit });
+      expect(saved.status, await saved.clone().text()).toBe(200);
+    }
+  });
+
   it('refuses a rule that reads no sibling, naming the field', async () => {
     const { send } = setup();
     const bad = {
