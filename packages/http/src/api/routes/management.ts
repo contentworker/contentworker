@@ -39,6 +39,7 @@ import { provisioningRoutes } from './management/provisioning';
 import { redirectsRoutes } from './management/redirects';
 import { releasesRoutes } from './management/releases';
 import { rolesRoutes } from './management/roles';
+import { savedViewsRoutes } from './management/saved-views';
 import { semanticsRoutes } from './management/semantics';
 import { seoRoutes } from './management/seo';
 import { shareLinksRoutes } from './management/share-links';
@@ -99,6 +100,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   redirectsRoutes,
   seoRoutes,
   menusRoutes,
+  savedViewsRoutes,
   entryTaxonomyRoutes,
 ];
 

@@ -102,6 +102,11 @@ const REF_ID = /^[\x20-\x21\x23-\x5b\x5d-\x7e]{1,128}$/;
 const FILTER_FIELD =
   /^(?:\*|sys\.[A-Za-z0-9_]+|metadata\.(?:tags|concepts)(?:\.slug)?|[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*){0,3})$/;
 
+/** True when `field` is a name a filter or an order may use ({@link FILTER_FIELD}'s forms). */
+export function isQueryField(field: unknown): field is string {
+  return typeof field === 'string' && FILTER_FIELD.test(field);
+}
+
 /** True for an AND or OR group, false for a field predicate. */
 export function isQueryGroup(node: QueryNode): node is QueryAnd | QueryOr {
   return 'and' in node || 'or' in node;
