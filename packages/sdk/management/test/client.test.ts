@@ -171,9 +171,13 @@ describe('@contentworker/sdk-management client', () => {
     expect(calls[0]?.url).toBe(
       'https://cms.test/spaces/s1/environments/main/entries/e1/versions/diff?from=1&to=3',
     );
+    await client.entries.versions.diff('e1', 'published', 'draft');
+    expect(calls[1]?.url).toBe(
+      'https://cms.test/spaces/s1/environments/main/entries/e1/versions/diff?from=published&to=draft',
+    );
 
     await client.assets.list();
-    expect(calls[1]?.url).toBe('https://cms.test/spaces/s1/environments/main/assets');
+    expect(calls[2]?.url).toBe('https://cms.test/spaces/s1/environments/main/assets');
   });
 
   it('encodes path segments', async () => {

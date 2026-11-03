@@ -8,6 +8,7 @@ import {
   diffVersions,
   getVersion,
   listVersions,
+  parseVersionRef,
   publishContentType,
   publishEntry,
   restoreVersion,
@@ -65,7 +66,7 @@ describe('entry version history', () => {
     });
   });
 
-  it('diffs two versions field-by-field', async () => {
+  it('diffs two versions per field and locale, labelled from the content type', async () => {
     const { entry } = await createEntry(ctx, scope, {
       contentTypeApiId: 'article',
       fields: { title: { 'en-US': 'Hello' } },
@@ -76,9 +77,70 @@ describe('entry version history', () => {
     });
 
     const diff = await diffVersions(ctx, scope, entry.id, 1, 2);
-    const byField = Object.fromEntries(diff.changes.map((c) => [c.field, c.kind]));
-    expect(byField.title).toBe('changed');
-    expect(byField.body).toBe('added');
+    expect(diff).toMatchObject({ entryId: entry.id, contentType: 'article', from: 1, to: 2 });
+    expect(diff.changes.map((c) => [c.field, c.name, c.kind])).toEqual([
+      ['title', 'Title', 'changed'],
+      ['body', 'Body', 'added'],
+    ]);
+    expect(diff.changes[0]?.locales[0]?.detail).toEqual({
+      type: 'text',
+      segments: [
+        { kind: 'unchanged', text: 'Hello' },
+        { kind: 'added', text: ' world' },
+      ],
+    });
+  });
+
+  it('resolves draft and published to the versions they name now', async () => {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'one' } },
+    });
+    await publishEntry(ctx, scope, entry.id);
+    await updateEntry(ctx, scope, entry.id, { title: { 'en-US': 'two' } });
+    await updateEntry(ctx, scope, entry.id, { title: { 'en-US': 'three' } });
+
+    const diff = await diffVersions(ctx, scope, entry.id, 'published', 'draft');
+    expect([diff.from, diff.to]).toEqual([1, 3]);
+    expect(diff.changes[0]?.locales[0]).toMatchObject({ before: 'one', after: 'three' });
+    expect((await diffVersions(ctx, scope, entry.id, 2, 'draft')).from).toBe(2);
+    // Reading a diff writes nothing: the entry is where it was.
+    expect((await listVersions(ctx, scope, entry.id)).map((v) => v.version)).toEqual([3, 2, 1]);
+  });
+
+  it('refuses published on an entry never published, and unknown versions or entries', async () => {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'x' } },
+    });
+    await expect(diffVersions(ctx, scope, entry.id, 'published', 'draft')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    await expect(diffVersions(ctx, scope, entry.id, 1, 9)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(diffVersions(ctx, scope, 'ghost', 1, 'draft')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+  });
+
+  it('keeps a diff inside its scope', async () => {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'x' } },
+    });
+    const other = { spaceId: 'space-1', environmentId: 'staging' };
+    await expect(diffVersions(ctx, other, entry.id, 1, 'draft')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+  });
+
+  it('reads version references from strings and numbers', () => {
+    expect(parseVersionRef('3')).toBe(3);
+    expect(parseVersionRef(4)).toBe(4);
+    expect(parseVersionRef('draft')).toBe('draft');
+    expect(parseVersionRef('published')).toBe('published');
+    for (const bad of ['0', '-1', '1.5', '', 'latest', undefined, null]) {
+      expect(parseVersionRef(bad)).toBeNull();
+    }
   });
 
   it('restores an older version as a new draft (history preserved)', async () => {

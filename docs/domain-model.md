@@ -400,6 +400,34 @@ Transitions (pure functions; each throws `InvalidStateError` when its preconditi
 `currentVersion`/`publishedVersion` are pointers into the immutable version ledger; each
 `saveDraft` appends a new version, and `publishedVersion` pins which one Delivery serves.
 
+### Comparing versions
+
+`diffEntryFields(before, after, contentType?)` (`packages/domain/src/entry/entry-diff.ts`) is the
+readable diff between two versions' fields. It returns one `FieldDiff` per field either version
+holds, in the content type's order (fields the type no longer declares follow, by name), each
+labelled with the field's `name` and `fieldType` and split per locale into `LocaleDiff`s whose
+`kind` is `added`, `removed`, `changed` or `unchanged`. A changed locale carries a typed `detail`
+(`ValueDiff`) picked by the field's type:
+
+| Field type                                                 | `detail.type` | What it holds                                                                                           |
+| ---------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------- |
+| `Symbol`, `Slug`, `Text`                                   | `text`        | `segments`: a word-level diff (`TextSegment`: `added`, `removed`, `unchanged` runs)                     |
+| `RichText`                                                 | `richText`    | `blocks`: one `RichTextBlockDiff` per paragraph, heading, list item, table row or embed, with its words |
+| `Link`                                                     | `link`        | the entry or asset id before and after                                                                  |
+| `Component`                                                | `component`   | the nested fields, each a `NestedFieldDiff` with its own `detail`                                       |
+| `Array`                                                    | `list`        | the elements (`ListItemDiff`), with their positions and a `moved` flag                                  |
+| `Integer`, `Number`, `Boolean`, `Date`, `Location`, `JSON` | `value`       | the two values                                                                                          |
+
+List elements are matched by identity where they have one (a block's `_key`, under its `_type`; a
+link's target; a tag's text) and by content otherwise; a matched element outside the longest run
+that kept its order is `moved`. Rich text is read as its blocks (`diffRichText` in
+`rich-text/rich-text-diff.ts`): blocks are lined up by content, an unmatched block of the same type
+in the same stretch is the same block edited (with `beforeNodeType` when it changed type, and
+`formattingChanged` when only its marks or links did), and embedded entries and assets carry their
+`target`. The word diff (`diffText`, Myers' algorithm in `entry/sequence-diff.ts`) stops looking for
+the shortest script past `MAX_DIFF_EDITS` edits and reports the text replaced. Every part is typed
+data, never markup: the admin, an API client and an agent each render it for themselves.
+
 ### The trash
 
 `archive` moves an entry out of circulation and `restore` brings it back as a _draft_, never

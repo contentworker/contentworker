@@ -27,19 +27,41 @@ follows from which version is live:
 - <span class="cw-badge" data-state="changed">Changed</span>: published, with newer edits saved but
   not live. Readers keep seeing the published version until you publish again.
 
-The entry's **History** lists every version. Compare any two to see what changed field by field,
-and **restore** an old version: it is copied forward as a new draft, so history is never rewritten.
+The entry's **History** lists every version. **Compare** one with the current draft, or with the
+live version when the entry is published, and **restore** an old version: it is copied forward as a
+new draft, so history is never rewritten.
 
 | Do this             | API                                                     | Scope             |
 | ------------------- | ------------------------------------------------------- | ----------------- |
 | Save a draft        | `PUT …/entries/{id}` with `{ "fields": … }`             | `content:write`   |
 | List versions       | `GET …/entries/{id}/versions`                           | `preview:read`    |
-| Compare two         | `GET …/entries/{id}/versions/diff?from=3&to=5`          | `preview:read`    |
+| Compare two         | `GET …/entries/{id}/versions/diff?from=3&to=draft`      | `preview:read`    |
 | Restore one         | `POST …/entries/{id}/versions/{version}/restore`        | `content:write`   |
 | Duplicate           | `POST …/entries/{id}/duplicate`                         | `content:write`   |
 
 **Duplicate** (in the entries list's row menu, or `entries_duplicate` over MCP) copies the fields
 and taxonomy metadata into a new draft.
+
+### What a comparison shows
+
+`from` and `to` each take a version number, `draft` (the current draft) or `published` (what
+delivery serves; `404` when the entry has never been published). The answer lists every field, in
+the content type's order and named as the type names it, with what changed in each locale:
+
+- **Text** changes word by word: `{ "type": "text", "segments": [{ "kind": "removed", "text":
+  "Spring" }, { "kind": "added", "text": "Summer" }, { "kind": "unchanged", "text": " launch" }] }`.
+- **Rich text** changes block by block (a paragraph, a heading, one list item, one table row, an
+  embed), each changed block with its own word diff; a paragraph made a heading, or a change to
+  formatting only, says so.
+- **Links** name the entry or asset before and after, by id.
+- **Lists and blocks** match elements by their key (a block's `_key`, a link's target, a tag's
+  text) and report each one added, removed, changed or **moved**.
+- **Components** list their nested fields the same way; numbers, dates, booleans, locations and
+  JSON show both values.
+
+The diff is structured data, never HTML: render it as you render the content. Fields your role may
+not read are left out. Over MCP, `entries_diff_versions` takes the same `from` and `to` and
+returns the same shape.
 
 ## Publish and unpublish
 

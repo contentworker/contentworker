@@ -23,6 +23,7 @@ import type {
   EntryMetadata,
   EntryVersion,
   EntryWorkflowState,
+  FieldDiff,
   FilterOp,
   GraphIssue,
   Redirect,
@@ -617,20 +618,19 @@ export interface WebhookDeliveryRecord {
   readonly createdAt: string;
 }
 
-/** A single field's difference between two entry versions. */
-export interface FieldChange {
-  readonly field: string;
-  readonly kind: 'added' | 'removed' | 'changed' | 'unchanged';
-  readonly before: unknown;
-  readonly after: unknown;
-}
+/** Which version a diff reads: a number, or the entry's current draft or published version. */
+export type VersionRef = number | 'draft' | 'published';
 
-/** Field-by-field diff of two entry versions (from → to). */
+/**
+ * A readable diff of two entry versions (from → to): every field, per locale, with typed detail
+ * (the domain's `diffEntryFields`).
+ */
 export interface VersionDiff {
   readonly entryId: string;
+  readonly contentType: string;
   readonly from: number;
   readonly to: number;
-  readonly changes: readonly FieldChange[];
+  readonly changes: readonly FieldDiff[];
 }
 
 /** How a source-environment item relates to the target. */
@@ -2753,7 +2753,7 @@ export function createManagementClient(
     getVersion(entryId: string, version: number): Promise<EntryVersion> {
       return req('GET', `${mgmt}/entries/${encodeURIComponent(entryId)}/versions/${version}`);
     },
-    diffVersions(entryId: string, from: number, to: number): Promise<VersionDiff> {
+    diffVersions(entryId: string, from: VersionRef, to: VersionRef): Promise<VersionDiff> {
       return req(
         'GET',
         `${mgmt}/entries/${encodeURIComponent(entryId)}/versions/diff?from=${from}&to=${to}`,

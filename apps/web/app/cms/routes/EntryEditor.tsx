@@ -1,4 +1,4 @@
-import type { EntryFields } from '@contentworker/domain';
+import type { EntryFields, FieldDiff } from '@contentworker/domain';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,7 +44,7 @@ import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
-import type { EntryAggregate, EntryView, FieldChange, ModelTier } from '../lib/management';
+import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
 import {
   useAllEntriesQuery,
   useAppExtensionsQuery,
@@ -107,7 +107,7 @@ export function EntryEditor() {
   // Freshest aggregate we hold (from save/publish responses); backs the
   // publish confirmation's changed-fields diff.
   const [lastAggregate, setLastAggregate] = useState<EntryAggregate | null>(null);
-  const [publishConfirm, setPublishConfirm] = useState<{ changes: FieldChange[] | null } | null>(
+  const [publishConfirm, setPublishConfirm] = useState<{ changes: FieldDiff[] | null } | null>(
     null,
   );
   if (patchState.target !== `${typeId}:${entryId ?? 'new'}`) {
@@ -280,7 +280,7 @@ export function EntryEditor() {
   // wrap it, and `run` doesn't nest.
   const computePublishConfirm = async (agg: EntryAggregate | null) => {
     if (!entryId) return;
-    let changes: FieldChange[] | null = null;
+    let changes: FieldDiff[] | null = null;
     if (agg && agg.publishedVersion != null) {
       const diff = await client.diffVersions(entryId, agg.publishedVersion, agg.currentVersion);
       changes = diff.changes.filter((c) => c.kind !== 'unchanged');
@@ -748,6 +748,8 @@ export function EntryEditor() {
                         ? meta.version
                         : null
                   }
+                  isLive={meta.status === 'published' || meta.status === 'changed'}
+                  contentType={selectedType}
                   hasUnsavedChanges={() => dirtyRef.current}
                   onRestored={() => void reseedFromServer()}
                 />

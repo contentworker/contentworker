@@ -28,7 +28,8 @@ Everything below is built and tested on v2.
 
 - **Content.** Spaces, environments (create, delete) and aliases; locales with fallback chains; typed fields with
   validations, components and unique values; the entry lifecycle (draft → published → archived,
-  trash, purge, duplicate); versions with diff and restore; references and `include`; rich text
+  trash, purge, duplicate); versions with a readable diff (per field and locale, by type: words,
+  rich-text blocks, list moves) and restore; references and `include`; rich text
   with HTML import; slugs; redirects (delivery data a front end or edge Worker applies: exact and
   pattern sources, import and export, loop checks, and an automatic `301` when a publish changes a
   slug a content type's URL pattern names).

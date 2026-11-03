@@ -3,6 +3,7 @@ import {
   getEntry,
   getVersion,
   listVersions,
+  parseVersionRef,
   restoreVersion,
 } from '@contentworker/application';
 import {
@@ -10,11 +11,15 @@ import {
   authorizeContent,
   maskDeniedFields,
   SCOPES,
+  ValidationError,
 } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
+import * as versionDocs from '../../docs/schemas/versions';
 import { BASE, entryAccess, expectedVersionOf, scopeOf } from './shared';
+
+const VERSION_REF = 'A version number (1 or more), draft or published';
 
 export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
@@ -33,25 +38,40 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
     }));
     return c.json({ items });
   });
-  // A field-by-field diff between two versions (?from=&to=).
-  app.get(`${BASE}/entries/:id/versions/diff`, requireScope(SCOPES.previewRead), async (c) => {
-    const type = await authorizeEntryRead(c, c.req.param('id'));
-    const principal = c.get('principal');
-    const diff = await diffVersions(
-      ctx,
-      scopeOf(c),
-      c.req.param('id'),
-      Number(c.req.query('from')),
-      Number(c.req.query('to')),
-    );
-    // Drop denied fields from the diff so they can't leak via before/after.
-    const allowed = maskDeniedFields(
-      principal,
-      type,
-      Object.fromEntries(diff.changes.map((ch) => [ch.field, ch])),
-    );
-    return c.json({ ...diff, changes: Object.values(allowed) });
-  });
+  // A readable diff between two versions, or a version and the current draft or published one.
+  app.get(
+    `${BASE}/entries/:id/versions/diff`,
+    doc('Entries', 'Compare two versions', {
+      description:
+        'Per field and locale: what was added, removed or changed, with detail by field type ' +
+        '(word-level text, link targets, list elements matched by key with moves, rich text ' +
+        'by block). Fields the caller may not read are left out.',
+      query: {
+        from: 'The baseline: a version number, `draft` or `published`',
+        to: 'The version compared against it: a version number, `draft` or `published`',
+      },
+      ok: versionDocs.versionDiff,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const from = parseVersionRef(c.req.query('from'));
+      const to = parseVersionRef(c.req.query('to'));
+      const issues = [
+        ...(from === null ? [{ field: 'from', message: VERSION_REF }] : []),
+        ...(to === null ? [{ field: 'to', message: VERSION_REF }] : []),
+      ];
+      if (from === null || to === null) throw new ValidationError(issues);
+      const type = await authorizeEntryRead(c, c.req.param('id'));
+      const diff = await diffVersions(ctx, scopeOf(c), c.req.param('id'), from, to);
+      // Drop denied fields from the diff so they can't leak via before/after.
+      const allowed = maskDeniedFields(
+        c.get('principal'),
+        type,
+        Object.fromEntries(diff.changes.map((ch) => [ch.field, ch])),
+      );
+      return c.json({ ...diff, changes: Object.values(allowed) });
+    },
+  );
   app.get(`${BASE}/entries/:id/versions/:version`, requireScope(SCOPES.previewRead), async (c) => {
     const type = await authorizeEntryRead(c, c.req.param('id'));
     const version = await getVersion(

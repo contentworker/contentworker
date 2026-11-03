@@ -1,4 +1,4 @@
-import type { ContentType } from '@contentworker/domain';
+import type { ContentType, FieldDiff } from '@contentworker/domain';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,7 +12,7 @@ import {
 import { Badge } from '@contentworker/ui/badge';
 import { cn } from '@contentworker/ui/lib/utils';
 import { humanize } from '../../lib/format';
-import type { FieldChange, ManagementClient, PreviewEntry } from '../../lib/management';
+import type { ManagementClient, PreviewEntry } from '../../lib/management';
 import { EntryDiff } from '../EntryDiff';
 
 export interface PublishConfirmProps {
@@ -27,7 +27,7 @@ export interface PublishConfirmProps {
    * Published → current, from the version diff, when the caller knows both versions (the editor,
    * right after a save). Without it, an entry that has been live is compared through `compare`.
    */
-  readonly changes?: readonly FieldChange[] | null;
+  readonly changes?: readonly FieldDiff[] | null;
   /** The draft to compare with what delivery serves, when `changes` isn't known. */
   readonly compare?: {
     readonly client: ManagementClient;
