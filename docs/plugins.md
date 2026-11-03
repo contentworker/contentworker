@@ -300,6 +300,11 @@ races another without it also fails with 409, never by dropping a field. A value
 upgrade removed or retyped is ignored when read and dropped at the next save. Uninstalling removes
 the settings.
 
+In the admin, each installed plugin's **Settings** opens a form generated from these fields, with
+secrets shown only as set or not set ([Admin UI](./admin-ui.md#installing-plugins)). A refused
+value comes back as a 422 whose `issues[].field` names the setting (`apiKey`, or `values.apiKey`
+when the body itself fails to parse), which is how the form puts it beside the field.
+
 ## Managing plugins
 
 Space-admin scope (`space:admin`). HTTP has every operation; MCP has five of them (below):

@@ -7,6 +7,7 @@ import {
   MGMT,
   openCms,
   PROPOSAL_TARGET,
+  SPACE,
   seedAsset,
   seedAssetFolder,
   seedCms,
@@ -516,6 +517,48 @@ test('plugin capability checkboxes are named in a real browser', async ({ page }
     await expect(page.getByRole('checkbox', { name: label })).toBeVisible();
   }
   await expect(page.getByRole('checkbox', { name: 'Call external services' })).toBeEnabled();
+});
+
+test('the plugin settings sheet has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  // Every kind of field a manifest may declare, so each control is scanned in a real browser.
+  const installed = await api(request, 'POST', `/spaces/${SPACE}/plugins`, {
+    manifest: {
+      id: 'com.example.settings',
+      name: 'Settings probe',
+      version: '1.0.0',
+      capabilities: [],
+      allowedHosts: [],
+      hooks: ['entry:beforeSave'],
+      entrypoint: 'index.js',
+      settings: [
+        { key: 'apiKey', label: 'API key', type: 'string', secret: true, required: true },
+        { key: 'site', label: 'Site name', type: 'string', description: 'Shown in titles.' },
+        { key: 'maxLength', label: 'Max length', type: 'number', default: 120 },
+        { key: 'strict', label: 'Strict mode', type: 'boolean' },
+        { key: 'tone', label: 'Tone', type: 'select', options: ['formal', 'casual'] },
+      ],
+    },
+    bundle: 'export class Plugin {}',
+    approvedCapabilities: [],
+  });
+  expect([201, 409], await installed.text()).toContain(installed.status());
+
+  await openCms(page, '/settings/plugins');
+  await page.getByRole('button', { name: 'Settings probe settings' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Settings probe settings' });
+  await expect(sheet.getByLabel('Max length')).toBeVisible();
+  await expect(sheet.getByRole('switch', { name: 'Strict mode' })).toBeVisible();
+  await scan(page, testInfo);
+
+  // A required secret left unset is refused beside it, and focus lands on it.
+  await sheet.getByLabel('Site name').fill('Acme');
+  await sheet.getByRole('button', { name: 'Save settings' }).click();
+  await expect(sheet.getByText('API key is required')).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'Set API key' })).toBeFocused();
+  await scan(page, testInfo);
 });
 
 test('repeater controls are named per item in a real browser', async ({ page }, info) => {

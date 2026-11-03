@@ -34,6 +34,7 @@ import {
 import { Puzzle } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { Confirmation } from '~/cms/components/ai/Confirmation';
+import { PluginSettingsSheet } from '~/cms/components/PluginSettingsSheet';
 import { EmptyState } from '~/cms/components/page';
 import { ToneBadge } from '~/cms/components/status';
 import {
@@ -82,6 +83,7 @@ export function Plugins(props: { client: ManagementClient }) {
   const invalidate = useInvalidate();
   const [installing, setInstalling] = useState(false);
   const [upgrading, setUpgrading] = useState<InstalledPluginSummary>();
+  const [configuring, setConfiguring] = useState<InstalledPluginSummary>();
 
   const plugins = useScopedQuery(QUERY_KEY, () => client.listPlugins()).data ?? [];
 
@@ -125,7 +127,7 @@ export function Plugins(props: { client: ManagementClient }) {
                 <TableHead>Runs on</TableHead>
                 <TableHead>Can</TableHead>
                 <TableHead className="w-28">Status</TableHead>
-                <TableHead className="w-44" />
+                <TableHead className="w-56" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -147,6 +149,7 @@ export function Plugins(props: { client: ManagementClient }) {
                     )
                   }
                   onUpgrade={() => setUpgrading(p)}
+                  onSettings={() => setConfiguring(p)}
                 />
               ))}
             </TableBody>
@@ -169,6 +172,16 @@ export function Plugins(props: { client: ManagementClient }) {
           toast.success(`${name} installed — enable it when you are ready`);
         }}
       />
+
+      {configuring && (
+        <PluginSettingsSheet
+          client={client}
+          plugin={configuring}
+          onOpenChange={(open) => {
+            if (!open) setConfiguring(undefined);
+          }}
+        />
+      )}
 
       {upgrading && (
         <UpgradePluginDialog
@@ -197,6 +210,7 @@ function PluginRow(props: {
   onUninstall: () => void;
   onApprove: (approved: string[]) => Promise<void>;
   onUpgrade: () => void;
+  onSettings: () => void;
 }) {
   const { plugin } = props;
   const granted = grantOf(plugin);
@@ -269,6 +283,17 @@ function PluginRow(props: {
               </Button>
             </>
           )}
+          {/* Named per plugin: a column of identical "Settings" buttons says nothing to a
+              screen reader listing the page's buttons. */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={`${plugin.name} settings`}
+            onClick={props.onSettings}
+          >
+            Settings
+          </Button>
           <Button type="button" variant="ghost" size="sm" onClick={props.onUpgrade}>
             Upgrade
           </Button>

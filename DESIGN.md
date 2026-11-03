@@ -576,7 +576,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   loads as Skeleton cards or rows. **On a phone** the tree becomes a select of folder paths
   ("Brand / Logos") with a Folder actions button that opens the folder actions in a bottom sheet.
 - **Settings:** one page, its section nav beside the section (a grouped select on a phone); each
-  section is cards and stacked tables. The install hint sits at the top of Connection.
+  section is cards and stacked tables. The install hint sits at the top of Connection. A plugin's
+  **Settings** is a sheet (from the side; the bottom on a phone) whose form is drawn from its
+  manifest's fields: a secret shows an `idle` Set or Not set stamp with Set/Replace and Clear,
+  never a value; a refusal sits beside its field and takes focus.
 - **Workflows list:** a table, flush in one section (stacking into cards below md): each
   workflow's name linked to its editor with its description and steps under it; what starts its
   published version (from the API's `publishedTrigger`, with "Draft starts on …" when the draft
