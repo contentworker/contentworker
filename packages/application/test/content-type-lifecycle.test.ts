@@ -14,7 +14,9 @@ import {
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  cancelBulkJob,
   cloneContentType,
+  contentTypeDeletionOf,
   contentTypeDependents,
   createContentType,
   createEntry,
@@ -201,6 +203,10 @@ describe('deleting a content type', () => {
     expect(await h.store.entries.getMany(scope, ids)).toEqual([]);
     expect(await h.store.contentTypes.get(scope, 'note')).toBeNull();
     expect(events(h, 'content_type.deleted')).toHaveLength(1);
+    // The outcome is on the job, where its readers wait for it.
+    expect(contentTypeDeletionOf(await getBulkJob(h.ctx, scope, started.job.id))).toEqual({
+      deleted: true,
+    });
     // Each live entry was unpublished on the way, as a trash does (the first by its own trash).
     expect(events(h, 'entry.unpublished')).toHaveLength(ids.length);
 
@@ -224,8 +230,40 @@ describe('deleting a content type', () => {
     const report = await getBulkJobReport(h.ctx, scope, started.job.id);
     expect(report.job.failed).toBe(1);
     expect(report.chunks[0]?.failures[0]).toMatchObject({ id: note });
+    expect(report.chunks[0]?.failures[0]?.error).toMatch(/link/i);
     expect(await h.store.contentTypes.get(scope, 'note')).not.toBeNull();
+    expect(await h.store.entries.get(scope, note)).not.toBeNull();
     expect(events(h, 'content_type.deleted')).toEqual([]);
+    expect(contentTypeDeletionOf(await getBulkJob(h.ctx, scope, started.job.id))).toEqual({
+      deleted: false,
+      reason: '1 entry could not be deleted',
+    });
+  });
+
+  it('records why it kept the type when a dependent arrived while the job ran', async () => {
+    await type(h, 'note');
+    await entry(h, 'note');
+    const started = await deleteContentTypeWithEntries(h.ctx, scope, 'note');
+    if (started.deleted) throw new Error('expected a job');
+    // Undecided until the job ends: readers wait for this, not only for the status.
+    expect(contentTypeDeletionOf(await getBulkJob(h.ctx, scope, started.job.id))).toBeUndefined();
+    await type(h, 'post', { fields: [title, link('note', 'note')] });
+    await h.drain();
+    expect(await h.store.contentTypes.get(scope, 'note')).not.toBeNull();
+    const outcome = contentTypeDeletionOf(await getBulkJob(h.ctx, scope, started.job.id));
+    expect(outcome?.deleted).toBe(false);
+    expect(outcome && !outcome.deleted && outcome.reason).toMatch(/post\.note/);
+  });
+
+  it('records a stopped job as keeping the type', async () => {
+    await type(h, 'note');
+    await entry(h, 'note');
+    const started = await deleteContentTypeWithEntries(h.ctx, scope, 'note');
+    if (started.deleted) throw new Error('expected a job');
+    const stopped = await cancelBulkJob(h.ctx, scope, started.job.id);
+    const outcome = { deleted: false, reason: 'the job was stopped' };
+    expect(contentTypeDeletionOf(stopped)).toEqual(outcome);
+    expect(contentTypeDeletionOf(await getBulkJob(h.ctx, scope, started.job.id))).toEqual(outcome);
   });
 
   it('refuses to start the job while another type links to it, and deletes an empty type at once', async () => {
@@ -299,5 +337,20 @@ describe('cloning a content type', () => {
     await expect(cloneContentType(h.ctx, scope, 'post', 'bad-id', 'Bad')).rejects.toBeInstanceOf(
       ValidationError,
     );
+  });
+
+  it('refuses the second of two clones to one apiId, whose read saw it free', async () => {
+    await type(h, 'post');
+    const first = await cloneContentType(h.ctx, scope, 'post', 'news', 'News');
+    // The second clone's read ran before the first committed: it saw no "news".
+    const get = h.store.contentTypes.get;
+    h.store.contentTypes.get = async (s, apiId) => (apiId === 'news' ? null : get(s, apiId));
+    try {
+      const second = cloneContentType(h.ctx, scope, 'post', 'news', 'Newer');
+      await expect(second).rejects.toBeInstanceOf(ConflictError);
+    } finally {
+      h.store.contentTypes.get = get;
+    }
+    expect(await h.store.contentTypes.get(scope, 'news')).toEqual(first);
   });
 });

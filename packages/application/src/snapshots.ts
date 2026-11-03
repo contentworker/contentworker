@@ -557,7 +557,9 @@ export async function writeSnapshotModel(
   snapshot: EnvironmentSnapshot,
   skipped: string[],
 ): Promise<ReadonlyMap<string, string>> {
-  // Content model first: entries cannot be validated without it.
+  // Content model first: entries cannot be validated without it. The singleton flag is the
+  // snapshot's either way: left out, a revision would keep the target's, and a clone promoted or
+  // merged back would then turn production's off (or keep one the source no longer has).
   for (const ct of snapshot.contentTypes) {
     await createContentType(ctx, target, {
       apiId: ct.apiId,
@@ -565,6 +567,7 @@ export async function writeSnapshotModel(
       displayField: ct.displayField,
       fields: [...ct.fields],
       ...(ct.urlPattern ? { urlPattern: ct.urlPattern } : {}),
+      singleton: ct.singleton === true,
     });
     if (ct.status === 'published') await publishContentType(ctx, target, ct.apiId);
   }

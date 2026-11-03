@@ -24,7 +24,7 @@ import {
   uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
-import type { BlobStore, EntryRepo } from '@contentworker/ports';
+import { type BlobStore, type EntryRepo, TransactionConflictError } from '@contentworker/ports';
 import { type AppContext, actorOf } from './context';
 import { runHook, runPureHook } from './hooks';
 import { unpublishEntryTx } from './publishing';
@@ -111,18 +111,43 @@ export async function createEntry(
   };
 
   const claims = uniqueClaims(contentType, fields);
-  if (claims.length === 0) {
-    await ctx.store.entries.create(scope, entry, version);
-    return { entry, fields };
-  }
   // Claim and write together: the claim is the constraint, so a crash between
   // the two must not leave a value reserved by an entry that does not exist.
-  await ctx.store.withTransaction(async (tx) => {
-    await assertClaimsFree(tx.entries, scope, claims);
-    await tx.entries.create(scope, entry, version);
-    await tx.entries.replaceUniqueClaims(scope, id, claims);
-  });
+  await writeNewEntry(ctx, scope, contentType, entry, version, claims);
   return { entry, fields };
+}
+
+/**
+ * Writes a new entry, its first version and its unique claims as one unit, guarded on its type
+ * as the caller read it: a type deleted since (which would orphan the entry) or whose singleton
+ * flag was turned on or off since (which would let a second entry past the claim it did not
+ * stake) fails the commit, and the create is refused (409) rather than written.
+ */
+export async function writeNewEntry(
+  ctx: AppContext,
+  scope: Scope,
+  contentType: ContentType,
+  entry: Entry,
+  version: EntryVersion,
+  claims: readonly UniqueClaim[],
+): Promise<void> {
+  if (claims.length > 0) await assertClaimsFree(ctx.store.entries, scope, claims);
+  try {
+    await ctx.store.withTransaction(async (tx) => {
+      await tx.contentTypes.guard(scope, contentType.apiId, {
+        singleton: contentType.singleton === true,
+      });
+      await tx.entries.create(scope, entry, version);
+      if (claims.length > 0) await tx.entries.replaceUniqueClaims(scope, entry.id, claims);
+    });
+  } catch (err) {
+    if (!(err instanceof TransactionConflictError)) throw err;
+    throw new ConflictError(
+      `The content type "${contentType.apiId}" was deleted or changed while the entry was being ` +
+        'created; try again',
+      { contentType: contentType.apiId },
+    );
+  }
 }
 
 /**

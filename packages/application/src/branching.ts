@@ -6,14 +6,14 @@ import {
   type EntryVersion,
   NotFoundError,
   type Scope,
-  singletonClaim,
   stampChanged,
   stampCreated,
+  uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
 import { saveContentTypeOver } from './content-types';
 import { type AppContext, actorOf } from './context';
-import { assertSingletonFree } from './entries';
+import { assertSingletonFree, writeNewEntry } from './entries';
 import { allPages } from './paging';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
 
@@ -217,16 +217,11 @@ async function applyEntry(
       now,
     );
     const version: EntryVersion = { entryId, version: 1, fields, createdAt: now, createdBy: actor };
-    if (!contentType.singleton) {
-      await ctx.store.entries.create(tgt, entry, version);
-      return;
-    }
-    // A singleton in the target already holding its entry takes no second one from the source.
-    await assertSingletonFree(ctx.store.entries, tgt, contentType);
-    await ctx.store.withTransaction(async (tx) => {
-      await tx.entries.create(tgt, entry, version);
-      await tx.entries.replaceUniqueClaims(tgt, entryId, [singletonClaim(contentTypeApiId)]);
-    });
+    // A singleton in the target already holding its entry takes no second one from the source,
+    // and the new entry stakes its unique values (the singleton's claim among them) as a create
+    // does, in the same guarded unit.
+    if (contentType.singleton) await assertSingletonFree(ctx.store.entries, tgt, contentType);
+    await writeNewEntry(ctx, tgt, contentType, entry, version, uniqueClaims(contentType, fields));
     return;
   }
   const nextVersion = existing.entry.currentVersion + 1;

@@ -14,6 +14,7 @@ import {
   singletonClaim,
   uniqueClaims,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
 
 /** Creates a new content type definition (status "draft", version 1). */
@@ -59,8 +60,13 @@ const SINGLETON_NAMED = 10;
  * promotion), so turning `singleton` on or off keeps its rule wherever it happens.
  *
  * Turning it on is refused while the type has more than one entry outside the trash, naming them;
- * with one, that entry takes the singleton's claim in the same unit as the save. Turning it off
- * gives the claim back the same way. A save that leaves the flag alone is the plain save.
+ * with one, that entry takes the singleton's claim in the same unit as the save, guarded so an
+ * entry created after the read fails the commit (409) rather than becoming a second one. Turning
+ * it off gives the claim back the same way. A save that leaves the flag alone is the plain save.
+ *
+ * Delivery serves a singleton by the flag as last published, so a published save that changes it
+ * (an environment merge copies a published definition) announces `content_type.published`, which
+ * purges the scope's delivery responses; a draft's change reaches Delivery with its publish.
  */
 export async function saveContentTypeOver(
   ctx: AppContext,
@@ -97,13 +103,36 @@ export async function saveContentTypeOver(
     const found = held ? await ctx.store.entries.get(scope, held.entryId) : null;
     holders = found ? [{ id: found.entry.id, fields: found.fields }] : [];
   }
-  await ctx.store.withTransaction(async (tx) => {
-    await tx.contentTypes.save(scope, next);
-    // Rebuilt from the entry's fields, so its unique values keep their claims beside it.
-    for (const h of holders) {
-      await tx.entries.replaceUniqueClaims(scope, h.id, uniqueClaims(next, h.fields));
-    }
-  });
+  try {
+    await ctx.store.withTransaction(async (tx) => {
+      if (is && current) {
+        await tx.contentTypes.guard(scope, next.apiId, {
+          singleton: false,
+          entries: holders.map((h) => h.id),
+        });
+      }
+      await tx.contentTypes.save(scope, next);
+      // Rebuilt from the entry's fields, so its unique values keep their claims beside it.
+      for (const h of holders) {
+        await tx.entries.replaceUniqueClaims(scope, h.id, uniqueClaims(next, h.fields));
+      }
+      if (next.status === 'published') {
+        await tx.outbox.append({
+          id: ctx.ids.newId(),
+          type: 'content_type.published',
+          scope,
+          occurredAt: ctx.clock.now().toISOString(),
+          contentTypeApiId: next.apiId,
+          version: next.version,
+        });
+      }
+    });
+  } catch (err) {
+    if (!(err instanceof TransactionConflictError)) throw err;
+    throw new ConflictError(
+      `"${next.apiId}" gained an entry or changed while it was being made a singleton; try again`,
+    );
+  }
 }
 
 /** Entries read per page while looking for content a revision would strand. */

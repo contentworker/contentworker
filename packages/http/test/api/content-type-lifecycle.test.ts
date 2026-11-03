@@ -48,7 +48,37 @@ function setup() {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-  return { ctx: wired.ctx, cma, request };
+  /** A cma key whose role holds `scopes`, and, with `grants`, only those content types. */
+  const roleKey = async (scopes: string[], grants?: string[]) => {
+    const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+    const role = (await (
+      await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          name: `Role ${scopes.join(' ')} ${grants?.join(' ') ?? ''}`,
+          scopes,
+          ...(grants
+            ? {
+                contentGrants: grants.map((t) => ({
+                  contentTypeApiId: t,
+                  actions: ['read', 'write', 'publish'],
+                })),
+              }
+            : {}),
+        }),
+      })
+    ).json()) as { id: string };
+    const { token } = (await (
+      await app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({ kind: 'cma', roleId: role.id }),
+      })
+    ).json()) as { token: string };
+    return token;
+  };
+  return { ctx: wired.ctx, cma, request, roleKey };
 }
 
 /** Deleting and cloning a content type over HTTP and the management SDK. */
@@ -132,5 +162,73 @@ describe('content type delete and clone over the API', () => {
 
     // A Delivery key can't delete a type at all.
     expect((await request('DELETE', '/content-types/note', undefined, 'cda')).status).toBe(403);
+  });
+
+  it('withholds dependents from a role restricted to other types', async () => {
+    const { cma, request, roleKey } = setup();
+    for (const apiId of ['page', 'note']) {
+      await cma.contentTypes.create({ apiId, name: apiId, displayField: 'title', fields: [title] });
+    }
+    const pagesOnly = await roleKey(['preview:read', 'content:manage'], ['page']);
+    expect(
+      (await request('GET', '/content-types/note/dependents', undefined, pagesOnly)).status,
+    ).toBe(403);
+    expect(
+      (await request('GET', '/content-types/page/dependents', undefined, pagesOnly)).status,
+    ).toBe(200);
+  });
+
+  it('takes content:write, and a role on every type, to purge entries with the type', async () => {
+    const { cma, request, roleKey } = setup();
+    await cma.contentTypes.create({
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields: [title],
+    });
+    await cma.entries.create({ contentTypeApiId: 'note', fields: { title: { 'en-US': 'a' } } });
+
+    const noWrite = await roleKey(['content:manage', 'content:publish', 'preview:read']);
+    const purge = (token: string) =>
+      request('DELETE', '/content-types/note?purge_entries=true', undefined, token);
+    expect((await purge(noWrite)).status).toBe(403);
+    const restricted = await roleKey(
+      ['content:manage', 'content:write', 'content:publish', 'preview:read'],
+      ['note'],
+    );
+    expect((await purge(restricted)).status).toBe(403);
+    // Nothing was started by either.
+    expect((await request('GET', '/bulk/jobs')).status).toBe(200);
+    expect(((await (await request('GET', '/bulk/jobs')).json()) as unknown[]).length).toBe(0);
+  });
+
+  it('answers 409 when a create loses the race to its type’s delete', async () => {
+    const { ctx, cma, request } = setup();
+    await cma.contentTypes.create({
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields: [title],
+    });
+    // The type goes between the create's read and its commit.
+    const guard = ctx.store.contentTypes.guard;
+    ctx.store.contentTypes.guard = async (scope, apiId, expected) => {
+      await ctx.store.contentTypes.delete(scope, apiId, 1);
+      return guard(scope, apiId, expected);
+    };
+    const res = await request('POST', '/entries', {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'orphan' } },
+    });
+    ctx.store.contentTypes.guard = guard;
+    expect(res.status).toBe(409);
+    expect(
+      (
+        await ctx.store.entries.list(
+          { spaceId: 's1', environmentId: 'main' },
+          { contentTypeApiId: 'note' },
+        )
+      ).length,
+    ).toBe(0);
   });
 });

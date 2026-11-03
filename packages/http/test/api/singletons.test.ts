@@ -164,4 +164,66 @@ describe('singleton types over the API', () => {
     expect(res.status).toBe(409);
     expect((await cma.contentTypes.get('note')).singleton).toBeUndefined();
   });
+
+  it('refuses a key restricted to other types, and a Delivery key on Preview', async () => {
+    const { app, cma } = setup();
+    await cma.contentTypes.create({
+      apiId: 'settings',
+      name: 'Settings',
+      displayField: 'title',
+      singleton: true,
+      fields: [symbol('title', 0)],
+    });
+    await cma.contentTypes.publish('settings');
+    const one = await cma.entries.create({
+      contentTypeApiId: 'settings',
+      fields: { title: { 'en-US': 'Site' } },
+    });
+    await cma.entries.publish(one.entry.id);
+
+    const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+    /** A key of `kind` whose role reads only `page`. */
+    const restricted = async (kind: 'cda' | 'cpa', scope: string) => {
+      const role = (await (
+        await app.request('/spaces/s1/roles', {
+          method: 'POST',
+          headers: admin,
+          body: JSON.stringify({
+            name: `Pages only (${kind})`,
+            scopes: [scope],
+            contentGrants: [{ contentTypeApiId: 'page', actions: ['read'] }],
+          }),
+        })
+      ).json()) as { id: string };
+      const { token } = (await (
+        await app.request('/spaces/s1/api-keys', {
+          method: 'POST',
+          headers: admin,
+          body: JSON.stringify({ kind, roleId: role.id }),
+        })
+      ).json()) as { token: string };
+      return token;
+    };
+    const get = (path: string, token: string) =>
+      app.request(path, { headers: { Authorization: `Bearer ${token}` } });
+
+    const cdaPages = await restricted('cda', 'delivery:read');
+    const cpaPages = await restricted('cpa', 'preview:read');
+    expect((await get('/delivery/s1/main/singletons/settings', cdaPages)).status).toBe(403);
+    expect((await get('/preview/s1/main/singletons/settings', cpaPages)).status).toBe(403);
+    // A Delivery key reads published content only: Preview's draft is not for it.
+    expect((await get('/preview/s1/main/singletons/settings', 'cda')).status).toBe(403);
+    // The unrestricted keys still read it.
+    expect((await get('/delivery/s1/main/singletons/settings', 'cda')).status).toBe(200);
+    expect((await get('/preview/s1/main/singletons/settings', 'cpa')).status).toBe(200);
+
+    // GraphQL: the singleton's root answers null to a key without a grant on its type.
+    const res = await app.request('/delivery/s1/main/graphql', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cdaPages}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '{ settings { title } }' }),
+    });
+    const body = (await res.json()) as { data?: { settings?: unknown } };
+    expect(body.data?.settings ?? null).toBeNull();
+  });
 });

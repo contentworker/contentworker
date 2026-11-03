@@ -206,6 +206,19 @@ export const contentTypeDeletion = z.object({
       action: z.literal('content_type_delete'),
       status: z.string(),
       totalItems: z.int(),
+      config: z
+        .object({
+          contentType: z.string(),
+          typeDeletion: z
+            .object({ deleted: z.boolean(), reason: z.string().optional() })
+            .optional()
+            .describe(
+              'What became of the type, once decided (the job completed or was stopped); ' +
+                'absent until then. Also on `GET …/bulk/jobs/:id`.',
+            ),
+        })
+        .loose()
+        .optional(),
     })
     .loose()
     .optional()

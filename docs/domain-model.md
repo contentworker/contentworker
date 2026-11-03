@@ -413,8 +413,17 @@ interface ContentType {
   (`assertSingletonFree`), which names the entry and still refuses when its claim went missing (an
   entry saved by a release from before singletons). `saveContentTypeOver` is the one save of a
   definition over another (a revision, a merge, a promotion): turning the flag on is refused over
-  more than one entry outside the trash and claims the one there is, in the same unit as the save;
-  turning it off gives the claim back. Stored in `content_types.singleton` (0027_singleton_types).
+  more than one entry outside the trash and claims the one there is, in the same unit as the save,
+  guarded (`ContentTypeRepo.guard` with the entries it read) so an entry created meanwhile fails
+  the commit (`409`); turning it off gives the claim back. A published save that changes the flag
+  appends `content_type.published`, which purges Delivery. Every new entry (`writeNewEntry`, used
+  by `createEntry` and the merge, which also claims the entry's unique values) is written in a unit
+  guarded on its type as read (`guard(scope, apiId, { singleton })`): a type deleted, or flipped,
+  since its read fails the commit, mapped to `409`. A promotion that would leave a singleton with a
+  second entry is refused when it is requested. Snapshots (clone, export and import) carry the
+  flag. Stored in `content_types.singleton` (0027_singleton_types); Delivery serves by
+  `content_types.published_singleton`, the flag as last saved published (0028_published_singleton),
+  so a draft's change reaches it with the type's publish.
 - **Delete and clone** (`content-type-lifecycle.ts`). `fieldsLinkingTo(types, apiId)` finds other
   types' fields whose `linkContentTypes` name it, through components, repeaters and block variants
   (a path like `body.byline.who`). `contentTypeDependents` adds its entry counts (live, trashed),
@@ -424,9 +433,12 @@ interface ContentType {
   requires no entry of the type, so a revision or an entry written after the reads fails the
   commit (`TransactionConflictError`). `deleteContentTypeWithEntries` starts a `content_type_delete`
   bulk job instead (chunks of `ENTRY_TRASH_CHUNK_SIZE`): `trashEntry`, then `purgeEntry`, forced
-  only past links from entries of the same type; `finishContentTypeDeletion` deletes the type on
-  the job's clean `bulk.job_completed`. `cloneContentType` defines a copy (fields, display field,
-  singleton; not `urlPattern`) at version 1 under a new `apiId`.
+  only past links from entries of the same type, over ids read by `EntryRepo.idsOfType` (an id-only
+  keyset read); `finishContentTypeDeletion` deletes the type on the job's clean
+  `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
+  `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
+  stopped). `cloneContentType` defines a copy (fields, display field, singleton; not `urlPattern`)
+  at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
   `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields; anything else is a

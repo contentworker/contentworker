@@ -60,7 +60,8 @@ curl -s "$CDN/delivery/$SPACE/main/singletons/settings?locale=en-US&include=1" \
 ```
 
 It returns the published entry in the same shape as `…/entries/{id}`, and takes `locale` and
-`include`. It answers `404` when the type is not a singleton, or its entry is not published.
+`include`. It answers `404` when the type is not a singleton as last published, or its entry is
+not published.
 
 ### Filters
 

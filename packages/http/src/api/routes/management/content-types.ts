@@ -183,7 +183,11 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: contentTypeDocs.contentTypeDependents,
     }),
     requireScope(SCOPES.previewRead),
-    async (c) => c.json(await contentTypeDependents(ctx, scopeOf(c), c.req.param('apiId'))),
+    async (c) => {
+      // It counts and names the type's entries: a role restricted to other types may not see them.
+      authorizeContent(c.get('principal'), 'read', c.req.param('apiId'));
+      return c.json(await contentTypeDependents(ctx, scopeOf(c), c.req.param('apiId')));
+    },
   );
   app.delete(
     `${BASE}/content-types/:apiId`,
@@ -193,8 +197,10 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
         'trash included, other types linking to it, menus or redirects naming its entries, its ' +
         'URL pattern. `?purge_entries=true` deletes its entries too, as a resumable bulk job ' +
         '(202 with the job): each is trashed, then purged, and the type goes when the job ' +
-        'completes cleanly. That takes `content:publish` too (live entries are unpublished) and ' +
-        'a role that holds it on every content type. Emits `content_type.deleted`.',
+        'completes cleanly. That takes `content:write` and `content:publish` too (entries are ' +
+        'trashed and purged, live ones unpublished) and a role that holds them on every content ' +
+        'type. The job’s `config.typeDeletion` says what became of the type once decided: ' +
+        '`{ deleted: true }`, or `{ deleted: false, reason }`. Emits `content_type.deleted`.',
       query: { purge_entries: 'true to delete its entries first, as a job' },
       ok: contentTypeDocs.contentTypeDeletion,
     }),
@@ -206,6 +212,7 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
         return c.json({ deleted: true });
       }
       const principal = c.get('principal');
+      authorize(principal, SCOPES.contentWrite, scopeOf(c).spaceId);
       authorize(principal, SCOPES.contentPublish, scopeOf(c).spaceId);
       authorizeBulkJob(principal, 'content_type_delete');
       const done = await deleteContentTypeWithEntries(ctx, scopeOf(c), apiId);

@@ -1523,6 +1523,11 @@ export interface DeliveryReadRequest {
 export interface SingletonRead {
   /** Null when no content type has the apiId. */
   readonly contentType: ContentType | null;
+  /**
+   * Whether the type's published revision is a singleton: what Delivery serves by, so a draft
+   * revision turning the flag on or off changes nothing there until the type is published.
+   */
+  readonly publishedSingleton: boolean;
   /** Null when none of its entries is published. */
   readonly entry: PublishedEntry | null;
 }
@@ -1701,6 +1706,22 @@ export interface ContentTypeRepo {
   list(scope: Scope): Promise<ContentType[]>;
   /** Upserts the definition at its version. */
   save(scope: Scope, contentType: ContentType): Promise<void>;
+  /**
+   * Inserts a new definition, never over another: a type of the same apiId already there (one
+   * written after the caller looked) is a `TransactionConflictError` (at commit, inside a unit).
+   */
+  create(scope: Scope, contentType: ContentType): Promise<void>;
+  /**
+   * Writes nothing: a unit of work's guard that the type still exists with this `singleton` flag
+   * and, with `entries`, holds no entry outside the trash but those. A type deleted or flipped
+   * since the caller read it, or an entry created meanwhile, is a `TransactionConflictError` (at
+   * commit, inside a unit).
+   */
+  guard(
+    scope: Scope,
+    apiId: string,
+    expected: { readonly singleton: boolean; readonly entries?: readonly string[] },
+  ): Promise<void>;
   /**
    * Deletes the definition while it is still at `version` and no entry of the type exists (the
    * trash included), both judged by the delete itself: a type revised since (or gone), or an
@@ -1883,6 +1904,15 @@ export interface EntryRepo {
   contentTypesOf(scope: Scope, ids: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /** Lists draft/current entries (the Preview read path), newest-affected first. */
   list(scope: Scope, query: EntryQuery): Promise<EntryWithFields[]>;
+  /**
+   * A page of one content type's entry ids, the trash included, by id after `after`: an id-only
+   * keyset read (no fields, no bodies) for callers that enumerate a whole type.
+   */
+  idsOfType(
+    scope: Scope,
+    contentTypeApiId: string,
+    page: { readonly after?: string; readonly limit: number },
+  ): Promise<string[]>;
   /**
    * How many entries this scope holds, per content type and status (trash included, as
    * `archived`): one grouped count, never a page of rows measured. Groups with no entries are
@@ -2275,6 +2305,11 @@ export interface BulkJobRepo {
       failures: readonly BulkItemFailure[];
     },
   ): Promise<BulkJob>;
+  /**
+   * Merges `patch` into the job's `config` (top-level keys replaced): what an action records about
+   * its own outcome after the job ends, for its readers. No-op for an unknown job.
+   */
+  mergeConfig(scope: Scope, id: string, patch: Readonly<Record<string, unknown>>): Promise<void>;
   /** Transitions a running job terminal; no-ops (returns null) otherwise. */
   finalizeJob(scope: Scope, id: string, status: BulkJobStatus, at: Date): Promise<BulkJob | null>;
   /**

@@ -115,6 +115,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      authorizeContent(principal, 'read', args.apiId);
       return ok(await contentTypeDependents(ctx, scopeOf(args), args.apiId));
     },
   );
@@ -125,8 +126,10 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       description:
         'Delete a content type. Refused, naming every reason, while anything depends on it (see ' +
         'model_content_type_dependents). purgeEntries: true deletes its entries too, as a ' +
-        'resumable bulk job (each trashed, then purged; follow it with bulk_job_status): the type ' +
-        'goes when the job completes cleanly. Answers { deleted } and, for a job, { job }.',
+        'resumable bulk job (each trashed, then purged; needs content:write and content:publish; ' +
+        'follow it with bulk_job_status): the type goes when the job completes cleanly, and the ' +
+        "job's config.typeDeletion then says { deleted: true } or { deleted: false, reason }. " +
+        'Answers { deleted } and, for a job, { job }.',
       inputSchema: toolSchema('model_delete_content_type', () =>
         z.object({
           apiId: z.string(),
@@ -144,6 +147,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         await deleteContentType(ctx, scopeOf(args), args.apiId);
         return ok({ deleted: true });
       }
+      guard(SCOPES.contentWrite, scopeOf(args));
       guard(SCOPES.contentPublish, scopeOf(args));
       authorizeBulkJob(principal, 'content_type_delete');
       return ok(await deleteContentTypeWithEntries(ctx, scopeOf(args), args.apiId));

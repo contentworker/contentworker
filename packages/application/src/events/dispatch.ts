@@ -368,7 +368,8 @@ export async function dispatchEvent(
   }
 
   // A content type's delete, its entries gone: the type goes too. Redelivered, it finds the type
-  // gone and does nothing; refused (a dependent added while the job ran), the type stays.
+  // gone and does nothing; refused (a dependent added while the job ran), the type stays. Either
+  // way the outcome is recorded on the job (`typeDeletion`), where REST, MCP and the admin read it.
   if (event.type === 'bulk.job_completed' && event.action === 'content_type_delete') {
     const kept = await finishContentTypeDeletion(ctx, scope, event.jobId);
     if (kept) console.warn('content type kept after its delete job', event.jobId, kept);

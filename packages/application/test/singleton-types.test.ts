@@ -1,20 +1,32 @@
-import { ConflictError, NotFoundError, singletonClaim } from '@contentworker/domain';
+import {
+  ConflictError,
+  NotFoundError,
+  type Principal,
+  SCOPES,
+  singletonClaim,
+} from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  approvePromotion,
   bulkCreateEntries,
+  cloneEnvironment,
   createContentType,
   createEntry,
   createEnvironment,
   createSpace,
+  deleteContentType,
   duplicateEntry,
+  exportSnapshot,
   getContentType,
   getDeliveredSingleton,
   getPreviewSingleton,
+  importSnapshot,
   mergeEnvironments,
   publishContentType,
   publishEntry,
+  requestPromotion,
   restoreEntry,
   trashEntry,
   updateContentType,
@@ -23,6 +35,14 @@ import {
 
 const scope = { spaceId: 'site', environmentId: 'main' };
 const staging = { spaceId: 'site', environmentId: 'staging' };
+const qa = { spaceId: 'site', environmentId: 'qa' };
+const ada: Principal = {
+  spaceId: 'site',
+  kind: 'user',
+  subject: 'ada',
+  scopes: [SCOPES.contentPublish, SCOPES.contentManage],
+};
+const grace: Principal = { ...ada, subject: 'grace' };
 
 function setup() {
   const store = new InMemoryContentStore();
@@ -278,5 +298,190 @@ describe('singleton types', () => {
       mergeEnvironments(h.ctx, 'site', 'staging', 'main', { contentTypes: ['settings'] }),
     ).rejects.toBeInstanceOf(ConflictError);
     expect('singleton' in (await getContentType(h.ctx, scope, 'settings'))).toBe(false);
+  });
+});
+
+describe('singleton types across environments', () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = setup();
+    await createSpace(h.ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
+    await settingsType(h);
+    await settings(h, 'Site');
+    await createEnvironment(h.ctx, 'site', 'staging');
+  });
+
+  it('keeps the flag through a clone, an export and import, and a promotion back', async () => {
+    await cloneEnvironment(h.ctx, scope, staging);
+    expect((await getContentType(h.ctx, staging, 'settings')).singleton).toBe(true);
+    // The rule holds in the clone: its one entry came with it.
+    await expect(settings(h, 'Second', staging)).rejects.toBeInstanceOf(ConflictError);
+
+    await createEnvironment(h.ctx, 'site', 'qa');
+    await importSnapshot(h.ctx, qa, await exportSnapshot(h.ctx, scope));
+    expect((await getContentType(h.ctx, qa, 'settings')).singleton).toBe(true);
+
+    // Promoted back after an edit, production's type stays a singleton.
+    await updateContentType(h.ctx, staging, 'settings', { name: 'Settings (renamed)' });
+    const requested = await requestPromotion(h.ctx, ada, 'site', {
+      source: 'staging',
+      target: 'main',
+      contentTypes: ['settings'],
+    });
+    await approvePromotion(h.ctx, grace, 'site', requested.id);
+    const promoted = await getContentType(h.ctx, scope, 'settings');
+    expect(promoted.name).toBe('Settings (renamed)');
+    expect(promoted.singleton).toBe(true);
+  });
+
+  it('refuses, when it is requested, a promotion that would give a singleton a second entry', async () => {
+    await settingsType(h, staging);
+    const other = await settings(h, 'Staging', staging);
+    const refused = requestPromotion(h.ctx, ada, 'site', {
+      source: 'staging',
+      target: 'main',
+      entries: [other.entry.id],
+    });
+    await expect(refused).rejects.toBeInstanceOf(ConflictError);
+    await expect(refused).rejects.toThrow(/singleton/);
+    expect(await h.store.promotions.list('site')).toEqual([]);
+  });
+
+  it('claims a merged new entry’s unique values, the singleton’s among them', async () => {
+    await settingsType(h, staging);
+    // Main's entry goes to the trash, so the singleton is free for the staging one.
+    const [mainEntry] = await h.store.entries.list(scope, { contentTypeApiId: 'settings' });
+    await trashEntry(h.ctx, scope, mainEntry?.entry.id ?? '');
+    const fromStaging = await createEntry(h.ctx, staging, {
+      contentTypeApiId: 'settings',
+      fields: { title: { 'en-US': 'Staging' }, code: { 'en-US': 'k1' } },
+    });
+    await mergeEnvironments(h.ctx, 'site', 'staging', 'main', { entries: [fromStaging.entry.id] });
+
+    const held = await h.store.entries.findUniqueConflicts(scope, [
+      singletonClaim('settings'),
+      { contentTypeApiId: 'settings', fieldApiId: 'code', locale: 'en-US', value: 'k1' },
+    ]);
+    expect(held.map((c) => [c.fieldApiId, c.entryId])).toEqual([
+      ['$singleton', fromStaging.entry.id],
+      ['code', fromStaging.entry.id],
+    ]);
+  });
+
+  it('announces a merged published definition that changes the flag, so Delivery purges', async () => {
+    await settingsType(h, staging, false);
+    const before = h.store.allEvents().length;
+    // Main's settings is a published singleton with one entry; staging's is an ordinary one.
+    await mergeEnvironments(h.ctx, 'site', 'staging', 'main', { contentTypes: ['settings'] });
+    const announced = h.store
+      .allEvents()
+      .slice(before)
+      .filter((e) => e.type === 'content_type.published');
+    expect(announced.map((e) => e.scope.environmentId)).toEqual(['main']);
+  });
+});
+
+describe('singleton types, served by their published revision', () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = setup();
+    await createSpace(h.ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
+    await settingsType(h);
+    const one = await settings(h, 'Site');
+    await publishEntry(h.ctx, scope, one.entry.id);
+  });
+
+  it('keeps serving through a draft that turns the flag off, and stops when it is published', async () => {
+    await updateContentType(h.ctx, scope, 'settings', { singleton: false });
+    expect((await getDeliveredSingleton(h.ctx, scope, 'settings')).fields.title).toBeDefined();
+    await publishContentType(h.ctx, scope, 'settings');
+    await expect(getDeliveredSingleton(h.ctx, scope, 'settings')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+
+    // On again as a draft: not served until that is published too.
+    await updateContentType(h.ctx, scope, 'settings', { singleton: true });
+    await expect(getDeliveredSingleton(h.ctx, scope, 'settings')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    await publishContentType(h.ctx, scope, 'settings');
+    expect((await getDeliveredSingleton(h.ctx, scope, 'settings')).fields.title).toBeDefined();
+  });
+});
+
+describe('a create racing a change to its content type', () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = setup();
+    await createSpace(h.ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
+    await pageType(h);
+  });
+
+  /** Runs `fn` with the store's type reads answering `stale`, as a read made before a change. */
+  async function withStaleType<T>(stale: unknown, fn: () => Promise<T>): Promise<T> {
+    const get = h.store.contentTypes.get;
+    h.store.contentTypes.get = async () => stale as Awaited<ReturnType<typeof get>>;
+    try {
+      return await fn();
+    } finally {
+      h.store.contentTypes.get = get;
+    }
+  }
+  const page = (title: string) =>
+    createEntry(h.ctx, scope, { contentTypeApiId: 'page', fields: { title: { 'en-US': title } } });
+  const pages = async () =>
+    (await h.store.entries.list(scope, { contentTypeApiId: 'page' })).map((e) => e.entry.id);
+
+  it('is refused (409) when the type was deleted after its read, leaving no orphan', async () => {
+    const read = await getContentType(h.ctx, scope, 'page');
+    await deleteContentType(h.ctx, scope, 'page');
+    const create = withStaleType(read, () => page('Orphan'));
+    await expect(create).rejects.toBeInstanceOf(ConflictError);
+    await expect(create).rejects.toThrow(/deleted or changed/);
+    expect(await pages()).toEqual([]);
+  });
+
+  it('keeps the type when the create commits first and the delete’s read saw no entry', async () => {
+    const created = await page('First');
+    // The delete's reads ran before the create committed: no entries counted.
+    const counts = h.store.entries.countByStatus;
+    h.store.entries.countByStatus = async () => [];
+    try {
+      await expect(deleteContentType(h.ctx, scope, 'page')).rejects.toBeInstanceOf(ConflictError);
+    } finally {
+      h.store.entries.countByStatus = counts;
+    }
+    expect(await getContentType(h.ctx, scope, 'page')).toBeDefined();
+    expect(await pages()).toEqual([created.entry.id]);
+  });
+
+  it('is refused (409) when the type became a singleton after its read', async () => {
+    const first = await page('First');
+    const read = await getContentType(h.ctx, scope, 'page');
+    await updateContentType(h.ctx, scope, 'page', { singleton: true });
+    // The create read an ordinary type, so it neither checked for nor staked the singleton.
+    await expect(withStaleType(read, () => page('Second'))).rejects.toBeInstanceOf(ConflictError);
+    expect(await pages()).toEqual([first.entry.id]);
+  });
+
+  it('refuses turning the flag on (409) when a create committed after its read', async () => {
+    const first = await page('First');
+    const second = await page('Second');
+    // The turn's read ran before the second create committed: it saw only the first.
+    const list = h.store.entries.list;
+    h.store.entries.list = async (s, q) =>
+      (await list(s, q)).filter((e) => e.entry.id === first.entry.id);
+    try {
+      await expect(
+        updateContentType(h.ctx, scope, 'page', { singleton: true }),
+      ).rejects.toBeInstanceOf(ConflictError);
+    } finally {
+      h.store.entries.list = list;
+    }
+    expect('singleton' in (await getContentType(h.ctx, scope, 'page'))).toBe(false);
+    expect((await pages()).sort()).toEqual([first.entry.id, second.entry.id].sort());
   });
 });

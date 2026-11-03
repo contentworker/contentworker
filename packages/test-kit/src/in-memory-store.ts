@@ -186,6 +186,8 @@ export class InMemoryContentStore implements ContentStore {
   /** Where the trash retention sweep resumes, by environment (as `environments.trash_sweep_cursor`). */
   private readonly trashSweepCursors = new Map<string, ExpiredTrashEntry>();
   private readonly contentTypeData = new Map<string, ContentType>();
+  /** As the D1 column: each type's `singleton` as last saved published, which Delivery serves by. */
+  private readonly publishedSingletonData = new Map<string, boolean>();
   private readonly entryData = new Map<string, Entry>();
   /**
    * When each entry last changed, standing in for D1's `updated_at`: stamped from `nowMs`, and
@@ -411,7 +413,34 @@ export class InMemoryContentStore implements ContentStore {
         .map(([, v]) => v);
     },
     save: async (scope, ct) => {
-      this.contentTypeData.set(`${scopeKey(scope)}::${ct.apiId}`, ct);
+      const key = `${scopeKey(scope)}::${ct.apiId}`;
+      this.contentTypeData.set(key, ct);
+      if (ct.status === 'published') this.publishedSingletonData.set(key, ct.singleton === true);
+    },
+    // As the D1 store's insert: never over a type already there.
+    create: async (scope, ct) => {
+      const key = `${scopeKey(scope)}::${ct.apiId}`;
+      if (this.contentTypeData.has(key)) throw new TransactionConflictError();
+      await this.contentTypes.save(scope, ct);
+    },
+    // As the D1 store's guard: the type as the caller read it, and no other entry outside the trash.
+    guard: async (scope, apiId, expected) => {
+      const ct = this.contentTypeData.get(`${scopeKey(scope)}::${apiId}`);
+      if (!ct || (ct.singleton === true) !== expected.singleton) {
+        throw new TransactionConflictError();
+      }
+      if (expected.entries) {
+        const allowed = new Set(expected.entries);
+        const prefix = `${scopeKey(scope)}::`;
+        const other = [...this.entryData].some(
+          ([k, e]) =>
+            k.startsWith(prefix) &&
+            e.contentTypeApiId === apiId &&
+            e.status !== 'archived' &&
+            !allowed.has(e.id),
+        );
+        if (other) throw new TransactionConflictError();
+      }
     },
     // Judged at the call, as the D1 store's WHERE judges it at commit.
     delete: async (scope, apiId, version) => {
@@ -424,6 +453,7 @@ export class InMemoryContentStore implements ContentStore {
         throw new TransactionConflictError();
       }
       this.contentTypeData.delete(key);
+      this.publishedSingletonData.delete(key);
     },
   };
 
@@ -518,6 +548,19 @@ export class InMemoryContentStore implements ContentStore {
         ...r,
         fields: projectFields(r.fields, query.select as string[]),
       }));
+    },
+    idsOfType: async (scope, contentTypeApiId, page) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return [...this.entryData]
+        .filter(
+          ([k, e]) =>
+            k.startsWith(prefix) &&
+            e.contentTypeApiId === contentTypeApiId &&
+            (!page.after || e.id > page.after),
+        )
+        .map(([, e]) => e.id)
+        .sort()
+        .slice(0, page.limit);
     },
     countByStatus: async (scope) => {
       const prefix = `${scopeKey(scope)}::`;
@@ -1764,6 +1807,8 @@ export class InMemoryContentStore implements ContentStore {
           .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
         singleton = {
           contentType: (await this.contentTypes.get(scope, apiId)) ?? null,
+          publishedSingleton:
+            this.publishedSingletonData.get(`${scopeKey(scope)}::${apiId}`) === true,
           entry: first ?? null,
         };
       }
@@ -3076,6 +3121,11 @@ export class InMemoryContentStore implements ContentStore {
       this.bulkJobData.set(jobKey, updated);
       return updated;
     },
+    mergeConfig: async (scope, id, patch) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const job = this.bulkJobData.get(key);
+      if (job) this.bulkJobData.set(key, { ...job, config: { ...job.config, ...patch } });
+    },
     finalizeJob: async (scope, id, status, at) => {
       const key = `${scopeKey(scope)}::${id}`;
       const job = this.bulkJobData.get(key);
@@ -3167,6 +3217,7 @@ export class InMemoryContentStore implements ContentStore {
       this.inviteData,
       this.memberData,
       this.contentTypeData,
+      this.publishedSingletonData,
       this.entryData,
       this.entryTouched,
       this.versionData,

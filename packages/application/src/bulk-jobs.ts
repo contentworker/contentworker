@@ -568,6 +568,13 @@ export async function cancelBulkJob(
     if (!existing) throw new NotFoundError('BulkJob', id);
     return existing; // already terminal — cancel is idempotent
   }
+  // A content type's delete stopped: the type stays, and its readers are told so as a completed
+  // job's are (`finishContentTypeDeletion`), not left waiting for an outcome that never comes.
+  if (job.action === 'content_type_delete') {
+    const typeDeletion = { deleted: false, reason: 'the job was stopped' };
+    await ctx.store.bulkJobs.mergeConfig(scope, id, { typeDeletion });
+    return { ...job, config: { ...job.config, typeDeletion } };
+  }
   return job;
 }
 

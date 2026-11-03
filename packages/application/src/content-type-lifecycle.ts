@@ -29,8 +29,11 @@ import { purgeEntry, trashEntry } from './entries';
  * the single-entry use-cases do it) and the type once they are gone.
  */
 
-/** Entry ids the job reads per page while listing the type's entries. */
-const LIST_PAGE = 100;
+/**
+ * Entry ids read per page while listing the type's entries for the job: an id-only keyset read,
+ * so a page this large is a few hundred kilobytes and the largest job a couple of dozen reads.
+ */
+const ID_PAGE = 5000;
 /** Ids named per kind in a refusal's message; the details carry them all. */
 const NAMED = 10;
 
@@ -194,28 +197,27 @@ export async function deleteContentTypeWithEntries(
 ): Promise<ContentTypeDeletion> {
   const dependents = await contentTypeDependents(ctx, scope, apiId);
   refuse(dependents, false);
-  const ids: string[] = [];
   const max = bulkMaxItemsOf('content_type_delete');
-  for (const archived of [false, true]) {
-    for (let after = ''; ; ) {
-      const page = await ctx.store.entries.list(scope, {
-        contentTypeApiId: apiId,
-        archived,
-        limit: LIST_PAGE,
-        afterEntryId: after,
-      });
-      ids.push(...page.map((e) => e.entry.id));
-      if (ids.length > max) {
-        throw new ValidationError([
-          {
-            field: 'purgeEntries',
-            message: `"${apiId}" has more than ${max} entries: delete some first`,
-          },
-        ]);
-      }
-      if (page.length < LIST_PAGE) break;
-      after = page[page.length - 1]?.entry.id ?? after;
-    }
+  const n = dependents.entries.live + dependents.entries.trashed;
+  const tooMany = () =>
+    new ValidationError([
+      {
+        field: 'purgeEntries',
+        message: `"${apiId}" has more than ${max} entries: delete some first`,
+      },
+    ]);
+  // Counted already: refuse past the cap before reading a single id.
+  if (n > max) throw tooMany();
+  const ids: string[] = [];
+  for (let after: string | undefined; ; ) {
+    const page = await ctx.store.entries.idsOfType(scope, apiId, {
+      limit: ID_PAGE,
+      ...(after ? { after } : {}),
+    });
+    ids.push(...page);
+    if (ids.length > max) throw tooMany();
+    if (page.length < ID_PAGE) break;
+    after = page[page.length - 1];
   }
   if (ids.length === 0) {
     await deleteContentType(ctx, scope, apiId);
@@ -283,10 +285,29 @@ export function contentTypePurgeChunkRunner(
 }
 
 /**
+ * What became of the type a `content_type_delete` job deletes, recorded in the job's `config` as
+ * `typeDeletion` once it is decided: when the job completes (`finishContentTypeDeletion`) or is
+ * stopped. Absent while that is still to come, so REST, MCP and the admin wait for it, not only
+ * for the job's status.
+ */
+export type ContentTypeDeletionOutcome =
+  | { readonly deleted: true }
+  | { readonly deleted: false; readonly reason: string };
+
+/** The job's recorded {@link ContentTypeDeletionOutcome}, or undefined while undecided. */
+export const contentTypeDeletionOf = (
+  job: Pick<BulkJob, 'config'>,
+): ContentTypeDeletionOutcome | undefined => {
+  const o = (job.config as { typeDeletion?: ContentTypeDeletionOutcome } | undefined)?.typeDeletion;
+  return o && typeof o.deleted === 'boolean' ? o : undefined;
+};
+
+/**
  * The last step of a `content_type_delete` job, on its `bulk.job_completed` event: with every
  * entry gone, the type goes too (`deleteContentType`, so a type that gained a dependent while the
- * job ran is kept). After a failure it stays, beside the entries the report names. Safe to run
- * twice: a type already gone is a no-op. Returns why it kept the type, or null.
+ * job ran is kept). After a failure it stays, beside the entries the report names. Either way the
+ * outcome is recorded on the job (`typeDeletion`). Safe to run twice: a type already gone is a
+ * no-op, recorded as deleted. Returns why it kept the type, or null.
  */
 export async function finishContentTypeDeletion(
   ctx: AppContext,
@@ -296,16 +317,25 @@ export async function finishContentTypeDeletion(
   const job = await ctx.store.bulkJobs.getJob(scope, jobId);
   const apiId = job ? contentTypeOfJob(job) : undefined;
   if (!job || !apiId || job.action !== 'content_type_delete') return null;
-  if (job.status !== 'completed' || job.failed > 0) {
-    return `the job ${job.status === 'completed' ? `failed for ${job.failed} entries` : `was ${job.status}`}`;
-  }
-  try {
-    if (await ctx.store.contentTypes.get(scope, apiId)) await deleteContentType(ctx, scope, apiId);
-    return null;
-  } catch (err) {
-    if (err instanceof DomainError) return err.message;
-    throw err;
-  }
+  const kept = await (async (): Promise<string | null> => {
+    if (job.status !== 'completed') return `the job was ${job.status}`;
+    if (job.failed > 0) {
+      return `${job.failed} ${job.failed === 1 ? 'entry' : 'entries'} could not be deleted`;
+    }
+    try {
+      if (await ctx.store.contentTypes.get(scope, apiId)) {
+        await deleteContentType(ctx, scope, apiId);
+      }
+      return null;
+    } catch (err) {
+      if (err instanceof DomainError) return err.message;
+      throw err;
+    }
+  })();
+  const typeDeletion: ContentTypeDeletionOutcome =
+    kept === null ? { deleted: true } : { deleted: false, reason: kept };
+  await ctx.store.bulkJobs.mergeConfig(scope, jobId, { typeDeletion });
+  return kept;
 }
 
 /**
@@ -333,6 +363,12 @@ export async function cloneContentType(
     fields: [...from.fields],
     ...(from.singleton ? { singleton: true } : {}),
   });
-  await ctx.store.contentTypes.save(scope, clone);
+  // Insert-only: a clone (or create) of the same apiId that landed after the read keeps its type.
+  try {
+    await ctx.store.contentTypes.create(scope, clone);
+  } catch (err) {
+    if (!(err instanceof TransactionConflictError)) throw err;
+    throw new ConflictError(`A content type "${newApiId}" already exists`);
+  }
   return clone;
 }

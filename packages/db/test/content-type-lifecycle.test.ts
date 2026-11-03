@@ -7,10 +7,15 @@ import {
   createEnvironment,
   createSpace,
   deleteContentType,
+  deleteContentTypeWithEntries,
+  getContentType,
+  getDeliveredSingleton,
   publishContentType,
+  publishEntry,
   trashEntry,
+  updateContentType,
 } from '@contentworker/application';
-import type { FieldDefinition } from '@contentworker/domain';
+import { ConflictError, type FieldDefinition, NotFoundError } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
 import { FixedClock } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
@@ -119,5 +124,147 @@ describe('content type delete on D1', () => {
     const clone = await cloneContentType(ctx, scope, 'note', 'memo', 'Memo');
     expect(await store.contentTypes.get(scope, 'memo')).toEqual(clone);
     expect(clone).toMatchObject({ version: 1, status: 'draft', displayField: 'title' });
+  });
+
+  it('refuses a second clone to one apiId at the insert, keeping the first', async () => {
+    const { ctx, scope } = await harness();
+    const first = await cloneContentType(ctx, scope, 'note', 'memo', 'Memo');
+    const again = { ...first, name: 'Memo 2' };
+    await expect(store.contentTypes.create(scope, again)).rejects.toBeInstanceOf(
+      TransactionConflictError,
+    );
+    await expect(
+      store.withTransaction((tx) => tx.contentTypes.create(scope, again)),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    expect((await store.contentTypes.get(scope, 'memo'))?.name).toBe('Memo');
+  });
+});
+
+describe('the content type guard on D1', () => {
+  it('passes for the type as read, and fails the commit once it is deleted or flipped', async () => {
+    const { ctx, scope } = await harness();
+    await store.contentTypes.guard(scope, 'note', { singleton: false });
+    await expect(
+      store.contentTypes.guard(scope, 'note', { singleton: true }),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    await updateContentType(ctx, scope, 'note', { singleton: true });
+    // A create that read the ordinary type: its unit fails and writes nothing.
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'one' } },
+    });
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.contentTypes.guard(scope, 'note', { singleton: false });
+        await tx.entries.create(
+          scope,
+          {
+            id: uid(),
+            contentTypeApiId: 'note',
+            status: 'draft',
+            currentVersion: 1,
+            publishedVersion: null,
+          },
+          { entryId: 'x', version: 1, fields: {}, createdAt: new Date().toISOString() },
+        );
+      }),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    expect(
+      (await store.entries.list(scope, { contentTypeApiId: 'note' })).map((e) => e.entry.id),
+    ).toEqual([entry.id]);
+    await expect(
+      store.contentTypes.guard(scope, 'gone', { singleton: false }),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+  });
+
+  it('refuses an entry outside the trash beyond those it allows, through one JSON parameter', async () => {
+    const { ctx, scope } = await harness();
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { entry } = await createEntry(ctx, scope, {
+        contentTypeApiId: 'note',
+        fields: { title: { 'en-US': `n${i}` } },
+      });
+      ids.push(entry.id);
+    }
+    await trashEntry(ctx, scope, ids[2] as string);
+    // Past D1's 100-parameter cap, as one bound value.
+    const allowed = [...ids.slice(0, 2), ...Array.from({ length: 150 }, () => uid())];
+    await store.contentTypes.guard(scope, 'note', { singleton: false, entries: allowed });
+    await expect(
+      store.contentTypes.guard(scope, 'note', { singleton: false, entries: [ids[0] as string] }),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    // Turning the flag on after a second entry arrived unseen is refused the same way.
+    const list = store.entries.list;
+    store.entries.list = async (s, q) => (await list(s, q)).filter((e) => e.entry.id === ids[0]);
+    try {
+      await expect(
+        updateContentType(ctx, scope, 'note', { singleton: true }),
+      ).rejects.toBeInstanceOf(ConflictError);
+    } finally {
+      store.entries.list = list;
+    }
+    expect((await getContentType(ctx, scope, 'note')).singleton).toBeUndefined();
+  });
+});
+
+describe('content type ids and job outcomes on D1', () => {
+  it('pages a type’s entry ids by id, the trash included, in its own scope only', async () => {
+    const { ctx, scope } = await harness();
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const { entry } = await createEntry(ctx, scope, {
+        contentTypeApiId: 'note',
+        fields: { title: { 'en-US': `n${i}` } },
+      });
+      ids.push(entry.id);
+    }
+    await trashEntry(ctx, scope, ids[0] as string);
+    const sorted = [...ids].sort();
+    const first = await store.entries.idsOfType(scope, 'note', { limit: 3 });
+    expect(first).toEqual(sorted.slice(0, 3));
+    expect(await store.entries.idsOfType(scope, 'note', { after: first[2], limit: 3 })).toEqual(
+      sorted.slice(3),
+    );
+    const other = { spaceId: `${scope.spaceId}-x`, environmentId: 'main' };
+    expect(await store.entries.idsOfType(other, 'note', { limit: 3 })).toEqual([]);
+  });
+
+  it('merges an outcome into a job’s config, keeping what it had', async () => {
+    const { ctx, scope } = await harness();
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'x' } },
+    });
+    const started = await deleteContentTypeWithEntries(ctx, scope, 'note');
+    if (started.deleted) throw new Error('expected a job');
+    await store.bulkJobs.mergeConfig(scope, started.job.id, {
+      typeDeletion: { deleted: false, reason: 'kept' },
+    });
+    expect((await store.bulkJobs.getJob(scope, started.job.id))?.config).toEqual({
+      contentType: 'note',
+      typeDeletion: { deleted: false, reason: 'kept' },
+    });
+  });
+});
+
+describe('a singleton served by its published revision on D1', () => {
+  it('reads the flag as last published, not as the draft has it', async () => {
+    const { ctx, scope } = await harness();
+    await updateContentType(ctx, scope, 'note', { singleton: true });
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'one' } },
+    });
+    await publishEntry(ctx, scope, entry.id);
+    // A draft turned it on: not served yet.
+    await expect(getDeliveredSingleton(ctx, scope, 'note')).rejects.toBeInstanceOf(NotFoundError);
+    await publishContentType(ctx, scope, 'note');
+    expect((await getDeliveredSingleton(ctx, scope, 'note')).id).toBe(entry.id);
+    // A draft turning it off keeps it served until that is published.
+    await updateContentType(ctx, scope, 'note', { singleton: false });
+    expect((await getDeliveredSingleton(ctx, scope, 'note')).id).toBe(entry.id);
+    await publishContentType(ctx, scope, 'note');
+    await expect(getDeliveredSingleton(ctx, scope, 'note')).rejects.toBeInstanceOf(NotFoundError);
   });
 });
