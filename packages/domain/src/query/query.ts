@@ -295,14 +295,19 @@ export interface QueryOrder {
  * backend for any field missing the requested locale — the same query
  * returning different rows depending on the store. Sorting makes the fallback
  * deterministic everywhere; `fallbacks` makes it semantically right.
+ *
+ * `hidden`, when set, names locales the value may never come from (Delivery's: the ones the space
+ * doesn't deliver), so neither the chain nor the any-locale tail reaches one of them.
  */
 export function comparableValue(
   lv: LocalizedValue | undefined,
   locale?: LocaleCode,
   fallbacks?: readonly LocaleCode[],
+  hidden?: readonly LocaleCode[],
 ): unknown {
   if (!lv) return undefined;
-  const present = (loc: string) => lv[loc] !== undefined && lv[loc] !== null;
+  const present = (loc: string) =>
+    lv[loc] !== undefined && lv[loc] !== null && !hidden?.includes(loc);
   if (locale && present(locale)) return lv[locale];
   for (const f of fallbacks ?? []) {
     if (present(f)) return lv[f];
@@ -472,13 +477,14 @@ function resolveField(
   sys: Record<string, unknown>,
   locale?: LocaleCode,
   fallbacks?: readonly LocaleCode[],
+  hidden?: readonly LocaleCode[],
 ): unknown {
   // `sys.*` and `metadata.*` are pseudo-fields backed by the row's sys record
   // (which carries both, keyed by the bare name / the full `metadata.*` key).
   if (field.startsWith('sys.')) return sys[field.slice(4)];
   if (field.startsWith('metadata.')) return sys[field];
   const [top, ...rest] = field.split('.');
-  let value = comparableValue(fields[top as string], locale, fallbacks);
+  let value = comparableValue(fields[top as string], locale, fallbacks, hidden);
   for (const segment of rest) value = pluck(value, segment);
   return value;
 }
@@ -505,6 +511,8 @@ interface MatchContext {
   readonly fallbacks?: readonly LocaleCode[];
   /** The content types by apiId, when the query carries them ({@link EntryQueryInput.contentTypes}). */
   readonly types?: ReadonlyMap<string, ContentType>;
+  /** Locales a value may never come from (Delivery's undelivered ones). */
+  readonly hidden?: readonly LocaleCode[];
 }
 
 /**
@@ -544,7 +552,11 @@ function matchesFilter(
   ctx: MatchContext,
 ): boolean {
   if (f.op === 'ref' || f.op === 'refIn') return linksToEntries(f, fields, sys, ctx);
-  return matchOp(f.op, resolveField(f.field, fields, sys, ctx.locale, ctx.fallbacks), f.value);
+  return matchOp(
+    f.op,
+    resolveField(f.field, fields, sys, ctx.locale, ctx.fallbacks, ctx.hidden),
+    f.value,
+  );
 }
 
 /** True if a `where` condition (a predicate or a group of them) matches the entry. */
@@ -565,10 +577,11 @@ function matchesSearch(
   search: string,
   locale?: LocaleCode,
   fallbacks?: readonly LocaleCode[],
+  hidden?: readonly LocaleCode[],
 ): boolean {
   const needle = search.toLowerCase();
   for (const lv of Object.values(fields)) {
-    const v = comparableValue(lv, locale, fallbacks);
+    const v = comparableValue(lv, locale, fallbacks, hidden);
     if (typeof v === 'string' && v.toLowerCase().includes(needle)) return true;
   }
   return false;
@@ -610,9 +623,12 @@ export function entryKeysetOf(
   sys: Record<string, unknown>,
   locale?: LocaleCode,
   fallbacks?: readonly LocaleCode[],
+  hidden?: readonly LocaleCode[],
 ): EntryKeyset {
   return {
-    values: keysetOrder(order).map((o) => resolveField(o.field, fields, sys, locale, fallbacks)),
+    values: keysetOrder(order).map((o) =>
+      resolveField(o.field, fields, sys, locale, fallbacks, hidden),
+    ),
     id: String(sys.id ?? ''),
   };
 }
@@ -653,6 +669,11 @@ export interface EntryQueryInput {
    *  `locale` has no value for a field — keeps resolution deterministic and
    *  identical across stores. */
   readonly fallbackLocales?: readonly LocaleCode[];
+  /**
+   * Locales a comparison never reads (Delivery: the ones the space doesn't deliver). Without it a
+   * field missing the preferred locales could compare an undelivered locale's value.
+   */
+  readonly hiddenLocales?: readonly LocaleCode[];
 }
 
 /**
@@ -674,6 +695,7 @@ export function runEntryQuery<T>(
   const ctx: MatchContext = {
     locale: query.locale,
     fallbacks: query.fallbackLocales,
+    hidden: query.hiddenLocales,
     ...(query.contentTypes ? { types: new Map(query.contentTypes.map((t) => [t.apiId, t])) } : {}),
   };
   const filters = query.filters ?? [];
@@ -688,7 +710,13 @@ export function runEntryQuery<T>(
   }
   if (query.search) {
     result = result.filter((r) =>
-      matchesSearch(fieldsOf(r), query.search as string, query.locale, query.fallbackLocales),
+      matchesSearch(
+        fieldsOf(r),
+        query.search as string,
+        query.locale,
+        query.fallbackLocales,
+        query.hiddenLocales,
+      ),
     );
   }
   if (query.afterRow !== undefined) {
@@ -696,7 +724,14 @@ export function runEntryQuery<T>(
     // last row, whatever was edited between the two reads.
     const order = keysetOrder(query.order);
     const keyOf = (r: T) =>
-      entryKeysetOf(order, fieldsOf(r), sysOf(r), query.locale, query.fallbackLocales);
+      entryKeysetOf(
+        order,
+        fieldsOf(r),
+        sysOf(r),
+        query.locale,
+        query.fallbackLocales,
+        query.hiddenLocales,
+      );
     const keyed = result.map((r) => ({ r, key: keyOf(r) }));
     keyed.sort((a, b) => compareKeysets(order, a.key, b.key));
     const after = query.afterRow;
@@ -713,6 +748,7 @@ export function runEntryQuery<T>(
           sysOf(a),
           query.locale,
           query.fallbackLocales,
+          query.hiddenLocales,
         );
         const bv = resolveField(
           o.field,
@@ -720,6 +756,7 @@ export function runEntryQuery<T>(
           sysOf(b),
           query.locale,
           query.fallbackLocales,
+          query.hiddenLocales,
         );
         const cmp = compareValues(av, bv);
         if (cmp !== 0) return o.direction === 'desc' ? -cmp : cmp;

@@ -1814,6 +1814,11 @@ export interface EntryQuery {
    * different locale per store. Populated by the delivery/preview use-cases from SpaceConfig.
    */
   readonly fallbackLocales?: readonly LocaleCode[];
+  /**
+   * Locales filtering, ordering and search never read. Delivery names the ones the space doesn't
+   * deliver, so a value in a locale it doesn't serve never decides a match or an order.
+   */
+  readonly hiddenLocales?: readonly LocaleCode[];
 }
 
 /** One ranked full-text match from the published read model. */

@@ -129,7 +129,10 @@ retry of one webhook, and without it a failed delivery is recorded and not retri
 
 After dispatch, `consumeEvent` publishes the event to the scope's **`LiveHubDO`** stateful edge
 object (when `LIVE_HUB` is bound), which fans it out to Live Content SSE clients
-(`GET /delivery/:space/:env/live`). A live-publish failure is logged and never blocks dispatch.
+(`GET /delivery/:space/:env/live`). An `entry.published` goes out through `liveEventOf` first,
+which reads the space's config and drops the locales it doesn't deliver from `fields` (webhooks
+and the outbox keep the event as published). A live-publish failure is logged and never blocks
+dispatch.
 
 On `entry.published`, on-publish agents run when `AGENTS_ENRICH` / `AGENTS_MODERATE` are enabled.
 With `AGENTS_QUEUE` bound, the consumer enqueues a job on `contentworker-agents` instead of running

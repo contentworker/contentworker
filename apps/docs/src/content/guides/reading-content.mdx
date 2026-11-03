@@ -45,8 +45,10 @@ asset. A link to something unpublished, or beyond the depth, stays `{ "id": …,
 Without `locale`, each field is keyed by locale (`{ "title": { "en-US": "…" } }`); with it, each
 field is a plain value, with the [fallback chain](/start/concepts/#locales) applied. A locale the
 space doesn't deliver is never served: naming it answers `404` (on entries, menus, taxonomy and
-assets alike), the fallback chain skips it, and it is left out of every per-locale map and of the
-sitemap's alternates. A locale the space doesn't have at all still resolves to the default.
+assets alike), the fallback chain skips it, and it is left out of every per-locale map (asset
+text included), of the sitemap's alternates, of GraphQL, of search matches and snippets, of the
+live stream, and of what list filters, ordering and `query=` compare. A locale the space doesn't
+have at all still resolves to the default.
 
 ### Filters
 
@@ -235,7 +237,8 @@ the environment: `entry.published`, `entry.unpublished`, `entries.published_bulk
 `asset.published`, `asset.unpublished`, `content_type.published`, `release.published` and
 `environment_alias.changed`. Add `?types=entry.published,entry.unpublished` to receive only those
 types. A key sees only what it could read: with a role that limits content types or
-hides fields, it gets events for its types only, with those fields left out. The server ends each
+hides fields, it gets events for its types only, with those fields left out. An
+`entry.published` carries only the locales the space delivers. The server ends each
 stream after ten minutes, so reconnect when it closes (as `EventSource` does on its own); that is
 also when a revoked key or a changed role takes effect. Use it to refresh a page or invalidate a cache the moment content changes, instead of polling. For server-to-server notifications, use [webhooks](/guides/webhooks/).
 

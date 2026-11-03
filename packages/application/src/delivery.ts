@@ -16,6 +16,7 @@ import {
   type Principal,
   resolveLocalizedValue,
   type Scope,
+  withoutUndeliveredLocales,
 } from '@contentworker/domain';
 import type { EntryQuery, PublishedAsset, PublishedEntry, SpaceConfig } from '@contentworker/ports';
 import { projectionContextOf, projectPublishedAsset } from './asset-delivery';
@@ -62,6 +63,14 @@ function spaceConfig(scope: Scope, config: SpaceConfig | null | undefined): Spac
   if (!config) throw new NotFoundError('Space', scope.spaceId);
   return config;
 }
+
+/** The locales a space turns off, for a store query to skip (nothing when it delivers them all). */
+const hiddenLocalesOf = (config: SpaceConfig): { hiddenLocales?: string[] } => {
+  const hidden = Object.keys(config.localeSettings ?? {}).filter(
+    (l) => !isLocaleDelivered(config, l),
+  );
+  return hidden.length > 0 ? { hiddenLocales: hidden } : {};
+};
 
 const toLocaleConfig = (s: SpaceConfig): LocaleConfig => ({
   defaultLocale: s.defaultLocale,
@@ -163,7 +172,7 @@ async function prefetchLinked(
     for (const e of fetchedEntries) entries.set(e.entryId, e);
     frontier = fetchedEntries;
   }
-  const pc = projectionContextOf(scope, renditions, opts.locale, config);
+  const pc = projectionContextOf(scope, renditions, opts.locale, config, reads.everyLocale);
   return {
     entries,
     assets,
@@ -423,6 +432,8 @@ export async function listPublishedEntries(
     ...(refs ? { contentTypes: first.contentTypes ?? [] } : {}),
     locale,
     fallbackLocales: localeFallbackChain(config, locale),
+    // An undelivered locale's value never decides a filter, an order or a `query=` match.
+    ...hiddenLocalesOf(config),
   });
   // One shared prefetch across all rows: N rows × M links costs one batched
   // read per depth level, not N×M point reads.
@@ -594,6 +605,24 @@ export const LIVE_EVENT_TYPES: ReadonlySet<DomainEvent['type']> = new Set([
   'release.published',
   'environment_alias.changed',
 ]);
+
+/**
+ * An event as the live stream may carry it at all, before any subscriber's access applies: an
+ * `entry.published` keeps only the locales the space delivers, as every Delivery read does. The
+ * LiveHub object holds no store, so the consumer that fans the event out writes this filtered
+ * copy once, reading the space's config only for an entry publish (every other live fact names
+ * ids, not text). A space with every locale delivered gets the event unchanged.
+ */
+export async function liveEventOf(ctx: AppContext, event: DomainEvent): Promise<DomainEvent> {
+  if (event.type !== 'entry.published') return event;
+  const config = await ctx.store.spaces.getConfig(event.scope);
+  if (!config?.localeSettings) return event;
+  const fields: Record<string, Record<string, unknown>> = {};
+  for (const [apiId, localized] of Object.entries(event.fields)) {
+    fields[apiId] = withoutUndeliveredLocales(localized, config);
+  }
+  return { ...event, fields: fields as typeof event.fields };
+}
 
 /**
  * What `principal` may see of `event` on the live stream, or null for nothing: the same rules as

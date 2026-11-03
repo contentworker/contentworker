@@ -5,6 +5,7 @@ import {
   createSpace,
   getLocaleSettings,
   getPublishedEntry,
+  listPublishedEntries,
   publishContentType,
   publishEntry,
   setLocaleSettings,
@@ -110,5 +111,23 @@ describe('locale settings on D1', () => {
       en: 'Hello',
       ar: 'مرحبا',
     });
+    // An entry titled only in fr: the store's any-locale fallback never compares that value.
+    const { entry: french } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'note',
+      fields: { title: { fr: 'Seulement' } },
+    });
+    await publishEntry(ctx, scope, french.id);
+    const query = {
+      contentTypeApiId: 'note',
+      locale: 'en',
+      filters: [{ field: 'title', op: 'eq' as const, value: 'Seulement' }],
+    };
+    expect((await store.entries.listPublished(scope, query)).map((e) => e.entryId)).toEqual([
+      french.id,
+    ]);
+    expect(await store.entries.listPublished(scope, { ...query, hiddenLocales: ['fr'] })).toEqual(
+      [],
+    );
+    expect(await listPublishedEntries(ctx, scope, query)).toEqual([]);
   });
 });

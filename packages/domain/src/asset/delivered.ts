@@ -1,5 +1,5 @@
 import { ValidationError } from '../errors';
-import { type LocaleConfig, resolveLocalizedValue } from '../locale';
+import { type LocaleConfig, resolveLocalizedValue, withoutUndeliveredLocales } from '../locale';
 import type { LocalizedValue, Scope } from '../types';
 import {
   type AssetFile,
@@ -264,6 +264,11 @@ export interface DeliveredAssetOptions {
   readonly renditions: readonly string[];
   /** Flattens title, description and alt text to one locale, with the space's fallbacks. */
   readonly locale?: { readonly requested: string; readonly config: LocaleConfig };
+  /**
+   * Without `locale`: the space as Delivery sees it, so each all-locale map leaves out the locales
+   * it doesn't deliver. Absent (Preview), every locale is served.
+   */
+  readonly delivered?: LocaleConfig;
 }
 
 /**
@@ -275,7 +280,8 @@ export function deliveredAsset(
   opts: DeliveredAssetOptions,
 ): DeliveredAsset {
   const text = (value: LocalizedValue): DeliveredText => {
-    if (!opts.locale) return value;
+    if (!opts.locale)
+      return opts.delivered ? withoutUndeliveredLocales(value, opts.delivered) : value;
     const v = resolveLocalizedValue(value, opts.locale.config, opts.locale.requested);
     return typeof v === 'string' ? v : null;
   };

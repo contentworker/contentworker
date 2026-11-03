@@ -117,4 +117,28 @@ describe('locale settings over HTTP', () => {
     const back = await app.request(`${D}/${id}?locale=de-DE`, { headers: cda });
     expect(((await back.json()) as { fields: { text: string } }).fields.text).toBe('Hallo');
   });
+
+  it('neither finds nor quotes a locale turned off, on REST /search and GraphQL search', async () => {
+    const D = '/delivery/s1/main';
+    const hits = async () =>
+      (
+        (await (
+          await app.request(`${D}/search?q=hallo&mode=lexical`, { headers: cda })
+        ).json()) as { hits: { entryId: string }[] }
+      ).hits.map((h) => h.entryId);
+    const graph = async () => {
+      const res = await app.request(`${D}/graphql`, {
+        method: 'POST',
+        headers: { ...cda, ...json },
+        body: JSON.stringify({ query: '{ search(query: "hallo") { entryId snippet } }' }),
+      });
+      return ((await res.json()) as { data: { search: { entryId: string }[] } }).data.search;
+    };
+    expect(await hits()).toEqual([id]);
+    expect((await graph()).map((h) => h.entryId)).toEqual([id]);
+
+    await setSettings(cma, { 'de-DE': { delivered: false } });
+    expect(await hits()).toEqual([]);
+    expect(await graph()).toEqual([]);
+  });
 });

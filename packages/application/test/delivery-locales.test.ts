@@ -7,29 +7,45 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import {
+  FakeBlobStore,
   FixedClock,
   InMemoryCache,
   InMemoryContentStore,
+  InMemoryEventBus,
+  InMemoryVectorStore,
+  LocalEmbeddingsProvider,
   RecordingWebhookSender,
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  addToAssetCollection,
   consumeEvent,
+  createAsset,
+  createAssetCollection,
   createContentType,
   createEntry,
   createSpace,
   createTag,
+  deliveredSearch,
+  deliveryGraphResolvers,
   epochTag,
+  getDeliveredAsset,
+  getDeliveredCollection,
   getLocaleSettings,
+  getPreviewAsset,
   getPreviewEntry,
   getPublishedEntry,
+  indexEntryEmbeddings,
+  listDeliveredAssets,
   listDeliveredSitemap,
   listDeliveredTags,
   listPublishedEntries,
+  publishAsset,
   publishContentType,
   publishEntry,
+  setAssetMetadata,
   setLocaleSettings,
 } from '../src/index';
 
@@ -180,5 +196,168 @@ describe('Delivery with a locale turned off', () => {
     const [tag] = await listDeliveredTags(ctx, scope);
     expect(tag?.labels).toEqual({ en: 'News', ar: 'أخبار' });
     await expect(listDeliveredTags(ctx, scope, { locale: 'fr' })).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe('every Delivery output with a locale turned off', () => {
+  /** A published image titled and described in en, fr and ar. */
+  async function frenchAsset() {
+    const blob = new FakeBlobStore();
+    const { asset } = await createAsset(ctx, blob, scope, {
+      fileName: 'hero.jpg',
+      contentType: 'image/jpeg',
+      title: { en: 'Hero', fr: 'Héros', ar: 'بطل' },
+    });
+    await store.assets.save(scope, { ...asset, file: { ...asset.file, size: 10, width: 10 } });
+    await setAssetMetadata(ctx, scope, asset.id, { altText: { en: 'A hero', fr: 'Un héros' } });
+    await publishAsset(ctx, scope, asset.id);
+    return { id: asset.id, blob };
+  }
+
+  it('leaves the locale out of asset text: one, a page, a collection and an include', async () => {
+    const { id, blob } = await frenchAsset();
+    await createContentType(ctx, scope, {
+      apiId: 'card',
+      name: 'Card',
+      displayField: 'heading',
+      fields: [
+        field({ apiId: 'heading', type: 'Symbol' }),
+        field({ apiId: 'image', type: 'Link', linkType: 'Asset', localized: false }),
+      ],
+    });
+    await publishContentType(ctx, scope, 'card');
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'card',
+      fields: { heading: { en: 'Card' }, image: { en: { id, linkType: 'Asset' } } },
+    });
+    await publishEntry(ctx, scope, entry.id);
+    const collection = await createAssetCollection(ctx, scope, { name: 'Heroes' });
+    await addToAssetCollection(ctx, scope, collection.id, [id]);
+    // Delivered before: fr is there.
+    expect((await getDeliveredAsset(ctx, scope, id)).title).toHaveProperty('fr');
+
+    await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
+    const one = await getDeliveredAsset(ctx, scope, id);
+    expect(one.title).toEqual({ en: 'Hero', ar: 'بطل' });
+    expect(one.altText).toEqual({ en: 'A hero' });
+    const [listed] = (await listDeliveredAssets(ctx, scope)).items;
+    expect(listed?.title).toEqual({ en: 'Hero', ar: 'بطل' });
+    const [member] = (await getDeliveredCollection(ctx, scope, collection.id)).items;
+    expect(member?.title).toEqual({ en: 'Hero', ar: 'بطل' });
+    const card = await getPublishedEntry(ctx, scope, entry.id, { include: 1 });
+    const embedded = (card.fields.image as Record<string, unknown>).en as { title: unknown };
+    expect(embedded.title).toEqual({ en: 'Hero', ar: 'بطل' });
+    // Named, it is refused; Preview still shows editors every locale.
+    await expect(getDeliveredAsset(ctx, scope, id, { locale: 'fr' })).rejects.toThrow(
+      NotFoundError,
+    );
+    expect((await getPreviewAsset(ctx, blob, scope, id)).title).toHaveProperty('fr', 'Héros');
+  });
+
+  it('gives GraphQL nothing for the locale: no asset text, no fallback under its name', async () => {
+    const { id } = await frenchAsset();
+    await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
+    const reader: Principal = { spaceId: 'site', kind: 'cda', scopes: [SCOPES.deliveryRead] };
+    const resolvers = deliveryGraphResolvers(ctx, scope, reader, { rag: undefined });
+    const found = await resolvers.asset(id);
+    expect(found?.asset.title).toEqual({ en: 'Hero', ar: 'بطل' });
+    // The raw map, as a field resolver would hand it over: fr is never read, nor fallen back from.
+    const title = { en: 'Hero', fr: 'Héros' };
+    expect(await resolvers.localize(title, 'fr')).toBeNull();
+    expect(await resolvers.localize(title, 'en')).toBe('Hero');
+    expect(await resolvers.localize(title)).toBe('Hero');
+  });
+
+  it('strips the locale from an entry.published fact before a live subscriber sees it', async () => {
+    await seed();
+    await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
+    const event = store.allEvents().find((e) => e.type === 'entry.published');
+    const bus = new InMemoryEventBus();
+    const seen: unknown[] = [];
+    bus.subscribe('entry.published', async (e) => {
+      seen.push('fields' in e ? e.fields : null);
+    });
+    const deps = { sender: new RecordingWebhookSender(), bus };
+    await consumeEvent(ctx, deps, event as never);
+    expect(seen).toEqual([{ title: { en: 'Hello', 'fr-CA': 'Allô' }, slug: { en: 'hello' } }]);
+    // The stored fact itself is untouched: webhooks and the outbox keep what was published.
+    expect(event && 'fields' in event ? event.fields.title : null).toHaveProperty('fr');
+  });
+
+  it('neither matches nor quotes the locale in search: lexical, semantic and GraphQL', async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'body',
+      fields: [field({ apiId: 'body', type: 'Text' })],
+    });
+    await publishContentType(ctx, scope, 'note');
+    const rag = { embeddings: new LocalEmbeddingsProvider(16), vectors: new InMemoryVectorStore() };
+    const note = async (body: Record<string, string>) => {
+      const { entry } = await createEntry(ctx, scope, {
+        contentTypeApiId: 'note',
+        fields: { body },
+      });
+      await publishEntry(ctx, scope, entry.id);
+      await indexEntryEmbeddings(rag, scope, {
+        entryId: entry.id,
+        fields: { body },
+        entryVersion: 1,
+      });
+      return entry.id;
+    };
+    const onlyFrench = await note({ en: 'Weather report', fr: 'fromage fromage fromage' });
+    const both = await note({ en: 'fromage on toast', fr: 'fromage fromage fromage fromage' });
+    const before = await deliveredSearch(undefined, ctx, scope, 'fromage', { mode: 'lexical' });
+    expect(before.map((h) => h.entryId).sort()).toEqual([onlyFrench, both].sort());
+
+    await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
+    const lexical = await deliveredSearch(undefined, ctx, scope, 'fromage', { mode: 'lexical' });
+    expect(lexical.map((h) => h.entryId)).toEqual([both]);
+    expect(lexical[0]?.snippet).toBe('fromage on toast');
+    // The vector leg: a French chunk is no hit, an English one still is.
+    const semantic = await deliveredSearch(rag, ctx, scope, 'fromage fromage fromage', {
+      mode: 'semantic',
+      topK: 10,
+    });
+    expect(semantic.map((h) => h.snippet)).not.toContain('fromage fromage fromage');
+    expect(semantic.every((h) => !h.snippet.startsWith('fromage fromage'))).toBe(true);
+    const hybrid = await deliveredSearch(rag, ctx, scope, 'fromage');
+    expect(hybrid.every((h) => !h.snippet.includes('fromage fromage'))).toBe(true);
+    expect(hybrid.map((h) => h.entryId)).toContain(both);
+    const reader: Principal = { spaceId: 'site', kind: 'cda', scopes: Object.values(SCOPES) };
+    const graph = deliveryGraphResolvers(ctx, scope, reader, { rag: undefined });
+    expect((await graph.search('fromage')).map((h) => h.entryId)).toEqual([both]);
+  });
+
+  it('never filters, orders or matches `query=` on the locale’s values', async () => {
+    const hello = await seed();
+    const zed = (
+      await createEntry(ctx, scope, {
+        contentTypeApiId: 'page',
+        fields: { title: { en: 'Zed' }, slug: { en: 'zed' } },
+      })
+    ).entry.id;
+    await publishEntry(ctx, scope, zed);
+    // Only French has a title: the any-locale fallback used to compare it.
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: { title: { fr: 'Seulement' }, slug: { en: 'only' } },
+    });
+    await publishEntry(ctx, scope, entry.id);
+    const filtered = (where: Record<string, unknown>) =>
+      listPublishedEntries(ctx, scope, { contentTypeApiId: 'page', ...where });
+    const byTitle = { filters: [{ field: 'title', op: 'eq' as const, value: 'Seulement' }] };
+    expect((await filtered(byTitle)).map((e) => e.id)).toEqual([entry.id]);
+    const ascending = { order: [{ field: 'title', direction: 'asc' as const }] };
+    expect((await filtered(ascending)).map((e) => e.id)).toEqual([hello, entry.id, zed]);
+
+    await setLocaleSettings(ctx, admin, scope, { fr: { delivered: false } });
+    expect(await filtered(byTitle)).toEqual([]);
+    expect(await filtered({ search: 'seulement' })).toEqual([]);
+    const exists = { filters: [{ field: 'title', op: 'exists' as const, value: false }] };
+    expect((await filtered(exists)).map((e) => e.id)).toEqual([entry.id]);
+    // Ordered by title, the French-only entry has none: it sorts last, not as "Seulement".
+    expect((await filtered(ascending)).map((e) => e.id)).toEqual([hello, zed, entry.id]);
   });
 });

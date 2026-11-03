@@ -563,6 +563,8 @@ export interface VectorRow {
 
 export interface VectorMatch {
   readonly entryId: string;
+  /** The locale the chunk's text is in (absent from a store that never recorded it). */
+  readonly locale?: string;
   readonly chunkText: string;
   readonly score: number;
 }

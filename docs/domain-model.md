@@ -547,7 +547,15 @@ default always, any other unless `delivered: false`) and which way its text runs
 Delivery reads the space through `deliveredLocaleConfig`: undelivered locales leave `locales`, and
 each fallback is re-pointed past them (`fr-CA → fr → en` with `fr` off is `fr-CA → en`), so no
 render, sitemap alternate, menu or label reaches their values; `withoutUndeliveredLocales` drops
-them from all-locale maps. A request naming an undelivered locale is a `NotFoundError` (404),
+them from all-locale maps (entry fields, taxonomy labels, and asset title, description and alt
+text, alone or embedded by `include`). The same holds on every other Delivery output: GraphQL's
+`localize` answers `null` for an undelivered locale; list filters, ordering and `query=` skip
+their values (`hiddenLocales` on the store query, so the any-locale fallback never compares one);
+Delivery search (`deliveredSearch`, REST `/search` and GraphQL `search`) drops a vector chunk in
+an undelivered locale and re-checks and re-ranks each lexical hit on its delivered text alone,
+quoting only that in snippets; and the queue consumer strips undelivered locales from an
+`entry.published` before the LiveHub fans it out to live subscribers (`liveEventOf`; the object
+holds no store, so the consumer writes the filtered copy once). A request naming an undelivered locale is a `NotFoundError` (404),
 rather than a fallback, so a front end leaves the route out instead of serving another language
 under it; a locale the space doesn't have still resolves through the default, as before. Preview
 and Management read every locale. `setLocaleSettings` (`space:admin`) writes the settings and a
