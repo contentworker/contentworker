@@ -747,4 +747,94 @@ describe('EntriesList trash jobs', () => {
     const bar = screen.getByRole('group', { name: 'Selected entries' });
     expect(within(bar).getByText('1 selected')).toBeTruthy();
   });
+
+  it('sends Move to trash to the assistant as one job card, and follows the job it started', async () => {
+    const edit = vi.fn(async (_tool: string, input: unknown) => {
+      const { entryIds } = input as { entryIds: string[] };
+      return { output: jobOf('trash', { totalItems: entryIds.length }) };
+    });
+    assistant.edit = edit;
+    setup();
+    await tick('About us');
+    await tick('Careers');
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    await screen.findByText('Trashed 2 entries', { selector: '[role="status"]' });
+    expect(edit).toHaveBeenCalledExactlyOnceWith(
+      'bulk_job_start',
+      { action: 'trash', entryIds: ['e-live', 'e-live2'] },
+      'Move 2 entries to the trash',
+    );
+    // The card was the confirm: no dialog of the page's own, and nothing started a second time.
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(client.startEntryBulkJob).not.toHaveBeenCalled();
+  });
+
+  it('sends Delete permanently to the assistant’s card, and does nothing when it is declined', async () => {
+    const edit = vi.fn(async () => ({ declined: true }));
+    assistant.edit = edit;
+    setup(withTrash);
+    await openTrash();
+    await tick('Old promo');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently…' }));
+    await waitFor(() =>
+      expect(edit).toHaveBeenCalledWith(
+        'bulk_job_start',
+        { action: 'purge', entryIds: ['t-1'] },
+        'Permanently delete 1 entry',
+      ),
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Bulk job' })).toBeNull();
+    expect(client.startEntryBulkJob).not.toHaveBeenCalled();
+    expect(screen.getByText('1 selected')).toBeTruthy();
+  });
+
+  it('restores straight through the API even with the assistant there, and focuses Stop', async () => {
+    const edit = vi.fn();
+    assistant.edit = edit;
+    client.startEntryBulkJob.mockResolvedValueOnce(
+      jobOf('restore', { status: 'running', totalItems: 1, completedChunks: 0, succeeded: 0 }),
+    );
+    setup(withTrash);
+    await openTrash();
+    await tick('Old promo');
+    const restore = screen.getByRole('button', { name: 'Restore selected' });
+    // Enabled once the session's access has been read.
+    await waitFor(() => expect(restore).toHaveProperty('disabled', false));
+    restore.focus();
+    fireEvent.click(restore);
+    await screen.findByText('Restoring 1 entry…');
+    expect(edit).not.toHaveBeenCalled();
+    // The bar's button now waits: focus moved to the job's Stop, not the page.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Stop' })),
+    );
+  });
+
+  it('counts the failures it can’t name, and leaves ticked only what is still listed', async () => {
+    const { ApiError } = await import('~/cms/lib/management');
+    client.startEntryBulkJob.mockResolvedValueOnce(
+      jobOf('purge', { totalItems: 2, succeeded: 1, failed: 1 }),
+    );
+    client.getBulkJobReport.mockRejectedValueOnce(new ApiError(403, 'Forbidden'));
+    let purged = false;
+    setup(async (_type, query) => ({
+      items: query?.trashed ? TRASHED.filter((e) => !(purged && e.id === 't-1')) : ENTRIES,
+    }));
+    await openTrash();
+    await tick('Old promo');
+    await tick('Retired page');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently…' }));
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Permanently delete 2 entries?',
+    });
+    purged = true;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete permanently' }));
+    await screen.findByText('1 entry failed');
+    expect(screen.getByText(/report couldn’t be read \(Forbidden\)/)).toBeTruthy();
+    // Old promo went; Retired page, still listed, stays ticked to try again.
+    await waitFor(() => expect(screen.queryByText('Old promo')).toBeNull());
+    const bar = screen.getByRole('group', { name: 'Selected entries' });
+    expect(within(bar).getByText('1 selected')).toBeTruthy();
+  });
 });

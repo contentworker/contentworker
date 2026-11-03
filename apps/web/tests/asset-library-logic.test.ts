@@ -7,7 +7,6 @@ import {
   allPages,
   assetLibraryQuery,
   assetSearchQuery,
-  bulkSummary,
   chunked,
   facetChips,
   fileSize,
@@ -15,7 +14,6 @@ import {
   folderRows,
   ingestState,
   isoToLocalInput,
-  jobFailures,
   localInputToIso,
   movedAnnouncement,
   moveItem,
@@ -30,6 +28,7 @@ import {
   zipRunning,
   zipSummary,
 } from '~/cms/lib/assets';
+import { bulkSummary, jobFailures } from '~/cms/lib/bulk-jobs';
 import type { AssetZip } from '~/cms/lib/management';
 
 const folder = (id: string, name: string, path: string, parentId?: string): AssetFolder => ({

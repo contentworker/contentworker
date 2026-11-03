@@ -1938,11 +1938,6 @@ export function createManagementClient(
       return req('POST', `${mgmt}/imports/space-export`, input);
     },
     /**
-     * Acts on many entries as a resumable job on the server (an unrestricted content:publish
-     * role): follow it with {@link getBulkJob}, and read what failed with {@link getBulkJobReport}.
-     * Purging takes only entries already in the trash, and refuses one published entries link to.
-     */
-    /**
      * Who the session is in this space: its scopes, and whether its role is limited to some content
      * types (`restricted`). A person's role is per space, so the admin asks before offering an
      * action only some roles may take.
@@ -1950,6 +1945,11 @@ export function createManagementClient(
     getSpaceAccess(): Promise<PrincipalInfo> {
       return req('GET', `${spaceBase}/auth/me`);
     },
+    /**
+     * Acts on many entries as a resumable job on the server (an unrestricted content:publish
+     * role): follow it with {@link getBulkJob}, and read what failed with {@link getBulkJobReport}.
+     * Purging takes only entries already in the trash, and refuses one published entries link to.
+     */
     startEntryBulkJob(action: EntryBulkJobAction, entryIds: string[]): Promise<BulkJobSummary> {
       return req('POST', `${mgmt}/bulk/jobs`, { action, entryIds });
     },

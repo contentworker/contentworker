@@ -403,12 +403,28 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   ticked row, and always on touch), and the ⋯ menu. Title, Status and Updated sort from their
   headers; Updated flips between newest first and the default, least recently changed first.
   **Ticking** anything swaps the filter bar for a bulk bar (`role="group"`, "2 selected · Publish
-  selected · Unpublish selected · Clear"), held under the shell's header, offering only what
-  applies (no Publish when every ticked entry is live as it is, no Unpublish when none is live) and
-  sending only the entries it changes. A polite sr-only line says "2 entries selected". The header
-  checkbox is mixed while some are ticked. A new order or a search leaves ticked only what it
-  still shows. Bulk changes confirm once, naming the first five entries and counting the rest
-  ("and 3 more"); what failed stays ticked and is named in an Alert. The entry editor: the title wraps; under it an action bar (status,
+  selected · Unpublish selected · Move to trash · Clear"), held under the shell's header, offering
+  only what applies (no Publish when every ticked entry is live as it is, no Unpublish when none is
+  live) and sending only the entries it changes. A polite sr-only line says "2 entries selected".
+  The header checkbox is mixed while some are ticked. A new order or a search leaves ticked only
+  what it still shows. Bulk changes confirm once, naming the first five entries and counting the
+  rest ("and 3 more"); what failed stays ticked and is named in an Alert. **The trash** (View
+  trash) is the same table with each title as plain text, a row's outline Restore and "Delete
+  permanently…" in its ⋯ menu (a dialog naming the entry); its rows tick too, and its bulk bar
+  offers Restore selected and Delete permanently… (both outline). Move to trash, Restore selected
+  and Delete permanently… run as a **bulk job** on the server, over everything ticked: Move to
+  trash ("Move 2 entries to the trash?", saying live ones are unpublished first) and Delete
+  permanently ("Permanently delete 2 entries?", naming them, saying it can't be undone and that an
+  entry published entries link to is kept; Keep in trash, then a destructive Delete permanently)
+  confirm at the assistant's card, or the page's own dialog without it; Restore selected runs at
+  once, as a row's Restore does. A role that can't start a job (not content:publish over every
+  type) sees the three disabled, with the reason under the bar (`aria-describedby`). The job shows
+  as the asset library's card does ("Bulk job": "Trashing 2 entries…", then "Trashed 2 entries",
+  its stamp, the `Progress` of batches, a ghost Stop asked in place), and Stop takes focus as it
+  arrives, since the bar's buttons now wait. When it ends the list reloads, only what it still
+  lists stays ticked, and what failed is named in the Alert from the job's report (a report that
+  can't be read gives the count and why, in a destructive Alert). A job keeps running, and its
+  card stays, when another content type is opened. The entry editor: the title wraps; under it an action bar (status,
   version and save state, then the one primary verb for the state: Save draft for a new entry,
   Publish while anything isn't live, a disabled "Published" when live and clean) stays under the
   shell's header from md, and below md its buttons sit above the tab bar. The secondary actions
@@ -580,6 +596,15 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   **Settings** is a sheet (from the side; the bottom on a phone) whose form is drawn from its
   manifest's fields: a secret shows an `idle` Set or Not set stamp with Set/Replace and Clear,
   never a value; a refusal sits beside its field and takes focus.
+  **Trash** (Workspace) is one section: a segmented Keep until deleted / Delete after a while
+  (off by default), and when on a "Days in the trash" field (1 to 3650; an out-of-range value is
+  said under it, tied to it by `aria-describedby`), with a muted line saying what happens (an
+  hourly sweep deletes for good entries in the trash longer than that, with their history, and
+  keeps one published entries link to). Save turning it on, or shortening it, asks in place
+  ("Delete trashed entries after 14 days?", Keep as is, "Save and delete"), since trash already
+  that old goes at the next sweep; turning it off saves at once. While it loads it is a skeleton
+  line with a sr-only status, `aria-busy`; a failed load is a destructive Alert with Retry, never
+  a setting that looks off.
 - **Workflows list:** a table, flush in one section (stacking into cards below md): each
   workflow's name linked to its editor with its description and steps under it; what starts its
   published version (from the API's `publishedTrigger`, with "Draft starts on …" when the draft

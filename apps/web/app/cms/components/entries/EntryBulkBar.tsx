@@ -90,7 +90,8 @@ export function EntryBulkBar(props: {
         <Button
           type="button"
           size="sm"
-          variant="destructive"
+          // Outline like its neighbours: the red belongs to the confirm that follows, not the ask.
+          variant="outline"
           disabled={jobsDisabled}
           onClick={props.onPurge}
           {...described}

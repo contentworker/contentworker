@@ -3,7 +3,7 @@ import { Progress } from '@contentworker/ui/progress';
 import { useEffect, useRef } from 'react';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
-import { bulkSummary, jobOutcome } from '~/cms/lib/assets';
+import { bulkSummary, jobOutcome } from '~/cms/lib/bulk-jobs';
 import { plural } from '~/cms/lib/format';
 import type { BulkJobSummary } from '~/cms/lib/management';
 
@@ -33,12 +33,26 @@ export function BulkJobProgress(props: {
   onCancel?: () => void;
   /** A stop is on its way to the server. */
   cancelling?: boolean;
+  /**
+   * Take focus when the card arrives, if nothing else holds it: the action that started the job
+   * now waits (disabled), and focus must not fall to the page. Focus elsewhere (the assistant's
+   * panel, a field) stays where it is.
+   */
+  takeFocus?: boolean;
 }) {
   const { job, verbs, nouns } = props;
   const running = job.status === 'running';
   const cancelled = job.status === 'cancelled';
   const dismiss = useRef<HTMLButtonElement>(null);
+  const stop = useRef<HTMLButtonElement>(null);
   const card = useRef<HTMLElement>(null);
+  // Once, as it arrives: on Stop while it runs, else (it finished at once) on Dismiss.
+  useEffect(() => {
+    if (!props.takeFocus) return;
+    const at = document.activeElement;
+    const idle = !at || at === document.body || (at instanceof HTMLButtonElement && at.disabled);
+    if (idle) (stop.current ?? dismiss.current)?.focus();
+  }, []);
   useEffect(() => {
     if (running) return;
     // Its Stop (or the confirm in its place) went with the job: don't drop focus on the page.
@@ -72,6 +86,7 @@ export function BulkJobProgress(props: {
           >
             {(ask) => (
               <Button
+                ref={stop}
                 type="button"
                 size="xs"
                 variant="ghost"

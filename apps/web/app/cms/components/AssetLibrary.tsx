@@ -51,14 +51,11 @@ import {
   assetName,
   assetSearchQuery,
   BULK_VERBS,
-  bulkSummary,
   chunked,
   type FacetChip,
   type FolderSelection,
   facetChips,
   fileSize,
-  jobFailures,
-  jobOutcome,
   RIGHTS_BADGE,
   rightsState,
   runBulk,
@@ -66,6 +63,7 @@ import {
   uploadInParts,
   uploadsInParts,
 } from '~/cms/lib/assets';
+import { bulkSummary, jobFailures, jobOutcome } from '~/cms/lib/bulk-jobs';
 import { humanize, plural } from '~/cms/lib/format';
 import { useNow } from '~/cms/lib/use-now';
 import { useClient } from '../lib/client-context';

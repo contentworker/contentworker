@@ -41,8 +41,8 @@ import {
 } from '../components/entries/EntriesTable';
 import { EntryBulkBar } from '../components/entries/EntryBulkBar';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
-import { bulkSummary, jobFailures, jobOutcome } from '../lib/assets';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
+import { bulkSummary, jobFailures, jobOutcome } from '../lib/bulk-jobs';
 import { useClient } from '../lib/client-context';
 import { plural } from '../lib/format';
 import {
@@ -152,13 +152,15 @@ const CONFIRM_COPY: Record<
 };
 
 /**
- * Entries table for one content type, with bulk publishing and a draft/published diff.
+ * Entries table for one content type, with bulk publishing, the trash and a draft/published diff.
  *
  * Its edits go through the assistant (`useAssistantEdit`): publishing, unpublishing, the trash,
- * deleting for good and bulk changes stop at a confirm card in its panel, and run once confirmed;
- * duplicating and restoring from the trash run at once and leave a line. When the assistant can't
- * be reached, each goes straight to the API as before (bulk changes and deleting for good confirm
- * in the page's own dialogs). Undo in a toast always goes straight to the API.
+ * deleting for good and bulk changes (bulk publishing, and moving to the trash or deleting for
+ * good as a job) stop at a confirm card in its panel, and run once confirmed; duplicating and
+ * restoring from the trash run at once and leave a line. When the assistant can't be reached,
+ * each goes straight to the API as before (bulk changes and deleting for good confirm in the
+ * page's own dialogs). Restoring several from the trash always goes straight to the API, as a job,
+ * with no confirm. Undo in a toast always goes straight to the API.
  */
 export function EntriesList() {
   const { typeId } = useParams();
@@ -193,6 +195,12 @@ export function EntriesList() {
   const [bulkFailures, setBulkFailures] = useState<
     { id: string; title: string; error?: string }[] | null
   >(null);
+  // How many a finished job failed when its report couldn't be read, so they can't be named, and
+  // why it couldn't.
+  const [unnamedFailures, setUnnamedFailures] = useState<{
+    readonly count: number;
+    readonly reason: string;
+  } | null>(null);
   // Filter state is bound to the type it was authored for and reset in-render
   // when the type changes, so a stale filter (naming another type's fields)
   // can never be combined with the new type's query key — not even for the
@@ -209,7 +217,9 @@ export function EntriesList() {
     setConfirmPublish(null);
     setConfirmBulk(null);
     setBulkFailures(null);
-    setEntryJob(null);
+    setUnnamedFailures(null);
+    // A running job is kept: it goes on on the server whatever is open, and its card (and the
+    // reload when it ends) still say what it did. Only what is ticked is per type.
   }
   const query = filterState.typeId === typeId ? filterState.query : {};
   const setQuery = (q: EntryListQuery) => setFilterState({ typeId, query: q });
@@ -300,16 +310,33 @@ export function EntriesList() {
     if (job.failed === 0 && job.status !== 'cancelled') setPicked(new Set());
     // Read before the list reloads: what succeeded leaves this view.
     const titles = new Map(entries.map((e) => [e.id, titleOf(e.id)]));
-    void Promise.all([
+    // Ticked is only ever what the reloaded list shows: what the job moved out of this view (or
+    // a job started on another type's list) is never left ticked unseen.
+    const listed = () =>
+      new Set(
+        dedupe(queryClient.getQueryData<InfiniteData<EntryPage>>(entriesKey)?.pages).map(
+          (e) => e.id,
+        ),
+      );
+    const keepListed = (ids?: readonly string[]) => {
+      const shown = listed();
+      setPicked((prev) => {
+        const next = new Set([...(ids ?? prev)].filter((id) => shown.has(id)));
+        return next.size === prev.size && [...next].every((id) => prev.has(id)) ? prev : next;
+      });
+    };
+    const reloaded = Promise.all([
       queryClient.invalidateQueries({ queryKey: keys.entriesRoot }),
       queryClient.invalidateQueries({ queryKey: keys.entryRoot }),
     ]);
-    if (job.failed === 0) return;
-    client
-      .getBulkJobReport(job.id)
-      .then((report) => {
+    if (job.failed === 0) {
+      void reloaded.then(() => keepListed());
+      return;
+    }
+    Promise.all([client.getBulkJobReport(job.id), reloaded])
+      .then(([report]) => {
         const failures = jobFailures(report, titles);
-        setPicked(new Set(failures.map((f) => f.id)));
+        keepListed(failures.map((f) => f.id));
         setBulkFailures(
           failures.map((f) => ({
             id: f.id,
@@ -318,7 +345,13 @@ export function EntriesList() {
           })),
         );
       })
-      .catch((e) => toast.error(`The failures couldn’t be read: ${apiErrorMessage(e)}`));
+      .catch(async (e) => {
+        // Without the report the failures can't be named: say how many, and leave ticked what is
+        // still listed, which is what the job didn't move.
+        await reloaded.catch(() => {});
+        keepListed();
+        setUnnamedFailures({ count: job.failed, reason: apiErrorMessage(e) });
+      });
   }, [finishedJob]);
 
   const pick = (ids: readonly string[], value: boolean) =>
@@ -524,16 +557,35 @@ export function EntriesList() {
   };
 
   // The trash's bulk actions run as a job on the server over everything ticked, and this tab
-  // watches it, as the asset library does. Moving to the trash and deleting for good confirm in
-  // the page's own dialog first (the assistant has no card for a bulk job); restoring runs at
-  // once, as a row's Restore does. The bar waits while a job runs.
+  // watches it, as the asset library does. Moving to the trash and deleting for good stop at the
+  // assistant's card (`bulk_job_start`), whose answer is the job, followed here as if this page
+  // had started it; without the assistant, the page's own dialog asks. Restoring runs at once,
+  // straight through the API, as a row's Restore does. The bar waits while a job runs.
+  const followJob = (action: TrashJobAction, job: BulkJobSummary) => {
+    setBulkFailures(null);
+    setUnnamedFailures(null);
+    setEntryJob({ action, job });
+  };
   const startJob = (action: TrashJobAction) => {
     const ids = [...picked];
     if (ids.length === 0) return;
-    setBulkFailures(null);
+    return run(async () => followJob(action, await client.startEntryBulkJob(action, ids)));
+  };
+  const requestJob = (action: 'trash' | 'purge') => {
+    const ids = [...picked];
+    if (ids.length === 0) return;
+    const many = plural(ids.length, 'entry', 'entries');
     return run(async () => {
-      const job = await client.startEntryBulkJob(action, ids);
-      setEntryJob({ action, job });
+      const r = await edit<BulkJobSummary>(
+        'bulk_job_start',
+        { action, entryIds: ids },
+        action === 'trash' ? `Move ${many} to the trash` : `Permanently delete ${many}`,
+      );
+      if (r === null) {
+        setConfirmBulk(action);
+        return;
+      }
+      if ('output' in r) followJob(action, r.output);
     });
   };
   const jobRunning = entryJob?.job.status === 'running';
@@ -810,7 +862,7 @@ export function EntriesList() {
               jobsPending={jobsPending}
               onRestore={() => void startJob('restore')}
               // Deleting for good is always asked first, by name: there is no way back.
-              onPurge={() => setConfirmBulk('purge')}
+              onPurge={() => void requestJob('purge')}
               onClear={() => setPicked(new Set())}
             />
           ) : (
@@ -821,7 +873,7 @@ export function EntriesList() {
               busy={busy || jobRunning}
               onPublish={() => void requestBulk('publish')}
               onUnpublish={() => void requestBulk('unpublish')}
-              onTrash={() => setConfirmBulk('trash')}
+              onTrash={() => void requestJob('trash')}
               jobsRefusal={jobsRefusal}
               jobsPending={jobsPending}
               onClear={() => setPicked(new Set())}
@@ -844,7 +896,30 @@ export function EntriesList() {
           onDismiss={() => setEntryJob(null)}
           onCancel={() => void cancelJob(entryJob.job.id)}
           cancelling={cancellingJob}
+          // Started from the bar, whose buttons now wait: focus goes to Stop, not the page.
+          takeFocus
         />
+      )}
+
+      {unnamedFailures && (
+        <Alert variant="destructive">
+          <AlertTitle>{plural(unnamedFailures.count, 'entry', 'entries')} failed</AlertTitle>
+          <AlertDescription>
+            <p>
+              The job’s report couldn’t be read ({unnamedFailures.reason}), so they can’t be named
+              here. Those still listed stay ticked.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={() => setUnnamedFailures(null)}
+            >
+              Dismiss
+            </Button>
+          </AlertDescription>
+        </Alert>
       )}
 
       {bulkFailures && bulkFailures.length > 0 && (

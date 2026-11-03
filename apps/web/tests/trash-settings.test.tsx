@@ -16,11 +16,13 @@ const refetchers = new Set<() => void>();
 vi.mock('~/cms/lib/queries', () => ({
   useScopedQuery: <T,>(segments: readonly unknown[], queryFn: () => Promise<T>) => {
     const [data, setData] = useState<T>();
+    const [error, setError] = useState<unknown>(null);
     const fn = useRef(queryFn);
     fn.current = queryFn;
     const key = JSON.stringify(segments);
     const load = useCallback(() => {
-      fn.current().then(setData);
+      setError(null);
+      fn.current().then(setData, setError);
     }, [key]);
     useEffect(() => {
       load();
@@ -29,7 +31,7 @@ vi.mock('~/cms/lib/queries', () => ({
         refetchers.delete(load);
       };
     }, [load]);
-    return { data };
+    return { data, isError: error !== null, error, refetch: async () => load() };
   },
   useInvalidate: () => async () => {
     for (const r of refetchers) r();
@@ -106,14 +108,17 @@ describe('Settings → Trash', () => {
     expect(client.setTrashSettings).toHaveBeenCalledExactlyOnceWith({ retentionDays: null });
   });
 
-  it('refuses days out of range before asking the API', async () => {
+  it('refuses days out of range before asking the API, and ties the reason to the field', async () => {
     const client = fakeClient(30);
     renderTrash(client);
     const days = await screen.findByLabelText('Days in the trash');
     fireEvent.change(days, { target: { value: '0' } });
-    expect(screen.getByText(/A whole number of days, from 1 to 3650/)).toBeTruthy();
+    const reason = screen.getByText(/A whole number of days, from 1 to 3650/);
     expect(days.getAttribute('aria-invalid')).toBe('true');
+    expect(days.getAttribute('aria-describedby')?.split(' ')).toContain(reason.id);
     expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+    fireEvent.change(days, { target: { value: '7' } });
+    expect(days.getAttribute('aria-describedby')?.split(' ')).not.toContain(reason.id);
   });
 
   it('shows the refusal of a role that may not change it', async () => {
@@ -124,6 +129,37 @@ describe('Settings → Trash', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(client.setTrashSettings).toHaveBeenCalled());
     expect(await screen.findByText(/space:admin/)).toBeTruthy();
+  });
+});
+
+describe('Settings → Trash loading', () => {
+  it('says it is loading, busy, until the setting arrives', async () => {
+    let answer: (v: { retentionDays: number | null }) => void = () => {};
+    const client = fakeClient(null);
+    client.getTrashSettings.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    renderTrash(client);
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('Loading the trash setting…');
+    expect(status.closest('[aria-busy="true"]')).toBeTruthy();
+    answer({ retentionDays: null });
+    await screen.findByRole('radio', { name: 'Keep until deleted' });
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  it('says a failed load as one, with Retry, never as a setting that looks off', async () => {
+    const client = fakeClient(14);
+    client.getTrashSettings.mockRejectedValueOnce(new ApiError(500, 'D1 is unavailable'));
+    renderTrash(client);
+    await screen.findByText('The trash setting didn’t load');
+    expect(screen.getByText('D1 is unavailable')).toBeTruthy();
+    expect(screen.queryByRole('radio', { name: 'Keep until deleted' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect((await screen.findByLabelText('Days in the trash')) as HTMLInputElement).toHaveProperty(
+      'value',
+      '14',
+    );
   });
 });
 

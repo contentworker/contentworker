@@ -1,3 +1,4 @@
+import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
@@ -5,6 +6,7 @@ import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { useEffect, useId, useState } from 'react';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { LoadingStatus } from '~/cms/components/loading';
 import { Section } from '~/cms/components/page';
 import { plural } from '../lib/format';
 import { apiErrorMessage, type ManagementClient } from '../lib/management';
@@ -35,7 +37,10 @@ export function TrashSettings(props: { client: ManagementClient }) {
   const toast = useToast();
   const invalidate = useInvalidate();
   const id = useId();
-  const settings = useScopedQuery(['trash-settings'], () => client.getTrashSettings());
+  // Silent: a failed load is said here, in place, with Retry, not as a toast.
+  const settings = useScopedQuery(['trash-settings'], () => client.getTrashSettings(), {
+    silent: true,
+  });
   const saved = settings.data?.retentionDays;
 
   const [on, setOn] = useState(false);
@@ -74,8 +79,28 @@ export function TrashSettings(props: { client: ManagementClient }) {
 
   return (
     <Section title="Trash" description="How long entries stay in the trash.">
-      {saved === undefined ? (
-        <SkeletonText width="16rem" />
+      {saved === undefined && settings.isError ? (
+        // A failed load is said as one, never as a setting that looks off.
+        <Alert variant="destructive">
+          <AlertTitle>The trash setting didn’t load</AlertTitle>
+          <AlertDescription>
+            <p>{apiErrorMessage(settings.error)}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={() => void settings.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : saved === undefined ? (
+        <div aria-busy="true">
+          <LoadingStatus>Loading the trash setting…</LoadingStatus>
+          <SkeletonText width="16rem" />
+        </div>
       ) : (
         <div className="space-y-4">
           <Segmented
@@ -96,13 +121,13 @@ export function TrashSettings(props: { client: ManagementClient }) {
                   className="w-28"
                   value={days}
                   aria-invalid={invalid || undefined}
-                  aria-describedby={`${id}-note`}
+                  aria-describedby={invalid ? `${id}-error ${id}-note` : `${id}-note`}
                   onChange={(e) => setDays(e.target.value)}
                 />
                 <span className="text-muted-foreground text-sm">days</span>
               </div>
               {invalid ? (
-                <p className="text-destructive text-xs">
+                <p id={`${id}-error`} className="text-destructive text-xs">
                   A whole number of days, from 1 to {MAX_RETENTION_DAYS}.
                 </p>
               ) : null}

@@ -101,6 +101,7 @@ export const ASSISTANT_TOOLS = {
   entries_purge: action('Delete this entry for good', 'Deleted for good'),
   entries_restore_version: action('Restore this version', 'Restored a version'),
   entries_bulk_action: action('Change these entries', 'Changed entries'),
+  bulk_job_start: action('Run a job on these entries', 'Started a job'),
   schedule_action: action('Schedule this change', 'Scheduled'),
   releases_publish: action('Publish this release', 'Published a release'),
 } as const satisfies Record<string, AssistantToolInfo>;
