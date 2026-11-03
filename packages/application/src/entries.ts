@@ -74,6 +74,17 @@ export interface CreateEntryInput {
   readonly authorship?: Pick<Entry, 'createdAt' | 'createdBy' | 'firstPublishedAt'>;
 }
 
+/** How a write's fields are judged. */
+export interface EntryWriteOptions {
+  /**
+   * A whole entry copied from elsewhere (a snapshot or space-export import, a promotion, a CSV or
+   * JSON import, a restored version): judged without previous values, so a field its rules
+   * disable is not held to its default or stored value. The copy carries what the source held;
+   * an interactive write (the API, MCP, AI, plugins) leaves this unset. Not accepted over the API.
+   */
+  readonly copy?: boolean;
+}
+
 export interface EntryView {
   readonly entry: Entry;
   readonly fields: EntryFields;
@@ -84,6 +95,7 @@ export async function createEntry(
   ctx: AppContext,
   scope: Scope,
   input: CreateEntryInput,
+  options: EntryWriteOptions = {},
 ): Promise<EntryView> {
   const contentType = await requireContentType(ctx, scope, input.contentTypeApiId);
   if (contentType.singleton) await assertSingletonFree(ctx.store.entries, scope, contentType);
@@ -95,7 +107,7 @@ export async function createEntry(
     ctx,
     scope,
     contentType,
-    asCreate(contentType, vctx),
+    options.copy ? vctx : asCreate(contentType, vctx),
     { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
     'save',
   );
@@ -293,18 +305,19 @@ export async function updateEntry(
   scope: Scope,
   id: string,
   fields: EntryFields,
+  options: EntryWriteOptions = {},
 ): Promise<EntryView> {
   const found = await ctx.store.entries.get(scope, id);
   if (!found) throw new NotFoundError('Entry', id);
   const contentType = await requireContentType(ctx, scope, found.entry.contentTypeApiId);
   const vctx = await loadValidationContext(ctx, scope);
-  // The stored version is what a disabled field must keep.
+  // The stored version is what a disabled field must keep, unless the whole entry is a copy.
   return saveEntryDraft(
     ctx,
     scope,
     found.entry,
     contentType,
-    { ...vctx, previous: found.fields },
+    options.copy ? vctx : { ...vctx, previous: found.fields },
     fields,
   );
 }

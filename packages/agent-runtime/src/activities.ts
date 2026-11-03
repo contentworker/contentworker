@@ -21,6 +21,7 @@ import {
   fieldStates,
   InvalidStateError,
   NotFoundError,
+  openProposals,
   type Scope,
 } from '@contentworker/domain';
 import type { AIProvider } from '@contentworker/ports';
@@ -38,6 +39,23 @@ const TEXT_TYPES = new Set(['Symbol', 'Text']);
 /** Builds the real (side-effecting) Activities over the core use-cases + AIProvider. */
 export function makeActivities(deps: ActivitiesDeps): Activities {
   const { ctx, ai } = deps;
+
+  /**
+   * The generated values the entry's type leaves open once they are in place, judged with what the
+   * entry stores (`openProposals`): one filled field can hide or disable another. Without an entry
+   * (a repurpose's channel copy), every value.
+   */
+  async function openFor(
+    input: GenerateFieldsInput,
+    fields: EntryFields,
+    locale: string,
+  ): Promise<EntryFields> {
+    if (!input.entryId) return fields;
+    const found = await ctx.store.entries.get(input.scope, input.entryId);
+    const ct =
+      found && (await ctx.store.contentTypes.get(input.scope, found.entry.contentTypeApiId));
+    return found && ct ? openProposals(ct.fields, found.fields, fields, locale) : fields;
+  }
 
   async function defaultLocale(scope: Scope): Promise<string> {
     const config = await ctx.store.spaces.getConfig(scope);
@@ -118,7 +136,7 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
         const value = obj[f.apiId];
         if (typeof value === 'string' && value.trim()) fields[f.apiId] = { [locale]: value };
       }
-      return { fields, usage: result.usage };
+      return { fields: await openFor(input, fields, locale), usage: result.usage };
     },
 
     async applyFields(scope, entryId, enriched, agent) {

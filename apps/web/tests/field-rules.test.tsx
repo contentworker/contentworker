@@ -127,6 +127,42 @@ describe('conditional field rules on the entry form', () => {
     );
   });
 
+  it('names a hidden field that still holds a value, so two fields hiding each other can be cleared', () => {
+    const notEmpty = (sibling: string): FieldRule => ({
+      action: 'hide',
+      when: { field: sibling, operator: 'notEmpty' },
+    });
+    const onSave = vi.fn();
+    render(
+      <EntryForm
+        contentType={{
+          ...LISTING,
+          fields: [
+            field({ apiId: 'title', name: 'Title' }),
+            field({ apiId: 'url', name: 'URL', position: 1, rules: [notEmpty('link')] }),
+            field({ apiId: 'link', name: 'Link', position: 2, rules: [notEmpty('url')] }),
+          ],
+        }}
+        initial={{ title: { 'en-US': 'T' }, url: { 'en-US': 'https://x' }, link: { 'en-US': 'l' } }}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        pickers={{ entries: [], assets: [] }}
+        onSave={onSave}
+        onCancel={() => {}}
+      />,
+    );
+    // Both hidden, both holding a value: neither is drawn as an input, each says so.
+    expect(screen.queryByLabelText('URL')).toBeNull();
+    expect(
+      screen.getByText(/is hidden while Link is not empty, but still holds a value/),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear URL' }));
+    // With URL empty, Link opens; URL, hidden and empty, is drawn no more.
+    expect((screen.getByLabelText('Link') as HTMLInputElement).value).toBe('l');
+    expect(screen.queryByRole('button', { name: 'Clear URL' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear Link' })).toBeNull();
+  });
+
   it('hides a nested field by its component sibling', () => {
     renderForm();
     expect(screen.queryByLabelText('URL')).toBeNull();

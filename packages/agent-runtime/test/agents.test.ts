@@ -96,6 +96,54 @@ describe('P8: durable agents (in-process executor)', () => {
     expect(latest?.createdBy).toBe('agent:enrich');
   });
 
+  it('enrich drops a generated value for a field the other values would hide', async () => {
+    await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
+    await createContentType(ctx, scope, {
+      apiId: 'brief',
+      name: 'Brief',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+        {
+          apiId: 'summary',
+          name: 'Summary',
+          type: 'Text',
+          localized: false,
+          required: false,
+          position: 1,
+        },
+        {
+          apiId: 'teaser',
+          name: 'Teaser',
+          type: 'Text',
+          localized: false,
+          required: false,
+          position: 2,
+          rules: [{ action: 'hide', when: { field: 'summary', operator: 'notEmpty' } }],
+        },
+      ],
+    });
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'brief',
+      fields: { title: { 'en-US': 'B' } },
+    });
+    const ai = new StubAIProvider(() => ({ summary: 'Short', teaser: 'Hidden by the summary' }));
+    const runtime = new InProcessAgentRuntime(makeActivities({ ctx, ai }));
+
+    // Asked for both, given one it may write: too few to apply on its own, so it goes to review.
+    const result = await runtime.run('enrich', { scope, entryId: entry.id, autoApply: true });
+    expect(result.status).not.toBe('completed');
+    const [review] = await ctx.store.agentReviews.list(scope, { entryId: entry.id });
+    expect(review?.proposed).toEqual({ summary: { 'en-US': 'Short' } });
+  });
+
   it('describes each field to the model with its guidance, delimited as data', async () => {
     const id = await seed(ctx);
     const ct = await ctx.store.contentTypes.get(scope, 'post');

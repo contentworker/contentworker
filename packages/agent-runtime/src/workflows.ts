@@ -118,6 +118,7 @@ export async function enrichWorkflow(
     scope: input.scope,
     contentTypeApiId: loaded.contentTypeApiId,
     fields: empty.map(({ hasValue: _, ...f }) => f),
+    entryId: input.entryId,
     context: loaded.text || '(no existing content)',
   });
 
@@ -195,6 +196,7 @@ export async function curateWorkflow(
     scope: input.scope,
     contentTypeApiId: loaded.contentTypeApiId,
     fields: filled.map(({ hasValue: _, ...f }) => f),
+    entryId: input.entryId,
     context: loaded.text,
     instruction:
       'Improve the existing values: fix grammar, tighten wording, and keep meaning and facts unchanged. Return the full improved value for every field.',

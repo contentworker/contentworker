@@ -177,25 +177,45 @@ export function fieldStates(
  * Values with every hidden or disabled top-level field left out, in the default locale: what a
  * model's draft may keep. Hidden values would be content nobody sees, and a disabled field takes
  * no new value. Leaving a value out can open or close another field (a rule on `notEmpty`), so
- * the closed set is recomputed from what remains until it settles; a set of rules that never
- * settles ends on the last pass, which closes more rather than less.
+ * the closed set is recomputed from what remains until it settles. Rules that never settle (two
+ * fields each hidden while the other holds a value) leave out every field any pass closed: more
+ * rather than less, and the same answer whichever pass the loop stopped on.
  */
 export function withoutClosedFields(
   fields: readonly FieldDefinition[],
   values: EntryFields,
   defaultLocale: LocaleCode,
 ): EntryFields {
+  const keep = (shut: ReadonlySet<string>): EntryFields =>
+    Object.fromEntries(Object.entries(values).filter(([apiId]) => !shut.has(apiId)));
+  const seen = new Set<string>();
   let out: EntryFields = values;
-  let closed = '';
+  let closed: string | undefined;
   for (let pass = 0; pass <= fields.length; pass++) {
     const states = fieldStates(fields, out, defaultLocale, defaultLocale);
     const shut = new Set([...states].filter(([, s]) => s.hidden || s.disabled).map(([id]) => id));
+    for (const id of shut) seen.add(id);
     const key = [...shut].sort().join(',');
-    out = Object.fromEntries(Object.entries(values).filter(([apiId]) => !shut.has(apiId)));
-    if (key === closed) break;
+    if (key === closed) return out;
     closed = key;
+    out = keep(shut);
   }
-  return out;
+  return keep(seen);
+}
+
+/**
+ * The proposed values (a model's, say) that may be written over `stored`: each for a field the
+ * type's rules leave open once the proposal is in place. Filling one field can hide or disable
+ * another (a rule on `notEmpty`), so they are judged together, as they will be stored.
+ */
+export function openProposals(
+  fields: readonly FieldDefinition[],
+  stored: EntryFields,
+  proposed: EntryFields,
+  defaultLocale: LocaleCode,
+): EntryFields {
+  const open = withoutClosedFields(fields, { ...stored, ...proposed }, defaultLocale);
+  return Object.fromEntries(Object.entries(proposed).filter(([apiId]) => apiId in open));
 }
 
 /** Equal as values: deep, ignoring key order, with absent and null the same. */

@@ -916,12 +916,19 @@ export async function createSnapshotEntry(
   entry: StagedSnapshotEntry,
 ): Promise<void> {
   if (!(await ctx.store.entries.get(target, entry.id))) {
-    await createEntry(ctx, target, {
-      contentTypeApiId: entry.contentTypeApiId,
-      fields: entry.fields,
-      id: entry.id,
-      ...(entry.authorship ? { authorship: entry.authorship } : {}),
-    });
+    // A copy of the source's entry, judged as the preflight judged it: on what it holds, so a
+    // field its rules disable keeps the source's value (see `EntryWriteOptions.copy`).
+    await createEntry(
+      ctx,
+      target,
+      {
+        contentTypeApiId: entry.contentTypeApiId,
+        fields: entry.fields,
+        id: entry.id,
+        ...(entry.authorship ? { authorship: entry.authorship } : {}),
+      },
+      { copy: true },
+    );
   }
   if (entry.tags.length > 0 || entry.concepts.length > 0) {
     await setEntryMetadata(ctx, target, entry.id, { tags: entry.tags, concepts: entry.concepts });
@@ -948,7 +955,9 @@ export async function publishSnapshotEntry(
   if (status !== 'published') {
     await publishEntry(ctx, target, publication.id, { grant: grantSnapshotImport() });
   }
-  if (publication.draft) await updateEntry(ctx, target, publication.id, publication.draft);
+  if (publication.draft) {
+    await updateEntry(ctx, target, publication.id, publication.draft, { copy: true });
+  }
 }
 
 /** Shown at most, so a broken snapshot's error stays readable. */

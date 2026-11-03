@@ -204,6 +204,7 @@ export async function runImportChunk(
   const failures: { id: string; error: string }[] = [];
   for (const record of staged.records) {
     try {
+      // Judged as the preview judged it: on the record's values (see `EntryWriteOptions.copy`).
       if (record.action === 'update' && record.entryId) {
         await updateImportedEntry(
           ctx,
@@ -213,7 +214,7 @@ export async function runImportChunk(
           staged.blockedFields ?? [],
         );
       } else {
-        await createEntry(ctx, scope, { contentTypeApiId, fields: record.fields });
+        await createEntry(ctx, scope, { contentTypeApiId, fields: record.fields }, { copy: true });
       }
       succeeded += 1;
     } catch (err) {

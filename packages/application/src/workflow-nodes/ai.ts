@@ -23,6 +23,7 @@ import {
   fieldStates,
   interpolate,
   logicHolds,
+  openProposals,
   RateLimitedError,
   type RunContext,
   SCOPES,
@@ -854,11 +855,13 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       },
       { ...call(i, 'workflow.enrich'), fallback: () => ({}) },
     );
-    const proposed: EntryFields = {};
+    const generated: EntryFields = {};
     for (const f of empty) {
       const v = r.value[f.apiId];
-      if (typeof v === 'string' && v.trim()) proposed[f.apiId] = { [locale]: v.trim() };
+      if (typeof v === 'string' && v.trim()) generated[f.apiId] = { [locale]: v.trim() };
     }
+    // Judged with the stored values, as they will be saved: one filled field can close another.
+    const proposed = openProposals(ct.fields, i.run.entry.fields ?? {}, generated, locale);
     const fields = Object.keys(proposed);
     if (!fields.length) {
       return {

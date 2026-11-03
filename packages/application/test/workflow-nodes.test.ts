@@ -619,6 +619,63 @@ describe('workflow node executors', () => {
     expect(r.vars).toEqual({ moderation: { flagged: true, categories: ['violence'] } });
   });
 
+  it('ai.enrich proposes no value for a field the other proposals would hide', async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'brief',
+      name: 'Brief',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+        {
+          apiId: 'summary',
+          name: 'Summary',
+          type: 'Text',
+          localized: false,
+          required: false,
+          position: 1,
+        },
+        {
+          apiId: 'teaser',
+          name: 'Teaser',
+          type: 'Text',
+          localized: false,
+          required: false,
+          position: 2,
+          rules: [{ action: 'hide', when: { field: 'summary', operator: 'notEmpty' } }],
+        },
+      ],
+    });
+    entryId = (
+      await createEntry(ctx, scope, {
+        contentTypeApiId: 'brief',
+        fields: { title: { 'en-US': 'B' } },
+      })
+    ).entry.id;
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    deps = {
+      ...deps,
+      ai: {
+        async generate() {
+          return {
+            text: '',
+            object: { summary: 'Short', teaser: 'Hidden once summary is filled' },
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        },
+      },
+    };
+    const r = await exec('ai.enrich', { awaitReview: false });
+    expect(r.output).toMatchObject({ proposed: { summary: { 'en-US': 'Short' } } });
+    expect(r.entry?.fields?.teaser).toBeUndefined();
+  });
+
   it('ai.enrich proposes a review to wait on, and resumes by the review’s decision', async () => {
     ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
     deps = {

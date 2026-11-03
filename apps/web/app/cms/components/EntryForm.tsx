@@ -19,6 +19,7 @@ import {
   fallbackChain,
   fieldState,
   fieldStates,
+  isEmptyValue,
   layoutTabs,
   mimeTypeAllowed,
   nestedFieldsFor,
@@ -176,17 +177,18 @@ function siblingName(siblings: readonly FieldDefinition[], path: string): string
 }
 
 /**
- * Why a field is read-only, for the helper line under it: the disabling conditions that hold, in
- * the names an editor sees ("Read-only while Status is "sold"").
+ * The conditions of a field's `action` rules that hold, in the names an editor sees
+ * (`Status is "sold"`).
  */
-function disabledReason(
+function heldConditions(
   field: FieldDefinition,
   siblings: readonly FieldDefinition[],
   values: Readonly<Record<string, unknown>>,
-): string {
-  const held = (field.rules ?? [])
+  action: 'hide' | 'disable',
+): string[] {
+  return (field.rules ?? [])
     .filter(
-      (r) => r.action === 'disable' && conditionMatches(r.when, ruleValueAt(values, r.when.field)),
+      (r) => r.action === action && conditionMatches(r.when, ruleValueAt(values, r.when.field)),
     )
     .map((r) =>
       describeCondition({
@@ -196,6 +198,18 @@ function disabledReason(
           : r.when.field,
       }),
     );
+}
+
+/**
+ * Why a field is read-only, for the helper line under it: the disabling conditions that hold, in
+ * the names an editor sees ("Read-only while Status is "sold"").
+ */
+function disabledReason(
+  field: FieldDefinition,
+  siblings: readonly FieldDefinition[],
+  values: Readonly<Record<string, unknown>>,
+): string {
+  const held = heldConditions(field, siblings, values, 'disable');
   return held.length ? `Read-only while ${held.join(' and ')}` : 'Read-only';
 }
 
@@ -554,15 +568,50 @@ export function EntryForm(props: {
       ),
     );
 
+  /** The values the top-level rules read in one locale (a shared field's in the default one). */
+  const rulesValues = (locale: string) =>
+    Object.fromEntries(
+      contentType.fields.map((g) => [
+        g.apiId,
+        shown[g.apiId]?.[g.localized ? locale : defaultLocale],
+      ]),
+    );
+
   /** One top-level field, or null when it is not drawn here (hidden, or another locale's). */
   const renderField = (f: FieldDefinition) => {
     // Non-localized fields are only editable on the default-locale tab.
     const locale = f.localized ? activeLocale : defaultLocale;
     if (!f.localized && activeLocale !== defaultLocale) return null;
-    // A field its rules hide is not drawn at all; its value stays and is still sent.
     const state = states.get(f.apiId);
-    if (state?.hidden) return null;
     const id = `field-${f.apiId}`;
+    // A field its rules hide is not drawn; its value stays and is still sent. One that still
+    // holds a value is named, so it can be cleared: otherwise a value nobody can see would be
+    // stored and delivered, and two fields hiding each other would hide both for good.
+    if (state?.hidden) {
+      const held = shown[f.apiId]?.[locale];
+      if (isEmptyValue(held)) return null;
+      const reason = heldConditions(f, contentType.fields, rulesValues(locale), 'hide');
+      return (
+        <div
+          key={f.apiId}
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-2 text-sm"
+        >
+          <p id={`${id}-hidden`} className="text-muted-foreground">
+            <span className="font-medium text-foreground">{f.name}</span> is hidden
+            {reason.length ? ` while ${reason.join(' and ')}` : ''}, but still holds a value.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-describedby={`${id}-hidden`}
+            onClick={() => set(f.apiId, locale, undefined)}
+          >
+            Clear {f.name}
+          </Button>
+        </div>
+      );
+    }
     const err = fieldErrors[errorKey(f.apiId, locale)];
     const hint =
       f.localized && locales.length > 1 ? fallbackHint(f, shown, locale, localeConfig) : undefined;
@@ -610,16 +659,7 @@ export function EntryForm(props: {
         )}
         {ruleId && (
           <p id={ruleId} className="max-w-measure text-muted-foreground text-xs">
-            {disabledReason(
-              f,
-              contentType.fields,
-              Object.fromEntries(
-                contentType.fields.map((g) => [
-                  g.apiId,
-                  shown[g.apiId]?.[g.localized ? locale : defaultLocale],
-                ]),
-              ),
-            )}
+            {disabledReason(f, contentType.fields, rulesValues(locale))}
           </p>
         )}
         {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}

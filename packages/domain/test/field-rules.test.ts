@@ -6,6 +6,7 @@ import {
   type FieldRule,
   fieldState,
   normalizeLegacyFields,
+  openProposals,
   reviseContentType,
   ValidationError,
   validateEntryFields,
@@ -374,6 +375,45 @@ describe('conditional field rules: generation and models', () => {
       'en',
     );
     expect(Object.keys(out).sort()).toEqual(['kind', 'note', 'title']);
+  });
+
+  it('withoutClosedFields leaves out every field any pass closed when the rules never settle', () => {
+    // Each is hidden while the other holds a value: leaving both out opens both, which hides
+    // both again, so no pass agrees with the one before it.
+    const mutual = [
+      field('title'),
+      field('url', { position: 1, rules: [hideWhen({ field: 'link', operator: 'notEmpty' })] }),
+      field('link', { position: 2, rules: [hideWhen({ field: 'url', operator: 'notEmpty' })] }),
+    ];
+    const values = { title: { en: 'T' }, url: { en: 'https://x' }, link: { en: 'l' } };
+    expect(Object.keys(withoutClosedFields(mutual, values, 'en'))).toEqual(['title']);
+    // One more field shifts how many passes run, not the answer.
+    const more = [...mutual, field('note', { position: 3 })];
+    expect(Object.keys(withoutClosedFields(more, values, 'en'))).toEqual(['title']);
+  });
+
+  it('openProposals keeps a proposed value only where the proposal as a whole leaves it open', () => {
+    const defs = [
+      field('title'),
+      field('summary', { position: 1 }),
+      field('teaser', {
+        position: 2,
+        rules: [hideWhen({ field: 'summary', operator: 'notEmpty' })],
+      }),
+      field('code', {
+        position: 3,
+        rules: [disableWhen({ field: 'title', operator: 'notEmpty' })],
+      }),
+    ];
+    // Empty on its own, `teaser` is closed once the proposed `summary` lands; `code` is closed by
+    // the stored title. Neither proposal is kept.
+    const out = openProposals(
+      defs,
+      { title: { en: 'T' } },
+      { summary: { en: 's' }, teaser: { en: 't' }, code: { en: 'c' } },
+      'en',
+    );
+    expect(out).toEqual({ summary: { en: 's' } });
   });
 
   it('describeFieldRules says each rule in words', () => {

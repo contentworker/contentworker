@@ -1,5 +1,6 @@
-import type { FieldDefinition } from '@contentworker/domain';
-import { ValidationError } from '@contentworker/domain';
+import type { FieldDefinition, Principal } from '@contentworker/domain';
+import { SCOPES, ValidationError } from '@contentworker/domain';
+import type { ImportSource } from '@contentworker/ports';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -12,8 +13,17 @@ import {
   autofillField,
   createContentType,
   createEntry,
+  createEnvironment,
+  createSpace,
   describeFieldForModel,
   draftEntry,
+  executeImport,
+  exportSnapshot,
+  importSnapshot,
+  publishContentType,
+  publishEntry,
+  requestPromotion,
+  restoreVersion,
   updateEntry,
   validateEntry,
 } from '../src/index';
@@ -169,5 +179,123 @@ describe('conditional field rules in the use-cases', () => {
     );
     expect(described.match(/<\/user_content>/g)).toHaveLength(1);
     expect(described.endsWith('</user_content>)')).toBe(true);
+  });
+});
+
+/**
+ * Whole-entry copies (a snapshot import and its draft overlay, a promotion, a CSV or JSON import, a
+ * restored version) are judged on what they hold, as their preflights judge them, not as edits of
+ * the target's defaults or stored values: a disabled field's value travels with the copy.
+ */
+describe('conditional field rules on whole-entry copies', () => {
+  const copy = { spaceId: 's2', environmentId: 'copy' };
+  const main = { spaceId: 's2', environmentId: 'main' };
+  const admin: Principal = {
+    spaceId: 's2',
+    kind: 'user',
+    subject: 'ada',
+    scopes: [SCOPES.contentPublish],
+  };
+
+  beforeEach(async () => {
+    await createSpace(ctx, { spaceId: 's2', name: 'S2', defaultLocale: 'en' });
+    await createEnvironment(ctx, 's2', 'copy');
+    for (const scope of [main, copy]) {
+      await createContentType(ctx, scope, {
+        apiId: 'listing',
+        name: 'Listing',
+        displayField: 'title',
+        fields: FIELDS,
+      });
+      await publishContentType(ctx, scope, 'listing');
+    }
+  });
+
+  /**
+   * An entry whose disabled `reference` holds REF-9, not its default: written while the rule did
+   * not match (no status), then kept unchanged as the status returned and disabled it.
+   */
+  async function holdingDisabledValue(scope = main) {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'listing',
+      fields: { title: { en: 'Flat' } },
+    });
+    await updateEntry(ctx, scope, entry.id, { title: { en: 'Flat' }, reference: { en: 'REF-9' } });
+    const held = { title: { en: 'Flat' }, status: { en: 'open' }, reference: { en: 'REF-9' } };
+    await updateEntry(ctx, scope, entry.id, held);
+    return entry.id;
+  }
+
+  it('the interactive create still refuses that value', async () => {
+    expect(
+      await issuesOf(
+        createEntry(ctx, copy, {
+          contentTypeApiId: 'listing',
+          fields: { title: { en: 'Flat' }, status: { en: 'open' }, reference: { en: 'REF-9' } },
+        }),
+      ),
+    ).toEqual([
+      'reference: Field is read-only while its rules disable it; it keeps its stored value',
+    ]);
+  });
+
+  it('a snapshot import copies it, and lays a published entry’s draft on top', async () => {
+    const id = await holdingDisabledValue();
+    await publishEntry(ctx, main, id);
+    const draft = { title: { en: 'Flat 2' }, status: { en: 'open' }, reference: { en: 'REF-9' } };
+    await updateEntry(ctx, main, id, draft);
+
+    // A snapshot goes into an empty environment.
+    await createEnvironment(ctx, 's2', 'fresh');
+    const fresh = { spaceId: 's2', environmentId: 'fresh' };
+    const report = await importSnapshot(ctx, fresh, await exportSnapshot(ctx, main));
+    expect(report).toMatchObject({ entries: 1 });
+    expect((await ctx.store.entries.getPublished(fresh, id))?.fields.reference).toEqual({
+      en: 'REF-9',
+    });
+    expect((await ctx.store.entries.get(fresh, id))?.fields).toEqual(draft);
+  });
+
+  it('a promotion applies it', async () => {
+    const id = await holdingDisabledValue();
+    const p = await requestPromotion(ctx, admin, 's2', { source: 'main', target: 'copy' });
+    expect(p.status).toBe('completed');
+    expect((await ctx.store.entries.get(copy, id))?.fields.reference).toEqual({ en: 'REF-9' });
+  });
+
+  it('a CSV or JSON import creates it, as its plan judged it', async () => {
+    const source: ImportSource = {
+      id: 'fake',
+      name: 'Fake',
+      async read() {
+        return {
+          records: [{ externalId: 'x1', values: { name: 'Flat', status: 'open', ref: 'REF-9' } }],
+          fields: ['name', 'status', 'ref'],
+          warnings: [],
+        };
+      },
+    };
+    const result = await executeImport(ctx, copy, source, {
+      payload: '',
+      mapping: {
+        contentTypeApiId: 'listing',
+        // `soldTo` is required, so it must be mapped; hidden while not sold, it may stay empty.
+        fields: { title: 'name', status: 'status', reference: 'ref', soldTo: 'buyer' },
+      },
+    });
+    expect(result).toMatchObject({ created: 1, failed: [] });
+  });
+
+  it('a restore brings back the old version’s value of a field its rules now disable', async () => {
+    const id = await holdingDisabledValue();
+    const before = (await ctx.store.entries.get(main, id))?.entry.currentVersion ?? 0;
+    // Opened (no status) and changed, so the stored value differs from the version restored.
+    await updateEntry(ctx, main, id, { title: { en: 'Flat' }, reference: { en: 'REF-10' } });
+    const restored = await restoreVersion(ctx, main, id, before);
+    expect(restored.fields).toEqual({
+      title: { en: 'Flat' },
+      status: { en: 'open' },
+      reference: { en: 'REF-9' },
+    });
   });
 });
