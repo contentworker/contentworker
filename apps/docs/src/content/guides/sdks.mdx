@@ -60,12 +60,23 @@ for await (const asset of client.iterateAssets({ kind: 'image' })) {
 // An archive page: the tag, then its entries.
 const tag = await client.getTag('news', { locale: 'de-DE' }); // { label, description, count, … }
 const tagged = await client.query().contentType('article').tagged('news').limit(20).fetch();
+
+// An author page: the articles linking to them, and those starting with "How" or highly read.
+const byAuthor = await client
+  .query()
+  .contentType('article')
+  .references('author', authorId)
+  .or({ field: 'title', op: 'startsWith', value: 'How' }, { field: 'views', op: 'gte', value: 100 })
+  .fetch();
 ```
 
 `listTags`, `getTag`, `listConcepts` and `getConcept` read the [taxonomy](/guides/reading-content/#tags-and-concepts):
 each term's slug, label in your locale, description and how many published entries carry it.
 `tagged(...slugs)` on a query (or `tags: [...]` on `listEntries`) keeps the entries carrying any
 of those tags; a filter on `metadata.concepts.slug` does the same for concepts.
+`references(field, ...ids)` keeps the entries whose link field links to one of the entries,
+`linksTo(...ids)` those linking from any field, and `or(...)` adds a
+[group](/guides/reading-content/#or-and-and-groups) any one of whose conditions may match.
 
 `getAsset`, `listAssets`, `iterateAssets`, `searchAssets`, `getCollection` and
 `iterateCollection` read [delivered assets](/guides/delivering-assets/). `imageProps` turns one

@@ -41,6 +41,7 @@ import type {
   PromotionStatus,
   PublishGate,
   QueryFilter,
+  QueryNode,
   QueryOrder,
   Redirect,
   ReferenceEdge,
@@ -1684,6 +1685,33 @@ export interface EntryWithFields {
   readonly updatedAt?: string;
 }
 
+/**
+ * Where a page of distinct field values starts: after this value in the values' order (booleans,
+ * then numbers, then strings, each ascending). Taken from the last row of the previous page.
+ */
+export interface FieldValueKey {
+  readonly value: string | number | boolean;
+}
+
+/** A content type's field whose distinct values to list ({@link EntryRepo.distinctFieldValues}). */
+export interface FieldValuesQuery {
+  readonly contentTypeApiId: string;
+  /** A top-level field apiId: a scalar field, or a list of them. */
+  readonly field: string;
+  /** Only this locale's values; every locale's when absent. */
+  readonly locale?: LocaleCode;
+  /** The page size. */
+  readonly limit: number;
+  readonly after?: FieldValueKey;
+}
+
+/** One distinct value of a field and how many entries hold it. */
+export interface FieldValueCount {
+  readonly value: string | number | boolean;
+  /** Entries (not in the trash) whose current version holds the value, in any locale. */
+  readonly count: number;
+}
+
 /** How many entries of one content type are in one status (a row of {@link EntryRepo.countByStatus}). */
 export interface EntryStatusCount {
   readonly contentType: string;
@@ -1743,6 +1771,17 @@ export interface EntryQuery {
   readonly afterRow?: EntryKeyset | 'start';
   /** Field-level predicates (all must match). `field` is a field apiId or `sys.*`. */
   readonly filters?: readonly QueryFilter[];
+  /**
+   * AND and OR groups of predicates, ANDed with `filters`. Build it with `parseQueryWhere`, which
+   * bounds its depth and size; a store trusts it as given.
+   */
+  readonly where?: QueryNode;
+  /**
+   * The content model, for `ref`/`refIn`: the engine then reads each row's links as the reference
+   * edges record them (the link-bearing fields its type declares). The use-cases pass it whenever
+   * a query has a reference filter.
+   */
+  readonly contentTypes?: readonly ContentType[];
   /** Sort keys, applied in order. */
   readonly order?: readonly QueryOrder[];
   /** Projection — return only these field apiIds. */
@@ -1801,6 +1840,14 @@ export interface EntryRepo {
    * absent; order unspecified.
    */
   countByStatus(scope: Scope): Promise<EntryStatusCount[]>;
+  /**
+   * The distinct scalar values one field holds across a content type's entries (current versions,
+   * trash excluded), each with how many entries hold it, in the order {@link FieldValueKey}
+   * describes. A list field contributes each of its elements; null, object and list values are
+   * skipped. At most `limit` rows, after `after`. Throws `QueryTooBroadError` when the type
+   * holds more entries than the store's query scan cap: every page groups the whole type.
+   */
+  distinctFieldValues(scope: Scope, query: FieldValuesQuery): Promise<FieldValueCount[]>;
   /** Persists a new entry and its first version. */
   create(scope: Scope, entry: Entry, version: EntryVersion): Promise<void>;
   /** Persists the updated aggregate plus a new version snapshot. */

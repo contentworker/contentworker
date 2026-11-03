@@ -158,3 +158,13 @@ export const contentTypeEntryCounts = z.object({
     }),
   ),
 });
+
+export const fieldValuesPage = z.object({
+  items: z.array(
+    z.object({
+      value: z.union([z.string(), z.number(), z.boolean()]),
+      count: z.int().describe('Entries (not in the trash) whose current version holds the value'),
+    }),
+  ),
+  nextCursor: z.string().optional().describe('Pass back as cursor for the next page'),
+});

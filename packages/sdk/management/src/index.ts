@@ -129,6 +129,18 @@ export interface ContentTypeEntryCounts {
   readonly archived: number;
 }
 
+/** One distinct value of a field and how many entries (not in the trash) hold it. */
+export interface FieldValueCount {
+  readonly value: string | number | boolean;
+  readonly count: number;
+}
+
+/** A page of a field's distinct values; `nextCursor` is absent on the last page. */
+export interface FieldValuesPage {
+  readonly items: readonly FieldValueCount[];
+  readonly nextCursor?: string;
+}
+
 export interface ContentTypeDraft {
   readonly apiId: string;
   readonly name: string;
@@ -1321,6 +1333,20 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Entries per content type, by status, from one grouped count. */
       entryCounts: () =>
         items(get<{ items: ContentTypeEntryCounts[] }>(`${envBase}/content-types/entry-counts`)),
+      /**
+       * The distinct values a scalar field (or list of Symbols) holds across the type's entries,
+       * each with its count: booleans, then numbers, then strings. Pass `nextCursor` back as
+       * `cursor` for the next page.
+       */
+      fieldValues: (
+        apiId: string,
+        field: string,
+        opts: { locale?: string; limit?: number; cursor?: string } = {},
+      ) =>
+        get<FieldValuesPage>(
+          `${envBase}/content-types/${e(apiId)}/fields/${e(field)}/values`,
+          opts,
+        ),
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

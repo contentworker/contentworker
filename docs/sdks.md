@@ -78,13 +78,16 @@ client.menus(): Promise<DeliveredMenuSummary[]>          // Delivery only: { han
 client.menu(handle, { locale? }): Promise<DeliveredMenu> // Delivery only: resolved; 404 DeliveryError for an unknown handle
 client.routes(): Promise<DeliveredRoute[]>               // Delivery only: { contentType, urlPattern } per published type
 client.sitemap({ from?, limit?, base? }): Promise<SitemapPage>  // Delivery only: { items, next }, published pages and their paths
-client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive
+client.query(): EntryQueryBuilder<F>     // fluent builder; .tagged(...slugs) for an archive,
+                                         // .references(field, ...ids), .linksTo(...ids), .or(...conditions)
 client.editable(entry, field, { locale? }): Record<string, string>   // see Inline editing
 client.clearCache(): void
 client.bookmark: string | undefined     // read-your-writes position (preview); assignable
 ```
 
-- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, order?, select?, search?, tags? }`.
+- `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, where?, linksToEntry?, order?, select?, search?, tags? }`.
+  `where` (an `EntryWhere` tree of `and`/`or` groups) is sent as the `where` parameter's JSON,
+  `linksToEntry` as `links_to_entry`; a filter `field` may be a component path (`seo.title`).
   Delivery pages with `skip`; Preview (`preview: true`) pages with `cursor`, the last page's
   `nextCursor`, and refuses `skip` (`422`).
   `tags` (slugs) sends `metadata.tags.slug[in]`, and a filter on `metadata.*` is sent unprefixed.
@@ -388,6 +391,7 @@ cma.bookmark                                          // read-your-writes positi
 cma.approvals.count()                                 // what waits on a person
 
 cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
+cma.contentTypes.fieldValues(apiId, field, { locale?, limit?, cursor? }): Promise<FieldValuesPage>
                                                       // create on an existing apiId revises it
 
 cma.entries.list({ contentType?, locale?, limit?, skip?, order?, query? })  // Preview: drafts included

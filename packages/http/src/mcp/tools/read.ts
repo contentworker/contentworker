@@ -8,8 +8,11 @@ import {
   getSchedulerStatus,
   hybridSearch,
   listContentTypes,
+  listFieldValues,
   listPreviewEntryPage,
+  MAX_FIELD_VALUES_PAGE,
   MAX_PAGE_LIMIT,
+  MAX_WHERE_LENGTH,
   relatedEntries,
   requestReindex,
   resolveEmbed,
@@ -19,10 +22,16 @@ import {
   visibleSearchHits,
 } from '@contentworker/application';
 import {
+  ANY_FIELD,
+  assertPathFilterBudget,
   assertQueryRespectsFieldRules,
   authorizeContent,
   canAccessContentType,
+  FILTER_OPS,
   maskDeniedFields,
+  parseQueryWhere,
+  type QueryFilter,
+  queryFilterIssues,
   SCOPES,
   ValidationError,
 } from '@contentworker/domain';
@@ -156,7 +165,11 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       description:
         'List entries (current/draft versions) with optional field-level filters, ' +
         'ordering, projection, and full-text search. Returns one page; pass nextCursor back ' +
-        'as cursor, with the same filters and order, for the next.',
+        'as cursor, with the same filters and order, for the next. A filter field may be a ' +
+        'component path (seo.title). ref/refIn find entries whose link field links to an entry ' +
+        'id; linksToEntry finds entries linking to it from any field. where takes AND/OR ' +
+        'groups: {"or": [{"field": "title", "op": "startsWith", "value": "A"}, ' +
+        '{"and": [...]}]}, at most 4 deep and 20 predicates.',
       inputSchema: toolSchema('entries_query', () =>
         z.object({
           contentType: z.string().optional(),
@@ -170,12 +183,25 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           filters: z
             .array(
               z.object({
-                field: z.string().describe('field apiId or a sys.* pseudo-field'),
-                op: z.enum(['eq', 'ne', 'in', 'nin', 'gt', 'gte', 'lt', 'lte', 'exists', 'match']),
-                value: z.any().optional(),
+                field: z
+                  .string()
+                  .describe('field apiId, a component path (seo.title) or a sys.* pseudo-field'),
+                op: z.enum(FILTER_OPS),
+                value: z
+                  .any()
+                  .optional()
+                  .describe('a list for in, nin and refIn; [low, high] for between'),
               }),
             )
             .optional(),
+          where: z
+            .any()
+            .optional()
+            .describe('AND/OR groups of filters: {"and": [...]} or {"or": [...]}, nestable'),
+          linksToEntry: z
+            .array(z.string())
+            .optional()
+            .describe('entry ids: only entries linking to one of them, from any field'),
           order: z
             .array(z.object({ field: z.string(), direction: z.enum(['asc', 'desc']) }))
             .optional(),
@@ -193,9 +219,31 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
         throw new ValidationError([
           { field: 'skip', message: 'entries_query pages with cursor (its nextCursor), not skip' },
         ]);
+      // The same checks the query string's filters and `where` get: an agent's filter is
+      // refused as a client's is, never handed to the store half-formed.
+      const filters: QueryFilter[] = [
+        // `fields.title` is the query string's spelling of `title`; take either.
+        ...(args.filters ?? []).map((f) =>
+          f.field.startsWith('fields.') ? { ...f, field: f.field.slice('fields.'.length) } : f,
+        ),
+        ...(args.linksToEntry?.length
+          ? [{ field: ANY_FIELD, op: 'refIn' as const, value: args.linksToEntry }]
+          : []),
+      ];
+      const issues = filters.flatMap((f, i) => queryFilterIssues(f, `filters[${i}]`));
+      if (issues.length) throw new ValidationError(issues);
+      // The REST parameter's length cap, measured on the same JSON, before the tree is walked.
+      if (args.where !== undefined && JSON.stringify(args.where).length > MAX_WHERE_LENGTH) {
+        throw new ValidationError([
+          { field: 'where', message: `where is at most ${MAX_WHERE_LENGTH} characters of JSON` },
+        ]);
+      }
+      const where = args.where === undefined ? undefined : parseQueryWhere(args.where);
+      assertPathFilterBudget({ ...(where ? { where } : {}) });
       assertQueryRespectsFieldRules(principal, {
         contentTypeApiId: args.contentType,
-        filters: args.filters,
+        filters,
+        ...(where ? { where } : {}),
         order: args.order,
         select: args.select,
         search: args.search,
@@ -207,7 +255,8 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           contentTypeApiId: args.contentType,
           limit: args.limit,
           locale: args.locale,
-          filters: args.filters,
+          ...(filters.length ? { filters } : {}),
+          ...(where ? { where } : {}),
           order: args.order,
           select: args.select,
           search: args.search,
@@ -224,6 +273,45 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) })),
         ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
       });
+    },
+  );
+
+  server.registerTool(
+    'entries_field_values',
+    {
+      description:
+        'The distinct values a field holds across a content type’s entries (current versions, ' +
+        'the trash left out), each with how many entries hold it: booleans, then numbers, then ' +
+        'strings, ascending. Use it to learn what a filter can match (the tags in use, the ' +
+        'categories, the years) before writing one. Short scalar fields (not Text) and lists of ' +
+        'Symbols only; a very large type is refused as too broad. ' +
+        'Returns one page; pass nextCursor back as cursor for the next.',
+      inputSchema: toolSchema('entries_field_values', () =>
+        z.object({
+          contentType: z.string(),
+          field: z.string().describe('a top-level field apiId'),
+          locale: z.string().optional().describe('only this locale’s values'),
+          limit: z.number().int().min(1).max(MAX_FIELD_VALUES_PAGE).optional(),
+          cursor: z.string().optional().describe('nextCursor from the previous page'),
+          ...scopeArgs,
+        }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      authorizeContent(principal, 'read', args.contentType);
+      assertQueryRespectsFieldRules(principal, {
+        contentTypeApiId: args.contentType,
+        select: [args.field],
+      });
+      return ok(
+        await listFieldValues(ctx, scopeOf(args), args.contentType, args.field, {
+          ...(args.locale ? { locale: args.locale } : {}),
+          ...(args.limit ? { limit: args.limit } : {}),
+          ...(args.cursor ? { cursor: args.cursor } : {}),
+        }),
+      );
     },
   );
 

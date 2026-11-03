@@ -29,6 +29,7 @@ import {
   type PluginSettings,
   type Promotion,
   projectFields,
+  type QueryFilter,
   QueryTooBroadError,
   type Redirect,
   type ReferenceEdge,
@@ -260,7 +261,7 @@ const RESERVED = 6;
 export const DEFAULT_QUERY_SCAN_LIMIT = 5000;
 
 const isAdvancedQuery = (q: EntryQuery) =>
-  Boolean(q.filters?.length || q.order?.length || q.search || q.select);
+  Boolean(q.filters?.length || q.where || q.order?.length || q.search || q.select);
 
 function makeContentTypeRepo(x: Exec): ContentTypeRepo {
   const db = x.db;
@@ -507,13 +508,11 @@ function makeEntryRepo(
         // runs against the joined CURRENT version. Same contract as the
         // published path: narrows candidates, never changes the answer.
         const vFields = sql`${cv.fields}`;
-        if (query.filters?.length) {
-          const p = buildFilterPrefilter(query.filters, vFields, {
-            entryId: sql`${schema.entries.id}`,
-            contentTypeApiId: sql`${schema.entries.contentTypeApiId}`,
-          });
-          if (p) conditions.push(p);
-        }
+        const p = buildFilterPrefilter(query, vFields, {
+          entryId: sql`${schema.entries.id}`,
+          contentTypeApiId: sql`${schema.entries.contentTypeApiId}`,
+        });
+        if (p) conditions.push(p);
         if (query.search) {
           const p = buildSearchPrefilter(query.search, vFields);
           if (p) conditions.push(p);
@@ -571,6 +570,55 @@ function makeEntryRepo(
       return rows.map((r) => ({
         contentType: r.contentType,
         status: r.status,
+        count: Number(r.n),
+      }));
+    },
+    async distinctFieldValues(scope, query) {
+      const e = schema.entries;
+      const ofType = and(
+        scopeFilter(e, scope),
+        eq(e.contentTypeApiId, query.contentTypeApiId),
+        ne(e.status, 'archived'),
+      );
+      // Grouping walks every entry of the type, so a type past the scan cap is refused, as a
+      // field query over it would be. The count stops at the cap.
+      const [counted] = await db.all<{ n: number }>(
+        sql`SELECT count(*) AS n FROM (SELECT 1 FROM ${e} WHERE ${ofType} LIMIT ${scanLimit + 1})`,
+      );
+      if (Number(counted?.n ?? 0) > scanLimit) throw new QueryTooBroadError(scanLimit);
+      // Every scalar value of the field in each entry's current version, in one pass: a locale's
+      // value, or each element of a locale's list (a scalar walks a one-row stand-in list). The
+      // field name, locale and cursor are bound values.
+      const locale = query.locale === undefined ? sql`` : sql`AND kv.key = ${query.locale}`;
+      // The order: booleans (as 0/1), then numbers, then strings (BINARY collation).
+      const after = query.after;
+      const afterKey =
+        after === undefined
+          ? sql``
+          : sql`WHERE (kind, atom) > (${typeof after.value === 'boolean' ? 0 : typeof after.value === 'number' ? 1 : 2}, ${
+              typeof after.value === 'boolean' ? (after.value ? 1 : 0) : after.value
+            })`;
+      const rows = await db.all<{ kind: number; atom: string | number; n: number }>(sql`
+        WITH vals(entry_id, type, atom) AS (
+          SELECT ${e.id},
+                 CASE WHEN kv.type = 'array' THEN el.type ELSE kv.type END,
+                 CASE WHEN kv.type = 'array' THEN el.atom ELSE kv.atom END
+          FROM ${e} JOIN ${schema.entryVersions} AS ${cv} ON ${currentVersionJoin},
+            json_each(${cv.fields}) AS fld, json_each(fld.value) AS kv,
+            json_each(CASE WHEN kv.type = 'array' THEN kv.value ELSE '[null]' END) AS el
+          WHERE ${ofType} AND fld.key = ${query.field} AND fld.type = 'object' ${locale}
+        ),
+        grouped(kind, atom, n) AS (
+          SELECT CASE WHEN type IN ('true', 'false') THEN 0
+                      WHEN type IN ('integer', 'real') THEN 1 ELSE 2 END,
+                 atom, COUNT(DISTINCT entry_id)
+          FROM vals WHERE type IN ('text', 'integer', 'real', 'true', 'false') GROUP BY 1, 2
+        )
+        SELECT kind, atom, n FROM grouped ${afterKey}
+        ORDER BY kind, atom LIMIT ${Math.max(1, query.limit)}
+      `);
+      return rows.map((r) => ({
+        value: r.kind === 0 ? Boolean(r.atom) : r.kind === 1 ? Number(r.atom) : String(r.atom),
         count: Number(r.n),
       }));
     },
@@ -938,12 +986,16 @@ function makeEntryRepo(
         contentTypeApiId: sql`${schema.entryPublished.contentTypeApiId}`,
         publishedAt: sql`${schema.entryPublished.publishedAt}`,
         metadata: sql`${schema.entryPublished.metadata}`,
+        // Published rows are what the reference edges describe: a link filter reads them.
+        edges: scope,
       };
+      // Reference filters answered exactly by the edge lookup. The edges record each link as the
+      // type declared it at publish, so the engine, which reads today's type, doesn't recheck
+      // them: an edited type must not hide an entry its published links still name.
+      const decided = new Set<QueryFilter>();
       if (advanced) {
-        if (query.filters?.length) {
-          const pre = buildFilterPrefilter(query.filters, fieldsCol, sysCols);
-          if (pre) conditions.push(pre);
-        }
+        const pre = buildFilterPrefilter(query, fieldsCol, sysCols, decided);
+        if (pre) conditions.push(pre);
         if (query.search) {
           const pre = buildSearchPrefilter(query.search, fieldsCol);
           if (pre) conditions.push(pre);
@@ -979,7 +1031,7 @@ function makeEntryRepo(
       }
       const filtered = runEntryQuery(
         published,
-        query,
+        decided.size ? { ...query, filters: query.filters?.filter((f) => !decided.has(f)) } : query,
         (r) => r.fields,
         (r) => ({
           id: r.entryId,

@@ -15,7 +15,7 @@ import {
   visibleSearchHits,
 } from './delivery';
 import { type DeliveryReads, deliveryReads } from './delivery-reads';
-import { entryQueryFrom } from './entry-query';
+import { entryQueryFrom, mergeWhereJson } from './entry-query';
 import { hybridSearch, type RagDeps } from './rag';
 
 export interface DeliveryGraphDeps {
@@ -70,9 +70,19 @@ export function deliveryGraphResolvers(
     collection: async (contentType, args) => {
       if (!canAccessContentType(principal, 'read', contentType)) return [];
       const raw: [string, string][] = [];
+      // `and`/`or` hold groups of predicates (`{ field, op, value }`), the REST `where` parameter's
+      // JSON; every other key is a query-string key (`fields.title[startsWith]`, `links_to_entry`).
+      const groups: Record<string, unknown>[] = [];
       for (const [k, v] of Object.entries(args.where ?? {})) {
-        raw.push([k, Array.isArray(v) ? v.join(',') : String(v)]);
+        if (k === 'and' || k === 'or') groups.push({ [k]: v });
+        // A whole tree under `where` (the REST parameter's JSON) joins the others.
+        else if (k === 'where' && v && typeof v === 'object')
+          groups.push(v as Record<string, unknown>);
+        else raw.push([k, Array.isArray(v) ? v.join(',') : String(v)]);
       }
+      // Merged as REST merges repeated `where` parameters: `and`'s conditions join the root, so
+      // a `where` holding both keys spends the same depth as its REST spelling.
+      if (groups.length) raw.push(['where', JSON.stringify(mergeWhereJson(groups))]);
       if (args.order?.length) raw.push(['order', args.order.join(',')]);
       if (args.search) raw.push(['query', args.search]);
       const parsed = entryQueryFrom(raw);

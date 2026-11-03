@@ -487,6 +487,34 @@ export class InMemoryContentStore implements ContentStore {
       }
       return [...groups.values()];
     },
+    distinctFieldValues: async (scope, query) => {
+      const prefix = `${scopeKey(scope)}::`;
+      // value key -> (value, entries holding it). Numbers key by number, so 5 and 5.0 are one.
+      const groups = new Map<string, { value: string | number | boolean; ids: Set<string> }>();
+      for (const [k, e] of this.entryData) {
+        if (!k.startsWith(prefix)) continue;
+        if (e.contentTypeApiId !== query.contentTypeApiId || e.status === 'archived') continue;
+        const versions = this.versionData.get(k) ?? [];
+        const localized = versions.find((v) => v.version === e.currentVersion)?.fields[query.field];
+        if (!localized || typeof localized !== 'object' || Array.isArray(localized)) continue;
+        for (const [locale, raw] of Object.entries(localized)) {
+          if (query.locale !== undefined && locale !== query.locale) continue;
+          for (const v of Array.isArray(raw) ? raw : [raw]) {
+            if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') continue;
+            const key = `${typeof v}:${String(v)}`;
+            const g = groups.get(key) ?? { value: v, ids: new Set<string>() };
+            g.ids.add(e.id);
+            groups.set(key, g);
+          }
+        }
+      }
+      const after = query.after;
+      return [...groups.values()]
+        .map((g) => ({ value: g.value, count: g.ids.size }))
+        .filter((g) => !after || compareFieldValues(g.value, after.value) > 0)
+        .sort((a, b) => compareFieldValues(a.value, b.value))
+        .slice(0, query.limit);
+    },
     create: async (scope, entry, version) => {
       this.setEntry(scope, entry);
       this.versionData.set(`${scopeKey(scope)}::${entry.id}`, [version]);
@@ -3197,4 +3225,23 @@ export class InMemoryContentStore implements ContentStore {
   allOutbox(): OutboxEntry[] {
     return this.outboxData.map((r) => r.event);
   }
+}
+
+/**
+ * The order distinct field values page in, as the D1 store's SQL sorts them: booleans (false
+ * first), then numbers, then strings by their UTF-8 bytes (SQLite's BINARY collation).
+ */
+function compareFieldValues(a: string | number | boolean, b: string | number | boolean): number {
+  const kind = (v: unknown) => (typeof v === 'boolean' ? 0 : typeof v === 'number' ? 1 : 2);
+  if (kind(a) !== kind(b)) return kind(a) - kind(b);
+  if (typeof a === 'string' && typeof b === 'string') {
+    // UTF-8 byte order is code point order (UTF-16 unit order is not, past the surrogates).
+    const x = [...a].map((c) => c.codePointAt(0) as number);
+    const y = [...b].map((c) => c.codePointAt(0) as number);
+    for (let i = 0; i < Math.min(x.length, y.length); i++) {
+      if (x[i] !== y[i]) return (x[i] as number) - (y[i] as number);
+    }
+    return x.length - y.length;
+  }
+  return Number(a) - Number(b);
 }

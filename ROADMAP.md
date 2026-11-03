@@ -159,8 +159,9 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 
 #### M2. Model and query parity
 
-- [ ] **Filter by referenced entry.** `fields.<link>[ref]=<id>` and `links_to_entry=<id>`, pushed
-  down as a join on the reference edges with one bound parameter.
+- [x] **Filter by referenced entry.** `fields.<link>[ref]=<id>` (`[refIn]` for several) and
+  `links_to_entry=<id>` on Delivery, Preview, GraphQL and `entries_query`; Delivery pushes them down
+  as an `IN` over the reference edges with one JSON parameter, Preview scans the draft's fields.
 - [ ] **Conditional field rules.** `rules` on a field (hide or disable when a sibling matches),
   evaluated in the domain so a hidden field skips `required` on every surface.
 - [ ] **Singleton types.** At most one entry; Delivery `GET /singletons/:apiId`; the admin opens the
@@ -169,8 +170,9 @@ in-browser model, page-per-language translation, and rich text or styles stored 
   trash-then-purge job; clone copies the definition under a new `apiId`.
 - [ ] **Authorship.** `created_by`, `modified_by` and `first_published_at` on entries and versions
   (expand-only), served as `sys` fields, filterable and sortable.
-- [ ] **Richer queries.** `startsWith` and `between`, OR and AND groups in a `where` JSON parameter,
-  component subfield paths through `json_each`, distinct field values.
+- [x] **Richer queries.** `startsWith` and `between`, OR and AND groups in a `where` JSON parameter
+  (≤ 4 deep, ≤ 20 predicates), component subfield paths through `json_tree` with bound keys, and
+  distinct field values (`…/content-types/:apiId/fields/:field/values`, `entries_field_values`).
 - [ ] **Saved views.** Named filters, sort and columns per content type, personal or shared.
 - [ ] **Model ergonomics.** Groups, description and icon on content types; editor-only tabs and
   field groups; date, time and datetime formats with `dateRange`; lists of any scalar; asset MIME

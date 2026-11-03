@@ -614,4 +614,78 @@ describe('@contentworker/sdk-core taxonomy', () => {
     expect(first.searchParams.get('metadata.tags.slug[in]')).toBe('news,sport');
     expect(new URL(urls[1] ?? '').searchParams.get('metadata.concepts.slug[nin]')).toBe('cats');
   });
+
+  it('filters by referenced entry: references() on a field, linksTo() from any', async () => {
+    const urls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        urls.push(url);
+        return { items: [], total: 0 };
+      }),
+    });
+    await client.query().contentType('post').references('author', 'a1').fetch();
+    await client.query().references('related', 'a1', 'a2').linksTo('b1').linksTo('b2').fetch();
+    const [one, two] = urls.map((u) => new URL(u).searchParams);
+    expect(one?.get('fields.author[ref]')).toBe('a1');
+    expect(two?.get('fields.related[refIn]')).toBe('a1,a2');
+    expect(two?.get('links_to_entry')).toBe('b1,b2');
+  });
+
+  it('chained or() groups join one root and, however many', async () => {
+    const urls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        urls.push(url);
+        return { items: [], total: 0 };
+      }),
+    });
+    let q = client.query();
+    for (let i = 0; i < 5; i++) q = q.or({ field: 'title', value: `t${i}` });
+    await q.fetch();
+    const where = JSON.parse(new URL(urls[0] ?? '').searchParams.get('where') ?? 'null');
+    expect(where).toEqual({
+      and: Array.from({ length: 5 }, (_, i) => ({ or: [{ field: 'title', value: `t${i}` }] })),
+    });
+  });
+
+  it('references() without an id throws rather than sending an empty filter', () => {
+    const client = createDeliveryClient({ ...base, fetch: fakeFetch(() => ({ items: [] })) });
+    expect(() => client.query().references('author')).toThrow(/at least one entry id/);
+  });
+
+  it('sends startsWith, between, component paths and or() groups as the API spells them', async () => {
+    const urls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        urls.push(url);
+        return { items: [], total: 0 };
+      }),
+    });
+    await client
+      .query()
+      .where('title', 'startsWith', 'Ap')
+      .where('views', 'between', [10, 20])
+      .where('seo.title', 'match', 'jam')
+      .or({ field: 'title', value: 'A' }, { field: 'views', op: 'gt', value: 9 })
+      .or({ field: 'tags', value: 'x' })
+      .fetch();
+    const params = new URL(urls[0] ?? '').searchParams;
+    expect(params.get('fields.title[startsWith]')).toBe('Ap');
+    expect(params.get('fields.views[between]')).toBe('10,20');
+    expect(params.get('fields.seo.title[match]')).toBe('jam');
+    expect(JSON.parse(params.get('where') ?? 'null')).toEqual({
+      and: [
+        {
+          or: [
+            { field: 'title', value: 'A' },
+            { field: 'views', op: 'gt', value: 9 },
+          ],
+        },
+        { or: [{ field: 'tags', value: 'x' }] },
+      ],
+    });
+  });
 });

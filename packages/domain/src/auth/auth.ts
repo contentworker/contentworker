@@ -1,4 +1,5 @@
 import { DomainError } from '../errors';
+import { ANY_FIELD, type QueryNode, queryNodeFilters } from '../query/query';
 import type { RolePreset } from './team';
 
 /** The kind of API key — the CMA/CDA/CPA (management/delivery/preview) split. */
@@ -389,14 +390,17 @@ function anyDeniedFields(principal: Principal): ReadonlySet<string> {
  * the response; a filter (`fields.salary[gt]=100000`), an ordering, a projection or a full-text
  * search evaluated over a hidden field still answers questions about it. So a query naming a
  * denied field is refused, and so is full-text search over a type with denied fields (the match
- * runs over every field and can't be masked per caller). `sys.*` fields are never field-restricted.
- * No-op for principals without field rules.
+ * runs over every field and can't be masked per caller), and so is `links_to_entry` for the same
+ * reason. Filters inside a `where` tree count like top-level ones, and a component path
+ * (`seo.title`) names its top-level field. `sys.*` fields are never field-restricted. No-op
+ * for principals without field rules.
  */
 export function assertQueryRespectsFieldRules(
   principal: Principal,
   query: {
     readonly contentTypeApiId?: string;
     readonly filters?: readonly { readonly field: string }[];
+    readonly where?: QueryNode;
     readonly order?: readonly { readonly field: string }[];
     readonly select?: readonly string[];
     readonly search?: string;
@@ -406,11 +410,10 @@ export function assertQueryRespectsFieldRules(
   const type = query.contentTypeApiId;
   const denied = type ? new Set(deniedFieldsFor(principal, type)) : anyDeniedFields(principal);
   if (denied.size === 0) return;
-  const named = [
-    ...(query.filters ?? []).map((f) => f.field),
-    ...(query.order ?? []).map((o) => o.field),
-    ...(query.select ?? []),
-  ]
+  const filtered = [...(query.filters ?? []), ...queryNodeFilters(query.where)].map((f) => f.field);
+  // `links_to_entry` looks in every field, the denied ones too: refused like search.
+  if (filtered.includes(ANY_FIELD)) throw new ForbiddenError(`content:read:${type ?? '*'}.*`);
+  const named = [...filtered, ...(query.order ?? []).map((o) => o.field), ...(query.select ?? [])]
     .filter((f) => !f.startsWith('sys.'))
     .map((f) => f.replace(/^fields\./, '').split('.')[0] as string);
   const hit = named.find((f) => denied.has(f));

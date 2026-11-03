@@ -57,8 +57,56 @@ Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>
 | `fields.category[nin]=news,events`    | none of                                 |
 | `fields.price[gte]=10&fields.price[lt]=50` | ranges: `gt`, `gte`, `lt`, `lte`   |
 | `fields.hero[exists]=true`            | has a value                             |
-| `fields.title[match]=launch`          | text contains                           |
+| `fields.price[between]=10,50`         | in the range, both ends included        |
+| `fields.title[match]=launch`          | text contains (case-insensitive)        |
+| `fields.title[startsWith]=launch`     | text starts with (case-insensitive)     |
+| `fields.seo.title[match]=guide`       | a component's member; through a list of components, any element's |
+| `fields.author[ref]=<entryId>`        | the link field links to that entry      |
+| `fields.related[refIn]=<id>,<id>`     | it links to any of them                 |
+| `links_to_entry=<entryId>`            | any field links to that entry (`<id>,<id>` for any of several) |
 | `sys.publishedAt[gt]=2026-10-01`      | system fields work the same way         |
+
+Delivery reads the links of the published version, Preview those of the current one, in any
+locale. A link counts where the content type declares one: a Link field, a list of links, a
+rich-text embed or a component's Link member; a lookalike `{ "id", "linkType" }` inside a JSON
+field does not. Reference filters can't target an id containing `"`, `\` or a non-ASCII
+character (refused with `422`). An empty `links_to_entry=` is no filter. On Delivery a link counts
+as the type declared it when the entry was published, so editing the type later doesn't hide it. A key whose role hides a field cannot use `links_to_entry`,
+which looks inside every field.
+
+A component member is filtered by its path, `fields.seo.title`. A `where` tree names at most 4
+paths (`422` past that); top-level path filters have no cap, and past 4 the extra ones cost a
+wider scan rather than a refusal. A query-string key with more than 4 segments, or a numeric segment (`fields.blocks.0`), isn't a
+filter and is ignored, as before; the same path inside `where` is refused with `422`.
+
+### OR and AND groups
+
+Filters in the query string all have to match. For "this or that", pass `where`, a JSON tree of
+`and` and `or` groups over the same filters (each `{ "field", "op", "value" }`, `op` defaulting to
+`eq`), ANDed with the other parameters:
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article" \
+  --data-urlencode 'where={"or":[{"field":"fields.title","op":"startsWith","value":"How"},{"and":[{"field":"fields.category","value":"news"},{"field":"fields.views","op":"gte","value":100}]}]}' \
+  -G -H "Authorization: Bearer $CDA"
+```
+
+Groups nest at most 4 deep and hold at most 20 filters in all, the parameter at most 8,192
+characters; a malformed tree is refused with `422`, naming where in it the problem is. Repeated
+`where` parameters are ANDed, sharing those limits; an empty `where=` is no filter. Filter tags and concepts by id
+(`metadata.tags`) inside `where`; slugs work only as top-level parameters.
+
+### Behaviour changes
+
+- A path filter such as `fields.seo.title=…` now filters by the component member. Before, a
+  dotted key was not a filter and was ignored.
+- `match` on a list field (a list of Symbols, or a path through a list of components) matches
+  when any element contains the text. Before, it never matched a list.
+- An empty `match` (`fields.title[match]=`) still means "has a value", and an `in` list may still
+  be longer than 100 values; the stricter checks apply to the new operators and to `where`.
+- During a rollback to a Worker from before these filters, it ignores the parameters it doesn't
+  know (`where`, `links_to_entry`, `[ref]`, `[startsWith]`, a path filter) and answers without
+  them: a wider list, not an error.
 
 Entries a role-bound key can't read are left out of lists, and denied fields are removed; see
 [Roles](/guides/api-keys/#roles).
@@ -168,7 +216,7 @@ Each content type gets `article(id:, locale:)` and `articleCollection(...)` root
 | --- | --- |
 | `locale` | Resolve every field to this locale |
 | `limit`, `skip` | Paging; `limit` is at most 100 |
-| `where` | A JSON object of the [filters](#filters) above, keyed the same way: `{"fields.category[in]": ["news", "events"], "fields.price[gte]": 10}` |
+| `where` | A JSON object of the [filters](#filters) above, keyed the same way: `{"fields.category[in]": ["news", "events"], "fields.price[gte]": 10}`. `and` and `or` keys hold [groups](#or-and-and-groups): `{"or": [{"field": "title", "op": "startsWith", "value": "A"}, …]}` |
 | `order` | A list of sort keys, `["-sys.publishedAt", "fields.title"]` |
 | `search` | Full-text match over text fields, like `query=` |
 

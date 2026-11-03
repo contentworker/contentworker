@@ -393,6 +393,28 @@ describe('prefilter superset property (adversarial)', { timeout: 120_000 }, () =
       filters: [{ field: 'data', op: 'match' as const, value: v }],
     })),
     ...['plain', 'ÄPFEL', 'a\\b', 'nested'].map((v) => ({ search: v })),
+    // startsWith shares match's LIKE widening, anchored at the start.
+    ...['pl', 'mix', 'äp', 'a\\', '50%', 'a_', '"q', 'tr', '5', 'x'].map((v) => ({
+      filters: [{ field: 'data', op: 'startsWith' as const, value: v }],
+    })),
+    // Component paths walk into the hostile objects and lists of objects.
+    ...(['eq', 'match', 'startsWith'] as const).flatMap((op) =>
+      ['obj', 'v', 'OB'].map((v) => ({
+        filters: [{ field: v === 'v' ? 'data.k' : 'data.nested', op, value: v }],
+      })),
+    ),
+    { filters: [{ field: 'data.nested', op: 'exists', value: true }] },
+    { filters: [{ field: 'data.k', op: 'in', value: ['v', 5] }] },
+    // An OR of pushable branches is pushed whole; it must still drop nothing.
+    {
+      where: {
+        or: [
+          { field: 'data', op: 'eq', value: '5' },
+          { field: 'data', op: 'startsWith', value: 'mi' },
+          { field: 'data.nested', op: 'eq', value: 'obj' },
+        ],
+      },
+    },
   ];
 
   beforeAll(async () => {

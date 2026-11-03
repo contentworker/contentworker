@@ -141,12 +141,46 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 | Parameter         | Syntax                                | Meaning                                                               |
 | ----------------- | ------------------------------------- | --------------------------------------------------------------------- |
 | Field filter      | `fields.<apiId>=v`                    | Equals                                                                |
-| Field filter (op) | `fields.<apiId>[op]=v`                | `op` ∈ `ne`, `in`, `nin`, `gt`, `gte`, `lt`, `lte`, `exists`, `match` |
+| Field filter (op) | `fields.<apiId>[op]=v`                | `op` ∈ `ne`, `in`, `nin`, `gt`, `gte`, `lt`, `lte`, `between` (`low,high`), `exists`, `match`, `startsWith` |
+| Component path    | `fields.seo.title[op]=v`              | A component member (up to 4 segments); through a list of components, any element's |
+| Referenced entry  | `fields.<link>[ref]=<id>`             | The field links to the entry (`[refIn]=<id>,<id>`: any of them)        |
+| Links to entry    | `links_to_entry=<id>[,<id>]`          | Any field links to the entry; refused (403) to a key with hidden fields |
+| Groups            | `where=<json>`                        | `and`/`or` groups of `{ field, op, value }`, ≤ 4 deep, ≤ 20 predicates (`parseQueryWhere`); ANDed with the rest |
 | System field      | `sys.publishedAt[gt]=<iso>`           | Filter on `sys.*` pseudo-fields                                       |
 | Taxonomy          | `metadata.tags.slug=news`             | Delivery only: entries carrying a tag (`metadata.tags` by id; `metadata.concepts[.slug]` for concepts) |
 | Sort              | `order=fields.title,-sys.publishedAt` | Comma-separated; `-` prefix = descending                              |
 | Projection        | `select=fields.title,fields.body`     | Return only listed field apiIds                                       |
 | Full-text         | `query=foo`                           | FTS over string fields (published model on Delivery)                  |
+
+The D1 store pushes a superset of each predicate into SQL and the domain engine
+(`runEntryQuery`) decides exactly (`packages/db/src/query-pushdown.ts`). Reference filters on
+Delivery are an `IN` over the `references` edges table (by its `to_id` index), on Preview a
+`json_tree` walk of the current fields, after a cheap `instr` test for the quoted id (so ref ids
+are restricted to printable ASCII: an id containing `"`, `\` or a non-ASCII character can't be
+targeted). On Delivery a top-level reference filter answered by the edge lookup is exact and is
+not rechecked against today's type, since the edges record the type as it was at publish. The use-cases pass the content model with a
+reference filter (`EntryQuery.contentTypes`; on Delivery it rides the config read), and the
+engine then reads links exactly as `extractReferences` writes the edges: declared link-bearing
+fields only, any locale. Component paths compare the path's last segment as a bound value, at
+most `MAX_PATH_FILTERS` (4) pushed per statement (the rest are left to the engine; only a `where`
+tree is refused, 422, past 4 paths, since top-level dotted keys were always accepted); an `or` group is pushed only when every branch is; a field
+key holding `"` widens the scan instead of being walked. Prefilters spend at most
+`PREFILTER_PARAM_BUDGET` (64) bound parameters per statement; a predicate past it is left to the
+engine.
+
+Strict checks (`queryFilterIssues`, strict inside `where`) apply to the new inputs only: `ref`,
+`refIn`, `between`, `startsWith`, `*`, and every predicate of a `where` tree. An empty `match`
+("has a value"), an `in`/`nin` list past 100 values and an unknown operator behave as before.
+Repeated `where` parameters (and GraphQL's `and`, `or` and `where` keys) are merged with
+`mergeWhereJson` and checked as one tree: ≤ 4 deep, ≤ 20 predicates, ≤ 8,192 characters (MCP
+measures `JSON.stringify(where)`); an empty `where=` is absent. A query-string key the parser
+doesn't recognise (more than 4 path segments, a numeric segment) is ignored as before; the same
+path inside `where` is refused with 422.
+
+In `packages/db/test/query-counts.json` the Delivery reference rows (`fields.author[ref]=`,
+`links_to_entry=`) record 3 statements to a plain list's 2: a reference filter reads the content
+types alongside the space config, in the same round trip, so the engine can read links as the
+edges do.
 
 ---
 
@@ -293,6 +327,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | POST   | `…/content-types`                  | `content:manage`  | Create/update content type         |
 | GET    | `…/content-types/entry-counts`     | `preview:read`    | Entries per type, by status        |
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
+| GET    | `…/content-types/:apiId/fields/:field/values` | `preview:read` | Distinct values of a short scalar field (not `Text`) or list of Symbols across current entries, trash excluded, each with its entry `count`; booleans, numbers, strings ascending; `locale`, `limit` (≤ 100), `cursor` → `{ items, nextCursor? }`. 422 for any other field, 403 for a hidden one, `query_too_broad` when the type holds more entries than the scan cap (5,000) |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 
 A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,

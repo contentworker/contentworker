@@ -11,6 +11,7 @@ import {
 import type { EntryQuery } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { localeFallbackChain, type RenderOptions } from './delivery';
+import { usesReferenceFilters } from './entry-query';
 import { renderFields } from './render';
 
 /** A previewed entry: the current (draft) version, including its status. */
@@ -61,6 +62,9 @@ export async function listPreviewEntries(
   const locale = query.locale ?? opts.locale ?? config.defaultLocale;
   const rows = await ctx.store.entries.list(scope, {
     ...query,
+    ...(usesReferenceFilters(query)
+      ? { contentTypes: await ctx.store.contentTypes.list(scope) }
+      : {}),
     locale,
     fallbackLocales: localeFallbackChain(config, locale),
   });
@@ -159,6 +163,10 @@ export async function listPreviewEntryPage(
   const config = await spaceConfig(ctx, scope);
   const locale = rest.locale ?? opts.locale ?? config.defaultLocale;
   const fallbackLocales = localeFallbackChain(config, locale);
+  // A reference filter is answered from the links the content model declares (as on Delivery).
+  const contentTypes = usesReferenceFilters(rest)
+    ? await ctx.store.contentTypes.list(scope)
+    : undefined;
   // A projection still reads the ordered fields: the cursor is built from them.
   const ordered = order.flatMap((o) =>
     o.field.startsWith('sys.') || o.field.startsWith('metadata.') ? [] : [o.field],
@@ -171,6 +179,7 @@ export async function listPreviewEntryPage(
     afterRow,
     locale,
     fallbackLocales,
+    ...(contentTypes ? { contentTypes } : {}),
   });
   const page = rows.slice(0, limit);
   const last = page.at(-1);
