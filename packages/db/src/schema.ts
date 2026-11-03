@@ -1231,7 +1231,7 @@ export const redirectSets = sqliteTable(
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
 );
 
-/** Navigation menus, each a JSON tree of items written whole at its revision (0021_menus). */
+/** Navigation menus, each a JSON tree of items written whole at its revision (0020_menus). */
 export const menus = sqliteTable(
   'menus',
   {

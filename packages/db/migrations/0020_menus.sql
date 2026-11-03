@@ -1,4 +1,4 @@
--- 0021_menus: navigation menus, as delivery data. Mirrors `menus` in packages/db/src/schema.ts.
+-- 0020_menus: navigation menus, as delivery data. Mirrors `menus` in packages/db/src/schema.ts.
 --
 -- A new table, so the code already deployed never reads or writes it, and nothing is backfilled.
 -- Environment-scoped (the environment purge clears it, snapshots and clones carry it).

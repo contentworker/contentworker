@@ -235,7 +235,7 @@ read paths), 10 GB per database.
 | `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows                                                                       |
 | `concept_schemes`, `concepts`, `tags`                                                                                                             | Taxonomy (`taxonomy_usage`, its published counts, from 0018)                              |
 | `redirects`, `redirect_sets` (`0017`)                                                                                                             | Redirects and their revision                                                              |
-| `menus` (`0021`)                                                                                                                                  | Navigation menus, each item tree a JSON column                                            |
+| `menus` (`0020`)                                                                                                                                  | Navigation menus, each item tree a JSON column                                            |
 | `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
 | `audit_log`                                                                                                                                       | Per-space audit trail                                                                     |
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
@@ -305,7 +305,7 @@ admin, deployment-wide (`grants` JSON names each space). Only the links' token h
 makes a link work once, and `expired` is read from `expires_at`, never written (see
 [Auth & RBAC](./auth-and-rbac.md#invitations)). Nothing is backfilled.
 
-`0021_menus.sql` adds `menus` and touches no existing table: one environment-scoped row per
+`0020_menus.sql` adds `menus` and touches no existing table: one environment-scoped row per
 navigation menu (`handle`, `name`, `description`, `items` as a JSON tree written whole, `revision`,
 epoch-ms `created_at` and `updated_at`), with the unique index `menus_by_handle` on `(space_id,
 environment_id, handle)`. `revision` is the compare-and-set every save rides with (a loser surfaces

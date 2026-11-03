@@ -24,7 +24,7 @@ import { createD1Store } from '../src/store';
 import { testDb } from './env';
 
 /**
- * Menus on D1 (0021_menus): the item tree stored whole, one menu per handle, the revision's
+ * Menus on D1 (0020_menus): the item tree stored whole, one menu per handle, the revision's
  * compare-and-set refusing a lost race at commit, Delivery's one-batch read of a menu and what its
  * links name (past the 100-parameter cap), and the table cleared with its environment. Each test
  * makes its own space: the file shares one database.
