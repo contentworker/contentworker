@@ -3,34 +3,33 @@ title: SDKs
 description: Typed clients for the Delivery and Management APIs, React and Vue bindings, an edge client, typed content from your model, and inline editing on previews.
 ---
 
-| Package                            | For                                                              |
-| ---------------------------------- | ---------------------------------------------------------------- |
-| `@contentworker/sdk-core`          | Delivery and Preview, in any JavaScript runtime. No dependencies |
-| `@contentworker/sdk-web`           | React hooks over sdk-core, plus inline editing                   |
-| `@contentworker/sdk-vue`           | Vue 3 composables over sdk-core                                  |
-| `@contentworker/sdk-edge`          | A tiny single-locale Delivery client for edge functions          |
-| `@contentworker/sdk-react-native`  | Delivery with offline sync for mobile apps                       |
-| `@contentworker/sdk-management`    | The Management API: model, author, publish, administer           |
-| `@contentworker/sdk-codegen`       | TypeScript types generated from your content model               |
-
-Install what you need; each is a separate package:
+One package, `@contentworker/sdk`. Import the subpath you use; nothing else ends up in your
+bundle.
 
 ```sh
-npm install @contentworker/sdk-core            # Delivery and Preview, any runtime
-npm install @contentworker/sdk-web react       # React hooks and inline editing
-npm install @contentworker/sdk-vue vue         # Vue 3 composables
-npm install @contentworker/sdk-edge            # single-locale client for edge functions
-npm install @contentworker/sdk-react-native    # Delivery with offline sync
-npm install @contentworker/sdk-management      # Management API (server-side only)
-npm install -D @contentworker/sdk-codegen      # contentworker-codegen
+npm install @contentworker/sdk
 ```
 
-The web, Vue and React Native packages take `react` or `vue` as a peer dependency.
+| Import                            | For                                                                   |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `@contentworker/sdk`              | Delivery and Preview, in any JavaScript runtime. No dependencies      |
+| `@contentworker/sdk/rich-text`    | Render rich text to HTML, Markdown or plain text                      |
+| `@contentworker/sdk/webhooks`     | Verify a signed webhook delivery                                      |
+| `@contentworker/sdk/redirects`    | Apply the space's redirects in a front-door Worker                    |
+| `@contentworker/sdk/react`        | React hooks and components, plus inline editing                       |
+| `@contentworker/sdk/vue`          | Vue 3 composables and components                                      |
+| `@contentworker/sdk/edge`         | A tiny single-locale Delivery client for edge functions               |
+| `@contentworker/sdk/react-native` | Delivery with offline sync for mobile apps                            |
+| `@contentworker/sdk/management`   | The Management API: model, author, publish, administer (server only)  |
+| `@contentworker/sdk/codegen`      | TypeScript types generated from your content model                    |
+
+The package also installs the [`contentworker` command](/guides/cli/). React and Vue are optional
+peer dependencies: install the one you use (`npm install react` or `npm install vue`).
 
 ## Reading content
 
 ```ts
-import { createDeliveryClient, imageProps } from '@contentworker/sdk-core';
+import { createDeliveryClient, imageProps } from '@contentworker/sdk';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',
@@ -91,7 +90,7 @@ Preview is served from the workspace's `api.` address, so point `baseUrl` there
 ### React and Vue
 
 ```tsx
-import { ContentworkerProvider, useEntry } from '@contentworker/sdk-web';
+import { ContentworkerProvider, useEntry } from '@contentworker/sdk/react';
 
 function Article({ id }: { id: string }) {
   const { data, error, loading } = useEntry(id, { locale: 'en-US' });
@@ -106,19 +105,19 @@ function Article({ id }: { id: string }) {
 `useAsset(id)` fetches an asset and `<Image asset={…} sizes="…" />` renders it with
 `imageProps`; nothing renders while it loads.
 
-`@contentworker/sdk-vue` has the same surface as composables (`useEntry`, `useEntries`,
+`@contentworker/sdk/vue` has the same surface as composables (`useEntry`, `useEntries`,
 `useAsset`, `useSemanticSearch`) and a `<CwImage>` component, installed with
 `app.use(createContentworker(client))`. Both fetch on the
 client only, so server rendering stays predictable.
 
 ### Edge devices and mobile
 
-`@contentworker/sdk-edge` is a tiny client for edge functions, kiosks and devices. It always asks
+`@contentworker/sdk/edge` is a tiny client for edge functions, kiosks and devices. It always asks
 for one locale, so values come back flat with no reference graph, and can project to the fields
 you name:
 
 ```ts
-import { createEdgeClient } from '@contentworker/sdk-edge';
+import { createEdgeClient } from '@contentworker/sdk/edge';
 
 const edge = createEdgeClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',
@@ -130,7 +129,7 @@ const edge = createEdgeClient({
 const posts = await edge.list('article', { limit: 10, pick: ['title', 'slug'] });
 ```
 
-`@contentworker/sdk-react-native` adds offline sync. `createOfflineDelivery` pulls entries
+`@contentworker/sdk/react-native` adds offline sync. `createOfflineDelivery` pulls entries
 published since its last cursor (the [`since`](/guides/reading-content/#entries) parameter) into
 storage you pass it, then reads from there without a network. Storage is pluggable: any object
 with `getItem`, `setItem` and `removeItem`, such as `AsyncStorage` or MMKV; `InMemoryStorage` is
@@ -140,11 +139,11 @@ for the device's density and the image's size in dp.
 
 ### Rendering rich text
 
-Rich text arrives as a document tree, not HTML. `@contentworker/sdk-rich-text` renders it in any
+Rich text arrives as a document tree, not HTML. `@contentworker/sdk/rich-text` renders it in any
 framework, with all text escaped and only safe links emitted:
 
 ```ts
-import { toHtml } from '@contentworker/sdk-rich-text';
+import { toHtml } from '@contentworker/sdk/rich-text';
 
 const html = toHtml(entry.fields.body, {
   entryHref: (target) => `/${target.fields?.slug}`,
@@ -166,7 +165,7 @@ pattern, sorted by content type, so a front end can route pages from the content
 
 `client.redirects()` returns the environment's enabled redirects and
 `client.resolveRedirect(path, { locale })` asks Delivery about one path (`null` when none matches).
-The subpath `@contentworker/sdk-core/redirects` applies them in a front-door Worker:
+The subpath `@contentworker/sdk/redirects` applies them in a front-door Worker:
 `createRedirectHandler`, `createRedirectMatcher` and `applyRedirects`. See
 [Redirects](/guides/redirects/#apply-redirects-in-a-worker). The management client has
 `cma.redirects.{list, get, create, update, delete, import, resolve, analyze, collapseChains}`, and a
@@ -175,7 +174,7 @@ content type draft takes `urlPattern`.
 ## Writing content
 
 ```ts
-import { createManagementClient } from '@contentworker/sdk-management';
+import { createManagementClient } from '@contentworker/sdk/management';
 
 const cma = createManagementClient({
   baseUrl: 'https://api.your-workspace.contentworker.app',
@@ -247,7 +246,7 @@ A failed call throws `ManagementError` with the `status`, the API's error `code`
 the details a code carries:
 
 ```ts
-import { isAssetInUse, isAssetRightsError } from '@contentworker/sdk-management';
+import { isAssetInUse, isAssetRightsError } from '@contentworker/sdk/management';
 
 try {
   await cma.assets.publish(id);
@@ -286,13 +285,15 @@ publish shortly after, not on the next request.
 ## Typed content
 
 Generate TypeScript types from your space's content types, so `entry.fields.title` is a `string`
-rather than `unknown`. With the [CLI](/guides/cli/) signed in, `contentworker types --out
-src/generated/content-types.ts` does it; without it:
+rather than `unknown`, with the [`contentworker` command](/guides/cli/):
 
 ```sh
-npx contentworker-codegen --url https://api.your-workspace.contentworker.app --space your-space \
-  --environment main --token "$CONTENTWORKER_CPA_TOKEN" --out src/generated/content-types.ts
+npx contentworker types --out src/generated/content-types.ts
 ```
+
+Signed in with `contentworker login`, or in CI with `CONTENTWORKER_URL`, `CONTENTWORKER_TOKEN`,
+`CONTENTWORKER_SPACE` and `CONTENTWORKER_ENVIRONMENT` set. To generate from content types you
+already have, `generateTypes(contentTypes)` from `@contentworker/sdk/codegen` returns the source.
 
 ```ts
 import type { ArticleFields } from './generated/content-types.js';
@@ -312,7 +313,7 @@ overlay then outlines a value on hover and opens that field in the editor on cli
 the values, and mount the overlay once.
 
 ```tsx
-import { InlineEditor, useEditable } from '@contentworker/sdk-web';
+import { InlineEditor, useEditable } from '@contentworker/sdk/react';
 
 function Title({ entry }) {
   const editable = useEditable();
@@ -326,7 +327,7 @@ function Title({ entry }) {
 `editable()` adds a `data-cw-ref` attribute only when the client was created with `preview: true`.
 In production it returns nothing, so the same components ship without revealing entry ids or field
 names. Outside React, call `client.editable(entry, 'title')` for the attributes and
-`mountInlineEditor({ adminUrl })` from `@contentworker/sdk-core/inline-edit` to mount the overlay;
+`mountInlineEditor({ adminUrl })` from `@contentworker/sdk/inline-edit` to mount the overlay;
 it returns a handle with `setEnabled()` and `destroy()`.
 
 Editing starts off, because intercepting every click would stop you following links on the preview.

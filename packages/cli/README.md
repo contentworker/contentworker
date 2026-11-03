@@ -1,11 +1,13 @@
 # @contentworker/cli
 
+> A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/sdk/README.md) as its `contentworker` binary; the examples below use that name.
+
 The `contentworker` command: sign in to a workspace, keep the content model in a file, read and
 write entries, upload assets, import files and generate types. Every command takes `--json` for
 scripts and agents. Node 24 or later.
 
 ```sh
-npm install -D @contentworker/cli
+npm install -D @contentworker/sdk
 
 npx contentworker login --url https://api.your-workspace.contentworker.app
 npx contentworker doctor

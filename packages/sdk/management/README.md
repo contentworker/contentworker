@@ -1,16 +1,18 @@
 # @contentworker/sdk-management
 
+> A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk/management`; the examples below use that name.
+
 The client for contentworker's Management API: content types, entries and their versions, the
 asset library, bulk jobs, releases, scheduled actions, webhooks, environments and keys. No
 dependencies; it runs on `fetch`. Keep it on a server: a Management token never belongs in a
 browser or app bundle.
 
 ```sh
-npm install @contentworker/sdk-management
+npm install @contentworker/sdk
 ```
 
 ```ts
-import { createManagementClient } from '@contentworker/sdk-management';
+import { createManagementClient } from '@contentworker/sdk/management';
 
 const cma = createManagementClient({
   baseUrl: 'https://api.your-workspace.contentworker.app',
@@ -70,7 +72,7 @@ A failed call throws `ManagementError` with `status`, the API's error `code`, th
 object and the raw `body`. Guards narrow it to the details a code carries:
 
 ```ts
-import { isAssetInUse, isAssetRightsError } from '@contentworker/sdk-management';
+import { isAssetInUse, isAssetRightsError } from '@contentworker/sdk/management';
 
 try {
   await cma.assets.delete(id);

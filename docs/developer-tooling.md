@@ -85,10 +85,9 @@ sources to the test task's inputs, so editing a skill reruns its check.
 
 ## Publishing
 
-Nothing is published from CI yet. When it is:
-
-- **The CLI** goes to npm as `@contentworker/cli` alongside the SDKs: `pnpm --filter
-  @contentworker/cli build` produces `dist/bin.js`, the only file in the package.
+- **The CLI** ships inside `@contentworker/sdk` as its `contentworker` binary
+  (`packages/sdk/sdk/src/bin.ts`, bundled to `dist/bin.js`); `@contentworker/cli` itself stays a
+  private workspace package. See [SDKs](./sdks.md) for the release.
 - **The skills** install straight from this repository with the open `skills` CLI
   (`npx skills add contentworker/contentworker@<skill>`), or by copying `skills/*` into a
   project's `.claude/skills/`. A separate repository (for example `contentworker/skills`) would

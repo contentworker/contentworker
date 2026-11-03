@@ -1,12 +1,12 @@
 name: Release SDKs
 
-# Publishes the public SDKs (packages/sdk/*) to npm when a tag `sdk-v<version>` is pushed. Every
-# SDK shares one version (scripts/sdk-packages.test.ts); bump them together, merge, then tag.
-# Versions already on npm are skipped, so a rerun is safe.
+# Publishes @contentworker/sdk (packages/sdk/sdk: every SDK and the `contentworker` CLI in one
+# package) to npm when a tag `sdk-v<version>` is pushed: bump its version, merge, then tag.
+# A version already on npm is skipped, so a rerun is safe.
 #
-# npm trusted publishing: no token is stored. On npmjs.com each package's "Trusted publisher"
+# npm trusted publishing: no token is stored. On npmjs.com the package's "Trusted publisher"
 # names GitHub Actions, org `contentworker`, repo `contentworker`, workflow `sdk-release.yml`,
-# environment `npm`. Each publish carries a provenance attestation.
+# environment `npm`. The publish carries a provenance attestation.
 on:
   push:
     tags: ["sdk-v*"]
@@ -36,17 +36,17 @@ jobs:
       - name: npm with trusted publishing
         run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
-      - name: The tag matches the SDKs' version
+      - name: The tag matches the SDK's version
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          version=$(node -p "require('./packages/sdk/core/package.json').version")
+          version=$(node -p "require('./packages/sdk/sdk/package.json').version")
           test "$TAG" = "sdk-v${version}" || { echo "tag $TAG is not sdk-v${version}"; exit 1; }
-      - name: The SDKs' checks
+      - name: The SDK's checks (and everything it bundles, the CLI included)
         run: |
           node --test scripts/sdk-packages.test.ts
-          pnpm turbo run lint check-types test --filter='./packages/sdk/*'
-      - name: Pack, then load every export from the tarballs
+          pnpm turbo run lint check-types test --filter='@contentworker/sdk...'
+      - name: Pack, then load and type-check every subpath from the tarball
         run: |
           node scripts/sdk-packages.ts pack
           node scripts/sdk-packages.ts check

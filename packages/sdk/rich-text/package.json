@@ -1,6 +1,7 @@
 {
   "name": "@contentworker/sdk-rich-text",
   "version": "0.1.0",
+  "private": true,
   "description": "Render ContentWorker rich text (RichTextDocument) to HTML, Markdown or plain text. Zero dependencies; any framework, any runtime.",
   "homepage": "https://docs.contentworker.app/guides/sdks/",
   "repository": {
@@ -32,16 +33,5 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true,
-    "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js",
-        "require": "./dist/index.cjs"
-      }
-    }
   }
 }

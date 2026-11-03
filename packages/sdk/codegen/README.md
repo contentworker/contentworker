@@ -1,13 +1,15 @@
 # @contentworker/sdk-codegen
 
+> A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk/codegen`; the examples below use that name.
+
 Generates TypeScript types from your space's content model, so `entry.fields.title` is a `string`
-rather than `unknown`. Ships the `contentworker-codegen` CLI.
+rather than `unknown`. The published package runs it as `contentworker types`; the workspace's own
+`contentworker-codegen` bin is for local use.
 
 ```sh
-npm install -D @contentworker/sdk-codegen
+npm install -D @contentworker/sdk
 
-npx contentworker-codegen --url https://api.your-workspace.contentworker.app --space your-space \
-  --environment main --token "$CONTENTWORKER_CPA_TOKEN" --out src/generated/content-types.ts
+npx contentworker types --out src/generated/content-types.ts
 ```
 
 ```ts
@@ -23,11 +25,11 @@ Each content type becomes a delivery shape (`ArticleFields`) and a management sh
 ## Assets
 
 An asset field in a delivery shape is `AssetLink | DeliveredAsset`: the link, or the asset itself
-when `include` embeds it. `DeliveredAsset` is the same shape as `@contentworker/sdk-core`'s, so an
+when `include` embeds it. `DeliveredAsset` is the same shape as `@contentworker/sdk`'s, so an
 embedded asset goes straight into its `imageProps`:
 
 ```ts
-import { imageProps } from '@contentworker/sdk-core';
+import { imageProps } from '@contentworker/sdk';
 
 const hero = article.fields.hero;
 const props = hero && 'url' in hero ? imageProps(hero, { sizes: '100vw' }) : undefined;

@@ -1,6 +1,7 @@
 {
   "name": "@contentworker/sdk-core",
   "version": "0.1.0",
+  "private": true,
   "homepage": "https://docs.contentworker.app/guides/sdks/",
   "repository": {
     "type": "git",
@@ -44,31 +45,5 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true,
-    "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js",
-        "require": "./dist/index.cjs"
-      },
-      "./inline-edit": {
-        "types": "./dist/inline-edit.d.ts",
-        "import": "./dist/inline-edit.js",
-        "require": "./dist/inline-edit.cjs"
-      },
-      "./redirects": {
-        "types": "./dist/redirects.d.ts",
-        "import": "./dist/redirects.js",
-        "require": "./dist/redirects.cjs"
-      },
-      "./webhooks": {
-        "types": "./dist/webhooks.d.ts",
-        "import": "./dist/webhooks.js",
-        "require": "./dist/webhooks.cjs"
-      }
-    }
   }
 }

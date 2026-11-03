@@ -94,7 +94,7 @@ The docs site runs on its own: `pnpm docs:dev`.
 # Test / typecheck / lint everything (what CI's verify job runs; turbo, cached)
 pnpm check-types && pnpm test && pnpm lint
 
-# The SDKs as npm sees them: pack every SDK, then load each export from the tarballs
+# The SDK as npm sees it: pack @contentworker/sdk, then load and type-check every subpath
 node scripts/sdk-packages.ts pack && node scripts/sdk-packages.ts check
 
 # One package
@@ -130,7 +130,7 @@ pnpm generate
 | `@contentworker/security`      | node                                                                                                                                              | The signed principal, the derived assistant key, roles and session lifetimes                                                                                       |
 | `@contentworker/delivery`      | node                                                                                                                                              | Visibility profiles, canonical URLs, client cache headers and the purge drain                                                                                      |
 | `@contentworker/web`           | vitest, two projects: `node` (`tests/**/*.test.ts`) and `dom` (jsdom, `tests/**/*.test.tsx`); Playwright (`pnpm --filter @contentworker/web e2e`) | Auth and lib units; CMS screens; device and CMS e2e with axe in WebKit and Chromium                                                                                |
-| `packages/sdk/*`               | node (vitest)                                                                                                                                     | The Delivery and Management clients, `contentworker-codegen`                                                                                                       |
+| `packages/sdk/*`               | node (vitest)                                                                                                                                     | The Delivery and Management clients, codegen, and the published `@contentworker/sdk`'s subpaths                                                                                                       |
 | `@contentworker/cli`           | node (vitest), a scripted fake server                                                                                                             | The `contentworker` CLI's commands, device flow and token file, model plans, and the drift check on `skills/` ([Developer tooling](./developer-tooling.md))       |
 | `scripts/*.test.ts`            | `node --test` (`pnpm test:fleet`)                                                                                                                 | Fleet registry rendering, DO migration tags (append-only), the pnpm catalog, assistant key derivation, and a guard on names that must not appear in the repository |
 

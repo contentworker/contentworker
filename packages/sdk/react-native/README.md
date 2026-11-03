@@ -1,15 +1,17 @@
 # @contentworker/sdk-react-native
 
-Delivery for React Native over `@contentworker/sdk-core`: an offline entry cache with
+> A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk/react-native`; the examples below use that name.
+
+Delivery for React Native over `@contentworker/sdk`: an offline entry cache with
 delta sync (`createOfflineDelivery`, `useOfflineEntries`) and image helpers for delivered assets.
 
 ```sh
-npm install @contentworker/sdk-react-native
+npm install @contentworker/sdk
 ```
 
 ```tsx
 import { Image, PixelRatio } from 'react-native';
-import { imageProps, imageSource } from '@contentworker/sdk-react-native';
+import { imageProps, imageSource } from '@contentworker/sdk/react-native';
 
 // The width step at or above 320 × the screen's density, sized 320 dp wide with the image's
 // aspect ratio; a hosted video gives its thumbnail, a document undefined.
@@ -24,7 +26,7 @@ const source = imageSource(asset, { width: 320, dpr: PixelRatio.get() });
 a URL: delivered URLs are signed.
 
 ```ts
-import { createDeliveryClient, createOfflineDelivery } from '@contentworker/sdk-react-native';
+import { createDeliveryClient, createOfflineDelivery } from '@contentworker/sdk/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const store = createOfflineDelivery({ client, storage: AsyncStorage, contentType: 'article' });

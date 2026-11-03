@@ -44,9 +44,9 @@ Vectorize, Workers AI through AI Gateway, Images, Stream, Email Sending and Work
     adding a use-case, changing the D1 schema, and the schema reference.
 15. **[Admin UI](./admin-ui.md)**: the React Router admin on the web Worker, sign-in routes,
     layout, features and its tests.
-16. **[SDKs](./sdks.md)**: the Delivery clients (`@contentworker/sdk-core`, web, vue, edge,
-    react-native), the Management client (`@contentworker/sdk-management`) and
-    `contentworker-codegen`.
+16. **[SDKs](./sdks.md)**: the one published package `@contentworker/sdk`: the Delivery clients
+    (core, react, vue, edge, react-native), the Management client (`/management`), rich text,
+    webhooks, codegen and the `contentworker` CLI, and how it is bundled and released.
 17. **[Plugins](./plugins.md)**: sandboxed write-path plugins on Worker Loader isolates:
     manifests, capabilities, hooks and distribution policy.
 18. **[Developer tooling](./developer-tooling.md)**: the `contentworker` CLI (`packages/cli`) and

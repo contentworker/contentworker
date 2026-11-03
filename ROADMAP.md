@@ -78,8 +78,9 @@ Everything below is built and tested on v2.
   rationed from a queue. Reads use D1 read-replica sessions.
 - **Read-your-writes.** The api returns the D1 Sessions bookmark in `x-cw-bookmark`; a client that
   sends it back reads at least that fresh.
-- **SDKs.** `@contentworker/sdk-core`, `sdk-web`, `sdk-vue`, `sdk-edge`, `sdk-rich-text`, `sdk-react-native`,
-  `sdk-management` and `sdk-codegen`.
+- **SDK.** One npm package, `@contentworker/sdk`: Delivery and Preview, rich text, webhooks,
+  redirects, inline editing, React, Vue, edge, React Native, Management and codegen as subpaths, and
+  the `contentworker` CLI as its binary.
 - **Operations.** The fleet registry and renderer, idempotent provisioning, CI ring deploys
   (engine → media → api → delivery → web) with a D1 Time Travel bookmark before each migration, smoke and
   latency checks, and ordered rollback.

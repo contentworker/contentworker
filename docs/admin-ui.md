@@ -126,7 +126,7 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 
 ### Inline-edit links
 
-The `@contentworker/sdk-web` inline editor links to
+The `@contentworker/sdk/react` inline editor links to
 `/content/:type/:entryId?field=&locale=&space=&env=` ([SDKs](./sdks.md#inline-editing)). The entry
 editor selects the locale tab and focuses that field. If the link names a different space or
 environment than the current connection, the editor says so rather than loading: the id either

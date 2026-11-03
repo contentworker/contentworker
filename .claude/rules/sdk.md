@@ -3,10 +3,14 @@ paths:
   - packages/sdk/**
 ---
 
-# Public SDKs (`packages/sdk/*`)
+# Public SDK (`packages/sdk/*`)
 
-- These ship to customers' browsers, apps and Workers (`@contentworker/sdk-core`, `sdk-web`,
-  `sdk-vue`, `sdk-react-native`, `sdk-edge`, `sdk-management`, `sdk-codegen`, `sdk-rich-text`). They import only
+- These ship to customers' browsers, apps and Workers as one npm package, `@contentworker/sdk`
+  (`packages/sdk/sdk`), which bundles the private workspace packages (`@contentworker/sdk-core`,
+  `sdk-web`, `sdk-vue`, `sdk-react-native`, `sdk-edge`, `sdk-management`, `sdk-codegen`,
+  `sdk-rich-text`) and the CLI, one subpath each. A new workspace SDK module adds a subpath there
+  (`package.json` exports and publishConfig, `src/`, `tsup.config.ts`, `scripts/types.ts`, the
+  subpath test). They import only
   other `@contentworker/sdk-*` packages (framework SDKs build on `sdk-core`), never domain, ports,
   application, http, platform or adapters. Types mirroring server shapes are redeclared here, not
   imported.
@@ -16,4 +20,5 @@ paths:
   and on workerd.
 - A new management route in `packages/http/src/api/routes` usually needs a matching
   `sdk-management` method and test.
-- Docs: `apps/docs/src/content/guides/sdks.mdx` and `docs/sdks.md`.
+- Docs: `apps/docs/src/content/guides/sdks.mdx` and `docs/sdks.md`; user-facing docs name the
+  published import (`@contentworker/sdk/react`), never a workspace package.

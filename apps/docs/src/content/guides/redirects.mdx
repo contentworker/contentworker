@@ -131,13 +131,13 @@ request, fetch the set once and match locally rather than calling `resolve` per 
 
 ## Apply redirects in a Worker
 
-`@contentworker/sdk-core/redirects` matches requests against the set with the same rules as
+`@contentworker/sdk/redirects` matches requests against the set with the same rules as
 Delivery. `createRedirectHandler` is a front-door helper: it returns a redirect `Response` for a
 request a redirect matches, or `null` to serve the request as usual.
 
 ```ts
-import { createDeliveryClient } from '@contentworker/sdk-core';
-import { createRedirectHandler } from '@contentworker/sdk-core/redirects';
+import { createDeliveryClient } from '@contentworker/sdk';
+import { createRedirectHandler } from '@contentworker/sdk/redirects';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',

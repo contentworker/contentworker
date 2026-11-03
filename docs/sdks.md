@@ -3,8 +3,15 @@
 Method-level reference for the client packages. For a task-oriented tour, see the
 [SDKs guide](https://docs.contentworker.app/guides/sdks/).
 
-Five client packages target the read-only **Delivery API**, one, `@contentworker/sdk-management`,
-targets the **Management API** for programmatic authoring, and `@contentworker/sdk-codegen`
+Everything ships as one npm package, `@contentworker/sdk` (`packages/sdk/sdk`), with a subpath per
+module and the `contentworker` CLI as its binary. In the workspace each module is its own private
+package under `packages/sdk/*` (`sdk-core`, `sdk-web`, …); the published package bundles them with
+tsup and copies their `.d.ts` files (`packages/sdk/sdk/scripts/types.ts`), so a user only ever sees
+`@contentworker/sdk`. `scripts/sdk-packages.ts` packs it, loads and type-checks every subpath
+from the tarball, and publishes it on an `sdk-v<version>` tag.
+
+Five modules target the read-only **Delivery API**, one, `@contentworker/sdk/management`,
+targets the **Management API** for programmatic authoring, and `@contentworker/sdk/codegen`
 generates typed field shapes. Point Delivery clients at the delivery host, `https://cdn.<domain>`
 (cached; served by the delivery Worker), and the Management client and codegen at the api host,
 `https://api.<domain>`. A Delivery client in `preview: true` mode reads `/preview/*`, which only the
@@ -13,27 +20,27 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 
 ## Choosing a client
 
-| Use case                                                            | Package                           |
+| Use case                                                            | Import                            |
 | ------------------------------------------------------------------- | --------------------------------- |
-| Node/SSR/backend, or building your own integration                  | `@contentworker/sdk-core`         |
-| React apps                                                          | `@contentworker/sdk-web`          |
-| Vue 3 / Nuxt apps                                                   | `@contentworker/sdk-vue`          |
-| Edge functions, constrained devices, single-locale, minimal payload | `@contentworker/sdk-edge`         |
-| React Native apps with offline sync                                 | `@contentworker/sdk-react-native` |
-| Programmatic authoring/publishing (writes)                          | `@contentworker/sdk-management`   |
-| Types for entry fields                                              | `@contentworker/sdk-codegen`      |
-| Rendering rich text to HTML, Markdown or plain text (any framework) | `@contentworker/sdk-rich-text`    |
+| Node/SSR/backend, or building your own integration                  | `@contentworker/sdk`         |
+| React apps                                                          | `@contentworker/sdk/react`          |
+| Vue 3 / Nuxt apps                                                   | `@contentworker/sdk/vue`          |
+| Edge functions, constrained devices, single-locale, minimal payload | `@contentworker/sdk/edge`         |
+| React Native apps with offline sync                                 | `@contentworker/sdk/react-native` |
+| Programmatic authoring/publishing (writes)                          | `@contentworker/sdk/management`   |
+| Types for entry fields                                              | `@contentworker/sdk/codegen`      |
+| Rendering rich text to HTML, Markdown or plain text (any framework) | `@contentworker/sdk/rich-text`    |
 
-The five Delivery packages are **read-only**. For writes and publishing, use
-`@contentworker/sdk-management`, call the Management API directly, or drive the MCP tools
+The five Delivery modules are **read-only**. For writes and publishing, use
+`@contentworker/sdk/management`, call the Management API directly, or drive the MCP tools
 ([MCP server](./mcp.md)).
 
-## `@contentworker/sdk-core` — framework-agnostic Delivery client
+## `@contentworker/sdk` — framework-agnostic Delivery client
 
 Zero-dependency client for Node, SSR, edge runtimes, and tests.
 
 ```ts
-import { createDeliveryClient } from '@contentworker/sdk-core';
+import { createDeliveryClient } from '@contentworker/sdk';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.example.com',
@@ -134,7 +141,7 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
 - **Redirects.** contentworker serves no site, so redirects are data a front end applies.
   `client.redirects()` fetches the enabled set once; `resolveRedirect(path, { locale? })` asks
   Delivery about one path (one request each, so prefer the set). The subpath
-  `@contentworker/sdk-core/redirects` (`packages/sdk/core/src/redirects.ts`, zero dependencies)
+  `@contentworker/sdk/redirects` (`packages/sdk/core/src/redirects.ts`, zero dependencies)
   matches them locally with Delivery's rules (kept in step by a test):
   `createRedirectMatcher(set).match(pathOrPathWithQuery, locale?)`;
   `createRedirectHandler(source, { ttlMs?, locale? })`, a front-door helper that returns
@@ -161,12 +168,12 @@ interface SearchHit {
 type DeliveryClient = ReturnType<typeof createDeliveryClient>;
 ```
 
-## `@contentworker/sdk-web` — React hooks
+## `@contentworker/sdk/react` — React hooks
 
-Hooks layered over `@contentworker/sdk-core`. Provide a client once via context, then call hooks.
+Hooks layered over `@contentworker/sdk`. Provide a client once via context, then call hooks.
 
 ```tsx
-import { createDeliveryClient } from '@contentworker/sdk-core';
+import { createDeliveryClient } from '@contentworker/sdk';
 import {
   ContentworkerProvider,
   useEntry,
@@ -174,7 +181,7 @@ import {
   useSemanticSearch,
   useEditable,
   InlineEditor, // inline editing — see below
-} from '@contentworker/sdk-web';
+} from '@contentworker/sdk/react';
 
 const client = createDeliveryClient({ baseUrl, space, environment, token });
 
@@ -202,26 +209,26 @@ renders no markup. `<Image asset sizes? width? rendition? locale? priority? …i
 `imageProps(asset, …)` as an `<img>` (nothing while `asset` is unset, or for an asset with no
 image); other `<img>` attributes pass through, and an `alt` or `style` given wins over or merges
 into its own. `createDeliveryClient`, `DeliveryError`, `assetUrl`, `srcset`, `imageProps` and
-`localizedText` are re-exported, so `sdk-web` alone is enough.
+`localizedText` are re-exported, so `@contentworker/sdk/react` alone is enough.
 
 SSR-safe: no fetch happens on the server unless a hook is actually invoked.
 
-## `@contentworker/sdk-vue` — Vue 3 composables
+## `@contentworker/sdk/vue` — Vue 3 composables
 
 The same surface as the React hooks, as composables. Install the client once as an app
 plugin; inputs accept plain values, refs, or getters and re-fetch on change.
 
 ```ts
 // main.ts (Nuxt: inside a plugin — nuxtApp.vueApp.use(...))
-import { createDeliveryClient } from '@contentworker/sdk-core';
-import { createContentworker } from '@contentworker/sdk-vue';
+import { createDeliveryClient } from '@contentworker/sdk';
+import { createContentworker } from '@contentworker/sdk/vue';
 
 app.use(createContentworker(createDeliveryClient({ baseUrl, space, environment, token })));
 ```
 
 ```vue
 <script setup lang="ts">
-import { useEntry } from '@contentworker/sdk-vue';
+import { useEntry } from '@contentworker/sdk/vue';
 const props = defineProps<{ id: string }>();
 // Getter input: re-fetches whenever props.id changes.
 const { data, error, loading } = useEntry(() => props.id, { locale: 'en-US' });
@@ -238,7 +245,7 @@ Composables (all return `AsyncRefs<T> = { data, error, loading }` as refs):
 
 `<CwImage :asset sizes width rendition locale priority />` renders `imageProps` as an `<img>`
 (`srcset`, `fetchpriority` as attributes), nothing while `asset` is unset; fallthrough `alt`,
-`class` and `style` win or merge. The same helpers as `sdk-web` are re-exported.
+`class` and `style` win or merge. The same helpers as `@contentworker/sdk/react` are re-exported.
 
 Fetching starts on mount (client-side), matching the React hooks' SSR behavior — this
 holds outside components too (plugins, stores): on the server nothing fetches. Rapid
@@ -248,13 +255,13 @@ previous data. Query tracking is top-level: replace the query or its nested
 not observed. For server-fetched Nuxt data, wrap the client's promise methods in
 `useAsyncData` instead.
 
-## `@contentworker/sdk-edge` — tiny single-locale client
+## `@contentworker/sdk/edge` — tiny single-locale client
 
 Minimal client for edge functions and constrained devices (IoT, wearables, kiosks). Always resolves to **one locale** and supports
 field projection to keep payloads small.
 
 ```ts
-import { createEdgeClient } from '@contentworker/sdk-edge';
+import { createEdgeClient } from '@contentworker/sdk/edge';
 
 const client = createEdgeClient({ baseUrl, space, environment, token, locale: 'en-US' });
 
@@ -264,13 +271,13 @@ await client.list('article', { limit: 20, pick: ['title'] });
 
 Returns `CompactEntry` = `{ id, contentType, fields }` where `fields` is already flattened to the
 client locale (no locale nesting). It asks for no `include`, so an asset field is the bare link
-`{ id, linkType: 'Asset' }`; fetch the asset with `sdk-core`'s `getAsset` (and render it with
+`{ id, linkType: 'Asset' }`; fetch the asset with `@contentworker/sdk`'s `getAsset` (and render it with
 `imageProps`) where a device shows images.
 
-## `@contentworker/sdk-core/webhooks` — verify a webhook delivery
+## `@contentworker/sdk/webhooks` — verify a webhook delivery
 
 ```ts
-import { verifyWebhook } from '@contentworker/sdk-core/webhooks';
+import { verifyWebhook } from '@contentworker/sdk/webhooks';
 
 const event = await verifyWebhook(request, secret); // the event, or null
 ```
@@ -280,14 +287,14 @@ with Web Crypto and rejects timestamps outside a window (default 5 minutes, `tol
 `verifyWebhookSignature({ body, timestamp, signature, secret })` takes the parts, for frameworks
 that parse the request first.
 
-## `@contentworker/sdk-rich-text` — render rich text anywhere
+## `@contentworker/sdk/rich-text` — render rich text anywhere
 
 Rich text is delivered as a `RichTextDocument` tree, never as HTML. Every channel renders it
 for itself. This package does that for web and text channels, with no dependencies, in any
 framework or runtime.
 
 ```ts
-import { toHtml, toMarkdown, toPlainText, excerpt } from '@contentworker/sdk-rich-text';
+import { toHtml, toMarkdown, toPlainText, excerpt } from '@contentworker/sdk/rich-text';
 
 const html = toHtml(entry.fields.body, {
   entryHref: (target) => `/${target.fields?.slug}`,      // links to other entries
@@ -309,23 +316,23 @@ const html = toHtml(entry.fields.body, {
 - **`toMarkdown`** gives CommonMark with GFM tables, for agents, feeds and `.md` endpoints.
   **`toPlainText`** and **`excerpt`** give search text and meta descriptions.
 
-## `@contentworker/sdk-react-native` — offline Delivery sync
+## `@contentworker/sdk/react-native` — offline Delivery sync
 
 Hooks and helpers for React Native: an offline entry cache, delta sync via `since`, and image
-helpers (`imageUrl`, `imageSource`). Builds on `@contentworker/sdk-core`.
+helpers (`imageUrl`, `imageSource`). Builds on `@contentworker/sdk`.
 `imageUrl(asset, { width?, dpr?, rendition? })` takes a delivered asset and returns the rendition
 when it exists, else the ladder step for `ceil(width × dpr)` (through `assetUrl`), else `url`; it
 never appends parameters to a URL.
 
 ```ts
 import {
-  createDeliveryClient, // re-exported from sdk-core
+  createDeliveryClient, // re-exported from @contentworker/sdk
   createOfflineDelivery,
   InMemoryStorage,
   imageSource,
   imageUrl,
   useOfflineEntries,
-} from '@contentworker/sdk-react-native';
+} from '@contentworker/sdk/react-native';
 ```
 
 - **Storage is injected.** `createOfflineDelivery({ client, storage, contentType, locale?, pageSize? })`
@@ -342,7 +349,7 @@ import {
   dp (no `height` for a rendition, which may crop). `imageProps(asset)?.alt` (re-exported) gives
   its alt, with the same title fallback as the web.
 
-## `@contentworker/sdk-management` — Management (CMA) client
+## `@contentworker/sdk/management` — Management (CMA) client
 
 Zero-dependency client for the Management API: content types, entries (draft → publish →
 version history), the asset library, releases, scheduled actions, webhooks, and space
@@ -351,7 +358,7 @@ Authenticate with a CMA key or the admin token — the server enforces RBAC scop
 operation, so the client is only as powerful as its token.
 
 ```ts
-import { createManagementClient } from '@contentworker/sdk-management';
+import { createManagementClient } from '@contentworker/sdk/management';
 
 const cma = createManagementClient({
   baseUrl: 'https://api.example.com',
@@ -493,7 +500,7 @@ A failed request throws `ManagementError` with `status`, the API's error `code`,
 narrow it to the bodies a client branches on:
 
 ```ts
-import { isAssetInUse, isAssetRightsError, isValidationError } from '@contentworker/sdk-management';
+import { isAssetInUse, isAssetRightsError, isValidationError } from '@contentworker/sdk/management';
 
 try {
   await cma.assets.delete(id);
@@ -550,19 +557,21 @@ and is eventually consistent after a publish (see [Consistency](./consistency.md
 in-memory cache (`cacheTtlMs`) answers without asking the api, so a cached read does not see a
 later write; `clearCache()` after writing.
 
-## `@contentworker/sdk-codegen` — typed field shapes from your content model
+## `@contentworker/sdk/codegen` — typed field shapes from your content model
 
 Every SDK client is generic over the field shape (`getEntry<F>`, `EntryFields`), and
-`contentworker-codegen` generates those shapes from a space's actual content types — so entry fields are
-typed end to end instead of `Record<string, unknown>`.
+`contentworker types` generates those shapes from a space's actual content types — so entry fields
+are typed end to end instead of `Record<string, unknown>`.
 
 ```bash
-# From a live API (any token with preview read):
-contentworker-codegen --url https://api.example.com --space space-1 --environment main \
-  --token $CMA_TOKEN --out src/generated/content-types.ts
+# The signed-in space (contentworker login), or CONTENTWORKER_URL / _TOKEN / _SPACE / _ENVIRONMENT:
+npx contentworker types --out src/generated/content-types.ts
+```
 
-# From an exported JSON file ({ items: [...] } or a bare array); stdout by default:
-contentworker-codegen --input content-types.json > content-types.ts
+```ts
+// From content types you already have ({ items: [...] } JSON, a build step):
+import { generateTypes } from '@contentworker/sdk/codegen';
+const source = generateTypes(contentTypes);
 ```
 
 For each content type it emits two interfaces plus shared helpers and lookup maps:
@@ -583,13 +592,14 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   `embed` node's `data` is typed `EmbedData` (`{ url, provider, kind?, title?, authorName?,
   thumbnail?, width?, height?, aspectRatio? }`), structured metadata, never markup.
 - `<Name>DraftFields` — Management shape (locale-keyed: `Localized<T>`), usable with
-  `@contentworker/sdk-management`.
+  `@contentworker/sdk/management`.
 - `ContentTypeApiId` (union of apiIds), `FieldsByContentType`, and `DraftFieldsByContentType`.
 
 Pass the shape as the type argument, e.g. `client.getEntry<ArticleFields>(id, { locale })`.
 
-The generator is also importable (`generateTypes(contentTypes)`) for build-tool integration, and
-`contentworker types` in the [CLI](./developer-tooling.md) runs it against the signed-in space.
+`contentworker types` is the [CLI](./developer-tooling.md)'s command over the same generator. The
+workspace package `sdk-codegen` still has its own `contentworker-codegen` bin for local use; it
+isn't published.
 Generated modules are self-contained and compile clean under `strict`.
 
 ## Inline editing
@@ -601,7 +611,7 @@ the field they came from, and an overlay that reads those marks back out of the 
 **Marking values.** Spread `editable()` onto whatever element renders the value:
 
 ```tsx
-const editable = useEditable();                        // @contentworker/sdk-web
+const editable = useEditable();                        // @contentworker/sdk/react
 <h1 {...editable(entry, 'title')}>{entry.fields.title}</h1>
 <p {...editable(entry, 'summary', 'de-DE')}>{entry.fields.summary}</p>
 ```
@@ -619,7 +629,7 @@ to the hottest read path to carry nothing new.
 **The overlay.** In React, render it anywhere in the tree:
 
 ```tsx
-import { InlineEditor } from '@contentworker/sdk-web';
+import { InlineEditor } from '@contentworker/sdk/react';
 
 <InlineEditor adminUrl="https://example.com" />;
 ```
@@ -628,7 +638,7 @@ Outside React, mount it directly — it is framework-free and reads the DOM, so 
 markup rendered by anything:
 
 ```ts
-import { mountInlineEditor } from '@contentworker/sdk-core/inline-edit';
+import { mountInlineEditor } from '@contentworker/sdk/inline-edit';
 
 const editor = mountInlineEditor({ adminUrl: 'https://example.com' });
 editor.setEnabled(true);

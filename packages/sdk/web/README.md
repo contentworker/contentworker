@@ -1,11 +1,13 @@
 # @contentworker/sdk-web
 
-React hooks and components over `@contentworker/sdk-core`: `useEntry`, `useEntries`,
+> A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk/react`; the examples below use that name.
+
+React hooks and components over `@contentworker/sdk`: `useEntry`, `useEntries`,
 `useAsset`, `useSemanticSearch`, an `<Image>` for delivered assets, and inline editing on
 previews. Fetching happens on the client, so server rendering is predictable.
 
 ```sh
-npm install @contentworker/sdk-web react
+npm install @contentworker/sdk react
 ```
 
 ```tsx
@@ -14,7 +16,7 @@ import {
   createDeliveryClient,
   Image,
   useAsset,
-} from '@contentworker/sdk-web';
+} from '@contentworker/sdk/react';
 
 const client = createDeliveryClient({ baseUrl, space, environment: 'main', token });
 

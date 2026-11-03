@@ -1,6 +1,7 @@
 {
   "name": "@contentworker/cli",
   "version": "0.1.0",
+  "private": true,
   "license": "Apache-2.0",
   "type": "module",
   "description": "The contentworker CLI: sign in to a deployment, keep the content model in code, read and write entries, upload assets, import files and generate types. JSON output for agents.",

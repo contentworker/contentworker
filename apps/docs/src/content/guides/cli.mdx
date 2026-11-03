@@ -5,10 +5,10 @@ description: The contentworker CLI - sign in with a device code, keep the conten
 
 `contentworker` works with a workspace from a terminal, a CI job or a coding agent. It is built on
 the [Management SDK](/guides/sdks/#writing-content), so it can do what your token can and nothing
-more. It needs Node 24 or later.
+more. It comes with the SDK package, `@contentworker/sdk`, and needs Node 24 or later.
 
 ```sh
-npm install -D @contentworker/cli
+npm install -D @contentworker/sdk
 npx contentworker --help
 ```
 
@@ -56,7 +56,7 @@ In CI, skip the file: set `CONTENTWORKER_TOKEN` and `CONTENTWORKER_URL` (and
 | `entries publish <id…>`              | Publish one entry (`--expected-version` holds it), or up to 1,000      | `content:publish`   |
 | `assets upload <file>`               | Upload a file of any size (`--title`, `--folder`, `--publish`)         | `content:write`     |
 | `import <file>`                      | Import a CSV, JSON or WordPress export as drafts                       | `content:write`     |
-| `types [--out file]`                 | TypeScript types for the model, as [`contentworker-codegen`](/guides/sdks/#typed-content) writes them | `preview:read` |
+| `types [--out file]`                 | TypeScript types for the model, as described in [typed content](/guides/sdks/#typed-content) | `preview:read` |
 | `doctor`                             | Check sign-in, reachability, the API version and access to the space   |                     |
 
 `--fields` takes JSON keyed by field, then locale (`{"title":{"en-US":"Hello"}}`), or `@file` to

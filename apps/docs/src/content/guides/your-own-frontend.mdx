@@ -5,10 +5,10 @@ description: The three things any frontend needs to show ContentWorker content â
 
 ContentWorker serves content, not pages, so your site can be built with anything: Next.js, Astro,
 Remix, SvelteKit, a Worker, or plain HTML generated at build time. A frontend needs three things,
-each a few lines with two small packages.
+each a few lines with one package.
 
 ```sh
-npm install @contentworker/sdk-core @contentworker/sdk-rich-text
+npm install @contentworker/sdk
 ```
 
 ## 1. Read content
@@ -17,7 +17,7 @@ Create a Content Delivery API key (**Settings â†’ API keys**, scope `delivery:re
 server, and read published entries:
 
 ```ts
-import { createDeliveryClient } from '@contentworker/sdk-core';
+import { createDeliveryClient } from '@contentworker/sdk';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',
@@ -49,7 +49,7 @@ Rich text arrives as a document tree, never as HTML, so each channel renders it 
 are emitted.
 
 ```ts
-import { toHtml } from '@contentworker/sdk-rich-text';
+import { toHtml } from '@contentworker/sdk/rich-text';
 
 const html = toHtml(page.fields.body, {
   // Links to other entries: map an entry to its URL on your site.
@@ -71,7 +71,7 @@ If your site caches pages (a CDN, static generation, incremental rebuilds), add 
 verify each delivery before acting on it:
 
 ```ts
-import { verifyWebhook } from '@contentworker/sdk-core/webhooks';
+import { verifyWebhook } from '@contentworker/sdk/webhooks';
 
 export async function POST(request: Request) {
   const event = await verifyWebhook(request, process.env.CONTENTWORKER_WEBHOOK_SECRET!);
@@ -91,6 +91,6 @@ Everything else is optional and works the same in any stack:
 | -------------------------------------- | -------------------------------------------------------------------- |
 | Drafts on your site                    | A Preview key and `preview: true` ([SDKs](/guides/sdks/))            |
 | Responsive images and art direction    | `imageProps` ([delivering assets](/guides/delivering-assets/))       |
-| The CMS's redirects, slug changes too  | `@contentworker/sdk-core/redirects` ([redirects](/guides/redirects/)) |
-| Typed entry fields                     | `@contentworker/sdk-codegen` ([SDKs](/guides/sdks/))                 |
+| The CMS's redirects, slug changes too  | `@contentworker/sdk/redirects` ([redirects](/guides/redirects/)) |
+| Typed entry fields                     | `@contentworker/sdk/codegen` ([SDKs](/guides/sdks/))                 |
 | Live updates without polling           | The live stream ([reading content](/guides/reading-content/))        |

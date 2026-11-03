@@ -6,7 +6,7 @@ take them. Docs: https://docs.contentworker.app/guides/content-modeling/#blocks
 ## A landing page with blocks
 
 ```ts
-import type { ContentTypeDraft } from '@contentworker/sdk-management';
+import type { ContentTypeDraft } from '@contentworker/sdk/management';
 
 export default [
   {
