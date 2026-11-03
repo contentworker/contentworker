@@ -44,21 +44,21 @@ Everything below is built and tested on v2.
   environment snapshots (export, plus import and clone as resumable jobs; a clone's export and
   checks run in the engine too), CSV, JSON and WordPress import, and whole-space import from the
   JSON space export format (model, locales, tags, entries with links remapped, asset files copied).
-- **Assets.** Signed uploads to object storage, edge image transforms, streamed video, localized
-  alt text and focal point, AI alt text and auto-tagging, asset usage; a library with folders,
-  filters and keyset paging, bulk moves, archive and restore, and delete refused while entries link to an asset.
-  Published files on the media worker at stable, immutable URLs with per-space renditions and a
-  width ladder for `srcset`, revoked on unpublish; one delivered-asset shape for REST, embeds,
+- **Assets.** Signed uploads to object storage, edge image transforms, streamed video, localized alt
+  text and focal point, AI alt text and auto-tagging, asset usage; a library with folders, filters
+  and keyset paging, bulk moves, archive and restore, and delete refused while entries link to an
+  asset. Published files on the media worker at stable, immutable URLs with per-space renditions and
+  a width ladder for `srcset`, revoked on unpublish; one delivered-asset shape for REST, embeds,
   GraphQL and Preview; short-lived signed URLs for Management and Preview reads. Ingest on upload
   (storage notification → durable workflow): content hash and duplicate marker, dimensions, AI alt
   text and tags where empty, text from documents and audio; hybrid asset search with facets in
-  Management, MCP and Delivery, and a reindex job for older assets. File versions with replace
-  and restore (the old version's URLs retired on republish), usage rights with an expiry the
-  engine enforces and an embargo that blocks publishing, and move, tag, publish, unpublish and
-  archive as resumable bulk jobs. Collections (named, ordered, many-to-many, carried by export,
-  import and clone, served by Delivery), expiring revocable share links on the media origin
-  (published assets only, optional password), multipart uploads past 100 MiB (up to 5 GiB), and zip
-  downloads built by a durable workflow.
+  Management, MCP and Delivery, and a reindex job for older assets. File versions with replace and
+  restore (the old version's URLs retired on republish), usage rights with an expiry the engine
+  enforces and an embargo that blocks publishing, and move, tag, publish, unpublish and archive as
+  resumable bulk jobs. Collections (named, ordered, many-to-many, carried by export, import and
+  clone, served by Delivery), expiring revocable share links on the media origin (published assets
+  only, optional password), multipart uploads past 100 MiB (up to 5 GiB), and zip downloads built by
+  a durable workflow.
 - **Taxonomy and collaboration.** Concept schemes, concepts and tags, each with a slug, description
   and localized labels, served on Delivery with published usage counts and filterable by slug for
   archive pages; comments, tasks, legacy
