@@ -223,25 +223,27 @@ then only the new).
 
 All Cloudflare calls retry up to three times; each step is idempotent.
 
-## Releasing the SDKs
+## Releasing the SDK
 
-The public SDKs (`packages/sdk/*`) ship to npm, apart from the deploys:
+One package ships to npm, apart from the deploys: `@contentworker/sdk` (`packages/sdk/sdk`), which
+bundles the private workspace SDKs (`packages/sdk/*`) and the CLI (`packages/cli`, its
+`contentworker` binary). Nothing else is published (`scripts/sdk-packages.test.ts`).
 
-- `.github/workflows/sdk-packages.yml` (pull requests that touch `packages/sdk/`): `node
-  scripts/sdk-packages.ts pack` builds and packs every SDK, then `check` installs the tarballs
-  into an empty project and loads every export (ESM and CJS) and the codegen binary. That is
-  what a user installs: `pnpm pack` applies each package's `publishConfig` (exports and bin
-  pointing at `dist/`) and rewrites `workspace:` and `catalog:` versions.
+- `.github/workflows/sdk-packages.yml` (pull requests that touch `packages/sdk/` or
+  `packages/cli/`): `node scripts/sdk-packages.ts pack` builds it through turbo and packs it, then
+  `check` installs the tarball into an empty project, loads every subpath (ESM and CJS),
+  type-checks every subpath against the shipped `.d.ts` files and runs `contentworker help`. That
+  is what a user installs: `pnpm pack` applies `publishConfig` (exports and bin pointing at
+  `dist/`) and rewrites `catalog:` versions.
 - `.github/workflows/sdk-release.yml` (a pushed tag `sdk-v<version>`): checks that the tag
-  matches the SDKs' shared version, runs the SDKs' lint, type-check and tests, packs and loads
-  them, then publishes each package npm doesn't already have at that version, with npm trusted
-  publishing (OIDC, no stored token) and a provenance attestation. It runs in the `npm`
-  environment; add required reviewers there to approve each release.
+  matches `packages/sdk/sdk/package.json`'s version, runs lint, type-check and tests for it and
+  everything it bundles, packs and checks it, then publishes it if npm doesn't already have that
+  version, with npm trusted publishing (OIDC, no stored token) and a provenance attestation. It
+  runs in the `npm` environment; add required reviewers there to approve each release.
 
-To release: bump `version` in every `packages/sdk/*/package.json` together (one version,
-checked by `scripts/sdk-packages.test.ts`), merge, then push `sdk-v<version>`. Each package's
-npm settings name this repo and `sdk-release.yml` as its trusted publisher; a package's very
-first publish may have to be done by an owner of the npm org before that can be set.
+To release: bump `version` in `packages/sdk/sdk/package.json`, merge, then push `sdk-v<version>`.
+The package's npm settings name this repo and `sdk-release.yml` as its trusted publisher; its very
+first publish is done by an owner of the npm org, before that can be set.
 
 ## Migrations
 

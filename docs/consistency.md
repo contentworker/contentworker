@@ -19,7 +19,7 @@ replication, Workers Caching, KV, Queues and the one-minute cron. This page is t
   no-op. A unique-constraint violation at commit throws `ConflictError`.
 - **A stale write is refused with `expectedVersion`.** A publish, unpublish or version restore can
   carry the `currentVersion` the caller read (`?expectedVersion=N` on the Management route, the
-  `{ expectedVersion }` option of `@contentworker/sdk-management`, `assertExpectedVersion` in
+  `{ expectedVersion }` option of `@contentworker/sdk/management`, `assertExpectedVersion` in
   `packages/application/src/publishing.ts`). If a draft was saved since, the write is a 409 that
   changes nothing; without it, the write acts on the entry as it is.
 - **The outbox row rides in the same batch** as the state change it describes, so an event

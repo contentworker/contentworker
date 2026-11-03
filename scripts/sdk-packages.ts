@@ -1,14 +1,15 @@
 /**
- * The public SDKs (packages/sdk/*) as npm sees them.
+ * The public SDK as npm sees it: @contentworker/sdk (packages/sdk/sdk), one package that bundles
+ * the private workspace SDKs (packages/sdk/*) and the `contentworker` CLI.
  *
- *   node scripts/sdk-packages.ts pack     build every SDK and pack it into .sdk-packages/
- *   node scripts/sdk-packages.ts check    install the tarballs into an empty project and load
- *                                          every export (ESM and CJS) and the codegen binary
- *   node scripts/sdk-packages.ts publish  publish each tarball whose version npm doesn't have yet
+ *   node scripts/sdk-packages.ts pack     build it (and what it bundles) and pack it into .sdk-packages/
+ *   node scripts/sdk-packages.ts check    install the tarball into an empty project, load every
+ *                                          subpath (ESM and CJS), type-check every subpath and
+ *                                          run the `contentworker` binary
+ *   node scripts/sdk-packages.ts publish  publish the tarball if npm doesn't have its version yet
  *
- * In the workspace the SDKs resolve to src/*.ts; `pnpm pack` applies each package's
- * `publishConfig` (exports and bin pointing at dist/) and rewrites `workspace:` and `catalog:`
- * versions, so `check` tests exactly what a user installs. `publish` runs in
+ * In the workspace the package resolves to src/*.ts; `pnpm pack` applies each package's
+ * `publishConfig` (exports and bin pointing at dist/) and rewrites `catalog:` versions, so `check` tests exactly what a user installs. `publish` runs in
  * .github/workflows/sdk-release.yml with npm trusted publishing and provenance; never by hand.
  */
 import { execFileSync } from 'node:child_process';
@@ -53,7 +54,8 @@ function pack(): void {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   for (const { dir, manifest } of sdkManifests()) {
-    run('pnpm', ['--filter', manifest.name, 'build']);
+    // Through turbo, so the workspace SDKs it bundles (and their .d.ts) build first.
+    run('pnpm', ['turbo', 'run', 'build', `--filter=${manifest.name}...`]);
     run('pnpm', ['pack', '--pack-destination', out], dir);
     console.log(`packed ${manifest.name}@${manifest.version}`);
   }
@@ -61,7 +63,8 @@ function pack(): void {
 
 function catalogVersion(name: string): string {
   const yaml = readFileSync(join(root, 'pnpm-workspace.yaml'), 'utf8');
-  const m = new RegExp(`^\\s+${name}:\\s*(\\S+)`, 'm').exec(yaml);
+  const key = name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  const m = new RegExp(`^\\s+["']?${key}["']?:\\s*(\\S+)`, 'm').exec(yaml);
   if (!m?.[1]) throw new Error(`${name} is not in the pnpm catalog`);
   return m[1].replace(/^['"]|['"]$/g, '');
 }
@@ -77,6 +80,8 @@ function check(): void {
     for (const { manifest } of sdkManifests()) {
       for (const p of Object.keys(manifest.peerDependencies ?? {})) peers.add(p);
     }
+    // A React user type-checks with React's types; Vue ships its own.
+    if (peers.has('react')) peers.add('@types/react');
     run(
       'npm',
       [
@@ -119,12 +124,44 @@ function check(): void {
       }
       for (const bin of Object.keys(manifest.bin ?? {})) {
         try {
-          run('node', ['--check', join(project, 'node_modules/.bin', bin)], project);
-          console.log(`ok   bin ${bin}`);
+          run(join(project, 'node_modules/.bin', bin), ['help'], project);
+          console.log(`ok   bin ${bin} (runs)`);
         } catch (error) {
           failures.push(`bin ${bin}: ${String(error).split('\n')[0]}`);
         }
       }
+    }
+    // The declarations resolve for a TypeScript user: import every subpath and type-check it.
+    const specs = sdkManifests().flatMap(({ manifest }) =>
+      Object.keys(manifest.publishConfig?.exports ?? {}).map((sub) =>
+        sub === '.' ? manifest.name : `${manifest.name}/${sub.slice(2)}`,
+      ),
+    );
+    writeFileSync(
+      join(project, 'check.ts'),
+      specs.map((s, i) => `import * as m${i} from '${s}';\nvoid m${i};\n`).join(''),
+    );
+    writeFileSync(
+      join(project, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: {
+          module: 'nodenext',
+          target: 'es2022',
+          strict: true,
+          noEmit: true,
+          lib: ['es2023', 'dom'],
+          types: [],
+        },
+        files: ['check.ts'],
+      }),
+    );
+    try {
+      run(join(root, 'node_modules/.bin/tsc'), ['-p', 'tsconfig.json'], project);
+      console.log(`ok   types for ${specs.length} subpaths`);
+    } catch (error) {
+      failures.push(
+        `types: ${String((error as { stdout?: string }).stdout ?? error).slice(0, 2000)}`,
+      );
     }
     if (failures.length) {
       console.error(`\n${failures.length} export(s) failed to load:\n${failures.join('\n')}`);
@@ -150,7 +187,7 @@ function publish(): void {
       continue;
     }
     const file = tarballs().find((t) =>
-      t.includes(manifest.name.replace('@', '').replace('/', '-')),
+      t.endsWith(`/${manifest.name.replace('@', '').replace('/', '-')}-${manifest.version}.tgz`),
     );
     if (!file) throw new Error(`no tarball for ${manifest.name}; run pack first`);
     run('npm', ['publish', file, '--provenance', '--access', 'public']);

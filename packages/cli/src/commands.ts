@@ -767,7 +767,7 @@ function renderAnalysis(a: ImportAnalysis): string {
 
 const types: Command = {
   name: 'types',
-  summary: 'Generate TypeScript types from the content model (contentworker-codegen)',
+  summary: 'Generate TypeScript types from the content model',
   options: {
     out: { type: 'string', short: 'o', description: 'File to write; stdout if absent' },
   },

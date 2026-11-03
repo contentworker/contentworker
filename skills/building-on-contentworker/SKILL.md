@@ -12,9 +12,9 @@ types itself from the content model, and renders rich text from a node tree.
 
 | You need                         | API and origin                        | Key (kind)          | SDK                                             |
 | -------------------------------- | ------------------------------------- | ------------------- | ----------------------------------------------- |
-| Published content on a live site | Delivery, `https://cdn.<workspace>`   | Delivery (`cda`)    | `@contentworker/sdk-core` (or web, vue, edge)   |
-| Drafts on a staging site         | Preview, `https://api.<workspace>`    | Preview (`cpa`)     | `@contentworker/sdk-core` with `preview: true`  |
-| Writes: create, update, publish  | Management, `https://api.<workspace>` | Management (`cma`)  | `@contentworker/sdk-management` (server only)   |
+| Published content on a live site | Delivery, `https://cdn.<workspace>`   | Delivery (`cda`)    | `@contentworker/sdk` (or `/react`, `/vue`, `/edge`) |
+| Drafts on a staging site         | Preview, `https://api.<workspace>`    | Preview (`cpa`)     | `@contentworker/sdk` with `preview: true`  |
+| Writes: create, update, publish  | Management, `https://api.<workspace>` | Management (`cma`)  | `@contentworker/sdk/management` (server only)   |
 
 Only a Delivery key may ship to a browser or app. Preview and Management keys stay on a server.
 Delivery is cached at the edge; Preview and Management are not.
@@ -23,7 +23,7 @@ Docs: https://docs.contentworker.app/guides/sdks/ and https://docs.contentworker
 ## Read
 
 ```ts
-import { createDeliveryClient } from '@contentworker/sdk-core';
+import { createDeliveryClient } from '@contentworker/sdk';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',
@@ -44,17 +44,17 @@ const latest = await client.query().contentType('article').locale('en-US').order
   and `skip` until a page comes back short.
 - `client.search(text)` is semantic search; `client.getAsset` and `client.iterateAssets` read
   delivered assets, and `imageProps` turns one into `<img>` attributes.
-- React: `ContentworkerProvider`, `useEntry`, `useEntries`, `Image` from `@contentworker/sdk-web`.
-  Vue: `@contentworker/sdk-vue`. Edge functions: `createEdgeClient` from `@contentworker/sdk-edge`.
+- React: `ContentworkerProvider`, `useEntry`, `useEntries`, `Image` from `@contentworker/sdk/react`.
+  Vue: `@contentworker/sdk/vue`. Edge functions: `createEdgeClient` from `@contentworker/sdk/edge`.
 - Rich text is a document tree, never HTML: render it with `toHtml` / `toMarkdown` from
-  `@contentworker/sdk-rich-text` (escaped, safe links, `entryHref` and `renderEntry` hooks).
+  `@contentworker/sdk/rich-text` (escaped, safe links, `entryHref` and `renderEntry` hooks).
 
 Filters, ordering and every parameter: https://docs.contentworker.app/guides/reading-content/
 
 ## Write, and read your own writes
 
 ```ts
-import { createManagementClient } from '@contentworker/sdk-management';
+import { createManagementClient } from '@contentworker/sdk/management';
 
 const cma = createManagementClient({ baseUrl: 'https://api.your-workspace.contentworker.app', space: 'your-space', environment: 'main', token: process.env.CONTENTWORKER_CMA_TOKEN! });
 const { entry } = await cma.entries.create({ contentTypeApiId: 'article', fields: { title: { 'en-US': 'Hello' } } });
@@ -89,7 +89,7 @@ const article = await client.getEntry<ArticleFields>(id, { locale: 'en-US' });
 
 Each type gets a delivery shape (`ArticleFields`) and a management shape (`ArticleDraftFields`).
 Regenerate in CI after the model changes (the `content_type.published` webhook fires on publish).
-`contentworker-codegen` and `GET …/content-types?format=typescript` give the same output.
+`contentworker types` and `GET …/content-types?format=typescript` give the same output.
 
 ## Render rich text
 
@@ -97,7 +97,7 @@ A `RichText` field is a `RichTextDocument`: `{ nodeType: 'document', content: [.
 by switching on `nodeType`, and render unknown types as nothing rather than failing. Never store or
 send HTML back; the API refuses anything but the node vocabulary. See
 [references/rendering-rich-text.md](references/rendering-rich-text.md) for every node type, a
-renderer and how to treat embeds (`embedCard` from `@contentworker/sdk-core` gives a safe link card).
+renderer and how to treat embeds (`embedCard` from `@contentworker/sdk` gives a safe link card).
 
 ## Caching
 

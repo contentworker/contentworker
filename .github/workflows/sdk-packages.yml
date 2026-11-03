@@ -1,11 +1,13 @@
 name: SDK packages
 
-# Packs every public SDK the way npm will see it and loads each export (ESM and CJS) from the
-# installed tarballs, so a published SDK can't ship with an export that points at nothing.
+# Packs @contentworker/sdk the way npm will see it, then loads every subpath (ESM and CJS),
+# type-checks every subpath and runs the `contentworker` binary from the installed tarball, so
+# the SDK can't ship an export, a declaration or a bin that points at nothing.
 on:
   pull_request:
     paths:
       - "packages/sdk/**"
+      - "packages/cli/**"
       - "scripts/sdk-packages.ts"
       - "pnpm-workspace.yaml"
       - ".github/workflows/sdk-packages.yml"
@@ -25,7 +27,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Pack every SDK
+      - name: Pack the SDK
         run: node scripts/sdk-packages.ts pack
-      - name: Install the tarballs and load every export
+      - name: Install the tarball and load every subpath
         run: node scripts/sdk-packages.ts check

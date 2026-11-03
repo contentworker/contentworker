@@ -36,7 +36,7 @@ Switch on `nodeType`, recurse into `content`, and render nothing for a type you 
 node type added later never breaks a page:
 
 ```tsx
-import { embedCard } from '@contentworker/sdk-core';
+import { embedCard } from '@contentworker/sdk';
 
 type Node = { nodeType: string; content?: Node[]; value?: string; marks?: { type: string }[]; data?: Record<string, unknown> };
 

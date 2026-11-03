@@ -44,7 +44,9 @@ pnpm test:toolkit                                               # .claude toolki
 pnpm test                                                       # everything, through turbo
 ```
 
-SDKs are `@contentworker/sdk-<name>` (`sdk-core`, `sdk-management`, …). `@contentworker/api` has no
+Workspace SDKs are `@contentworker/sdk-<name>` (`sdk-core`, `sdk-management`, …); the published
+`@contentworker/sdk` (`packages/sdk/sdk`) re-exports them, and `node scripts/sdk-packages.ts pack &&
+node scripts/sdk-packages.ts check` tests its tarball. `@contentworker/api` has no
 test target: its surface is tested in `@contentworker/http`.
 
 ## The workerd suites

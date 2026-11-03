@@ -1158,6 +1158,57 @@ importers:
         specifier: 'catalog:'
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(jsdom@30.1.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/sdk/sdk:
+    devDependencies:
+      '@contentworker/cli':
+        specifier: workspace:*
+        version: link:../../cli
+      '@contentworker/sdk-codegen':
+        specifier: workspace:*
+        version: link:../codegen
+      '@contentworker/sdk-core':
+        specifier: workspace:*
+        version: link:../core
+      '@contentworker/sdk-edge':
+        specifier: workspace:*
+        version: link:../edge
+      '@contentworker/sdk-management':
+        specifier: workspace:*
+        version: link:../management
+      '@contentworker/sdk-react-native':
+        specifier: workspace:*
+        version: link:../react-native
+      '@contentworker/sdk-rich-text':
+        specifier: workspace:*
+        version: link:../rich-text
+      '@contentworker/sdk-vue':
+        specifier: workspace:*
+        version: link:../vue
+      '@contentworker/sdk-web':
+        specifier: workspace:*
+        version: link:../web
+      '@contentworker/typescript-config':
+        specifier: workspace:*
+        version: link:../../typescript-config
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+      react:
+        specifier: 'catalog:'
+        version: 19.3.1
+      tsup:
+        specifier: 'catalog:'
+        version: 9.0.0(jiti@2.7.0)(postcss@8.5.32)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(jsdom@30.1.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+      vue:
+        specifier: 'catalog:'
+        version: 3.5.44(typescript@7.0.2)
+
   packages/sdk/vue:
     dependencies:
       '@contentworker/sdk-core':

@@ -1,14 +1,16 @@
 # @contentworker/sdk-core
 
+> A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk`; the examples below use that name.
+
 The framework-agnostic client for contentworker's read-only Delivery API (and Preview, for
 drafts). No dependencies; it runs on `fetch` in Node, browsers, Workers and other edge runtimes.
 
 ```sh
-npm install @contentworker/sdk-core
+npm install @contentworker/sdk
 ```
 
 ```ts
-import { createDeliveryClient, imageProps } from '@contentworker/sdk-core';
+import { createDeliveryClient, imageProps } from '@contentworker/sdk';
 
 const client = createDeliveryClient({
   baseUrl: 'https://cdn.your-workspace.contentworker.app',

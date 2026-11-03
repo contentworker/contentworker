@@ -1,15 +1,17 @@
 # @contentworker/sdk-rich-text
 
+> A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk/rich-text`; the examples below use that name.
+
 Render ContentWorker rich text to HTML, Markdown or plain text. ContentWorker delivers rich text
 as a document tree (`RichTextDocument`), never as HTML, so every channel renders it for itself.
 This package does it for the web and for text, with no dependencies, in any framework or runtime.
 
 ```sh
-npm install @contentworker/sdk-rich-text
+npm install @contentworker/sdk
 ```
 
 ```ts
-import { toHtml } from '@contentworker/sdk-rich-text';
+import { toHtml } from '@contentworker/sdk/rich-text';
 
 const html = toHtml(entry.fields.body, {
   entryHref: (target) => `/${target.fields?.slug}`, // links to other entries

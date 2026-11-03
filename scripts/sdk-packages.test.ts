@@ -1,16 +1,20 @@
-// The SDKs' npm manifests: what `pnpm pack` publishes (scripts/sdk-packages.ts). Runs in CI with
+// The SDK's npm manifest: what `pnpm pack` publishes (scripts/sdk-packages.ts). Runs in CI with
 // `node --test scripts/*.test.ts`; the pack-and-load check runs in .github/workflows/sdk-packages.yml.
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { sdkManifests } from './sdk-packages.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 
-test('every SDK publishes its dist/, with an export map mirroring the workspace one', () => {
+test('@contentworker/sdk is the one published package: its dist/, with an export map mirroring the workspace one', () => {
   const sdks = sdkManifests();
-  assert.ok(sdks.length >= 8, 'found the SDKs');
+  assert.deepEqual(
+    sdks.map(({ manifest }) => manifest.name),
+    ['@contentworker/sdk'],
+    'one published package',
+  );
   for (const { dir, manifest } of sdks) {
     const m = manifest as typeof manifest & {
       exports: Record<string, { default: string }>;
@@ -48,7 +52,33 @@ test('every SDK publishes its dist/, with an export map mirroring the workspace 
   }
 });
 
-test('the SDKs share one version, released together by the sdk-v<version> tag', () => {
-  const versions = new Set(sdkManifests().map(({ manifest }) => manifest.version));
-  assert.equal(versions.size, 1, `one version for every SDK, found ${[...versions].join(', ')}`);
+test('the workspace SDKs and the CLI stay private: they ship inside @contentworker/sdk', () => {
+  const base = join(root, 'packages/sdk');
+  const dirs = readdirSync(base, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && d.name !== 'sdk')
+    .map((d) => join(base, d.name));
+  assert.ok(dirs.length >= 8, 'found the workspace SDKs');
+  for (const dir of [...dirs, join(root, 'packages/cli')]) {
+    const m = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+      name: string;
+      private?: boolean;
+      publishConfig?: unknown;
+    };
+    assert.equal(m.private, true, `${m.name} is bundled into @contentworker/sdk, never published`);
+    assert.equal(m.publishConfig, undefined, `${m.name} has no publishConfig`);
+  }
+});
+
+test('every workspace SDK module and the CLI is reachable from @contentworker/sdk', () => {
+  const sdk = JSON.parse(readFileSync(join(root, 'packages/sdk/sdk/package.json'), 'utf8')) as {
+    devDependencies: Record<string, string>;
+    bin: Record<string, string>;
+  };
+  const base = join(root, 'packages/sdk');
+  for (const d of readdirSync(base).filter((n) => n !== 'sdk')) {
+    const m = JSON.parse(readFileSync(join(base, d, 'package.json'), 'utf8')) as { name: string };
+    assert.equal(sdk.devDependencies[m.name], 'workspace:*', `${m.name} is bundled`);
+  }
+  assert.equal(sdk.devDependencies['@contentworker/cli'], 'workspace:*', 'the CLI is bundled');
+  assert.deepEqual(Object.keys(sdk.bin), ['contentworker'], 'the contentworker binary');
 });

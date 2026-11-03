@@ -1,6 +1,7 @@
 {
   "name": "@contentworker/sdk-codegen",
   "version": "0.1.0",
+  "private": true,
   "homepage": "https://docs.contentworker.app/guides/sdks/",
   "repository": {
     "type": "git",
@@ -35,18 +36,5 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true,
-    "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js"
-      }
-    },
-    "bin": {
-      "contentworker-codegen": "./dist/bin.js"
-    }
   }
 }
