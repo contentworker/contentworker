@@ -1,6 +1,7 @@
 import {
   applyEntryTags,
   auditEntry,
+  authorizeBulkJob,
   autofillField,
   BULK_JOB_MAX_ITEMS,
   bulkEntryAction,
@@ -14,7 +15,7 @@ import {
   summarizeEntry,
   translateEntry,
 } from '@contentworker/application';
-import { ForbiddenError, SCOPES } from '@contentworker/domain';
+import { SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
@@ -212,25 +213,23 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
   );
 
-  // Start/cancel/report demand an ungranted principal: per-item RBAC guards
-  // are impractical at bulk cardinality, and reports expose entry ids across
-  // all content types. Mirrors the API routes' policy exactly.
-  const guardBulkJobs = () => {
-    if (principal.contentGrants) {
-      throw new ForbiddenError('bulk jobs (unrestricted content:publish role required)');
-    }
-  };
+  // Start/cancel/report take a role holding the job's actions on every content type alike
+  // (`authorizeBulkJob`): per-item RBAC guards are impractical at bulk cardinality, and reports
+  // expose entry ids across all content types. The API routes' rule exactly.
+  const guardJob = async (id: string, s: ReturnType<typeof scopeOf>) =>
+    authorizeBulkJob(principal, (await getBulkJob(ctx, s, id)).action);
 
   server.registerTool(
     'bulk_job_start',
     {
       description:
-        'Start a durable bulk publish/unpublish job for a large entry-id set. ' +
-        'Processed in chunked transactions on the queue; poll bulk_job_status ' +
+        'Start a durable bulk job over a large entry-id set: publish, unpublish, trash, ' +
+        'restore, or purge (permanent: only entries already in the trash, never one that ' +
+        'published entries link to). Processed in chunks on the queue; poll bulk_job_status ' +
         'for progress and bulk_job_report for the per-item compliance report.',
       inputSchema: toolSchema('bulk_job_start', () =>
         z.object({
-          action: z.enum(['publish', 'unpublish']),
+          action: z.enum(['publish', 'unpublish', 'trash', 'restore', 'purge']),
           entryIds: z.array(z.string()).min(1).max(BULK_JOB_MAX_ITEMS),
           ...scopeArgs,
         }),
@@ -238,7 +237,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      guardBulkJobs();
+      authorizeBulkJob(principal, args.action);
       return ok(
         await startBulkJob(ctx, scopeOf(args), {
           action: args.action,
@@ -278,7 +277,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      guardBulkJobs();
+      await guardJob(args.id, scopeOf(args));
       return ok(await getBulkJobReport(ctx, scopeOf(args), args.id));
     },
   );
@@ -292,7 +291,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      guardBulkJobs();
+      await guardJob(args.id, scopeOf(args));
       return ok(
         await cancelBulkJob(ctx, scopeOf(args), args.id, deps.blob ? { blob: deps.blob } : {}),
       );

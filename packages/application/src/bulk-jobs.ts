@@ -1,6 +1,11 @@
 import {
   type BulkChunkDueEvent,
+  canRunEntryBulkJob,
+  ENTRY_BULK_JOB_KINDS,
+  type EntryBulkJobKind,
+  ForbiddenError,
   NotFoundError,
+  type Principal,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -10,6 +15,7 @@ import {
   type BulkJob,
   type BulkJobAction,
   type BulkJobChunk,
+  ENTRY_TRASH_BULK_ACTIONS,
   TransactionConflictError,
 } from '@contentworker/ports';
 import type { AppContext } from './context';
@@ -18,12 +24,54 @@ import { publishEntriesTx, unpublishEntriesTx } from './publishing';
 
 /** Entry ids processed per chunk (one transaction + one coalesced event each). */
 export const BULK_JOB_CHUNK_SIZE = 200;
+/**
+ * Entry ids per chunk of a trash, restore or purge job. Those run each entry through its own
+ * single-entry use-case, a unit of work and a few reads apiece, where a publish chunk is one
+ * batched transaction. Measured on D1 (packages/db/test/trash-retention.test.ts): a purge is 10
+ * statements in 5 round trips, so 200 would pass the 1,000 queries one invocation may send and
+ * the chunk would be retried into the dead-letter queue; 50 is about 500.
+ */
+export const ENTRY_TRASH_CHUNK_SIZE = 50;
+
+/**
+ * The largest trash, restore or purge job. Its chunks are a quarter the size of a publish job's, so
+ * the same id count would make four times the chunks, every one of them a row and an outbox nudge
+ * written in the one batch that starts the job: 100,000 ids is 2,000 chunks, as many as a
+ * 400,000-id publish job would make if one could be started.
+ */
+export const ENTRY_TRASH_MAX_ITEMS = 100_000;
+
+const isEntryTrashAction = (action: BulkJobAction): boolean =>
+  (ENTRY_TRASH_BULK_ACTIONS as readonly string[]).includes(action);
+
+/** How many ids one chunk of `action` takes. */
+export const bulkChunkSizeOf = (action: BulkJobAction): number =>
+  isEntryTrashAction(action) ? ENTRY_TRASH_CHUNK_SIZE : BULK_JOB_CHUNK_SIZE;
+
+/** The most ids one job of `action` takes. */
+export const bulkMaxItemsOf = (action: BulkJobAction): number =>
+  isEntryTrashAction(action) ? ENTRY_TRASH_MAX_ITEMS : BULK_JOB_MAX_ITEMS;
 /** Largest bulk job a single start call accepts. */
 export const BULK_JOB_MAX_ITEMS = 250_000;
 /** A chunk claimed longer than this is considered crashed and re-claimable. */
 export const BULK_CHUNK_STALE_SECONDS = 300;
 /** Attempts before a chunk is marked failed instead of retried. */
 export const BULK_CHUNK_MAX_ATTEMPTS = 5;
+
+/**
+ * Refuses a principal who may not start, cancel or read the report of a bulk job of `action`: one
+ * rule for both surfaces. A job over entries is checked by `canRunEntryBulkJob` (no per-type
+ * grants, or one full `*` grant holding the job's actions); any other job (an import, an asset
+ * job) still needs a principal with no per-type grants at all.
+ */
+export function authorizeBulkJob(principal: Principal, action: BulkJobAction): void {
+  const allowed = (ENTRY_BULK_JOB_KINDS as readonly string[]).includes(action)
+    ? canRunEntryBulkJob(principal, action as EntryBulkJobKind)
+    : !principal.contentGrants;
+  if (!allowed) {
+    throw new ForbiddenError(`bulk ${action} jobs (a role holding them on every content type)`);
+  }
+}
 
 export interface StartBulkJobInput {
   readonly action: BulkJobAction;
@@ -33,10 +81,11 @@ export interface StartBulkJobInput {
 }
 
 /**
- * Starts a durable bulk publish/unpublish job: persists the job and its
- * chunks, then appends one `bulk.chunk_due` control event per chunk to the
- * outbox. The relay routes those onto the bulk topic; consumers CAS-claim
- * each chunk and run it through the batched publish transaction. Progress
+ * Starts a durable bulk job over entry (or asset) ids: persists the job and its chunks, then
+ * appends one `bulk.chunk_due` control event per chunk to the outbox. The relay routes those onto
+ * the bulk topic; consumers CAS-claim each chunk and run it: publish and unpublish through the
+ * batched publish transaction, trash, restore and purge through each entry's single-entry
+ * use-case (`entry-trash-bulk.ts`). Progress
  * and the per-item compliance report live in the store, never in memory —
  * a crash anywhere resumes via the stall sweep.
  */
@@ -49,21 +98,21 @@ export async function startBulkJob(
   if (ids.length === 0) {
     throw new ValidationError([{ field: 'entryIds', message: 'No items provided' }]);
   }
-  if (ids.length > BULK_JOB_MAX_ITEMS) {
-    throw new ValidationError([
-      { field: 'entryIds', message: `Job exceeds ${BULK_JOB_MAX_ITEMS} items` },
-    ]);
+  const max = bulkMaxItemsOf(input.action);
+  if (ids.length > max) {
+    throw new ValidationError([{ field: 'entryIds', message: `Job exceeds ${max} items` }]);
   }
 
   const jobId = ctx.ids.newId();
   const now = ctx.clock.now().toISOString();
   const chunks: BulkJobChunk[] = [];
-  for (let at = 0; at < ids.length; at += BULK_JOB_CHUNK_SIZE) {
+  const size = bulkChunkSizeOf(input.action);
+  for (let at = 0; at < ids.length; at += size) {
     chunks.push({
       jobId,
       // Zero-padded ordinal: sorts lexically in report order.
       chunkId: `c${String(chunks.length).padStart(5, '0')}`,
-      entryIds: ids.slice(at, at + BULK_JOB_CHUNK_SIZE),
+      entryIds: ids.slice(at, at + size),
       status: 'pending',
       attempts: 0,
       failures: [],
@@ -182,6 +231,15 @@ export interface BulkChunkDeps {
     job: BulkJob,
     chunk: BulkJobChunk,
   ) => Promise<BulkChunkOutcome>;
+  /**
+   * Runs an entry trash job's chunk (`entry-trash-bulk.ts`), injected because purging needs the
+   * blob store its archived versions live in. Absent, the chunk stays claimable.
+   */
+  readonly entryTrashChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
 }
 
 export async function runBulkChunk(
@@ -230,6 +288,10 @@ export async function runBulkChunk(
   // An asset reindex chunk hands its assets to ingest: nothing is written here but the report.
   if (job.action === 'asset_reindex') {
     return runChunkAndFold(ctx, deps.assetReindexChunk, scope, job, chunk);
+  }
+  // Trash, restore or purge: each entry through its single-entry use-case.
+  if (job.action === 'trash' || job.action === 'restore' || job.action === 'purge') {
+    return runChunkAndFold(ctx, deps.entryTrashChunk, scope, job, chunk);
   }
   // An asset library action: each asset through its own use-case, failures reported by name.
   if (job.action !== 'publish' && job.action !== 'unpublish') {
@@ -481,7 +543,7 @@ export async function cancelBulkJob(
 }
 
 /**
- * Runs an import or asset reindex chunk and folds its outcome into the job.
+ * Runs an import, asset or entry trash chunk and folds its outcome into the job.
  *
  * Mirrors the publish path's bookkeeping exactly — claim, run, complete,
  * finalize — so progress, cancellation, the stall sweep and the per-item

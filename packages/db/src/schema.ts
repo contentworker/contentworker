@@ -69,6 +69,8 @@ export const spaces = sqliteTable('spaces', {
   workflowSeparateDuties: integer('workflow_separate_duties', { mode: 'boolean' })
     .notNull()
     .default(false),
+  /** Days a trashed entry is kept before the engine's sweep purges it; null is off (keep). */
+  trashRetentionDays: integer('trash_retention_days'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
 });
 
@@ -81,6 +83,11 @@ export const environments = sqliteTable(
       .references(() => spaces.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** Where the trash retention sweep resumes here; null is from the oldest. */
+    trashSweepCursor: text('trash_sweep_cursor', { mode: 'json' }).$type<{
+      trashedAt: string;
+      id: string;
+    }>(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.id] })],
 );
@@ -173,7 +180,13 @@ export const entries = sqliteTable(
     publishedVersion: integer('published_version'),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
   },
-  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    // The trash retention sweep: an archived entry's `updated_at` is when it was trashed.
+    index('entries_trashed')
+      .on(t.spaceId, t.environmentId, t.updatedAt, t.id)
+      .where(sql`${t.status} = 'archived'`),
+  ],
 );
 
 // The uniqueness registry behind `unique` fields. A row per (entry, field,

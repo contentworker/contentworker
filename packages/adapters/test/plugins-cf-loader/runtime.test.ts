@@ -222,6 +222,20 @@ describe('capability enforcement', () => {
     });
   });
 
+  it('refuses a dry run the same way, without reporting it', async () => {
+    const { caps, onDenied } = await capsFor(
+      invocation({
+        capabilities: [],
+        dryRun: true,
+        scope: { spaceId: 's1', environmentId: 'main' },
+      }),
+      {},
+    );
+    await expect(caps.content?.list?.()).rejects.toThrow(/capability_denied/);
+    // Reporting writes an audit row; a dry run writes nothing.
+    expect(onDenied).not.toHaveBeenCalled();
+  });
+
   it('denies every capability by default', async () => {
     const { caps, onDenied } = await capsFor(invocation({ capabilities: [] }), {});
     const calls = [

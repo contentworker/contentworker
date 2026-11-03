@@ -148,12 +148,14 @@ in-browser model, page-per-language translation, and rich text or styles stored 
   only, like the rest of it, so there is no route or MCP tool (agents don't have passwords).
 - [x] **Webhook resend and test.** A stored delivery is re-sent through the outbox, signed afresh
   and logged with `resendOf`; a `webhook.test` event goes to one webhook (REST, MCP, the admin).
-- [ ] **Validate without saving.** `POST /entries/validate` and its tool, for agents and editors.
+- [x] **Validate without saving.** `POST /entries/validate` and `entries_validate`: the save's checks,
+  its errors, no write; capability-holding `entry:beforeSave` plugins are skipped and named.
 - [x] **API keys on MCP.** `api_keys_list`, `api_key_create` (token shown once), `api_key_update`
   and `api_key_revoke`; minting a personal access token stays HTTP-only, for the reason in
   `docs/mcp.md`.
-- [ ] **Bulk trash, restore and purge, and trash retention.** New bulk job actions; a cron sweep
-  through `purgeEntry` after a per-space retention window.
+- [x] **Bulk trash, restore and purge, and trash retention.** `trash`, `restore` and `purge` bulk
+  job actions through the single-entry use-cases; an hourly sweep through `purgeEntry` after a
+  per-space retention window (off by default; never forced).
 
 #### M2. Model and query parity
 

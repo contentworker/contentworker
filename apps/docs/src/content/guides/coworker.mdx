@@ -89,7 +89,7 @@ It offers a fixed set of [MCP tools](/guides/mcp/), by their MCP names.
 | --- | --- |
 | Reads, no confirm | `docs_search`, `docs_read`, `model_list_content_types`, `model_get_content_type`, `entries_query`, `entries_get`, `entries_suggest`, `content_search`, `entries_list_versions`, `entries_diff_versions`, `entries_list_trashed`, `releases_list`, `releases_get`, `comments_list`, `tasks_list`, `taxonomy_list_tags`, `assets_list`, `workflow_task_list` |
 | Edits, run at once from a page | `entries_create`, `entries_update`, `entries_duplicate`, `entries_restore`, `entries_set_metadata`, `entry_apply_tags`, `comments_add`, `releases_add_entry` |
-| Actions, always ask first | `entries_publish`, `entries_unpublish`, `entries_trash`, `entries_purge`, `entries_restore_version`, `entries_bulk_action`, `schedule_action`, `releases_publish` |
+| Actions, always ask first | `entries_publish`, `entries_unpublish`, `entries_trash`, `entries_purge`, `entries_restore_version`, `entries_bulk_action`, `bulk_job_start`, `schedule_action`, `releases_publish` |
 
 A write the model proposes always waits for your confirm, whichever row it is in. Every other MCP
 tool stays MCP's alone. Whatever arguments it is given, a call runs in the space and environment

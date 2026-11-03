@@ -19,6 +19,19 @@ export const entry = z.object({
 
 export const createdEntry = z.object({ entry, warnings: z.array(z.string()).optional() });
 
+export const entryValidation = z.object({
+  valid: z.literal(true),
+  fields: entryFields.describe(
+    'The fields as the save would store them: defaults applied, slugs normalized, blocks keyed',
+  ),
+  skippedHooks: z
+    .array(z.string())
+    .describe(
+      'Plugins on entry:beforeSave that hold capabilities and so did not run; a real save may ' +
+        'still rewrite or refuse the fields',
+    ),
+});
+
 export const publishedEntry = z.object({
   id: z.uuid(),
   contentType: z.string().describe('Content type apiId'),

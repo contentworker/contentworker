@@ -123,6 +123,12 @@ mutations. The first veto wins and the rest do not run.
 A plugin that throws, times out, or fails its checksum check is **skipped**, and the write proceeds.
 A broken plugin must not make the CMS unwritable: failure means "did not run".
 
+Validating an entry without saving it (`POST …/entries/validate`, `entries_validate`) runs
+`entry:beforeSave` as a dry run (`HookDispatchOptions.pureOnly`): only plugins whose effective grant
+is empty run, since with no capability object a plugin can compute an answer and nothing else. A
+plugin holding any capability could write, store or fetch, so it is skipped, and its id is returned
+in `skippedHooks`: on the real save it may still rewrite or refuse the fields.
+
 ## The sandbox
 
 Plugins execute through `@contentworker/adapters/plugins-cf-loader`, backed by the platform's

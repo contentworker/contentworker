@@ -165,6 +165,27 @@ describe('dispatching to plugins', () => {
     });
     expect(onError).toHaveBeenCalledOnce();
   });
+
+  it('runs only capability-free plugins on a dry run, and names the rest', async () => {
+    await installEnabled({ id: 'com.example.pure', capabilities: [] }, []);
+    await installEnabled({ id: 'com.example.writer', capabilities: ['content:write'] });
+    const runtime = fakeRuntime((inv) => ({
+      payload: { seen: [...((inv.payload as { seen?: string[] }).seen ?? []), inv.pluginId] },
+    }));
+    const d = createPluginHookDispatcher(ctx, blob, runtime, { principal: admin });
+
+    expect(await d.dispatch('entry:beforeSave', { seen: [] }, scope, { pureOnly: true })).toEqual({
+      payload: { seen: ['com.example.pure'] },
+      skipped: ['com.example.writer'],
+    });
+    // Marked as a dry run, so the runtime reports no capability refusal (an audit write).
+    expect(runtime.calls[0]?.inv.dryRun).toBe(true);
+    // A real save still runs both.
+    expect(await d.dispatch('entry:beforeSave', { seen: [] }, scope)).toEqual({
+      payload: { seen: ['com.example.pure', 'com.example.writer'] },
+    });
+    expect(runtime.calls[1]?.inv.dryRun).toBeUndefined();
+  });
 });
 
 describe('what a plugin is handed', () => {

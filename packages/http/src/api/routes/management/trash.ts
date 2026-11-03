@@ -2,8 +2,10 @@ import {
   duplicateEntry,
   getEntry,
   getReverseReferences,
+  getTrashSettings,
   purgeEntry,
   restoreEntry,
+  setTrashRetention,
   trashEntry,
   updateEntry,
 } from '@contentworker/application';
@@ -17,7 +19,7 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as entryDocs from '../../docs/schemas/entries';
-import { parseBody, updateEntryBody } from '../../validation';
+import { parseBody, trashSettingsBody, updateEntryBody } from '../../validation';
 import { BASE, entryAccess, scopeOf } from './shared';
 
 export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
@@ -73,6 +75,33 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
         ...(blob ? { blob } : {}),
       });
       return c.body(null, 204);
+    },
+  );
+  // How long the space keeps trashed entries before the engine's hourly sweep purges them.
+  app.get(
+    `${BASE}/trash-settings`,
+    doc('Entries', 'Read the space’s trash retention', {
+      description: '`retentionDays` is null when retention is off (the default).',
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => c.json(await getTrashSettings(ctx, scopeOf(c))),
+  );
+  app.put(
+    `${BASE}/trash-settings`,
+    doc('Entries', 'Set the space’s trash retention', {
+      body: trashSettingsBody,
+      description:
+        'Entries in the trash longer than `retentionDays` (1 to 3650) are deleted permanently by ' +
+        'the engine’s hourly sweep, in every environment of the space, including what is already ' +
+        'in the trash. Entries published entries link to are kept. null turns it off. Needs ' +
+        '`space:admin`.',
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) => {
+      const body = await parseBody(c, trashSettingsBody);
+      return c.json(
+        await setTrashRetention(ctx, c.get('principal'), scopeOf(c), body.retentionDays),
+      );
     },
   );
   app.post(

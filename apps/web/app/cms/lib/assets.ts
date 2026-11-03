@@ -5,6 +5,7 @@ import {
   type AssetRights,
   rightsExpireSoon,
 } from '@contentworker/domain';
+import type { BulkOutcome } from './bulk-jobs';
 import { plural } from './format';
 import {
   ApiError,
@@ -13,8 +14,6 @@ import {
   type AssetSearchQuery,
   type AssetZip,
   apiErrorMessage,
-  type BulkJobReport,
-  type BulkJobSummary,
   type ManagementClient,
   UploadPartError,
 } from './management';
@@ -150,14 +149,6 @@ export function fileSize(bytes: number | undefined): string {
   return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[unit]}`;
 }
 
-/** The outcome of running one action over several assets. */
-export interface BulkOutcome {
-  readonly done: number;
-  readonly failed: number;
-  /** Which ones failed and why, so the screen can name them and keep them selected. */
-  readonly failures?: readonly { readonly id: string; readonly error: string }[];
-}
-
 /**
  * Runs `act` over every id, a few at a time, and counts what worked: one failure never stops the
  * rest, and the caller reports the tally.
@@ -183,14 +174,6 @@ export async function runBulk(
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, lane));
   return { done, failed: failures.length, failures };
-}
-
-/** "Published 3 assets", or "Published 2 of 3 assets; 1 failed". */
-export function bulkSummary(verb: string, outcome: BulkOutcome): string {
-  const total = outcome.done + outcome.failed;
-  const noun = total === 1 ? 'asset' : 'assets';
-  if (outcome.failed === 0) return `${verb} ${total} ${noun}`;
-  return `${verb} ${outcome.done} of ${total} ${noun}; ${outcome.failed} failed`;
 }
 
 /** The search query for what the screen shows: the text, the folder, then the filter bar. */
@@ -289,26 +272,6 @@ export const BULK_VERBS: Record<
   unpublish: { done: 'Unpublished', doing: 'Unpublishing' },
   archive: { done: 'Archived', doing: 'Archiving' },
 };
-
-/** A job's tally as a {@link BulkOutcome}, so it is summed up in the same words as a loop. */
-export const jobOutcome = (job: BulkJobSummary): BulkOutcome => ({
-  done: job.succeeded,
-  failed: job.failed,
-});
-
-/**
- * What a job's report says failed, by asset: its name (title or file name) where it gave one,
- * else the name of the asset as the library has it loaded (a batch that failed as a whole names
- * no asset), and only then its id.
- */
-export function jobFailures(
-  report: BulkJobReport,
-  known: ReadonlyMap<string, string> = new Map(),
-): { readonly id: string; readonly name: string; readonly error: string }[] {
-  return report.chunks.flatMap((c) =>
-    c.failures.map((f) => ({ id: f.id, name: f.name ?? known.get(f.id) ?? f.id, error: f.error })),
-  );
-}
 
 /**
  * Who a version's file came from, as a person reads it: a teammate by name or email when the team

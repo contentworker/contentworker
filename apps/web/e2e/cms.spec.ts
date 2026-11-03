@@ -273,6 +273,79 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
 });
 
+test('moves two entries to the trash as a job, then deletes them permanently from the trash', async ({
+  page,
+  request,
+}) => {
+  // Two bulk jobs the engine works through: the queue consumer and outbox relay run locally.
+  test.setTimeout(180_000);
+  // The page's own dialogs (the assistant's card is the jsdom suite's): each asks by name.
+  await withoutAssistant(page);
+  const stamp = Date.now();
+  const titles = [`Bulk trash ${stamp} 1`, `Bulk trash ${stamp} 2`];
+  for (const title of titles) {
+    const res = await api(request, 'POST', `${MGMT}/entries`, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': title } },
+    });
+    expect(res.ok(), await res.text()).toBe(true);
+  }
+  await openCms(page, '/content/article');
+  for (const title of titles) {
+    await page
+      .getByRole('row', { name: new RegExp(title) })
+      .getByRole('checkbox')
+      .check();
+  }
+  const bar = page.getByRole('group', { name: 'Selected entries' });
+  await bar.getByRole('button', { name: 'Move to trash' }).click();
+  const trash = page.getByRole('alertdialog', { name: 'Move 2 entries to the trash?' });
+  for (const title of titles) await expect(trash.getByText(title)).toBeVisible();
+  await trash.getByRole('button', { name: 'Move to trash' }).click();
+  const job = page.getByRole('region', { name: 'Bulk job' });
+  await expect(job.getByRole('status')).toHaveText('Trashed 2 entries', { timeout: 120_000 });
+  for (const title of titles) {
+    await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
+  }
+  await job.getByRole('button', { name: 'Dismiss' }).click();
+
+  await page.getByRole('button', { name: 'View trash' }).click();
+  for (const title of titles) {
+    await page
+      .getByRole('row', { name: new RegExp(title) })
+      .getByRole('checkbox')
+      .check();
+  }
+  await bar.getByRole('button', { name: 'Delete permanently…' }).click();
+  const purge = page.getByRole('alertdialog', { name: 'Permanently delete 2 entries?' });
+  for (const title of titles) await expect(purge.getByText(title)).toBeVisible();
+  await expect(purge.getByText(/can’t be undone/)).toBeVisible();
+  await purge.getByRole('button', { name: 'Delete permanently' }).click();
+  await expect(job.getByRole('status')).toHaveText('Permanently deleted 2 entries', {
+    timeout: 120_000,
+  });
+  for (const title of titles) {
+    await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
+  }
+  await expect(bar).toBeHidden();
+});
+
+test('Settings → Trash: turning retention on asks in place before it saves', async ({ page }) => {
+  await openCms(page, '/settings/trash');
+  await page.getByRole('radio', { name: 'Delete after a while' }).click();
+  const days = page.getByLabel('Days in the trash');
+  await days.fill('3650');
+  await expect(page.getByText(/longer than 3650 days/)).toBeVisible();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  // Asked in place, the safe choice focused; backing out saves nothing.
+  await expect(page.getByText('Delete trashed entries after 3650 days?')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Keep as is' })).toBeFocused();
+  await page.getByRole('button', { name: 'Keep as is' }).click();
+  await expect(page.getByText('Delete trashed entries after 3650 days?')).toBeHidden();
+  await page.reload();
+  await expect(page.getByRole('radio', { name: 'Keep until deleted' })).toBeChecked();
+});
+
 test('duplicates an entry into a new draft marked as a copy', async ({ page, request }) => {
   const title = `Dup ${Date.now()}`;
   await api(request, 'POST', `${MGMT}/entries`, {

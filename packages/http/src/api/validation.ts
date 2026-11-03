@@ -5,6 +5,7 @@ import {
   MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
   MAX_PART_URLS,
+  MAX_TRASH_RETENTION_DAYS,
   SCHEDULER_ALERT_MAX_RECIPIENTS,
 } from '@contentworker/application';
 import {
@@ -364,6 +365,19 @@ export const previewLinkBody = z.object({
 });
 export const updateEntryBody = z.object({ fields: zFieldValues });
 /**
+ * A dry run of a save: `contentTypeApiId` judges the fields as a new entry, `entryId` as a new
+ * version of that entry.
+ */
+export const validateEntryBody = z
+  .object({
+    contentTypeApiId: zId.optional().describe('Validate as a new entry of this content type'),
+    entryId: zId.optional().describe('Validate as a new version of this entry'),
+    fields: zFieldValues.optional(),
+  })
+  .refine((b) => (b.contentTypeApiId === undefined) !== (b.entryId === undefined), {
+    message: 'Give contentTypeApiId (a new entry) or entryId (a new version), not both',
+  });
+/**
  * A change to one locale of an entry's SEO metadata (its type's Seo field): a part left out keeps
  * its value, null clears it. Shared with the MCP tool, so both take the same change.
  */
@@ -444,7 +458,7 @@ export const idsBody = z.object({ ids: zIdList.optional() });
 // routes (the practical ceiling is the request body limit, then chunked
 // server-side); the shared application cap keeps both surfaces in lockstep.
 export const bulkJobBody = z.object({
-  action: z.enum(['publish', 'unpublish']),
+  action: z.enum(['publish', 'unpublish', 'trash', 'restore', 'purge']),
   entryIds: z.array(zId).min(1).max(BULK_JOB_MAX_ITEMS),
 });
 export const auditBody = z.object({
@@ -740,6 +754,15 @@ export const decideWorkflowTaskBody = z.object({
   note: z.string().max(2000).optional(),
 });
 export const workflowSettingsBody = z.object({ separateDuties: z.boolean() });
+export const trashSettingsBody = z.object({
+  retentionDays: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_TRASH_RETENTION_DAYS)
+    .nullable()
+    .describe('Days a trashed entry is kept before it is deleted permanently; null is off'),
+});
 export const transitionBody = z.object({ workflowId: zId, toStepId: zId });
 export const schemeBody = z.object({ name: zShort });
 /** What a tag or concept carries beside its label (see `TermFieldsInput`). */

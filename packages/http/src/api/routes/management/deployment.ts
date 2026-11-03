@@ -4,8 +4,8 @@ import {
   revokeEverythingFor,
   setSchedulerAlertRecipients,
 } from '@contentworker/application';
-import { ForbiddenError } from '@contentworker/domain';
-import { Hono } from 'hono';
+import { entryBulkJobsFor, ForbiddenError, inScope } from '@contentworker/domain';
+import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, principalMiddleware } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as authDocs from '../../docs/schemas/auth';
@@ -78,18 +78,43 @@ export function deploymentRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
 
   /** Lightweight principal probe for admin connection UI and SSO sessions. */
+  const me = (c: Context<AuthVars>) => {
+    const principal = c.get('principal');
+    return c.json({
+      spaceId: principal.spaceId,
+      kind: principal.kind,
+      scopes: principal.scopes,
+      subject: principal.subject,
+      restricted: principal.contentGrants !== undefined,
+    });
+  };
   app.get(
     '/auth/me',
     doc('Auth', 'Resolve the calling principal', { ok: authDocs.principal }),
     principalMiddleware(deps),
+    me,
+  );
+  // The same, resolved in one space: a person's role (and its per-content-type grants) is per
+  // space, so this is what the admin asks before offering an action only some roles may take.
+  // `/spaces/*` already resolved the principal; a key or person with no standing in this space
+  // is refused rather than described.
+  app.get(
+    '/spaces/:space/auth/me',
+    doc('Auth', 'Resolve the calling principal in a space', { ok: authDocs.spacePrincipal }),
     (c) => {
       const principal = c.get('principal');
+      if (!inScope(principal, c.req.param('space'))) {
+        throw new ForbiddenError('this space');
+      }
       return c.json({
         spaceId: principal.spaceId,
         kind: principal.kind,
         scopes: principal.scopes,
         subject: principal.subject,
         restricted: principal.contentGrants !== undefined,
+        // The bulk jobs over entries this role may start here (`canRunEntryBulkJob`), as the
+        // bulk job routes decide: the admin offers only these.
+        bulkJobs: entryBulkJobsFor(principal),
       });
     },
   );

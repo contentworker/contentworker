@@ -75,6 +75,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['settings: environments', '/settings/environments'],
   ['settings: redirects', '/settings/redirects'],
   ['settings: menus', '/settings/menus'],
+  ['settings: trash', '/settings/trash'],
   ['settings: ai actions', '/settings/ai-actions'],
   ['settings: functions', '/settings/functions'],
   ['settings: extensions', '/settings/extensions'],
@@ -538,6 +539,41 @@ test('the redirect and import dialogs have no accessibility violations', async (
   await scan(page, testInfo);
   await page.getByRole('button', { name: 'Import' }).click();
   await expect(page.getByRole('dialog', { name: 'Import redirects' })).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('the trash with rows ticked, its bulk bar and an entry bulk job have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const stamp = Date.now();
+  const titles = [`A11y trash ${stamp} 1`, `A11y trash ${stamp} 2`];
+  for (const title of titles) {
+    const res = await api(request, 'POST', `${MGMT}/entries`, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': title } },
+    });
+    expect(res.ok(), await res.text()).toBe(true);
+    const { entry } = (await res.json()) as { entry: { id: string } };
+    const trashed = await api(request, 'DELETE', `${MGMT}/entries/${entry.id}`);
+    expect(trashed.ok(), await trashed.text()).toBe(true);
+  }
+  await openCms(page, '/content/article');
+  await page.getByRole('button', { name: 'View trash' }).click();
+  const row = (title: string) => page.getByRole('row', { name: new RegExp(title) });
+  // One restored as a job, so its card shows; then the other ticked beside it.
+  await row(titles[0] as string)
+    .getByRole('checkbox')
+    .check();
+  const bar = page.getByRole('group', { name: 'Selected entries' });
+  await bar.getByRole('button', { name: 'Restore selected' }).click();
+  const job = page.getByRole('region', { name: 'Bulk job' });
+  await expect(job.getByRole('status')).toHaveText('Restored 1 entry', { timeout: 120_000 });
+  await row(titles[1] as string)
+    .getByRole('checkbox')
+    .check();
+  await expect(bar.getByRole('button', { name: 'Delete permanently…' })).toBeVisible();
   await scan(page, testInfo);
 });
 

@@ -96,6 +96,7 @@ import type {
   EntryStatusCount,
   EntryWithFields,
   EnvironmentAlias,
+  ExpiredTrashEntry,
   FunctionDefinition,
   FunctionRepo,
   InviteRepo,
@@ -180,6 +181,8 @@ export class InMemoryContentStore implements ContentStore {
   nowMs: () => number = () => Date.now();
 
   private readonly spaceConfigs = new Map<string, SpaceConfig>();
+  /** Where the trash retention sweep resumes, by environment (as `environments.trash_sweep_cursor`). */
+  private readonly trashSweepCursors = new Map<string, ExpiredTrashEntry>();
   private readonly contentTypeData = new Map<string, ContentType>();
   private readonly entryData = new Map<string, Entry>();
   /**
@@ -216,6 +219,17 @@ export class InMemoryContentStore implements ContentStore {
     list: async () => [...this.spaceConfigs.values()],
     create: async (config) => {
       this.spaceConfigs.set(config.spaceId, config);
+    },
+    getTrashSweepCursor: async (scope) => this.trashSweepCursors.get(scopeKey(scope)) ?? null,
+    setTrashSweepCursor: async (scope, cursor) => {
+      if (cursor) this.trashSweepCursors.set(scopeKey(scope), cursor);
+      else this.trashSweepCursors.delete(scopeKey(scope));
+    },
+    setTrashRetentionDays: async (spaceId, days) => {
+      const config = this.spaceConfigs.get(spaceId);
+      if (!config) return;
+      const { trashRetentionDays: _was, ...rest } = config;
+      this.spaceConfigs.set(spaceId, days === null ? rest : { ...rest, trashRetentionDays: days });
     },
     setWorkflowSeparateDuties: async (spaceId, value) => {
       const config = this.spaceConfigs.get(spaceId);
@@ -489,6 +503,28 @@ export class InMemoryContentStore implements ContentStore {
     },
     saveAggregateMany: async (scope, entries) => {
       for (const entry of entries) this.setEntry(scope, entry);
+    },
+    listExpiredTrash: async (scope, before, limit, after) => {
+      const prefix = `${scopeKey(scope)}::`;
+      const linked = new Set(
+        [...this.referenceData.entries()]
+          .filter(([k]) => k.startsWith(prefix))
+          .flatMap(([, edges]) => edges.map((e) => e.toId)),
+      );
+      return [...this.entryData.entries()]
+        .filter(([k, e]) => k.startsWith(prefix) && e.status === 'archived' && !linked.has(e.id))
+        .map(([k, e]) => ({ id: e.id, trashedAt: this.entryTouched.get(k) ?? '' }))
+        .filter((e) => e.trashedAt < before.toISOString())
+        .filter(
+          (e) =>
+            !after ||
+            e.trashedAt > after.trashedAt ||
+            (e.trashedAt === after.trashedAt && e.id > after.id),
+        )
+        .sort((a, b) =>
+          a.trashedAt === b.trashedAt ? (a.id < b.id ? -1 : 1) : a.trashedAt < b.trashedAt ? -1 : 1,
+        )
+        .slice(0, limit);
     },
     delete: async (scope, id) => {
       this.entryData.delete(`${scopeKey(scope)}::${id}`);

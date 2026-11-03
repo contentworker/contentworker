@@ -35,6 +35,9 @@ publishing does.
   `{ "nodeType": "embed", "data": <embed>, "content": [] }`. Never write the provider's HTML or an
   `<iframe>` into rich text; it is refused. If `resolved` is false, the embed is still valid.
 - Validation errors come back with the field that failed. Fix the value; do not retry unchanged.
+- To check fields without saving, call `entries_validate` with `contentType` (as a new entry) or
+  `id` (as a new version): the same checks and errors as the save, and nothing is written. Its
+  `skippedHooks` lists plugins that didn't run and may still refuse the real save.
 
 ## Publish
 

@@ -505,6 +505,23 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   (row, `asset.deleted`, and the engine removes anything under the asset's storage prefix)
   (`removed`). A store or blob error leaves the draft for the next sweep (`failed`). The engine
   logs `abandoned uploads swept` and counts `contentworker_abandoned_uploads_total{outcome}`.
+- **Trash retention.** A space's `trash_retention_days` (migration `0023`; null, the default, is
+  off) is how long its trashed entries are kept. On the top-of-hour tick the engine runs
+  `sweepExpiredTrash` (`packages/application/src/trash-retention.ts`, heartbeat job
+  `trash-retention`): for every environment of every space with a window, the entries trashed
+  before it (an archived entry's `updated_at` is its trashing), oldest first, leaving out any a
+  published entry links to (`EntryRepo.listExpiredTrash`, on the partial index `entries_trashed`),
+  each through `purgeEntry` without `force`. At most `TRASH_SWEEP_LIMIT` (40) purges and twice
+  that many refusals a tick (a purge is about 10 D1 statements, and the tick shares one
+  invocation's query budget), one at a time. The environments take turns going first, hour by
+  hour; first pages are read only until they hold the budget, which is shared evenly between the
+  environments that have expired trash. A purge a rule refuses (a plugin's veto, a race) uses no
+  slot, and each environment resumes after the last entry it looked at
+  (`environments.trash_sweep_cursor`, a keyset cursor on `(updated_at, id)`), with at most
+  `TRASH_SWEEP_REFUSALS_PER_ENVIRONMENT` (10) refusals a tick there, so held entries never stall
+  the ones behind them. Once an environment's expired trash has been read to its end, the cursor
+  clears and the next tick retries from the oldest. The engine logs `expired trash swept` and
+  counts `contentworker_trash_purged_total{outcome}` (`purged`, `refused`).
 - **Search.** Assets are indexed apart from entries, in two corpora (`AssetSearchCorpus`): the
   library (every asset as it is now) and the published assets (their published snapshots, written
   on publish and ingest, removed on unpublish). Each has its own SearchShard objects

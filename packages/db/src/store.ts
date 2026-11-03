@@ -660,6 +660,33 @@ function makeEntryRepo(
     async releaseUniqueClaims(scope, entryId) {
       await x.write(deleteClaims(scope, entryId));
     },
+    async listExpiredTrash(scope, before, limit, after) {
+      const e = schema.entries;
+      const r = schema.references;
+      const rows = await db
+        .select({ id: e.id, updatedAt: e.updatedAt })
+        .from(e)
+        .where(
+          and(
+            scopeFilter(e, scope),
+            // A literal, not a bound value, so the planner can use the partial `entries_trashed`.
+            sql`${e.status} = 'archived'`,
+            lt(e.updatedAt, before),
+            // Keyset: strictly after the cursor in (updated_at, id) order.
+            after
+              ? or(
+                  gt(e.updatedAt, new Date(after.trashedAt)),
+                  and(eq(e.updatedAt, new Date(after.trashedAt)), gt(e.id, after.id)),
+                )
+              : undefined,
+            // Not under a published link (edges are recorded at publish), on `references_reverse`.
+            sql`NOT EXISTS (SELECT 1 FROM ${r} WHERE ${r.spaceId} = ${e.spaceId} AND ${r.environmentId} = ${e.environmentId} AND ${r.toId} = ${e.id})`,
+          ),
+        )
+        .orderBy(asc(e.updatedAt), asc(e.id))
+        .limit(limit);
+      return rows.map((row) => ({ id: row.id, trashedAt: row.updatedAt.toISOString() }));
+    },
     async delete(scope, id) {
       // One atomic step (versions, claims, then the entry row).
       await writeAll(x, [
@@ -4073,6 +4100,7 @@ function toSpaceConfig(row: SpaceRow): SpaceConfig {
     locales: row.locales,
     ...(row.fallbacks ? { fallbacks: row.fallbacks } : {}),
     ...(row.workflowSeparateDuties ? { workflowSeparateDuties: true } : {}),
+    ...(row.trashRetentionDays !== null ? { trashRetentionDays: row.trashRetentionDays } : {}),
   };
 }
 
@@ -4099,6 +4127,7 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
             locales: [...config.locales],
             fallbacks: config.fallbacks ?? null,
             workflowSeparateDuties: config.workflowSeparateDuties ?? false,
+            trashRetentionDays: config.trashRetentionDays ?? null,
           })
           .onConflictDoUpdate({
             target: schema.spaces.id,
@@ -4109,6 +4138,31 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
               fallbacks: config.fallbacks ?? null,
             },
           }),
+      );
+    },
+    async getTrashSweepCursor(scope) {
+      const e = schema.environments;
+      const [row] = await db
+        .select({ cursor: e.trashSweepCursor })
+        .from(e)
+        .where(and(eq(e.spaceId, scope.spaceId), eq(e.id, scope.environmentId)));
+      return row?.cursor ?? null;
+    },
+    async setTrashSweepCursor(scope, cursor) {
+      const e = schema.environments;
+      await x.write(
+        db
+          .update(e)
+          .set({ trashSweepCursor: cursor ? { trashedAt: cursor.trashedAt, id: cursor.id } : null })
+          .where(and(eq(e.spaceId, scope.spaceId), eq(e.id, scope.environmentId))),
+      );
+    },
+    async setTrashRetentionDays(spaceId, days) {
+      await x.write(
+        db
+          .update(schema.spaces)
+          .set({ trashRetentionDays: days })
+          .where(eq(schema.spaces.id, spaceId)),
       );
     },
     async setWorkflowSeparateDuties(spaceId, value) {

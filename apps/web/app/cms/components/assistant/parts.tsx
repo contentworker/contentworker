@@ -92,12 +92,38 @@ export function entryHref(output: unknown): string | null {
   return id && type ? `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}` : null;
 }
 
-/** What a card or line is about when the page didn't say: how many entries, for a batch. */
-function aboutOf(part: Part): string | undefined {
+const entriesCount = (n: number) => `${n} ${n === 1 ? 'entry' : 'entries'}`;
+
+/** What a bulk job does, as a person would say it: `bulk_job_start`'s `action` over `entryIds`. */
+const BULK_JOB_ABOUT: Record<string, (n: string) => string> = {
+  publish: (n) => `Publish ${n}`,
+  unpublish: (n) => `Unpublish ${n}`,
+  trash: (n) => `Move ${n} to the trash`,
+  restore: (n) => `Restore ${n} from the trash`,
+  purge: (n) => `Permanently delete ${n}`,
+};
+
+/** A bulk job's action, when the call is one. */
+function bulkJobAction(part: Part): string | undefined {
+  if (getToolName(part) !== 'bulk_job_start') return undefined;
+  const action = (part.input as { action?: unknown } | undefined)?.action;
+  return typeof action === 'string' ? action : undefined;
+}
+
+/**
+ * What a card or line is about when the page didn't say: how many entries, for a batch, and for a
+ * bulk job what it does to them, so a model's proposal to delete 500 entries says so.
+ */
+export function aboutOf(part: Part): string | undefined {
   const about = metaOf(part).about;
   if (about) return about;
-  const ids = (part.input as { ids?: unknown } | undefined)?.ids;
-  if (Array.isArray(ids)) return `${ids.length} ${ids.length === 1 ? 'entry' : 'entries'}`;
+  const input = part.input as { ids?: unknown; entryIds?: unknown } | undefined;
+  const action = bulkJobAction(part);
+  if (action !== undefined && Array.isArray(input?.entryIds)) {
+    const n = entriesCount(input.entryIds.length);
+    return BULK_JOB_ABOUT[action]?.(n) ?? `${action}: ${n}`;
+  }
+  if (Array.isArray(input?.ids)) return entriesCount(input.ids.length);
   return undefined;
 }
 
@@ -220,6 +246,13 @@ export function EditLine({ part }: { part: Part }) {
 
 /** Actions that remove something from the delivery API or for good: their confirm is `destructive`. */
 const DESTRUCTIVE = new Set(['entries_trash', 'entries_purge', 'entries_unpublish']);
+/** The bulk job actions that do the same to many entries at once. */
+const DESTRUCTIVE_JOBS = new Set(['trash', 'purge', 'unpublish']);
+
+export function isDestructive(part: Part): boolean {
+  const action = bulkJobAction(part);
+  return action !== undefined ? DESTRUCTIVE_JOBS.has(action) : DESTRUCTIVE.has(getToolName(part));
+}
 
 /**
  * A call waiting for the person: a page's action, or anything the model proposed to change. One
@@ -303,7 +336,7 @@ export function ActionCard({
             </Button>
             <Button
               size="sm"
-              variant={DESTRUCTIVE.has(name) ? 'destructive' : 'default'}
+              variant={isDestructive(part) ? 'destructive' : 'default'}
               disabled={sent}
               onClick={() => {
                 setSent(true);

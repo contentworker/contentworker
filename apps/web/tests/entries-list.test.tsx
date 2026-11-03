@@ -35,7 +35,41 @@ const client = {
   })),
   purgeEntry: vi.fn(async () => {}),
   duplicateEntry: vi.fn(),
+  startEntryBulkJob: vi.fn(async (action: string, ids: string[]) =>
+    jobOf(action, { totalItems: ids.length, succeeded: ids.length }),
+  ),
+  getBulkJob: vi.fn(async (_id: string) => jobOf('restore', {})),
+  getBulkJobReport: vi.fn(async (_id: string) => ({
+    job: jobOf('purge', {}),
+    chunks: [] as { failures: { id: string; error: string }[] }[],
+  })),
+  cancelBulkJob: vi.fn(),
+  getSpaceAccess: vi.fn(async () => fullAccess),
 };
+
+/** The session's access in the space: an unrestricted publisher unless a test says otherwise. */
+const fullAccess = {
+  spaceId: 's1',
+  kind: 'web',
+  scopes: ['content:write', 'content:publish'],
+  restricted: false,
+  bulkJobs: ['publish', 'unpublish', 'trash', 'restore', 'purge'] as string[],
+};
+
+/** A bulk job as the API reports it: one batch, finished unless said otherwise. */
+function jobOf(action: string, over: Record<string, unknown>) {
+  return {
+    id: 'job-1',
+    action,
+    status: 'completed',
+    totalItems: 2,
+    totalChunks: 1,
+    completedChunks: 1,
+    succeeded: 2,
+    failed: 0,
+    ...over,
+  } as never;
+}
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
     client,
@@ -70,6 +104,7 @@ const { EntriesList } = await import('~/cms/routes/EntriesList');
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  client.getSpaceAccess.mockImplementation(async () => fullAccess);
   assistant.edit = null;
 });
 
@@ -572,5 +607,265 @@ describe('EntriesList bulk bar', () => {
     await waitFor(() => expect(screen.queryByRole('link', { name: 'Careers' })).toBeNull());
     await screen.findByText('1 selected');
     expect(screen.getByText('1 entry selected')).toBeTruthy();
+  });
+});
+
+describe('EntriesList trash jobs', () => {
+  const tick = async (t: string) =>
+    fireEvent.click(
+      await screen.findByRole('checkbox', { name: `Select “${t}”` }, { timeout: FIRST_RENDER_MS }),
+    );
+  const TRASHED = [
+    entry('t-1', 'archived', 'Old promo'),
+    entry('t-2', 'archived', 'Draft FAQ'),
+    entry('t-3', 'archived', 'Retired page'),
+  ];
+  // The list for the entries, and the trash for `trashed: true`.
+  const withTrash: ListPage = async (_type, query) => ({
+    items: query?.trashed ? TRASHED : ENTRIES,
+  });
+  const openTrash = async () => {
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'View trash' }, { timeout: FIRST_RENDER_MS }),
+    );
+    await screen.findByText('Old promo', undefined, { timeout: FIRST_RENDER_MS });
+  };
+
+  it('moves the ticked entries to the trash as one job, once the batch is confirmed', async () => {
+    setup();
+    await tick('About us');
+    await tick('Spring launch');
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Move 2 entries to the trash?',
+    });
+    expect(within(dialog).getByText(/unpublished first/)).toBeTruthy();
+    expect(within(dialog).getByText('About us')).toBeTruthy();
+    expect(client.startEntryBulkJob).not.toHaveBeenCalled();
+    const before = client.listEntryPage.mock.calls.length;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move to trash' }));
+    await screen.findByText('Trashed 2 entries', { selector: '[role="status"]' });
+    expect(client.startEntryBulkJob).toHaveBeenCalledExactlyOnceWith('trash', [
+      'e-live',
+      'e-draft',
+    ]);
+    // The list reloads as the job ends, and the selection goes with what moved.
+    await waitFor(() => expect(client.listEntryPage.mock.calls.length).toBeGreaterThan(before));
+    expect(screen.queryByRole('group', { name: 'Selected entries' })).toBeNull();
+  });
+
+  it('disables the job actions, saying why, for a role limited to some content types', async () => {
+    client.getSpaceAccess.mockImplementation(async () => ({
+      ...fullAccess,
+      restricted: true,
+      bulkJobs: [],
+    }));
+    setup(withTrash);
+    await tick('About us');
+    const trash = screen.getByRole('button', { name: 'Move to trash' }) as HTMLButtonElement;
+    await waitFor(() => expect(trash.disabled).toBe(true));
+    expect(trash.getAttribute('aria-describedby')).toBeTruthy();
+    expect(screen.getByText(/allowed to do that to every content type/)).toBeTruthy();
+    // Unpublishing doesn't run as a job, so it stays on offer.
+    expect(
+      (screen.getByRole('button', { name: 'Unpublish selected' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+
+    await openTrash();
+    await tick('Old promo');
+    for (const name of ['Restore selected', 'Delete permanently…']) {
+      expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it('enables the job actions for a member whose role may run them, one by one', async () => {
+    // As the api answers for the Administrator preset: every entry job.
+    setup(withTrash);
+    await tick('About us');
+    const trash = screen.getByRole('button', { name: 'Move to trash' }) as HTMLButtonElement;
+    await waitFor(() => expect(trash.disabled).toBe(false));
+    expect(trash.getAttribute('aria-describedby')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+
+    // A role that may restore but not delete (its `*` grant withholds delete).
+    client.getSpaceAccess.mockImplementation(async () => ({
+      ...fullAccess,
+      restricted: true,
+      bulkJobs: ['publish', 'unpublish', 'restore'],
+    }));
+    cleanup();
+    setup(withTrash);
+    await openTrash();
+    await tick('Old promo');
+    const purge = screen.getByRole('button', { name: 'Delete permanently…' }) as HTMLButtonElement;
+    await waitFor(() => expect(purge.disabled).toBe(true));
+    expect(
+      (screen.getByRole('button', { name: 'Restore selected' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it('offers Restore and Delete permanently for what is ticked in the trash', async () => {
+    setup(withTrash);
+    await openTrash();
+    await tick('Old promo');
+    const bar = screen.getByRole('group', { name: 'Selected entries' });
+    expect(within(bar).getByRole('button', { name: 'Restore selected' })).toBeTruthy();
+    expect(within(bar).getByRole('button', { name: 'Delete permanently…' })).toBeTruthy();
+    expect(within(bar).queryByRole('button', { name: 'Move to trash' })).toBeNull();
+    expect(within(bar).queryByRole('button', { name: 'Publish selected' })).toBeNull();
+  });
+
+  it(
+    'restores at once as a job, follows it until it ends, then reloads the trash',
+    async () => {
+      client.startEntryBulkJob.mockResolvedValueOnce(
+        jobOf('restore', { status: 'running', completedChunks: 0, succeeded: 0 }),
+      );
+      client.getBulkJob.mockResolvedValueOnce(jobOf('restore', {}));
+      setup(withTrash);
+      await openTrash();
+      await tick('Old promo');
+      await tick('Draft FAQ');
+      fireEvent.click(screen.getByRole('button', { name: 'Restore selected' }));
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      await screen.findByText('Restoring 2 entries…');
+      expect(client.startEntryBulkJob).toHaveBeenCalledWith('restore', ['t-1', 't-2']);
+      // While it runs, the bar waits.
+      expect(screen.getByRole('button', { name: 'Restore selected' })).toHaveProperty(
+        'disabled',
+        true,
+      );
+      await screen.findByText(
+        'Restored 2 entries',
+        { selector: '[role="status"]' },
+        { timeout: 5000 },
+      );
+      expect(client.getBulkJob).toHaveBeenCalledWith('job-1');
+    },
+    FULL_PAGE_TEST_MS,
+  );
+
+  it('deletes permanently only once confirmed by name, and names what was kept', async () => {
+    client.startEntryBulkJob.mockResolvedValueOnce(
+      jobOf('purge', { totalItems: 2, succeeded: 1, failed: 1 }),
+    );
+    client.getBulkJobReport.mockResolvedValueOnce({
+      job: jobOf('purge', {}),
+      chunks: [{ failures: [{ id: 't-3', error: '1 published entry links to this one' }] }],
+    });
+    setup(withTrash);
+    await openTrash();
+    await tick('Old promo');
+    await tick('Retired page');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently…' }));
+    let dialog = await screen.findByRole('alertdialog', { name: 'Permanently delete 2 entries?' });
+    expect(within(dialog).getByText(/can’t be undone/)).toBeTruthy();
+    expect(within(dialog).getByText('Old promo')).toBeTruthy();
+    expect(within(dialog).getByText('Retired page')).toBeTruthy();
+    // Backing out deletes nothing and keeps the selection.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep in trash' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(client.startEntryBulkJob).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently…' }));
+    dialog = await screen.findByRole('alertdialog', { name: 'Permanently delete 2 entries?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete permanently' }));
+    await screen.findByText('1 entry failed');
+    expect(client.startEntryBulkJob).toHaveBeenCalledExactlyOnceWith('purge', ['t-1', 't-3']);
+    expect(screen.getByText(/1 published entry links to this one/)).toBeTruthy();
+    // What was kept stays ticked, to try again once the links are gone.
+    const bar = screen.getByRole('group', { name: 'Selected entries' });
+    expect(within(bar).getByText('1 selected')).toBeTruthy();
+  });
+
+  it('sends Move to trash to the assistant as one job card, and follows the job it started', async () => {
+    const edit = vi.fn(async (_tool: string, input: unknown) => {
+      const { entryIds } = input as { entryIds: string[] };
+      return { output: jobOf('trash', { totalItems: entryIds.length }) };
+    });
+    assistant.edit = edit;
+    setup();
+    await tick('About us');
+    await tick('Careers');
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    await screen.findByText('Trashed 2 entries', { selector: '[role="status"]' });
+    expect(edit).toHaveBeenCalledExactlyOnceWith(
+      'bulk_job_start',
+      { action: 'trash', entryIds: ['e-live', 'e-live2'] },
+      'Move 2 entries to the trash',
+    );
+    // The card was the confirm: no dialog of the page's own, and nothing started a second time.
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(client.startEntryBulkJob).not.toHaveBeenCalled();
+  });
+
+  it('sends Delete permanently to the assistant’s card, and does nothing when it is declined', async () => {
+    const edit = vi.fn(async () => ({ declined: true }));
+    assistant.edit = edit;
+    setup(withTrash);
+    await openTrash();
+    await tick('Old promo');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently…' }));
+    await waitFor(() =>
+      expect(edit).toHaveBeenCalledWith(
+        'bulk_job_start',
+        { action: 'purge', entryIds: ['t-1'] },
+        'Permanently delete 1 entry',
+      ),
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Bulk job' })).toBeNull();
+    expect(client.startEntryBulkJob).not.toHaveBeenCalled();
+    expect(screen.getByText('1 selected')).toBeTruthy();
+  });
+
+  it('restores straight through the API even with the assistant there, and focuses Stop', async () => {
+    const edit = vi.fn();
+    assistant.edit = edit;
+    client.startEntryBulkJob.mockResolvedValueOnce(
+      jobOf('restore', { status: 'running', totalItems: 1, completedChunks: 0, succeeded: 0 }),
+    );
+    setup(withTrash);
+    await openTrash();
+    await tick('Old promo');
+    const restore = screen.getByRole('button', { name: 'Restore selected' });
+    // Enabled once the session's access has been read.
+    await waitFor(() => expect(restore).toHaveProperty('disabled', false));
+    restore.focus();
+    fireEvent.click(restore);
+    await screen.findByText('Restoring 1 entry…');
+    expect(edit).not.toHaveBeenCalled();
+    // The bar's button now waits: focus moved to the job's Stop, not the page.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Stop' })),
+    );
+  });
+
+  it('counts the failures it can’t name, and leaves ticked only what is still listed', async () => {
+    const { ApiError } = await import('~/cms/lib/management');
+    client.startEntryBulkJob.mockResolvedValueOnce(
+      jobOf('purge', { totalItems: 2, succeeded: 1, failed: 1 }),
+    );
+    client.getBulkJobReport.mockRejectedValueOnce(new ApiError(403, 'Forbidden'));
+    let purged = false;
+    setup(async (_type, query) => ({
+      items: query?.trashed ? TRASHED.filter((e) => !(purged && e.id === 't-1')) : ENTRIES,
+    }));
+    await openTrash();
+    await tick('Old promo');
+    await tick('Retired page');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently…' }));
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Permanently delete 2 entries?',
+    });
+    purged = true;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete permanently' }));
+    await screen.findByText('1 entry failed');
+    expect(screen.getByText(/report couldn’t be read \(Forbidden\)/)).toBeTruthy();
+    // Old promo went; Retired page, still listed, stays ticked to try again.
+    await waitFor(() => expect(screen.queryByText('Old promo')).toBeNull());
+    const bar = screen.getByRole('group', { name: 'Selected entries' });
+    expect(within(bar).getByText('1 selected')).toBeTruthy();
   });
 });

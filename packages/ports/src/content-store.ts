@@ -1450,6 +1450,11 @@ export interface SpaceConfig {
    * true, whoever started a run can't decide its approvals. Absent means false.
    */
   readonly workflowSeparateDuties?: boolean;
+  /**
+   * Days a trashed entry is kept before the engine's retention sweep deletes it permanently.
+   * Absent means off: trashed entries stay until someone deletes them.
+   */
+  readonly trashRetentionDays?: number;
 }
 
 /** An environment (branch) within a space. */
@@ -1588,6 +1593,11 @@ export interface SpaceRepo {
   create(config: SpaceConfig): Promise<void>;
   /** Sets the space's default separation of duties for workflow approvals. */
   setWorkflowSeparateDuties(spaceId: string, value: boolean): Promise<void>;
+  /** Sets how many days the space keeps trashed entries; null turns retention off. */
+  setTrashRetentionDays(spaceId: string, days: number | null): Promise<void>;
+  /** Where the trash retention sweep resumes in this environment; null is from the oldest. */
+  getTrashSweepCursor(scope: Scope): Promise<ExpiredTrashEntry | null>;
+  setTrashSweepCursor(scope: Scope, cursor: ExpiredTrashEntry | null): Promise<void>;
   /**
    * Registers an environment (branch) within a space. Refused with `TransactionConflictError`
    * while a deleted environment of that id is still being purged, so it can't inherit leftovers.
@@ -1763,6 +1773,13 @@ export interface TextSearchHit {
   readonly score: number;
 }
 
+/** A trashed entry as the retention sweep reads it, and its keyset cursor. */
+export interface ExpiredTrashEntry {
+  readonly id: string;
+  /** When it was trashed (ISO). */
+  readonly trashedAt: string;
+}
+
 export interface EntryRepo {
   get(scope: Scope, id: string): Promise<EntryWithFields | null>;
   /**
@@ -1821,6 +1838,19 @@ export interface EntryRepo {
   ): Promise<UniqueConflict[]>;
   /** Drops every claim held by an entry, freeing its values for reuse. */
   releaseUniqueClaims(scope: Scope, entryId: string): Promise<void>;
+  /**
+   * Up to `limit` trashed entries trashed before `before` (an archived entry's last change is its
+   * trashing), oldest first by `(trashedAt, id)` and strictly after `after` when given (a keyset
+   * cursor), leaving out any entry a published entry links to: those can't be purged without
+   * forcing, and the retention sweep never forces, so returning them would only stall it behind
+   * entries it can never delete.
+   */
+  listExpiredTrash(
+    scope: Scope,
+    before: Date,
+    limit: number,
+    after?: ExpiredTrashEntry,
+  ): Promise<ExpiredTrashEntry[]>;
 
   /**
    * Lists every saved version of an entry, newest first. Versions whose body has moved to
@@ -2010,14 +2040,25 @@ export interface StoredSecretRepo {
 
 /**
  * `asset_reindex`: the chunk's ids are assets, each sent through ingest again. The other `asset_*`
- * actions are the asset library's bulk actions ({@link ASSET_BULK_ACTIONS}), over asset ids.
+ * actions are the asset library's bulk actions ({@link ASSET_BULK_ACTIONS}), over asset ids;
+ * `trash`, `restore` and `purge` are the entry trash's ({@link ENTRY_TRASH_BULK_ACTIONS}).
  */
 export type BulkJobAction =
   | 'publish'
   | 'unpublish'
   | 'import'
   | 'asset_reindex'
+  | EntryTrashBulkJobAction
   | AssetBulkJobAction;
+
+/** What an entry trash bulk job does to each entry: each through its single-entry use-case. */
+export type EntryTrashBulkJobAction = 'trash' | 'restore' | 'purge';
+
+export const ENTRY_TRASH_BULK_ACTIONS: readonly EntryTrashBulkJobAction[] = [
+  'trash',
+  'restore',
+  'purge',
+];
 
 /** What an asset bulk job does to each asset of the selection. */
 export type AssetBulkJobAction =

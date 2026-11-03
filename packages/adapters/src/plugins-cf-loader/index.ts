@@ -196,10 +196,13 @@ export function gateCapabilities(
     ...(host ? { host } : {}),
   });
   const refuse = async (denial: PluginCapabilityDenial): Promise<never> => {
-    try {
-      await onDenied(denial);
-    } catch {
-      // Reporting must not change what the plugin sees.
+    // A dry run is refused the same way but leaves no trace: reporting is a write.
+    if (!invocation.dryRun) {
+      try {
+        await onDenied(denial);
+      } catch {
+        // Reporting must not change what the plugin sees.
+      }
     }
     throw new Error(capabilityDeniedMessage(denial));
   };
