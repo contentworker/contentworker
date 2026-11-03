@@ -1,9 +1,10 @@
 /**
  * The deployment's human sign-in tables, read and written by the admin web app (apps/web): people
  * and their deployment role (`member` < `admin`), sessions, two-factor sign-in, passkeys, SCIM
- * groups, the sign-in throttle, workspace settings and the tamper-evident admin audit log.
- * Must match migrations/0002_auth.sql column for column and index
- * for index. Content permissions (spaces, roles, scopes) are not here: the api resolves them.
+ * groups, the sign-in throttle, password reset codes, workspace settings and the tamper-evident
+ * admin audit log. Must match migrations/0002_auth.sql (and 0021_password_resets.sql) column for
+ * column and index for index. Content permissions (spaces, roles, scopes) are not here: the api
+ * resolves them.
  *
  * The api's own credentials (api_keys, OAuth grants) live in schema.ts; nothing here replaces them.
  */
@@ -159,6 +160,30 @@ export const passkeyChallenges = sqliteTable('passkey_challenges', {
   userId: text('user_id'),
   expiresAt: integer('expires_at').notNull(),
 });
+
+/**
+ * Self-service password reset codes (migration 0021). Only `code_hash` is kept: HMAC-SHA256 with
+ * `PASSWORD_PEPPER` over the row id and the emailed code. A code works once (`used_at`), until `expires_at`, for a few tries
+ * (`attempts`, counted before each comparison); a new code for the person deletes their older rows.
+ */
+export const passwordResets = sqliteTable(
+  'password_resets',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    codeHash: text('code_hash').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    usedAt: integer('used_at'),
+  },
+  (t) => [
+    index('password_resets_user').on(t.userId, t.createdAt),
+    index('password_resets_expires').on(t.expiresAt),
+  ],
+);
 
 /** Settings operators change in the app; `key` names one, e.g. `two_factor_required`. */
 export const workspaceSettings = sqliteTable('workspace_settings', {

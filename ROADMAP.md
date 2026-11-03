@@ -75,7 +75,8 @@ Everything below is built and tested on v2.
   presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
   access tokens, preview links, rate limits, the audit log, secrets sealed at rest with a daily
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
-  recovery codes, with the person forwarded to the api as a signed `x-cw-principal`.
+  recovery codes, self-service password reset by an emailed code, with the person forwarded to the
+  api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a stateful edge object,
   OpenAPI 3.1 with a Scalar explorer, and the MCP server (184 tools, plus skills and the docs
   tools).
@@ -141,8 +142,9 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 
 - [ ] **Field guidance.** `help`, `placeholder` and `description` on every field; `in` options as
   `{value, label}`; a custom `message` on each validation rule. Agents read them from the model.
-- [ ] **Self-service password reset.** An emailed single-use code (hashed, expiring, attempt-capped,
-  uniform responses), throttled like sign-in. Replaces "ask an admin to reset it".
+- [x] **Self-service password reset.** An emailed single-use code (hashed, expiring, attempt-capped,
+  uniform responses), throttled like sign-in. Replaces "ask an admin to reset it". Human sign-in
+  only, like the rest of it, so there is no route or MCP tool (agents don't have passwords).
 - [ ] **Webhook resend and test.** Re-enqueue a stored delivery; send a `webhook.test` ping.
 - [ ] **Validate without saving.** `POST /entries/validate` and its tool, for agents and editors.
 - [ ] **API keys on MCP.** Key tools, or a written reason they stay REST-only.

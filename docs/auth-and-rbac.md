@@ -15,7 +15,8 @@ delivery alike before any use-case runs.
 ## People: sign-in on the web worker
 
 The web app keeps its own accounts in the database (`users`, `sessions`, `passkeys`,
-`recovery_codes`, `scim_groups`, `admin_audit`; migration `0002_auth.sql`):
+`recovery_codes`, `scim_groups`, `admin_audit`; migration `0002_auth.sql`; `password_resets`,
+`0021_password_resets.sql`):
 
 - **Deployment roles** (`@contentworker/security/roles`): `member` signs in and uses the CMS
   within the content permissions the api resolves for them; `admin` also manages people, single
@@ -23,6 +24,9 @@ The web app keeps its own accounts in the database (`users`, `sessions`, `passke
 - **Passwords** are PBKDF2 (`pbkdf2p:` when peppered with `PASSWORD_PEPPER`). **Passkeys** are
   WebAuthn. **TOTP** two-factor has one-time recovery codes. Authenticator secrets are sealed with
   `DATA_KEY`.
+- **Forgotten passwords** are reset by an emailed code at `/login/forgot` when the deployment
+  sends email (see [Password reset](#password-reset)); otherwise an admin resets them on the Team
+  page.
 - **Invitations** let an admin invite an email with a role and space roles; the person accepts at
   `/invite/:token` with a password or single sign-on (see [Invitations](#invitations)).
 - **Single sign-on** uses the deployment's OIDC provider (`OIDC_ISSUER`, `OIDC_CLIENT_ID`,
@@ -236,6 +240,53 @@ deployment (`authorize(…, '*')`), which only a deployment-wide principal holds
 a deployment admin signed in to the admin. A space's own keys and tokens, and a member (who gets a
 principal with no space and no scopes on a route that names none), are refused; the `space_create`
 MCP tool makes the same check.
+
+## Password reset
+
+Someone who forgot their password resets it themselves (`apps/web/app/lib/password-reset.server.ts`,
+pages `/login/forgot` and `/login/reset`). The sign-in page links to it when the web worker has the
+`EMAIL` binding and `EMAIL_FROM` (rendered from the registry's `email`), or in local development,
+where the email is printed to the dev server's log instead; otherwise it says to ask an admin.
+
+1. **Asking.** `/login/forgot` takes an address and always answers the same: "if it belongs to an
+   account that signs in with a password, we've emailed it a code", then moves on to the code step.
+   Before the response it does the same work for every address: it reads and counts the request
+   against the place (`reset-ip`, 10 per 15-minute window; over it, 429) and the address
+   (`reset-email`, 3 per window; over it, the same answer and no email, unless the request comes
+   from where the person has a live session, so a stranger can't use up their codes) in
+   `auth_failures`.
+   Everything that depends on the account (the lookup, writing the code, sending the email, the
+   `auth.password_reset_requested` audit entry with its outcome) runs after the response
+   (`waitUntil`), so neither the answer nor its timing says whether the account exists.
+2. **Who gets a code.** Only an enabled account with a password, while web SSO-only is off. A
+   disabled account, an unknown address, an account single sign-on or SCIM created without a
+   password, and every account under SSO-only get nothing, with the same answer; the audit entry
+   says which. Under SSO-only the page says the workspace resets passwords at its identity
+   provider (a workspace-wide fact the sign-in page shows anyway). An SSO account gets no password
+   this way, because the provider couldn't then take its access away.
+3. **The code.** 8 characters of Crockford base32 (40 bits), shown `ABCD-EFGH`, with a link
+   `/login/reset/<reset id>.<code>` that moves both into the `cw_reset` cookie (path
+   `/login/reset`, HttpOnly, 15 minutes) and redirects, so the code is in no later URL. Only
+   HMAC-SHA256 with `PASSWORD_PEPPER` over the reset id and the code is stored
+   (`password_resets.code_hash`; plain SHA-256 without a pepper, in local development). A code works once
+   (`used_at`), for 15 minutes, and for 5 tries, each counted by a conditional update before the
+   comparison so racing requests can't share one. That one statement (an `UPDATE … RETURNING`
+   over the newest live code for an enabled account with a password) runs for every attempt, and
+   the hashing runs whether or not it found a code, so a wrong guess costs the same for any address; a new code deletes the person's older ones. Wrong
+   codes count against the place too (`reset-code-ip`, 10 per window). Every failure reads the same
+   ("isn't right, or it has expired or been used"); `auth.password_reset_failed` records why.
+4. **Setting the password.** The password policy applies (`passwordProblem`; for a typed code it is
+   checked first, against the address typed, and spends no try). Spending the code is a
+   compare-and-set on `used_at`; then one database batch sets the password (clearing
+   `password_change_due` and `password_expires_at`), deletes the person's reset rows, their pending
+   two-factor challenges and every session. The audit entry is `auth.password_reset`, with the
+   person as actor and the sessions ended, and the person is emailed that their password changed.
+5. **No second factor is bypassed.** A reset starts no session. The person signs in with the new
+   password, and someone with two-factor sign-in still gets the code step. A reset leaves
+   two-factor sign-in, recovery codes, passkeys and api tokens as they are: an emailed code proves
+   only the mailbox, so it replaces the password and nothing else (an admin's reset, which assumes
+   the device may be lost, also removes passkeys and tokens; see
+   [Ending a person's access](#ending-a-persons-access)).
 
 ## Invitations
 

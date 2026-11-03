@@ -180,7 +180,10 @@ export type Deployment = {
   aiGatewayLogs: boolean;
   /** The customer's OIDC provider for admin single sign-on (secret: OIDC_CLIENT_SECRET). */
   sso?: { issuer: string; clientId: string; trustEmail?: boolean };
-  /** Email Sending sender for workflow `content.notify` nodes; adds the engine's EMAIL binding. */
+  /**
+   * Email Sending sender for workflow `content.notify` nodes and invitations (the engine) and
+   * password reset codes (web); adds both Workers' EMAIL binding.
+   */
   email?: { from: string; fromName?: string };
 };
 
@@ -407,13 +410,17 @@ function common(base: Config, d: Deployment, app: App): Config {
   return c;
 }
 
-export function renderEngine(base: Config, d: Deployment): Config {
-  const c = common(base, d, 'engine');
+/** The deployment's Email Sending sender, on a Worker that sends mail. */
+function withEmail(c: Config, d: Deployment): Config {
   if (d.email) {
     c.send_email = [{ name: 'EMAIL' }];
     c.vars = { ...c.vars, EMAIL_FROM: d.email.from, EMAIL_FROM_NAME: d.email.fromName ?? '' };
   }
   return c;
+}
+
+export function renderEngine(base: Config, d: Deployment): Config {
+  return withEmail(common(base, d, 'engine'), d);
 }
 
 export function renderApi(base: Config, d: Deployment): Config {
@@ -447,7 +454,8 @@ export function renderWeb(base: Config, d: Deployment): Config {
       OIDC_CLIENT_ID: d.sso.clientId,
       OIDC_TRUST_EMAIL: d.sso.trustEmail ? 'true' : '',
     };
-  return c;
+  // Password reset codes (apps/web/app/lib/password-reset.server.ts).
+  return withEmail(c, d);
 }
 
 const RENDER: Record<App, (base: Config, d: Deployment) => Config> = {
@@ -718,7 +726,7 @@ export function doctor(d: Deployment, bases: Record<App, Config>): Finding[] {
     if (!c) continue;
     const have = bindingNames(c);
     const need = REQUIRED_BINDINGS[app].filter((b) => !(d.demo && b === 'VECTORIZE'));
-    if (app === 'engine' && d.email) need.push('EMAIL');
+    if ((app === 'engine' || app === 'web') && d.email) need.push('EMAIL');
     const missing = need.filter((b) => !have.has(b));
     if (missing.length) error(app, `missing bindings: ${missing.join(', ')}`);
     else ok(app, `${need.length} required bindings present`);

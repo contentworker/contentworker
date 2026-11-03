@@ -1,4 +1,5 @@
 import { env, waitUntil } from 'cloudflare:workers';
+import { createCfEmailSender, type SendEmailBinding } from '@contentworker/adapters/email-cf';
 import { type AuthDb, authSchema } from '@contentworker/db/auth';
 import { drizzle } from 'drizzle-orm/d1';
 
@@ -8,6 +9,33 @@ import { drizzle } from 'drizzle-orm/d1';
  */
 export function passwordPepper(): string | undefined {
   return (env as { PASSWORD_PEPPER?: string }).PASSWORD_PEPPER || undefined;
+}
+
+/** The `EmailSender` port, as the adapter builds it (the web app takes no dependency on ports). */
+export type EmailSender = ReturnType<typeof createCfEmailSender>;
+
+type EmailEnv = { EMAIL?: SendEmailBinding; EMAIL_FROM?: string; EMAIL_FROM_NAME?: string };
+
+/**
+ * Whether this deployment sends email: an Email Sending `send_email` binding (EMAIL, added per
+ * deployment by scripts/fleet.ts when the registry names a sender) and its sender address.
+ */
+export function sendsEmail(): boolean {
+  const e = env as EmailEnv;
+  return !!e.EMAIL && !!e.EMAIL_FROM;
+}
+
+/**
+ * The `EmailSender` over the EMAIL binding (`@contentworker/adapters/email-cf`), or undefined
+ * when the deployment sends no email. Throws on a sender address the adapter can't use.
+ */
+export function emailSender(): EmailSender | undefined {
+  const e = env as EmailEnv;
+  if (!e.EMAIL || !e.EMAIL_FROM) return undefined;
+  return createCfEmailSender(e.EMAIL, {
+    from: e.EMAIL_FROM,
+    ...(e.EMAIL_FROM_NAME ? { fromName: e.EMAIL_FROM_NAME } : {}),
+  });
 }
 
 /** One drizzle instance per D1 binding, so a request that asks again reuses it. */

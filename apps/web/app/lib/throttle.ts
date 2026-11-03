@@ -23,6 +23,15 @@ export const LIMITS = {
   reauth: 5,
   /** Wrong step-up answers (a code or password before a sensitive admin action). */
   'step-up': 5,
+  /**
+   * Password reset codes asked for one address, whether or not it has an account (every request
+   * counts, not only failures): a new code replaces the last, so a few are enough.
+   */
+  'reset-email': 3,
+  /** Password reset codes asked for from one place, across addresses (every request counts). */
+  'reset-ip': 10,
+  /** Wrong or dead reset codes tried from one place, across addresses. */
+  'reset-code-ip': 10,
 } as const;
 
 export type ThrottleKind = keyof typeof LIMITS;

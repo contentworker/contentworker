@@ -28,6 +28,7 @@ another origin are refused (403).
 | `/login`                                               | Email and password (PBKDF2, peppered with `PASSWORD_PEPPER`)                                                                                                                     |
 | `/login/passkey`, `/account/passkeys`                  | Passkeys (WebAuthn)                                                                                                                                                              |
 | `/login/two-factor`                                    | TOTP second factor, or a recovery code                                                                                                                                           |
+| `/login/forgot`, `/login/reset/:token?`                | Self-service password reset by an emailed code (`app/lib/password-reset.server.ts`); the emailed link moves its code into a cookie and redirects to `/login/reset`                |
 | `/logout`                                              | Signing out is a POST (the origin check covers it); a GET asks first                                                                                                             |
 | `/login/sso`, `/login/sso/callback`, `/login/sso/link` | OpenID Connect single sign-on with the deployment's provider (`app/lib/sso.server.ts`)                                                                                           |
 | `/scim/v2/*`                                           | SCIM provisioning from the identity provider, with its own bearer token. Answered by `workers/app.ts` (`scimFetch`) before React Router, so it is not a route in `app/routes.ts` |
@@ -36,7 +37,8 @@ another origin are refused (403).
 | `/audit`                                               | The deployment's admin audit log (`admin_audit`, hash-chained)                                                                                                                   |
 | `/account`                                             | Your password, passkeys, two-factor                                                                                                                                              |
 
-Sessions, users, passkeys and challenges live in the database (`0002_auth.sql`). Authenticator secrets are
+Sessions, users, passkeys and challenges live in the database (`0002_auth.sql`; reset codes,
+`0021_password_resets.sql`). Authenticator secrets are
 sealed with `DATA_KEY`. Sign-in paths that need no session, and SCIM, are rate-limited per address
 (`API_LIMIT`).
 

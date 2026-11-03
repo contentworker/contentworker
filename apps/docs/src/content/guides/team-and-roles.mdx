@@ -44,6 +44,16 @@ manages accounts, single sign-on, SCIM provisioning and the audit log, and admin
 - **Sign-in methods.** A password, a passkey, or your organization's **single sign-on** (OpenID
   Connect) when the workspace has an identity provider configured. Two-factor sign-in with an
   authenticator app can be required.
+- **Forgotten passwords.** When the workspace sends email, **Forgot your password?** on the
+  sign-in page emails a code (and a link carrying it) to the address you enter. The code works once,
+  for 15 minutes; asking again replaces it, and a few wrong tries end it. The page answers the same
+  whether or not the address has an account, so nobody can use it to find out who does. Choosing
+  the new password signs you out everywhere; you then sign in with it, and with your two-factor code
+  if you use one: a reset never skips two-factor sign-in, and leaves your passkeys, personal access tokens and
+  connected apps as they are (the email confirming the change says so).
+  Accounts that sign in only through single sign-on, and every account while the workspace requires
+  single sign-on, get no code: reset the password with your identity provider. Without email, an
+  Admin resets it on **People and sign-in**.
 - **SCIM provisioning.** Your identity provider can add, update and turn off people through the
   SCIM endpoint (`/scim/v2`) with a token made on this page. Turning someone off signs them out
   everywhere and disconnects their apps and the API tokens they made.
