@@ -631,4 +631,38 @@ describe('@contentworker/sdk-core taxonomy', () => {
     expect(two?.get('fields.related[refIn]')).toBe('a1,a2');
     expect(two?.get('links_to_entry')).toBe('b1,b2');
   });
+
+  it('sends startsWith, between, component paths and or() groups as the API spells them', async () => {
+    const urls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        urls.push(url);
+        return { items: [], total: 0 };
+      }),
+    });
+    await client
+      .query()
+      .where('title', 'startsWith', 'Ap')
+      .where('views', 'between', [10, 20])
+      .where('seo.title', 'match', 'jam')
+      .or({ field: 'title', value: 'A' }, { field: 'views', op: 'gt', value: 9 })
+      .or({ field: 'tags', value: 'x' })
+      .fetch();
+    const params = new URL(urls[0] ?? '').searchParams;
+    expect(params.get('fields.title[startsWith]')).toBe('Ap');
+    expect(params.get('fields.views[between]')).toBe('10,20');
+    expect(params.get('fields.seo.title[match]')).toBe('jam');
+    expect(JSON.parse(params.get('where') ?? 'null')).toEqual({
+      and: [
+        {
+          or: [
+            { field: 'title', value: 'A' },
+            { field: 'views', op: 'gt', value: 9 },
+          ],
+        },
+        { or: [{ field: 'tags', value: 'x' }] },
+      ],
+    });
+  });
 });

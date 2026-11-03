@@ -1,5 +1,12 @@
-import { ANY_FIELD, type QueryFilter, type Scope } from '@contentworker/domain';
-import { and, type SQL, sql } from 'drizzle-orm';
+import {
+  ANY_FIELD,
+  fieldPath,
+  isQueryGroup,
+  type QueryFilter,
+  type QueryNode,
+  type Scope,
+} from '@contentworker/domain';
+import { and, or, type SQL, sql } from 'drizzle-orm';
 import { SQLiteAsyncDialect } from 'drizzle-orm/sqlite-core';
 import * as schema from './schema';
 
@@ -25,10 +32,15 @@ import * as schema from './schema';
  *
  * Field names are never spliced into JSON paths (SQLite's quoted path labels
  * cannot escape `"`); every lookup walks `json_each(fields)` and compares the
- * key as a bound parameter. Comparand lists travel as ONE JSON-array parameter
- * (`json_each(?)`), and the predicates as a whole stay inside
- * {@link PREFILTER_PARAM_BUDGET} (a predicate past it is left to the engine),
- * so no query can push a statement past D1's 100-parameter cap.
+ * key as a bound parameter. A component path (`seo.title`) walks the locale
+ * value with `json_tree` and compares the LAST segment's key, also bound: a
+ * superset of the engine's walk down the exact path. Comparand lists travel as
+ * ONE JSON-array parameter (`json_each(?)`), and the predicates as a whole stay
+ * inside {@link PREFILTER_PARAM_BUDGET} (a predicate past it is left to the
+ * engine), so no query can push a statement past D1's 100-parameter cap.
+ *
+ * OR groups push down only when every branch does: a branch left to the engine
+ * could match a row the other branches' SQL would exclude.
  *
  * LINKS: `ref`/`refIn` on the published path are an `IN` over the reference
  * edges table (driven by its `(space, environment, to_id)` index), which every
@@ -81,22 +93,30 @@ const sameScalar = (c: string, f: string) =>
 
 /**
  * Superset for "some value of the field passes `test`": the field exists and SOME locale's value
- * passes. `test` reads a `json_each` row aliased `kv`.
+ * passes, or, for a component path (`seo.title`), some member named the path's last segment
+ * anywhere inside the field does. `test` reads a `json_each`/`json_tree` row aliased `kv`.
  *
  * CASE, not AND: a malformed/imported (non-object) field value must widen the scan, never be
- * excluded.
+ * excluded. A path's walk starts from `fld.fullkey`, the path SQLite itself wrote for the field,
+ * so the field name is only ever compared as a bound value.
  */
 function fieldHas(fieldsCol: SQL, field: string, test: SQL): SQL {
+  const [top, ...rest] = fieldPath(field);
+  const leaf = rest.at(-1);
+  const values =
+    leaf === undefined
+      ? sql`SELECT 1 FROM json_each(fld.value) AS kv WHERE ${test}`
+      : sql`SELECT 1 FROM json_tree(${fieldsCol}, fld.fullkey) AS kv
+          WHERE kv.key = ${leaf} AND ${test}`;
   return sql`EXISTS (
     SELECT 1 FROM json_each(${fieldsCol}) AS fld
-    WHERE fld.key = ${field} AND CASE WHEN fld.type = 'object' THEN EXISTS (
-      SELECT 1 FROM json_each(fld.value) AS kv WHERE ${test}
-    ) ELSE 1 END
+    WHERE fld.key = ${top} AND CASE WHEN fld.type = 'object' THEN EXISTS (${values}) ELSE 1 END
   )`;
 }
 
 /**
- * Superset predicate for `eq`/`in` on a content field: SOME locale's value equals one of the comparand forms, or is an array that contains one (the engine's
+ * Superset predicate for `eq`/`in` on a content field: SOME locale's value (or, on a path, some
+ * member) equals one of the comparand forms, or is an array that contains one (the engine's
  * array-field membership semantics).
  */
 function fieldValueMatches(fieldsCol: SQL, field: string, values: readonly unknown[]): SQL | null {
@@ -135,13 +155,27 @@ const FOLDS_FROM_NON_ASCII = new Set(['i', 'I', 'k', 'K']);
  * - No ESCAPE clause is used, so a backslash is an ordinary literal character.
  */
 export function likePattern(needle: string): string {
-  let out = '%';
+  return `%${foldSafe(needle)}%`.replace(/%{2,}/g, '%');
+}
+
+/**
+ * {@link likePattern} anchored at the start: a superset of the engine's case-insensitive
+ * `startsWith`. The same characters widen to `%` (a first character among them unanchors the
+ * pattern, which only widens it).
+ */
+export function prefixPattern(needle: string): string {
+  return `${foldSafe(needle)}%`.replace(/%{2,}/g, '%');
+}
+
+/** The needle with every character SQLite's LIKE cannot fold as JS does turned into `%`. */
+function foldSafe(needle: string): string {
+  let out = '';
   for (const ch of needle) {
     const code = ch.codePointAt(0) ?? 0;
     const safe = code >= 0x20 && code < 0x7f && !FOLDS_FROM_NON_ASCII.has(ch);
     out += safe ? ch : '%';
   }
-  return `${out}%`.replace(/%{2,}/g, '%');
+  return out;
 }
 
 /**
@@ -156,8 +190,8 @@ const matchText = (kv: string, pattern: string) =>
     LIKE ${pattern} OR ${sql.raw(kv)}.type NOT IN ('text', 'true', 'false', 'null'))`;
 
 /**
- * Superset for a case-insensitive substring match on a field (`pattern` from
- * {@link likePattern}): does any LOCALE value of the field match? Matches
+ * Superset for a case-insensitive text test on a field (`pattern` from {@link likePattern} or
+ * {@link prefixPattern}): does any LOCALE value of the field (or member, on a path) match? Matches
  * decoded values (`json_each` atoms), never the JSON-encoded text, where `\` and `"` appear
  * escaped.
  */
@@ -179,10 +213,11 @@ function linksToPredicate(
   ids: readonly string[],
 ): SQL | null {
   if (ids.length === 0) return null;
-  const top = field === ANY_FIELD ? null : field;
+  const top = field === ANY_FIELD ? null : (fieldPath(field)[0] as string);
   const idList = JSON.stringify(ids);
   if (sys.edges) {
     const r = schema.references;
+    // Edges carry the top-level field, as a path's links are attributed to it.
     return sql`${sys.entryId} IN (
       SELECT ${r.fromEntryId} FROM ${r}
       WHERE ${r.spaceId} = ${sys.edges.spaceId} AND ${r.environmentId} = ${sys.edges.environmentId}
@@ -284,6 +319,9 @@ function filterPredicate(f: QueryFilter, fieldsCol: SQL, sys: SysColumns): SQL |
     case 'match':
       if (typeof f.value !== 'string' || f.value === '') return null;
       return fieldTextLike(fieldsCol, f.field, likePattern(f.value));
+    case 'startsWith':
+      if (typeof f.value !== 'string' || f.value === '') return null;
+      return fieldTextLike(fieldsCol, f.field, prefixPattern(f.value));
     case 'ref':
       return typeof f.value === 'string'
         ? linksToPredicate(fieldsCol, sys, f.field, [f.value])
@@ -296,9 +334,12 @@ function filterPredicate(f: QueryFilter, fieldsCol: SQL, sys: SysColumns): SQL |
       // where the key is absent OR present-but-null.
       const want = f.value === undefined ? true : Boolean(f.value);
       if (!want) return null;
-      return sql`EXISTS (SELECT 1 FROM json_each(${fieldsCol}) AS fld WHERE fld.key = ${f.field})`;
+      const [top, ...rest] = fieldPath(f.field);
+      return rest.length === 0
+        ? sql`EXISTS (SELECT 1 FROM json_each(${fieldsCol}) AS fld WHERE fld.key = ${top})`
+        : fieldHas(fieldsCol, f.field, sql`1`);
     }
-    // ne / nin / gt / gte / lt / lte: no superset-safe form (negation
+    // ne / nin / gt / gte / lt / lte / between: no superset-safe form (negation
     // can exclude; ordering depends on the field's runtime type). Left to JS.
     default:
       return null;
@@ -306,27 +347,50 @@ function filterPredicate(f: QueryFilter, fieldsCol: SQL, sys: SysColumns): SQL |
 }
 
 /**
- * Builds the superset prefilter for a set of field predicates.
- * Returns null when nothing could be pushed down (caller scans unfiltered).
+ * Builds the superset prefilter for a query's top-level predicates (`filters`, all must match)
+ * and its `where` tree. Returns null when nothing could be pushed down (caller scans unfiltered).
  *
  * Predicates are taken in order while they fit {@link PREFILTER_PARAM_BUDGET}; one that does not
  * fit is skipped (a wider scan), so a query with many predicates can never build a statement
  * past D1's parameter cap.
  */
 export function buildFilterPrefilter(
-  filters: readonly QueryFilter[],
+  query: { readonly filters?: readonly QueryFilter[]; readonly where?: QueryNode },
   fieldsCol: SQL,
   sys: SysColumns,
 ): SQL | null {
   let budget = PREFILTER_PARAM_BUDGET;
-  const conds: SQL[] = [];
-  for (const f of filters) {
-    const p = filterPredicate(f, fieldsCol, sys);
-    if (!p) continue;
+  const spend = (p: SQL | null): SQL | null => {
+    if (!p) return null;
     const n = paramsOf(p);
-    if (n > budget) continue;
+    if (n > budget) return null;
     budget -= n;
-    conds.push(p);
+    return p;
+  };
+  // A group's predicate: AND keeps what pushes down; OR only when every branch does. Built whole
+  // first, then spent, so an OR that does not fit is dropped as one.
+  const nodePredicate = (node: QueryNode): SQL | null => {
+    if (!isQueryGroup(node)) return filterPredicate(node, fieldsCol, sys);
+    if ('and' in node) {
+      const parts = node.and.map(nodePredicate).filter((p): p is SQL => p !== null);
+      return parts.length ? (and(...parts) as SQL) : null;
+    }
+    const parts = node.or.map(nodePredicate);
+    if (parts.some((p) => p === null)) return null;
+    return or(...(parts as SQL[])) as SQL;
+  };
+  const conds: SQL[] = [];
+  for (const f of query.filters ?? []) {
+    const p = spend(filterPredicate(f, fieldsCol, sys));
+    if (p) conds.push(p);
+  }
+  if (query.where) {
+    // The root AND's branches are spent one by one, like `filters`.
+    const top = 'and' in query.where ? query.where.and : [query.where];
+    for (const node of top) {
+      const p = spend(nodePredicate(node));
+      if (p) conds.push(p);
+    }
   }
   return conds.length > 0 ? (and(...conds) as SQL) : null;
 }

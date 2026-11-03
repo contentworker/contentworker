@@ -1,12 +1,20 @@
 import {
+  clampCount,
   countEntriesByContentType,
   createContentType,
   getContentType,
   getSpaceConfig,
   listContentTypes,
+  listFieldValues,
+  MAX_FIELD_VALUES_PAGE,
   publishContentType,
 } from '@contentworker/application';
-import { canAccessContentType, SCOPES } from '@contentworker/domain';
+import {
+  assertQueryRespectsFieldRules,
+  authorizeContent,
+  canAccessContentType,
+  SCOPES,
+} from '@contentworker/domain';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
@@ -94,6 +102,42 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Content types', 'Get a content type', { ok: contentTypeDocs.contentType }),
     requireScope(SCOPES.previewRead),
     async (c) => c.json(await getContentType(ctx, scopeOf(c), c.req.param('apiId'))),
+  );
+  app.get(
+    `${BASE}/content-types/:apiId/fields/:field/values`,
+    doc('Content types', 'List a field’s distinct values', {
+      ok: contentTypeDocs.fieldValuesPage,
+      description:
+        'The distinct values a field holds across the type’s entries (current versions, the trash ' +
+        'left out), each with how many entries hold it: booleans, then numbers, then strings, ' +
+        'ascending. A list of Symbols contributes each element. Only scalar fields and lists of ' +
+        `Symbols have values to list (422 otherwise). At most ${MAX_FIELD_VALUES_PAGE} per page; ` +
+        'page with the response’s nextCursor.',
+      query: {
+        locale: 'Only this locale’s values (every locale’s by default)',
+        limit: `Page size (at most ${MAX_FIELD_VALUES_PAGE})`,
+        cursor: 'nextCursor from the previous page',
+      },
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const apiId = c.req.param('apiId');
+      const field = c.req.param('field');
+      const principal = c.get('principal');
+      authorizeContent(principal, 'read', apiId);
+      // A field the caller may not read has no values to show it either.
+      assertQueryRespectsFieldRules(principal, { contentTypeApiId: apiId, select: [field] });
+      const limit = clampCount(c.req.query('limit'), MAX_FIELD_VALUES_PAGE, { min: 1 });
+      const locale = c.req.query('locale');
+      const cursor = c.req.query('cursor');
+      return c.json(
+        await listFieldValues(ctx, scopeOf(c), apiId, field, {
+          ...(limit !== undefined ? { limit } : {}),
+          ...(locale ? { locale } : {}),
+          ...(cursor ? { cursor } : {}),
+        }),
+      );
+    },
   );
   app.post(
     `${BASE}/content-types/:apiId/published`,

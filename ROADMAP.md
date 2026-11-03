@@ -170,8 +170,9 @@ in-browser model, page-per-language translation, and rich text or styles stored 
   trash-then-purge job; clone copies the definition under a new `apiId`.
 - [ ] **Authorship.** `created_by`, `modified_by` and `first_published_at` on entries and versions
   (expand-only), served as `sys` fields, filterable and sortable.
-- [ ] **Richer queries.** `startsWith` and `between`, OR and AND groups in a `where` JSON parameter,
-  component subfield paths through `json_each`, distinct field values.
+- [x] **Richer queries.** `startsWith` and `between`, OR and AND groups in a `where` JSON parameter
+  (≤ 4 deep, ≤ 20 predicates), component subfield paths through `json_tree` with bound keys, and
+  distinct field values (`…/content-types/:apiId/fields/:field/values`, `entries_field_values`).
 - [ ] **Saved views.** Named filters, sort and columns per content type, personal or shared.
 - [ ] **Model ergonomics.** Groups, description and icon on content types; editor-only tabs and
   field groups; date, time and datetime formats with `dateRange`; lists of any scalar; asset MIME

@@ -134,6 +134,7 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
         cursor: 'nextCursor from the previous page, with the same filters and order',
         order: 'Sort keys, e.g. -sys.updatedAt,fields.title',
         query: 'Full-text search across text fields',
+        where: 'AND/OR groups of predicates as JSON (as on Delivery)',
         links_to_entry: 'Entries whose current version links to this entry id in any field',
         trashed: 'true lists the trash',
       },

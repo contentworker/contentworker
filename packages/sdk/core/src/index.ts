@@ -177,8 +177,9 @@ export interface ClientOptions {
 }
 
 /**
- * Comparison operators for a field-level filter. `ref` (one entry id) and `refIn` (several) match
- * a link field that links to one of those entries.
+ * Comparison operators for a field-level filter. `match` is a case-insensitive substring and
+ * `startsWith` a case-insensitive prefix; `between` takes `[low, high]` (both inclusive); `ref`
+ * (one entry id) and `refIn` (several) match a link field that links to one of those entries.
  */
 export type FilterOp =
   | 'eq'
@@ -189,21 +190,32 @@ export type FilterOp =
   | 'gte'
   | 'lt'
   | 'lte'
+  | 'between'
   | 'exists'
   | 'match'
+  | 'startsWith'
   | 'ref'
   | 'refIn';
 
 /**
- * A single field predicate. `field` is a field apiId, a `sys.*` pseudo-field, or a taxonomy
- * association: `metadata.tags` / `metadata.concepts` (ids) or `metadata.tags.slug` /
- * `metadata.concepts.slug` (slugs; `eq`, `ne`, `in`, `nin`).
+ * A single field predicate. `field` is a field apiId, a path into a component (`seo.title`), a
+ * `sys.*` pseudo-field, or a taxonomy association: `metadata.tags` / `metadata.concepts` (ids) or
+ * `metadata.tags.slug` / `metadata.concepts.slug` (slugs; `eq`, `ne`, `in`, `nin`).
  */
 export interface EntryFilter {
   readonly field: string;
   readonly op?: FilterOp;
   readonly value?: unknown;
 }
+
+/**
+ * A condition of a `where` tree: a field predicate, or an AND or OR group of conditions. At most
+ * 4 groups deep and 20 predicates; slug filters stay top-level `filters`.
+ */
+export type EntryWhere =
+  | EntryFilter
+  | { readonly and: readonly EntryWhere[] }
+  | { readonly or: readonly EntryWhere[] };
 
 export interface EntryQuery {
   readonly contentType?: string;
@@ -222,6 +234,8 @@ export interface EntryQuery {
   readonly since?: string;
   /** Field-level predicates (all must match). */
   readonly filters?: readonly EntryFilter[];
+  /** AND/OR groups of predicates, ANDed with `filters` (sent as the `where` parameter). */
+  readonly where?: EntryWhere;
   /** Only entries with a link to one of these entry ids, from any field. */
   readonly linksToEntry?: readonly string[];
   /** Sort keys, e.g. `['fields.title', '-sys.publishedAt']`. */
@@ -711,6 +725,7 @@ function toParams(q: EntryQuery): Record<string, string | number | undefined> {
     const value = Array.isArray(f.value) ? f.value.join(',') : String(f.value ?? '');
     params[key] = value;
   }
+  if (q.where) params.where = JSON.stringify(q.where);
   if (q.linksToEntry?.length) params.links_to_entry = q.linksToEntry.join(',');
   if (q.tags?.length) params['metadata.tags.slug[in]'] = q.tags.join(',');
   if (q.order?.length) params.order = q.order.join(',');
@@ -766,6 +781,16 @@ export class EntryQueryBuilder<F extends Fields> {
   /** Only entries linking to one of these entries from any field: `.linksTo(entryId)`. */
   linksTo(...ids: string[]): this {
     this.q = { ...this.q, linksToEntry: [...(this.q.linksToEntry ?? []), ...ids] };
+    return this;
+  }
+  /**
+   * Adds a group that matches when any of its conditions does, ANDed with the rest:
+   * `.or({ field: 'title', op: 'startsWith', value: 'A' }, { field: 'views', op: 'gt', value: 9 })`.
+   */
+  or(...conditions: EntryWhere[]): this {
+    const group: EntryWhere = { or: conditions };
+    const where = this.q.where;
+    this.q = { ...this.q, where: where ? { and: [where, group] } : group };
     return this;
   }
   /** Only entries carrying a tag with one of these slugs: `.tagged('news')`. */

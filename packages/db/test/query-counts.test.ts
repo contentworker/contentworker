@@ -428,6 +428,20 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
         filters: [{ field: '*', op: 'refIn', value: ids.authors }],
       }),
   ],
+  // A where tree: OR groups and a component path ride in the list's statement too.
+  [
+    'delivery: GET /entries?where= (or)',
+    () =>
+      listPublishedEntries(ctx, scope, {
+        contentTypeApiId: 'article',
+        where: {
+          or: [
+            { field: 'title', op: 'startsWith', value: 'Article 1' },
+            { field: 'views', op: 'between', value: [10, 20] },
+          ],
+        },
+      }),
+  ],
   [
     'delivery: GET /entries?metadata.tags.slug=red',
     () =>

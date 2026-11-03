@@ -57,7 +57,10 @@ Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>
 | `fields.category[nin]=news,events`    | none of                                 |
 | `fields.price[gte]=10&fields.price[lt]=50` | ranges: `gt`, `gte`, `lt`, `lte`   |
 | `fields.hero[exists]=true`            | has a value                             |
-| `fields.title[match]=launch`          | text contains                           |
+| `fields.price[between]=10,50`         | in the range, both ends included        |
+| `fields.title[match]=launch`          | text contains (case-insensitive)        |
+| `fields.title[startsWith]=launch`     | text starts with (case-insensitive)     |
+| `fields.seo.title[match]=guide`       | a component's member; through a list of components, any element's |
 | `fields.author[ref]=<entryId>`        | the link field links to that entry      |
 | `fields.related[refIn]=<id>,<id>`     | it links to any of them                 |
 | `links_to_entry=<entryId>`            | any field links to that entry (`<id>,<id>` for any of several) |
@@ -66,6 +69,22 @@ Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>
 Delivery reads the links of the published version, Preview those of the current one, rich-text
 embeds and component members included. A key whose role hides a field cannot use
 `links_to_entry`, which looks inside every field.
+
+### OR and AND groups
+
+Filters in the query string all have to match. For "this or that", pass `where`, a JSON tree of
+`and` and `or` groups over the same filters (each `{ "field", "op", "value" }`, `op` defaulting to
+`eq`), ANDed with the other parameters:
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article" \
+  --data-urlencode 'where={"or":[{"field":"fields.title","op":"startsWith","value":"How"},{"and":[{"field":"fields.category","value":"news"},{"field":"fields.views","op":"gte","value":100}]}]}' \
+  -G -H "Authorization: Bearer $CDA"
+```
+
+Groups nest at most 4 deep and hold at most 20 filters in all; a malformed tree is refused with
+`422`, naming where in it the problem is. Filter tags and concepts by id (`metadata.tags`) inside
+`where`; slugs work only as top-level parameters.
 
 Entries a role-bound key can't read are left out of lists, and denied fields are removed; see
 [Roles](/guides/api-keys/#roles).
@@ -175,7 +194,7 @@ Each content type gets `article(id:, locale:)` and `articleCollection(...)` root
 | --- | --- |
 | `locale` | Resolve every field to this locale |
 | `limit`, `skip` | Paging; `limit` is at most 100 |
-| `where` | A JSON object of the [filters](#filters) above, keyed the same way: `{"fields.category[in]": ["news", "events"], "fields.price[gte]": 10}` |
+| `where` | A JSON object of the [filters](#filters) above, keyed the same way: `{"fields.category[in]": ["news", "events"], "fields.price[gte]": 10}`. `and` and `or` keys hold [groups](#or-and-and-groups): `{"or": [{"field": "title", "op": "startsWith", "value": "A"}, …]}` |
 | `order` | A list of sort keys, `["-sys.publishedAt", "fields.title"]` |
 | `search` | Full-text match over text fields, like `query=` |
 

@@ -260,7 +260,7 @@ const RESERVED = 6;
 export const DEFAULT_QUERY_SCAN_LIMIT = 5000;
 
 const isAdvancedQuery = (q: EntryQuery) =>
-  Boolean(q.filters?.length || q.order?.length || q.search || q.select);
+  Boolean(q.filters?.length || q.where || q.order?.length || q.search || q.select);
 
 function makeContentTypeRepo(x: Exec): ContentTypeRepo {
   const db = x.db;
@@ -507,13 +507,11 @@ function makeEntryRepo(
         // runs against the joined CURRENT version. Same contract as the
         // published path: narrows candidates, never changes the answer.
         const vFields = sql`${cv.fields}`;
-        if (query.filters?.length) {
-          const p = buildFilterPrefilter(query.filters, vFields, {
-            entryId: sql`${schema.entries.id}`,
-            contentTypeApiId: sql`${schema.entries.contentTypeApiId}`,
-          });
-          if (p) conditions.push(p);
-        }
+        const p = buildFilterPrefilter(query, vFields, {
+          entryId: sql`${schema.entries.id}`,
+          contentTypeApiId: sql`${schema.entries.contentTypeApiId}`,
+        });
+        if (p) conditions.push(p);
         if (query.search) {
           const p = buildSearchPrefilter(query.search, vFields);
           if (p) conditions.push(p);
@@ -571,6 +569,47 @@ function makeEntryRepo(
       return rows.map((r) => ({
         contentType: r.contentType,
         status: r.status,
+        count: Number(r.n),
+      }));
+    },
+    async distinctFieldValues(scope, query) {
+      const e = schema.entries;
+      // Every scalar value of the field in each entry's current version: a locale's value, or
+      // each element of a locale's list. The field name, locale and cursor are bound values.
+      const kinds = sql.raw(`('text', 'integer', 'real', 'true', 'false')`);
+      const locale = query.locale === undefined ? sql`` : sql`AND kv.key = ${query.locale}`;
+      const from = sql`FROM ${e} JOIN ${schema.entryVersions} AS ${cv} ON ${currentVersionJoin},
+        json_each(${cv.fields}) AS fld,
+        json_each(fld.value) AS kv`;
+      const where = sql`${e.spaceId} = ${scope.spaceId} AND ${e.environmentId} = ${scope.environmentId}
+        AND ${e.contentTypeApiId} = ${query.contentTypeApiId} AND ${e.status} != 'archived'
+        AND fld.key = ${query.field} AND fld.type = 'object' ${locale}`;
+      // The order: booleans (as 0/1), then numbers, then strings (BINARY collation).
+      const after = query.after;
+      const afterKey =
+        after === undefined
+          ? sql``
+          : sql`WHERE (kind, atom) > (${typeof after.value === 'boolean' ? 0 : typeof after.value === 'number' ? 1 : 2}, ${
+              typeof after.value === 'boolean' ? (after.value ? 1 : 0) : after.value
+            })`;
+      const rows = await db.all<{ kind: number; atom: string | number; n: number }>(sql`
+        WITH vals(entry_id, type, atom) AS (
+          SELECT ${e.id}, kv.type, kv.atom ${from} WHERE ${where} AND kv.type IN ${kinds}
+          UNION ALL
+          SELECT ${e.id}, el.type, el.atom ${from}, json_each(kv.value) AS el
+          WHERE ${where} AND kv.type = 'array' AND el.type IN ${kinds}
+        ),
+        grouped(kind, atom, n) AS (
+          SELECT CASE WHEN type IN ('true', 'false') THEN 0
+                      WHEN type IN ('integer', 'real') THEN 1 ELSE 2 END,
+                 atom, COUNT(DISTINCT entry_id)
+          FROM vals GROUP BY 1, 2
+        )
+        SELECT kind, atom, n FROM grouped ${afterKey}
+        ORDER BY kind, atom LIMIT ${Math.max(1, query.limit)}
+      `);
+      return rows.map((r) => ({
+        value: r.kind === 0 ? Boolean(r.atom) : r.kind === 1 ? Number(r.atom) : String(r.atom),
         count: Number(r.n),
       }));
     },
@@ -942,10 +981,8 @@ function makeEntryRepo(
         edges: scope,
       };
       if (advanced) {
-        if (query.filters?.length) {
-          const pre = buildFilterPrefilter(query.filters, fieldsCol, sysCols);
-          if (pre) conditions.push(pre);
-        }
+        const pre = buildFilterPrefilter(query, fieldsCol, sysCols);
+        if (pre) conditions.push(pre);
         if (query.search) {
           const pre = buildSearchPrefilter(query.search, fieldsCol);
           if (pre) conditions.push(pre);

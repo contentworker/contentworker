@@ -39,6 +39,10 @@ const DOCS = {
         content_type: 'Filter by content type apiId',
         locale: 'Resolve fields for one locale',
         include: 'Reference resolution depth',
+        where:
+          'AND/OR groups of predicates as JSON, e.g. {"or":[{"field":"fields.title","op":"startsWith",' +
+          '"value":"A"},{"field":"fields.views","op":"between","value":[10,20]}]} ' +
+          '(at most 4 groups deep and 20 predicates)',
         links_to_entry: 'Entries with a link to this entry id in any field (a,b: to any of them)',
         'fields.<field>[ref]':
           'Entries whose link field links to this entry id ([refIn]=a,b for any of several)',

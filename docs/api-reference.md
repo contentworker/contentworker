@@ -141,9 +141,11 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 | Parameter         | Syntax                                | Meaning                                                               |
 | ----------------- | ------------------------------------- | --------------------------------------------------------------------- |
 | Field filter      | `fields.<apiId>=v`                    | Equals                                                                |
-| Field filter (op) | `fields.<apiId>[op]=v`                | `op` ∈ `ne`, `in`, `nin`, `gt`, `gte`, `lt`, `lte`, `exists`, `match` |
+| Field filter (op) | `fields.<apiId>[op]=v`                | `op` ∈ `ne`, `in`, `nin`, `gt`, `gte`, `lt`, `lte`, `between` (`low,high`), `exists`, `match`, `startsWith` |
+| Component path    | `fields.seo.title[op]=v`              | A component member (up to 4 segments); through a list of components, any element's |
 | Referenced entry  | `fields.<link>[ref]=<id>`             | The field links to the entry (`[refIn]=<id>,<id>`: any of them)        |
 | Links to entry    | `links_to_entry=<id>[,<id>]`          | Any field links to the entry; refused (403) to a key with hidden fields |
+| Groups            | `where=<json>`                        | `and`/`or` groups of `{ field, op, value }`, ≤ 4 deep, ≤ 20 predicates (`parseQueryWhere`); ANDed with the rest |
 | System field      | `sys.publishedAt[gt]=<iso>`           | Filter on `sys.*` pseudo-fields                                       |
 | Taxonomy          | `metadata.tags.slug=news`             | Delivery only: entries carrying a tag (`metadata.tags` by id; `metadata.concepts[.slug]` for concepts) |
 | Sort              | `order=fields.title,-sys.publishedAt` | Comma-separated; `-` prefix = descending                              |
@@ -153,8 +155,10 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 The D1 store pushes a superset of each predicate into SQL and the domain engine
 (`runEntryQuery`) decides exactly (`packages/db/src/query-pushdown.ts`). Reference filters on
 Delivery are an `IN` over the `references` edges table (by its `to_id` index), on Preview a
-`json_tree` scan of the current fields. Prefilters spend at most `PREFILTER_PARAM_BUDGET` (64)
-bound parameters per statement; a predicate past it is left to the engine.
+`json_tree` scan of the current fields; component paths compare the path's last segment as a
+bound value; an `or` group is pushed only when every branch is. Prefilters spend at most
+`PREFILTER_PARAM_BUDGET` (64) bound parameters per statement; a predicate past it is left to the
+engine.
 
 ---
 
@@ -301,6 +305,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | POST   | `…/content-types`                  | `content:manage`  | Create/update content type         |
 | GET    | `…/content-types/entry-counts`     | `preview:read`    | Entries per type, by status        |
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
+| GET    | `…/content-types/:apiId/fields/:field/values` | `preview:read` | Distinct values of a scalar field (or list of Symbols) across current entries, trash excluded, each with its entry `count`; booleans, numbers, strings ascending; `locale`, `limit` (≤ 100), `cursor` → `{ items, nextCursor? }`. 422 for a structured field, 403 for a hidden one |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 
 A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,

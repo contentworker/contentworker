@@ -6,9 +6,11 @@
  *
  * Supported syntax:
  *   - `fields.<apiId>=v`                 → equals
- *   - `fields.<apiId>[op]=v`             → op ∈ ne|in|nin|gt|gte|lt|lte|exists|match
+ *   - `fields.<apiId>[op]=v`             → op ∈ ne|in|nin|gt|gte|lt|lte|between|exists|match|startsWith
+ *   - `fields.seo.title[op]=v`           → a component's member (a path of up to 4 segments)
  *   - `fields.<link>[ref]=<id>`          → the field links to that entry (`[refIn]=<id>,<id>`: any)
  *   - `links_to_entry=<id>`              → any field links to that entry (`<id>,<id>`: any)
+ *   - `where=<json>`                     → AND/OR groups of predicates (`parseQueryWhere`)
  *   - `sys.publishedAt[gt]=<iso>`        → `sys.*` pseudo-fields
  *   - `metadata.tags[in]=<id>,<id>`      → taxonomy associations by id (also `metadata.concepts`)
  *   - `metadata.tags.slug=news`          → by slug (eq|ne|in|nin; also `metadata.concepts.slug`)
@@ -22,7 +24,9 @@ import {
   ANY_FIELD,
   FILTER_OPS,
   type FilterOp,
+  parseQueryWhere,
   type QueryFilter,
+  type QueryNode,
   type QueryOrder,
   queryFilterIssues,
   ValidationError,
@@ -32,11 +36,15 @@ import type { EntryQuery } from '@contentworker/ports';
 const OPS: ReadonlySet<string> = new Set(FILTER_OPS);
 
 /**
- * `fields.<apiId>`, `sys.<name>`, or a taxonomy association: `metadata.tags` /
- * `metadata.concepts` (ids) and `metadata.tags.slug` / `metadata.concepts.slug` (slugs).
+ * `fields.<apiId>` (with up to three component segments after it), `sys.<name>`, or a taxonomy
+ * association: `metadata.tags` / `metadata.concepts` (ids) and `metadata.tags.slug` /
+ * `metadata.concepts.slug` (slugs).
  */
 const FILTER_KEY =
-  /^((?:fields|sys)\.[A-Za-z0-9_]+|metadata\.(?:tags|concepts)(?:\.slug)?)(?:\[(\w+)\])?$/;
+  /^(fields\.[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*){0,3}|sys\.[A-Za-z0-9_]+|metadata\.(?:tags|concepts)(?:\.slug)?)(?:\[(\w+)\])?$/;
+
+/** The longest `where` parameter read, in characters: a bounded tree is far shorter. */
+export const MAX_WHERE_LENGTH = 8192;
 
 /** Largest page a client may request; caps memory/DB work per request. */
 export const MAX_PAGE_LIMIT = 100;
@@ -69,7 +77,7 @@ const list = (raw: string) => raw.split(',').map((s) => s.trim());
 function toFilter(path: string, op: string, raw: string): QueryFilter | null {
   if (!OPS.has(op)) return null;
   const field = fieldName(path);
-  if (op === 'in' || op === 'nin' || op === 'refIn') {
+  if (op === 'in' || op === 'nin' || op === 'between' || op === 'refIn') {
     return { field, op: op as FilterOp, value: list(raw) };
   }
   if (op === 'exists') {
@@ -83,6 +91,22 @@ function checked(filter: QueryFilter, key: string): QueryFilter {
   const issues = queryFilterIssues(filter, key);
   if (issues.length) throw new ValidationError(issues);
   return filter;
+}
+
+/** Reads the `where` parameter: JSON, then the domain's checks on its shape and size. */
+function parseWhereParam(raw: string): QueryNode {
+  if (raw.length > MAX_WHERE_LENGTH) {
+    throw new ValidationError([
+      { field: 'where', message: `where is at most ${MAX_WHERE_LENGTH} characters` },
+    ]);
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new ValidationError([{ field: 'where', message: 'where must be JSON' }]);
+  }
+  return parseQueryWhere(json);
 }
 
 function parseOrder(raw: string): QueryOrder[] {
@@ -109,6 +133,7 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
   let since: string | undefined;
   let locale: string | undefined;
   let archived: boolean | undefined;
+  let where: QueryNode | undefined;
 
   for (const [key, value] of entries) {
     if (key === 'order') {
@@ -153,6 +178,10 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
       archived = value === 'true';
       continue;
     }
+    if (key === 'where') {
+      where = parseWhereParam(value);
+      continue;
+    }
     if (key === 'links_to_entry') {
       const ids = list(value).filter(Boolean);
       filters.push(
@@ -180,6 +209,7 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
     locale,
     archived,
     filters: filters.length ? filters : undefined,
+    ...(where ? { where } : {}),
     order,
     select,
     search,

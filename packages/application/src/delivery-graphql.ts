@@ -70,8 +70,15 @@ export function deliveryGraphResolvers(
     collection: async (contentType, args) => {
       if (!canAccessContentType(principal, 'read', contentType)) return [];
       const raw: [string, string][] = [];
+      // `and`/`or` hold groups of predicates (`{ field, op, value }`), the REST `where` parameter's
+      // JSON; every other key is a query-string key (`fields.title[startsWith]`, `links_to_entry`).
+      const groups: Record<string, unknown>[] = [];
       for (const [k, v] of Object.entries(args.where ?? {})) {
-        raw.push([k, Array.isArray(v) ? v.join(',') : String(v)]);
+        if (k === 'and' || k === 'or') groups.push({ [k]: v });
+        else raw.push([k, Array.isArray(v) ? v.join(',') : String(v)]);
+      }
+      if (groups.length) {
+        raw.push(['where', JSON.stringify(groups.length === 1 ? groups[0] : { and: groups })]);
       }
       if (args.order?.length) raw.push(['order', args.order.join(',')]);
       if (args.search) raw.push(['query', args.search]);
