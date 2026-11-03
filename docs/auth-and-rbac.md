@@ -405,6 +405,7 @@ interface Role {
 interface ContentTypeGrant {
   contentTypeApiId: string; // exact apiId, or '*' for all types
   actions: readonly ('read' | 'write' | 'publish')[];
+  deniedActions?: readonly ('delete' | 'unpublish')[]; // finer actions withheld (see below)
   deniedFields?: readonly string[]; // masked on read, rejected on write
   readOnlyFields?: readonly string[]; // readable, rejected on write
 }
@@ -416,9 +417,43 @@ Semantics:
   request (`authenticate`), so editing a role instantly changes what every bound key can do.
   Deleting a role is refused while active keys reference it; a dangling reference fails closed.
 - **Exact grant wins over `'*'`**; a type with no matching grant is denied entirely.
+- **Five actions, three listed.** `ContentAction` is `read | write | publish | delete | unpublish`.
+  A grant lists only the first three; `grantedActions(grant)` adds `delete` when it lists `write`
+  or `publish`, and `unpublish` when it lists `publish`, unless `deniedActions` withholds them.
+  Every grant stored before the finer actions existed names no `deniedActions`, so it authorizes
+  exactly what it did (`packages/domain/test/content-actions.test.ts` proves it for every legacy
+  action list), and no stored role, preset, key or token changed. Role validation refuses
+  `delete`/`unpublish` in `actions` (one way to say it) and anything else in `deniedActions`.
+  An inviter's grants are compared resolved (`assertCanGrant`), so withholding `delete` caps what
+  they can hand out.
+- **What each operation needs** (`ENTRY_OPERATION_ACTIONS`, on top of the coarse scope):
+  trash `write` + `delete` (`authorizeTrash`, which also refuses a live entry when the grant
+  withholds `unpublish`, since trashing unpublishes it); restore `write`; purge `publish` +
+  `delete`; unpublish `unpublish`. These were a write and two publishes before, which is why the
+  base action stays required.
 - **Enforcement points** (identical for HTTP and MCP): entry create/update check
-  `authorizeContent(principal, 'write', ct)` + `assertWritableFields`; publish/unpublish check
-  the `publish` action; management/preview/delivery reads filter out ungranted types and
+  `authorizeContent(principal, 'write', ct)` + `assertWritableFields`; publish checks `publish`;
+  unpublish, bulk unpublish (`/bulk/entries/unpublish`, `entries_bulk_action`) and the
+  `content.unpublish` node check `unpublish`; trash and purge as above. Shipping a release
+  (`publishRelease` with the caller's `principal`, from the route, `releases_publish` and the
+  `content.publish_release` node) checks `publish` or `unpublish` per member type, and
+  `scheduleAction` checks the scheduler's role against the entry (or every release member) when
+  the action is scheduled, since the cron fires it with no one behind it; for the same reason
+  `addEntryToRelease` checks `read` plus the item's action when a member goes in (route,
+  `releases_add_entry`, the `content.add_to_release` node), so a release already scheduled can't
+  gain a member its adder couldn't ship. Bulk jobs refuse any principal with grants.
+- **Limits of a withhold**, stated plainly:
+  - It doesn't constrain a principal that also holds `space:admin`: that principal can edit roles
+    (its own included) and mint keys, so withholding `delete` from an administrator is advice, not
+    a control.
+  - Scheduled actions and workflow runs are authorized when they are created or started.
+    Withdrawing a permission later doesn't cancel them; cancel the scheduled action
+    (`DELETE …/scheduled-actions/{id}`) or the run to revoke what they would do.
+  - A write-only grant (no `publish`, so no `unpublish`) can still trash a live entry, which
+    unpublishes it. Only an explicit `deniedActions: ['unpublish']` stops that.
+- **Role edits are live at once.** `createRole`, `updateRole` and `deleteRole` drop the space's
+  cached principals (`invalidateCachedPrincipals`), so Delivery's cached keys see the new grants on
+  their next request. Management/preview/delivery reads filter out ungranted types and
   `maskDeniedFields` on what remains. Keys without a role (`contentGrants === undefined`) are
   unrestricted at this layer — coarse scopes alone apply, preserving pre-role behavior.
 - Managed at `GET/POST /spaces/:space/roles`, `GET/PUT/DELETE /spaces/:space/roles/:id`
@@ -426,7 +461,7 @@ Semantics:
   `role_delete` MCP tools. Mint a bound key with `POST /spaces/:space/api-keys { kind, roleId }`. Deleting is
   refused while a key or a person holds the role, and for a preset.
 
-Grants govern entry read/write/publish and content-type visibility. **Delivery and Preview**
+Grants govern entry read/write/publish/delete/unpublish and content-type visibility. **Delivery and Preview**
 list/get endpoints filter ungranted content types and `maskDeniedFields` on responses. Coarse
 scopes still gate search, GraphQL, SSE, and assets at the route level.
 

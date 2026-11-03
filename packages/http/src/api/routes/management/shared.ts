@@ -4,6 +4,7 @@ import {
   type ApiKey,
   type Asset,
   authorizeContent,
+  authorizeTrash,
   type ContentAction,
   effectivePluginGrant,
   ForbiddenError,
@@ -106,11 +107,22 @@ export function entryAccess(ctx: AppContext) {
   // Granular RBAC: content-level check on top of the coarse scope for
   // role-bound principals (unrestricted principals short-circuit inside the
   // domain helpers). Resolves the entry's content type when needed.
-  const guardEntry = async (c: Context<AuthVars>, id: string, action: ContentAction) => {
+  const guardEntry = async (
+    c: Context<AuthVars>,
+    id: string,
+    action: ContentAction | readonly ContentAction[],
+  ) => {
     const principal = c.get('principal');
     if (!principal.contentGrants) return;
     const { entry } = await getEntry(ctx, scopeOf(c), id);
     authorizeContent(principal, action, entry.contentTypeApiId);
+  };
+  // Trashing asks for more than one action, and for `unpublish` too when the entry is live.
+  const guardTrash = async (c: Context<AuthVars>, id: string) => {
+    const principal = c.get('principal');
+    if (!principal.contentGrants) return;
+    const { entry } = await getEntry(ctx, scopeOf(c), id);
+    authorizeTrash(principal, entry);
   };
   // Authorizes read on an entry (404 if missing, 403 if the role can't read its
   // content type) and returns the content type id so callers can mask denied
@@ -121,7 +133,7 @@ export function entryAccess(ctx: AppContext) {
     authorizeContent(c.get('principal'), 'read', entry.contentTypeApiId);
     return entry.contentTypeApiId;
   };
-  return { guardEntry, authorizeEntryRead };
+  return { guardEntry, guardTrash, authorizeEntryRead };
 }
 
 /**

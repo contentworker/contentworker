@@ -1,4 +1,5 @@
 import {
+  getEntry,
   getPreviewEntry,
   resolveEnvironment,
   resolveWritableEnvironment,
@@ -6,6 +7,7 @@ import {
 import {
   authorize,
   authorizeContent,
+  authorizeTrash,
   type ContentAction,
   inScope,
   type PermissionScope,
@@ -207,10 +209,19 @@ export function buildServer(
   // Granular RBAC: content-level check for role-bound principals (unrestricted
   // principals short-circuit inside the domain helpers). Same enforcement as
   // the HTTP API, resolving the entry's content type when needed.
-  const guardEntry = async (s: Scope, id: string, action: ContentAction) => {
+  const guardEntry = async (
+    s: Scope,
+    id: string,
+    action: ContentAction | readonly ContentAction[],
+  ) => {
     if (!principal.contentGrants) return;
     const entry = await getPreviewEntry(ctx, s, id);
     authorizeContent(principal, action, entry.contentType);
+  };
+  // Trashing asks for more than one action, and for `unpublish` too when the entry is live.
+  const guardTrash = async (s: Scope, id: string) => {
+    if (!principal.contentGrants) return;
+    authorizeTrash(principal, (await getEntry(ctx, s, id)).entry);
   };
   // Authorizes read on an entry and returns its content type, so version/history
   // tools can mask denied fields — mirrors the HTTP API's authorizeEntryRead.
@@ -229,6 +240,7 @@ export function buildServer(
     principal,
     guard,
     guardEntry,
+    guardTrash,
     authorizeEntryRead,
     requestedEnvironment,
   };

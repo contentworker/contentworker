@@ -1032,3 +1032,51 @@ test.describe('on a phone', () => {
     await expect(dialog.getByRole('button', { name: 'Create link' })).toBeInViewport();
   });
 });
+
+test('a role’s content access: withhold unpublish, save, and read it back', async ({
+  page,
+  request,
+}) => {
+  const name = `Keeps live ${Date.now()}`;
+  const created = await api(request, 'POST', `/spaces/${SPACE}/roles`, {
+    name,
+    scopes: ['content:write', 'content:publish', 'preview:read'],
+    contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }],
+  });
+  expect(created.status()).toBe(201);
+  const { id } = (await created.json()) as { id: string };
+
+  await openCms(page, '/settings/roles');
+  await page.getByRole('button', { name: `Content access for ${name}` }).click();
+  const sheet = page.getByRole('dialog');
+  const save = sheet.getByRole('button', { name: 'Save access' });
+  await expect(save).toBeDisabled();
+  await sheet.getByRole('checkbox', { name: 'Unpublish Every type' }).click();
+  await save.click();
+  await expect(sheet).toBeHidden();
+  await expect(page.getByText(`Saved content access for ${name}`)).toBeVisible();
+
+  // Stored as a withhold, with the rest of the role untouched.
+  const role = (await (await api(request, 'GET', `/spaces/${SPACE}/roles/${id}`)).json()) as {
+    name: string;
+    scopes: string[];
+    contentGrants: { actions: string[]; deniedActions?: string[] }[];
+  };
+  expect(role.name).toBe(name);
+  expect(role.scopes).toEqual(['content:write', 'content:publish', 'preview:read']);
+  expect(role.contentGrants[0]).toMatchObject({
+    actions: ['read', 'write', 'publish'],
+    deniedActions: ['unpublish'],
+  });
+  await expect(
+    page
+      .getByRole('row', { name: new RegExp(name) })
+      .getByText('Every type: read, write, publish, delete'),
+  ).toBeVisible();
+
+  // Reopened, the box reads back unticked.
+  await page.getByRole('button', { name: `Content access for ${name}` }).click();
+  await expect(
+    page.getByRole('dialog').getByRole('checkbox', { name: 'Unpublish Every type' }),
+  ).not.toBeChecked();
+});

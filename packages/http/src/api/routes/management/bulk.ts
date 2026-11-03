@@ -48,7 +48,7 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
   });
   app.post(`${BASE}/bulk/entries/unpublish`, requireScope(SCOPES.contentPublish), async (c) => {
     const body = await parseBody(c, idsBody);
-    for (const id of body.ids ?? []) await guardEntry(c, id, 'publish');
+    for (const id of body.ids ?? []) await guardEntry(c, id, 'unpublish');
     return c.json(await bulkEntryAction(ctx, scopeOf(c), 'unpublish', body.ids ?? []));
   });
 

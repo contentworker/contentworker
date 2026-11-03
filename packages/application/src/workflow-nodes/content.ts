@@ -120,7 +120,7 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
   },
 
   'content.unpublish': async (i) => {
-    guard(i, SCOPES.contentPublish, 'publish');
+    guard(i, SCOPES.contentPublish, 'unpublish');
     const current = await i.ctx.store.entries.get(i.scope, i.entryId);
     if (!current || current.entry.publishedVersion === null) {
       return { summary: 'Not published', output: { unpublished: false }, entry: await fresh(i) };
@@ -135,8 +135,8 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
   },
 
   'content.schedule': async (i) => {
-    guard(i, SCOPES.contentPublish, 'publish');
     const action = str(i.config.action, 'publish') === 'unpublish' ? 'unpublish' : 'publish';
+    guard(i, SCOPES.contentPublish, action);
     const now = i.ctx.clock.now().getTime();
     let at: number;
     if (i.config.at !== undefined && i.config.at !== null && i.config.at !== '') {
@@ -176,7 +176,13 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
     const release = await getRelease(i.ctx, i.scope, releaseId);
     const wasMember = release.items.some((it) => it.entityId === i.entryId);
     if (!wasMember) {
-      await addEntryToRelease(i.ctx, i.scope, releaseId, { entityId: i.entryId });
+      await addEntryToRelease(
+        i.ctx,
+        i.scope,
+        releaseId,
+        { entityId: i.entryId },
+        { principal: i.actor.principal },
+      );
     }
     return {
       output: { releaseId, wasMember },
@@ -198,8 +204,10 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
         summary: `${release.release.title} already shipped`,
       };
     }
+    // The run ships the release as its starter would: their role covers every member's action.
     const shipped = await publishRelease(i.ctx, i.scope, releaseId, {
       grant: grantWorkflowRunPublish(i.workflowId, i.runId),
+      principal: i.actor.principal,
     });
     return {
       output: { releaseId, published: true, entries: shipped.items.length },

@@ -1,4 +1,4 @@
-import { InvalidStateError } from '@contentworker/domain';
+import { ForbiddenError, InvalidStateError, type Principal, SCOPES } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -103,6 +103,51 @@ describe('releases', () => {
 
     await publishRelease(ctx, scope, release.id);
     await expect(getPublishedEntry(ctx, scope, a.entry.id)).rejects.toThrow(/not.*found/i);
+  });
+
+  it('ships only what the principal’s role grants on each member’s type', async () => {
+    const live = await draft(ctx, 'Live');
+    await publishEntry(ctx, scope, live.entry.id);
+    const fresh = await draft(ctx, 'Fresh');
+    const release = await createRelease(ctx, scope, { title: 'Mixed' });
+    await addEntryToRelease(ctx, scope, release.id, { entityId: fresh.entry.id });
+    await addEntryToRelease(ctx, scope, release.id, {
+      entityId: live.entry.id,
+      action: 'unpublish',
+    });
+    const role = (deniedActions?: readonly ('delete' | 'unpublish')[]): Principal => ({
+      spaceId: scope.spaceId,
+      kind: 'cma',
+      scopes: [SCOPES.contentPublish],
+      contentGrants: [
+        {
+          contentTypeApiId: 'article',
+          actions: ['read', 'write', 'publish'],
+          ...(deniedActions ? { deniedActions } : {}),
+        },
+      ],
+    });
+
+    // Publishes but withholds unpublish: the whole release is refused and nothing ships.
+    await expect(
+      publishRelease(ctx, scope, release.id, { principal: role(['unpublish']) }),
+    ).rejects.toThrow(/content:unpublish:article/);
+    await expect(getPublishedEntry(ctx, scope, fresh.entry.id)).rejects.toThrow(/not.*found/i);
+    expect((await store.entries.get(scope, live.entry.id))?.entry.publishedVersion).toBe(1);
+    expect((await store.releases.get(scope, release.id))?.status).toBe('open');
+    // No grant on the type at all: refused on the first member, as the entry routes refuse it.
+    await expect(
+      publishRelease(ctx, scope, release.id, {
+        principal: {
+          ...role(),
+          contentGrants: [{ contentTypeApiId: 'page', actions: ['publish'] }],
+        },
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    // A grant stored before unpublish existed holds it with publish, and ships as it always did.
+    await publishRelease(ctx, scope, release.id, { principal: role() });
+    await expect(getPublishedEntry(ctx, scope, live.entry.id)).rejects.toThrow(/not.*found/i);
   });
 
   it('lists each release with its member count, per scope', async () => {

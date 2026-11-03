@@ -46,6 +46,7 @@ import { Menus } from '~/cms/components/Menus';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader } from '~/cms/components/page';
 import { Redirects } from '~/cms/components/Redirects';
+import { RoleAccessSheet } from '~/cms/components/RoleAccessSheet';
 import { StatusBadge } from '~/cms/components/status';
 import { Team } from '~/cms/components/Team';
 import { WebhookDeliveriesSheet } from '~/cms/components/WebhookDeliveriesSheet';
@@ -53,13 +54,16 @@ import { WebhookDialog } from '~/cms/components/WebhookDialog';
 import { KEY_KINDS, keyKindApi, keyKindLabel } from '../lib/key-kinds';
 import {
   type ApiKeyKind,
+  apiErrorMessage,
   type CreatedApiKey,
   type ManagementClient,
+  type RoleSummary,
   WEBHOOK_TOPICS,
   type WebhookSummary,
   type WebhookTopic,
 } from '../lib/management';
-import { useInvalidate, useScopedQuery } from '../lib/queries';
+import { useContentTypesQuery, useInvalidate, useScopedQuery } from '../lib/queries';
+import { describeGrants, saveRoleGrants } from '../lib/role-grants';
 import { useToast } from '../lib/toast';
 import { DEFAULT_SETTINGS_SECTION } from './layout/nav';
 import { SettingsNav } from './layout/SettingsNav';
@@ -394,8 +398,21 @@ function RolesSettings(props: { client: ManagementClient }) {
   const invalidate = useInvalidate();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [accessFor, setAccessFor] = useState<RoleSummary | null>(null);
 
   const roles = useScopedQuery(['roles'], () => props.client.listRoles()).data ?? [];
+  const contentTypes = useContentTypesQuery().data ?? [];
+
+  // The role is replaced whole (PUT), so its name, description and scopes go back as they were.
+  const typeNames = new Map(contentTypes.map((t) => [t.apiId, t.name]));
+
+  // Grants only: the rest of the role is re-read at save, and a concurrent grant change refuses.
+  const saveAccess = async (role: RoleSummary, contentGrants: RoleSummary['contentGrants']) => {
+    await saveRoleGrants(props.client, role, contentGrants);
+    await invalidate(['roles']);
+    setAccessFor(null);
+    toast.success(`Saved content access for ${role.name}`);
+  };
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -411,7 +428,7 @@ function RolesSettings(props: { client: ManagementClient }) {
       await invalidate(['roles']);
       toast.success('Role created');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      toast.error(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -423,7 +440,7 @@ function RolesSettings(props: { client: ManagementClient }) {
       await invalidate(['roles']);
       toast.success(`Cloned ${roleName}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      toast.error(apiErrorMessage(err));
     }
   };
 
@@ -433,7 +450,7 @@ function RolesSettings(props: { client: ManagementClient }) {
       await invalidate(['roles']);
       toast.success('Role deleted');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      toast.error(apiErrorMessage(err));
     }
   };
 
@@ -454,12 +471,15 @@ function RolesSettings(props: { client: ManagementClient }) {
             Create role
           </Button>
         </form>
-        <Table>
+        <Table stack="cards" caption="Roles, their scopes and content access">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Scopes</TableHead>
-              <TableHead className="w-24" />
+              <TableHead>Content</TableHead>
+              <TableHead className="w-24">
+                <span className="sr-only">Actions</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -471,11 +491,23 @@ function RolesSettings(props: { client: ManagementClient }) {
                     {role.preset ? <Badge variant="outline">Built-in</Badge> : null}
                   </span>
                 </TableCell>
-                <TableCell className="text-muted-foreground text-sm">
+                <TableCell label="Scopes" className="text-muted-foreground text-sm">
                   {role.scopes.join(', ')}
+                </TableCell>
+                <TableCell label="Content" className="text-muted-foreground text-sm">
+                  {describeGrants(role.contentGrants, typeNames)}
                 </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Content access for ${role.name}`}
+                      onClick={() => setAccessFor(role)}
+                    >
+                      Access
+                    </Button>
                     <Button
                       type="button"
                       variant="ghost"
@@ -504,6 +536,16 @@ function RolesSettings(props: { client: ManagementClient }) {
             ))}
           </TableBody>
         </Table>
+        {accessFor ? (
+          <RoleAccessSheet
+            key={accessFor.id}
+            role={accessFor}
+            contentTypes={contentTypes}
+            open
+            onOpenChange={(o) => !o && setAccessFor(null)}
+            onSave={(grants) => saveAccess(accessFor, grants)}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );

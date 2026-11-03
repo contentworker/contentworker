@@ -164,7 +164,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'entries_unpublish',
     {
-      description: 'Withdraw an entry from the Delivery API.',
+      description:
+        'Withdraw an entry from the Delivery API. A role needs unpublish on the type, which ' +
+        'comes with publish unless its grant withholds it.',
       inputSchema: toolSchema('entries_unpublish', () =>
         z.object({
           id: z.string(),
@@ -180,7 +182,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      await guardEntry(scopeOf(args), args.id, 'publish');
+      await guardEntry(scopeOf(args), args.id, 'unpublish');
       return ok(
         await unpublishEntry(ctx, scopeOf(args), args.id, {
           expectedVersion: args.expectedVersion,

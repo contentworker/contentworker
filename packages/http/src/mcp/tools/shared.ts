@@ -66,7 +66,13 @@ export const entryFields = z
 
 export const grantShape = z.object({
   contentTypeApiId: z.string().describe("content type apiId, or '*' for all"),
-  actions: z.array(z.enum(['read', 'write', 'publish'])),
+  actions: z
+    .array(z.enum(['read', 'write', 'publish']))
+    .describe('write also grants delete (trash, purge); publish also grants delete and unpublish'),
+  deniedActions: z
+    .array(z.enum(['delete', 'unpublish']))
+    .optional()
+    .describe('withhold delete or unpublish, e.g. ["delete"] to write without deleting'),
   deniedFields: z.array(z.string()).optional(),
   readOnlyFields: z.array(z.string()).optional(),
 });
@@ -187,8 +193,14 @@ export interface ToolContext {
   readonly principal: Principal;
   /** Authorizes `scope` in the target space; throws `ForbiddenError`. */
   readonly guard: (scope: PermissionScope, s: Scope) => void;
-  /** Granular RBAC on one entry, for role-bound principals. */
-  readonly guardEntry: (s: Scope, id: string, action: ContentAction) => Promise<void>;
+  /** Granular RBAC on one entry, for role-bound principals: every one of `action` is needed. */
+  readonly guardEntry: (
+    s: Scope,
+    id: string,
+    action: ContentAction | readonly ContentAction[],
+  ) => Promise<void>;
+  /** Granular RBAC for trashing one entry (`authorizeTrash`), for role-bound principals. */
+  readonly guardTrash: (s: Scope, id: string) => Promise<void>;
   /** Authorizes read on an entry and returns its content type, to mask denied fields. */
   readonly authorizeEntryRead: (s: Scope, id: string) => Promise<string>;
   /** The `environment` each call named, before alias resolution, keyed by the resolved args. */

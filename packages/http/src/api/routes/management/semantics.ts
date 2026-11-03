@@ -134,6 +134,8 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
     `${BASE}/entries/:id/published`,
     doc('Entries', 'Unpublish an entry', {
       ok: entryDocs.entry,
+      description:
+        'A role needs `unpublish` on the type: it comes with `publish` unless the grant withholds it.',
       query: {
         expectedVersion:
           "The entry's currentVersion as the caller read it; 409 if it has changed since",
@@ -141,7 +143,7 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
-      await guardEntry(c, c.req.param('id'), 'publish');
+      await guardEntry(c, c.req.param('id'), 'unpublish');
       return c.json(await unpublishEntry(ctx, scopeOf(c), c.req.param('id'), expectedVersionOf(c)));
     },
   );

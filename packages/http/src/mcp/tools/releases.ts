@@ -67,7 +67,8 @@ export function registerReleaseTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'releases_add_entry',
     {
-      description: 'Add an entry to an open release, choosing whether it publishes or unpublishes.',
+      description:
+        "Add an entry to an open release, choosing whether it publishes or unpublishes. Your role must grant read and that action on the entry's type.",
       inputSchema: toolSchema('releases_add_entry', () =>
         z.object({
           releaseId: z.string(),
@@ -80,10 +81,16 @@ export function registerReleaseTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await addEntryToRelease(ctx, scopeOf(args), args.releaseId, {
-          entityId: args.entryId,
-          action: args.action,
-        }),
+        await addEntryToRelease(
+          ctx,
+          scopeOf(args),
+          args.releaseId,
+          {
+            entityId: args.entryId,
+            action: args.action,
+          },
+          { principal: t.principal },
+        ),
       );
     },
   );
@@ -92,12 +99,12 @@ export function registerReleaseTools(server: McpServer, t: ToolContext): void {
     'releases_publish',
     {
       description:
-        'Ship a release: publish/unpublish every member atomically in one transaction. Refused whole (publish_gated) when a gated workflow covers a member it publishes.',
+        "Ship a release: publish/unpublish every member atomically in one transaction. Refused whole (publish_gated) when a gated workflow covers a member it publishes, and (forbidden) when your role lacks publish or unpublish on a member's type.",
       inputSchema: toolSchema('releases_publish', () => z.object({ id: z.string(), ...scopeArgs })),
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      return ok(await publishRelease(ctx, scopeOf(args), args.id));
+      return ok(await publishRelease(ctx, scopeOf(args), args.id, { principal: t.principal }));
     },
   );
 }

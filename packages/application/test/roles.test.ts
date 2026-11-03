@@ -55,11 +55,44 @@ describe('granular RBAC: roles', () => {
       createRole(c, 's1', {
         name: 'Bad',
         scopes: ['content:write'],
-        contentGrants: [{ contentTypeApiId: 'post', actions: ['delete' as unknown as 'read'] }],
+        contentGrants: [{ contentTypeApiId: 'post', actions: ['destroy' as unknown as 'read'] }],
       }),
     ).rejects.toMatchObject({
       issues: [expect.objectContaining({ message: expect.stringContaining('Unknown action') })],
     });
+  });
+
+  it('withholds delete and unpublish with deniedActions, never by listing them', async () => {
+    const c = ctx();
+    // Listed, they would say nothing a grant doesn't already hold: refused, naming the way.
+    await expect(
+      createRole(c, 's1', {
+        name: 'Listed',
+        scopes: ['content:write'],
+        contentGrants: [{ contentTypeApiId: 'post', actions: ['delete' as unknown as 'read'] }],
+      }),
+    ).rejects.toMatchObject({
+      issues: [expect.objectContaining({ message: expect.stringContaining('deniedActions') })],
+    });
+    await expect(
+      createRole(c, 's1', {
+        name: 'Withholds read',
+        scopes: ['content:write'],
+        contentGrants: [
+          { contentTypeApiId: 'post', actions: ['read'], deniedActions: ['read' as 'delete'] },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      issues: [expect.objectContaining({ message: expect.stringContaining('"read"') })],
+    });
+    const role = await createRole(c, 's1', {
+      name: 'Writer, no deletes',
+      scopes: ['content:write'],
+      contentGrants: [
+        { contentTypeApiId: '*', actions: ['read', 'write'], deniedActions: ['delete'] },
+      ],
+    });
+    expect((await getRole(c, 's1', role.id)).contentGrants[0]?.deniedActions).toEqual(['delete']);
   });
 
   it('a role-bound key resolves the role live on authenticate', async () => {

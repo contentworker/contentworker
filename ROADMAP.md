@@ -71,8 +71,8 @@ Everything below is built and tested on v2.
 - **Integration.** Signed webhooks with a delivery log, event-triggered functions, app
   extensions, sandboxed plugins in isolated edge workers (with per-plugin `kv:storage` and
   operator settings, secrets sealed), the transactional outbox with lease-claimed relay.
-- **Access.** CMA/CDA/CPA keys, eight scopes, roles with per-type and per-field grants and
-  presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
+- **Access.** CMA/CDA/CPA keys, eight scopes, roles with per-type and per-field grants (read,
+  write, publish, and delete and unpublish implied unless withheld) and presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
   access tokens, preview links, rate limits, the audit log, secrets sealed at rest with a daily
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
   recovery codes, self-service password reset by an emailed code, with the person forwarded to the
@@ -150,8 +150,6 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 - [ ] **API keys on MCP.** Key tools, or a written reason they stay REST-only.
 - [ ] **Bulk trash, restore and purge, and trash retention.** New bulk job actions; a cron sweep
   through `purgeEntry` after a per-space retention window.
-- [ ] **Finer content actions.** `delete` and `unpublish` alongside `read`, `write` and `publish`,
-  implied by today's grants so no stored role changes.
 
 #### M2. Model and query parity
 

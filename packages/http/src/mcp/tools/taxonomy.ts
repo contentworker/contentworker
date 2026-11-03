@@ -276,7 +276,7 @@ export function registerTaxonomyTools(server: McpServer, t: ToolContext): void {
     'schedule_action',
     {
       description:
-        'Schedule a publish/unpublish of an entry or release for a future ISO-8601 instant. A publish a gated workflow covers is refused (publish_gated) now, and fails if gating is on when it fires.',
+        "Schedule a publish/unpublish of an entry or release for a future ISO-8601 instant. A publish a gated workflow covers is refused (publish_gated) now, and fails if gating is on when it fires. Your role must grant the action on the entry's type (or every release member's).",
       inputSchema: toolSchema('schedule_action', () =>
         z.object({
           action: z.enum(['publish', 'unpublish']),
@@ -290,12 +290,17 @@ export function registerTaxonomyTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
       return ok(
-        await scheduleAction(ctx, scopeOf(args), {
-          action: args.action,
-          entityType: args.entityType,
-          entityId: args.entityId,
-          scheduledFor: args.scheduledFor,
-        }),
+        await scheduleAction(
+          ctx,
+          scopeOf(args),
+          {
+            action: args.action,
+            entityType: args.entityType,
+            entityId: args.entityId,
+            scheduledFor: args.scheduledFor,
+          },
+          { principal: t.principal },
+        ),
       );
     },
   );

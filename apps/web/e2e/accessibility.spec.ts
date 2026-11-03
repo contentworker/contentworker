@@ -261,6 +261,23 @@ test.describe('on a phone', () => {
   });
 });
 
+// A role's content access: the built-in Editor (every type, read/write/publish), with Delete
+// withheld and a read-only type added, so the scan always sees a ticked, an unticked and a disabled
+// box with its reason, over the roles table.
+test('a role’s content access sheet has no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/roles');
+  await page.getByRole('button', { name: 'Content access for Editor', exact: true }).click();
+  const sheet = page.getByRole('dialog');
+  await sheet.getByRole('checkbox', { name: 'Delete Every type' }).click();
+  await expect(sheet.getByRole('checkbox', { name: 'Delete Every type' })).not.toBeChecked();
+  await sheet.getByRole('combobox', { name: 'Content type to add' }).selectOption('article');
+  await sheet.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(sheet.getByRole('checkbox', { name: /^Unpublish / }).last()).toBeDisabled();
+  await scan(page, testInfo);
+});
+
 // An unpublished asset's share dialog: the warning in place of the form, over the sheet.
 test('the share dialog for an unpublished asset has no accessibility violations', async ({
   page,

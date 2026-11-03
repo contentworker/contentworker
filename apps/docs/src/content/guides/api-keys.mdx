@@ -68,11 +68,25 @@ list of grants:
 
 - A key bound to a role can only touch the content types its grants name (`*` matches any type;
   an exact grant wins over `*`). Types without a grant are invisible to it, in lists too.
+- **Actions** are `read`, `write` and `publish`. Two finer actions come with them: `delete`
+  (moving to the trash, and with `publish` deleting permanently) with `write` or `publish`, and
+  `unpublish` with `publish`. List `deniedActions` to withhold either, so a role can write but not
+  delete, or publish but not unpublish:
+  `{ "contentTypeApiId": "*", "actions": ["read", "write", "publish"], "deniedActions": ["unpublish"] }`.
+  A role that withholds `unpublish` can't take a live entry down any other way either: not in
+  bulk, by trashing it, in a release (adding the item is refused too) or a scheduled action.
+- What a withhold doesn't do:
+  - It doesn't bind a role that also has `space:admin`, which can edit roles and mint keys.
+  - Scheduled actions and workflow runs are checked when they are created or started; taking a
+    permission away later doesn't cancel them. Cancel the action or the run to revoke it.
+  - A grant with `write` but not `publish` can still trash a live entry (which unpublishes it)
+    unless it withholds `unpublish` explicitly: `"deniedActions": ["unpublish"]`.
 - **Denied fields** are removed from every response and refused on write. **Read-only fields**
   can be read but not written.
 - Roles are live: editing a role changes what every key bound to it can do on the next request.
 
-Create roles in **Settings → Roles** or at `POST /spaces/{space}/roles`, then bind a key with
+Create roles in **Settings → Roles** (where **Access** sets each type's five actions) or at
+`POST /spaces/{space}/roles`, then bind a key with
 `{ "kind": "cma", "roleId": "…" }`.
 
 Every space also has five built-in roles, Viewer, Approver, Editor, Manager and Administrator,
