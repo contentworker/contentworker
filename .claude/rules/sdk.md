@@ -5,7 +5,7 @@ paths:
 
 # Public SDK (`packages/sdk/*`)
 
-- These ship to customers' browsers, apps and Workers as one npm package, `@contentworker/sdk`
+- These ship to customers' browsers, apps and edge workers as one npm package, `@contentworker/sdk`
   (`packages/sdk/sdk`), which bundles the private workspace packages (`@contentworker/sdk-core`,
   `sdk-web`, `sdk-vue`, `sdk-react-native`, `sdk-edge`, `sdk-management`, `sdk-codegen`,
   `sdk-rich-text`) and the CLI, one subpath each. A new workspace SDK module adds a subpath there
@@ -17,7 +17,7 @@ paths:
 - Public exports are an API contract: don't rename or remove an export, or narrow a parameter type,
   without calling it out as a breaking change.
 - Keep `sdk-core`, `sdk-edge` and `sdk-rich-text` runtime-agnostic (`fetch`, no `node:*`), so they run in browsers
-  and on workerd.
+  and on edge workers.
 - A new management route in `packages/http/src/api/routes` usually needs a matching
   `sdk-management` method and test.
 - Docs: `apps/docs/src/content/guides/sdks.mdx` and `docs/sdks.md`; user-facing docs name the
