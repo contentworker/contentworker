@@ -71,9 +71,7 @@ export function PluginSettingsSheet(props: {
     <Sheet open onOpenChange={guard.onOpenChange}>
       <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            {plugin.name} settings
-          </SheetTitle>
+          <SheetTitle>{plugin.name} settings</SheetTitle>
           <SheetDescription className="text-xs">
             What the plugin reads when it runs. Secrets are write-only: once saved, they can be
             replaced or cleared, never read back.

@@ -3,6 +3,7 @@
 import {
   Dialog,
   DialogContent,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -72,6 +73,17 @@ describe('dialog body', () => {
     expect(body?.contains(screen.getByRole('button', { name: 'Save' }))).toBe(true);
     // The close button stays outside what scrolls, so it can't scroll away.
     expect(body?.contains(screen.getByRole('button', { name: 'Close' }))).toBe(false);
+  });
+});
+
+describe('dialog error', () => {
+  it('is heard at once, and brings itself into view above the pinned footer', () => {
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+    render(<DialogError title="Nothing was imported">Row 3 has no source.</DialogError>);
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toBe('Nothing was importedRow 3 has no source.');
+    expect(alert.className).toContain('text-destructive');
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
   });
 });
 

@@ -17,6 +17,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -702,11 +703,7 @@ function InstallPluginDialog(props: {
             </div>
           )}
 
-          {error && (
-            <p className="text-sm text-destructive" role="alert">
-              {error}
-            </p>
-          )}
+          {error && <DialogError>{error}</DialogError>}
 
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this plugin install?">
@@ -859,11 +856,7 @@ function UpgradePluginDialog(props: {
             </div>
           )}
 
-          {error && (
-            <p className="text-sm text-destructive" role="alert">
-              {error}
-            </p>
-          )}
+          {error && <DialogError>{error}</DialogError>}
 
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this upgrade?">

@@ -74,9 +74,7 @@ export function TermEditor({
     <Sheet open={term !== null} onOpenChange={guard.onOpenChange}>
       <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            {term ? `Edit “${term.label}”` : 'Edit'}
-          </SheetTitle>
+          <SheetTitle>{term ? `Edit “${term.label}”` : 'Edit'}</SheetTitle>
           <SheetDescription className="text-xs">
             {term ? usageLine(term.usage) : null}
           </SheetDescription>

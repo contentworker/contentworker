@@ -30,6 +30,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -1133,7 +1134,7 @@ export function ContentTypeDialog(props: {
             ))}
           </fieldset>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
 
           <DialogFooter>
             <DiscardAsk

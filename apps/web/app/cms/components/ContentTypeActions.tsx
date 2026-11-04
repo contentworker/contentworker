@@ -6,6 +6,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -13,7 +14,7 @@ import {
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { SkeletonText } from '@contentworker/ui/skeleton';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LoadingStatus } from '~/cms/components/loading';
 import { toApiId } from '../lib/api-id';
 import { useClient } from '../lib/client-context';
@@ -108,11 +109,7 @@ export function CloneContentTypeDialog(props: {
               }}
             />
           </div>
-          {error && (
-            <Alert id="ct-clone-error" variant="destructive">
-              <AlertDescription>{error.message}</AlertDescription>
-            </Alert>
-          )}
+          {error && <DialogError id="ct-clone-error">{error.message}</DialogError>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
               Cancel
@@ -169,11 +166,24 @@ export function DeleteContentTypeDialog(props: {
   const d = deps.data;
   const entries = d ? d.entries.live + d.entries.trashed : 0;
   const blocked = d ? otherBlockers(d) : [];
-  const ready =
-    d !== undefined &&
-    blocked.length === 0 &&
-    (entries === 0 || withEntries) &&
-    typed.trim() === apiId;
+  const isBlocked = blocked.length > 0;
+  const entriesLabel = `Also delete its ${plural(entries, 'entry', 'entries')}`;
+  // What still stands between the person and the delete, said beside the disabled button.
+  const outstanding = [
+    ...(entries > 0 && !withEntries ? [`tick “${entriesLabel}”`] : []),
+    ...(typed.trim() !== apiId ? [`type ${apiId}`] : []),
+  ];
+  const ready = d !== undefined && !isBlocked && outstanding.length === 0;
+
+  // While it reads what depends on the type, Keep it is the only control, so it takes focus. Once
+  // the fields are drawn they come before it: focus moves to the first, or the keyboard would have
+  // to go backwards.
+  const entriesBox = useRef<HTMLButtonElement>(null);
+  const typedInput = useRef<HTMLInputElement>(null);
+  const loaded = d !== undefined;
+  useEffect(() => {
+    if (props.open && loaded) (entriesBox.current ?? typedInput.current)?.focus();
+  }, [props.open, loaded]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -222,7 +232,7 @@ export function DeleteContentTypeDialog(props: {
             </Alert>
           ) : (
             <>
-              {blocked.length > 0 && (
+              {isBlocked && (
                 <Alert variant="warning">
                   <AlertTitle>It can’t be deleted yet</AlertTitle>
                   <AlertDescription>
@@ -234,18 +244,18 @@ export function DeleteContentTypeDialog(props: {
                   </AlertDescription>
                 </Alert>
               )}
-              {entries > 0 && (
+              {!isBlocked && entries > 0 && (
                 <div className="space-y-1.5">
                   <Label className="gap-2 font-normal">
                     <Checkbox
+                      ref={entriesBox}
                       aria-labelledby="ct-delete-entries-label"
                       aria-describedby="ct-delete-entries-hint"
                       checked={withEntries}
-                      disabled={blocked.length > 0}
                       onCheckedChange={(c) => setWithEntries(c === true)}
                     />
                     <span id="ct-delete-entries-label">
-                      Also delete its {plural(entries, 'entry', 'entries')}
+                      {entriesLabel}
                       {d.entries.trashed > 0 ? ` (${d.entries.trashed} in the trash)` : ''}
                     </span>
                   </Label>
@@ -256,12 +266,13 @@ export function DeleteContentTypeDialog(props: {
                   </p>
                 </div>
               )}
-              {blocked.length === 0 && (
+              {!isBlocked && (
                 <div className="space-y-1.5">
                   <Label htmlFor="ct-delete-confirm">
                     Type <span className="font-mono">{apiId}</span> to confirm
                   </Label>
                   <Input
+                    ref={typedInput}
                     id="ct-delete-confirm"
                     value={typed}
                     autoComplete="off"
@@ -280,13 +291,30 @@ export function DeleteContentTypeDialog(props: {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
+          {loaded && !isBlocked && outstanding.length > 0 && (
+            <p id="ct-delete-gate" aria-live="polite" className="text-muted-foreground text-ui">
+              To delete it, {outstanding.join(' and ')}.
+            </p>
+          )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
               Keep it
             </Button>
-            <Button type="submit" variant="destructive" disabled={!ready || busy}>
-              {busy ? 'Deleting…' : entries > 0 ? 'Delete type and entries' : 'Delete content type'}
-            </Button>
+            {/* Blocked, no confirm is offered: what blocks it is the whole answer. */}
+            {!isBlocked && (
+              <Button
+                type="submit"
+                variant="destructive"
+                disabled={!ready || busy}
+                aria-describedby={loaded && !ready ? 'ct-delete-gate' : undefined}
+              >
+                {busy
+                  ? 'Deleting…'
+                  : entries > 0
+                    ? 'Delete type and entries'
+                    : 'Delete content type'}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

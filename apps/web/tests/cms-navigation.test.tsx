@@ -206,6 +206,19 @@ describe('command palette', () => {
     await waitFor(() => expect(screen.getByTestId('path').textContent).toBe('/settings/webhooks'));
   });
 
+  it('says a search that missed out loud, from a region that was already there', async () => {
+    palette('/dashboard');
+    act(openCommandPalette);
+    const input = await screen.findByRole('combobox', { name: 'Command palette search' });
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('');
+    fireEvent.change(input, { target: { value: 'nothing is called this' } });
+    expect(status.textContent).toBe('No results found.');
+    // Once: the words on screen, inside the listbox, are hidden from a screen reader.
+    const shown = within(screen.getByRole('listbox')).getByText('No results found.');
+    expect(shown.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('opens on ⌘K', async () => {
     palette('/dashboard');
     fireEvent.keyDown(document, { key: 'k', metaKey: true });

@@ -187,6 +187,25 @@ describe('EntryEditor action row', () => {
   });
 });
 
+describe('EntryEditor secondary actions', () => {
+  it.each([
+    ['Generate with AI', /^Generate Article draft/],
+    ['Draft from prose', /^Draft Article from prose/],
+  ])('%s from ⋯ hands focus back to ⋯ as it closes', async (item, title) => {
+    setup('/content/article/e1', saved('draft'));
+    await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
+    const more = screen.getByRole('button', { name: 'More entry actions' });
+    fireEvent.keyDown(more, { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: item }));
+    const dialog = await screen.findByRole('dialog', { name: title });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(more));
+  });
+});
+
 describe('EntryEditor Publish', () => {
   it('confirms a first publish, then offers Undo, which unpublishes it', async () => {
     setup('/content/article/e1', saved('draft'));

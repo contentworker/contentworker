@@ -1,7 +1,7 @@
 import type { ContentTypeGrant } from '@contentworker/domain';
-import { Alert, AlertDescription } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
@@ -66,9 +66,7 @@ export function RoleAccessSheet(props: {
     <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
       <ResponsiveSheetContent className="w-full gap-0 overflow-y-auto sm:max-w-lg">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            Content access: {props.role.name}
-          </SheetTitle>
+          <SheetTitle>Content access: {props.role.name}</SheetTitle>
           <SheetDescription className="text-xs">
             Write and Publish bring Delete and Unpublish with them; untick either to withhold it. An
             exact type wins over Every type.
@@ -175,11 +173,7 @@ export function RoleAccessSheet(props: {
               </Button>
             </div>
           ) : null}
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
+          {error ? <DialogError>{error}</DialogError> : null}
           <div className="flex justify-end gap-2">
             <DiscardAsk
               guard={guard}

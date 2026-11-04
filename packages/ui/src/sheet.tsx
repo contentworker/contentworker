@@ -55,7 +55,7 @@ function SheetContent({
         data-slot="sheet-content"
         data-side={side}
         className={cn(
-          'fixed z-50 flex flex-col gap-4 bg-popover bg-clip-padding text-sm text-popover-foreground shadow-xl transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500',
+          'fixed z-50 flex flex-col gap-4 bg-popover bg-clip-padding text-sm text-popover-foreground shadow-xl data-[state=closed]:animate-out data-[state=closed]:duration-(--motion-instant) data-[state=closed]:ease-leave data-[state=open]:animate-in data-[state=open]:duration-(--motion-travel) data-[state=open]:ease-arrive',
           // A side drawer runs the full height of the screen, so on a phone it meets
           // the status bar, the notch and the home indicator. The insets are 0
           // everywhere else; the `*-safe` utilities are defined in the app's CSS.
@@ -113,7 +113,7 @@ function SheetTitle({ className, ...props }: React.ComponentProps<typeof SheetPr
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn('font-medium text-base text-foreground', className)}
+      className={cn('section-title text-balance', className)}
       {...props}
     />
   );

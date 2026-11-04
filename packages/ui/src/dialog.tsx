@@ -2,7 +2,7 @@
 
 import { XIcon } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import type * as React from 'react';
+import * as React from 'react';
 import { Button } from './button';
 import { keyboardInset } from './lib/keyboard-inset';
 import { cn } from './lib/utils';
@@ -148,7 +148,7 @@ function DialogTitle({ className, ...props }: React.ComponentProps<typeof Dialog
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('pr-8 font-heading text-base leading-none font-medium', className)}
+      className={cn('pr-8 section-title text-balance', className)}
       {...props}
     />
   );
@@ -170,11 +170,44 @@ function DialogDescription({
   );
 }
 
+/**
+ * What stopped a form, the one way a dialog or sheet says so: heard at once, in the action's red
+ * (`bad` is a status), above the form's buttons. The footer is pinned, so a form can be submitted
+ * from anywhere in its scroll: this brings itself into view.
+ */
+function DialogError({
+  title,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<'div'> & {
+  /** A heading, when `children` is a list of what went wrong. */
+  title?: React.ReactNode;
+}) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    ref.current?.scrollIntoView?.({ block: 'nearest' });
+  }, []);
+  return (
+    <div
+      ref={ref}
+      role="alert"
+      data-slot="dialog-error"
+      className={cn('scroll-mb-24 text-destructive text-sm', className)}
+      {...props}
+    >
+      {title ? <p className="font-medium">{title}</p> : null}
+      {children}
+    </div>
+  );
+}
+
 export {
   Dialog,
   DialogClose,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogOverlay,

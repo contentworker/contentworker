@@ -4,6 +4,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -39,6 +40,8 @@ export function CanvasDialog(props: {
   contentTypeName: string;
   /** Maps the prose into the form; once `signal` aborts, it must leave the form alone. */
   onMap: (prose: string, tier: ModelTier, signal: AbortSignal) => Promise<void>;
+  /** Where focus goes as it closes, when what opened it may be gone. */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const [prose, setProse] = useState('');
   const [tier, setTier] = useState<ModelTier>('balanced');
@@ -74,7 +77,7 @@ export function CanvasDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={(o) => (o ? props.onOpenChange(o) : close())}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-2xl" onCloseAutoFocus={props.onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PenLine className="size-4 text-primary" />
@@ -113,7 +116,7 @@ export function CanvasDialog(props: {
             </Select>
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <p className="sr-only" aria-live="polite">
             {busy ? 'Mapping the text to fields.' : ''}
           </p>

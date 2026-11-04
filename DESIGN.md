@@ -235,7 +235,7 @@ Tailwind's default breakpoints, read as devices:
 
 | Width                     | Typically                 | What changes                                                                                                                                                                      |
 | ------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| below `sm` (640px)        | iPhone upright            | Header shows the mark, and Search and Coworker as icons; the scope (space, environment, locale) opens from More                                                                   |
+| below `sm` (640px)        | iPhone upright            | Header shows the mark, and Search and Coworker as icons; the scope (space, environment, locale) opens from More; dialogs and form sheets come from the bottom                     |
 | below `md` (768px)        | phones, either way up     | Bottom tab bar, no sidebar; tables stack into cards; the content-type list leaves the Content pages (their overview lists the types)                                              |
 | `md` to `lg` (768–1023px) | iPad upright              | The sidebar is an icon rail beside the page and opens over it                                                                                                                     |
 | `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the space, environment and locale switchers in the header; the entry editor's side pane beside the form; the assistant as a column |
@@ -344,8 +344,9 @@ through the variables, never `env()` directly.
 ## Touch
 
 - **Targets:** 44px for a finger. A small control keeps its drawn size and gets `hit-area`, an
-  invisible box grown to 2.75rem on a coarse pointer. The shared buttons have it at every size;
-  raw buttons and links in the bars add it. A tab grows instead: on a coarse pointer each trigger
+  invisible box grown to 2.75rem on a coarse pointer. The shared buttons have it at every size,
+  a dialog's close and footer buttons included; raw buttons and links in the bars add it, and a
+  sheet's close grows to 2.75rem. A tab grows instead: on a coarse pointer each trigger
   is at least 44px and its list grows to hold it (a mouse keeps the 32px list), since a tab list
   that scrolls sideways would clip an invisible box to its own height.
 - **Fields:** 16px on a touch screen whatever their classes say (an unlayered rule in index.css),
@@ -404,9 +405,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   either way, focus goes back to the row's ⋯. **Deleting a type** can't be undone, so it confirms
   in a modal (The Undoable Confirms In Place Rule): a dialog reads what depends on the type first, names in a warning Alert whatever blocks it (another type
   linking to it, a menu or redirect naming its entries, its URL pattern; then no confirm is
-  offered), and with entries offers "Also delete its N entries" as an unticked opt-in. It is
-  confirmed by typing the API ID, and a refusal shows as a destructive Alert in the dialog. Deleted
-  at once, focus moves to the next row's ⋯, or the page heading when it was the last. With its
+  offered: no opt-in, no red button, only Keep it), and with entries offers "Also delete its N
+  entries" as an unticked opt-in. It is confirmed by typing the API ID, with a muted line tied to
+  the disabled button saying which steps are outstanding, and a refusal shows as a destructive
+  Alert in the dialog. Keep it holds focus while the check runs; once it lands, focus moves to the
+  first field. Deleted at once, focus moves to the next row's ⋯, or the page heading when it was the last. With its
   entries, the delete runs as a bulk job shown in the trash's card above the table, Stop included,
   kept by the Content layout so it is still there after a visit to an entry. The type goes in a
   step after the last entry: the card says "Deleting the content type…" until that is recorded on
@@ -763,6 +766,8 @@ opacity, colour and a few pixels of travel.
   `--motion-instant` 100ms (feedback, anything leaving), `--motion-move` 180ms (something appearing
   or changing state), `--motion-travel` 240ms (pages and panels).
 - **Easing:** `ease-arrive` (`cubic-bezier(0.16,1,0.3,1)`) for arrivals, `ease-leave` for exits.
+- **Overlays:** a sheet, or a dialog rising on a phone, travels in on `--motion-travel` and
+  `ease-arrive`; a dialog appears on `--motion-move`; all of them leave on `--motion-instant`.
 - **Arrival:** `animate-arrive`, a fade and a 4px rise, for a toast, a confirm or a new row
   (`useArrivals` decides what is new).
 - **Pages** cross-fade with View Transitions while the header, the sidebar and the tab bar hold
@@ -829,6 +834,26 @@ for code and data blocks only.
   menu, Alert, Alert dialog, Dialog, Select, Tabs, Checkbox, Avatar** (`packages/ui`): radix-maia
   primitives on the Ledger tokens. Dialogs, alert dialogs and sheets open over a clear backdrop that
   blurs the page (`backdrop-blur-sm`), with no tint.
+- **Dialog** (`ui/dialog.tsx`, `ui/alert-dialog.tsx`): capped to the screen, less an on-screen
+  keyboard (`--keyboard-inset`, since iOS leaves that out of `dvh`), so what gives way is the body,
+  which scrolls: the header, the footer and the close button stay put and every action stays in
+  reach. A dialog comes from the bottom on a phone and sits centred from `sm`; an alert dialog is a
+  question, not a form, and stays centred. The palette anchors to the top at every width
+  (`placement="top"`), so its search box holds still as the results shrink.
+  - **Title:** `section-title`, the same in a dialog, an alert dialog and a sheet.
+  - **Footer:** an outline Cancel, then the primary at the default size, on the right. On a phone
+    they stack, the primary on top.
+  - **Errors:** `DialogError`, one line (or a title and a list) in `destructive`, `role="alert"`,
+    above the footer, for what stopped the form, in a dialog or a sheet; it brings itself into view,
+    since the pinned footer can be pressed from anywhere in the scroll. A field's own error stays
+    beside the field, and a notice that blocks the task (a refusal with a way on) is an Alert.
+  - **Leaving:** a form with work in it never goes quietly (`cms/components/discard-guard.tsx`).
+    Escape, a press outside, the close button and Cancel all ask in place of its buttons ("Discard
+    this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, and an
+    untouched form just closes. Dialogs that talk to a model keep their work instead: the prompt
+    and a draft under review stay for when they open again, and only Discard or Apply clear them.
+    Closing one while the model works aborts the request and drops a late answer, so a model that
+    hangs never holds the dialog shut.
 - **Status badge** (`components/status.tsx`): a pill tinted 11% in the status colour with a dot; an
   ending that went badly is ruled in the colour with a mark (✕ or undo) instead of tinted, so it
   reads apart without colour. `ToneBadge` for another vocabulary (a diff's change, a finding's
@@ -848,7 +873,8 @@ for code and data blocks only.
 - **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
   toast carries its Undo action.
 - **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"
-  button, in a sheet from the side (from the bottom on a phone).
+  button, in a sheet from the side (from the bottom on a phone, as every sheet with a form or a
+  detail is: `ResponsiveSheetContent`).
 - **Relative time** (`components/ago.tsx`): "3m ago" that stays true, the full time in its tooltip.
 - **Copy and share** (`components/copy-button.tsx`, `cms/components/share-button.tsx`): copy says so
   for a moment; share uses the system sheet where there is one.

@@ -274,9 +274,15 @@ export function CommandPalette() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent showCloseButton={false} className="overflow-hidden p-0 sm:max-w-lg">
+      {/* Anchored to the top: centred, the search box would jump as the results shrink. */}
+      <DialogContent
+        showCloseButton={false}
+        placement="top"
+        className="sm:max-w-lg"
+        bodyClassName="flex flex-col gap-0 overflow-hidden p-0"
+      >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
-        <div className="flex items-center gap-2 border-b px-3">
+        <div className="flex shrink-0 items-center gap-2 border-b px-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
           <input
             ref={inputRef}
@@ -306,10 +312,12 @@ export function CommandPalette() {
           id="contentworker-cmdk-list"
           role="listbox"
           aria-label="Results"
-          className="max-h-80 overflow-y-auto p-1"
+          className="max-h-80 min-h-0 flex-1 overflow-y-auto p-1"
         >
           {filtered.length === 0 && (
-            <div className="py-6 text-center text-sm text-muted-foreground">No results found.</div>
+            <div aria-hidden="true" className="py-6 text-center text-sm text-muted-foreground">
+              No results found.
+            </div>
           )}
           {GROUPS.map((g) => {
             const inGroup = filtered.filter((i) => i.group === g);
@@ -355,6 +363,10 @@ export function CommandPalette() {
             );
           })}
         </div>
+        {/* Always mounted, so filling it is announced; the words on screen sit in the listbox. */}
+        <p role="status" className="sr-only">
+          {filtered.length === 0 ? 'No results found.' : ''}
+        </p>
       </DialogContent>
     </Dialog>
   );

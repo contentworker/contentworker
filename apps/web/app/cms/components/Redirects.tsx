@@ -5,6 +5,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -500,7 +501,7 @@ export function RedirectDialog(props: {
             <Switch id={`${id}-enabled`} checked={enabled} onCheckedChange={setEnabled} />
             <Label htmlFor={`${id}-enabled`}>Enabled</Label>
           </div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this redirect?">
               <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
@@ -629,17 +630,14 @@ export function ImportRedirectsDialog(props: {
             />
           </div>
           {problems.length > 0 && (
-            <Alert variant="destructive">
-              <AlertTitle>Nothing was imported</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc ps-4">
-                  {problems.slice(0, 10).map((p) => (
-                    <li key={p}>{p}</li>
-                  ))}
-                  {problems.length > 10 && <li>and {problems.length - 10} more</li>}
-                </ul>
-              </AlertDescription>
-            </Alert>
+            <DialogError title="Nothing was imported">
+              <ul className="list-disc ps-4">
+                {problems.slice(0, 10).map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+                {problems.length > 10 && <li>and {problems.length - 10} more</li>}
+              </ul>
+            </DialogError>
           )}
           {checked && (
             <p role="status" className="text-sm">

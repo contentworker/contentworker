@@ -37,6 +37,7 @@ export default defineConfig({
         'editor-action-bar.spec.ts',
         'entry-tabs.spec.ts',
         'entries-list-phone.spec.ts',
+        'modals-phone.spec.ts',
       ],
       use: { ...devices['iPhone 15'] },
     },

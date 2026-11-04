@@ -5,6 +5,7 @@ import {
   type WorkflowTemplateId,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
 import {
   Field,
   FieldDescription,
@@ -324,11 +325,7 @@ function NewWorkflowForm({
             <FieldDescription className="text-xs">{chosen?.description}</FieldDescription>
           </Field>
         ) : null}
-        {error ? (
-          <p className="text-bad text-sm" role="alert">
-            {error}
-          </p>
-        ) : null}
+        {error ? <DialogError>{error}</DialogError> : null}
         <FieldDescription className="text-xs">
           A new workflow starts no runs until it is published.
         </FieldDescription>

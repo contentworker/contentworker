@@ -5,6 +5,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -742,7 +743,7 @@ function MenuDialog(props: {
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this menu?">
               <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
@@ -958,7 +959,7 @@ export function MenuItemDialog(props: {
             <Switch id={`${id}-tab`} checked={newTab} onCheckedChange={setNewTab} />
             <Label htmlFor={`${id}-tab`}>Open in a new tab</Label>
           </div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this menu item?">
               <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>

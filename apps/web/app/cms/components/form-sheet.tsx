@@ -51,9 +51,7 @@ export function FormSheet({
         {...(description ? {} : { 'aria-describedby': undefined })}
       >
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            {title ?? label}
-          </SheetTitle>
+          <SheetTitle>{title ?? label}</SheetTitle>
           {description ? (
             <SheetDescription className="text-xs">{description}</SheetDescription>
           ) : null}

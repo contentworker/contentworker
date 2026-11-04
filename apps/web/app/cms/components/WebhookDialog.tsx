@@ -4,6 +4,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -133,7 +134,7 @@ export function WebhookDialog(props: {
             <span>Send events from every environment</span>
           </Label>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
 
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard your changes to this webhook?">

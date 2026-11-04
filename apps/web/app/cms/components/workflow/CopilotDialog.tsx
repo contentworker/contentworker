@@ -14,6 +14,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -192,11 +193,7 @@ export function CopilotDialog({
             </div>
           </div>
         )}
-        {error ? (
-          <p role="alert" className="text-bad text-sm">
-            {error}
-          </p>
-        ) : null}
+        {error ? <DialogError>{error}</DialogError> : null}
         <p className="sr-only" aria-live="polite">
           {drafting ? 'Drafting the workflow.' : ''}
         </p>

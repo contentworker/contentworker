@@ -3,6 +3,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -155,7 +156,7 @@ function CreateEnvironmentDialog(props: {
               onChange={(e) => setName(e.target.value)}
             />
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
               Cancel
