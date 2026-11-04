@@ -5,6 +5,10 @@
 #
 #   ./scripts/provision.sh <id>
 #
+# FLEET_REGISTRY names the registry directory and FLEET_REPO the GitHub repository (owner/name)
+# that holds the deployment's environment. Set both to work against the private ops repo; without
+# them, this repository's deployments/ and its own environments are used.
+#
 # Needs `wrangler login` (or CLOUDFLARE_API_TOKEN) and `gh auth login`. The AI Gateway is created
 # through the API, so it also needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; without them
 # it prints what to create instead.
@@ -12,6 +16,7 @@ set -euo pipefail
 id="${1:?usage: scripts/provision.sh <id>}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
+repo="${FLEET_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
 
 eval "$(node scripts/fleet.ts names "$id")"
 wrangler() { pnpm --filter @contentworker/engine exec wrangler "$@"; }
@@ -115,9 +120,9 @@ fi
 # alone. DATA_KEY seals every stored secret and TOKEN_PEPPER is in every API key hash, and
 # PASSWORD_PEPPER in every password hash: once a deployment runs, none may change, so none is
 # generated while its api Worker already holds one. None is ever written to disk.
-gh api --method PUT "repos/{owner}/{repo}/environments/$ENVIRONMENT" >/dev/null
+gh api --method PUT "repos/$repo/environments/$ENVIRONMENT" >/dev/null
 API_WORKER="contentworker-api$SUFFIX"
-EXISTING=$(gh secret list --env "$ENVIRONMENT" --json name -q '.[].name')
+EXISTING=$(gh secret list -R "$repo" --env "$ENVIRONMENT" --json name -q '.[].name')
 WORKER_SECRETS=""
 if WORKER_SECRETS=$(wrangler secret list --name "$API_WORKER" 2>/dev/null); then
   WORKER_SECRETS=$(jq -r '.[].name' <<<"$WORKER_SECRETS" 2>/dev/null || true)
@@ -133,7 +138,7 @@ for KEY in PRINCIPAL_KEY DATA_KEY TOKEN_PEPPER MEDIA_SIGNING_SECRET PASSWORD_PEP
     echo "value on $ENVIRONMENT from its escrowed copy; a new one would make what it protects unreadable."
     exit 1
   else
-    openssl rand -hex 32 | tr -d '\n' | gh secret set "$KEY" --env "$ENVIRONMENT"
+    openssl rand -hex 32 | tr -d '\n' | gh secret set "$KEY" -R "$repo" --env "$ENVIRONMENT"
     echo "Set $KEY on $ENVIRONMENT"
   fi
 done
@@ -146,11 +151,11 @@ if grep -qx SETUP_TOKEN <<<"$EXISTING"; then
   echo "$ENVIRONMENT already has SETUP_TOKEN"
 else
   [ -s "$file" ] || (umask 077 && openssl rand -hex 16 | tr -d '\n' >"$file")
-  gh secret set SETUP_TOKEN --env "$ENVIRONMENT" <"$file"
+  gh secret set SETUP_TOKEN -R "$repo" --env "$ENVIRONMENT" <"$file"
   echo "Set SETUP_TOKEN on $ENVIRONMENT (value in $file)"
 fi
 
 echo
 echo "Next: add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to $ENVIRONMENT if they aren't"
-echo "repository secrets, commit deployments/$id.jsonc, and merge: CI deploys it in its ring."
+echo "repository secrets, commit $id.jsonc in the registry, and merge: CI deploys it in its ring."
 echo "Then send the customer's first admin https://$DOMAIN/setup and the setup code in $file."

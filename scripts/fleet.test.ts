@@ -19,6 +19,7 @@ import {
   matrix,
   names,
   REQUIRED_BINDINGS,
+  registryDir,
   renderApi,
   renderDelivery,
   renderEngine,
@@ -241,6 +242,11 @@ test('rendering refuses an unprovisioned deployment, and so does the CI matrix',
   assert.throws(() => renderEngine(base('engine'), bare), /no d1Id/);
   assert.throws(() => matrix([bare]), /not provisioned/);
   assert.deepEqual(matrix([{ ...bare, hold: true }]).canary, []);
+});
+
+test('FLEET_REGISTRY moves the registry, and an unset one stays in this repo', () => {
+  assert.match(registryDir({}), /\/deployments$/);
+  assert.equal(registryDir({ FLEET_REGISTRY: '/srv/ops/deployments' }), '/srv/ops/deployments');
 });
 
 test('the checked-in registry loads, with distinct slots, domains and suffixes', () => {
