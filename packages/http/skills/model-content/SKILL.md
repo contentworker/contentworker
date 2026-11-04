@@ -35,9 +35,9 @@ Delivery API serves only entries whose content type is published.
    - `layout` (optional, editor-only, never delivered) — tabs and field groups for the entry form:
      `{ tabs: [{ apiId, name, groups: [{ name?, fields: [apiIds], collapsed? }] }] }`. Each field
      at most once; unplaced fields follow on the first tab. Left out keeps it; `null` clears it.
-   - A Date's `format`: `date` (2026-11-03) or `datetime` (2026-11-03T14:30). A `time` format and
-     lists of `Text`, `Integer`, `Number` or `Date` are read but refused on write until the next
-     release; use `Symbol` lists or a `datetime` meanwhile.
+   - A Date's `format`: `date` (2026-11-03), `datetime` (2026-11-03T14:30) or `time` (14:30).
+     A list of values: `type: 'Array'` with `items.type` `Symbol`, `Text`, `Integer`, `Number` or
+     `Date` (and `items.format` for dates); each element is checked as one value.
    - Validations beyond the basics: `regexp: { preset: 'email' }` (also `url`, `slug`, `phone`,
      `hexColor`, `usZipCode`) instead of writing a pattern; `dateRange: { min?, max? }` on a Date;
      `assetMimeTypes: ['image/*']` on an asset Link, checked against the asset on write.

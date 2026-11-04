@@ -241,16 +241,16 @@ A `Date` field's `format` says what it holds, and how its value is written:
 | `time`     | `14:30`            | a time picker         |
 
 Without a format a Date takes any ISO 8601 date string, as before. Bound it with
-`validations.dateRange` (`{ "min": "2026-01-01" }`), written in the same format. Time-only fields
-can be read today and are accepted on write in the next release.
+`validations.dateRange` (`{ "min": "2026-01-01" }`), written in the same format. In the admin,
+pick the format from **Format** in a Date field's **Settings**.
 
 ## Lists
 
 An `Array` of `Symbol`, `Text`, `Integer`, `Number` or `Date` holds a list of those values, each
 checked as one (`"items": { "type": "Integer" }`; a list of dates takes `items.format`). The entry
 form edits it item by item, GraphQL types it as a list of the scalar (`[Int]`) and generated types
-as `number[]` or `string[]`. Lists of `Text`, `Integer`, `Number` and `Date` can be read today and
-are accepted on write in the next release; lists of `Symbol`, `Link` and `Component` work as before.
+as `number[]` or `string[]`. In the admin, a list field's **Items** picks what it holds; a list of
+links or components keeps the items it was given.
 
 ## Organizing the model
 

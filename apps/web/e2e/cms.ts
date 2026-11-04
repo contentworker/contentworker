@@ -550,3 +550,42 @@ export async function seedVenueType(request: APIRequestContext) {
   if (![200, 201].includes(res.status())) throw new Error(await res.text());
   await api(request, 'POST', `${MGMT}/content-types/venue/published`);
 }
+
+/** A type with a list of whole numbers and a time-of-day field: the scalar list editor's ground. */
+export async function seedShelfType(request: APIRequestContext) {
+  const res = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'shelf',
+    name: 'Shelf',
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: true,
+        position: 0,
+      },
+      {
+        apiId: 'sizes',
+        name: 'Sizes',
+        type: 'Array',
+        items: { type: 'Integer' },
+        localized: false,
+        required: false,
+        position: 1,
+      },
+      {
+        apiId: 'opens',
+        name: 'Opens',
+        type: 'Date',
+        format: 'time',
+        localized: false,
+        required: false,
+        position: 2,
+      },
+    ],
+  });
+  if (![200, 201].includes(res.status())) throw new Error(await res.text());
+  await api(request, 'POST', `${MGMT}/content-types/shelf/published`);
+}
