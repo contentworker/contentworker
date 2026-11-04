@@ -161,6 +161,21 @@ describe('the media Worker', () => {
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
+  it('keeps a dead-lettered purge’s tags, so an operator can purge them by hand', async () => {
+    const timestamp = new Date('2026-11-04T10:00:00.000Z');
+    const tags = ['cwa:shop:main:asset-1'];
+    const batch = createMessageBatch<PurgeMessage>('contentworker-media-purge-dlq', [
+      { id: 'dead-1', timestamp, attempts: 1, body: { tags } },
+    ]);
+    const ctx = Object.assign(createExecutionContext(), { exports });
+    await worker.queue(batch, env as never, ctx);
+    expect((await getQueueResult(batch, ctx)).explicitAcks).toEqual(['dead-1']);
+    const kept = await env.MEDIA_BUCKET.get(
+      'dlq/contentworker-media-purge-dlq/2026-11-04/dead-1.json',
+    );
+    expect((await kept?.json<{ body: unknown }>())?.body).toEqual({ tags });
+  });
+
   it('reads a D1 replica when the gate has no entry yet, and writes nothing', async () => {
     const u = await uploaded();
     await publishAsset(u.ctx, u.scope, u.asset.id);

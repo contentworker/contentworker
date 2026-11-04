@@ -21,6 +21,7 @@
 import { handleMediaRequest } from '@contentworker/adapters/blob-r2';
 import { type ImagesBindingLike, transformImage } from '@contentworker/adapters/images-cf';
 import { parseShareLinkPath } from '@contentworker/domain';
+import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { type EdgeEnv, queueName } from '@contentworker/platform/env';
 import type { PurgeMessage } from '@contentworker/platform/messages';
 import { drain } from '@contentworker/platform/purge';
@@ -177,20 +178,13 @@ export default {
   async queue(batch, env, ctx) {
     if (batch.queue === queueName(env, 'contentworker-media-purge-dlq')) {
       // Purges that failed every retry: the media they name stays cached (it is immutable), so
-      // say so loudly; an operator can purge the tags by hand.
-      for (const msg of batch.messages) {
-        console.error(
-          JSON.stringify({
-            msg: 'media purge dead-lettered',
-            tags: (msg.body as PurgeMessage).tags,
-          }),
-        );
+      // keep a record; an operator can purge its tags by hand.
+      await recordDeadLetters(batch, env.MEDIA_BUCKET, () =>
         env.METRICS?.writeDataPoint({
           blobs: ['contentworker_media_purge_dead_letters_total'],
           doubles: [1],
-        });
-        msg.ack();
-      }
+        }),
+      );
       return;
     }
     const exports = (ctx as unknown as { exports: Exports }).exports;
