@@ -1,4 +1,5 @@
 import { Button } from '@contentworker/ui/button';
+import { focusIsAdrift } from '@contentworker/ui/lib/focus-return';
 import { cn } from '@contentworker/ui/lib/utils';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 
@@ -90,10 +91,10 @@ export function InlineConfirm({
   useEffect(() => {
     const me = { root };
     open.push(me);
-    // <body> isn't "what asked" (Safari doesn't focus buttons on click), so
-    // it falls through to `returnFocus`.
+    // <body>, or the dialog around it, isn't "what asked" (Safari doesn't focus
+    // a pressed button), so it falls through to `returnFocus`.
     const active = document.activeElement;
-    const before = active instanceof HTMLElement && active !== document.body ? active : null;
+    const before = active instanceof HTMLElement && !focusIsAdrift(active) ? active : null;
     cancel.current?.focus();
     // Window capture runs before Radix's document-level Escape handling, so a
     // confirm inside a Sheet backs out of the confirm without closing the Sheet.
@@ -109,8 +110,7 @@ export function InlineConfirm({
     return () => {
       window.removeEventListener('keydown', onKey, true);
       open.splice(open.indexOf(me), 1);
-      const now = document.activeElement;
-      if (now && now !== document.body && now.isConnected) return;
+      if (!focusIsAdrift()) return;
       // A trigger disabled by the action it confirmed can't take focus.
       const usable = (el: HTMLElement | null | undefined) =>
         el?.isConnected && !(el as HTMLButtonElement).disabled ? el : undefined;

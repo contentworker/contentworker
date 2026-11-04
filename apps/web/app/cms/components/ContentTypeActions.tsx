@@ -35,8 +35,6 @@ export function CloneContentTypeDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCloned: (clone: ContentType) => void;
-  /** Where focus goes as it closes (the row's menu button), rather than the page. */
-  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const { client } = useClient();
   const [name, setName] = useState(`${props.source.name} copy`);
@@ -79,7 +77,7 @@ export function CloneContentTypeDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="sm:max-w-md" onCloseAutoFocus={props.onCloseAutoFocus}>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Clone “{props.source.name}”</DialogTitle>
           <DialogDescription>
@@ -152,7 +150,7 @@ export function DeleteContentTypeDialog(props: {
   onOpenChange: (open: boolean) => void;
   /** Deleted at once (null), or a job deleting its entries first. */
   onDeleted: (job: BulkJobSummary | null) => void;
-  /** Where focus goes as it closes, rather than the page (the menu that opened it is gone). */
+  /** Where focus goes as it closes, when the row that opened it has gone with the type. */
   onCloseAutoFocus?: (event: Event) => void;
 }) {
   const { client } = useClient();

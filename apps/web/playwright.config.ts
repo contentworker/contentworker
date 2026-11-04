@@ -56,12 +56,17 @@ export default defineConfig({
       testMatch: 'shell.spec.ts',
       use: { ...devices['iPad Pro 11 landscape'] },
     },
-    { name: 'desktop', testMatch: 'shell.spec.ts', use: { ...devices['Desktop Safari'] } },
+    {
+      name: 'desktop',
+      testMatch: ['shell.spec.ts', 'modal-focus.spec.ts'],
+      use: { ...devices['Desktop Safari'] },
+    },
     // The CMS screens (seeded through the same-origin gateway while sign-in is still open), with
     // the axe sweep. Desktop Chrome: the editors are review-only below lg.
     {
       name: 'cms',
-      testMatch: /(cms|workflows|space-access|first-space|accessibility|contrast-settle)\.spec\.ts/,
+      testMatch:
+        /(cms|workflows|space-access|first-space|accessibility|contrast-settle|modal-focus)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {

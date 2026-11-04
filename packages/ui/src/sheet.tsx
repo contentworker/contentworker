@@ -2,6 +2,7 @@ import { XIcon } from 'lucide-react';
 import { Dialog as SheetPrimitive } from 'radix-ui';
 import type * as React from 'react';
 
+import { useFocusReturn } from './lib/focus-return';
 import { keyboardInset } from './lib/keyboard-inset';
 import { cn } from './lib/utils';
 
@@ -42,16 +43,18 @@ function SheetContent({
   children,
   side = 'right',
   showCloseButton = true,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left';
   showCloseButton?: boolean;
 }) {
+  const focusReturn = useFocusReturn(onCloseAutoFocus, keyboardInset);
   return (
     <SheetPortal>
       <SheetOverlay />
       <SheetPrimitive.Content
-        ref={keyboardInset}
+        {...focusReturn}
         data-slot="sheet-content"
         data-side={side}
         className={cn(

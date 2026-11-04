@@ -95,14 +95,6 @@ export function AssetShareDialog(props: {
   // The link just made: it takes focus (its Copy button), so it can be copied at once.
   const [made, setMade] = useState<string | null>(null);
   const listHeading = useRef<HTMLHeadingElement>(null);
-  // What opened the dialog: opened by state, not a DialogTrigger, so Radix can't hand focus back
-  // to it on close (inside the sheet, the sheet's focus trap would take it instead).
-  const opener = useRef<HTMLElement | null>(null);
-  const wasOpen = useRef(false);
-  if (props.open && !wasOpen.current && typeof document !== 'undefined') {
-    opener.current = document.activeElement as HTMLElement | null;
-  }
-  wasOpen.current = props.open;
   const list = useRef<HTMLUListElement>(null);
 
   // A fresh form each time the dialog opens on a target.
@@ -287,14 +279,7 @@ export function AssetShareDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent
-        className="sm:max-w-lg"
-        onCloseAutoFocus={(e) => {
-          if (!opener.current?.isConnected) return;
-          e.preventDefault();
-          opener.current.focus();
-        }}
-      >
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="truncate">Share “{target.name}”</DialogTitle>
           <DialogDescription>

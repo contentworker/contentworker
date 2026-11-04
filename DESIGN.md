@@ -860,6 +860,11 @@ for code and data blocks only.
   question, not a form, and stays centred. The palette anchors to the top at every width
   (`placement="top"`), so its search box holds still as the results shrink.
   - **Title:** `section-title`, the same in a dialog, an alert dialog and a sheet.
+  - **Closing:** focus goes back to what opened it, in a dialog, an alert dialog and a sheet alike
+    (`ui/lib/focus-return.ts`): the control that was pressed even where Safari didn't focus it, a
+    menu's trigger for a menu's item, the sheet under a dialog over one. An opener that is disabled
+    or gone hands on to what stood beside it, then to the page, and focus the closing action put
+    somewhere on purpose stays there. `onCloseAutoFocus` overrides it.
   - **Footer:** an outline Cancel, then the primary at the default size, on the right. On a phone
     they stack, the primary on top.
   - **Errors:** `DialogError`, one line (or a title and a list) in `destructive`, `role="alert"`,

@@ -43,18 +43,13 @@ export function ContentTypesOverview() {
   const [cloning, setCloning] = useState<ContentType | null>(null);
   const [deleting, setDeleting] = useState<ContentType | null>(null);
   const invalidate = useInvalidate();
-  // Each row's ⋯ button, so focus comes back to it when a dialog it opened closes (the menu item
-  // that opened the dialog is gone by then, and focus would otherwise fall to the page).
+  // Each row's ⋯ button: after a delete, focus goes on to the next row's.
   const triggers = useRef(new Map<string, HTMLButtonElement>());
   // Set when a delete removed the type at once: its row (and button) go with it.
   const deletedNow = useRef(false);
-  const focusTrigger = (apiId: string) => (event: Event) => {
-    event.preventDefault();
-    triggers.current.get(apiId)?.focus();
-  };
   /** After a delete: the next row's button, or the page's heading when it was the last row. */
   const focusAfterDelete = (apiId: string) => (event: Event) => {
-    if (!deletedNow.current) return focusTrigger(apiId)(event);
+    if (!deletedNow.current) return;
     event.preventDefault();
     deletedNow.current = false;
     const next = types[types.findIndex((t) => t.apiId === apiId) + 1];
@@ -245,7 +240,6 @@ export function ContentTypesOverview() {
           source={cloning}
           open
           onOpenChange={(open) => !open && setCloning(null)}
-          onCloseAutoFocus={focusTrigger(cloning.apiId)}
           onCloned={(clone) => {
             reload();
             toast.success(`Cloned as “${clone.name}”, a draft`);

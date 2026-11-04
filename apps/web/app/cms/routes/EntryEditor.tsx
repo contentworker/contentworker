@@ -125,7 +125,7 @@ export function EntryEditor() {
     setPatchState((s) => ({ ...s, patch: { seq: (s.patch?.seq ?? 0) + 1, fields } }));
   const [genOpen, setGenOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
-  const moreActions = useRef<HTMLButtonElement>(null);
+  const publishButton = useRef<HTMLButtonElement>(null);
   // Bumped after a restore to re-seed the form (EntryForm reads `initial` once).
   const [formKey, setFormKey] = useState(0);
   // A new entry being created: from its save until the created entry's editor takes over, this
@@ -536,13 +536,14 @@ export function EntryEditor() {
   const live = meta?.status === 'published' && !dirty;
   // A new entry can always be created; a saved one has nothing to save until it is edited.
   const canSave = !busy && initial !== null && (dirty || !isEdit);
-  // Opened from the ⋯ menu, the item that asked is gone as a dialog closes: the keyboard carries on
-  // from ⋯. Beside the editor's own buttons, ⋯ is hidden and the dialog goes back to the button.
-  const backToActions = (e: Event) => {
-    const more = moreActions.current;
-    if (!more || getComputedStyle(more).display === 'none') return;
-    e.preventDefault();
-    more.focus();
+  // Publish can't always take focus back: it is off while the publish runs, and for good once the
+  // entry is live. Then the action beside it does (⋯, or Copy preview link where the row has room).
+  const afterPublishConfirm = () => {
+    const publish = publishButton.current;
+    if (publish && !publish.disabled) return publish;
+    return Array.from(pageBarRef.current?.querySelectorAll('button:enabled') ?? [])
+      .filter((b): b is HTMLButtonElement => b instanceof HTMLButtonElement)
+      .findLast((b) => b.checkVisibility?.() ?? true);
   };
   const secondary = [
     { label: 'Draft from prose', icon: PenLine, onSelect: () => setCanvasOpen(true) },
@@ -599,7 +600,6 @@ export function EntryEditor() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                ref={moreActions}
                 type="button"
                 variant="ghost"
                 size="icon-sm"
@@ -640,6 +640,7 @@ export function EntryEditor() {
           </Button>
           {isEdit && (
             <Button
+              ref={publishButton}
               type="button"
               size="sm"
               // A published entry with UNSAVED edits can still publish: the
@@ -876,6 +877,7 @@ export function EntryEditor() {
         }
         busy={busy}
         onConfirm={() => void confirmPublish()}
+        returnFocus={afterPublishConfirm}
       />
 
       <GenerateEntryDialog
@@ -885,7 +887,6 @@ export function EntryEditor() {
         onOpenChange={setGenOpen}
         contentType={selectedType}
         onGenerate={generate}
-        onCloseAutoFocus={backToActions}
         onApply={(fields) => {
           applyPatch(fields);
           toast.success('Applied the draft to the form. Save to keep it');
@@ -896,7 +897,6 @@ export function EntryEditor() {
         onOpenChange={setCanvasOpen}
         contentTypeName={selectedType.name}
         onMap={mapCanvas}
-        onCloseAutoFocus={backToActions}
       />
     </div>
   );

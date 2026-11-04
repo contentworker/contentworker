@@ -4,6 +4,7 @@ import { XIcon } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import * as React from 'react';
 import { Button } from './button';
+import { useFocusReturn } from './lib/focus-return';
 import { keyboardInset } from './lib/keyboard-inset';
 import { cn } from './lib/utils';
 
@@ -56,6 +57,7 @@ function DialogContent({
   children,
   placement = 'sheet',
   showCloseButton = true,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   /** For the scrolling body, which holds the padding (`className` sizes the dialog). */
@@ -63,11 +65,12 @@ function DialogContent({
   placement?: keyof typeof PLACEMENTS;
   showCloseButton?: boolean;
 }) {
+  const focusReturn = useFocusReturn(onCloseAutoFocus, keyboardInset);
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
-        ref={keyboardInset}
+        {...focusReturn}
         data-slot="dialog-content"
         className={cn(
           'fixed z-50 flex flex-col overflow-hidden bg-popover text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/5 outline-none data-open:animate-in data-open:fade-in-0 data-open:duration-(--motion-move) data-closed:animate-out data-closed:fade-out-0 data-closed:duration-(--motion-instant) dark:ring-foreground/10',
