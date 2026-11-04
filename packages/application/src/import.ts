@@ -35,7 +35,8 @@ import { createEntry, updateEntry } from './entries';
  * Both run as the `principal` who asked, with the same authority as writing each entry by hand:
  * `write` on the target type (refused up front, before the payload is read), and no record
  * writes a field the role denies or makes read-only (that record is reported and skipped, like
- * one that fails validation). An unrestricted principal (no role) is held to the scope alone.
+ * one that fails validation). An update keeps what those fields hold (`updateImportedEntry`). An
+ * unrestricted principal (no role) is held to the scope alone.
  */
 
 /** How many records the synchronous path will read. */
@@ -175,7 +176,7 @@ export async function executeImport(
   input: ImportInput,
   options: ImportRunOptions = {},
 ): Promise<ImportResult> {
-  const { analysis, planned, contentType } = await plan(
+  const { analysis, planned, contentType, blockedFields } = await plan(
     ctx,
     principal,
     scope,
@@ -206,7 +207,7 @@ export async function executeImport(
     }
     try {
       if (record.action === 'update' && record.entryId) {
-        await updateEntry(ctx, scope, record.entryId, record.fields);
+        await updateImportedEntry(ctx, scope, record.entryId, record.fields, blockedFields);
         updated += 1;
       } else {
         await createEntry(ctx, scope, {
@@ -232,6 +233,39 @@ export interface Plan {
   readonly analysis: ImportAnalysis;
   readonly planned: readonly PlannedRecord[];
   readonly contentType: ContentType;
+  /** The fields of the type the principal may not write; an update keeps what they hold. */
+  readonly blockedFields: readonly string[];
+}
+
+/**
+ * Writes a planned update, keeping what `blockedFields` hold now. An update's fields become the
+ * whole new version, so leaving a field out would clear it, and for a field the role may not
+ * write that is a write too. Read here, as the record is written, so neither the plan nor its
+ * report depends on those values, and a value set after planning survives a job's later chunk.
+ */
+export async function updateImportedEntry(
+  ctx: AppContext,
+  scope: Scope,
+  entryId: string,
+  fields: EntryFields,
+  blockedFields: readonly string[],
+): Promise<void> {
+  if (blockedFields.length === 0) {
+    await updateEntry(ctx, scope, entryId, fields);
+    return;
+  }
+  const found = await ctx.store.entries.get(scope, entryId);
+  if (!found) throw new NotFoundError('Entry', entryId);
+  const stored = found.fields;
+  await updateEntry(
+    ctx,
+    scope,
+    entryId,
+    Object.fromEntries([
+      ...Object.entries(fields).filter(([apiId]) => !blockedFields.includes(apiId)),
+      ...blockedFields.filter((f) => Object.hasOwn(stored, f)).map((f) => [f, stored[f]] as const),
+    ]) as EntryFields,
+  );
 }
 
 /**
@@ -272,10 +306,11 @@ async function plan(
   // the whole run; a type the role can't write is refused before anything is read.
   authorize(principal, SCOPES.contentWrite, scope.spaceId);
   authorizeContent(principal, 'write', input.mapping.contentTypeApiId);
-  // Matching on the identity field is a query over it: a field the role can't read would answer
-  // which values exist (through the skip, update and conflict counts), so it is refused like a
-  // filter on it.
+  // Matching on the identity field is a query over it: what the role can't read would answer
+  // which values exist (through the skip, update and conflict counts), so it needs `read` on the
+  // type and is refused like a filter on a hidden field.
   if (input.mapping.identityField) {
+    authorizeContent(principal, 'read', input.mapping.contentTypeApiId);
     assertQueryRespectsFieldRules(principal, {
       contentTypeApiId: input.mapping.contentTypeApiId,
       filters: [{ field: input.mapping.identityField }],
@@ -332,15 +367,8 @@ async function plan(
   const blockedFields = unwritableFields(principal, contentType.apiId, Object.fromEntries(defined));
   const existing =
     input.mapping.identityField && unknownTargetFields.length === 0
-      ? await indexExisting(
-          ctx,
-          scope,
-          contentType.apiId,
-          input.mapping.identityField,
-          locale,
-          blockedFields,
-        )
-      : new Map<string, ExistingEntry>();
+      ? await indexExisting(ctx, scope, contentType.apiId, input.mapping.identityField, locale)
+      : new Map<string, string>();
 
   const vctx = { defaultLocale: config.defaultLocale, locales: config.locales };
   const planned: PlannedRecord[] = [];
@@ -361,12 +389,6 @@ async function plan(
     for (const apiId of unwritableFields(principal, contentType.apiId, fields)) {
       issues.push(`${apiId}: your role may not write this field`);
     }
-    const withDefaults = applyDefaults(contentType, fields, config.locales, config.defaultLocale);
-    const normalized = normalizeSlugFields(contentType, withDefaults);
-    for (const issue of validateEntryFields(contentType, normalized, vctx)) {
-      issues.push(`${issue.field}: ${issue.message}`);
-    }
-
     const identity = input.mapping.identityField
       ? asText(record.values[input.mapping.fields[input.mapping.identityField] ?? ''])
       : undefined;
@@ -378,19 +400,23 @@ async function plan(
         issues.push(`An entry already exists with ${input.mapping.identityField} "${identity}"`);
       }
       action = options.conflicts === 'update' ? 'update' : 'skip';
-      // An update's fields become the whole new version, so one that leaves out a field clears
-      // it: for a field the role may not write, that is a write too.
-      if (action === 'update') {
-        for (const apiId of match.blockedValues) {
-          if (!(apiId in fields)) issues.push(`${apiId}: your role may not clear this field`);
-        }
-      }
+    }
+
+    // Defaults are for a new entry: on an update they would overwrite what the entry holds, as
+    // `saveEntryDraft` says. A skipped record is checked as the create it would have been.
+    const withDefaults =
+      action === 'update'
+        ? fields
+        : applyDefaults(contentType, fields, config.locales, config.defaultLocale);
+    const normalized = normalizeSlugFields(contentType, withDefaults);
+    for (const issue of validateEntryFields(contentType, normalized, vctx)) {
+      issues.push(`${issue.field}: ${issue.message}`);
     }
 
     planned.push({
       externalId: record.externalId,
       action,
-      ...(match ? { entryId: match.id } : {}),
+      ...(match ? { entryId: match } : {}),
       fields: normalized,
       issues,
     });
@@ -418,13 +444,7 @@ async function plan(
     executable: missingRequiredFields.length === 0 && unknownTargetFields.length === 0,
   };
 
-  return { analysis, planned, contentType };
-}
-
-/** An entry an import may match, and which of the role's blocked fields it holds a value in. */
-interface ExistingEntry {
-  readonly id: string;
-  readonly blockedValues: readonly string[];
+  return { analysis, planned, contentType, blockedFields };
 }
 
 /**
@@ -439,9 +459,8 @@ async function indexExisting(
   contentTypeApiId: string,
   identityField: string,
   locale: string,
-  blockedFields: readonly string[],
-): Promise<Map<string, ExistingEntry>> {
-  const index = new Map<string, ExistingEntry>();
+): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
   let cursor = '';
   const pageSize = 500;
   while (index.size < IMPORT_MAX_EXISTING) {
@@ -449,7 +468,7 @@ async function indexExisting(
       contentTypeApiId,
       limit: pageSize,
       afterEntryId: cursor,
-      select: [identityField, ...blockedFields],
+      select: [identityField],
       // Trashed entries are not matches: an import must not silently revive
       // something someone deleted.
       archived: false,
@@ -458,10 +477,7 @@ async function indexExisting(
       const value = asText(found.fields[identityField]?.[locale]);
       // First write wins, so a re-run updates the same entry it created rather
       // than picking a different duplicate each time.
-      if (value !== undefined && !index.has(value)) {
-        const blockedValues = blockedFields.filter((f) => found.fields[f] !== undefined);
-        index.set(value, { id: found.entry.id, blockedValues });
-      }
+      if (value !== undefined && !index.has(value)) index.set(value, found.entry.id);
     }
     if (page.length < pageSize) break;
     cursor = page[page.length - 1]?.entry.id ?? '';

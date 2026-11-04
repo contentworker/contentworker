@@ -2,6 +2,7 @@ import {
   applyEntryTags,
   auditEntry,
   authorizeBulkJob,
+  authorizeBulkJobAccess,
   autofillField,
   BULK_JOB_MAX_ITEMS,
   bulkEntryAction,
@@ -215,9 +216,10 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
 
   // Start/cancel/report take a role holding the job's actions on every content type alike
   // (`authorizeBulkJob`): per-item RBAC guards are impractical at bulk cardinality, and reports
-  // expose entry ids across all content types. The API routes' rule exactly.
-  const guardJob = async (id: string, s: ReturnType<typeof scopeOf>) =>
-    authorizeBulkJob(principal, (await getBulkJob(ctx, s, id)).action);
+  // expose entry ids across all content types; an import job goes by what it reached
+  // (`authorizeBulkJobAccess`). The API routes' rule exactly.
+  const guardJob = async (id: string, s: ReturnType<typeof scopeOf>, access: 'report' | 'cancel') =>
+    authorizeBulkJobAccess(principal, await getBulkJob(ctx, s, id), access);
 
   server.registerTool(
     'bulk_job_start',
@@ -277,7 +279,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      await guardJob(args.id, scopeOf(args));
+      await guardJob(args.id, scopeOf(args), 'report');
       return ok(await getBulkJobReport(ctx, scopeOf(args), args.id));
     },
   );
@@ -291,7 +293,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      await guardJob(args.id, scopeOf(args));
+      await guardJob(args.id, scopeOf(args), 'cancel');
       return ok(
         await cancelBulkJob(ctx, scopeOf(args), args.id, deps.blob ? { blob: deps.blob } : {}),
       );

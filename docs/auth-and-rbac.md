@@ -442,20 +442,29 @@ Semantics:
   the action is scheduled, since the cron fires it with no one behind it; for the same reason
   `addEntryToRelease` checks `read` plus the item's action when a member goes in (route,
   `releases_add_entry`, the `content.add_to_release` node), so a release already scheduled can't
-  gain a member its adder couldn't ship. Bulk jobs refuse any principal with grants.
+  gain a member its adder couldn't ship. Bulk jobs are authorized as a whole (see
+  [below](#api-keys-at-rest)).
   An import (`analyzeImport`, `executeImport`, `startImportJob`, which take the caller's
-  `principal`) checks `write` on the target type before reading the payload, and refuses an
-  `identityField` the role may not read. A record that sets a field the role denies or makes
-  read-only is skipped and listed in the report's `issues`, like one that fails validation, and so
-  is an update that would clear such a field by leaving it out (an update's fields are the whole
-  new version). An import job runs in the engine with no one behind it, so the decision is made
-  when the job starts: only records the principal may write are staged. The operations over a
+  `principal`) checks `write` on the target type before reading the payload; an `identityField`
+  also needs `read` on the type and a field the role may read. A record that sets a field the role
+  denies or makes read-only is skipped and listed in the report's `issues`, like one that fails
+  validation. An update keeps what such a field holds (an update's fields are the whole new
+  version, so leaving it out would clear it), read as the record is written, so the report is the
+  same whether it holds a value or not. An import job runs in the engine with no one behind it, so
+  the decision is made when the job starts: only records the principal may write are staged, with
+  the names of the fields an update keeps. The operations over a
   whole environment can't be authorized type by type, since they write types they create:
   `GET …/export` (`read`), `POST …/import` and `POST …/imports/space-export` and its analyze
   (`write`, plus `publish` unless `publish` is false), and `POST …/clone` (all of those), with the
   matching MCP tools, need `content:manage` and `authorizeEveryContentType`: no per-type grants, or
   a single `*` grant holding those actions and restricting no field. The Manager and Administrator
-  presets qualify.
+  presets qualify. `POST …/merge` (`environments_merge`) needs the same, with `read` and `write`,
+  when it copies entries; copying only content types needs just `content:manage`.
+  `GET …/compare` (`environments_compare`) lists only the content types the role can read and
+  their entries.
+- **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but
+  not `publish` used to run a snapshot or space export import that published. It now needs
+  `publish=false` for those imports (`?publish=false`, `"publish": false`), and the same on a clone.
 - **Limits of a withhold**, stated plainly:
   - It doesn't constrain a principal that also holds `space:admin`: that principal can edit roles
     (its own included) and mint keys, so withholding `delete` from an administrator is advice, not
@@ -611,7 +620,12 @@ interface Principal {
 `write`, purge `publish` and `delete`)
   and restricting no field. The Editor, Manager and Administrator presets qualify; a role limited
   to some types, or with field rules, doesn't.
-  Import and asset jobs still need a principal with no per-type grants.
+  Asset jobs still need a principal with no per-type grants. An import job's report and cancel go
+  by what it reached (`authorizeBulkJobAccess`): a CSV, JSON or WordPress job needs `write` on its
+  content type, and a snapshot, clone or space export job needs `read` and `write` on every type
+  alike. A role with field rules on the type can cancel a single-type job but not read its report,
+  since a failure's message can quote a stored value (a unique conflict names it, a plugin's
+  refusal says what it likes).
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through

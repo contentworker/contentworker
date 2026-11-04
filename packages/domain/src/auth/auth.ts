@@ -401,6 +401,13 @@ export function entryBulkJobsFor(principal: Principal): EntryBulkJobKind[] {
   return ENTRY_BULK_JOB_KINDS.filter((kind) => canRunEntryBulkJob(principal, kind));
 }
 
+/** Whether `principal`'s grant on `contentTypeApiId` denies a field or makes one read-only. */
+export function hasFieldRules(principal: Principal, contentTypeApiId: string): boolean {
+  if (!principal.contentGrants) return false;
+  const grant = grantFor(principal, contentTypeApiId);
+  return Boolean(grant?.deniedFields?.length || grant?.readOnlyFields?.length);
+}
+
 /** The fields `principal` may not read on `contentTypeApiId` (empty when unrestricted). */
 export function deniedFieldsFor(principal: Principal, contentTypeApiId: string): readonly string[] {
   if (!principal.contentGrants) return [];

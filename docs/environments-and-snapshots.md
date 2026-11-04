@@ -217,9 +217,10 @@ matched as conflicts: an import must not silently revive something someone delet
 
 **An import runs as whoever asked.** A role limited per content type
 gets a `403` for a type it can't write, at analyze as at the run, and for an `identityField` it
-can't read (matching on a field answers which values it holds). A record that sets a field the role
-denies or makes read-only is skipped and listed in `issues`, and so is an update that would clear
-one by leaving it out, since an update's fields are the whole new version. A durable job is
+can't read, or on a type it can't read (matching on a field answers which values it holds). A
+record that sets a field the role denies or makes read-only is skipped and listed in `issues`. An
+update keeps what those fields hold, since an update's fields are the whole new version and leaving
+one out would clear it; schema defaults apply to new entries only. A durable job is
 authorized when it starts: only records the caller may write are staged, and the engine writes those
 with no further check. A snapshot import, a clone, a snapshot export and a space export import need
 `content:manage` and a role holding their actions on every content type with no field rules (see

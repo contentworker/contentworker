@@ -8,7 +8,7 @@ import type {
 } from '@contentworker/ports';
 import { actingForJob, persistJob } from './bulk-jobs';
 import type { AppContext } from './context';
-import { createEntry, updateEntry } from './entries';
+import { createEntry } from './entries';
 import {
   IMPORT_JOB_CHUNK_SIZE,
   IMPORT_JOB_MAX_RECORDS,
@@ -17,6 +17,7 @@ import {
   type ImportRunOptions,
   type PlannedRecord,
   planImport,
+  updateImportedEntry,
 } from './import';
 import { importChunkKey } from './job-staging';
 import { isSnapshotJob, runSnapshotChunk } from './snapshot-jobs';
@@ -45,6 +46,8 @@ import { isSnapshotJob, runSnapshotChunk } from './snapshot-jobs';
  */
 interface StagedChunk {
   readonly records: readonly PlannedRecord[];
+  /** Fields the job's principal may not write: names only, kept by updates as they run. */
+  readonly blockedFields?: readonly string[];
 }
 
 export interface ImportJobConfig extends Record<string, unknown> {
@@ -79,7 +82,7 @@ export async function startImportJob(
   input: ImportInput,
   options: ImportRunOptions = {},
 ): Promise<StartImportJobResult> {
-  const { analysis, planned, contentType } = await planImport(
+  const { analysis, planned, contentType, blockedFields } = await planImport(
     ctx,
     principal,
     scope,
@@ -118,7 +121,10 @@ export async function startImportJob(
     // report order.
     const chunkId = `c${String(chunks.length).padStart(5, '0')}`;
     const payloadKey = importChunkKey(scope, jobId, chunkId);
-    const staged: StagedChunk = { records: writable.slice(at, at + IMPORT_JOB_CHUNK_SIZE) };
+    const staged: StagedChunk = {
+      records: writable.slice(at, at + IMPORT_JOB_CHUNK_SIZE),
+      ...(blockedFields.length ? { blockedFields } : {}),
+    };
     // Staged before the job exists, so a chunk can never be claimed before the
     // work it refers to is readable.
     await blob.put(payloadKey, JSON.stringify(staged), 'application/json');
@@ -169,8 +175,9 @@ export interface ImportChunkOutcome {
  * Records go through `createEntry`/`updateEntry` like every other write, so
  * validation, uniqueness, hooks and the reference graph all apply — a job is
  * not a back door around the content model. Nor around the role that started
- * it: `startImportJob` staged only what that principal may write, so a chunk
- * has nothing left to authorize.
+ * it: `startImportJob` staged only what that principal may write, and the
+ * names of the fields an update must keep, so a chunk has nothing left to
+ * authorize.
  *
  * Re-running is safe in the sense that matters for at-least-once delivery: a
  * re-run of an *update* chunk writes the same values again, and a re-run of a
@@ -198,7 +205,13 @@ export async function runImportChunk(
   for (const record of staged.records) {
     try {
       if (record.action === 'update' && record.entryId) {
-        await updateEntry(ctx, scope, record.entryId, record.fields);
+        await updateImportedEntry(
+          ctx,
+          scope,
+          record.entryId,
+          record.fields,
+          staged.blockedFields ?? [],
+        );
       } else {
         await createEntry(ctx, scope, { contentTypeApiId, fields: record.fields });
       }

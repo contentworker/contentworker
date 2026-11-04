@@ -5,12 +5,20 @@ import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runt
 import {
   type AppContext,
   createContentType,
+  createEntry,
   createEnvironment,
   createSpace,
   listPreviewEntries,
   publishContentType,
+  startImportJob,
 } from '@contentworker/application';
-import { type ContentTypeGrant, type Principal, SCOPES } from '@contentworker/domain';
+import {
+  type ContentTypeGrant,
+  type Principal,
+  rolePresetDefinition,
+  SCOPES,
+} from '@contentworker/domain';
+import type { ImportSource } from '@contentworker/ports';
 import {
   FakeBlobStore,
   FixedClock,
@@ -184,5 +192,88 @@ describe('environment-wide tools as a role', () => {
     expect(dryRun.isError).toBe(false);
     const clone = await call(wide, 'environment_clone', { ...main, targetEnvironment: 'empty' });
     expect(clone.isError).toBe(false);
+  });
+});
+
+describe('merge, compare and job tools as a role', () => {
+  const narrow = role([{ contentTypeApiId: 'post', actions: ['read', 'write'] }]);
+  const wide = role([{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
+  const envs = { source: 'main', target: 'empty', space: SPACE };
+  const entryOf = async (contentTypeApiId: string) =>
+    (
+      await createEntry(deps.ctx, scope, {
+        contentTypeApiId,
+        fields: { title: { 'en-US': 'One' } },
+      })
+    ).entry.id;
+
+  it('refuses a narrow manager merging entries, and leaves it the content model', async () => {
+    const entries = [await entryOf('page')];
+    const refused = await call(narrow, 'environments_merge', { ...envs, entries });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('on every content type');
+    const model = await call(narrow, 'environments_merge', { ...envs, contentTypes: ['post'] });
+    expect(model.isError).toBe(false);
+    const merged = await call(wide, 'environments_merge', {
+      ...envs,
+      contentTypes: ['page'],
+      entries,
+    });
+    expect(merged.isError).toBe(false);
+  });
+
+  it('shows a narrow role only the types it can read in a comparison', async () => {
+    await entryOf('post');
+    await entryOf('page');
+    const { text } = await call(narrow, 'environments_compare', envs);
+    const seen = JSON.parse(text) as {
+      contentTypes: { apiId: string }[];
+      entries: { contentTypeApiId: string }[];
+    };
+    expect(seen.contentTypes.map((c) => c.apiId)).toEqual(['post']);
+    expect(seen.entries.map((e) => e.contentTypeApiId)).toEqual(['post']);
+  });
+
+  it('holds job reports and cancelling to the type the import wrote', async () => {
+    const started = await startImportJob(
+      deps.ctx,
+      deps.blob as FakeBlobStore,
+      admin,
+      scope,
+      deps.importSources?.csv as ImportSource,
+      {
+        payload: CSV,
+        mapping: { contentTypeApiId: 'post', fields: { title: 'title' } },
+        sourceOptions: { identityField: 'id' },
+      },
+    );
+    const writer = (contentTypeApiId: string) => ({
+      ...role([{ contentTypeApiId, actions: ['read', 'write'] as const }]),
+      scopes: [SCOPES.contentPublish],
+    });
+    const args = { id: started.job.id, space: SPACE, environment: 'main' };
+    expect((await call(writer('page'), 'bulk_job_report', args)).isError).toBe(true);
+    expect((await call(writer('page'), 'bulk_job_cancel', args)).isError).toBe(true);
+    expect((await call(writer('post'), 'bulk_job_report', args)).isError).toBe(false);
+    expect((await call(writer('post'), 'bulk_job_cancel', args)).isError).toBe(false);
+  });
+
+  it('lets an Administrator cancel a clone', async () => {
+    const preset = rolePresetDefinition('admin');
+    const administrator: Principal = {
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: preset.scopes,
+      contentGrants: preset.contentGrants,
+    };
+    const { text } = await call(administrator, 'environment_clone', {
+      space: SPACE,
+      environment: 'main',
+      targetEnvironment: 'empty',
+    });
+    const { job } = JSON.parse(text) as { job: { id: string } };
+    const args = { id: job.id, space: SPACE, environment: 'empty' };
+    expect((await call(narrow, 'bulk_job_cancel', args)).isError).toBe(true);
+    expect((await call(administrator, 'bulk_job_cancel', args)).isError).toBe(false);
   });
 });

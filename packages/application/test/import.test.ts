@@ -18,6 +18,7 @@ import {
   IMPORT_MAX_RECORDS,
   type ImportInput,
   listPreviewEntries,
+  planImport,
   publishContentType,
   trashEntry,
 } from '../src/index';
@@ -475,6 +476,63 @@ describe('bounds', () => {
   });
 });
 
+describe('defaults', () => {
+  beforeEach(async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+        {
+          apiId: 'state',
+          name: 'State',
+          type: 'Symbol',
+          localized: false,
+          required: false,
+          defaultValue: 'fresh',
+          position: 1,
+        },
+      ],
+    } as Parameters<typeof createContentType>[2]);
+    await publishContentType(ctx, scope, 'note');
+  });
+
+  const mapped = input({
+    mapping: { contentTypeApiId: 'note', fields: { title: 'name' }, identityField: 'title' },
+  });
+
+  it('fills a new entry, and leaves an update alone', async () => {
+    const created = await executeImport(ctx, admin, scope, rows([{ name: 'One' }]), mapped);
+    expect(created).toMatchObject({ created: 1 });
+    const [first] = await listPreviewEntries(ctx, scope, { contentTypeApiId: 'note' });
+    expect(first?.fields.state).toEqual({ 'en-US': 'fresh' });
+
+    const updated = await executeImport(ctx, admin, scope, rows([{ name: 'One' }]), mapped, {
+      conflicts: 'update',
+    });
+    expect(updated).toMatchObject({ updated: 1 });
+    const [second] = await listPreviewEntries(ctx, scope, { contentTypeApiId: 'note' });
+    expect(second?.fields.state).toBeUndefined();
+  });
+
+  it('plans an update without them, and a skip as the create it would have been', async () => {
+    await executeImport(ctx, admin, scope, rows([{ name: 'One' }]), mapped);
+    const source = rows([{ name: 'One' }]);
+    const planned = await planImport(ctx, admin, scope, source, mapped, { conflicts: 'update' });
+    expect(planned.planned[0]?.fields).not.toHaveProperty('state');
+    const skipped = await planImport(ctx, admin, scope, source, mapped);
+    expect(skipped.planned[0]).toMatchObject({ action: 'skip', issues: [] });
+  });
+});
+
 describe('importing as a role', () => {
   const writes = (over: Record<string, unknown> = {}) => [
     { contentTypeApiId: 'article', actions: ['read', 'write'] as const, ...over },
@@ -555,41 +613,68 @@ describe('importing as a role', () => {
     expect(entry?.fields.views).toEqual({ 'en-US': 1 });
   });
 
-  it('will not clear a blocked field by leaving it out of an update', async () => {
+  it('keeps a blocked field through an update, and the report says nothing of it', async () => {
     // An update's fields are the whole new version: a mapping that omits the field would wipe it.
-    await createEntry(ctx, scope, {
+    // Nor may the outcome differ with what the field holds, or it answers whether it holds any.
+    const role = asRole(writes({ deniedFields: ['views'] }));
+    const run = (name: string) =>
+      executeImport(
+        ctx,
+        role,
+        scope,
+        rows([{ name, code: 'new' }]),
+        input({
+          mapping: {
+            contentTypeApiId: 'article',
+            fields: { title: 'name', sku: 'code' },
+            identityField: 'title',
+          },
+        }),
+        { conflicts: 'update' },
+      );
+    const held = await createEntry(ctx, scope, {
       contentTypeApiId: 'article',
-      fields: { title: { 'en-US': 'Kept' }, views: { 'en-US': 1 } },
+      fields: { title: { 'en-US': 'Same' }, views: { 'en-US': 1 } },
     });
-    await createEntry(ctx, scope, {
+    const withValue = await run('Same');
+    const version = await ctx.store.entries.get(scope, held.entry.id);
+    expect(version?.fields.views).toEqual({ 'en-US': 1 });
+    expect(version?.fields.sku).toEqual({ 'en-US': 'new' });
+
+    await trashEntry(ctx, scope, held.entry.id);
+    const bare = await createEntry(ctx, scope, {
       contentTypeApiId: 'article',
-      fields: { title: { 'en-US': 'Empty' } },
+      fields: { title: { 'en-US': 'Same' } },
     });
-    const role = asRole(writes({ readOnlyFields: ['views'] }));
-    const result = await executeImport(
-      ctx,
-      role,
-      scope,
-      rows([
-        { name: 'Kept', sku: 'A' },
-        { name: 'Empty', sku: 'B' },
-      ]),
-      input({
-        mapping: {
-          contentTypeApiId: 'article',
-          fields: { title: 'name', sku: 'sku' },
-          identityField: 'title',
-        },
-      }),
-      { conflicts: 'update' },
-    );
-    expect(result).toMatchObject({ updated: 1, skipped: 1 });
-    expect(result.analysis.issues).toEqual([
-      { externalId: 'x1', messages: ['views: your role may not clear this field'] },
-    ]);
-    const entries = await listPreviewEntries(ctx, scope, {});
-    const kept = entries.find((e) => JSON.stringify(e.fields.title).includes('Kept'));
-    expect(kept?.fields.views).toEqual({ 'en-US': 1 });
+    const withoutValue = await run('Same');
+    expect(withoutValue).toEqual(withValue);
+    expect(withValue).toMatchObject({ updated: 1, skipped: 0 });
+    const after = await ctx.store.entries.get(scope, bare.entry.id);
+    expect(after?.fields.views).toBeUndefined();
+  });
+
+  it('needs `read` on the type to match on an identity field', async () => {
+    // Otherwise a write-only grant could test which values exist through the skip count.
+    const writeOnly = asRole([{ contentTypeApiId: 'article', actions: ['write'] }]);
+    const source = rows([{ name: 'Probe' }]);
+    await expect(
+      analyzeImport(
+        ctx,
+        writeOnly,
+        scope,
+        source,
+        input({
+          mapping: {
+            contentTypeApiId: 'article',
+            fields: { title: 'name' },
+            identityField: 'title',
+          },
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await analyzeImport(ctx, writeOnly, scope, source, input())).toMatchObject({
+      willCreate: 1,
+    });
   });
 
   it('refuses matching on an identity field the role cannot read', async () => {

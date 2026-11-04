@@ -1,3 +1,4 @@
+import { rolePresetDefinition } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { spaceExportFixture } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -263,5 +264,133 @@ describe('environment-wide operations as a role over HTTP', () => {
       body: JSON.stringify({ targetEnvironmentId: 'empty' }),
     });
     expect(clone.status).toBe(202);
+  });
+});
+
+describe('merge and compare as a role over HTTP', () => {
+  let entryId: string;
+
+  beforeEach(async () => {
+    await app.request('/spaces/s1/environments', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ id: 'empty', name: 'Empty' }),
+    });
+    for (const contentTypeApiId of ['post', 'page']) {
+      const res = await app.request(`${M}/entries`, {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({ contentTypeApiId, fields: { title: { 'en-US': 'One' } } }),
+      });
+      entryId = ((await res.json()) as { entry: { id: string } }).entry.id;
+    }
+  });
+
+  const merge = (headers: Record<string, string>, selection: Record<string, unknown>) =>
+    app.request('/spaces/s1/merge', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ source: 'main', target: 'empty', ...selection }),
+    });
+
+  it('refuses a narrow manager merging entries, and leaves it the content model', async () => {
+    const headers = await keyFor(
+      ['content:manage'],
+      [{ contentTypeApiId: 'post', actions: ['read', 'write'] }],
+    );
+    expect((await merge(headers, { entries: [entryId] })).status).toBe(403);
+    expect((await merge(headers, { contentTypes: ['post'] })).status).toBe(200);
+  });
+
+  it('refuses a manager with a field rule, and merges for one holding every type', async () => {
+    const ruled = await keyFor(
+      ['content:manage'],
+      [{ contentTypeApiId: '*', actions: ['read', 'write'], deniedFields: ['internalNotes'] }],
+    );
+    expect((await merge(ruled, { entries: [entryId] })).status).toBe(403);
+    const wide = await keyFor(
+      ['content:manage'],
+      [{ contentTypeApiId: '*', actions: ['read', 'write'] }],
+    );
+    const res = await merge(wide, { contentTypes: ['page'], entries: [entryId] });
+    expect(res.status).toBe(200);
+  });
+
+  it('shows a narrow role only the types it can read in a comparison', async () => {
+    const compare = async (headers: Record<string, string>) => {
+      const res = await app.request('/spaces/s1/compare?source=main&target=empty', { headers });
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        contentTypes: { apiId: string }[];
+        entries: { contentTypeApiId: string }[];
+      };
+    };
+    const narrow = await compare(
+      await keyFor(['preview:read'], [{ contentTypeApiId: 'post', actions: ['read'] }]),
+    );
+    expect(narrow.contentTypes.map((c) => c.apiId)).toEqual(['post']);
+    expect(narrow.entries.map((e) => e.contentTypeApiId)).toEqual(['post']);
+    const full = await compare(admin);
+    expect(full.entries.map((e) => e.contentTypeApiId).sort()).toEqual(['page', 'post']);
+  });
+});
+
+describe('import job reports and cancelling as a role over HTTP', () => {
+  const job = async (headers: Record<string, string>) => {
+    const res = await app.request(`${M}/imports/job`, {
+      method: 'POST',
+      headers,
+      body: importBody('post'),
+    });
+    expect(res.status).toBe(202);
+    return ((await res.json()) as { job: { id: string } }).job.id;
+  };
+  const scopes = ['content:write', 'content:publish'];
+  const report = (id: string, headers: Record<string, string>) =>
+    app.request(`${M}/bulk/jobs/${id}/report`, { headers });
+  const cancel = (id: string, headers: Record<string, string>) =>
+    app.request(`${M}/bulk/jobs/${id}/cancel`, { method: 'POST', headers });
+
+  it('lets a role follow its own type, and refuses another type', async () => {
+    const id = await job(admin);
+    const post = await keyFor(scopes, [{ contentTypeApiId: 'post', actions: ['read', 'write'] }]);
+    const page = await keyFor(scopes, [{ contentTypeApiId: 'page', actions: ['read', 'write'] }]);
+    expect((await report(id, page)).status).toBe(403);
+    expect((await cancel(id, page)).status).toBe(403);
+    expect((await report(id, post)).status).toBe(200);
+    expect((await cancel(id, post)).status).toBe(200);
+  });
+
+  it('keeps the report from a role with field rules but lets it cancel', async () => {
+    const ruled = await keyFor(scopes, [
+      { contentTypeApiId: 'post', actions: ['read', 'write'], deniedFields: ['internalNotes'] },
+    ]);
+    const id = await job(ruled);
+    expect((await report(id, ruled)).status).toBe(403);
+    expect((await cancel(id, ruled)).status).toBe(200);
+  });
+
+  it('lets an Administrator cancel a clone, and refuses a narrow role', async () => {
+    await app.request('/spaces/s1/environments', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ id: 'empty', name: 'Empty' }),
+    });
+    const preset = rolePresetDefinition('admin');
+    const administrator = await keyFor([...preset.scopes], [...preset.contentGrants]);
+    const res = await app.request(`${M}/clone`, {
+      method: 'POST',
+      headers: administrator,
+      body: JSON.stringify({ targetEnvironmentId: 'empty' }),
+    });
+    expect(res.status).toBe(202);
+    const { job: clone } = (await res.json()) as { job: { id: string } };
+    const narrow = await keyFor(scopes, [
+      { contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] },
+    ]);
+    const cancelled = (headers: Record<string, string>) =>
+      app.request(`${EMPTY}/bulk/jobs/${clone.id}/cancel`, { method: 'POST', headers });
+    expect((await cancelled(narrow)).status).toBe(403);
+    expect((await cancelled(administrator)).status).toBe(200);
   });
 });

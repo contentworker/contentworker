@@ -9,7 +9,9 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AppContext,
+  authorizeBulkJobAccess,
   createContentType,
+  createEntry,
   getBulkJob,
   getBulkJobReport,
   IMPORT_JOB_CHUNK_SIZE,
@@ -19,6 +21,7 @@ import {
   publishContentType,
   runBulkChunk,
   startImportJob,
+  updateEntry,
 } from '../src/index';
 
 const SPACE = 's1';
@@ -342,6 +345,37 @@ describe('a job started by a role', () => {
     expect(blob.keys()).toHaveLength(0);
   });
 
+  it('keeps a blocked field set after planning, reading it as the chunk runs', async () => {
+    const created = await createEntry(ctx, scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'One' } },
+    });
+    const { job } = await startImportJob(
+      ctx,
+      blob,
+      asRole([
+        { contentTypeApiId: 'article', actions: ['read', 'write'], readOnlyFields: ['sku'] },
+      ]),
+      scope,
+      rows([{ name: 'One' }]),
+      input({
+        mapping: { contentTypeApiId: 'article', fields: { title: 'name' }, identityField: 'title' },
+      }),
+      { conflicts: 'update' },
+    );
+    await updateEntry(ctx, scope, created.entry.id, {
+      title: { 'en-US': 'One' },
+      sku: { 'en-US': 'set-later' },
+    });
+    const [chunk] = await ctx.store.bulkJobs.listChunks(scope, job.id);
+    expect(await blob.get(chunk?.payloadKey as string)).not.toContain('set-later');
+
+    await drain(job.id);
+    const after = await ctx.store.entries.get(scope, created.entry.id);
+    expect(after?.entry.currentVersion).toBe(3);
+    expect(after?.fields.sku).toEqual({ 'en-US': 'set-later' });
+  });
+
   it('still runs for an unrestricted principal', async () => {
     const { job } = await startImportJob(
       ctx,
@@ -353,5 +387,39 @@ describe('a job started by a role', () => {
     );
     await drain(job.id);
     expect(await listPreviewEntries(ctx, scope, { limit: 100 })).toHaveLength(1);
+  });
+});
+
+describe('who may read the report of, or cancel, an import job', () => {
+  const into = { action: 'import', config: { contentTypeApiId: 'post', locale: 'en-US' } } as const;
+  const snapshot = { action: 'import', config: { kind: 'snapshot', phase: 'create' } } as const;
+  const post = asRole([{ contentTypeApiId: 'post', actions: ['read', 'write'] }]);
+  const page = asRole([{ contentTypeApiId: 'page', actions: ['read', 'write'] }]);
+  const fieldRule = asRole([
+    { contentTypeApiId: 'post', actions: ['read', 'write'], readOnlyFields: ['sku'] },
+  ]);
+  const everyType = asRole([{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
+
+  it('goes by the type a single-type job wrote', () => {
+    expect(() => authorizeBulkJobAccess(post, into, 'report')).not.toThrow();
+    expect(() => authorizeBulkJobAccess(post, into, 'cancel')).not.toThrow();
+    expect(() => authorizeBulkJobAccess(page, into, 'report')).toThrow(ForbiddenError);
+    expect(() => authorizeBulkJobAccess(page, into, 'cancel')).toThrow(ForbiddenError);
+  });
+
+  it('keeps the report from a role with field rules, whose failures could quote a value', () => {
+    expect(() => authorizeBulkJobAccess(fieldRule, into, 'report')).toThrow(ForbiddenError);
+    expect(() => authorizeBulkJobAccess(fieldRule, into, 'cancel')).not.toThrow();
+  });
+
+  it('asks for every type of a job that reached every type', () => {
+    expect(() => authorizeBulkJobAccess(post, snapshot, 'cancel')).toThrow(ForbiddenError);
+    expect(() => authorizeBulkJobAccess(everyType, snapshot, 'report')).not.toThrow();
+    expect(() => authorizeBulkJobAccess(asRole(undefined), snapshot, 'report')).not.toThrow();
+  });
+
+  it('treats a job naming no type as one over every type', () => {
+    const unnamed = { action: 'import' } as const;
+    expect(() => authorizeBulkJobAccess(post, unnamed, 'report')).toThrow(ForbiddenError);
   });
 });
