@@ -3,7 +3,7 @@
  * are the deployment's own accounts (People and sign-in, /team), matched by email; adding someone
  * here gives them this space, not a deployment account. Long-lived API keys are listed with their
  * role too. Changing a role
- * asks in place (InlineConfirm); the space's last administrator can't be demoted, disabled,
+ * asks in place (InlineConfirm), and removing someone in a modal; the space's last administrator can't be demoted, disabled,
  * removed or revoked, and the page says so where the action would be rather than failing after.
  */
 
@@ -28,6 +28,7 @@ import {
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { ConfirmButton, InlineConfirm } from '~/cms/components/InlineConfirm';
 import { Empty, Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
@@ -93,11 +94,15 @@ export function Team(props: { client: ManagementClient }) {
   const data = team.data;
 
   const refresh = () => invalidate(['team']);
+  // For a confirm that says a refusal itself.
+  const attempt = async (fn: () => Promise<unknown>, done: string) => {
+    await fn();
+    await refresh();
+    toast.success(done);
+  };
   const act = async (fn: () => Promise<unknown>, done: string) => {
     try {
-      await fn();
-      await refresh();
-      toast.success(done);
+      await attempt(fn, done);
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
@@ -105,7 +110,7 @@ export function Team(props: { client: ManagementClient }) {
 
   return (
     <div className="space-y-6">
-      <People client={client} team={data} options={options} act={act} />
+      <People client={client} team={data} options={options} act={act} attempt={attempt} />
       <Keys team={data} options={options} act={act} client={client} />
       {data?.sso ? <SignIn client={client} team={data} act={act} /> : null}
     </div>
@@ -124,6 +129,7 @@ function People(props: {
   team: TeamSummary | undefined;
   options: Options;
   act: Act;
+  attempt: Act;
 }) {
   const { client, team, options, act } = props;
   const [email, setEmail] = useState('');
@@ -219,6 +225,7 @@ function People(props: {
                 team={team}
                 options={options}
                 act={act}
+                attempt={props.attempt}
                 client={client}
               />
             ))}
@@ -234,6 +241,7 @@ function PersonRow(props: {
   team: TeamSummary | undefined;
   options: Options;
   act: Act;
+  attempt: Act;
   client: ManagementClient;
 }) {
   const { person: p, team, options, act, client } = props;
@@ -292,11 +300,11 @@ function PersonRow(props: {
                 </Button>
               )}
             </ConfirmButton>
-            <ConfirmButton
+            <ConfirmDialog
               message={`Remove ${who} from the team?`}
               note="They lose their role here; adding them again starts over."
               confirmLabel="Remove"
-              onConfirm={() => void act(() => client.removeMember(p.id), `${who} removed`)}
+              onConfirm={() => props.attempt(() => client.removeMember(p.id), `${who} removed`)}
             >
               {(ask) => (
                 <Button
@@ -309,7 +317,7 @@ function PersonRow(props: {
                   Remove
                 </Button>
               )}
-            </ConfirmButton>
+            </ConfirmDialog>
           </div>
         )}
       </TableCell>

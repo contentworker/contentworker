@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ContentType } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -81,6 +81,8 @@ vi.mock('~/cms/lib/client-context', () => ({
   useLocalRun: () => ({ busy: false, run: (fn: () => Promise<void>) => fn() }),
 }));
 
+const { ApiError } = await import('~/cms/lib/management');
+const { ConfirmDialog } = await import('~/cms/components/ConfirmDialog');
 const { ConfirmButton, InlineConfirm } = await import('~/cms/components/InlineConfirm');
 const { ToastProvider, useToast } = await import('~/cms/lib/toast');
 const { Releases } = await import('~/cms/routes/Releases');
@@ -103,6 +105,148 @@ function renderWithProviders(ui: React.ReactNode) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+describe('ConfirmDialog', () => {
+  function Harness(props: { onConfirm: () => void }) {
+    return (
+      <ConfirmDialog
+        message="Delete “Spring”?"
+        note="This can’t be undone."
+        cancelLabel="Keep it"
+        confirmLabel="Delete release"
+        onConfirm={props.onConfirm}
+      >
+        {(ask) => (
+          <button type="button" onClick={ask}>
+            Delete
+          </button>
+        )}
+      </ConfirmDialog>
+    );
+  }
+
+  it('asks in a modal, focusing the safe choice, and only acts on the named action', async () => {
+    const onConfirm = vi.fn();
+    render(<Harness onConfirm={onConfirm} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete “Spring”?' });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep it' })),
+    );
+    const confirm = within(dialog).getByRole('button', { name: 'Delete release' });
+    expect(confirm.className).toContain('destructive');
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('backs out on Escape and returns focus to the trigger', async () => {
+    const onConfirm = vi.fn();
+    render(<Harness onConfirm={onConfirm} />);
+    const trigger = screen.getByRole('button', { name: 'Delete' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    await screen.findByRole('alertdialog');
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConfirmDialog holding for its answer', () => {
+  function Held(props: { onConfirm: () => Promise<unknown> }) {
+    return (
+      <ConfirmDialog
+        message="Delete “Spring”?"
+        note="This can’t be undone."
+        confirmLabel="Delete release"
+        onConfirm={props.onConfirm}
+      >
+        {(ask) => (
+          <button type="button" onClick={ask}>
+            Delete
+          </button>
+        )}
+      </ConfirmDialog>
+    );
+  }
+  const open = async (onConfirm: () => Promise<unknown>) => {
+    render(<Held onConfirm={onConfirm} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    return screen.findByRole('alertdialog');
+  };
+
+  it('sends once, and waits with no way out until the answer', async () => {
+    let answer = () => {};
+    const onConfirm = vi.fn(() => new Promise<void>((resolve) => (answer = resolve)));
+    const dialog = await open(onConfirm);
+    const confirm = within(dialog).getByRole('button', { name: 'Delete release' });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(confirm.getAttribute('aria-disabled')).toBe('true');
+    expect(within(dialog).getByRole('status').textContent).toContain('closes when it’s done');
+
+    expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(
+      true,
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(screen.getByRole('alertdialog')).toBe(dialog);
+
+    answer();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('says a refusal in the dialog and lets the person out', async () => {
+    const dialog = await open(() => Promise.reject(new ApiError(409, 'It is in use')));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete release' }));
+    expect((await within(dialog).findByRole('alert')).textContent).toBe('It is in use');
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    expect(cancel.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(cancel);
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('after no answer, stops offering to keep anything, and a refused retry doesn’t undo that', async () => {
+    const onConfirm = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(503, 'DELETE → 503'))
+      .mockRejectedValueOnce(new ApiError(404, 'DELETE → 404'));
+    const dialog = await open(onConfirm);
+    const confirm = within(dialog).getByRole('button', { name: 'Delete release' });
+    fireEvent.click(confirm);
+    expect((await within(dialog).findByRole('alert')).textContent).toContain(
+      'may still have gone through',
+    );
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
+
+    fireEvent.click(confirm);
+    await within(dialog).findByText(/This try was refused/);
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
+  });
+
+  it('lets go of an answer that never comes, without saying nothing happened', async () => {
+    const dialog = await open(() => new Promise(() => {}));
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete release' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(45_000);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(within(dialog).getByRole('alert').textContent).toContain('may still have gone through');
+    expect(within(dialog).getByRole('button', { name: 'Close' }).hasAttribute('disabled')).toBe(
+      false,
+    );
+  });
 });
 
 describe('InlineConfirm', () => {
@@ -383,22 +527,22 @@ describe('Releases destructive actions', () => {
 
   it('confirms a release delete by name; cancelling sends nothing', async () => {
     setup();
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete “Spring campaign”' }));
-    expect(screen.getByRole('alertdialog', { name: 'Delete “Spring campaign”?' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const trigger = await screen.findByRole('button', { name: 'Delete “Spring campaign”' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete “Spring campaign”?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(client.deleteRelease).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(
-      screen.getByRole('button', { name: 'Delete “Spring campaign”' }),
-    );
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete “Spring campaign”' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete release' }));
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete release' }));
     await waitFor(() => expect(client.deleteRelease).toHaveBeenCalledWith('rel-1'));
   });
 });
 
 describe('permanent deletes', () => {
-  const cases = [
+  const modal = [
     {
       name: 'Workflows route',
       ui: () => (
@@ -421,6 +565,8 @@ describe('permanent deletes', () => {
       call: () => client.deleteScheme,
       arg: 'sc-1',
     },
+  ];
+  const inPlace = [
     {
       name: 'AI action',
       ui: () => <AiActions client={client as unknown as ManagementClient} />,
@@ -441,8 +587,30 @@ describe('permanent deletes', () => {
     },
   ];
 
-  it.each(cases)(
-    'permanent deletes ask in place and send nothing until confirmed ($name)',
+  it.each(modal)(
+    'what reaches content asks in a modal and sends nothing until confirmed ($name)',
+    async ({ ui, trigger, dialog, confirm, call, arg }) => {
+      renderWithProviders(ui());
+      const button = await screen.findByRole('button', { name: trigger });
+      button.focus();
+      fireEvent.click(button);
+      const ask = await screen.findByRole('alertdialog', { name: dialog });
+      expect(ask.closest('[data-slot="alert-dialog-content"]')).toBe(ask);
+      expect(call()).not.toHaveBeenCalled();
+
+      fireEvent.click(within(ask).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(button));
+      expect(call()).not.toHaveBeenCalled();
+
+      fireEvent.click(button);
+      fireEvent.click(await screen.findByRole('button', { name: confirm }));
+      await waitFor(() => expect(call()).toHaveBeenCalledExactlyOnceWith(arg));
+    },
+  );
+
+  it.each(inPlace)(
+    'a small config row asks in place and sends nothing until confirmed ($name)',
     async ({ ui, trigger, dialog, confirm, call, arg }) => {
       renderWithProviders(ui());
       fireEvent.click(await screen.findByRole('button', { name: trigger }));

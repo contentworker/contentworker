@@ -115,7 +115,7 @@ export function WebhookDeliveriesSheet(props: {
 
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-3xl">
+      <ResponsiveSheetContent className="w-full sm:max-w-3xl">
         <SheetHeader>
           <SheetTitle>Deliveries</SheetTitle>
           <SheetDescription className="break-all font-mono text-xs">

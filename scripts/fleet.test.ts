@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -307,6 +307,28 @@ const bases = () =>
   Object.fromEntries(APPS.map((app) => [app, base(app)])) as Parameters<typeof doctor>[1];
 const errors = (findings: ReturnType<typeof doctor>) =>
   findings.filter((f) => f.level === 'error').map((f) => `${f.app}: ${f.message}`);
+
+test('a registry refuses two deployments on one database or key-value namespace', () => {
+  const [kv1, kv2] = ['a'.repeat(32), 'b'.repeat(32)];
+  const registry = (a: object, b: object) => {
+    const dir = mkdtempSync(join(tmpdir(), 'fleet-registry-'));
+    const entry = (id: string, slot: number, rest: object) =>
+      JSON.stringify({ id, ring: 'general', slot, domain: `${id}.example.com`, ...rest });
+    writeFileSync(join(dir, 'alpha.jsonc'), entry('alpha', 1, a));
+    writeFileSync(join(dir, 'bravo.jsonc'), entry('bravo', 2, b));
+    return dir;
+  };
+  assert.throws(
+    () => loadDeployments(registry({ d1Id: 'same', kvId: kv1 }, { d1Id: 'same', kvId: kv2 })),
+    /two deployments share d1Id "same"/,
+  );
+  assert.throws(
+    () => loadDeployments(registry({ d1Id: 'd1', kvId: kv1 }, { d1Id: 'd2', kvId: kv1 })),
+    /two deployments share kvId "a{32}"/,
+  );
+  // Not yet provisioned: neither has an id to share.
+  assert.equal(loadDeployments(registry({}, {})).length, 2);
+});
 
 test('doctor passes a provisioned deployment rendered from the checked-in configs', () => {
   assert.deepEqual(errors(doctor(acme, bases())), []);

@@ -136,7 +136,7 @@ delivery bind them by `script_name`) and handles:
 - **Queues**: `contentworker-events` (batch 25, concurrency 10), `contentworker-bulk` (batch 1),
   `contentworker-agents` (batch 25, concurrency 4), `contentworker-asset-events` (batch 25,
   concurrency 4; see [Asset ingest](#asset-ingest-and-search)), and `contentworker-events-dlq` and
-  `contentworker-asset-events-dlq` (logged and acked). The events consumer runs `consumeEvent` per
+  `contentworker-asset-events-dlq` (logged, kept redacted under `dlq/`, and acked). The events consumer runs `consumeEvent` per
   message (webhooks, key-value cache tags, search and vector indexing, functions, reindex slices,
   bulk chunks, environment purge steps, live fan-out), in 6 lanes at once (`runInLanes`,
   `apps/engine/src/lanes.ts`): one entry's events keep their order, other entries run side by side.

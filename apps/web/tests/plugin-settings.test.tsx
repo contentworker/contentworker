@@ -198,7 +198,7 @@ describe('PluginSettingsSheet', () => {
     expect(input.type).toBe('password');
     expect(input.value).toBe('');
     expect(input.autocomplete).toBe('new-password');
-    expect(document.activeElement).toBe(input);
+    await waitFor(() => expect(document.activeElement).toBe(input));
     fireEvent.change(input, { target: { value: 'sk_rotated' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await waitFor(() =>
@@ -217,7 +217,9 @@ describe('PluginSettingsSheet', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Keep API key' }));
     expect(screen.getByText('Set')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Save settings' })).toHaveProperty('disabled', true);
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Replace API key' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Replace API key' })),
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear API key' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
@@ -276,7 +278,7 @@ describe('PluginSettingsSheet', () => {
     const set = await screen.findByRole('button', { name: 'Set API key' });
     await waitFor(() => expect(set.getAttribute('aria-invalid')).toBe('true'));
     expect(screen.getByText('API key is required')).toBeTruthy();
-    expect(document.activeElement).toBe(set);
+    await waitFor(() => expect(document.activeElement).toBe(set));
   });
 
   it('offers a reload when someone else saved first', async () => {

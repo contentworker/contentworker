@@ -4,6 +4,7 @@ import { XIcon } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import * as React from 'react';
 import { Button } from './button';
+import { useFocusReturn } from './lib/focus-return';
 import { keyboardInset } from './lib/keyboard-inset';
 import { cn } from './lib/utils';
 
@@ -50,12 +51,16 @@ const PLACEMENTS = {
   top: 'top-[calc(var(--safe-top)+4rem)] left-1/2 max-h-[calc(100dvh-var(--keyboard-inset,0px)-var(--safe-top)-5rem)] w-[calc(100%-2rem)] -translate-x-1/2 rounded-4xl data-open:zoom-in-95 data-closed:zoom-out-95 sm:max-w-md',
 };
 
+/** For an alert dialog that reviews rather than asks: `sheet`, with the same phone behaviour. */
+const DIALOG_SHEET_PLACEMENT = PLACEMENTS.sheet;
+
 function DialogContent({
   className,
   bodyClassName,
   children,
   placement = 'sheet',
   showCloseButton = true,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   /** For the scrolling body, which holds the padding (`className` sizes the dialog). */
@@ -63,11 +68,12 @@ function DialogContent({
   placement?: keyof typeof PLACEMENTS;
   showCloseButton?: boolean;
 }) {
+  const focusReturn = useFocusReturn(onCloseAutoFocus, keyboardInset);
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
-        ref={keyboardInset}
+        {...focusReturn}
         data-slot="dialog-content"
         className={cn(
           'fixed z-50 flex flex-col overflow-hidden bg-popover text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/5 outline-none data-open:animate-in data-open:fade-in-0 data-open:duration-(--motion-move) data-closed:animate-out data-closed:fade-out-0 data-closed:duration-(--motion-instant) dark:ring-foreground/10',
@@ -110,7 +116,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="dialog-header"
       className={cn(
-        'sticky top-0 z-10 -mx-6 -mb-3 flex flex-col gap-1.5 bg-popover px-6 pt-6 pb-3',
+        'sticky top-0 z-10 -mx-6 -mb-3 flex flex-col gap-1.5 bg-popover px-6 pt-6 pb-3 in-data-cramped:static',
         className,
       )}
       {...props}
@@ -130,7 +136,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        'sticky bottom-0 z-10 -mx-6 -mt-3 flex flex-col-reverse gap-2 bg-popover px-6 pt-3 pb-safe-6 sm:flex-row sm:justify-end',
+        'sticky bottom-0 z-10 -mx-6 -mt-3 flex flex-col-reverse gap-2 bg-popover px-6 pt-3 pb-safe-6 in-data-cramped:static sm:flex-row sm:justify-end',
         className,
       )}
       {...props}
@@ -204,6 +210,7 @@ function DialogError({
 }
 
 export {
+  DIALOG_SHEET_PLACEMENT,
   Dialog,
   DialogClose,
   DialogContent,

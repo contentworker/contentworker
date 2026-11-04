@@ -35,6 +35,7 @@ import {
 } from '@contentworker/application';
 import { isWebhookSendRequest, type Scope } from '@contentworker/domain';
 import { isResealTick } from '@contentworker/platform/data-key';
+import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { CostGuardDO, doAgentCostGuardFromEnv } from '@contentworker/platform/do/cost-guard';
 import { createDoEventBus, LiveHubDO } from '@contentworker/platform/do/live-hub';
 import { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
@@ -431,8 +432,8 @@ export default {
    *   await durable Workflow runs for minutes without starving event delivery.
    * - contentworker-asset-events: R2 object-create notifications (and the api's upload and
    *   re-ingest messages), each starting one AssetIngestWorkflow run.
-   * - contentworker-events-dlq, contentworker-asset-events-dlq: dead letters are logged loudly
-   *   and acked, never silent.
+   * - contentworker-events-dlq, contentworker-asset-events-dlq: dead letters are logged, kept
+   *   redacted under `dlq/` in the media bucket, and acked, never silent.
    * Per-message ack/retry so one poison message doesn't recycle a batch.
    */
   async queue(batch: MessageBatch, rawEnv: EdgeEnv, _exec: ExecutionContext): Promise<void> {
@@ -442,17 +443,9 @@ export default {
       batch.queue === queueName(env, 'contentworker-asset-events-dlq')
     ) {
       const metrics = makeMetrics(env.METRICS);
-      for (const msg of batch.messages) {
-        console.error(
-          JSON.stringify({
-            msg: 'dead-lettered message dropped after max retries',
-            id: msg.id,
-            body: msg.body,
-          }),
-        );
-        metrics.count('contentworker_dead_letters_total');
-        msg.ack();
-      }
+      await recordDeadLetters(batch, env.MEDIA_BUCKET, () =>
+        metrics.count('contentworker_dead_letters_total'),
+      );
       return;
     }
 

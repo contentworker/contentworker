@@ -32,7 +32,7 @@ import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { Switch } from '@contentworker/ui/switch';
 import { Bookmark, ChevronDown } from 'lucide-react';
-import { useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 import { useClient, useLocalRun } from '../../lib/client-context';
 import {
   type EntryListState,
@@ -75,7 +75,6 @@ export function SavedViewsMenu(props: {
   subject?: string;
 }) {
   const { type, state, canShare } = props;
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const { client } = useClient();
   const toast = useToast();
   const invalidate = useInvalidate();
@@ -158,7 +157,7 @@ export function SavedViewsMenu(props: {
         <DropdownMenuTrigger asChild>
           {/* Stays enabled while a change saves: a disabled button can't take focus back from a
               dialog. The menu's changes wait instead. */}
-          <Button ref={triggerRef} type="button" variant="outline" size="sm">
+          <Button type="button" variant="outline" size="sm">
             <Bookmark aria-hidden="true" className="size-4" />
             {current && <span className="sr-only">View: </span>}
             <span className="max-w-48 truncate">{current ? current.name : 'Views'}</span>
@@ -268,13 +267,7 @@ export function SavedViewsMenu(props: {
       )}
 
       <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
-        <AlertDialogContent
-          // The menu item that opened it is gone: the keyboard carries on from the trigger.
-          onCloseAutoFocus={(e) => {
-            e.preventDefault();
-            triggerRef.current?.focus();
-          }}
-        >
+        <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deleting?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>

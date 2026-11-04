@@ -20,7 +20,7 @@ import { AssetPreview } from '~/cms/components/AssetPreview';
 import { CollectionForm } from '~/cms/components/assets/AssetCollectionList';
 import { AssetShareDialog } from '~/cms/components/assets/AssetShareDialog';
 import { AssetZipProgress, type AssetZipState } from '~/cms/components/assets/AssetZipProgress';
-import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { EmptyState } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
@@ -192,13 +192,9 @@ export function AssetCollectionView(props: {
   };
 
   const deleteCollection = async () => {
-    try {
-      await client.deleteAssetCollection(collection.id);
-      toast.success(`Deleted collection “${collection.name}”`);
-      props.onDeleted();
-    } catch (e) {
-      toast.error(apiErrorMessage(e));
-    }
+    await client.deleteAssetCollection(collection.id);
+    toast.success(`Deleted collection “${collection.name}”`);
+    props.onDeleted();
   };
 
   const onDragStart = (e: DragEvent, id: string) => {
@@ -267,11 +263,11 @@ export function AssetCollectionView(props: {
             <Pencil aria-hidden="true" />
             Edit
           </Button>
-          <ConfirmButton
+          <ConfirmDialog
             message={`Delete “${collection.name}”?`}
             note="Its assets stay in the library; links shared to it stop opening."
             confirmLabel="Delete collection"
-            onConfirm={() => void deleteCollection()}
+            onConfirm={deleteCollection}
           >
             {(ask) => (
               <Button
@@ -285,7 +281,7 @@ export function AssetCollectionView(props: {
                 Delete
               </Button>
             )}
-          </ConfirmButton>
+          </ConfirmDialog>
         </div>
       </div>
 

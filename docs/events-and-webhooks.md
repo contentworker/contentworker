@@ -141,8 +141,17 @@ them inline; that consumer starts durable `AgentWorkflow` instances. See
 
 Each message is acked or retried individually, so one poison message doesn't recycle a batch.
 Malformed messages are dropped (acked) with a log line. After `max_retries` (5 on
-`contentworker-events`), a message goes to `contentworker-events-dlq`, whose consumer logs it
-loudly and acks it.
+`contentworker-events`), a message goes to `contentworker-events-dlq`, whose consumer logs it, keeps
+a record and acks it.
+
+Every dead-letter consumer keeps its record at `dlq/<queue>/<day>/<message id>.json` in object
+storage, where a lifecycle rule removes it after 30 days (`recordDeadLetters`,
+`@contentworker/platform/dead-letters`). A record holds only the keys that identify the message
+(ids, type, scope, version, cache tags, an object's key), and `omitted` names the ones it left out,
+so `fields`, a webhook `payload` and anything a new event adds stay out of both the record and the
+log line. To recover a domain event, [replay it from the outbox](./backup-and-restore.md#replaying-events-from-the-outbox)
+by its `id` while the row is kept. If the write fails, the message goes back for the queue's own
+retries, then is dropped with only its log line.
 
 ### Delivery cache purges
 
@@ -168,8 +177,8 @@ its `published` is true: ingest of a draft changes nothing Delivery serves. A fa
 The delivery worker drains the queue at concurrency 1 (`drain`, `@contentworker/platform/purge`): up
 to 100 tags per purge call, a 12 s pause after each (the platform allows 5 calls a minute), at most
 40 calls per batch; the rest, or a refused call, goes back with exponential backoff. After 10
-retries a message lands in `contentworker-purge-dlq`, whose consumer (the delivery worker) logs the
-tags, counts `contentworker_purge_dead_letters_total` and drops it. Those responses age out on their
+retries a message lands in `contentworker-purge-dlq`, whose consumer (the delivery worker) keeps a
+record of the tags, counts `contentworker_purge_dead_letters_total` and drops it. Those responses age out on their
 `max-age` plus stale-while-revalidate. The cache layers these purges feed are described in
 [Consistency & guarantees](./consistency.md#delivery-cache).
 
@@ -189,7 +198,7 @@ asset (at most 100, `MAX_COLLECTIONS_PURGED`); and `asset_share.revoked` revokes
 revoked goes again with `delaySeconds: 90` (`REVOCATION_REPURGE_SECONDS`), once the key-value
 store's 60 s read cache and replica lag have passed, so a location that re-cached a file from a
 stale gate read loses it too. The media worker drains it with the same `drain`; dead letters land in
-`contentworker-media-purge-dlq` and are logged (`contentworker_media_purge_dead_letters_total`).
+`contentworker-media-purge-dlq` and are logged and kept (`contentworker_media_purge_dead_letters_total`).
 
 Before that, `dispatchEvent` runs `syncAssetGate` for `asset.published`, `asset.unpublished`,
 `asset.deleted` and `asset.rights_changed` when `assetGate` is bound: it reads the current published snapshot and writes
@@ -401,7 +410,7 @@ The platform's queues have no producer-side dedupe, so consumers stay idempotent
 | `contentworker-events`      | api, engine | engine   | 25 / 10 / 5 → events DLQ       |
 | `contentworker-bulk`        | api, engine | engine   | 1 / 10 / 5 → events DLQ        |
 | `contentworker-agents`      | api, engine | engine   | 25 / 4 / 3 → events DLQ        |
-| `contentworker-events-dlq`  | (queues)    | engine   | logged and acked               |
+| `contentworker-events-dlq`  | (queues)    | engine   | logged, kept and acked         |
 | `contentworker-purge`       | engine      | delivery | 100 / 1 / 10 → purge DLQ       |
 | `contentworker-media-purge` | engine      | media    | 100 / 1 / 10 → media purge DLQ |
-| `contentworker-purge-dlq`   | (queues)    | delivery | logged, counted and dropped    |
+| `contentworker-purge-dlq`   | (queues)    | delivery | logged, kept and dropped       |

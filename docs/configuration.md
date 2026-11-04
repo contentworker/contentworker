@@ -178,7 +178,7 @@ it serves from, all read-only:
 | `IMAGES`                        | Width steps and renditions; absent → only originals are served. Ranges need no binding: the `Media.range` RPC reads `MEDIA_BUCKET`                                                                                        |
 | `METRICS` (metrics store)       | `contentworker_media_purge_dead_letters_total`                                                                                                                                                                            |
 | `RATE_LIMIT_SHARE_UNLOCK`       | Password attempts on a share link: 10 per 60 s per link and client address, and per link overall (namespace `1006`)                                                                                                       |
-| `QUEUE_SUFFIX`, `ROLE=media`    | Template vars; consumers `contentworker-media-purge` (+ `-dlq`, logged and acked)                                                                                                                                         |
+| `QUEUE_SUFFIX`, `ROLE=media`    | Template vars; consumers `contentworker-media-purge` (+ `-dlq`, logged, kept and acked)                                                                                                                                         |
 | `MEDIA_SIGNING_SECRET`          | Its only secret: verifies published paths' tokens and signed `/media/*` GETs (with `exp`), the share-link tokens, and signs a share link's unlock cookie. Required with `DB` bound; dev uses the dev key, as the api does |
 
 Its `exports` put the edge cache on the `Media` entrypoint only; the default (gateway) entrypoint

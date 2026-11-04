@@ -425,8 +425,8 @@ describe('archiving and deleting', () => {
     assets = [asset({ status: 'archived' })];
     renderLibrary();
     fireEvent.click(await screen.findByRole('button', { name: 'Delete “photo.jpg”' }));
-    const confirm = screen.getByRole('alertdialog', { name: /Delete “photo.jpg”\?/ });
-    fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByRole('alertdialog', { name: /Delete “photo.jpg”\?/ });
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Delete asset' }));
     await waitFor(() => expect(client.deleteAsset).toHaveBeenCalledWith('a1'));
     expect(await screen.findByText('Deleted “photo.jpg”')).toBeTruthy();
   });
@@ -455,7 +455,7 @@ describe('archiving and deleting', () => {
     renderLibrary();
     fireEvent.click(await screen.findByRole('button', { name: 'Delete “photo.jpg”' }));
     fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete' }),
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete asset' }),
     );
     const notice = await screen.findByRole('alert');
     expect(within(notice).getByText('“photo.jpg” is used by 1 entry')).toBeTruthy();
@@ -487,7 +487,7 @@ describe('an asset in heavy use', () => {
     renderLibrary();
     fireEvent.click(await screen.findByRole('button', { name: 'Delete “photo.jpg”' }));
     fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete' }),
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete asset' }),
     );
     const notice = await screen.findByRole('alert');
     expect(within(notice).getByText('“photo.jpg” is used by 120 entries')).toBeTruthy();

@@ -760,10 +760,26 @@ export async function sweepAbandonedUploads(
 }
 
 /**
+ * Every environment of the deployment but `scope`'s. A clone keeps its source's asset ids and file
+ * keys, even in another space, so whether a file is still in use is a deployment-wide question.
+ */
+export async function otherEnvironments(ctx: AppContext, scope: Scope): Promise<Scope[]> {
+  const others: Scope[] = [];
+  for (const { spaceId } of await ctx.store.spaces.list()) {
+    for (const env of await ctx.store.spaces.listEnvironments(spaceId)) {
+      if (spaceId === scope.spaceId && env.id === scope.environmentId) continue;
+      others.push({ spaceId, environmentId: env.id });
+    }
+  }
+  return others;
+}
+
+/**
  * Removes a deleted asset's bytes (the engine runs it for `asset.deleted`). Everything under the
  * asset's key prefix goes, so older versions' files go with the current one; but nothing goes
- * while another environment of the space still has an asset with this id, because an environment
- * import keeps asset ids and shares their files. Idempotent: a redelivered event finds nothing.
+ * while another environment, in any space, still has an asset with this id, because an environment
+ * import keeps asset ids and a clone shares their files, across spaces too. Idempotent: a
+ * redelivered event finds nothing.
  */
 export async function deleteAssetFiles(
   ctx: AppContext,
@@ -787,9 +803,7 @@ export async function deleteAssetFiles(
     // from them goes.
     await deps.blob.deletePrefix(ownPrefix, isAssetFileKey);
   }
-  for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
-    if (env.id === scope.environmentId) continue;
-    const other = { spaceId: scope.spaceId, environmentId: env.id };
+  for (const other of await otherEnvironments(ctx, scope)) {
     if (await ctx.store.assets.get(other, assetId)) return;
   }
   if (event.videoId) await ctx.video?.delete(event.videoId);

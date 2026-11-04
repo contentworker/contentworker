@@ -121,6 +121,33 @@ describe('the asset sheet’s Details tab', () => {
     );
   });
 
+  it('opens on the form rather than Share', async () => {
+    assets = [image()];
+    const sheet = await openDetails();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        sheet.querySelector('button[aria-describedby="asset-focal-hint"]'),
+      ),
+    );
+  });
+
+  it('says Tap, and no keyboard, under a finger', async () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) =>
+        ({
+          matches: query.includes('pointer: coarse'),
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    assets = [image()];
+    const sheet = await openDetails();
+    const hint = sheet.querySelector('#asset-focal-hint');
+    expect(hint?.textContent).toBe('Tap the image to set a focal point for smart cropping.');
+    vi.restoreAllMocks();
+  });
+
   it('names the focal point control by where the point is, and moves it with the keyboard', async () => {
     assets = [image()];
     const sheet = await openDetails();

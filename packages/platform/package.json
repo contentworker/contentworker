@@ -9,6 +9,7 @@
     "./asset-zip": "./src/asset-zip.ts",
     "./auth-rate-limit": "./src/auth-rate-limit.ts",
     "./config": "./src/config.ts",
+    "./dead-letters": "./src/dead-letters.ts",
     "./data-key": "./src/data-key.ts",
     "./do/cost-guard": "./src/do/cost-guard.ts",
     "./do/live-access": "./src/do/live-access.ts",
@@ -35,6 +36,7 @@
     "@contentworker/db": "workspace:*",
     "@contentworker/domain": "workspace:*",
     "@contentworker/ports": "workspace:*",
+    "@contentworker/redaction": "workspace:*",
     "@contentworker/security": "workspace:*",
     "@contentworker/test-kit": "workspace:*"
   },

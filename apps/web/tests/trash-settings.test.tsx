@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -89,10 +89,12 @@ describe('Settings → Trash', () => {
     expect(screen.getByText(/link to is kept/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    // Asked in place: it deletes trash that is already old enough.
-    expect(await screen.findByText('Delete trashed entries after 14 days?')).toBeTruthy();
+    // Asked in a modal: it deletes trash that is already old enough, for good.
+    const ask = await screen.findByRole('alertdialog', {
+      name: 'Delete trashed entries after 14 days?',
+    });
     expect(client.setTrashSettings).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Save and delete' }));
+    fireEvent.click(within(ask).getByRole('button', { name: 'Save and delete' }));
     await screen.findByText('Trashed entries are deleted after 14 days');
     expect(client.setTrashSettings).toHaveBeenCalledExactlyOnceWith({ retentionDays: 14 });
   });

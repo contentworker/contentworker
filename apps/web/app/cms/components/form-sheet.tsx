@@ -45,12 +45,13 @@ export function FormSheet({
         </Button>
       </SheetTrigger>
       <ResponsiveSheetContent
-        className="gap-0 overflow-y-auto sm:max-w-md"
+        className="sm:max-w-md"
+        bodyClassName="gap-0"
         onCloseAutoFocus={onCloseAutoFocus}
         // With no description, say so, rather than point at one that isn't there.
         {...(description ? {} : { 'aria-describedby': undefined })}
       >
-        <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
+        <SheetHeader className="gap-1 border-b pt-4 pb-3">
           <SheetTitle>{title ?? label}</SheetTitle>
           {description ? (
             <SheetDescription className="text-xs">{description}</SheetDescription>

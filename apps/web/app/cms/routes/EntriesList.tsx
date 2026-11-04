@@ -187,7 +187,11 @@ export function EntriesList() {
   // A row's Publish of an entry that has been live, awaiting the same confirmation (and diff of
   // what changes) as the editor's Publish.
   const [confirmPublish, setConfirmPublish] = useState<PreviewEntry | null>(null);
-  const publishAsked = useRef<string | null>(null);
+  const publishedRow = useRef<string | null>(null);
+  // What the confirm says as it leaves: `confirmPublish` is gone by then, the dialog not yet.
+  const lastAskedPublish = useRef<PreviewEntry | null>(null);
+  if (confirmPublish) lastAskedPublish.current = confirmPublish;
+  const askedPublish = confirmPublish ?? lastAskedPublish.current;
   // Bulk action awaiting confirmation (bulk selections are tedious to rebuild,
   // so the whole batch is confirmed once before it runs).
   const [confirmBulk, setConfirmBulk] = useState<BulkConfirm | null>(null);
@@ -685,60 +689,36 @@ export function EntriesList() {
 
   // Through the assistant's card, the status changes once confirmed (no optimism before an answer).
   // Straight through the API, it changes at once and rolls back on failure.
-  const setStatus = (
-    id: string,
-    tool: 'entries_publish' | 'entries_unpublish',
-    status: string,
-    act: (id: string) => Promise<unknown>,
-    msg: string,
-    toastOptions?: ToastOptions,
-  ) =>
+  const unpublishRow = (id: string, toastOptions?: ToastOptions) =>
     mutateEntries(async () => {
       // Held to the version the row shows: confirmed after a newer draft was saved, it is refused.
       const version = entries.find((e) => e.id === id)?.version;
       const input = { id, ...(version ? { expectedVersion: version } : {}) };
-      const r = await orDirect(await edit(tool, input, titleOf(id)), () =>
-        applyStatus(id, status, act),
+      const r = await orDirect(await edit('entries_unpublish', input, titleOf(id)), () =>
+        applyStatus(id, 'draft', (x) => client.unpublishEntry(x)),
       );
       if (!('output' in r)) return;
-      toast.success(msg, toastOptions);
+      toast.success(`“${titleOf(id)}” unpublished`, toastOptions);
     });
 
-  // A row's Publish says what goes live as surely as the editor's does. A draft has nothing live
-  // to compare with, so it publishes at once and offers Undo: unpublishing is its exact inverse.
-  // An entry that has been live replaces what's live, which Undo can't bring back, so it confirms
-  // first, with the changed fields: the assistant's card, or without it the page's own dialog.
-  const publishRow = (e: PreviewEntry) => {
-    const title = titleOf(e.id);
-    if (e.status === 'draft') {
-      return setStatus(
-        e.id,
-        'entries_publish',
-        'published',
-        (id) => client.publishEntry(id),
-        `“${title}” published`,
-        { action: { label: 'Undo', onAction: () => void undoPublish(e.id, title) } },
-      );
-    }
-    return mutateEntries(async () => {
-      // Held to the version the row shows, like setStatus: a newer draft saved meanwhile is refused.
+  // A row's Publish says what goes live as surely as the editor's does, and it always asks first:
+  // readers and webhooks have a publish at once, and no undo calls that back. The assistant's card,
+  // or without it the page's own dialog, with the changed fields where something is live already.
+  const publishRow = (e: PreviewEntry) =>
+    mutateEntries(async () => {
+      const title = titleOf(e.id);
+      // Held to the version the row shows: a newer draft saved meanwhile is refused.
       const input = { id: e.id, ...(e.version ? { expectedVersion: e.version } : {}) };
       const r = await edit('entries_publish', input, title);
       if (r === null) {
-        publishAsked.current = e.id;
+        publishedRow.current = null;
         setConfirmPublish(e);
       } else if ('output' in r) toast.success(`“${title}” published`);
     });
-  };
   const publishConfirmed = (e: PreviewEntry) =>
     mutateEntries(async () => {
       await applyStatus(e.id, 'published', (id) => client.publishEntry(id));
       toast.success(`“${titleOf(e.id)}” published`);
-    });
-  const undoPublish = (id: string, title: string) =>
-    mutateEntries(async () => {
-      await client.unpublishEntry(id);
-      toast.success(`“${title}” is back to draft`);
     });
 
   // Per-row actions for the table; each calls the same handler the list always
@@ -748,12 +728,8 @@ export function EntriesList() {
     diff: (e) => setDiffEntry(e),
     duplicate: (e) => void duplicate(e),
     unpublish: (e) =>
-      void setStatus(
+      void unpublishRow(
         e.id,
-        'entries_unpublish',
-        'draft',
-        (id) => client.unpublishEntry(id),
-        `“${titleOf(e.id)}” unpublished`,
         // Republishing restores exactly what was live only for a "published"
         // entry; for a changed one it would ship the unreviewed draft. (An edit
         // made during the toast's 10s window would ship with the Undo too — an
@@ -1161,19 +1137,19 @@ export function EntriesList() {
         onOpenChange={(open) => {
           if (!open) setConfirmPublish(null);
         }}
-        title={confirmPublish ? titleOf(confirmPublish.id) : ''}
-        status={confirmPublish?.status}
-        compare={
-          confirmPublish ? { client, entry: confirmPublish, locale: conn.locale } : undefined
-        }
+        title={askedPublish ? titleOf(askedPublish.id) : ''}
+        status={askedPublish?.status}
+        compare={askedPublish ? { client, entry: askedPublish, locale: conn.locale } : undefined}
         busy={busy}
         onConfirm={() => {
           const entry = confirmPublish;
           setConfirmPublish(null);
+          publishedRow.current = entry?.id ?? null;
           if (entry) void publishConfirmed(entry);
         }}
         // The row's Publish goes once it is live; its title link keeps the keyboard on the row.
-        returnFocus={() => rowLink(publishAsked.current)}
+        // Kept as it was, the button is still there, and focus goes back to it.
+        returnFocus={() => rowLink(publishedRow.current)}
       />
 
       {/* Permanent deletion names the entry and says plainly that it cannot be
@@ -1214,7 +1190,7 @@ export function EntriesList() {
       </AlertDialog>
 
       <Sheet open={!!diffEntry} onOpenChange={(o) => !o && setDiffEntry(null)}>
-        <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-xl">
+        <ResponsiveSheetContent className="w-full sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>Diff vs published</SheetTitle>
             <SheetDescription>Draft changes since this entry was last published.</SheetDescription>

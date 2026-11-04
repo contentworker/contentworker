@@ -1,6 +1,7 @@
 import { Button } from '@contentworker/ui/button';
+import { focusIsAdrift } from '@contentworker/ui/lib/focus-return';
 import { cn } from '@contentworker/ui/lib/utils';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 /** Open confirmations' roots, newest last. */
 const open: { readonly root: { current: HTMLElement | null } }[] = [];
@@ -53,8 +54,9 @@ export interface InlineConfirmProps {
 }
 
 /**
- * An "are you sure?" in place, where the action was: how anything undoable confirms (a modal is
- * only for what can't be undone).
+ * An "are you sure?" in place, where the action was: how anything undoable confirms, and the small
+ * config rows DESIGN.md names. What can't be undone and reaches content, files or access takes
+ * `ConfirmDialog`.
  *
  * - Focus lands on the safe choice (Cancel), so a stray Enter backs out.
  * - Escape cancels the newest open confirm only, and is swallowed so an
@@ -87,14 +89,21 @@ export function InlineConfirm({
   const returnFocusRef = useRef(returnFocus);
   returnFocusRef.current = returnFocus;
 
+  // In a layout effect, so the safe choice has focus in the commit that shows it. Handing focus
+  // back stays in the effect below: a layout cleanup runs with this confirm still in the DOM, so
+  // it couldn't tell that focus had gone.
+  const asked = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    // <body>, or the dialog around it, isn't "what asked" (Safari doesn't focus
+    // a pressed button), so it falls through to `returnFocus`.
+    const active = document.activeElement;
+    asked.current = active instanceof HTMLElement && !focusIsAdrift(active) ? active : null;
+    cancel.current?.focus();
+  }, []);
+
   useEffect(() => {
     const me = { root };
     open.push(me);
-    // <body> isn't "what asked" (Safari doesn't focus buttons on click), so
-    // it falls through to `returnFocus`.
-    const active = document.activeElement;
-    const before = active instanceof HTMLElement && active !== document.body ? active : null;
-    cancel.current?.focus();
     // Window capture runs before Radix's document-level Escape handling, so a
     // confirm inside a Sheet backs out of the confirm without closing the Sheet.
     // Only when the key comes from inside this confirm (the innermost one that
@@ -109,12 +118,11 @@ export function InlineConfirm({
     return () => {
       window.removeEventListener('keydown', onKey, true);
       open.splice(open.indexOf(me), 1);
-      const now = document.activeElement;
-      if (now && now !== document.body && now.isConnected) return;
+      if (!focusIsAdrift()) return;
       // A trigger disabled by the action it confirmed can't take focus.
       const usable = (el: HTMLElement | null | undefined) =>
         el?.isConnected && !(el as HTMLButtonElement).disabled ? el : undefined;
-      const target = usable(before) ?? usable(returnFocusRef.current?.());
+      const target = usable(asked.current) ?? usable(returnFocusRef.current?.());
       target?.focus({ preventScroll: true });
     };
   }, []);

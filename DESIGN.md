@@ -334,7 +334,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   but are counted in a warning Alert ("1 field you can't read goes live."), never "nothing changed". The other cards list nothing. Any other edit (saving, duplicating) runs
   at once and leaves a line ("Published · Spring launch notes") linking to the entry. When its socket
   is down the panel says so in one quiet line and the page makes the edit itself, confirming in
-  place or in a dialog as The Undoable Confirms In Place Rule says. Beside the column a page is narrower than the screen, so the Content pages'
+  place or in a dialog as The Blast Radius Rule says. Beside the column a page is narrower than the screen, so the Content pages'
   content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
   In that list a singleton links to its one entry (`/content/:typeId/entry`), not a list of one,
   and stays marked current anywhere under the type.
@@ -355,8 +355,8 @@ through the variables, never `env()` directly.
 
 - **Targets:** 44px for a finger. A small control keeps its drawn size and gets `hit-area`, an
   invisible box grown to 2.75rem on a coarse pointer. The shared buttons have it at every size,
-  a dialog's close and footer buttons included; raw buttons and links in the bars add it, and a
-  sheet's close grows to 2.75rem. A tab grows instead: on a coarse pointer each trigger
+  a dialog's and a sheet's close and footer buttons included; raw buttons and links in the bars add
+  it. A tab grows instead: on a coarse pointer each trigger
   is at least 44px and its list grows to hold it (a mouse keeps the 32px list), since a tab list
   that scrolls sideways would clip an invisible box to its own height.
 - **Fields:** 16px on a touch screen whatever their classes say (an unlayered rule in index.css),
@@ -413,10 +413,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   for ‹type›") with Clone… and, after a separator, a destructive Delete…; a Draft badge only on a
   type whose schema isn't published. Clone… opens a dialog with the copy's name and API ID. Closed
   either way, focus goes back to the row's ⋯. **Deleting a type** can't be undone, so it confirms
-  in a modal (The Undoable Confirms In Place Rule): a dialog reads what depends on the type first, names in a warning Alert whatever blocks it (another type
+  in a modal (The Blast Radius Rule): a dialog reads what depends on the type first, names in a warning Alert whatever blocks it (another type
   linking to it, a menu or redirect naming its entries, its URL pattern; then no confirm is
-  offered: no opt-in, no red button, only Keep it), and with entries offers "Also delete its N
-  entries" as an unticked opt-in. It is confirmed by typing the API ID, with a muted line tied to
+  offered: no opt-in, no red button, only Keep it), and with entries asks for a tick on "Delete its
+  N entries too", said to be required: a type can't go while it holds entries. It is confirmed by typing the API ID, with a muted line tied to
   the disabled button saying which steps are outstanding, and a refusal shows as a destructive
   Alert in the dialog. Keep it holds focus while the check runs; once it lands, focus moves to the
   first field. Deleted at once, focus moves to the next row's ⋯, or the page heading when it was the last. With its
@@ -478,9 +478,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   Publish while anything isn't live, a disabled "Published" when live and clean) stays under the
   shell's header from md, and below md its buttons sit above the tab bar. The secondary actions
   (Draft from prose, Generate with AI, Copy preview link) are ghost and fold into a ghost ⋯ menu
-  ("More entry actions") when the editor is narrower than 56rem. Publishing an entry that has been
-  live confirms with what changed, from the editor and from an entries row alike
-  (`entries/PublishConfirm.tsx`), held as the card is (Publish entry stays off until the read has
+  ("More entry actions") when the editor is narrower than 56rem. Publishing always confirms, from
+  the editor and from an entries row alike, with the assistant or without it: readers and webhooks
+  have a publish at once, and no undo calls that back. An entry that has been live confirms with
+  what changed (`entries/PublishConfirm.tsx`), held as the card is (Publish entry stays off until the read has
   something to show, says why, and a failed read offers Try again; the cancel always works): each
   changed field by name, its published and draft values side
   by side where the container has room and stacked where it hasn't (a container query, so a dialog
@@ -489,8 +490,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   rest ("1 field you can't read changed", as every diff counts them, never "0 fields changed") and
   always get the warning Alert, even when the editor's own diff has nothing else to list: that still
   confirms, with the warning. "The draft matches" is said only once a read has shown it. The
-  scroller takes keyboard focus. A first publish confirms in the editor, where the whole entry is
-  in front of you, and goes at once from a row, with Undo in the toast. Beside the form sits the **side pane** (after felix's):
+  scroller takes keyboard focus. A first publish asks the same way, saying the whole entry goes live, with Keep as draft as the safe choice. Beside the form sits the **side pane** (after felix's):
   where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
   the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
   narrower, it stacks under the form. The divider is an ARIA splitter (drag, arrows, Shift for a
@@ -569,8 +569,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   a name and an optional description. A collection opens **in place of the library**
   (`assets/AssetCollectionView.tsx`), no folder current while it shows: a "Collection" caption over
   its name (an h2 that takes focus when the collection was just made), its description and count,
-  then Share and Download as zip (outline), Edit (the same form, in a card) and Delete (in-place
-  confirm: its assets stay in the library, links to it stop opening). Its assets are an ordered
+  then Share and Download as zip (outline), Edit (the same form, in a card) and Delete (an alert
+  dialog: its assets stay in the library, links to it stop opening). Its assets are an ordered
   list in a card, every status included: a grip, the position in muted tabular figures, the
   thumbnail, the name as the open button, the status stamp, then Move up, Move down and Remove
   (ghost icon buttons, each named for its asset). A row drags onto another; the buttons are the
@@ -687,7 +687,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   ("Uploading “film.mov”", value text and a muted tabular line "64 MB of 150 MB · 1 of 3 parts",
   "· retrying part 2" while one waits to try again, its badge then a `run` "Retrying"), and an
   icon Cancel ("Cancel uploading “film.mov”"), which a file still waiting has too; a cancelled file
-  is an `idle` "Cancelled". **Share** (`assets/AssetShareDialog.tsx`, from the sheet's header and
+  is an `idle` "Cancelled". **Share** (`assets/AssetShareDialog.tsx`, from the sheet and
   a collection's) is a dialog, "Share “x”", saying anyone with the link sees the published files
   until it expires or is revoked (for a collection, that its drafts stay off the page). Then a
   form: Expires after (a `Segmented` of 1 day, 7 days, 30 days and Custom, which adds a
@@ -695,13 +695,15 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   password with its hint, and Create link; the new link's Copy takes focus. Active links follow
   under their own heading: the URL in mono (or that the deployment has no media origin), "Expires
   in 3 days (date)", `idle` stamps for Password and Downloads allowed or View only, then Copy
-  (outline) and Revoke (ghost, in-place confirm; focus goes to the heading). An unpublished asset
-  gets a warning Alert ("Publish it to share it") in place of the form; a role without
+  (outline) and Revoke (ghost, an alert dialog over the Share dialog, since the link can't be
+  brought back; focus goes to the heading). An unpublished asset
+  gets a warning Alert ("Publish it to share it", with an outline Publish asset that goes live at
+  once, as the library's Publish does, and hands on to the form) in place of the form; a role without
   content:publish, a warning Alert saying who can share, and no form; a refusal is a destructive
   Alert in the server's words, a field's beside the field as an alert (heard at once), tied to the
   expiry choice or the field by `aria-describedby`. Archiving one asset is an
   Undo toast that restores it; an archived one shows Restore (back as a draft). **Delete** asks in
-  place, and one an entry still links to is refused: a warning Alert takes focus, names the first
+  an alert dialog, since its files go too, and one an entry still links to is refused: a warning Alert takes focus, names the first
   five entries (each a link) and counts the rest ("and 12 more"), and offers Archive instead. A
   load that failed is a destructive Alert with Retry, never an empty library; the first page
   loads as Skeleton cards or rows. **On a phone** the tree becomes a select of folder paths
@@ -715,8 +717,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   (off by default), and when on a "Days in the trash" field (1 to 3650; an out-of-range value is
   said under it, tied to it by `aria-describedby`), with a muted line saying what happens (an
   hourly sweep deletes for good entries in the trash longer than that, with their history, and
-  keeps one published entries link to). Save turning it on, or shortening it, asks in place
-  ("Delete trashed entries after 14 days?", Keep as is, "Save and delete"), since trash already
+  keeps one published entries link to). Save turning it on, or shortening it, asks in an alert
+  dialog ("Delete trashed entries after 14 days?", Keep as is, "Save and delete"), since trash already
   that old goes at the next sweep; turning it off saves at once. While it loads it is a skeleton
   line with a sr-only status, `aria-busy`; a failed load is a destructive Alert with Retry, never
   a setting that looks off.
@@ -739,7 +741,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   published version (from the API's `publishedTrigger`, with "Draft starts on …" when the draft
   starts differently, and the other workflows that start alongside it, from `startsAlongside`);
   what it covers; whether it gates publishing; its live version; then Duplicate and Delete
-  (confirmed in a row beneath). "New workflow" is a form sheet (template or blank) and "Draft
+  (confirmed in an alert dialog). "New workflow" is a form sheet (template or blank) and "Draft
   with AI" a dialog whose proposal is reviewed in a Confirmation before a draft is created.
 
 ## Screens that change shape
@@ -860,10 +862,27 @@ for code and data blocks only.
 - **Dialog** (`ui/dialog.tsx`, `ui/alert-dialog.tsx`): capped to the screen, less an on-screen
   keyboard (`--keyboard-inset`, since iOS leaves that out of `dvh`), so what gives way is the body,
   which scrolls: the header, the footer and the close button stay put and every action stays in
-  reach. A dialog comes from the bottom on a phone and sits centred from `sm`; an alert dialog is a
-  question, not a form, and stays centred. The palette anchors to the top at every width
-  (`placement="top"`), so its search box holds still as the results shrink.
+  reach. A focused field clears what is pinned, as it takes focus and as the keyboard rises. A dialog
+  comes from the bottom on a phone and sits centred from `sm`; an alert dialog is a question, not a
+  form, and stays centred, except the entry publish review (`placement="sheet"`), which is read
+  before it is answered and comes from the bottom as a dialog does, its Publish entry in thumb
+  reach. The palette anchors to the top at every width (`placement="top"`), so its search box holds
+  still as the results shrink.
+- **Sheet** (`ui/sheet.tsx`): built as a dialog is, from the side or from the bottom. Capped to the
+  screen, less an on-screen keyboard and the safe areas; `SheetHeader` and `SheetFooter` stick to the
+  edges of a body that scrolls (`bodyClassName` for its padding, `className` for the sheet's size),
+  and the close button (a dialog's: a filled 32px `icon-sm`) sits outside the body, so a long sheet
+  never scrolls its way out or its action off a phone. A body that overflows with nothing to tab
+  to takes focus itself, ringed and named as the sheet is, so the keyboard can scroll it. Its footer
+  is a dialog's, stacked primary first on a phone. A consumer never puts `overflow-y-auto` on the
+  content. Where pinning would leave no room between header and footer (a phone on its side with
+  the keyboard up), both let go and scroll with the body, in a dialog too (`data-cramped`).
   - **Title:** `section-title`, the same in a dialog, an alert dialog and a sheet.
+  - **Closing:** focus goes back to what opened it, in a dialog, an alert dialog and a sheet alike
+    (`ui/lib/focus-return.ts`): the control that was pressed even where Safari didn't focus it, a
+    menu's trigger for a menu's item, the sheet under a dialog over one. An opener that is disabled
+    or gone hands on to what stood beside it, then to the page, and focus the closing action put
+    somewhere on purpose stays there. `onCloseAutoFocus` overrides it.
   - **Footer:** an outline Cancel, then the primary at the default size, on the right. On a phone
     they stack, the primary on top.
   - **Errors:** `DialogError`, one line (or a title and a list) in `destructive`, `role="alert"`,
@@ -872,7 +891,8 @@ for code and data blocks only.
     beside the field, and a notice that blocks the task (a refusal with a way on) is an Alert.
   - **Leaving:** a form with work in it never goes quietly (`cms/components/discard-guard.tsx`).
     Escape, a press outside, the close button and Cancel all ask in place of its buttons ("Discard
-    this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, and an
+    this redirect?", Keep editing focused, then a destructive Discard); Keep editing goes back to
+    the field last in use; saving doesn't ask, and an
     untouched form just closes. A save under way holds the form: Cancel waits, and a try at leaving
     says "Still saving". Only a save holds it; a read (Check, Fetch) stays closable. A save that
     never answers times out (`RequestTimeoutError`, in `req`): the form lets go and keeps what was
@@ -895,16 +915,33 @@ for code and data blocks only.
   severity); `StatusDot` alone where the word sits beside it.
 - **Inline confirm** (`cms/components/InlineConfirm.tsx`): an "are you sure?" where the action was.
   The safe choice has focus, Escape backs out of the newest one, and focus goes back to what asked.
-  **The Undoable Confirms In Place Rule:** a modal confirm only when nothing can be undone; anything
-  undoable confirms inline. So restoring a version asks in place, since it appends a new version
-  and the one it replaced can be restored in turn. Revoking a key or a token, disconnecting an
-  application, deleting a webhook, uninstalling a plugin (its settings and stored data go with it),
-  deleting a saved view, starting a new conversation, discarding an entry's unsaved changes, and
-  Delete permanently and deleting a content type are modals: the data is gone, and asking again
-  makes something new rather than bringing it back. A publish confirms in a modal too, an entry's, a
-  bulk publish or a release's: readers and webhooks have it at once, and no undo calls that back.
-  Unpublishing and moving to the trash ask in place, one entry or many: Undo or Restore puts them
-  back.
+  **The Blast Radius Rule:** how something asks follows what it reaches. Anything irreversible that
+  touches content, files or access confirms in a modal, its act in `variant="destructive"`
+  (`cms/components/ConfirmDialog.tsx`, the modal twin of `ConfirmButton`, or a dialog of its own when
+  it has more to say; it waits for the answer, its act held and Cancel with it, says a refusal in
+  the dialog, and closes once the page has moved on; with no answer it says the act may have gone
+  through, and its safe choice reads Close): the thing is gone, and asking again makes something new rather than bringing
+  it back. Those are deleting an asset, a release, a workflow, a role, a menu, a collection, a saved
+  view, a webhook or a content type; deleting a taxonomy scheme, concept or tag, which every entry
+  carrying it loses; Delete permanently, and shortening how long the trash keeps entries; revoking a
+  key, a token or a share link; disconnecting an application; removing someone from a space;
+  uninstalling a plugin (its settings and stored data go with it); starting a new conversation; and
+  discarding an entry's unsaved changes. A publish confirms in a modal too, an entry's, a bulk
+  publish or a release's: readers and webhooks have it at once, and no undo calls that back.
+  Anything undoable confirms in place: restoring a version appends a new version and the one it
+  replaced can be restored in turn, and Undo or Restore puts back an unpublish or a move to the
+  trash, one entry or many.
+  **The named exceptions:** a small irreversible config row may stay in place, when it reaches no
+  content, file or access and can be typed in again as it was. Only these: a redirect, an item in a
+  menu's editor, an environment alias, a function, an AI action, an app extension, a comment or a
+  task on an entry, and an empty asset folder (a folder with anything in it is refused). The team
+  page's account actions and revoking an invitation also ask in place for now: their step-up field
+  posts with their form. Anything new joins this list by being written here. The rule is about what
+  is stored, so three kinds of asking sit outside it: leaving a form with work in it (Leaving,
+  above, and leaving a workflow with edits) loses only what was never saved; stopping a bulk job
+  leaves done what is done, and the rest can be run again; and a workflow's Publish asks in place,
+  since a run keeps the version it began on. An asset's Publish doesn't ask: unpublishing it puts
+  back what was delivered.
 - **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
   toast carries its Undo action.
 - **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"
