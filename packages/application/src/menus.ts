@@ -579,7 +579,12 @@ export async function previewMenu(
   const hasEntries = targets.entryIds.length > 0;
   const [config, contentTypes, published, current, tags, concepts] = await Promise.all([
     ctx.store.spaces.getConfig(scope),
-    hasEntries ? ctx.store.contentTypes.list(scope) : [],
+    // As Delivery resolves it: the published view, or a live type's draft would say `no_url`.
+    hasEntries
+      ? deliveryReads(ctx)
+          .read(scope, { contentTypes: true })
+          .then((read) => read.contentTypes ?? [])
+      : [],
     hasEntries ? ctx.store.entries.getPublishedMany(scope, targets.entryIds) : [],
     hasEntries ? ctx.store.entries.getMany(scope, targets.entryIds) : [],
     wants('tag') ? ctx.store.taxonomy.listTags(scope) : [],

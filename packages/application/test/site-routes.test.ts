@@ -75,10 +75,12 @@ describe('listDeliveredRoutes', () => {
     ]);
   });
 
-  it('serves a type once it is published, and drops one whose revision is not yet', async () => {
+  it('serves a type as last published, and a revision once it is published too', async () => {
     await defineType('article', '/blog/{slug}');
     await updateContentType(ctx, scope, 'article', { urlPattern: '/news/{slug}' });
-    expect(await listDeliveredRoutes(ctx, scope)).toEqual([]);
+    expect(await listDeliveredRoutes(ctx, scope)).toEqual([
+      { contentType: 'article', urlPattern: '/blog/{slug}' },
+    ]);
     await publishContentType(ctx, scope, 'article');
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([
       { contentType: 'article', urlPattern: '/news/{slug}' },

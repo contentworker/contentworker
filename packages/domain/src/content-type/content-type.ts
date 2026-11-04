@@ -62,6 +62,49 @@ export interface ContentType {
   readonly status: ContentTypeStatus;
 }
 
+/**
+ * The definition a type last published, kept while a draft revision holds its row: what Delivery
+ * serves until the draft is published. Only what Delivery reads; the admin-only details aren't in
+ * it. `version` is the published revision's, so a schema cached by version survives a draft.
+ */
+export interface PublishedContentTypeDefinition {
+  readonly name: string;
+  readonly displayField: string;
+  readonly fields: readonly FieldDefinition[];
+  readonly urlPattern?: string;
+  readonly singleton?: true;
+  readonly version: number;
+}
+
+/**
+ * A type as Delivery serves it. A published row is the published definition, whatever else is
+ * stored. A draft with a `published` definition is a live type with an unpublished revision, and
+ * serves that, reporting `published`. A draft with none stays as it is: never published, or
+ * revised before published definitions were kept, and Delivery can't tell which. The singleton
+ * flag is always the one last published.
+ */
+export function deliveredContentType(
+  current: ContentType,
+  published: PublishedContentTypeDefinition | null,
+  publishedSingleton: boolean,
+): ContentType {
+  const { singleton: _draft, urlPattern: _pattern, ...rest } = current;
+  const flag = publishedSingleton ? { singleton: true as const } : {};
+  if (current.status === 'published' || !published) {
+    return { ...rest, ...(current.urlPattern ? { urlPattern: current.urlPattern } : {}), ...flag };
+  }
+  return {
+    ...rest,
+    name: published.name,
+    displayField: published.displayField,
+    fields: published.fields,
+    ...(published.urlPattern ? { urlPattern: published.urlPattern } : {}),
+    ...flag,
+    version: published.version,
+    status: 'published',
+  };
+}
+
 export interface ContentTypeDraft {
   apiId: string;
   name: string;

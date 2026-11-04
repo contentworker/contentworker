@@ -649,7 +649,8 @@ binding selects a dev fallback (in-memory store, fake blob, stub AI, in-memory v
 - `@contentworker/security`: the signed principal (`principal.ts`) and deployment roles.
 - `@contentworker/agent-runtime`: engine-agnostic agent workflow logic and the in-process
   executor (the engine runs the same workflows as durable workflows).
-- `@contentworker/graphql-gen`: the GraphQL delivery schema from published content types.
+- `@contentworker/graphql-gen`: the GraphQL delivery schema from Delivery's published view of the
+  content types.
 - `@contentworker/seed`: the demo dataset (`SEED_DEV`, `SEED_SCALE`).
 - `@contentworker/test-kit`: in-memory `ContentStore` (enforcing the same unit-of-work rule),
   fake blob store, in-memory vectors, deterministic clock and ids.

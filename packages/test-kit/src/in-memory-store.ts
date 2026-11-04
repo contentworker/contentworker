@@ -16,6 +16,7 @@ import {
   cloneJson,
   coversEnvironment,
   type DomainEvent,
+  deliveredContentType,
   type Entry,
   type EntryFields,
   type EntryMetadata,
@@ -33,6 +34,7 @@ import {
   type OutboxEntry,
   type PluginSettings,
   type Promotion,
+  type PublishedContentTypeDefinition,
   projectFields,
   type Redirect,
   type ReferenceEdge,
@@ -191,6 +193,11 @@ export class InMemoryContentStore implements ContentStore {
   private readonly contentTypeData = new JournaledMap<string, ContentType>();
   /** As the D1 column: each type's `singleton` as last saved published, which Delivery serves by. */
   private readonly publishedSingletonData = new JournaledMap<string, boolean>();
+  /** As `content_types.published_definition`: kept while a draft revision holds the type. */
+  private readonly publishedDefinitionData = new JournaledMap<
+    string,
+    PublishedContentTypeDefinition
+  >();
   private readonly entryData = new JournaledMap<string, Entry>();
   /**
    * When each entry last changed, standing in for D1's `updated_at`: stamped from `nowMs`, and
@@ -318,6 +325,8 @@ export class InMemoryContentStore implements ContentStore {
       // space-level keys such as an alias that shares the environment's name). Not the audit log.
       const scoped: Map<string, unknown>[] = [
         this.contentTypeData,
+        this.publishedSingletonData,
+        this.publishedDefinitionData,
         this.entryData,
         this.entryTouched,
         this.versionData,
@@ -415,8 +424,36 @@ export class InMemoryContentStore implements ContentStore {
         .filter(([k]) => k.startsWith(prefix))
         .map(([, v]) => v);
     },
+    // As 0030_published_definition's triggers: leaving published keeps what it was, publishing
+    // drops it, and a draft over a draft leaves it alone.
+    publishedDefinitions: async (scope) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return new Map(
+        [...this.publishedDefinitionData.entries()]
+          .filter(([k]) => k.startsWith(prefix))
+          .map(([k, definition]) => {
+            const singleton = this.publishedSingletonData.get(k) === true;
+            return [
+              k.slice(prefix.length),
+              { ...definition, ...(singleton ? { singleton: true as const } : {}) },
+            ];
+          }),
+      );
+    },
     save: async (scope, ct) => {
       const key = `${scopeKey(scope)}::${ct.apiId}`;
+      const was = this.contentTypeData.get(key);
+      if (ct.status === 'published') {
+        this.publishedDefinitionData.delete(key);
+      } else if (was?.status === 'published') {
+        this.publishedDefinitionData.set(key, {
+          name: was.name,
+          displayField: was.displayField,
+          fields: was.fields,
+          ...(was.urlPattern ? { urlPattern: was.urlPattern } : {}),
+          version: was.version,
+        });
+      }
       this.contentTypeData.set(key, ct);
       if (ct.status === 'published') this.publishedSingletonData.set(key, ct.singleton === true);
     },
@@ -457,17 +494,23 @@ export class InMemoryContentStore implements ContentStore {
       }
       this.contentTypeData.delete(key);
       this.publishedSingletonData.delete(key);
+      this.publishedDefinitionData.delete(key);
     },
   };
 
-  /** As the D1 delivery read: each type with its singleton flag as last published. */
+  /** As the D1 delivery read: the published view of one type. */
+  private deliveredContentType(scope: Scope, ct: ContentType): ContentType {
+    const key = `${scopeKey(scope)}::${ct.apiId}`;
+    return deliveredContentType(
+      ct,
+      this.publishedDefinitionData.get(key) ?? null,
+      this.publishedSingletonData.get(key) === true,
+    );
+  }
+
+  /** As the D1 delivery read: each type as last published. */
   private async deliveredContentTypes(scope: Scope): Promise<ContentType[]> {
-    return (await this.contentTypes.list(scope)).map((ct) => {
-      const { singleton: _draft, ...rest } = ct;
-      return this.publishedSingletonData.get(`${scopeKey(scope)}::${ct.apiId}`)
-        ? { ...rest, singleton: true as const }
-        : rest;
-    });
+    return (await this.contentTypes.list(scope)).map((ct) => this.deliveredContentType(scope, ct));
   }
 
   /**
@@ -1818,8 +1861,9 @@ export class InMemoryContentStore implements ContentStore {
           .filter(([k, p]) => k.startsWith(prefix) && p.contentTypeApiId === apiId)
           .map(([, p]) => p)
           .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
+        const working = await this.contentTypes.get(scope, apiId);
         singleton = {
-          contentType: (await this.contentTypes.get(scope, apiId)) ?? null,
+          contentType: working ? this.deliveredContentType(scope, working) : null,
           publishedSingleton:
             this.publishedSingletonData.get(`${scopeKey(scope)}::${apiId}`) === true,
           entry: first ?? null,
@@ -3268,6 +3312,7 @@ export class InMemoryContentStore implements ContentStore {
       this.memberData,
       this.contentTypeData,
       this.publishedSingletonData,
+      this.publishedDefinitionData,
       this.entryData,
       this.entryTouched,
       this.versionData,

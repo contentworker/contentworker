@@ -349,6 +349,17 @@ where the retention sweep resumes in that environment; NULL is from the oldest) 
 updated_at, id) WHERE status = 'archived'`, which the engine's trash retention sweep reads. Nothing
 is backfilled (see [Architecture](./architecture.md)).
 
+`0030_published_definition.sql` adds the nullable JSON `content_types.published_definition`, the
+definition a live type serves while a draft revision holds its row, and two triggers on `status`
+that keep it: `content_types_keep_published` copies the old row when a save leaves `published`, and
+`content_types_clear_published` clears it on a publish. Triggers, not the store, because CI migrates
+before deploying and a rollback leaves the migration: code that doesn't know the column saves rows
+here too, and a copy only new code made would go stale under it. The store's upsert doesn't name
+the column. Delivery reads the row whenever it is published, so nothing left beside it can be
+served. Nothing is backfilled: NULL serves the row as before. While a draft is outstanding a row
+holds its fields twice, against D1's 2 MB row limit; a save that would pass it is refused, which is
+about 1 MB of field definitions (see [Domain model](./domain-model.md#content-type)).
+
 `0026_content_type_details.sql` adds four nullable columns to `content_types`: `group_name`,
 `description`, `icon` and `layout` (JSON, the entry form's tabs and field groups; editor-only and
 never delivered). Code older than the migration neither reads nor writes them, and its upsert

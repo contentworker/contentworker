@@ -93,13 +93,8 @@ async function setup() {
   return { app, wired, save, publish, entry, graphql, routes };
 }
 
-/**
- * `it.fails` because Delivery doesn't hold to this yet: `content_types` keeps one definition per
- * type, so a draft save overwrites the published one. Each turns red when Delivery gets a published
- * definition to read; drop the `.fails` then.
- */
 describe('Delivery while a live type has an unpublished revision', () => {
-  it.fails('keeps a draft field out of GraphQL until the type is published', async () => {
+  it('keeps a draft field out of GraphQL until the type is published', async () => {
     const { save, publish, graphql } = await setup();
     const query = '{ pageCollection { subtitle } }';
     expect((await graphql(query)).status).toBe(400);
@@ -111,7 +106,7 @@ describe('Delivery while a live type has an unpublished revision', () => {
     expect((await graphql(query)).status).toBe(200);
   });
 
-  it.fails('keeps a field’s published type in GraphQL through a draft that changes it', async () => {
+  it('keeps a field’s published type in GraphQL through a draft that changes it', async () => {
     const { save, graphql } = await setup();
     const query = '{ pageCollection { title } }';
     expect((await graphql(query)).body.errors).toBeUndefined();
@@ -124,27 +119,49 @@ describe('Delivery while a live type has an unpublished revision', () => {
     });
   });
 
-  it.fails('keeps a live type in the routes through a draft revision', async () => {
+  it('keeps a live type in the routes through a draft revision', async () => {
     const { save, routes } = await setup();
     await save({ ...definition, name: 'Pages' });
     expect(await routes()).toEqual([{ contentType: 'page', urlPattern: '/{slug}' }]);
   });
 
-  it.fails('keeps a live type in the routes through a save that changes nothing', async () => {
+  it('keeps a live type in the routes through a save that changes nothing', async () => {
     const { save, routes } = await setup();
     await save(definition);
     expect(await routes()).toEqual([{ contentType: 'page', urlPattern: '/{slug}' }]);
   });
 
-  it.fails('holds a draft URL pattern back until the type is published', async () => {
+  it('holds a draft URL pattern back until the type is published', async () => {
     const { save, routes } = await setup();
     await save({ ...definition, urlPattern: '/pages/{slug}' });
     expect(await routes()).toEqual([{ contentType: 'page', urlPattern: '/{slug}' }]);
   });
 });
 
-describe('what Delivery does today', () => {
-  it('serves an entry of a never-published type over REST and GraphQL today', async () => {
+describe('the Management API while a live type has an unpublished revision', () => {
+  it('reads the draft, as a save returned it', async () => {
+    const { app, save, routes } = await setup();
+    const saved = await save({ ...definition, urlPattern: '/pages/{slug}' });
+    expect(await saved.json()).toMatchObject({ status: 'draft', version: 2 });
+    const res = await app.request(`${M}/content-types/page`, { headers: cma });
+    expect(await res.json()).toMatchObject({
+      status: 'draft',
+      urlPattern: '/pages/{slug}',
+      version: 2,
+    });
+    expect(await routes()).toEqual([{ contentType: 'page', urlPattern: '/{slug}' }]);
+  });
+
+  it('brings the draft to Delivery with the publish', async () => {
+    const { save, publish, routes } = await setup();
+    await save({ ...definition, urlPattern: '/pages/{slug}' });
+    await publish('page');
+    expect(await routes()).toEqual([{ contentType: 'page', urlPattern: '/pages/{slug}' }]);
+  });
+});
+
+describe('what stays as it was', () => {
+  it('serves an entry of a never-published type over REST and GraphQL', async () => {
     const { app, save, entry, graphql, routes } = await setup();
     await save({ ...definition, apiId: 'event' });
     const id = await entry('event', 'launch');
@@ -153,6 +170,33 @@ describe('what Delivery does today', () => {
       eventCollection: [{ title: 'launch' }],
     });
     expect(await routes()).toEqual([{ contentType: 'page', urlPattern: '/{slug}' }]);
+  });
+
+  it('serves a draft-only field’s value over REST before GraphQL has the field', async () => {
+    const { app, save, publish, graphql } = await setup();
+    await save({ ...definition, fields: [...fields, field('subtitle', 'Symbol', 2)] });
+    const res = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        contentTypeApiId: 'page',
+        fields: {
+          title: { 'en-US': 'T' },
+          slug: { 'en-US': 't' },
+          subtitle: { 'en-US': 'Early' },
+        },
+      }),
+    });
+    const { entry } = (await res.json()) as { entry: { id: string } };
+    await app.request(`${M}/entries/${entry.id}/published`, { method: 'POST', headers: cma });
+    const rest = await app.request(`${D}/entries/${entry.id}?locale=en-US`, { headers: cda });
+    expect(((await rest.json()) as { fields: unknown }).fields).toMatchObject({
+      subtitle: 'Early',
+    });
+    expect((await graphql('{ pageCollection { subtitle } }')).status).toBe(400);
+
+    await publish('page');
+    expect((await graphql('{ pageCollection { subtitle } }')).status).toBe(200);
   });
 
   it('announces nothing for a draft save, so no purge follows', async () => {

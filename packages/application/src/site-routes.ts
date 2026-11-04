@@ -3,7 +3,7 @@ import type { AppContext } from './context';
 import { type DeliveryReads, deliveryReads } from './delivery-reads';
 
 /**
- * Site routes: where each published content type's entries live on the site (`urlPattern`), so a
+ * Site routes: where each live content type's entries live on the site (`urlPattern`), so a
  * front end can route pages from the content model instead of hard-coding them. contentworker
  * serves no site, so these are delivery data, like redirects.
  */
@@ -24,7 +24,10 @@ export interface RouteDeliveryOptions {
   readonly reads?: DeliveryReads;
 }
 
-/** Every published content type with a URL pattern, by content type. */
+/**
+ * Every published content type with a URL pattern, by content type: as last published, so a live
+ * type stays here, under the pattern a front end routes by, through a draft revision.
+ */
 export async function listDeliveredRoutes(
   ctx: AppContext,
   scope: Scope,

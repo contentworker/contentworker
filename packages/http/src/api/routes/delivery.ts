@@ -537,9 +537,10 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
   );
 
   // --- GraphQL Delivery ---------------------------------------------------
-  // Schema is generated from the content types the principal may read and
-  // cached content-addressed (scope + visible apiId@version set), so it
-  // rebuilds automatically when the content-type set/versions change and is
+  // Schema is generated from the published view of the content types the
+  // principal may read and cached content-addressed (scope + visible
+  // apiId@version set, each the version last published, so a draft of a live
+  // type rebuilds nothing). It rebuilds when the set or those versions change and is
   // shared across principals with the same visible shape. The schema holds NO
   // principal state — resolvers travel per-request via the GraphQL
   // contextValue (a cached schema serving another caller's closures would be

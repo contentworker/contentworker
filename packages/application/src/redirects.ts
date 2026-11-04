@@ -4,6 +4,7 @@ import {
   checkRedirect,
   collapseRedirectChains,
   createRedirectMatcher,
+  deliveredContentType,
   type EntryFields,
   MAX_REDIRECT_IMPORT,
   MAX_REDIRECTS,
@@ -446,9 +447,17 @@ export async function slugRedirectWrites(
   previouslyPublished: ReadonlySet<string>,
 ): Promise<() => Promise<void>> {
   const none = async () => {};
-  const candidates = publishing.filter(
-    (p) => p.contentType.urlPattern?.includes('{') && previouslyPublished.has(p.entryId),
-  );
+  // Paths move by the URL pattern Delivery serves: a type with a draft revision moves its entries
+  // by the definition last published, not a pattern no front end routes by yet. Read only then.
+  const kept = publishing.some((p) => p.contentType.status !== 'published')
+    ? await tx.contentTypes.publishedDefinitions(scope)
+    : null;
+  const candidates = publishing
+    .map((p) => {
+      const live = kept?.get(p.contentType.apiId);
+      return live ? { ...p, contentType: deliveredContentType(p.contentType, live, false) } : p;
+    })
+    .filter((p) => p.contentType.urlPattern?.includes('{') && previouslyPublished.has(p.entryId));
   if (candidates.length === 0) return none;
   const previous = new Map(
     (

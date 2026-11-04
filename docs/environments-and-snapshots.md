@@ -36,6 +36,14 @@ exist (create it first). Merging two content models is a different and much hard
 `compare`/`merge` for the intra-space case. Cloning is the cross-space case those cannot cover, and
 the target space is authorized separately so a clone cannot cross a tenancy boundary.
 
+A live type with a draft revision carries what it serves in `published` beside its draft
+(`SnapshotContentType`), and `writeSnapshotModel` publishes that first and saves the draft over it,
+so the target serves what the source served. Versions start again in the target, as for any type.
+The field is optional and `snapshotVersion` stays 1: a snapshot from before it, or a draft with
+nothing kept, imports as a plain draft. A merge or a promotion copies the source's current
+definition and no `published`: over a live target the target keeps serving its own definition until
+it is published, and into a target without the type it arrives as a plain draft.
+
 A snapshot's content model is normalised once, before the checks (`normalizeSnapshotModel`): an
 `in` list stored before options were checked keeps its usable options, once each (and goes when
 none is left), and unusable guidance, messages and conditional rules are dropped, rather than

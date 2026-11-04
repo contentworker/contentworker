@@ -24,6 +24,7 @@ import type {
   PromotionResult,
   PromotionRisk,
   PromotionStatus,
+  PublishedContentTypeDefinition,
   RedirectOrigin,
   RedirectStatus,
   RenditionFit,
@@ -158,6 +159,12 @@ export const environmentPromotions = sqliteTable(
   ],
 );
 
+/** `content_types.published_definition` as its trigger writes it (a null pattern, no flag). */
+export type StoredPublishedDefinition = Omit<
+  PublishedContentTypeDefinition,
+  'urlPattern' | 'singleton'
+> & { readonly urlPattern: string | null };
+
 export const contentTypes = sqliteTable(
   'content_types',
   {
@@ -178,6 +185,14 @@ export const contentTypes = sqliteTable(
     publishedSingleton: integer('published_singleton', { mode: 'boolean' })
       .notNull()
       .default(false),
+    /**
+     * The definition last published, while a draft revision holds this row: what Delivery serves.
+     * Null otherwise. Written only by 0030_published_definition's triggers, on `status`, so code
+     * of any version keeps it right; never set it here.
+     */
+    publishedDefinition: text('published_definition', {
+      mode: 'json',
+    }).$type<StoredPublishedDefinition>(),
     /** The admin's sidebar group, description and icon (0026_content_type_details). */
     group: text('group_name'),
     description: text('description'),

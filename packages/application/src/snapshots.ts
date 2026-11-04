@@ -30,6 +30,7 @@ import {
   type MenuItem,
   NotFoundError,
   normalizeLegacyFields,
+  type PublishedContentTypeDefinition,
   type Redirect,
   redirectKey,
   redirectSetError,
@@ -103,11 +104,19 @@ export interface SnapshotEntry {
   readonly firstPublishedAt?: string;
 }
 
+/**
+ * A content type in a snapshot. `published` is the definition a live type serves while `status` is
+ * `draft`; a snapshot from before these were kept has none, and the type imports as a plain draft.
+ */
+export type SnapshotContentType = ContentType & {
+  readonly published?: PublishedContentTypeDefinition;
+};
+
 export interface EnvironmentSnapshot {
   readonly snapshotVersion: number;
   readonly exportedAt: string;
   readonly source: { readonly spaceId: string; readonly environmentId: string };
-  readonly contentTypes: readonly ContentType[];
+  readonly contentTypes: readonly SnapshotContentType[];
   readonly entries: readonly SnapshotEntry[];
   /** Metadata only — binaries stay in the blob store and are never copied. */
   readonly assets: readonly Asset[];
@@ -188,7 +197,14 @@ export async function exportSnapshot(
   const config = await ctx.store.spaces.getConfig(scope);
   if (!config) throw new NotFoundError('Space', scope.spaceId);
 
-  const contentTypes = await ctx.store.contentTypes.list(scope);
+  const [workingTypes, publishedTypes] = await Promise.all([
+    ctx.store.contentTypes.list(scope),
+    ctx.store.contentTypes.publishedDefinitions(scope),
+  ]);
+  const contentTypes = workingTypes.map((ct): SnapshotContentType => {
+    const published = publishedTypes.get(ct.apiId);
+    return published ? { ...ct, published } : ct;
+  });
   // Every page, not the store's default first page (100 on D1): a snapshot that silently stopped
   // at 100 entries made exports and clones of any real environment incomplete.
   const rows =
@@ -542,6 +558,9 @@ export function normalizeSnapshotModel(snapshot: EnvironmentSnapshot): Environme
     contentTypes: snapshot.contentTypes.map((ct) => ({
       ...ct,
       fields: normalizeLegacyFields(ct.fields),
+      ...(ct.published
+        ? { published: { ...ct.published, fields: normalizeLegacyFields(ct.published.fields) } }
+        : {}),
     })),
   };
 }
@@ -561,6 +580,25 @@ export async function writeSnapshotModel(
   // snapshot's either way: left out, a revision would keep the target's, and a clone promoted or
   // merged back would then turn production's off (or keep one the source no longer has).
   for (const ct of snapshot.contentTypes) {
+    // A live type with a draft: published first, so the draft lands over it as it did at the source
+    // and the target serves what the source served. Versions start again here, as for any type.
+    // Only into a target without it: a retried write finds it there, its entries perhaps already
+    // holding draft-only values, which going back through the published definition would refuse.
+    if (
+      ct.status !== 'published' &&
+      ct.published &&
+      !(await ctx.store.contentTypes.get(target, ct.apiId))
+    ) {
+      await createContentType(ctx, target, {
+        apiId: ct.apiId,
+        name: ct.published.name,
+        displayField: ct.published.displayField,
+        fields: [...ct.published.fields],
+        ...(ct.published.urlPattern ? { urlPattern: ct.published.urlPattern } : {}),
+        singleton: ct.published.singleton === true,
+      });
+      await publishContentType(ctx, target, ct.apiId);
+    }
     await createContentType(ctx, target, {
       apiId: ct.apiId,
       name: ct.name,

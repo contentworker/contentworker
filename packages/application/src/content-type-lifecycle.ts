@@ -62,14 +62,18 @@ export async function contentTypeDependents(
   scope: Scope,
   apiId: string,
 ): Promise<ContentTypeDependents> {
-  const [type, types, counts, menus, redirects] = await Promise.all([
+  const [type, kept, types, counts, menus, redirects] = await Promise.all([
     ctx.store.contentTypes.get(scope, apiId),
+    ctx.store.contentTypes.publishedDefinitions(scope),
     ctx.store.contentTypes.list(scope),
     ctx.store.entries.countByStatus(scope),
     ctx.store.menus.all(scope),
     ctx.store.redirects.all(scope),
   ]);
   if (!type) throw new NotFoundError('ContentType', apiId);
+  // The pattern Delivery serves, which a draft's change hasn't reached: a draft clearing it doesn't
+  // take the type off the routes, so it doesn't free the type to go either.
+  const urlPattern = kept.get(apiId)?.urlPattern ?? type.urlPattern;
   let live = 0;
   let trashed = 0;
   for (const c of counts) {
@@ -102,7 +106,7 @@ export async function contentTypeDependents(
     redirects: slugRedirects
       .filter((r) => ours.has(r.entryId as string))
       .map((r) => ({ id: r.id, source: r.source })),
-    ...(type.urlPattern ? { urlPattern: type.urlPattern } : {}),
+    ...(urlPattern ? { urlPattern } : {}),
   };
 }
 

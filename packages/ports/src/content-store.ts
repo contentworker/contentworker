@@ -40,6 +40,7 @@ import type {
   PluginSettings,
   Promotion,
   PromotionStatus,
+  PublishedContentTypeDefinition,
   PublishGate,
   QueryFilter,
   QueryNode,
@@ -1548,7 +1549,7 @@ export interface DeliveryReadRequest {
 
 /** A content type and its published entry, as {@link DeliveryReadRequest.singleton} reads them. */
 export interface SingletonRead {
-  /** Null when no content type has the apiId. */
+  /** As Delivery serves it (`deliveredContentType`). Null when no content type has the apiId. */
   readonly contentType: ContentType | null;
   /**
    * Whether the type's published revision is a singleton: what Delivery serves by, so a draft
@@ -1612,6 +1613,11 @@ export interface DeliveryReadResult {
   readonly config?: SpaceConfig | null;
   /** The space's per-locale settings (`{}` for none), when asked and the asset read found rows. */
   readonly assetLocales?: Readonly<Record<LocaleCode, LocaleSettings>>;
+  /**
+   * The published view of every type (`deliveredContentType`), not the working definitions
+   * `ContentTypeRepo` reads: a live type with a draft revision is here as last published, and a
+   * draft with no published definition as it stands, status `draft`.
+   */
   readonly contentTypes?: ContentType[];
   readonly renditions?: AssetRendition[];
   readonly entry?: PublishedEntry | null;
@@ -1731,6 +1737,12 @@ export interface SpaceRepo {
 export interface ContentTypeRepo {
   get(scope: Scope, apiId: string): Promise<ContentType | null>;
   list(scope: Scope): Promise<ContentType[]>;
+  /**
+   * The definitions kept for types with a draft revision over a published one, by apiId: what
+   * Delivery serves for them. Types with nothing kept aren't in it. The store keeps these itself: a
+   * save that takes a published type to draft keeps what it was, and a publish drops it.
+   */
+  publishedDefinitions(scope: Scope): Promise<ReadonlyMap<string, PublishedContentTypeDefinition>>;
   /** Upserts the definition at its version. */
   save(scope: Scope, contentType: ContentType): Promise<void>;
   /**

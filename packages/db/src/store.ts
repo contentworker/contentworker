@@ -14,12 +14,14 @@ import {
   ConflictError,
   type ContentType,
   type DomainEvent,
+  deliveredContentType,
   type Entry,
   type EntryFields,
   type EntryMetadata,
   type EntryVersion,
   type EventType,
   entrySysOf,
+  type FieldDefinition,
   type InstalledPlugin,
   isWebhookSendRequest,
   type LocaleSettings,
@@ -30,6 +32,7 @@ import {
   type OutboxEntry,
   type PluginSettings,
   type Promotion,
+  type PublishedContentTypeDefinition,
   projectFields,
   type QueryFilter,
   QueryTooBroadError,
@@ -272,13 +275,31 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
   return {
     async get(scope, apiId) {
       const [row] = await db
-        .select()
+        .select(workingColumns)
         .from(schema.contentTypes)
         .where(and(scopeFilter(schema.contentTypes, scope), eq(schema.contentTypes.apiId, apiId)));
       return row ? toContentType(row) : null;
     },
     async list(scope) {
       return (await contentTypesQuery(db, scope)).map(toContentType);
+    },
+    async publishedDefinitions(scope) {
+      const t = schema.contentTypes;
+      const rows = await db
+        .select({
+          apiId: t.apiId,
+          definition: t.publishedDefinition,
+          publishedSingleton: t.publishedSingleton,
+        })
+        .from(t)
+        .where(
+          and(scopeFilter(t, scope), ne(t.status, 'published'), isNotNull(t.publishedDefinition)),
+        );
+      return new Map(
+        rows.flatMap(({ apiId, definition, publishedSingleton }) =>
+          definition ? [[apiId, toPublishedDefinition(definition, publishedSingleton)]] : [],
+        ),
+      );
     },
     async save(scope, ct) {
       const values = {
@@ -6725,8 +6746,42 @@ function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
 const spaceConfigQuery = (db: Db, scope: Scope) =>
   db.select().from(schema.spaces).where(eq(schema.spaces.id, scope.spaceId));
 
+// A working definition has no use for the copy of the published one: nothing reads it there.
+const { publishedDefinition: _kept, ...workingColumns } = getTableColumns(schema.contentTypes);
+
 const contentTypesQuery = (db: Db, scope: Scope) =>
-  db.select().from(schema.contentTypes).where(scopeFilter(schema.contentTypes, scope));
+  db
+    .select(workingColumns)
+    .from(schema.contentTypes)
+    .where(scopeFilter(schema.contentTypes, scope));
+
+/**
+ * The columns the published view reads: the row's, and the kept definition. A row that has one
+ * brings no draft `fields` beside it, so the read is no larger than a row with only its own.
+ */
+const deliveredContentTypeColumns = (t: typeof schema.contentTypes) => ({
+  apiId: t.apiId,
+  name: t.name,
+  displayField: t.displayField,
+  fields: sql<
+    FieldDefinition[]
+  >`CASE WHEN ${t.status} <> 'published' AND ${t.publishedDefinition} IS NOT NULL THEN '[]' ELSE ${t.fields} END`.mapWith(
+    t.fields,
+  ),
+  urlPattern: t.urlPattern,
+  version: t.version,
+  status: t.status,
+  publishedSingleton: t.publishedSingleton,
+  publishedDefinition: t.publishedDefinition,
+});
+
+const deliveredContentTypesQuery = (db: Db, scope: Scope, apiId?: string) => {
+  const t = schema.contentTypes;
+  return db
+    .select(deliveredContentTypeColumns(t))
+    .from(t)
+    .where(and(scopeFilter(t, scope), apiId === undefined ? undefined : eq(t.apiId, apiId)));
+};
 
 /** Rendition presets are the space's, not an environment's. */
 const renditionsQuery = (db: Db, scope: Scope) =>
@@ -6876,11 +6931,9 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         });
       }
       if (request.contentTypes) {
-        // Delivery's view: the singleton flag as last published, not as a draft has it.
-        add(contentTypesQuery(db, scope), (rows) => {
-          result.contentTypes = rows.map((row) =>
-            toContentType({ ...row, singleton: row.publishedSingleton }),
-          );
+        // Delivery's view: each type as last published, not as a draft has it.
+        add(deliveredContentTypesQuery(db, scope), (rows) => {
+          result.contentTypes = rows.map(toDeliveredContentType);
         });
       }
       if (request.renditions) {
@@ -7036,18 +7089,10 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
           entry: PublishedEntry | null;
         } = { contentType: null, publishedSingleton: false, entry: null };
         result.singleton = read;
-        add(
-          db
-            .select()
-            .from(schema.contentTypes)
-            .where(
-              and(scopeFilter(schema.contentTypes, scope), eq(schema.contentTypes.apiId, apiId)),
-            ),
-          ([row]) => {
-            read.contentType = row ? toContentType(row) : null;
-            read.publishedSingleton = row?.publishedSingleton === true;
-          },
-        );
+        add(deliveredContentTypesQuery(db, scope, apiId), ([row]) => {
+          read.contentType = row ? toDeliveredContentType(row) : null;
+          read.publishedSingleton = row?.publishedSingleton === true;
+        });
         const ep = schema.entryPublished;
         add(
           db
@@ -7193,7 +7238,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
 
 // ---- row mappers ----------------------------------------------------------
 
-type CtRow = typeof schema.contentTypes.$inferSelect;
+type CtRow = Omit<typeof schema.contentTypes.$inferSelect, 'publishedDefinition'>;
 type EntryRow = typeof schema.entries.$inferSelect;
 type PubRow = typeof schema.entryPublished.$inferSelect;
 
@@ -7211,6 +7256,42 @@ const toContentType = (r: CtRow): ContentType => ({
   version: r.version,
   status: r.status,
 });
+
+const toPublishedDefinition = (
+  { urlPattern, ...definition }: schema.StoredPublishedDefinition,
+  publishedSingleton: boolean,
+): PublishedContentTypeDefinition => ({
+  ...definition,
+  ...(urlPattern ? { urlPattern } : {}),
+  ...(publishedSingleton ? { singleton: true as const } : {}),
+});
+
+const toDeliveredContentType = (r: {
+  apiId: string;
+  name: string;
+  displayField: string;
+  fields: FieldDefinition[];
+  urlPattern: string | null;
+  version: number;
+  status: ContentType['status'];
+  publishedSingleton: boolean;
+  publishedDefinition: schema.StoredPublishedDefinition | null;
+}): ContentType =>
+  deliveredContentType(
+    {
+      apiId: r.apiId,
+      name: r.name,
+      displayField: r.displayField,
+      fields: r.fields,
+      ...(r.urlPattern ? { urlPattern: r.urlPattern } : {}),
+      version: r.version,
+      status: r.status,
+    },
+    r.publishedDefinition
+      ? toPublishedDefinition(r.publishedDefinition, r.publishedSingleton)
+      : null,
+    r.publishedSingleton,
+  );
 
 const toEntry = (r: EntryRow): Entry => ({
   id: r.id,
