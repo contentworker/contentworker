@@ -16,6 +16,7 @@ import {
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  archiveAsset,
   assetFileKey,
   assetGateEntry,
   assetKeyVersion,
@@ -476,6 +477,7 @@ describe('deleting a versioned asset', () => {
     await h.blob.put(`shop/main/${asset.id}/v1/text.md`, 'text', 'text/markdown');
     await h.blob.put(`shop/main/${asset.id}/v2/text.md`, 'text', 'text/markdown');
     const other = await upload(h, 'other.png');
+    await archiveAsset(h.ctx, scope, asset.id);
     await deleteAsset(h.ctx, scope, asset.id);
     await h.drain();
     expect(h.blob.keys().filter((k) => k.includes(asset.id))).toEqual([]);

@@ -189,6 +189,8 @@ describe('asset library tools (MCP), on the same use-cases as the HTTP routes', 
     });
 
     const free = await add('free.png', 'image/png');
+    expect((await call('asset_delete', free.id)).isError).toBe(true);
+    await call('asset_archive', free.id);
     expect(payload(await call('asset_delete', free.id))).toEqual({ deleted: free.id });
   });
 

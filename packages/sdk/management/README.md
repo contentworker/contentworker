@@ -75,6 +75,7 @@ object and the raw `body`. Guards narrow it to the details a code carries:
 import { isAssetInUse, isAssetRightsError } from '@contentworker/sdk/management';
 
 try {
+  await cma.assets.archive(id); // deleting needs an archived asset
   await cma.assets.delete(id);
 } catch (err) {
   if (isAssetInUse(err)) {

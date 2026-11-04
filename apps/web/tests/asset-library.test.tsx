@@ -414,8 +414,15 @@ describe('archiving and deleting', () => {
     await waitFor(() => expect(client.restoreAsset).toHaveBeenCalledWith('a1'));
   });
 
-  it('asks first, then deletes', async () => {
+  it('offers Delete only once an asset is archived', async () => {
     assets = [asset()];
+    renderLibrary();
+    await screen.findByRole('button', { name: 'Archive “photo.jpg”' });
+    expect(screen.queryByRole('button', { name: 'Delete “photo.jpg”' })).toBeNull();
+  });
+
+  it('asks first, then deletes', async () => {
+    assets = [asset({ status: 'archived' })];
     renderLibrary();
     fireEvent.click(await screen.findByRole('button', { name: 'Delete “photo.jpg”' }));
     const confirm = screen.getByRole('alertdialog', { name: /Delete “photo.jpg”\?/ });
@@ -425,7 +432,7 @@ describe('archiving and deleting', () => {
   });
 
   it('shows the entries that use an asset when the delete is refused', async () => {
-    assets = [asset()];
+    assets = [asset({ status: 'archived' })];
     client.deleteAsset.mockRejectedValueOnce(
       new ApiError(409, 'in use', {
         error: {
@@ -458,15 +465,12 @@ describe('archiving and deleting', () => {
     expect(client.getEntry).not.toHaveBeenCalled();
     // The confirm that caused it was elsewhere: the notice takes focus, so it is read out.
     await waitFor(() => expect(document.activeElement).toBe(notice));
-
-    fireEvent.click(within(notice).getByRole('button', { name: 'Archive instead' }));
-    await waitFor(() => expect(client.archiveAsset).toHaveBeenCalledWith('a1'));
   });
 });
 
 describe('an asset in heavy use', () => {
   it('lists the first few links and counts the rest', async () => {
-    assets = [asset()];
+    assets = [asset({ status: 'archived' })];
     const usage = Array.from({ length: 50 }, (_, i) => ({
       fromEntryId: `e${i}`,
       fromField: 'hero',

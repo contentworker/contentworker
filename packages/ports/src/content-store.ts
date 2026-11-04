@@ -1905,6 +1905,13 @@ export interface EntryRepo {
    * are absent.
    */
   contentTypesOf(scope: Scope, ids: readonly string[]): Promise<ReadonlyMap<string, string>>;
+  /**
+   * Ids of up to `limit` entries, the trash included, whose current version has `text` anywhere in
+   * its fields. A scan of the environment's current versions, for rare checks that must see what
+   * the reference graph doesn't (it holds published links only). A match is a candidate, not a
+   * link: read the entry to find out what the text is.
+   */
+  idsMentioning(scope: Scope, text: string, limit: number): Promise<string[]>;
   /** Lists draft/current entries (the Preview read path), newest-affected first. */
   list(scope: Scope, query: EntryQuery): Promise<EntryWithFields[]>;
   /**

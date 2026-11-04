@@ -1,6 +1,7 @@
 import {
   type AppContext,
   addToAssetCollection,
+  archiveAsset,
   completeMultipartAssetUpload,
   createAsset,
   createAssetCollection,
@@ -162,6 +163,7 @@ describe('collections on D1', () => {
     expect((await store.assetCollections.collectionsOf(scope, a.id, 10)).sort()).toEqual(
       [x.id, y.id].sort(),
     );
+    await archiveAsset(ctx, scope, a.id);
     await deleteAsset(ctx, scope, a.id);
     expect(await store.assetCollections.collectionsOf(scope, a.id, 10)).toEqual([]);
   });

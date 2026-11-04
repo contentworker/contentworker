@@ -354,8 +354,9 @@ embeds, Preview and GraphQL's `Asset` type.
   bulk-job machinery: chunks of 200, CAS-claimed, swept when stalled. Each asset goes through its
   single-asset use-case (`assetBulkChunkRunner`), and a failure carries the asset's `name` (title or
   file name) in the job report.
-- **Deleting** an asset (`DELETE …/assets/:id`, refused with `409 asset_in_use` while entries link
-  to it) removes the row and its version history in one unit with an `asset.deleted` event; the
+- **Deleting** an asset (`DELETE …/assets/:id`, only once it is archived, and refused with
+  `409 asset_in_use` while entries link to it, drafts and the trash included) removes the row and
+  its version history in one unit with an `asset.deleted` event; the
   engine then deletes every version's bytes under the asset's key prefix (and, for an imported
   asset replaced here, under this environment's prefix too) and its hosted video, unless another
   environment of the space still holds an asset with that id (an environment import shares

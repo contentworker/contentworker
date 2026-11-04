@@ -3,6 +3,7 @@ import {
   type DomainEvent,
   InvalidStateError,
   MAX_ASSET_USAGE_SHOWN,
+  NotFoundError,
 } from '@contentworker/domain';
 import {
   FakeBlobStore,
@@ -30,6 +31,9 @@ import {
   publishContentType,
   publishEntry,
   restoreAsset,
+  trashEntry,
+  unpublishEntry,
+  updateEntry,
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -65,7 +69,11 @@ async function upload(h: ReturnType<typeof setup>, fileName = 'hero.png') {
   return asset;
 }
 
-async function linkFromEntry(h: ReturnType<typeof setup>, assetId: string) {
+async function linkFromEntry(
+  h: ReturnType<typeof setup>,
+  assetId: string,
+  opts: { publish?: boolean; title?: string } = {},
+) {
   await createContentType(h.ctx, scope, {
     apiId: 'page',
     name: 'Page',
@@ -94,11 +102,11 @@ async function linkFromEntry(h: ReturnType<typeof setup>, assetId: string) {
   const created = await createEntry(h.ctx, scope, {
     contentTypeApiId: 'page',
     fields: {
-      title: { 'en-US': 'Home' },
+      title: { 'en-US': opts.title ?? 'Home' },
       hero: { 'en-US': { id: assetId, linkType: 'Asset' } },
     },
   });
-  await publishEntry(h.ctx, scope, created.entry.id);
+  if (opts.publish !== false) await publishEntry(h.ctx, scope, created.entry.id);
   return created.entry.id;
 }
 
@@ -190,6 +198,45 @@ describe('deleting an asset', () => {
     expect(await getAsset(h.ctx, scope, asset.id)).toMatchObject({ id: asset.id });
   });
 
+  it('is refused until it is archived, and archiving can still be undone', async () => {
+    const asset = await upload(h);
+    await publishAsset(h.ctx, scope, asset.id);
+    await expect(deleteAsset(h.ctx, scope, asset.id)).rejects.toBeInstanceOf(InvalidStateError);
+    await archiveAsset(h.ctx, scope, asset.id);
+    await restoreAsset(h.ctx, scope, asset.id);
+    await expect(deleteAsset(h.ctx, scope, asset.id)).rejects.toBeInstanceOf(InvalidStateError);
+    expect(h.store.allEvents().some((e) => e.type === 'asset.deleted')).toBe(false);
+  });
+
+  it('is refused while only a draft links to it, and names the draft', async () => {
+    const asset = await upload(h);
+    const entryId = await linkFromEntry(h, asset.id, { publish: false, title: 'Launch' });
+
+    const refused = await deleteAsset(h.ctx, scope, asset.id).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(AssetInUseError);
+    expect((refused as AssetInUseError).usage).toEqual([
+      expect.objectContaining({ fromEntryId: entryId, toId: asset.id, entryTitle: 'Launch' }),
+    ]);
+  });
+
+  it('is refused while an unpublished or trashed entry links to it', async () => {
+    const asset = await upload(h);
+    const entryId = await linkFromEntry(h, asset.id);
+    await unpublishEntry(h.ctx, scope, entryId);
+    await expect(deleteAsset(h.ctx, scope, asset.id)).rejects.toBeInstanceOf(AssetInUseError);
+    await trashEntry(h.ctx, scope, entryId);
+    await expect(deleteAsset(h.ctx, scope, asset.id)).rejects.toBeInstanceOf(AssetInUseError);
+  });
+
+  it('goes once the draft stops linking, and a mere mention of its id is no link', async () => {
+    const asset = await upload(h);
+    const entryId = await linkFromEntry(h, asset.id, { publish: false });
+    await updateEntry(h.ctx, scope, entryId, { title: { 'en-US': `See ${asset.id}` } });
+    await archiveAsset(h.ctx, scope, asset.id);
+    await deleteAsset(h.ctx, scope, asset.id);
+    await expect(getAsset(h.ctx, scope, asset.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
   it('names each linking entry by type and title, and caps the list while counting all', async () => {
     const asset = await upload(h);
     await publishAsset(h.ctx, scope, asset.id);
@@ -241,6 +288,7 @@ describe('deleting an asset', () => {
       return original(s, id);
     };
 
+    await archiveAsset(h.ctx, scope, asset.id);
     await expect(deleteAsset(h.ctx, scope, asset.id)).rejects.toBeInstanceOf(AssetInUseError);
     expect(await getAsset(h.ctx, scope, asset.id)).toMatchObject({ id: asset.id });
     expect(h.store.allEvents().some((e) => e.type === 'asset.deleted')).toBe(false);
@@ -250,6 +298,8 @@ describe('deleting an asset', () => {
     const asset = await upload(h);
     await publishAsset(h.ctx, scope, asset.id);
     const before = h.store.allEvents().length;
+
+    await archiveAsset(h.ctx, scope, asset.id);
 
     await deleteAsset(h.ctx, scope, asset.id);
 
@@ -269,6 +319,7 @@ describe('deleting an asset', () => {
 
   it('removes the bytes once even when the event is delivered twice', async () => {
     const asset = await upload(h);
+    await archiveAsset(h.ctx, scope, asset.id);
     await deleteAsset(h.ctx, scope, asset.id);
     const deleted = h.store.allEvents().find((e) => e.type === 'asset.deleted') as DomainEvent;
     await h.drain();
@@ -281,6 +332,7 @@ describe('deleting an asset', () => {
       fileName: 'intro.mp4',
       contentType: 'video/mp4',
     });
+    await archiveAsset(h.ctx, scope, asset.id);
     await deleteAsset(h.ctx, scope, asset.id);
     await h.drain();
     expect(h.video.deleted).toEqual([asset.file.video?.videoId]);
@@ -293,9 +345,13 @@ describe('deleting an asset', () => {
     // As an environment import copies it: same id, same file.
     await h.store.assets.create(staging, { ...asset });
 
+    await archiveAsset(h.ctx, scope, asset.id);
+
     await deleteAsset(h.ctx, scope, asset.id);
     await h.drain();
     expect(h.blob.keys()).toContain(asset.r2Key);
+
+    await archiveAsset(h.ctx, staging, asset.id);
 
     await deleteAsset(h.ctx, staging, asset.id);
     await h.drain();

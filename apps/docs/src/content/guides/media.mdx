@@ -187,9 +187,10 @@ as a draft. Select several to archive them together. The routes are `POST …/as
 (`content:publish`) and `…/restore` (`content:write`); the MCP tools are `asset_archive` and
 `asset_restore`.
 
-**Delete** removes an asset and its files for good (`DELETE …/assets/{id}`, `content:publish`; MCP
-`asset_delete`). It is refused with `409 asset_in_use` while any entry links to it, and the answer
-names those entries, so archive the asset or remove the links first. The asset also leaves every
+**Delete** removes an archived asset and its files for good (`DELETE …/assets/{id}`,
+`content:publish`; MCP `asset_delete`). Archive it first, which restoring undoes: anything else is
+refused with `400 invalid_state`. It is refused with `409 asset_in_use` while any entry links to it,
+drafts and trashed entries included, and the answer names those entries, so remove the links first. The asset also leaves every
 collection it was in.
 
 ### Collections

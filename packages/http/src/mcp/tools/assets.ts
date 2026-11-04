@@ -394,8 +394,9 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
     'asset_delete',
     {
       description:
-        'Delete an asset permanently, with its files. Refused while entries link to it: the ' +
-        'result then lists those links (usage); archive it instead, or remove the links first.',
+        'Delete an archived asset permanently, with its files: asset_archive it first, which ' +
+        'asset_restore can undo. Refused while entries, drafts included, link to it: the result ' +
+        'then lists those links (usage); remove them first.',
       inputSchema: toolSchema('asset_delete', () => z.object({ id: z.string(), ...scopeArgs })),
     },
     async (args) => {

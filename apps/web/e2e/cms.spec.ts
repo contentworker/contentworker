@@ -702,6 +702,8 @@ test('deleting an asset an entry uses names that entry and links to it', async (
 
   await openCms(page, '/assets');
   const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('button', { name: `Archive “${assetTitle}”` }).click();
+  await library.getByRole('combobox', { name: 'Status' }).selectOption('archived');
   await library.getByRole('button', { name: `Delete “${assetTitle}”` }).click();
   await library
     .getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) })
