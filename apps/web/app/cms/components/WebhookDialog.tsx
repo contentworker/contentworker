@@ -11,6 +11,7 @@ import {
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { useState } from 'react';
+import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { WEBHOOK_TOPICS, type WebhookSummary, type WebhookTopic } from '../lib/management';
 
 /** Edit a webhook's endpoint, topics, secret, active state and which environments it hears. */
@@ -34,6 +35,17 @@ export function WebhookDialog(props: {
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const guard = useDiscardGuard({
+    open: props.open,
+    dirty:
+      url !== props.webhook.url ||
+      secret !== '' ||
+      active !== props.webhook.active ||
+      everywhere !== wasEverywhere ||
+      topics.length !== props.webhook.topics.length ||
+      topics.some((t) => !props.webhook.topics.includes(t)),
+    onOpenChange: props.onOpenChange,
+  });
 
   const toggleTopic = (t: WebhookTopic) =>
     setTopics((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
@@ -65,7 +77,7 @@ export function WebhookDialog(props: {
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Edit webhook</DialogTitle>
@@ -124,12 +136,14 @@ export function WebhookDialog(props: {
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Saving…' : 'Save changes'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard your changes to this webhook?">
+              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? 'Saving…' : 'Save changes'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>

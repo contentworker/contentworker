@@ -80,13 +80,16 @@ function AlertDialogDescription({
   );
 }
 
-/** The confirming button; `destructive` for an action that can't be undone. */
+/**
+ * The confirming button. `variant` is required, so every confirm chooses: `destructive` for what
+ * removes something for good, `default` for the rest.
+ */
 function AlertDialogAction({
   className,
-  variant = 'default',
+  variant,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Action> & {
-  variant?: 'default' | 'destructive';
+  variant: 'default' | 'destructive';
 }) {
   return (
     <AlertDialogPrimitive.Action

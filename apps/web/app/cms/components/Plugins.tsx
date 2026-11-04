@@ -34,6 +34,7 @@ import {
 import { Puzzle } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { Confirmation } from '~/cms/components/ai/Confirmation';
+import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { PluginSettingsSheet } from '~/cms/components/PluginSettingsSheet';
 import { EmptyState } from '~/cms/components/page';
 import { ToneBadge } from '~/cms/components/status';
@@ -414,13 +415,16 @@ function UninstallButton(props: { name: string; onConfirm: () => void }) {
         <AlertDialogHeader>
           <AlertDialogTitle>Uninstall “{props.name}”?</AlertDialogTitle>
           <AlertDialogDescription>
-            Its code and its capability grant are both removed. Content it already changed stays as
-            it is. Installing it again means approving its capabilities again.
+            Its code, settings, stored data and capability grant are all removed, and can’t be
+            brought back. Content it already changed stays as it is. Installing it again means
+            approving its capabilities again.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={props.onConfirm}>Uninstall</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={props.onConfirm}>
+            Uninstall
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -496,6 +500,11 @@ function InstallPluginDialog(props: {
     if (!open) reset();
     props.onOpenChange(open);
   };
+  const guard = useDiscardGuard({
+    open: props.open,
+    dirty: Boolean(manifest || bundle || packageUrl.trim()),
+    onOpenChange: close,
+  });
 
   const readManifest = async (file: File) => {
     setError(undefined);
@@ -548,7 +557,7 @@ function InstallPluginDialog(props: {
   );
 
   return (
-    <Dialog open={props.open} onOpenChange={close}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Install a plugin</DialogTitle>
@@ -700,12 +709,14 @@ function InstallPluginDialog(props: {
           )}
 
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => close(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || !ready}>
-              {busy ? 'Installing…' : 'Install disabled'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard this plugin install?">
+              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !ready}>
+                {busy ? 'Installing…' : 'Install disabled'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -738,6 +749,11 @@ function UpgradePluginDialog(props: {
   const [approved, setApproved] = useState<string[]>([]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+
+  const guard = useDiscardGuard({
+    dirty: Boolean(manifest || bundle),
+    onOpenChange: props.onOpenChange,
+  });
 
   const isNew = (c: string) => !plugin.requestedCapabilities.includes(c);
 
@@ -783,7 +799,7 @@ function UpgradePluginDialog(props: {
   };
 
   return (
-    <Dialog open onOpenChange={props.onOpenChange}>
+    <Dialog open onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Upgrade {plugin.name}</DialogTitle>
@@ -850,12 +866,14 @@ function UpgradePluginDialog(props: {
           )}
 
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || !manifest || !bundle}>
-              {busy ? 'Upgrading…' : widens ? 'Upgrade disabled' : 'Upgrade'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard this upgrade?">
+              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !manifest || !bundle}>
+                {busy ? 'Upgrading…' : widens ? 'Upgrade disabled' : 'Upgrade'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>

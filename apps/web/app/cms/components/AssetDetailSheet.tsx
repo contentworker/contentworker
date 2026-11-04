@@ -29,6 +29,7 @@ import { AssetIngestBadges, BADGE_BUTTON_FOCUS } from '~/cms/components/assets/A
 import { AssetRightsForm } from '~/cms/components/assets/AssetRightsForm';
 import { AssetShareDialog } from '~/cms/components/assets/AssetShareDialog';
 import { AssetVersions } from '~/cms/components/assets/AssetVersions';
+import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { StatusBadge, StatusDot, ToneBadge } from '~/cms/components/status';
@@ -112,6 +113,15 @@ export function AssetDetailSheet(props: {
       .catch(() => setUsage([]));
   }, [assetId, props.open, locale, client]);
 
+  const altChanged = altText !== base.altText;
+  const tagsChanged = !sameSet(tagIds, base.tagIds);
+  const dirty = altChanged || tagsChanged || !sameFocal(focal, base.focal);
+  const guard = useDiscardGuard({
+    open: props.open,
+    dirty,
+    onOpenChange: props.onOpenChange,
+  });
+
   if (!asset) return null;
   const isImage = asset.file.contentType.startsWith('image/');
   const video = asset.file.video;
@@ -135,10 +145,6 @@ export function AssetDetailSheet(props: {
       toast.error(e instanceof Error ? e.message : String(e));
     }
   };
-
-  const altChanged = altText !== base.altText;
-  const tagsChanged = !sameSet(tagIds, base.tagIds);
-  const dirty = altChanged || tagsChanged || !sameFocal(focal, base.focal);
 
   // Opening the original replaces this form: with edits in it, that is asked in place first.
   const openOriginal = (id: string) => {
@@ -260,7 +266,7 @@ export function AssetDetailSheet(props: {
   };
 
   return (
-    <Sheet open={props.open} onOpenChange={props.onOpenChange}>
+    <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle className="truncate">{asset.file.fileName}</SheetTitle>
@@ -652,11 +658,13 @@ export function AssetDetailSheet(props: {
         </div>
 
         {/* Save metadata saves the Details tab; the other tabs act at once or have their own. */}
-        {tab === 'details' && (
+        {(tab === 'details' || guard.asking) && (
           <SheetFooter>
-            <Button type="button" onClick={save} disabled={busy}>
-              {busy ? 'Saving…' : 'Save metadata'}
-            </Button>
+            <DiscardAsk guard={guard} message={`Discard your changes to ${asset.file.fileName}?`}>
+              <Button type="button" onClick={save} disabled={busy}>
+                {busy ? 'Saving…' : 'Save metadata'}
+              </Button>
+            </DiscardAsk>
           </SheetFooter>
         )}
       </SheetContent>

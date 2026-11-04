@@ -46,6 +46,7 @@ import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { type EntryRef, entryPath, entryRef } from '~/cms/components/dashboard/entry-titles';
 import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
+import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { ReleasePublishConfirm } from '~/cms/components/ReleasePublishConfirm';
@@ -390,6 +391,11 @@ function CreateReleaseDialog(props: {
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const guard = useDiscardGuard({
+    open: props.open,
+    dirty: title.trim() !== '' || description.trim() !== '',
+    onOpenChange: props.onOpenChange,
+  });
 
   // Reset fields each time the dialog opens.
   useEffect(() => {
@@ -400,7 +406,7 @@ function CreateReleaseDialog(props: {
   }, [props.open]);
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New release</DialogTitle>
@@ -427,18 +433,23 @@ function CreateReleaseDialog(props: {
           </div>
         </div>
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            disabled={!title.trim() || props.busy}
-            onClick={() =>
-              props.onCreate({ title: title.trim(), description: description.trim() || undefined })
-            }
-          >
-            Create
-          </Button>
+          <DiscardAsk guard={guard} message="Discard this release?">
+            <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!title.trim() || props.busy}
+              onClick={() =>
+                props.onCreate({
+                  title: title.trim(),
+                  description: description.trim() || undefined,
+                })
+              }
+            >
+              Create
+            </Button>
+          </DiscardAsk>
         </DialogFooter>
       </DialogContent>
     </Dialog>

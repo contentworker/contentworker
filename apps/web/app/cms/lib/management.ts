@@ -1325,12 +1325,18 @@ export function createManagementClient(
   const mgmt = `${root}/spaces/${conn.space}/environments/${conn.environment}`;
   const preview = `${root}/preview/${conn.space}/${conn.environment}`;
   const delivery = `${root}/delivery/${conn.space}/${conn.environment}`;
-  async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
+  async function req<T>(
+    method: string,
+    url: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const res = await fetchImpl(url, {
       method,
       headers: apiHeaders({ 'content-type': 'application/json' }),
       credentials: 'same-origin',
       body: body === undefined ? undefined : JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     rememberBookmark(res);
     if (!res.ok) {
@@ -1611,20 +1617,18 @@ export function createManagementClient(
       return req('DELETE', `${mgmt}/entries/${encodeURIComponent(id)}/published`);
     },
     /** AI-draft field values for a content type from a natural-language prompt. */
-    generateEntry(input: {
-      contentTypeApiId: string;
-      prompt: string;
-      tier?: ModelTier;
-    }): Promise<GeneratedDraft> {
-      return req('POST', `${mgmt}/entries/generate`, input);
+    generateEntry(
+      input: { contentTypeApiId: string; prompt: string; tier?: ModelTier },
+      signal?: AbortSignal,
+    ): Promise<GeneratedDraft> {
+      return req('POST', `${mgmt}/entries/generate`, input, signal);
     },
     /** Map free-form prose into a content type's structured fields (Canvas authoring). */
-    canvasEntry(input: {
-      contentTypeApiId: string;
-      prose: string;
-      tier?: ModelTier;
-    }): Promise<GeneratedDraft> {
-      return req('POST', `${mgmt}/entries/canvas`, input);
+    canvasEntry(
+      input: { contentTypeApiId: string; prose: string; tier?: ModelTier },
+      signal?: AbortSignal,
+    ): Promise<GeneratedDraft> {
+      return req('POST', `${mgmt}/entries/canvas`, input, signal);
     },
 
     // --- assets ----------------------------------------------------------
@@ -2814,12 +2818,11 @@ export function createManagementClient(
       return req('POST', `${mgmt}/workflows/validate`, { graph });
     },
     /** Proposes a graph from a prompt (editing `graph` when given). Never saves. */
-    workflowCopilot(input: {
-      prompt: string;
-      graph?: WorkflowGraph;
-      contentTypes?: readonly string[];
-    }): Promise<WorkflowCopilotProposal> {
-      return req('POST', `${mgmt}/workflows/copilot`, input);
+    workflowCopilot(
+      input: { prompt: string; graph?: WorkflowGraph; contentTypes?: readonly string[] },
+      signal?: AbortSignal,
+    ): Promise<WorkflowCopilotProposal> {
+      return req('POST', `${mgmt}/workflows/copilot`, input, signal);
     },
 
     // --- workflow runs and tasks -------------------------------------------

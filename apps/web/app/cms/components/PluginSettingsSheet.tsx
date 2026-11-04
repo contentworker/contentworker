@@ -14,6 +14,7 @@ import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
+import { DiscardAsk, type DiscardGuard, useDiscardGuard } from '~/cms/components/discard-guard';
 import { LoadingStatus } from '~/cms/components/loading';
 import { RequiredMark } from '~/cms/components/required-mark';
 import { ToneBadge } from '~/cms/components/status';
@@ -57,6 +58,8 @@ export function PluginSettingsSheet(props: {
   const phone = useMedia('(max-width: 639px)');
   const [view, setView] = useState<PluginSettingsView>();
   const [loadError, setLoadError] = useState<unknown>();
+  const [dirty, setDirty] = useState(false);
+  const guard = useDiscardGuard({ dirty, onOpenChange: props.onOpenChange });
 
   const load = useCallback(async () => {
     setLoadError(undefined);
@@ -72,7 +75,7 @@ export function PluginSettingsSheet(props: {
   }, [load]);
 
   return (
-    <Sheet open onOpenChange={props.onOpenChange}>
+    <Sheet open onOpenChange={guard.onOpenChange}>
       <SheetContent side={phone ? 'bottom' : 'right'} className="gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
           <SheetTitle className="font-semibold text-base tracking-title">
@@ -123,6 +126,8 @@ export function PluginSettingsSheet(props: {
               client={client}
               plugin={plugin}
               view={view}
+              guard={guard}
+              onDirty={setDirty}
               onSaved={(next) => {
                 setView(next);
                 props.onOpenChange(false);
@@ -140,6 +145,8 @@ function SettingsForm(props: {
   client: ManagementClient;
   plugin: { readonly id: string; readonly name: string };
   view: PluginSettingsView;
+  guard: DiscardGuard;
+  onDirty: (dirty: boolean) => void;
   onSaved: (view: PluginSettingsView) => void;
   onReload: () => Promise<void>;
 }) {
@@ -153,6 +160,11 @@ function SettingsForm(props: {
 
   const patch = settingsPatch(view, draft);
   const dirty = Object.keys(patch).length > 0;
+  const { onDirty } = props;
+  useEffect(() => {
+    onDirty(dirty);
+    return () => onDirty(false);
+  }, [dirty, onDirty]);
 
   const set = (key: string, value: SettingDraft) => {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -238,9 +250,11 @@ function SettingsForm(props: {
       ))}
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
-        <Button type="submit" disabled={busy || !dirty}>
-          {busy ? 'Saving…' : 'Save settings'}
-        </Button>
+        <DiscardAsk guard={props.guard} message={`Discard your changes to ${plugin.name}?`}>
+          <Button type="submit" disabled={busy || !dirty}>
+            {busy ? 'Saving…' : 'Save settings'}
+          </Button>
+        </DiscardAsk>
         {view.updatedAt && (
           <p className="text-muted-foreground text-xs">
             Last saved <Ago at={view.updatedAt} />

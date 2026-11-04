@@ -1163,6 +1163,7 @@ export function EntriesList() {
           <AlertDialogFooter>
             <AlertDialogCancel>Keep in trash</AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               disabled={busy}
               onClick={() => {
                 const entry = confirmPurge;

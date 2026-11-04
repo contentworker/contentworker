@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useCallback, useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -109,6 +109,16 @@ describe('Connected applications', () => {
     expect(screen.getByText('Read published content, Read drafts')).toBeTruthy();
     // Several tokens behind one connection is surfaced, not hidden.
     expect(screen.getByText('2 active tokens')).toBeTruthy();
+  });
+
+  it('confirms a disconnect in red: it removes the access for good', async () => {
+    const client = fakeClient({ apps: [claude] });
+    renderWith(<ConnectedApps client={client as unknown as ManagementClient} />);
+    await screen.findByText('Claude');
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+    const dialog = await screen.findByRole('alertdialog');
+    const action = within(dialog).getByRole('button', { name: 'Disconnect' });
+    expect(action.className).toContain('text-destructive');
   });
 
   it('disconnects an application by client and subject', async () => {

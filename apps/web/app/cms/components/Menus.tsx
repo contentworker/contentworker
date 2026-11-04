@@ -38,6 +38,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { EntityPicker } from '~/cms/components/EntityPicker';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { EmptyState, Section } from '~/cms/components/page';
@@ -649,6 +650,13 @@ function MenuDialog(props: {
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const guard = useDiscardGuard({
+    dirty:
+      name !== (m?.name ?? '') ||
+      handle !== (m?.handle ?? '') ||
+      description !== (m?.description ?? ''),
+    onOpenChange: props.onOpenChange,
+  });
 
   const suggest = (n: string) =>
     n
@@ -679,7 +687,7 @@ function MenuDialog(props: {
   };
 
   return (
-    <Dialog open onOpenChange={props.onOpenChange}>
+    <Dialog open onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{m ? 'Rename menu' : 'New menu'}</DialogTitle>
@@ -736,12 +744,14 @@ function MenuDialog(props: {
           </div>
           {error && <p className="text-destructive text-sm">{error}</p>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || !name.trim() || !handle.trim()}>
-              {busy ? 'Saving…' : m ? 'Save' : 'Create menu'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard this menu?">
+              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !name.trim() || !handle.trim()}>
+                {busy ? 'Saving…' : m ? 'Save' : 'Create menu'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -797,6 +807,13 @@ export function MenuItemDialog(props: {
       : null;
   };
   const chosen = linkOf();
+  const guard = useDiscardGuard({
+    dirty:
+      JSON.stringify(chosen) !== JSON.stringify(link ?? null) ||
+      label !== (item?.label ?? '') ||
+      newTab !== (item?.target === '_blank'),
+    onOpenChange: props.onOpenChange,
+  });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -829,7 +846,7 @@ export function MenuItemDialog(props: {
   const linkIssue = issues.url ?? issues.link;
 
   return (
-    <Dialog open onOpenChange={props.onOpenChange}>
+    <Dialog open onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{item ? 'Edit item' : 'New item'}</DialogTitle>
@@ -943,12 +960,14 @@ export function MenuItemDialog(props: {
           </div>
           {error && <p className="text-destructive text-sm">{error}</p>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || !chosen || (kind === 'url' && !label.trim())}>
-              {busy ? 'Saving…' : item ? 'Save item' : 'Add item'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard this menu item?">
+              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !chosen || (kind === 'url' && !label.trim())}>
+                {busy ? 'Saving…' : item ? 'Save item' : 'Add item'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>

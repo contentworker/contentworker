@@ -254,6 +254,7 @@ export function VersionHistory(props: {
           <AlertDialogFooter>
             <AlertDialogCancel>Keep current draft</AlertDialogCancel>
             <AlertDialogAction
+              variant="default"
               disabled={busy}
               onClick={() => {
                 if (confirmRestore !== null) void restore(confirmRestore);

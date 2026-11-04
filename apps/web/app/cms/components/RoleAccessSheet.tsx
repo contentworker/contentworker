@@ -12,7 +12,7 @@ import {
   SheetTitle,
 } from '@contentworker/ui/sheet';
 import { useId, useState } from 'react';
-import { InlineConfirm } from '~/cms/components/InlineConfirm';
+import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { useMedia } from '~/cms/lib/device';
 import { apiErrorMessage, type RoleSummary } from '../lib/management';
 import {
@@ -45,19 +45,16 @@ export function RoleAccessSheet(props: {
   const [adding, setAdding] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [discarding, setDiscarding] = useState(false);
   const dirty = !sameGrants(grants, props.role.contentGrants);
+  const guard = useDiscardGuard({
+    open: props.open,
+    dirty,
+    onOpenChange: props.onOpenChange,
+  });
   const names = new Map(props.contentTypes.map((t) => [t.apiId, t.name]));
   const addable = ['*', ...props.contentTypes.map((t) => t.apiId)].filter(
     (apiId) => !grants.some((g) => g.contentTypeApiId === apiId),
   );
-
-  // Every way out (the close button, Escape, the overlay, Cancel) asks while there are changes.
-  const close = (open: boolean) => {
-    if (open) return props.onOpenChange(true);
-    if (dirty) setDiscarding(true);
-    else props.onOpenChange(false);
-  };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,7 +70,7 @@ export function RoleAccessSheet(props: {
   };
 
   return (
-    <Sheet open={props.open} onOpenChange={close}>
+    <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
       <SheetContent
         side={phone ? 'bottom' : 'right'}
         className="w-full gap-0 overflow-y-auto sm:max-w-lg"
@@ -193,28 +190,19 @@ export function RoleAccessSheet(props: {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
-          {discarding ? (
-            <InlineConfirm
+          <div className="flex justify-end gap-2">
+            <DiscardAsk
+              guard={guard}
               message={`Discard your changes to ${props.role.name}’s access?`}
-              note="Nothing has been saved."
-              cancelLabel="Keep editing"
-              onCancel={() => setDiscarding(false)}
             >
-              {/* The ink pill: nothing stored is deleted, only this sheet's unsaved ticks. */}
-              <Button type="button" size="sm" onClick={() => props.onOpenChange(false)}>
-                Discard
-              </Button>
-            </InlineConfirm>
-          ) : (
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={() => close(false)}>
+              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
                 Cancel
               </Button>
               <Button type="submit" disabled={busy || !dirty}>
                 Save access
               </Button>
-            </div>
-          )}
+            </DiscardAsk>
+          </div>
         </form>
       </SheetContent>
     </Sheet>

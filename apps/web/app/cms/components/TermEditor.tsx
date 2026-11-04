@@ -10,7 +10,8 @@ import {
   SheetTitle,
 } from '@contentworker/ui/sheet';
 import { Textarea } from '@contentworker/ui/textarea';
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
+import { DiscardAsk, type DiscardGuard, useDiscardGuard } from '~/cms/components/discard-guard';
 import { useMedia } from '~/cms/lib/device';
 import type { TermFields } from '~/cms/lib/management';
 
@@ -74,8 +75,10 @@ export function TermEditor({
   onOpenChange: (open: boolean) => void;
 }) {
   const phone = useMedia('(max-width: 639px)');
+  const [dirty, setDirty] = useState(false);
+  const guard = useDiscardGuard({ open: term !== null, dirty, onOpenChange });
   return (
-    <Sheet open={term !== null} onOpenChange={onOpenChange}>
+    <Sheet open={term !== null} onOpenChange={guard.onOpenChange}>
       <SheetContent side={phone ? 'bottom' : 'right'} className="gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
           <SheetTitle className="font-semibold text-base tracking-title">
@@ -95,7 +98,8 @@ export function TermEditor({
             defaultLocale={defaultLocale}
             busy={busy}
             onSave={onSave}
-            onCancel={() => onOpenChange(false)}
+            guard={guard}
+            onDirty={setDirty}
           />
         ) : null}
       </SheetContent>
@@ -119,7 +123,8 @@ function TermForm({
   defaultLocale,
   busy,
   onSave,
-  onCancel,
+  guard,
+  onDirty,
 }: {
   kind: 'tag' | 'concept';
   term: EditableTerm;
@@ -127,7 +132,8 @@ function TermForm({
   defaultLocale: string;
   busy: boolean;
   onSave: (changes: TermChanges) => void;
-  onCancel: () => void;
+  guard: DiscardGuard;
+  onDirty: (dirty: boolean) => void;
 }) {
   const id = useId();
   const [label, setLabel] = useState(term.label);
@@ -137,6 +143,10 @@ function TermForm({
   const others = locales.filter((l) => l !== defaultLocale);
   const changes = termChanges(term, { label, slug, description, labels });
   const changed = Object.keys(changes).length > 0;
+  useEffect(() => {
+    onDirty(changed);
+    return () => onDirty(false);
+  }, [changed, onDirty]);
 
   return (
     <form
@@ -205,13 +215,15 @@ function TermForm({
           </p>
         </fieldset>
       ) : null}
-      <div className="flex gap-2">
-        <Button type="submit" disabled={!changed || !label.trim() || busy}>
-          Save {kind}
-        </Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
+      <div className="flex justify-end gap-2">
+        <DiscardAsk guard={guard} message={`Discard your changes to “${term.label}”?`}>
+          <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={!changed || !label.trim() || busy}>
+            Save {kind}
+          </Button>
+        </DiscardAsk>
       </div>
     </form>
   );

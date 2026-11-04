@@ -19,9 +19,10 @@ import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
 import { Search, Trash2, Workflow } from 'lucide-react';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Ago } from '~/cms/components/ago';
+import { DiscardAsk, type DiscardGuard, useDiscardGuard } from '~/cms/components/discard-guard';
 import { FormSheet } from '~/cms/components/form-sheet';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
@@ -66,6 +67,12 @@ export function Workflows() {
   const invalidate = useInvalidate();
   const navigate = useNavigate();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [formDirty, setFormDirty] = useState(false);
+  const guard = useDiscardGuard({
+    open: sheetOpen,
+    dirty: formDirty,
+    onOpenChange: setSheetOpen,
+  });
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [filter, setFilter] = useState('');
 
@@ -93,8 +100,10 @@ export function Workflows() {
             <Button type="button" size="sm" variant="outline" onClick={() => setCopilotOpen(true)}>
               Draft with AI
             </Button>
-            <FormSheet open={sheetOpen} onOpenChange={setSheetOpen} label="New workflow">
+            <FormSheet open={sheetOpen} onOpenChange={guard.onOpenChange} label="New workflow">
               <NewWorkflowForm
+                guard={guard}
+                onDirty={setFormDirty}
                 onCreated={async (id) => {
                   setSheetOpen(false);
                   await invalidate(['workflows']);
@@ -202,7 +211,15 @@ export function gatingLabel(w: Pick<WorkflowListItem, 'gatesPublish' | 'publishG
 }
 
 /** The New workflow sheet's form: a name, then a template or a blank start. */
-function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<void> }) {
+function NewWorkflowForm({
+  onCreated,
+  guard,
+  onDirty,
+}: {
+  onCreated: (id: string) => Promise<void>;
+  guard: DiscardGuard;
+  onDirty: (dirty: boolean) => void;
+}) {
   const { client } = useClient();
   const [name, setName] = useState('');
   const [start, setStart] = useState<Start>('template');
@@ -215,6 +232,11 @@ function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<voi
   const templateId = useId();
   const hintId = useId();
   const chosen = TEMPLATES.find((t) => t.id === template);
+  const dirty = name.trim() !== '';
+  useEffect(() => {
+    onDirty(dirty);
+    return () => onDirty(false);
+  }, [dirty, onDirty]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -307,12 +329,19 @@ function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<voi
             {error}
           </p>
         ) : null}
-        <Button type="submit" size="sm" className="self-start" disabled={busy}>
-          {busy ? 'Creating…' : 'Create workflow'}
-        </Button>
         <FieldDescription className="text-xs">
           A new workflow starts no runs until it is published.
         </FieldDescription>
+        <div className="flex justify-end gap-2">
+          <DiscardAsk guard={guard} message="Discard this workflow?">
+            <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy}>
+              {busy ? 'Creating…' : 'Create workflow'}
+            </Button>
+          </DiscardAsk>
+        </div>
       </FieldGroup>
     </form>
   );

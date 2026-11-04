@@ -32,6 +32,7 @@ import {
 import { Textarea } from '@contentworker/ui/textarea';
 import { ArrowRightLeft, Plus, Upload } from 'lucide-react';
 import { useId, useState } from 'react';
+import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { EmptyState, Section } from '~/cms/components/page';
 import {
@@ -343,6 +344,17 @@ export function RedirectDialog(props: {
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
+  const guard = useDiscardGuard({
+    open: props.open,
+    dirty:
+      source !== (r?.source ?? '') ||
+      destination !== (r?.destination ?? '') ||
+      status !== (r?.status ?? 301) ||
+      locale !== (r?.locale ?? ALL) ||
+      enabled !== (r?.enabled ?? true) ||
+      note !== (r?.note ?? ''),
+    onOpenChange: props.onOpenChange,
+  });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -389,7 +401,7 @@ export function RedirectDialog(props: {
     issues[name] ? `${id}-${name}-error` : hint ? `${id}-${name}-hint` : undefined;
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{r ? 'Edit redirect' : 'New redirect'}</DialogTitle>
@@ -490,12 +502,14 @@ export function RedirectDialog(props: {
           </div>
           {error && <p className="text-destructive text-sm">{error}</p>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || !source.trim() || !destination.trim()}>
-              {busy ? 'Saving…' : r ? 'Save changes' : 'Add redirect'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard this redirect?">
+              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !source.trim() || !destination.trim()}>
+                {busy ? 'Saving…' : r ? 'Save changes' : 'Add redirect'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -525,6 +539,11 @@ export function ImportRedirectsDialog(props: {
   const [checked, setChecked] = useState<RedirectImportReport | null>(null);
   const [problems, setProblems] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const guard = useDiscardGuard({
+    open: props.open,
+    dirty: data.trim() !== '',
+    onOpenChange: props.onOpenChange,
+  });
 
   const run = async (dryRun: boolean) => {
     setBusy(true);
@@ -557,7 +576,7 @@ export function ImportRedirectsDialog(props: {
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Import redirects</DialogTitle>
@@ -632,18 +651,20 @@ export function ImportRedirectsDialog(props: {
           )}
         </div>
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
-          </Button>
-          {checked ? (
-            <Button disabled={busy} onClick={() => void run(false)}>
-              {busy ? 'Importing…' : 'Import'}
+          <DiscardAsk guard={guard} message="Discard this import?">
+            <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
+              Cancel
             </Button>
-          ) : (
-            <Button disabled={busy || !data.trim()} onClick={() => void run(true)}>
-              {busy ? 'Checking…' : 'Check'}
-            </Button>
-          )}
+            {checked ? (
+              <Button disabled={busy} onClick={() => void run(false)}>
+                {busy ? 'Importing…' : 'Import'}
+              </Button>
+            ) : (
+              <Button disabled={busy || !data.trim()} onClick={() => void run(true)}>
+                {busy ? 'Checking…' : 'Check'}
+              </Button>
+            )}
+          </DiscardAsk>
         </DialogFooter>
       </DialogContent>
     </Dialog>

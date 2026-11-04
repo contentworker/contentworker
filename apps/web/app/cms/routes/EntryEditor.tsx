@@ -834,6 +834,7 @@ export function EntryEditor() {
               Keep editing
             </AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               onClick={() => {
                 if (blocker.state !== 'blocked') return;
                 blockerProceededRef.current = true;
@@ -864,6 +865,8 @@ export function EntryEditor() {
       />
 
       <GenerateEntryDialog
+        // A draft under review stays when the dialog closes, but it was written for this entry.
+        key={entryId ?? 'new'}
         open={genOpen}
         onOpenChange={setGenOpen}
         contentType={selectedType}
@@ -885,16 +888,20 @@ export function EntryEditor() {
   // Generate field values from a prompt. Returns the draft for the dialog to
   // show as a proposal; the form only changes on its Apply (throws on error so
   // the dialog can surface it; not wrapped in `run`).
-  async function generate(prompt: string, tier: ModelTier) {
+  async function generate(prompt: string, tier: ModelTier, signal: AbortSignal) {
     if (!selectedType) throw new Error('Content type not loaded');
-    return client.generateEntry({ contentTypeApiId: selectedType.apiId, prompt, tier });
+    return client.generateEntry({ contentTypeApiId: selectedType.apiId, prompt, tier }, signal);
   }
 
   // Canvas: map free-form prose into the form's fields (throws so the dialog can
   // surface the error; not wrapped in `run`).
-  async function mapCanvas(prose: string, tier: ModelTier) {
+  async function mapCanvas(prose: string, tier: ModelTier, signal: AbortSignal) {
     if (!selectedType) return;
-    const res = await client.canvasEntry({ contentTypeApiId: selectedType.apiId, prose, tier });
+    const res = await client.canvasEntry(
+      { contentTypeApiId: selectedType.apiId, prose, tier },
+      signal,
+    );
+    if (signal.aborted) return;
     applyPatch(res.fields);
     const total = res.usage.inputTokens + res.usage.outputTokens;
     toast.success(`Mapped ${Object.keys(res.fields).length} field(s) · ${total} tokens`);
