@@ -372,7 +372,7 @@ describe('Publish entry, until the dialog can show what goes live', () => {
     const retry = await screen.findByRole('button', { name: 'Try again' });
     retry.focus();
     fireEvent.click(retry);
-    expect(document.activeElement).toBe(cancel());
+    await waitFor(() => expect(document.activeElement).toBe(cancel()));
     await screen.findByText('5 fields changed');
     expect(client.diffVersions).toHaveBeenCalledTimes(2);
     expect(publish().disabled).toBe(false);

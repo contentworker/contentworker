@@ -24,6 +24,7 @@ const link = (over: Partial<AssetShareLink> = {}): AssetShareLink => ({
 
 let links: AssetShareLink[] = [];
 const client = {
+  publishAsset: vi.fn(async (id: string): Promise<unknown> => ({ id, status: 'published' })),
   listShareLinks: vi.fn(async (_t: unknown) => links),
   createShareLink: vi.fn(async (input: ShareLinkInput) => {
     const made = link({
@@ -66,7 +67,13 @@ afterEach(() => {
 });
 
 function renderDialog(
-  props: { type?: 'asset' | 'collection'; published?: boolean; name?: string } = {},
+  props: {
+    type?: 'asset' | 'collection';
+    published?: boolean;
+    archived?: boolean;
+    name?: string;
+    onPublished?: () => void;
+  } = {},
 ) {
   const type = props.type ?? 'asset';
   return render(
@@ -79,6 +86,8 @@ function renderDialog(
           onOpenChange={() => {}}
           target={{ type, id: type === 'asset' ? 'a1' : 'c1', name: props.name ?? 'hero.jpg' }}
           {...(type === 'asset' ? { published: props.published ?? true } : {})}
+          {...(props.onPublished ? { onPublished: props.onPublished } : {})}
+          {...(props.archived ? { archived: true } : {})}
         />
       </ToastProvider>
     </QueryClientProvider>,
@@ -211,6 +220,57 @@ describe('sharing an asset or a collection', () => {
     expect(within(alert).getByText(/publish it first/)).toBeTruthy();
   });
 
+  it('publishes an unpublished asset from the warning, then offers the form', async () => {
+    const onPublished = vi.fn();
+    renderDialog({ published: false, onPublished });
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish asset' }));
+    expect(await screen.findByRole('form', { name: 'New share link' })).toBeTruthy();
+    expect(client.publishAsset).toHaveBeenCalledExactlyOnceWith('a1');
+    expect(onPublished).toHaveBeenCalledOnce();
+    expect(screen.queryByText('Publish it to share it')).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('radio', { name: '7 days' })),
+    );
+  });
+
+  it('keeps the warning when the publish is refused, saying why', async () => {
+    client.publishAsset.mockRejectedValueOnce(new ApiError(409, 'Under embargo'));
+    renderDialog({ published: false });
+    const publish = await screen.findByRole('button', { name: 'Publish asset' });
+    publish.focus();
+    fireEvent.click(publish);
+    await waitFor(() => expect(client.publishAsset).toHaveBeenCalledOnce());
+    // In the dialog, in the server's words: a toast sits outside the modal.
+    const alert = (await screen.findByText('It wasn’t published')).closest('[role="alert"]');
+    expect(alert?.textContent).toContain('Under embargo');
+    expect(screen.getByText('Publish it to share it')).toBeTruthy();
+    expect(screen.queryByRole('form', { name: 'New share link' })).toBeNull();
+    // The button that asked keeps focus through the wait and the refusal.
+    await waitFor(() => expect(document.activeElement).toBe(publish));
+  });
+
+  it('never says it wasn’t published when no answer came, nor on a refused retry', async () => {
+    client.publishAsset
+      .mockRejectedValueOnce(new ApiError(503, 'POST → 503'))
+      .mockRejectedValueOnce(new ApiError(409, 'POST → 409'));
+    renderDialog({ published: false });
+    const publish = await screen.findByRole('button', { name: 'Publish asset' });
+    fireEvent.click(publish);
+    await screen.findByText(/didn’t confirm/);
+    expect(screen.queryByText('It wasn’t published')).toBeNull();
+
+    fireEvent.click(publish);
+    await screen.findByText('This try was refused');
+    expect(screen.queryByText('It wasn’t published')).toBeNull();
+  });
+
+  it('tells an archived asset to restore first, with nothing to press', async () => {
+    renderDialog({ published: false, archived: true });
+    expect(await screen.findByText('Restore it to share it')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Publish asset' })).toBeNull();
+    expect(screen.queryByRole('form', { name: 'New share link' })).toBeNull();
+  });
+
   it('never says the link wasn’t created when no answer came, nor on a refused retry', async () => {
     client.createShareLink
       .mockRejectedValueOnce(new ApiError(503, 'POST → 503'))
@@ -226,12 +286,12 @@ describe('sharing an asset or a collection', () => {
     expect(within(form).queryByText('The link wasn’t created')).toBeNull();
   });
 
-  it('revokes a link after asking in place', async () => {
+  it('revokes a link after asking in a modal over the dialog', async () => {
     links = [link()];
     renderDialog();
     const revoke = await screen.findByRole('button', { name: /Revoke the link/ });
     fireEvent.click(revoke);
-    const confirm = screen.getByRole('alertdialog', { name: /Revoke this link\?/ });
+    const confirm = await screen.findByRole('alertdialog', { name: /Revoke this link\?/ });
     fireEvent.click(within(confirm).getByRole('button', { name: 'Revoke link' }));
     await waitFor(() => expect(client.revokeShareLink).toHaveBeenCalledWith('l1'));
     expect(await screen.findByText('No link opens it now.')).toBeTruthy();

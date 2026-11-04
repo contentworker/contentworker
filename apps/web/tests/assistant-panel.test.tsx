@@ -183,7 +183,9 @@ describe('a page’s edits through the panel', () => {
     expect(within(panel).getByRole('heading', { name: 'Publish this entry' })).toBeTruthy();
     expect(within(panel).getByText('Spring launch notes')).toBeTruthy();
     // The card a page asked for takes focus on its safe choice.
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' })),
+    );
     expect(settled).toBe(false);
 
     const agg = { id: 'e1', contentTypeApiId: 'article', publishedVersion: 4 };
@@ -479,7 +481,9 @@ describe('a publish card', () => {
     const retry = await screen.findByRole('button', { name: 'Try again' });
     retry.focus();
     fireEvent.click(retry);
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' })),
+    );
     await screen.findByText('1 field goes live:');
     expect(client.diffVersions).toHaveBeenCalledTimes(2);
     expect(confirm().disabled).toBe(false);
@@ -575,7 +579,9 @@ describe('a publish card', () => {
     conn = { ...home, environment: 'staging' };
     view.rerender(tree());
     await screen.findByText(/Switch back/);
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' })),
+    );
   });
 
   it('confirms a first publish and a publish that changes nothing, as ever', async () => {
@@ -652,7 +658,7 @@ describe('a card’s focus', () => {
     await screen.findByText('1 field goes live:');
     fireEvent.click(screen.getByRole('button', { name }));
     const holder = screen.getByTestId('card').firstElementChild;
-    expect(document.activeElement).toBe(holder);
+    await waitFor(() => expect(document.activeElement).toBe(holder));
     // The answer lands: the buttons go, and focus stays with the line that replaces them.
     view.rerender(<Frame part={answered} />);
     expect(screen.getByText(/left as it was/)).toBeTruthy();
@@ -662,9 +668,13 @@ describe('a card’s focus', () => {
   it('keeps focus when the card is answered somewhere else', async () => {
     const view = render(<Frame part={card()} />);
     await screen.findByText('1 field goes live:');
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' })),
+    );
     view.rerender(<Frame part={answered} />);
-    expect(document.activeElement).toBe(screen.getByTestId('card').firstElementChild);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByTestId('card').firstElementChild),
+    );
   });
 
   it('leaves focus alone when it was elsewhere on the page', async () => {
@@ -711,7 +721,9 @@ describe('a card’s focus', () => {
     const review = await screen.findByRole('button', { name: 'Review changes' });
     review.focus();
     fireEvent.click(screen.getByRole('button', { name: /Waiting for you/ }));
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' })),
+    );
   });
 });
 

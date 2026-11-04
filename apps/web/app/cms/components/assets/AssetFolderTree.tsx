@@ -333,7 +333,7 @@ export function AssetFolderTree(props: {
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetContent
             side="bottom"
-            className="px-4 pb-6"
+            bodyClassName="px-4 pb-6"
             onCloseAutoFocus={(e) => {
               if (!createdInSheet.current) return;
               // The new folder is open: the select showing it is where the person is.
@@ -342,7 +342,7 @@ export function AssetFolderTree(props: {
               select.current?.focus();
             }}
           >
-            <SheetHeader className="px-0">
+            <SheetHeader className="pr-10 pl-0">
               <SheetTitle>{open ? open.name : 'Folders'}</SheetTitle>
               <SheetDescription>
                 {open ? folderLabel(open, folders) : 'Add a folder at the top of the library.'}

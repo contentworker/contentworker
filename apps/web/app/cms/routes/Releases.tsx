@@ -36,13 +36,13 @@ import {
   TooltipTrigger,
 } from '@contentworker/ui/tooltip';
 import { CalendarClock, PackageOpen, Plus, Rocket, Trash2, X } from 'lucide-react';
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { type EntryRef, entryPath, entryRef } from '~/cms/components/dashboard/entry-titles';
 import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
-import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { ReleasePublishConfirm } from '~/cms/components/ReleasePublishConfirm';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
@@ -78,19 +78,6 @@ export function Releases() {
   const invalidate = useInvalidate();
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  // At most one row asks "delete this?" at a time, in a row of its own beneath it.
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const triggerId = (id: string) => `release-delete-${id}`;
-  // Back to the trigger after a cancel. After a confirm the trigger is disabled while the request
-  // runs (and gone once deleted), and focus() on it would drop focus to <body>, so fall back to
-  // the row's title.
-  const focusTrigger = (id: string) => () => {
-    const trigger = document.getElementById(triggerId(id));
-    return trigger instanceof HTMLButtonElement && !trigger.disabled
-      ? trigger
-      : document.getElementById(`release-open-${id}`);
-  };
-
   const releasesQuery = useScopedQuery(['releases'], () => client.listReleases());
   const scheduledQuery = useScopedQuery(['scheduled-actions'], () => client.listScheduledActions());
   const releases = releasesQuery.data ?? [];
@@ -114,13 +101,12 @@ export function Releases() {
   const reload = () =>
     invalidate(['releases'], ['scheduled-actions'], ['release'], ['entries'], ['entry']);
 
-  const remove = (id: string) =>
-    run(async () => {
-      await client.deleteRelease(id);
-      toast.success('Release deleted');
-      if (openId === id) setOpenId(null);
-      await reload();
-    });
+  const remove = async (id: string) => {
+    await client.deleteRelease(id);
+    toast.success('Release deleted');
+    if (openId === id) setOpenId(null);
+    await reload();
+  };
 
   const cancel = (id: string) =>
     run(async () => {
@@ -188,97 +174,77 @@ export function Releases() {
                     {releases.map((r) => {
                       const at = scheduledFor(r.id);
                       return (
-                        <Fragment key={r.id}>
-                          <TableRow>
-                            <TableCell className="max-w-md">
-                              {/* Opening is the row's main path; publishing waits inside, with its
+                        <TableRow key={r.id}>
+                          <TableCell className="max-w-md">
+                            {/* Opening is the row's main path; publishing waits inside, with its
                                 members in view. */}
-                              <button
-                                type="button"
-                                id={`release-open-${r.id}`}
-                                className="hit-area break-words text-left font-medium hover:underline"
-                                onClick={() => setOpenId(r.id)}
+                            <button
+                              type="button"
+                              className="hit-area break-words text-left font-medium hover:underline"
+                              onClick={() => setOpenId(r.id)}
+                            >
+                              {r.title}
+                            </button>
+                            {r.description ? (
+                              <p className="line-clamp-2 text-muted-foreground text-xs">
+                                {r.description}
+                              </p>
+                            ) : null}
+                          </TableCell>
+                          <TableCell numeric label="Entries">
+                            {r.itemCount}
+                          </TableCell>
+                          <TableCell label="When" className="text-muted-foreground">
+                            {r.publishedAt ? (
+                              <>
+                                Published <Ago at={r.publishedAt} />
+                              </>
+                            ) : at ? (
+                              <>
+                                Scheduled for <When at={at} />
+                              </>
+                            ) : (
+                              <>
+                                Created <Ago at={r.createdAt} />
+                              </>
+                            )}
+                          </TableCell>
+                          <TableCell label="Status">
+                            <StatusBadge
+                              status={r.status === 'open' && at ? 'scheduled' : r.status}
+                            />
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {r.status !== 'published' ? (
+                              <ConfirmDialog
+                                message={`Delete “${r.title}”?`}
+                                note="Its entries stay as they are; the release itself can’t be recovered."
+                                confirmLabel="Delete release"
+                                busy={busy}
+                                onConfirm={() => remove(r.id)}
                               >
-                                {r.title}
-                              </button>
-                              {r.description ? (
-                                <p className="line-clamp-2 text-muted-foreground text-xs">
-                                  {r.description}
-                                </p>
-                              ) : null}
-                            </TableCell>
-                            <TableCell numeric label="Entries">
-                              {r.itemCount}
-                            </TableCell>
-                            <TableCell label="When" className="text-muted-foreground">
-                              {r.publishedAt ? (
-                                <>
-                                  Published <Ago at={r.publishedAt} />
-                                </>
-                              ) : at ? (
-                                <>
-                                  Scheduled for <When at={at} />
-                                </>
-                              ) : (
-                                <>
-                                  Created <Ago at={r.createdAt} />
-                                </>
-                              )}
-                            </TableCell>
-                            <TableCell label="Status">
-                              <StatusBadge
-                                status={r.status === 'open' && at ? 'scheduled' : r.status}
-                              />
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {r.status !== 'published' ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="hit-area size-8"
-                                      id={triggerId(r.id)}
-                                      aria-label={`Delete “${r.title}”`}
-                                      aria-expanded={deleting === r.id}
-                                      onClick={() => setDeleting(r.id)}
-                                      disabled={busy}
-                                    >
-                                      <Trash2 className="size-4" aria-hidden="true" />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>Delete release</TooltipContent>
-                                </Tooltip>
-                              ) : null}
-                            </TableCell>
-                          </TableRow>
-                          {deleting === r.id ? (
-                            <TableRow>
-                              <TableCell colSpan={5}>
-                                <InlineConfirm
-                                  message={`Delete “${r.title}”?`}
-                                  note="Its entries stay as they are; the release itself can’t be recovered."
-                                  onCancel={() => setDeleting(null)}
-                                  returnFocus={focusTrigger(r.id)}
-                                >
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="destructive"
-                                    disabled={busy}
-                                    onClick={() => {
-                                      setDeleting(null);
-                                      void remove(r.id);
-                                    }}
-                                  >
-                                    Delete release
-                                  </Button>
-                                </InlineConfirm>
-                              </TableCell>
-                            </TableRow>
-                          ) : null}
-                        </Fragment>
+                                {(ask) => (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="hit-area size-8"
+                                        aria-label={`Delete “${r.title}”`}
+                                        onClick={ask}
+                                        disabled={busy}
+                                      >
+                                        <Trash2 className="size-4" aria-hidden="true" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Delete release</TooltipContent>
+                                  </Tooltip>
+                                )}
+                              </ConfirmDialog>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
                   </TableBody>
@@ -561,7 +527,7 @@ function ReleaseDetailSheet(props: {
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && props.onClose()}>
-      <ResponsiveSheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-lg">
+      <ResponsiveSheetContent className="w-full sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{release?.title ?? 'Release'}</SheetTitle>
           {release ? (

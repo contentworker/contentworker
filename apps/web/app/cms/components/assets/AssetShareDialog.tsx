@@ -1,4 +1,5 @@
 import {
+  type Asset,
   type AssetShareLink,
   type AssetShareTargetType,
   MAX_SHARE_LINK_SECONDS,
@@ -23,7 +24,7 @@ import { SkeletonText } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { Copy, Link2 } from 'lucide-react';
 import { type FormEvent, useEffect, useId, useRef, useState } from 'react';
-import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { ToneBadge } from '~/cms/components/status';
 import {
@@ -40,6 +41,7 @@ import {
   apiFieldIssues,
   isForbidden,
   refusedSave,
+  saveFailureMessage,
   UNCONFIRMED_SAVE,
 } from '~/cms/lib/management';
 import { useInvalidate, useScopedQuery } from '~/cms/lib/queries';
@@ -71,6 +73,12 @@ export function AssetShareDialog(props: {
   target: ShareTarget;
   /** For an asset: whether it is published (only a published asset can be shared). */
   published?: boolean;
+  /** For an asset: archived, it can't be published until it is restored. */
+  archived?: boolean;
+  /** The asset was published from here, so it could be shared. */
+  onPublished?: (asset: Asset) => void;
+  /** A publish from here got no answer, so the asset should be read again. */
+  onPublishUnconfirmed?: () => void;
 }) {
   const { target } = props;
   const { client } = useClient();
@@ -96,16 +104,18 @@ export function AssetShareDialog(props: {
   const [mayHaveLanded, setMayHaveLanded] = useState(false);
   // The link just made: it takes focus (its Copy button), so it can be copied at once.
   const [made, setMade] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishFailed, setPublishFailed] = useState<{ said: string; refused: boolean } | null>(
+    null,
+  );
+  // As with a link: a publish that got no answer may have landed.
+  const [publishMayHaveLanded, setPublishMayHaveLanded] = useState(false);
+  // Published from here: the caller's `published` catches up when its read does.
+  const [publishedHere, setPublishedHere] = useState(false);
   const listHeading = useRef<HTMLHeadingElement>(null);
-  // What opened the dialog: opened by state, not a DialogTrigger, so Radix can't hand focus back
-  // to it on close (inside the sheet, the sheet's focus trap would take it instead).
-  const opener = useRef<HTMLElement | null>(null);
-  const wasOpen = useRef(false);
-  if (props.open && !wasOpen.current && typeof document !== 'undefined') {
-    opener.current = document.activeElement as HTMLElement | null;
-  }
-  wasOpen.current = props.open;
   const list = useRef<HTMLUListElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const revoked = useRef(false);
 
   // A fresh form each time the dialog opens on a target.
   useEffect(() => {
@@ -117,7 +127,17 @@ export function AssetShareDialog(props: {
     setIssues({});
     setRefusal(null);
     setMade(null);
+    setPublishedHere(false);
+    setPublishFailed(null);
+    setPublishMayHaveLanded(false);
   }, [props.open, target.type, target.id]);
+
+  // Publish asset goes with the warning: the form that replaces it carries the keyboard on.
+  useEffect(() => {
+    if (publishedHere) {
+      formRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus();
+    }
+  }, [publishedHere]);
 
   useEffect(() => {
     if (!made) return;
@@ -130,7 +150,8 @@ export function AssetShareDialog(props: {
   }, [made, links.data]);
 
   const forbidden = isForbidden(links.error);
-  const unpublished = target.type === 'asset' && props.published === false;
+  const unpublished = target.type === 'asset' && props.published === false && !publishedHere;
+  const archived = unpublished && props.archived === true;
   const active = links.data ?? [];
 
   const create = async (e: FormEvent) => {
@@ -170,15 +191,41 @@ export function AssetShareDialog(props: {
     }
   };
 
-  const revoke = async (link: AssetShareLink) => {
+  // Goes live at once, as an asset's Publish does in the library. Refused under an embargo or past
+  // an expiry, in the server's words.
+  const publish = async () => {
+    if (publishing) return;
+    setPublishFailed(null);
+    setPublishing(true);
     try {
-      await client.revokeShareLink(link.id);
-      toast.success('Link revoked; it stops opening within a minute');
-      await invalidate(key);
-      listHeading.current?.focus();
+      const asset = await client.publishAsset(target.id);
+      toast.success(`Published “${target.name}”`);
+      setPublishedHere(true);
+      props.onPublished?.(asset);
     } catch (err) {
-      toast.error(apiErrorMessage(err));
+      const refused = refusedSave(err);
+      setPublishFailed({ said: saveFailureMessage(err), refused });
+      if (!refused) {
+        setPublishMayHaveLanded(true);
+        props.onPublishUnconfirmed?.();
+      }
+    } finally {
+      setPublishing(false);
     }
+  };
+
+  const revoke = async (link: AssetShareLink) => {
+    await client.revokeShareLink(link.id);
+    revoked.current = true;
+    toast.success('Link revoked; it stops opening within a minute');
+    await invalidate(key);
+  };
+  // After the confirm has gone: it holds focus while it is up, and its row goes with the link.
+  const toTheList = (event: Event) => {
+    if (!revoked.current) return;
+    revoked.current = false;
+    event.preventDefault();
+    listHeading.current?.focus();
   };
 
   const copy = async (url: string) => {
@@ -200,7 +247,13 @@ export function AssetShareDialog(props: {
 
   const what = target.type === 'asset' ? 'this file' : 'the collection’s files';
   const form = (
-    <form className="space-y-4" onSubmit={create} noValidate aria-label="New share link">
+    <form
+      ref={formRef}
+      className="space-y-4"
+      onSubmit={create}
+      noValidate
+      aria-label="New share link"
+    >
       {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
       {refusal && (
         <Alert variant="destructive">
@@ -293,14 +346,7 @@ export function AssetShareDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent
-        className="sm:max-w-lg"
-        onCloseAutoFocus={(e) => {
-          if (!opener.current?.isConnected) return;
-          e.preventDefault();
-          opener.current.focus();
-        }}
-      >
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="truncate">Share “{target.name}”</DialogTitle>
           <DialogDescription>
@@ -341,11 +387,42 @@ export function AssetShareDialog(props: {
           </Alert>
         ) : (
           <>
-            {unpublished ? (
+            {archived ? (
+              <Alert variant="warning">
+                <AlertTitle>Restore it to share it</AlertTitle>
+                <AlertDescription>
+                  A share link only serves published files, and this asset is archived. Restored, it
+                  comes back as a draft to publish.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {unpublished && publishFailed && !publishFailed.refused ? (
+              <DialogError>{publishFailed.said}</DialogError>
+            ) : null}
+            {unpublished && publishFailed?.refused ? (
+              <Alert variant="destructive">
+                <AlertTitle>
+                  {publishMayHaveLanded ? 'This try was refused' : 'It wasn’t published'}
+                </AlertTitle>
+                <AlertDescription>{publishFailed.said}</AlertDescription>
+              </Alert>
+            ) : null}
+            {archived ? null : unpublished ? (
               <Alert variant="warning">
                 <AlertTitle>Publish it to share it</AlertTitle>
                 <AlertDescription>
-                  A share link only serves published files, and this asset isn’t published.
+                  <p>A share link only serves published files, and this asset isn’t published.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    // Not `disabled`: focus stays on it, for a refusal to find it there.
+                    aria-disabled={publishing || undefined}
+                    className="mt-2 aria-disabled:opacity-50"
+                    onClick={() => void publish()}
+                  >
+                    {publishing ? 'Publishing…' : 'Publish asset'}
+                  </Button>
                 </AlertDescription>
               </Alert>
             ) : (
@@ -399,11 +476,12 @@ export function AssetShareDialog(props: {
                                 Copy
                               </Button>
                             )}
-                            <ConfirmButton
+                            <ConfirmDialog
                               message="Revoke this link?"
                               note="It stops opening within a minute. This can’t be undone."
                               confirmLabel="Revoke link"
-                              onConfirm={() => void revoke(link)}
+                              onConfirm={() => revoke(link)}
+                              onCloseAutoFocus={toTheList}
                             >
                               {(ask) => (
                                 <Button
@@ -416,7 +494,7 @@ export function AssetShareDialog(props: {
                                   Revoke
                                 </Button>
                               )}
-                            </ConfirmButton>
+                            </ConfirmDialog>
                           </div>
                         </div>
                       </li>

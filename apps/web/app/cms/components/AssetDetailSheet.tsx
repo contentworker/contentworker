@@ -34,6 +34,7 @@ import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge, StatusDot, ToneBadge } from '~/cms/components/status';
+import { coarse, useMedia } from '~/cms/lib/device';
 import { useClient } from '../lib/client-context';
 import type { ImageTransform } from '../lib/management';
 import { useToast } from '../lib/toast';
@@ -84,6 +85,8 @@ export function AssetDetailSheet(props: {
   // The original a possible duplicate points at, waiting on "discard your edits?".
   const [confirmOpen, setConfirmOpen] = useState<string | null>(null);
   const imgRef = useRef<HTMLButtonElement>(null);
+  const altRef = useRef<HTMLTextAreaElement>(null);
+  const finger = useMedia('(pointer: coarse)');
   // The values the form was filled from: what "changed" and "unsaved" are measured against.
   const [base, setBase] = useState<FormValues>({ altText: '', tagIds: [] });
 
@@ -281,34 +284,49 @@ export function AssetDetailSheet(props: {
     }
   };
 
+  // The sheet is for its form, so that is where it opens, not on Share. Never a text field under a
+  // finger, where the keyboard would rise over what was just opened: the sheet itself takes focus.
+  const toTheForm = (event: Event) => {
+    const target = imgRef.current ?? (coarse() ? null : altRef.current);
+    event.preventDefault();
+    (target ?? (event.currentTarget as HTMLElement)).focus({ preventScroll: true });
+  };
+
   return (
     <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
-      <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-lg">
+      <ResponsiveSheetContent className="w-full sm:max-w-lg" onOpenAutoFocus={toTheForm}>
         <SheetHeader>
           <SheetTitle className="truncate">{asset.file.fileName}</SheetTitle>
           <SheetDescription className="font-mono text-xs">
             {asset.file.contentType} · v{asset.version ?? 1}
           </SheetDescription>
-          {/* Sharing opens the share dialog over the sheet; it explains when the asset can't be
-              shared (not published) or the role can't share, rather than hiding the way in. */}
-          <div className="pt-1">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              aria-haspopup="dialog"
-              onClick={() => setSharing(true)}
-            >
-              <Share2 aria-hidden="true" />
-              Share
-            </Button>
-          </div>
         </SheetHeader>
+        {/* Sharing opens the share dialog over the sheet; it explains when the asset can't be
+            shared (not published) or the role can't share, rather than hiding the way in. It
+            scrolls with the body: on a phone the pinned header has to stay short. */}
+        <div className="-mt-2 px-4">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-haspopup="dialog"
+            onClick={() => setSharing(true)}
+          >
+            <Share2 aria-hidden="true" />
+            Share
+          </Button>
+        </div>
         <AssetShareDialog
           open={sharing}
           onOpenChange={setSharing}
           target={{ type: 'asset', id: asset.id, name: asset.file.fileName }}
           published={asset.status === 'published'}
+          archived={asset.status === 'archived'}
+          onPublished={(next) => {
+            props.onAssetChange?.(next);
+            props.onSaved();
+          }}
+          onPublishUnconfirmed={props.onSaved}
         />
 
         <div className="space-y-5 px-4 pb-4">
@@ -450,9 +468,13 @@ export function AssetDetailSheet(props: {
                     aria-live="polite"
                     className="text-muted-foreground text-xs"
                   >
-                    {focal
-                      ? `x ${focal.x}, y ${focal.y}. Click to move it, or use the arrow keys (Shift for bigger steps).`
-                      : 'Click the image, or focus it and press Enter, to set a focal point for smart cropping.'}
+                    {finger
+                      ? focal
+                        ? `x ${focal.x}, y ${focal.y}. Tap to move it.`
+                        : 'Tap the image to set a focal point for smart cropping.'
+                      : focal
+                        ? `x ${focal.x}, y ${focal.y}. Click to move it, or use the arrow keys (Shift for bigger steps).`
+                        : 'Click the image, or focus it and press Enter, to set a focal point for smart cropping.'}
                   </p>
                 </div>
               )}
@@ -482,6 +504,7 @@ export function AssetDetailSheet(props: {
                   )}
                 </div>
                 <Textarea
+                  ref={altRef}
                   id="asset-alt"
                   value={altText}
                   onChange={(e) => setAltText(e.target.value)}
@@ -681,9 +704,11 @@ export function AssetDetailSheet(props: {
         </div>
 
         {/* Save metadata saves the Details tab; the other tabs act at once or have their own. */}
+        {(tab === 'details' || guard.asking) && saveError && (
+          <DialogError className="px-4">{saveError}</DialogError>
+        )}
         {(tab === 'details' || guard.asking) && (
           <SheetFooter>
-            {saveError && <DialogError>{saveError}</DialogError>}
             <DiscardAsk
               guard={guard}
               message={`Discard your changes to ${asset.file.fileName}?`}
