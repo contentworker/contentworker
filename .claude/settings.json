@@ -125,7 +125,11 @@
       "Bash(npx wrangler deploy*)",
       "Bash(wrangler rollback*)",
       "Bash(pnpm db:migrate:remote*)",
-      "Bash(pnpm --filter @contentworker/web db:migrate:remote*)"
+      "Bash(pnpm --filter @contentworker/web db:migrate:remote*)",
+      "Read(/.secrets/**)",
+      "Read(/**/.dev.vars)",
+      "Read(/**/.env)",
+      "Read(/**/.env.*)"
     ]
   }
 }
