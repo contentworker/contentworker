@@ -791,6 +791,26 @@ test('the publish confirmation has no accessibility violations', async ({
   await scan(page, testInfo);
 });
 
+test('a publish card with its review open has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const title = `Card ${Date.now()}`;
+  await createChanged(request, title);
+  await openCms(page, '/content/article');
+  await page
+    .getByRole('row', { name: new RegExp(title) })
+    .getByRole('button', { name: `Publish “${title}”` })
+    .click();
+  const card = page
+    .getByRole('complementary', { name: 'Coworker' })
+    .getByRole('region', { name: 'Publish this entry' })
+    .last();
+  await card.getByRole('button', { name: 'Review changes' }).click();
+  await expect(card.getByText('Edited body')).toBeVisible();
+  await scan(page, testInfo);
+});
+
 test('an entry’s authorship and the Mine filter have no accessibility violations', async ({
   page,
   request,
