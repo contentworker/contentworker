@@ -11,7 +11,7 @@ export function importsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const resolveSource = (id: string) => importSourceOr400(deps.importSources, id);
   const toImportInput = (body: { payload: string; mapping: unknown; sourceOptions?: unknown }) => ({
     payload: body.payload,
-    mapping: body.mapping as Parameters<typeof analyzeImport>[3]['mapping'],
+    mapping: body.mapping as Parameters<typeof analyzeImport>[4]['mapping'],
     ...(body.sourceOptions ? { sourceOptions: body.sourceOptions as Record<string, unknown> } : {}),
   });
   const app = new Hono<AuthVars>();
@@ -43,9 +43,16 @@ export function importsRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, importBody);
       return c.json(
-        await analyzeImport(ctx, scopeOf(c), resolveSource(body.source), toImportInput(body), {
-          ...(body.conflicts ? { conflicts: body.conflicts } : {}),
-        }),
+        await analyzeImport(
+          ctx,
+          c.get('principal'),
+          scopeOf(c),
+          resolveSource(body.source),
+          toImportInput(body),
+          {
+            ...(body.conflicts ? { conflicts: body.conflicts } : {}),
+          },
+        ),
       );
     },
   );
@@ -65,6 +72,7 @@ export function importsRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json(
         await executeImport(
           actingCtx(ctx, c),
+          c.get('principal'),
           scopeOf(c),
           resolveSource(body.source),
           toImportInput(body),
@@ -93,6 +101,7 @@ export function importsRoutes(deps: AuthDeps): Hono<AuthVars> {
       const started = await startImportJob(
         actingCtx(ctx, c),
         blob,
+        c.get('principal'),
         scopeOf(c),
         resolveSource(body.source),
         toImportInput(body),

@@ -1,4 +1,4 @@
-import { ValidationError } from '@contentworker/domain';
+import { ForbiddenError, type Principal, SCOPES, ValidationError } from '@contentworker/domain';
 import type { ImportSource, SourceRecord } from '@contentworker/ports';
 import {
   FakeBlobStore,
@@ -23,8 +23,17 @@ import {
 
 const SPACE = 's1';
 const scope = { spaceId: SPACE, environmentId: 'main' };
+const admin: Principal = { spaceId: '*', kind: 'admin', scopes: Object.values(SCOPES) };
 let ctx: AppContext;
 let blob: FakeBlobStore;
+
+/** A person whose role holds `content:write` and these grants. */
+const asRole = (contentGrants: Principal['contentGrants']): Principal => ({
+  spaceId: SPACE,
+  kind: 'user',
+  scopes: [SCOPES.contentWrite],
+  ...(contentGrants ? { contentGrants } : {}),
+});
 
 const rows = (values: Record<string, unknown>[]): ImportSource => ({
   id: 'fake',
@@ -96,13 +105,13 @@ beforeEach(async () => {
 
 describe('starting a durable import', () => {
   it('reports the same plan the synchronous path would', async () => {
-    const { job, analysis } = await startImportJob(ctx, blob, scope, rows(many(3)), input());
+    const { job, analysis } = await startImportJob(ctx, blob, admin, scope, rows(many(3)), input());
     expect(analysis).toMatchObject({ records: 3, willCreate: 3, executable: true });
     expect(job).toMatchObject({ action: 'import', status: 'running', totalItems: 3 });
   });
 
   it('writes nothing until a chunk runs', async () => {
-    await startImportJob(ctx, blob, scope, rows(many(3)), input());
+    await startImportJob(ctx, blob, admin, scope, rows(many(3)), input());
     expect(await listPreviewEntries(ctx, scope, {})).toHaveLength(0);
   });
 
@@ -110,6 +119,7 @@ describe('starting a durable import', () => {
     const { job } = await startImportJob(
       ctx,
       blob,
+      admin,
       scope,
       rows(many(IMPORT_JOB_CHUNK_SIZE + 1)),
       input(),
@@ -119,7 +129,7 @@ describe('starting a durable import', () => {
 
   it('stages each chunk before the job exists', async () => {
     // A chunk claimed before its work is readable would fail for no reason.
-    const { job } = await startImportJob(ctx, blob, scope, rows(many(3)), input());
+    const { job } = await startImportJob(ctx, blob, admin, scope, rows(many(3)), input());
     const chunks = await ctx.store.bulkJobs.listChunks(scope, job.id);
     for (const chunk of chunks) {
       expect(chunk.payloadKey).toBeTruthy();
@@ -132,6 +142,7 @@ describe('starting a durable import', () => {
       startImportJob(
         ctx,
         blob,
+        admin,
         scope,
         rows(many(3)),
         input({ mapping: { contentTypeApiId: 'article', fields: { sku: 'name' } } }),
@@ -144,7 +155,9 @@ describe('starting a durable import', () => {
     // Starting a job that writes nothing gives an operator a progress bar to
     // watch for no reason.
     expect(
-      await refusal(startImportJob(ctx, blob, scope, rows([{ other: 'no title' }]), input())),
+      await refusal(
+        startImportJob(ctx, blob, admin, scope, rows([{ other: 'no title' }]), input()),
+      ),
     ).toMatch(/nothing in this file/i);
   });
 
@@ -152,6 +165,7 @@ describe('starting a durable import', () => {
     const { job } = await startImportJob(
       ctx,
       blob,
+      admin,
       scope,
       rows([{ name: 'Fine' }, { other: 'no title' }]),
       input(),
@@ -165,6 +179,7 @@ describe('running the chunks', () => {
     const { job } = await startImportJob(
       ctx,
       blob,
+      admin,
       scope,
       rows(many(IMPORT_JOB_CHUNK_SIZE + 5)),
       input(),
@@ -182,14 +197,14 @@ describe('running the chunks', () => {
   });
 
   it('discards the staged records once written', async () => {
-    const { job } = await startImportJob(ctx, blob, scope, rows(many(2)), input());
+    const { job } = await startImportJob(ctx, blob, admin, scope, rows(many(2)), input());
     await drain(job.id);
     // Otherwise a copy of every import sits in object storage indefinitely.
     expect(blob.keys()).toHaveLength(0);
   });
 
   it('records a failed record without abandoning the chunk', async () => {
-    const { job } = await startImportJob(ctx, blob, scope, rows(many(3)), input());
+    const { job } = await startImportJob(ctx, blob, admin, scope, rows(many(3)), input());
     // Make one write fail the way a constraint would.
     const create = ctx.store.entries.create.bind(ctx.store.entries);
     let calls = 0;
@@ -207,7 +222,7 @@ describe('running the chunks', () => {
   });
 
   it('leaves the chunk claimable when the consumer forgot to wire imports', async () => {
-    const { job } = await startImportJob(ctx, blob, scope, rows(many(2)), input());
+    const { job } = await startImportJob(ctx, blob, admin, scope, rows(many(2)), input());
     const [chunk] = await ctx.store.bulkJobs.listChunks(scope, job.id);
     const result = await runBulkChunk(ctx, {
       id: 'e',
@@ -225,7 +240,7 @@ describe('running the chunks', () => {
   });
 
   it('fails the chunk when its staged records have vanished', async () => {
-    const { job } = await startImportJob(ctx, blob, scope, rows(many(2)), input());
+    const { job } = await startImportJob(ctx, blob, admin, scope, rows(many(2)), input());
     const [chunk] = await ctx.store.bulkJobs.listChunks(scope, job.id);
     await blob.delete(chunk?.payloadKey ?? '');
 
@@ -242,12 +257,12 @@ describe('running the chunks', () => {
         identityField: 'sku',
       },
     });
-    const first = await startImportJob(ctx, blob, scope, rows(many(2)), withSku);
+    const first = await startImportJob(ctx, blob, admin, scope, rows(many(2)), withSku);
     await drain(first.job.id);
 
     // Second run of the same file: nothing new to write, so it refuses to
     // start rather than producing an empty job.
-    expect(await refusal(startImportJob(ctx, blob, scope, rows(many(2)), withSku))).toMatch(
+    expect(await refusal(startImportJob(ctx, blob, admin, scope, rows(many(2)), withSku))).toMatch(
       /nothing in this file/i,
     );
     expect(await listPreviewEntries(ctx, scope, { limit: 100 })).toHaveLength(2);
@@ -256,7 +271,7 @@ describe('running the chunks', () => {
 
 describe('re-delivery', () => {
   it('does not double-write a chunk that already completed', async () => {
-    const { job } = await startImportJob(ctx, blob, scope, rows(many(2)), input());
+    const { job } = await startImportJob(ctx, blob, admin, scope, rows(many(2)), input());
     await drain(job.id);
     // The queue redelivers; the chunk is completed and its claim is lost.
     const runner = vi.fn();
@@ -276,5 +291,67 @@ describe('re-delivery', () => {
     expect(result.outcome).toBe('skipped');
     expect(runner).not.toHaveBeenCalled();
     expect(await listPreviewEntries(ctx, scope, { limit: 100 })).toHaveLength(2);
+  });
+});
+
+describe('a job started by a role', () => {
+  const mapped = input({
+    mapping: { contentTypeApiId: 'article', fields: { title: 'name', sku: 'code' } },
+  });
+  const noSku = asRole([
+    { contentTypeApiId: 'article', actions: ['read', 'write'], deniedFields: ['sku'] },
+  ]);
+
+  it('refuses a type the role cannot write before staging anything', async () => {
+    const onlyPost = asRole([{ contentTypeApiId: 'post', actions: ['read', 'write'] }]);
+    await expect(
+      startImportJob(ctx, blob, onlyPost, scope, rows(many(3)), input()),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    expect(blob.keys()).toHaveLength(0);
+    expect(await ctx.store.bulkJobs.listChunks(scope, 'e1')).toHaveLength(0);
+  });
+
+  it('never stages a record setting a blocked field, so the engine cannot write it', async () => {
+    const { job, analysis } = await startImportJob(
+      ctx,
+      blob,
+      noSku,
+      scope,
+      rows([{ name: 'Clean' }, { name: 'Blocked', code: 'secret' }]),
+      mapped,
+    );
+    expect(analysis).toMatchObject({ willCreate: 1, invalid: 1 });
+    expect(job.totalItems).toBe(1);
+    const chunks = await ctx.store.bulkJobs.listChunks(scope, job.id);
+    for (const chunk of chunks) {
+      expect(await blob.get(chunk.payloadKey as string)).not.toContain('secret');
+    }
+
+    await drain(job.id);
+    const written = await listPreviewEntries(ctx, scope, { limit: 100 });
+    expect(written).toHaveLength(1);
+    expect(JSON.stringify(written)).not.toContain('secret');
+  });
+
+  it('refuses a file every record of which is blocked', async () => {
+    expect(
+      await refusal(
+        startImportJob(ctx, blob, noSku, scope, rows([{ name: 'A', code: 'secret' }]), mapped),
+      ),
+    ).toMatch(/nothing in this file/i);
+    expect(blob.keys()).toHaveLength(0);
+  });
+
+  it('still runs for an unrestricted principal', async () => {
+    const { job } = await startImportJob(
+      ctx,
+      blob,
+      asRole(undefined),
+      scope,
+      rows([{ name: 'One', code: 'A' }]),
+      mapped,
+    );
+    await drain(job.id);
+    expect(await listPreviewEntries(ctx, scope, { limit: 100 })).toHaveLength(1);
   });
 });

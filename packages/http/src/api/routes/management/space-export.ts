@@ -1,5 +1,10 @@
 import { analyzeSpaceExport, startSpaceExportImport } from '@contentworker/application';
-import { authorize, SCOPES, ValidationError } from '@contentworker/domain';
+import {
+  authorize,
+  authorizeEveryContentType,
+  SCOPES,
+  ValidationError,
+} from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -25,6 +30,12 @@ export function spaceExportRoutes(deps: AuthDeps): Hono<AuthVars> {
     // Adding locales changes the space for every environment: a space admin's call.
     if (body.addLocales)
       authorize(c.get('principal'), SCOPES.spaceAdmin, c.req.param('space') as string);
+    // It writes (and publishes) entries of every type the export defines: a role limited to some
+    // types or fields is refused, at analyze too, which stands in for the import.
+    authorizeEveryContentType(
+      c.get('principal'),
+      body.publish !== false ? ['write', 'publish'] : ['write'],
+    );
     return {
       reader: deps.spaceExportReader,
       input: {

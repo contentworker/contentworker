@@ -1,11 +1,17 @@
 import {
   applyDefaults,
+  assertQueryRespectsFieldRules,
+  authorize,
+  authorizeContent,
   type ContentType,
   type EntryFields,
   NotFoundError,
   normalizeSlugFields,
+  type Principal,
   richTextFromHtml,
+  SCOPES,
   type Scope,
+  unwritableFields,
   ValidationError,
   validateEntryFields,
 } from '@contentworker/domain';
@@ -25,6 +31,11 @@ import { createEntry, updateEntry } from './entries';
  *
  * The two phases share one code path — `plan()` — so the report is not a
  * prediction of what execute will do, it is the same computation.
+ *
+ * Both run as the `principal` who asked, with the same authority as writing each entry by hand:
+ * `write` on the target type (refused up front, before the payload is read), and no record
+ * writes a field the role denies or makes read-only (that record is reported and skipped, like
+ * one that fails validation). An unrestricted principal (no role) is held to the scope alone.
  */
 
 /** How many records the synchronous path will read. */
@@ -135,6 +146,7 @@ export interface ImportInput {
  */
 export async function analyzeImport(
   ctx: AppContext,
+  principal: Principal,
   scope: Scope,
   source: ImportSource,
   input: ImportInput,
@@ -144,7 +156,8 @@ export async function analyzeImport(
   // nothing, so what limits it is memory — the same limit a job has. Refusing
   // to describe a file the durable path would happily import would mean an
   // operator could not even find out how big their problem was.
-  return (await plan(ctx, scope, source, input, options, IMPORT_JOB_MAX_RECORDS)).analysis;
+  return (await plan(ctx, principal, scope, source, input, options, IMPORT_JOB_MAX_RECORDS))
+    .analysis;
 }
 
 /**
@@ -156,12 +169,20 @@ export async function analyzeImport(
  */
 export async function executeImport(
   ctx: AppContext,
+  principal: Principal,
   scope: Scope,
   source: ImportSource,
   input: ImportInput,
   options: ImportRunOptions = {},
 ): Promise<ImportResult> {
-  const { analysis, planned, contentType } = await plan(ctx, scope, source, input, options);
+  const { analysis, planned, contentType } = await plan(
+    ctx,
+    principal,
+    scope,
+    source,
+    input,
+    options,
+  );
   if (!analysis.executable) {
     throw new ValidationError([
       {
@@ -222,13 +243,14 @@ export interface Plan {
  */
 export async function planImport(
   ctx: AppContext,
+  principal: Principal,
   scope: Scope,
   source: ImportSource,
   input: ImportInput,
   options: ImportRunOptions = {},
   maxRecords = IMPORT_MAX_RECORDS,
 ): Promise<Plan> {
-  return plan(ctx, scope, source, input, options, maxRecords);
+  return plan(ctx, principal, scope, source, input, options, maxRecords);
 }
 
 /**
@@ -239,12 +261,26 @@ export async function planImport(
  */
 async function plan(
   ctx: AppContext,
+  principal: Principal,
   scope: Scope,
   source: ImportSource,
   input: ImportInput,
   options: ImportRunOptions,
   maxRecords = IMPORT_MAX_RECORDS,
 ): Promise<Plan> {
+  // Every record is a create or an update of this one type, so the type's `write` grant covers
+  // the whole run; a type the role can't write is refused before anything is read.
+  authorize(principal, SCOPES.contentWrite, scope.spaceId);
+  authorizeContent(principal, 'write', input.mapping.contentTypeApiId);
+  // Matching on the identity field is a query over it: a field the role can't read would answer
+  // which values exist (through the skip, update and conflict counts), so it is refused like a
+  // filter on it.
+  if (input.mapping.identityField) {
+    assertQueryRespectsFieldRules(principal, {
+      contentTypeApiId: input.mapping.contentTypeApiId,
+      filters: [{ field: input.mapping.identityField }],
+    });
+  }
   const contentType = await ctx.store.contentTypes.get(scope, input.mapping.contentTypeApiId);
   if (!contentType) throw new NotFoundError('ContentType', input.mapping.contentTypeApiId);
 
@@ -293,10 +329,18 @@ async function plan(
     .filter((f) => f.required && f.defaultValue === undefined && !(f.apiId in input.mapping.fields))
     .map((f) => f.apiId);
 
+  const blockedFields = unwritableFields(principal, contentType.apiId, Object.fromEntries(defined));
   const existing =
     input.mapping.identityField && unknownTargetFields.length === 0
-      ? await indexExisting(ctx, scope, contentType.apiId, input.mapping.identityField, locale)
-      : new Map<string, string>();
+      ? await indexExisting(
+          ctx,
+          scope,
+          contentType.apiId,
+          input.mapping.identityField,
+          locale,
+          blockedFields,
+        )
+      : new Map<string, ExistingEntry>();
 
   const vctx = { defaultLocale: config.defaultLocale, locales: config.locales };
   const planned: PlannedRecord[] = [];
@@ -312,6 +356,11 @@ async function plan(
     seen.add(record.externalId);
 
     const fields = toFields(record, input.mapping, contentType, locale);
+    // Checked on what the record sets, before defaults: a default the role didn't write is
+    // allowed, as it is for an entry created by hand.
+    for (const apiId of unwritableFields(principal, contentType.apiId, fields)) {
+      issues.push(`${apiId}: your role may not write this field`);
+    }
     const withDefaults = applyDefaults(contentType, fields, config.locales, config.defaultLocale);
     const normalized = normalizeSlugFields(contentType, withDefaults);
     for (const issue of validateEntryFields(contentType, normalized, vctx)) {
@@ -329,12 +378,19 @@ async function plan(
         issues.push(`An entry already exists with ${input.mapping.identityField} "${identity}"`);
       }
       action = options.conflicts === 'update' ? 'update' : 'skip';
+      // An update's fields become the whole new version, so one that leaves out a field clears
+      // it: for a field the role may not write, that is a write too.
+      if (action === 'update') {
+        for (const apiId of match.blockedValues) {
+          if (!(apiId in fields)) issues.push(`${apiId}: your role may not clear this field`);
+        }
+      }
     }
 
     planned.push({
       externalId: record.externalId,
       action,
-      ...(match ? { entryId: match } : {}),
+      ...(match ? { entryId: match.id } : {}),
       fields: normalized,
       issues,
     });
@@ -365,6 +421,12 @@ async function plan(
   return { analysis, planned, contentType };
 }
 
+/** An entry an import may match, and which of the role's blocked fields it holds a value in. */
+interface ExistingEntry {
+  readonly id: string;
+  readonly blockedValues: readonly string[];
+}
+
 /**
  * Indexes existing entries by their identity value.
  *
@@ -377,8 +439,9 @@ async function indexExisting(
   contentTypeApiId: string,
   identityField: string,
   locale: string,
-): Promise<Map<string, string>> {
-  const index = new Map<string, string>();
+  blockedFields: readonly string[],
+): Promise<Map<string, ExistingEntry>> {
+  const index = new Map<string, ExistingEntry>();
   let cursor = '';
   const pageSize = 500;
   while (index.size < IMPORT_MAX_EXISTING) {
@@ -386,7 +449,7 @@ async function indexExisting(
       contentTypeApiId,
       limit: pageSize,
       afterEntryId: cursor,
-      select: [identityField],
+      select: [identityField, ...blockedFields],
       // Trashed entries are not matches: an import must not silently revive
       // something someone deleted.
       archived: false,
@@ -395,7 +458,10 @@ async function indexExisting(
       const value = asText(found.fields[identityField]?.[locale]);
       // First write wins, so a re-run updates the same entry it created rather
       // than picking a different duplicate each time.
-      if (value !== undefined && !index.has(value)) index.set(value, found.entry.id);
+      if (value !== undefined && !index.has(value)) {
+        const blockedValues = blockedFields.filter((f) => found.fields[f] !== undefined);
+        index.set(value, { id: found.entry.id, blockedValues });
+      }
     }
     if (page.length < pageSize) break;
     cursor = page[page.length - 1]?.entry.id ?? '';

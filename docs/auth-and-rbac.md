@@ -443,13 +443,26 @@ Semantics:
   `addEntryToRelease` checks `read` plus the item's action when a member goes in (route,
   `releases_add_entry`, the `content.add_to_release` node), so a release already scheduled can't
   gain a member its adder couldn't ship. Bulk jobs refuse any principal with grants.
+  An import (`analyzeImport`, `executeImport`, `startImportJob`, which take the caller's
+  `principal`) checks `write` on the target type before reading the payload, and refuses an
+  `identityField` the role may not read. A record that sets a field the role denies or makes
+  read-only is skipped and listed in the report's `issues`, like one that fails validation, and so
+  is an update that would clear such a field by leaving it out (an update's fields are the whole
+  new version). An import job runs in the engine with no one behind it, so the decision is made
+  when the job starts: only records the principal may write are staged. The operations over a
+  whole environment can't be authorized type by type, since they write types they create:
+  `GET …/export` (`read`), `POST …/import` and `POST …/imports/space-export` and its analyze
+  (`write`, plus `publish` unless `publish` is false), and `POST …/clone` (all of those), with the
+  matching MCP tools, need `content:manage` and `authorizeEveryContentType`: no per-type grants, or
+  a single `*` grant holding those actions and restricting no field. The Manager and Administrator
+  presets qualify.
 - **Limits of a withhold**, stated plainly:
   - It doesn't constrain a principal that also holds `space:admin`: that principal can edit roles
     (its own included) and mint keys, so withholding `delete` from an administrator is advice, not
     a control.
-  - Scheduled actions and workflow runs are authorized when they are created or started.
-    Withdrawing a permission later doesn't cancel them; cancel the scheduled action
-    (`DELETE …/scheduled-actions/{id}`) or the run to revoke what they would do.
+  - Scheduled actions, workflow runs and import jobs are authorized when they are created or
+    started. Withdrawing a permission later doesn't cancel them; cancel the scheduled action
+    (`DELETE …/scheduled-actions/{id}`), the run or the job to revoke what they would do.
   - A write-only grant (no `publish`, so no `unpublish`) can still trash a live entry, which
     unpublishes it. Only an explicit `deniedActions: ['unpublish']` stops that.
 - **Role edits are live at once.** `createRole`, `updateRole` and `deleteRole` drop the space's

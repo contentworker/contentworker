@@ -1,4 +1,4 @@
-import { type Scope, ValidationError } from '@contentworker/domain';
+import { type Principal, type Scope, ValidationError } from '@contentworker/domain';
 import type {
   BlobStore,
   BulkJob,
@@ -64,10 +64,16 @@ export { importChunkKey } from './job-staging';
  *
  * Planning still happens in one pass, because a report that only describes
  * part of a file is worse than no report. What gets chunked is the writing.
+ *
+ * The `principal` is authorized here, once, exactly as the synchronous run is (`planImport`):
+ * the chunks run later in the engine with no one behind them, so only the records the principal
+ * may write are ever staged. As with a scheduled action, narrowing the role afterwards doesn't
+ * stop a job already started; cancel it.
  */
 export async function startImportJob(
   ctx: AppContext,
   blob: BlobStore,
+  principal: Principal,
   scope: Scope,
   source: ImportSource,
   input: ImportInput,
@@ -75,6 +81,7 @@ export async function startImportJob(
 ): Promise<StartImportJobResult> {
   const { analysis, planned, contentType } = await planImport(
     ctx,
+    principal,
     scope,
     source,
     input,
@@ -161,7 +168,9 @@ export interface ImportChunkOutcome {
  *
  * Records go through `createEntry`/`updateEntry` like every other write, so
  * validation, uniqueness, hooks and the reference graph all apply — a job is
- * not a back door around the content model.
+ * not a back door around the content model. Nor around the role that started
+ * it: `startImportJob` staged only what that principal may write, so a chunk
+ * has nothing left to authorize.
  *
  * Re-running is safe in the sense that matters for at-least-once delivery: a
  * re-run of an *update* chunk writes the same values again, and a re-run of a
