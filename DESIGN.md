@@ -828,7 +828,8 @@ for code and data blocks only.
   remembered row count (`cms/components/loading.tsx`).
 - **Item, Field, Kbd, Spinner, Badge, Separator, Breadcrumb, Tooltip, Sheet, Dropdown
   menu, Alert, Alert dialog, Dialog, Select, Tabs, Checkbox, Avatar** (`packages/ui`): radix-maia
-  primitives on the Ledger tokens.
+  primitives on the Ledger tokens. Dialogs, alert dialogs and sheets open over a clear backdrop that
+  blurs the page (`backdrop-blur-sm`), with no tint.
 - **Status badge** (`components/status.tsx`): a pill tinted 11% in the status colour with a dot; an
   ending that went badly is ruled in the colour with a mark (✕ or undo) instead of tinted, so it
   reads apart without colour. `ToneBadge` for another vocabulary (a diff's change, a finding's
