@@ -4,6 +4,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -216,11 +217,7 @@ export function CreateSpaceDialog(props: {
               </label>
             ))}
           </fieldset>
-          {error && (
-            <p className="text-destructive text-sm" role="alert">
-              {error}
-            </p>
-          )}
+          {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
             <Button
               type="button"

@@ -24,6 +24,8 @@ export function Confirmation(props: {
   busy?: boolean;
   onApply: () => void;
   onDismiss: () => void;
+  /** What Escape does, where it shouldn't throw the proposal away as Dismiss does. */
+  onEscape?: () => void;
   className?: string;
 }) {
   return (
@@ -32,6 +34,7 @@ export function Confirmation(props: {
       note={props.note}
       cancelLabel={props.dismissLabel ?? 'Dismiss'}
       onCancel={props.onDismiss}
+      onEscape={props.onEscape}
       className={props.className}
       details={
         (props.provenance || props.children) && (

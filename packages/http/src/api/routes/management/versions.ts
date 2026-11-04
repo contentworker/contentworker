@@ -5,6 +5,7 @@ import {
   listVersions,
   parseVersionRef,
   restoreVersion,
+  visibleDiff,
 } from '@contentworker/application';
 import {
   assertWritableFields,
@@ -46,7 +47,8 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'Per field and locale: what was added, removed or changed, with detail by field type ' +
         '(word-level text, link targets, list elements matched by key with moves, rich text ' +
-        'by block). Fields the caller may not read are left out.',
+        'by block). Fields the caller may not read are left out; `hiddenChanges` counts the ones ' +
+        'that changed.',
       query: {
         from: 'The baseline: a version number, `draft` or `published`',
         to: 'The version compared against it: a version number, `draft` or `published`',
@@ -62,15 +64,9 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         ...(to === null ? [{ field: 'to', message: VERSION_REF }] : []),
       ];
       if (from === null || to === null) throw new ValidationError(issues);
-      const type = await authorizeEntryRead(c, c.req.param('id'));
+      await authorizeEntryRead(c, c.req.param('id'));
       const diff = await diffVersions(ctx, scopeOf(c), c.req.param('id'), from, to);
-      // Drop denied fields from the diff so they can't leak via before/after.
-      const allowed = maskDeniedFields(
-        c.get('principal'),
-        type,
-        Object.fromEntries(diff.changes.map((ch) => [ch.field, ch])),
-      );
-      return c.json({ ...diff, changes: Object.values(allowed) });
+      return c.json(visibleDiff(c.get('principal'), diff));
     },
   );
   app.get(`${BASE}/entries/:id/versions/:version`, requireScope(SCOPES.previewRead), async (c) => {

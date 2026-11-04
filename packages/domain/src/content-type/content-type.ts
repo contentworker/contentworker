@@ -336,7 +336,6 @@ function assertFieldSetValid(
     assertGuidanceValid(f, where, before);
     assertRulesValid(f, fields, where, before, inList);
     assertSettingsValid(f, where, before);
-    assertWritableYet(f, where, before);
     for (const rx of [f.validations?.regexp, f.items?.validations?.regexp]) {
       if (!rx) continue;
       if (typeof rx.pattern !== 'string') {
@@ -623,39 +622,6 @@ function assertSettingsValid(
         `Unknown pattern preset ${JSON.stringify(preset)} (one of: ${Object.keys(PATTERN_PRESETS).join(', ')})`,
       );
     }
-  }
-}
-
-/**
- * Shapes this release reads but does not yet write, because the release before it reads them
- * wrongly: a time-only Date value (its validator demands a full ISO date, so an entry holding one
- * could no longer be saved after a rollback) and a list of Text, Integer, Number or Date (its
- * validator checks no element, its form edits the list as raw JSON and its codegen types it as
- * strings). Accepted on write by the next release, once this one is deployed everywhere. Only a
- * new use is refused, so a type that already holds one stays editable.
- */
-function assertWritableYet(
-  f: FieldDefinition,
-  where: string,
-  before: FieldDefinition | undefined,
-): void {
-  const fail = (message: string): never => {
-    throw new ValidationError([{ field: where, message }]);
-  };
-  const later = 'is read by this release and accepted on write by the next';
-  if (f.format === 'time' && before?.format !== 'time') fail(`A time-only Date field ${later}`);
-  if (f.items?.format === 'time' && before?.items?.format !== 'time') {
-    fail(`A list of time-only Dates ${later}`);
-  }
-  const itemType = f.items?.type;
-  if (
-    (itemType === 'Text' ||
-      itemType === 'Integer' ||
-      itemType === 'Number' ||
-      itemType === 'Date') &&
-    before?.items?.type !== itemType
-  ) {
-    fail(`A list of ${itemType} values ${later}`);
   }
 }
 

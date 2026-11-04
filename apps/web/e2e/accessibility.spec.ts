@@ -632,6 +632,29 @@ test('the menu editor and its dialogs have no accessibility violations', async (
   await scan(page, testInfo);
 });
 
+test('the entries list’s views menu, column picker and save dialog have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/content/article?columns=sys.status,sys.updatedAt');
+  await expect(page.getByRole('button', { name: 'Views' })).toBeVisible();
+  await scan(page, testInfo);
+  // Menus aren't scanned while open: a Radix menu is modal and hides the page behind it, which axe
+  // reports (as for every menu in the admin). The dialog it opens is scanned.
+  await page.getByRole('button', { name: 'Views' }).click();
+  await page.getByRole('menuitem', { name: 'Save as new view…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Save view' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Name' }).fill(`A11y ${Date.now()}`);
+  await scan(page, testInfo);
+  await dialog.getByRole('button', { name: 'Save view' }).click();
+  await expect(dialog).toBeHidden();
+  await page.getByRole('button', { name: 'Columns' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Updated' }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('columnheader', { name: 'Updated' })).toHaveCount(0);
+  await scan(page, testInfo);
+});
+
 test('permission checkboxes are named in a real browser', async ({ page }) => {
   await openCms(page, '/settings/connected-apps');
   for (const label of [
@@ -766,6 +789,29 @@ test('the publish confirmation has no accessibility violations', async ({
   const dialog = page.getByRole('alertdialog');
   await expect(dialog.getByText('1 field changed')).toBeVisible();
   await scan(page, testInfo);
+});
+
+test('a publish card with its review open has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const title = `Card ${Date.now()}`;
+  await createChanged(request, title);
+  await openCms(page, '/content/article');
+  await page
+    .getByRole('row', { name: new RegExp(title) })
+    .getByRole('button', { name: `Publish “${title}”` })
+    .click();
+  const card = page
+    .getByRole('complementary', { name: 'Coworker' })
+    .getByRole('region', { name: 'Publish this entry' })
+    .filter({ hasText: title });
+  await card.getByRole('button', { name: 'Review changes' }).click();
+  await expect(card.getByText('Edited body')).toBeVisible();
+  await scan(page, testInfo);
+  // The conversation is shared with every other test: a card left waiting would be in theirs.
+  await card.getByRole('button', { name: 'Not now' }).click();
+  await expect(card).toHaveCount(0);
 });
 
 test('an entry’s authorship and the Mine filter have no accessibility violations', async ({

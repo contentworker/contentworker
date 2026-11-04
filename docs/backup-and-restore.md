@@ -93,7 +93,7 @@ pipeline.
    New code may read columns the restored schema does not have yet. The engine cannot be rolled
    back past a stateful-object migration (the platform refuses); CI then leaves the other workers
    on the new version to match it and fails for a person to decide
-   (`.github/workflows/deploy.yml`), so fix forward.
+   (`scripts/deploy.sh`), so fix forward.
 4. Asset bytes in object storage are not rolled back with the database. Rows that reference
    objects created after the restore point are gone; objects deleted after it are not restored.
    That includes the files of a deleted environment: the purge deletes them from object storage,

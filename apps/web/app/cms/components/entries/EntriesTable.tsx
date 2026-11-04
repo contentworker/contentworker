@@ -1,4 +1,4 @@
-import type { ContentType } from '@contentworker/domain';
+import type { ContentType, FieldDefinition, FieldType } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import {
@@ -21,10 +21,11 @@ import {
   Tr as TableRow,
 } from '@contentworker/ui/table';
 import { MoreHorizontalIcon } from 'lucide-react';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { StatusBadge } from '~/cms/components/status';
+import { plural } from '../../lib/format';
 import type { EntryOrder, PreviewEntry } from '../../lib/management';
 import { plainKeyAllowed, type ShortcutGroup, usePageShortcuts } from '../../lib/shortcuts';
 
@@ -62,6 +63,57 @@ export interface EntryRowActions {
 export const SORT_STATUS = 'sys.status';
 export const SORT_UPDATED = 'sys.updatedAt';
 
+/** What a list shows besides the title when nobody picked: the status, then when it changed. */
+export const DEFAULT_COLUMNS: readonly string[] = [SORT_STATUS, SORT_UPDATED];
+
+/** The field types a list can sort by; the rest have no one value to put in order. */
+const SORTABLE_FIELDS: ReadonlySet<FieldType> = new Set<FieldType>([
+  'Symbol',
+  'Text',
+  'Integer',
+  'Number',
+  'Date',
+  'Boolean',
+]);
+
+/** What a cell says for a value it can't show, by the field's type. */
+const SUMMARY_WORDS: Partial<Record<FieldType, string>> = {
+  RichText: 'Rich text',
+  Location: 'Location',
+  Seo: 'SEO',
+  JSON: 'JSON',
+  Component: 'Component',
+};
+
+/** A field's value as a cell shows it; `summary` when that says what it is, not what it holds. */
+export interface FieldCell {
+  readonly text: string;
+  readonly summary?: true;
+}
+
+/**
+ * A field's value as one line of a cell: text as it is, numbers, Yes or No, a list joined. What
+ * doesn't fit a line is named instead (a count of links or items, "Rich text"): the editor shows it.
+ */
+export function fieldCell(value: unknown, field?: Pick<FieldDefinition, 'type'>): FieldCell | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'string') return { text: value };
+  if (typeof value === 'number') return { text: String(value) };
+  if (typeof value === 'boolean') return { text: value ? 'Yes' : 'No' };
+  const isLink = (v: unknown) =>
+    !!v && typeof v === 'object' && 'linkType' in (v as Record<string, unknown>);
+  if (isLink(value)) return { text: '1 link', summary: true };
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    if (value.every(isLink)) return { text: plural(value.length, 'link', 'links'), summary: true };
+    if (value.every((v) => typeof v === 'string' || typeof v === 'number')) {
+      return { text: value.join(', ') };
+    }
+    return { text: plural(value.length, 'item', 'items'), summary: true };
+  }
+  return { text: (field && SUMMARY_WORDS[field.type]) ?? 'Details', summary: true };
+}
+
 export interface EntriesTableProps {
   readonly type: ContentType;
   readonly entries: readonly PreviewEntry[];
@@ -86,6 +138,11 @@ export interface EntriesTableProps {
   readonly empty?: ReactNode;
   /** Skeleton rows to draw after the entries: the first page, before it has arrived. */
   readonly pending?: number;
+  /**
+   * The columns after the title, in order: `sys.status`, `sys.updatedAt` or a field's apiId (the
+   * column picker's choice, which a saved view keeps). Absent is {@link DEFAULT_COLUMNS}.
+   */
+  readonly columns?: readonly string[];
 }
 
 /** The entry's display-field value in `locale`, or null when it has none. */
@@ -97,8 +154,8 @@ export function entryTitle(type: ContentType, entry: PreviewEntry, locale: strin
 
 export const needsPublish = (status: string) => status === 'draft' || status === 'changed';
 
-/** The columns: checkbox, title, status, updated, the contextual action, the menu. */
-const COLUMNS = 6;
+/** The columns around the picked ones: checkbox, title, the contextual action, the menu. */
+const FIXED_COLUMNS = 4;
 
 // Below md each row is a card: the checkbox and title on the first line, the
 // status, when it changed and the actions beneath. The header stays for screen
@@ -107,6 +164,12 @@ const COLUMNS = 6;
 const ROW_STACK =
   'group/row md:h-11 max-md:grid max-md:grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] max-md:items-center max-md:gap-x-2 max-md:gap-y-1.5 max-md:py-2';
 const CELL_STACK = 'max-md:block max-md:p-0';
+// The second line of a row's card, placed by column so a view's own column order (or leaving one
+// out) can't push the status onto a line of its own.
+const STATUS_CELL = `${CELL_STACK} max-md:col-start-2 max-md:row-start-2`;
+const UPDATED_CELL = `${CELL_STACK} max-md:col-start-3 max-md:row-start-2`;
+const ACTION_CELL = `${CELL_STACK} max-md:col-start-4 max-md:row-start-2 text-right`;
+const MENU_CELL = `${CELL_STACK} max-md:col-start-5 max-md:row-start-2 text-right`;
 
 /**
  * The row's Publish is quiet: a ghost at badge height, shown on the row a pointer is over, the row
@@ -140,6 +203,14 @@ export function EntriesTable(props: EntriesTableProps) {
 
   const fieldName = type.fields.find((f) => f.apiId === type.displayField)?.name;
   const titleHeader = fieldName ?? type.displayField;
+  // A column naming a field the type no longer has (a view saved before it was removed) is left out.
+  const columns = (props.columns ?? DEFAULT_COLUMNS).filter(
+    (c) => c === SORT_STATUS || c === SORT_UPDATED || type.fields.some((f) => f.apiId === c),
+  );
+  const columnCount = FIXED_COLUMNS + columns.length;
+  // A phone's card always says the status, whichever columns were picked: it is how a row reads.
+  const statusPicked = columns.includes(SORT_STATUS);
+  const fieldOf = (apiId: string) => type.fields.find((f) => f.apiId === apiId);
   const pickedHere = entries.filter((e) => picked.has(e.id)).length;
   const allState =
     entries.length > 0 && pickedHere === entries.length
@@ -221,11 +292,17 @@ export function EntriesTable(props: EntriesTableProps) {
     if (order.field !== field) return undefined;
     return order.direction === 'asc' ? 'ascending' : 'descending';
   };
+  const sortable = (field: string) => {
+    if (field === SORT_STATUS || field === SORT_UPDATED) return true;
+    const declared = fieldOf(field);
+    return declared !== undefined && SORTABLE_FIELDS.has(declared.type);
+  };
   const header = (field: string, label: ReactNode, className?: string) => {
-    const sort = props.onSort ? sortOf(field) : undefined;
+    const canSort = props.onSort !== undefined && sortable(field);
+    const sort = canSort ? sortOf(field) : undefined;
     return (
       <TableHead role="columnheader" scope="col" sort={sort} className={className}>
-        {props.onSort ? (
+        {canSort ? (
           <button
             type="button"
             className="hit-area caption -mx-1 rounded-sm px-1 hover:text-foreground"
@@ -263,8 +340,15 @@ export function EntriesTable(props: EntriesTableProps) {
                 />
               </TableHead>
               {header(type.displayField, titleHeader)}
-              {header(SORT_STATUS, 'Status', 'w-28')}
-              {header(SORT_UPDATED, 'Updated', 'w-28')}
+              {columns.map((c) =>
+                c === SORT_STATUS ? (
+                  <Fragment key={c}>{header(SORT_STATUS, 'Status', 'w-28')}</Fragment>
+                ) : c === SORT_UPDATED ? (
+                  <Fragment key={c}>{header(SORT_UPDATED, 'Updated', 'w-28')}</Fragment>
+                ) : (
+                  <Fragment key={c}>{header(c, fieldOf(c)?.name ?? c)}</Fragment>
+                ),
+              )}
               <TableHead role="columnheader" scope="col" className="w-24">
                 <span className="sr-only">Action</span>
               </TableHead>
@@ -325,16 +409,33 @@ export function EntriesTable(props: EntriesTableProps) {
                       </Link>
                     )}
                   </TableCell>
-                  <TableCell role="cell" className={`${CELL_STACK} max-md:col-start-2`}>
-                    <StatusBadge status={e.status} />
-                  </TableCell>
-                  <TableCell
-                    role="cell"
-                    className={`${CELL_STACK} whitespace-nowrap text-muted-foreground text-xs`}
-                  >
-                    {e.updatedAt ? <Ago at={e.updatedAt} /> : null}
-                  </TableCell>
-                  <TableCell role="cell" className={`${CELL_STACK} text-right`}>
+                  {columns.map((c) =>
+                    c === SORT_STATUS ? (
+                      <TableCell key={c} role="cell" className={STATUS_CELL}>
+                        <StatusBadge status={e.status} />
+                      </TableCell>
+                    ) : c === SORT_UPDATED ? (
+                      <TableCell
+                        key={c}
+                        role="cell"
+                        className={`${UPDATED_CELL} whitespace-nowrap text-muted-foreground text-xs`}
+                      >
+                        {e.updatedAt ? <Ago at={e.updatedAt} /> : null}
+                      </TableCell>
+                    ) : (
+                      <FieldTableCell
+                        key={c}
+                        value={(e.fields[c] as Record<string, unknown> | undefined)?.[locale]}
+                        field={fieldOf(c)}
+                      />
+                    ),
+                  )}
+                  {!statusPicked && (
+                    <TableCell role="cell" className={`${STATUS_CELL} md:hidden`}>
+                      <StatusBadge status={e.status} />
+                    </TableCell>
+                  )}
+                  <TableCell role="cell" className={ACTION_CELL}>
                     {viewingTrash ? (
                       <Button
                         type="button"
@@ -359,7 +460,7 @@ export function EntriesTable(props: EntriesTableProps) {
                       </Button>
                     ) : null}
                   </TableCell>
-                  <TableCell role="cell" className={`${CELL_STACK} text-right`}>
+                  <TableCell role="cell" className={MENU_CELL}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -411,16 +512,22 @@ export function EntriesTable(props: EntriesTableProps) {
               );
             })}
             {entries.length === 0 && props.empty ? (
-              <TableEmpty colSpan={COLUMNS}>{props.empty}</TableEmpty>
+              <TableEmpty colSpan={columnCount}>{props.empty}</TableEmpty>
             ) : null}
             {Array.from({ length: props.pending ?? 0 }, (_, i) => (
-              <EntryRowSkeleton key={i} index={i} viewingTrash={viewingTrash} />
+              <EntryRowSkeleton
+                key={i}
+                index={i}
+                viewingTrash={viewingTrash}
+                columns={columns}
+                statusPicked={statusPicked}
+              />
             ))}
           </TableBody>
           {props.onLoadMore ? (
             <TableFoot className="max-md:block">
               <TableRow className="border-t max-md:block">
-                <TableCell colSpan={COLUMNS} className="py-2 text-center max-md:block">
+                <TableCell colSpan={columnCount} className="py-2 text-center max-md:block">
                   <Button
                     type="button"
                     variant="ghost"
@@ -456,6 +563,23 @@ export function EntriesTable(props: EntriesTableProps) {
   );
 }
 
+/**
+ * A picked field's cell. A phone's row card keeps to the title, status and actions. Long text is
+ * cut to the column, and its `title` has the whole of it; what a cell only names has none.
+ */
+function FieldTableCell(props: { value: unknown; field?: FieldDefinition }) {
+  const cell = fieldCell(props.value, props.field);
+  return (
+    <TableCell
+      role="cell"
+      title={cell && !cell.summary ? cell.text : undefined}
+      className={`max-w-64 truncate max-md:hidden ${cell?.summary ? 'text-muted-foreground' : ''}`}
+    >
+      {cell?.text}
+    </TableCell>
+  );
+}
+
 /** Title lengths for skeleton rows, so a column of them reads as titles of different lengths. */
 const TITLE_WIDTHS = ['58%', '42%', '71%', '50%', '64%', '37%'];
 
@@ -463,7 +587,18 @@ const TITLE_WIDTHS = ['58%', '42%', '71%', '50%', '64%', '37%'];
  * A row still on its way, laid out by the real row's classes so nothing moves when it arrives:
  * the checkbox, the title, a status pill, when it changed, and Restore on each trashed row.
  */
-function EntryRowSkeleton({ index, viewingTrash }: { index: number; viewingTrash: boolean }) {
+function EntryRowSkeleton({
+  index,
+  viewingTrash,
+  columns,
+  statusPicked,
+}: {
+  index: number;
+  viewingTrash: boolean;
+  columns: readonly string[];
+  statusPicked: boolean;
+}) {
+  const statusPill = <SkeletonPill className={index % 3 === 1 ? 'w-[5.5rem]' : 'w-[4.5rem]'} />;
   return (
     <TableRow role="row" aria-hidden="true" className={ROW_STACK}>
       <TableCell
@@ -475,17 +610,31 @@ function EntryRowSkeleton({ index, viewingTrash }: { index: number; viewingTrash
       <TableCell role="cell" className={`${CELL_STACK} max-md:col-span-4`}>
         <SkeletonText width={TITLE_WIDTHS[index % TITLE_WIDTHS.length]} />
       </TableCell>
-      <TableCell role="cell" className={`${CELL_STACK} max-md:col-start-2`}>
-        <SkeletonPill className={index % 3 === 1 ? 'w-[5.5rem]' : 'w-[4.5rem]'} />
-      </TableCell>
-      <TableCell role="cell" className={`${CELL_STACK} text-xs`}>
-        <SkeletonText width="3.5rem" />
-      </TableCell>
-      <TableCell role="cell" className={`${CELL_STACK} text-right`}>
+      {columns.map((c) =>
+        c === SORT_STATUS ? (
+          <TableCell key={c} role="cell" className={STATUS_CELL}>
+            {statusPill}
+          </TableCell>
+        ) : (
+          <TableCell
+            key={c}
+            role="cell"
+            className={c === SORT_UPDATED ? `${UPDATED_CELL} text-xs` : 'max-md:hidden'}
+          >
+            <SkeletonText width={c === SORT_UPDATED ? '3.5rem' : '5rem'} />
+          </TableCell>
+        ),
+      )}
+      {!statusPicked && (
+        <TableCell role="cell" className={`${STATUS_CELL} md:hidden`}>
+          {statusPill}
+        </TableCell>
+      )}
+      <TableCell role="cell" className={ACTION_CELL}>
         {/* The row's Publish is hidden at rest; Restore, in the trash, always shows. */}
         {viewingTrash ? <SkeletonPill className="h-6 w-[4.25rem]" /> : null}
       </TableCell>
-      <TableCell role="cell" className={`${CELL_STACK} text-right`}>
+      <TableCell role="cell" className={MENU_CELL}>
         {/* The row menu's ghost button is only its icon at rest: hold its height, draw nothing. */}
         <span className="inline-block size-8 align-middle" />
       </TableCell>

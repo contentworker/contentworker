@@ -16,6 +16,7 @@ import {
   seedIngestFindings,
   seedLaidOutType,
   seedRuledType,
+  seedShelfType,
   seedVenueType,
   statusOf,
   stubLocales,
@@ -42,12 +43,15 @@ test.beforeEach(async ({ page }) => {
 /** The seeded content type's entries list, from the Content section's own sub-nav. */
 /**
  * Confirms a page's action at its card in the assistant's panel; the page waits on the answer. The
- * newest card: the conversation is the one person's, kept across tests.
+ * conversation is the one person's, kept across tests and live in all of them, so the card is found
+ * by the entry it names: the newest "Publish this entry" can be another test's, here before this
+ * one's has arrived. Newest of those, for an entry asked about twice.
  */
-async function confirmCard(page: Page, title: string) {
+async function confirmCard(page: Page, title: string, about: string) {
   const card = page
     .getByRole('complementary', { name: 'Coworker' })
     .getByRole('region', { name: title })
+    .filter({ hasText: about })
     .last();
   await card.getByRole('button', { name: 'Confirm' }).click();
 }
@@ -99,7 +103,7 @@ test('authors and publishes an entry end-to-end', async ({ page }) => {
 
   // Publish from the editor header: confirmed at the assistant's card.
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
-  await confirmCard(page, 'Publish this entry');
+  await confirmCard(page, 'Publish this entry', title);
   await expect(page.getByText(/Published v\d+/)).toBeVisible();
 
   // Back on the list, the entry shows as published (in words, not only colour).
@@ -168,7 +172,8 @@ test('publishing with unsaved edits saves first, then confirms', async ({ page }
 
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
   await expect(page.getByText('Draft updated')).toBeVisible();
-  await confirmCard(page, 'Publish this entry');
+  // Named as just saved, not as the page read before the save.
+  await confirmCard(page, 'Publish this entry', `${title} v2`);
   await expect(page.getByText(/Published v\d+/)).toBeVisible();
 
   // Publish with an INVALID form: feedback at the button, no confirm.
@@ -238,6 +243,175 @@ test('the bulk bar offers what applies to the ticked drafts and names them in it
   await expect(page.getByRole('searchbox', { name: 'Search entries' })).toBeVisible();
 });
 
+test('saves the list as a view, reopens it from a clean list and from its link, and shares it', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  for (const which of ['keep', 'other']) {
+    const res = await api(request, 'POST', `${MGMT}/entries`, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': `View ${stamp} ${which}` } },
+    });
+    expect(res.ok(), await res.text()).toBe(true);
+  }
+  const keep = page.getByRole('row', { name: new RegExp(`View ${stamp} keep`) });
+  const other = page.getByRole('row', { name: new RegExp(`View ${stamp} other`) });
+  await openCms(page, '/content/article');
+  await page.getByRole('searchbox', { name: 'Search entries' }).fill(`View ${stamp} keep`);
+  // The search is the URL, as the API reads it.
+  await expect(page).toHaveURL(new RegExp(`query=View(\\+|%20)${stamp}`));
+  await expect(other).toHaveCount(0);
+  await expect(keep).toBeVisible();
+
+  const name = `Keepers ${stamp}`;
+  await page.getByRole('button', { name: 'Views' }).click();
+  await page.getByRole('menuitem', { name: 'Save as new view…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Save view' });
+  await dialog.getByRole('textbox', { name: 'Name' }).fill(name);
+  await dialog.getByRole('button', { name: 'Save view' }).click();
+  await expect(page.getByText(`Saved “${name}”`)).toBeVisible();
+  await expect(page).toHaveURL(/view=/);
+  const link = page.url();
+
+  // A clean list shows both; the view brings its filter back.
+  await openCms(page, '/content/article');
+  await expect(other).toBeVisible();
+  await page.getByRole('button', { name: 'Views' }).click();
+  await page.getByRole('menuitemradio', { name }).click();
+  await expect(keep).toBeVisible();
+  await expect(other).toHaveCount(0);
+
+  // Its link opens the same list.
+  await page.goto(link);
+  await expect(keep).toBeVisible();
+  await expect(other).toHaveCount(0);
+  await expect(page.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+
+  // Shared, it moves under the space's views.
+  await page.getByRole('button', { name: new RegExp(name) }).click();
+  await page.getByRole('menuitem', { name: 'Share with the space' }).click();
+  await expect(page.getByText(`“${name}” is shared with everyone in the space`)).toBeVisible();
+  await page.getByRole('button', { name: new RegExp(name) }).click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByText('Shared with the space')).toBeVisible();
+  await expect(menu.getByRole('menuitemradio', { name })).toBeVisible();
+  await page.keyboard.press('Escape');
+  const listed = await api(request, 'GET', `${MGMT}/saved-views?content_type=article`);
+  const views = (await listed.json()) as { items: { name: string; visibility: string }[] };
+  expect(views.items.find((v) => v.name === name)?.visibility).toBe('shared');
+});
+
+test('a saved view: renamed, saved over, refused when stale, unshared, then deleted', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  await createDraft(request, `Flow ${stamp} one`);
+  await createDraft(request, `Flow ${stamp} two`);
+  await openCms(page, '/content/article');
+  const searchbox = page.getByRole('searchbox', { name: 'Search entries' });
+
+  // Typing in the list is the list's own state: it asks nothing of the shell's server loader.
+  const loads: string[] = [];
+  page.on('request', (r) => {
+    if (new URL(r.url()).pathname.endsWith('.data')) loads.push(r.url());
+  });
+  await searchbox.pressSequentially(`Flow ${stamp} one`);
+  await expect(page).toHaveURL(new RegExp(`query=Flow(\\+|%20)${stamp}(\\+|%20)one`));
+  expect(loads).toEqual([]);
+
+  const views = page.getByRole('button', { name: 'Views' });
+  const first = `Flow view ${stamp}`;
+  const name = `Renamed ${stamp}`;
+  const trigger = (view: string) => page.getByRole('button', { name: new RegExp(view) });
+  await views.click();
+  await page.getByRole('menuitem', { name: 'Save as new view…' }).click();
+  const saving = page.getByRole('dialog', { name: 'Save view' });
+  await saving.getByRole('textbox', { name: 'Name' }).fill(first);
+  await saving.getByRole('switch', { name: 'Share with the space' }).click();
+  await saving.getByRole('button', { name: 'Save view' }).click();
+  await expect(page.getByText(`Saved “${first}” for everyone`)).toBeVisible();
+  // An open view's trigger says so, with its visible text in the name.
+  await expect(trigger(first)).toHaveAccessibleName(`View: ${first}`);
+
+  await trigger(first).click();
+  await page.getByRole('menuitem', { name: 'Rename…' }).click();
+  const renaming = page.getByRole('dialog', { name: 'Rename view' });
+  await renaming.getByRole('textbox', { name: 'Name' }).fill(name);
+  await renaming.getByRole('button', { name: 'Rename' }).click();
+  await expect(page.getByText(`Renamed to “${name}”`)).toBeVisible();
+  await expect(trigger(name)).toHaveAccessibleName(`View: ${name}`);
+
+  // Edited, it says so; someone else saving first refuses this save, and it reads the view again.
+  await searchbox.fill(`Flow ${stamp}`);
+  await expect(trigger(`${name}.*edited`)).toBeVisible();
+  const listed = await api(request, 'GET', `${MGMT}/saved-views?content_type=article`);
+  const saved = (await listed.json()) as { items: { id: string; name: string }[] };
+  const id = saved.items.find((v) => v.name === name)?.id;
+  const other = await api(request, 'PATCH', `${MGMT}/saved-views/${id}`, {
+    query: { search: `Flow ${stamp} two` },
+  });
+  expect(other.ok(), await other.text()).toBe(true);
+  await trigger(name).click();
+  const save = page.getByRole('menuitem', { name: `Save changes to “${name}”` });
+  await save.click();
+  await expect(page.getByText(/saved by someone else since/)).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`query=Flow(\\+|%20)${stamp}(&|$)`));
+  // Asked again, on the view as it now stands, it goes through.
+  await trigger(name).click();
+  await save.click();
+  await expect(page.getByText(`Saved “${name}”`)).toBeVisible();
+  await expect(trigger(name)).not.toContainText('edited');
+  const read = await api(request, 'GET', `${MGMT}/saved-views/${id}`);
+  expect(((await read.json()) as { query: unknown }).query).toEqual({ search: `Flow ${stamp}` });
+
+  // Unshared, it is the creator's alone: back under their own views, as a fresh read says.
+  await trigger(name).click();
+  await page.getByRole('menuitem', { name: 'Stop sharing' }).click();
+  await expect(page.getByText(`“${name}” is yours alone now`)).toBeVisible();
+  await page.reload();
+  await trigger(name).click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByText('Your views')).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Share with the space' })).toBeVisible();
+
+  // Backing out of the delete and going through with it both leave the keyboard on the trigger.
+  await menu.getByRole('menuitem', { name: 'Delete view…' }).click();
+  const confirm = page.getByRole('alertdialog', { name: `Delete “${name}”?` });
+  await confirm.getByRole('button', { name: 'Keep view' }).click();
+  await expect(confirm).toBeHidden();
+  await expect(trigger(name)).toBeFocused();
+  await trigger(name).click();
+  await page.getByRole('menuitem', { name: 'Delete view…' }).click();
+  await confirm.getByRole('button', { name: 'Delete view' }).click();
+  await expect(page.getByText(`Deleted “${name}”`)).toBeVisible();
+  await expect(views).toBeFocused();
+  await expect(page).not.toHaveURL(/view=/);
+});
+
+test('a link’s grouped conditions show in the filters and can be removed', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  await createDraft(request, `Group ${stamp} in`);
+  await createDraft(request, `Other ${stamp} out`);
+  const where = { or: [{ field: 'title', op: 'startsWith', value: `Group ${stamp}` }] };
+  await openCms(page, `/content/article?where=${encodeURIComponent(JSON.stringify(where))}`);
+  const kept = page.getByRole('row', { name: new RegExp(`Group ${stamp} in`) });
+  const other = page.getByRole('row', { name: new RegExp(`Other ${stamp} out`) });
+  await expect(kept).toBeVisible();
+  await expect(other).toHaveCount(0);
+
+  await page.getByRole('button', { name: /^Filters/ }).click();
+  await expect(page.getByText(/grouped conditions/)).toBeVisible();
+  await page.getByRole('button', { name: 'Remove them' }).click();
+  await expect(page.getByText(/grouped conditions/)).toHaveCount(0);
+  await expect(page).not.toHaveURL(/where=/);
+  await expect(other).toBeVisible();
+});
+
 test('trashes an entry, restores it, then deletes it permanently', async ({ page, request }) => {
   const title = `Trash ${Date.now()}`;
   await api(request, 'POST', `${MGMT}/entries`, {
@@ -249,7 +423,7 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
   const row = page.getByRole('row', { name: new RegExp(title) });
   await row.getByRole('button', { name: /^More actions for / }).click();
   await page.getByRole('menuitem', { name: 'Move to trash' }).click();
-  await confirmCard(page, 'Move this entry to the trash');
+  await confirmCard(page, 'Move this entry to the trash', title);
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
 
   await page.getByRole('button', { name: 'View trash' }).click();
@@ -265,7 +439,7 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
     .getByRole('button', { name: /^More actions for / })
     .click();
   await page.getByRole('menuitem', { name: 'Move to trash' }).click();
-  await confirmCard(page, 'Move this entry to the trash');
+  await confirmCard(page, 'Move this entry to the trash', title);
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
   await page.getByRole('button', { name: 'View trash' }).click();
   await page
@@ -273,7 +447,7 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
     .getByRole('button', { name: /^More actions for / })
     .click();
   await page.getByRole('menuitem', { name: 'Delete permanently…' }).click();
-  await confirmCard(page, 'Delete this entry for good');
+  await confirmCard(page, 'Delete this entry for good', title);
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
 });
 
@@ -721,12 +895,42 @@ test('deleting an asset an entry uses names that entry and links to it', async (
   await expect(library.getByRole('button', { name: `Open “${assetTitle}”` })).toBeVisible();
 });
 
+test('a changed entry’s card says what goes live, and declining keeps focus in the panel', async ({
+  page,
+  request,
+}) => {
+  const title = `Carded ${Date.now()}`;
+  const id = await createChanged(request, title);
+  await openCms(page, '/content/article');
+  await page
+    .getByRole('row', { name: new RegExp(title) })
+    .getByRole('button', { name: `Publish “${title}”` })
+    .click();
+
+  const card = page
+    .getByRole('complementary', { name: 'Coworker' })
+    .getByRole('region', { name: 'Publish this entry' })
+    .filter({ hasText: title });
+  await expect(card.getByText('1 field goes live:')).toBeVisible();
+  await expect(card.getByRole('list', { name: 'Changed fields' })).toContainText('Body');
+  await expect(card.getByRole('button', { name: 'Not now' })).toBeFocused();
+
+  await card.getByRole('button', { name: 'Review changes' }).click();
+  await expect(card.getByText('Live body')).toBeVisible();
+  await expect(card.getByText('Edited body')).toBeVisible();
+
+  await card.getByRole('button', { name: 'Not now' }).click();
+  await expect(page.getByText(/left as it was/).last()).toBeVisible();
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
+  expect(await statusOf(request, id)).toBe('changed');
+});
+
 test.describe('publishing from a row, without the assistant', () => {
   test.beforeEach(async ({ page }) => {
     await withoutAssistant(page);
   });
 
-  test('a changed entry confirms what goes live; Keep as draft publishes nothing, Publish entry publishes', async ({
+  test('a changed entry confirms what goes live; Keep live version publishes nothing, Publish entry publishes', async ({
     page,
     request,
   }) => {
@@ -741,12 +945,18 @@ test.describe('publishing from a row, without the assistant', () => {
     await expect(dialog.getByRole('heading', { name: `Publish “${title}”?` })).toBeVisible();
     // Only the body differs from what's live: it is listed as changed, the title is not.
     await expect(dialog.getByText('1 field changed')).toBeVisible();
-    const changed = dialog.getByRole('row', { name: /^body Changed/ });
+    const changed = dialog.getByRole('list', { name: 'Changes' }).getByRole('listitem');
+    await expect(changed).toHaveCount(1);
+    await expect(changed.getByText('Body', { exact: true })).toBeVisible();
     await expect(changed.getByText('Live body')).toBeVisible();
     await expect(changed.getByText('Edited body')).toBeVisible();
-    await expect(dialog.getByRole('row', { name: /^title/ }).getByText('Changed')).toHaveCount(0);
+    await expect(dialog.getByText(title, { exact: true })).toHaveCount(0);
+    await dialog.getByRole('button', { name: /^Show \d+ unchanged field/ }).click();
+    await expect(
+      dialog.getByRole('list', { name: 'Unchanged fields' }).getByText(title),
+    ).toBeVisible();
 
-    await dialog.getByRole('button', { name: 'Keep as draft' }).click();
+    await dialog.getByRole('button', { name: 'Keep live version' }).click();
     await expect(dialog).toBeHidden();
     expect(await statusOf(request, id)).toBe('changed');
     await expect(row.getByRole('button', { name: `Publish “${title}”` })).toBeVisible();
@@ -756,6 +966,36 @@ test.describe('publishing from a row, without the assistant', () => {
     await expect(page.getByText(`“${title}” published`)).toBeVisible();
     await expect(row.getByRole('button', { name: `Publish “${title}”` })).toHaveCount(0);
     expect(await statusOf(request, id)).toBe('published');
+  });
+
+  test('at phone width the value going live sits inside the dialog, however long', async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width: 393, height: 852 });
+    const title = `Narrow ${Date.now()}`;
+    const id = await createChanged(request, title);
+    const long = `https://example.com/${'unbroken-'.repeat(30)}`;
+    const edited = await api(request, 'PUT', `${MGMT}/entries/${id}`, {
+      fields: { title: { 'en-US': title }, body: { 'en-US': long } },
+    });
+    expect(edited.ok(), await edited.text()).toBe(true);
+    await openCms(page, '/content/article');
+    await page.getByRole('link', { name: title }).focus();
+    await page.getByRole('button', { name: `Publish “${title}”` }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    const region = dialog.getByRole('region', { name: 'What changes' });
+    const value = region.getByText(long);
+    await expect(value).toBeVisible();
+    const box = (await value.boundingBox()) ?? { x: 0, width: Number.POSITIVE_INFINITY };
+    const bounds = (await region.boundingBox()) ?? { x: 0, width: 0 };
+    expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+    expect(await region.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+    // A keyboard reaches the scroller, and leaves the safe choice as where it starts.
+    await expect(dialog.getByRole('button', { name: 'Keep live version' })).toBeFocused();
+    expect(await region.getAttribute('tabindex')).toBe('0');
   });
 
   test('a draft publishes at once with an Undo that returns it to draft', async ({
@@ -1315,6 +1555,20 @@ test('a singleton type opens its one entry, and refuses a second', async ({ page
     fields: { title: { 'en-US': 'Another' } },
   });
   expect(second.status()).toBe(409);
+
+  // Its list, reached past the sidebar, keeps the views menu: a view of the one row saves and opens.
+  await openCms(page, `/content/${apiId}`);
+  const table = page.getByRole('main').getByRole('table');
+  await expect(table.getByRole('link', { name: 'Our site' })).toBeVisible();
+  await page.getByRole('button', { name: 'Views' }).click();
+  await page.getByRole('menuitem', { name: 'Save as new view…' }).click();
+  const saving = page.getByRole('dialog', { name: 'Save view' });
+  await saving.getByLabel('Name', { exact: true }).fill('The one');
+  await saving.getByRole('button', { name: 'Save view' }).click();
+  await expect(saving).toBeHidden();
+  await expect(page.getByRole('button', { name: /The one/ })).toBeVisible();
+  await expect(page).toHaveURL(/[?&]view=/);
+  await expect(table.getByRole('link', { name: 'Our site' })).toBeVisible();
 });
 
 test('a content type is cloned, then deleted with its entries, from its menu', async ({
@@ -1490,4 +1744,33 @@ test('an images-only asset link offers images only', async ({ page, request }) =
   await picker.fill(String(stamp));
   await expect(page.getByRole('option', { name: `Poster art ${stamp}` })).toBeVisible();
   await expect(page.getByRole('option', { name: `Floor plan ${stamp}` })).toHaveCount(0);
+});
+
+test('a list of whole numbers is edited row by row, saved as numbers, beside a time of day', async ({
+  page,
+  request,
+}) => {
+  await seedShelfType(request);
+  await openCms(page, '/content/shelf/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByLabel('Title').fill(`Shelf ${Date.now()}`);
+  const add = page.getByRole('button', { name: 'Add item' });
+  await add.click();
+  await expect(page.getByLabel('Sizes item 1', { exact: true })).toBeFocused();
+  await page.keyboard.type('12');
+  await add.click();
+  await expect(page.getByLabel('Sizes item 2', { exact: true })).toBeFocused();
+  await page.keyboard.type('14');
+  await add.click();
+  await page.keyboard.type('16');
+  // Removing the middle row puts focus on the one that took its place.
+  await page.getByRole('button', { name: 'Remove Sizes item 2' }).click();
+  await expect(page.getByLabel('Sizes item 2', { exact: true })).toBeFocused();
+  await expect(page.getByLabel('Sizes item 2', { exact: true })).toHaveValue('16');
+  await page.getByLabel('Opens').fill('09:30');
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
+  await expect(page.getByLabel('Sizes item 1', { exact: true })).toHaveValue('12');
+  await expect(page.getByLabel('Sizes item 2', { exact: true })).toHaveValue('16');
+  await expect(page.getByLabel('Opens')).toHaveValue('09:30');
 });

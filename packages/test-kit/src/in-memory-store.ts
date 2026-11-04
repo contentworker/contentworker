@@ -40,6 +40,7 @@ import {
   type ReleaseItem,
   type Role,
   runEntryQuery,
+  type SavedView,
   type Scope,
   type SpaceMember,
   type StoredAssetShareLink,
@@ -121,6 +122,7 @@ import type {
   ReferenceRepo,
   ReleaseRepo,
   RoleRepo,
+  SavedViewRepo,
   ScheduledActionRepo,
   SchedulerJobRepo,
   SchedulerJobStatus,
@@ -2788,6 +2790,43 @@ export class InMemoryContentStore implements ContentStore {
       const key = `${scopeKey(scope)}::${id}`;
       if (this.menuData.get(key)?.revision !== expected) throw new TransactionConflictError();
       this.menuData.delete(key);
+    },
+  };
+
+  /** `space::id` → view: saved views are the space's, whatever environment asks. */
+  private readonly savedViewData = new Map<string, SavedView>();
+
+  readonly savedViews: SavedViewRepo = {
+    list: async (scope, opts = {}) =>
+      [...this.savedViewData.entries()]
+        .filter(([k]) => k.startsWith(`${scope.spaceId}::`))
+        .map(([, v]) => v)
+        .filter(
+          (v) =>
+            v.visibility === 'shared' || (opts.owner !== undefined && v.createdBy === opts.owner),
+        )
+        .sort((a, b) =>
+          a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+        ),
+    get: async (scope, id) => this.savedViewData.get(`${scope.spaceId}::${id}`) ?? null,
+    save: async (scope, view, expected) => {
+      const key = `${scope.spaceId}::${view.id}`;
+      const current = this.savedViewData.get(key);
+      if (expected === undefined) {
+        if (current) throw new ConflictError('A unique value is already taken');
+      } else if (current?.revision !== expected) {
+        throw new TransactionConflictError();
+      }
+      // As the D1 row: the creator and creation time never change after the insert.
+      this.savedViewData.set(
+        key,
+        current ? { ...view, createdBy: current.createdBy, createdAt: current.createdAt } : view,
+      );
+    },
+    delete: async (scope, id, expected) => {
+      const key = `${scope.spaceId}::${id}`;
+      if (this.savedViewData.get(key)?.revision !== expected) throw new TransactionConflictError();
+      this.savedViewData.delete(key);
     },
   };
 

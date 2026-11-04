@@ -240,6 +240,7 @@ read paths), 10 GB per database.
 | `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows                                                                       |
 | `concept_schemes`, `concepts`, `tags`                                                                                                             | Taxonomy (`taxonomy_usage`, its published counts, from 0018)                              |
 | `redirects`, `redirect_sets` (`0017`)                                                                                                             | Redirects and their revision                                                              |
+| `saved_views` (`0029`)                                                                                                                            | Saved views of the entries list (space-scoped)                                            |
 | `menus` (`0020`)                                                                                                                                  | Navigation menus, each item tree a JSON column                                            |
 | `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
 | `audit_log`                                                                                                                                       | Per-space audit trail                                                                     |
@@ -316,6 +317,16 @@ the row id and the code, never the code; `browser_hash`, the SHA-256 of the aski
 nonce, which a typed code must come with; `created_at`, `expires_at`, `used_at`), indexed by
 `(user_id, created_at)` and by `expires_at`. Tries are counted in `auth_failures` (`reset-try`). Nothing is backfilled (see
 [Auth & RBAC](./auth-and-rbac.md#password-reset)).
+
+`0029_saved_views.sql` adds `saved_views` and touches no existing table: one **space-scoped** row
+per saved view (no `environment_id`: every environment shows the same views), `name`,
+`content_type` (null for every type), `visibility` (`personal` or `shared`), `created_by` (the
+owner of a personal view), `query` (the structured query as JSON, never a query string), `columns`
+(JSON, null for the default), `revision` and epoch-ms `created_at` and `updated_at`, keyed
+`(space_id, id)`, with the index `saved_views_by_owner` on `(space_id, visibility, created_by)` for
+the shared-plus-own list. Nothing is backfilled (see
+[Domain model](./domain-model.md#saved-views)). 0024 to 0028 are other branches' numbers; wrangler
+applies migrations by name, so the gap is harmless.
 
 `0020_menus.sql` adds `menus` and touches no existing table: one environment-scoped row per
 navigation menu (`handle`, `name`, `description`, `items` as a JSON tree written whole, `revision`,

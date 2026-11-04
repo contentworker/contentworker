@@ -1,17 +1,18 @@
 import type { TermUsageSummary } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { Textarea } from '@contentworker/ui/textarea';
-import { useId, useState } from 'react';
-import { useMedia } from '~/cms/lib/device';
+import { useEffect, useId, useState } from 'react';
+import {
+  DiscardAsk,
+  type DiscardGuard,
+  GuardCancel,
+  useDiscardGuard,
+} from '~/cms/components/discard-guard';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import type { TermFields } from '~/cms/lib/management';
 
 /** A tag or concept as the editor shows it: its own label is the default locale's. */
@@ -70,17 +71,30 @@ export function TermEditor({
   locales: readonly string[];
   defaultLocale: string;
   busy: boolean;
-  onSave: (changes: TermChanges) => void;
+  onSave: (changes: TermChanges) => Promise<void> | void;
   onOpenChange: (open: boolean) => void;
 }) {
-  const phone = useMedia('(max-width: 639px)');
+  const [dirty, setDirty] = useState(false);
+  // Its own write, not `busy`, which any action on the page sets.
+  const [saving, setSaving] = useState(false);
+  const guard = useDiscardGuard({ open: term !== null, dirty, saving, onOpenChange });
+  const [error, setError] = useState<string>();
+  const save = async (changes: TermChanges) => {
+    setSaving(true);
+    setError(undefined);
+    try {
+      await onSave(changes);
+    } catch (err) {
+      setError(guard.saveFailed(err));
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
-    <Sheet open={term !== null} onOpenChange={onOpenChange}>
-      <SheetContent side={phone ? 'bottom' : 'right'} className="gap-0 overflow-y-auto sm:max-w-md">
+    <Sheet open={term !== null} onOpenChange={guard.onOpenChange}>
+      <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            {term ? `Edit “${term.label}”` : 'Edit'}
-          </SheetTitle>
+          <SheetTitle>{term ? `Edit “${term.label}”` : 'Edit'}</SheetTitle>
           <SheetDescription className="text-xs">
             {term ? usageLine(term.usage) : null}
           </SheetDescription>
@@ -94,11 +108,13 @@ export function TermEditor({
             locales={locales}
             defaultLocale={defaultLocale}
             busy={busy}
-            onSave={onSave}
-            onCancel={() => onOpenChange(false)}
+            onSave={(changes) => void save(changes)}
+            guard={guard}
+            error={error}
+            onDirty={setDirty}
           />
         ) : null}
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }
@@ -119,7 +135,9 @@ function TermForm({
   defaultLocale,
   busy,
   onSave,
-  onCancel,
+  guard,
+  error,
+  onDirty,
 }: {
   kind: 'tag' | 'concept';
   term: EditableTerm;
@@ -127,7 +145,9 @@ function TermForm({
   defaultLocale: string;
   busy: boolean;
   onSave: (changes: TermChanges) => void;
-  onCancel: () => void;
+  guard: DiscardGuard;
+  error: string | undefined;
+  onDirty: (dirty: boolean) => void;
 }) {
   const id = useId();
   const [label, setLabel] = useState(term.label);
@@ -137,6 +157,10 @@ function TermForm({
   const others = locales.filter((l) => l !== defaultLocale);
   const changes = termChanges(term, { label, slug, description, labels });
   const changed = Object.keys(changes).length > 0;
+  useEffect(() => {
+    onDirty(changed);
+    return () => onDirty(false);
+  }, [changed, onDirty]);
 
   return (
     <form
@@ -205,13 +229,14 @@ function TermForm({
           </p>
         </fieldset>
       ) : null}
-      <div className="flex gap-2">
-        <Button type="submit" disabled={!changed || !label.trim() || busy}>
-          Save {kind}
-        </Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
+      {error && <DialogError>{error}</DialogError>}
+      <div className="flex justify-end gap-2">
+        <DiscardAsk guard={guard} message={`Discard your changes to “${term.label}”?`}>
+          <GuardCancel guard={guard} />
+          <Button type="submit" disabled={!changed || !label.trim() || busy}>
+            Save {kind}
+          </Button>
+        </DiscardAsk>
       </div>
     </form>
   );

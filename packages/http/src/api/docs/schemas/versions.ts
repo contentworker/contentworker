@@ -86,5 +86,10 @@ export const versionDiff = z.object({
   contentType: z.string().describe('Content type apiId'),
   from: z.int().describe('The baseline version'),
   to: z.int().describe('The version compared against it'),
-  changes: z.array(fieldDiff).describe("Every field, in the content type's order"),
+  changes: z
+    .array(fieldDiff)
+    .describe("Every field the caller may read, in the content type's order"),
+  hiddenChanges: z
+    .int()
+    .describe('How many fields changed that the caller may not read, without saying which'),
 });

@@ -3,6 +3,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -177,11 +178,7 @@ export function InviteDialog({
               </div>
             ) : null}
             {role === 'admin' ? <StepUpField method={stepUp} next="/team" /> : null}
-            {result?.error ? (
-              <p role="alert" className="text-destructive text-sm">
-                {result.error}
-              </p>
-            ) : null}
+            {result?.error ? <DialogError>{result.error}</DialogError> : null}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel

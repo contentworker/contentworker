@@ -10,6 +10,7 @@ import {
   publishContentType,
   publishEntry,
   trashEntry,
+  updateEntry,
 } from '@contentworker/application';
 import { type ContentTypeGrant, type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -67,6 +68,14 @@ async function setup() {
         required: false,
         position: 0,
       },
+      {
+        apiId: 'secret',
+        name: 'Secret',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 1,
+      },
     ],
   });
   await publishContentType(ctx, scope, 'post');
@@ -95,6 +104,32 @@ async function connect(deps: McpDeps, principal: Principal) {
     return { isError: r.isError === true, text: r.content?.find((c) => c.type === 'text')?.text };
   };
 }
+
+describe('comparing versions over MCP, as over HTTP', () => {
+  it('counts the changes a role can’t read, and says nothing else of them', async () => {
+    const { ctx, deps } = await setup();
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'post',
+      fields: { title: { 'en-US': 'One' }, secret: { 'en-US': 'old secret' } },
+    });
+    await publishEntry(ctx, scope, entry.id);
+    await updateEntry(ctx, scope, entry.id, {
+      title: { 'en-US': 'One' },
+      secret: { 'en-US': 'new secret' },
+    });
+    const call = await connect(
+      deps,
+      role({ actions: ['read', 'write', 'publish'], deniedFields: ['secret'] }),
+    );
+    const { text } = await call('entries_diff_versions', {
+      id: entry.id,
+      from: 'published',
+      to: 'draft',
+    });
+    expect(JSON.parse(text ?? '{}')).toMatchObject({ hiddenChanges: 1 });
+    expect(text).not.toContain('secret');
+  });
+});
 
 describe('finer content actions over MCP, as over HTTP', () => {
   it('a grant that withholds nothing trashes, purges and unpublishes as before', async () => {

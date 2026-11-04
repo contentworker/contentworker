@@ -2,6 +2,7 @@ import type { Asset, ReferenceEdge, Tag } from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { ComposeLoader, composeIcons } from '@contentworker/ui/compose-loader';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import {
@@ -13,7 +14,6 @@ import {
 } from '@contentworker/ui/select';
 import {
   Sheet,
-  SheetContent,
   SheetDescription,
   SheetFooter,
   SheetHeader,
@@ -29,8 +29,10 @@ import { AssetIngestBadges, BADGE_BUTTON_FOCUS } from '~/cms/components/assets/A
 import { AssetRightsForm } from '~/cms/components/assets/AssetRightsForm';
 import { AssetShareDialog } from '~/cms/components/assets/AssetShareDialog';
 import { AssetVersions } from '~/cms/components/assets/AssetVersions';
+import { DiscardAsk, UNCONFIRMED_NOTE, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge, StatusDot, ToneBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { ImageTransform } from '../lib/management';
@@ -76,6 +78,9 @@ export function AssetDetailSheet(props: {
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<SheetTab>('details');
   const [sharing, setSharing] = useState(false);
+  const [rightsDirty, setRightsDirty] = useState(false);
+  const [rightsSaving, setRightsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string>();
   // The original a possible duplicate points at, waiting on "discard your edits?".
   const [confirmOpen, setConfirmOpen] = useState<string | null>(null);
   const imgRef = useRef<HTMLButtonElement>(null);
@@ -112,6 +117,23 @@ export function AssetDetailSheet(props: {
       .catch(() => setUsage([]));
   }, [assetId, props.open, locale, client]);
 
+  const altChanged = altText !== base.altText;
+  const tagsChanged = !sameSet(tagIds, base.tagIds);
+  const dirty = altChanged || tagsChanged || !sameFocal(focal, base.focal);
+  const guard = useDiscardGuard({
+    open: props.open,
+    dirty: dirty || rightsDirty,
+    saving: busy || rightsSaving,
+    subject: assetId,
+    onOpenChange: props.onOpenChange,
+  });
+  // What leaving would lose. Each half saves on its own, so neither speaks for the other.
+  const unsaved = !dirty
+    ? 'The rights here are not saved.'
+    : rightsDirty
+      ? 'Alt text, tags, the focal point and rights here are not saved.'
+      : 'Alt text, tags and the focal point here are not saved.';
+
   if (!asset) return null;
   const isImage = asset.file.contentType.startsWith('image/');
   const video = asset.file.video;
@@ -136,13 +158,9 @@ export function AssetDetailSheet(props: {
     }
   };
 
-  const altChanged = altText !== base.altText;
-  const tagsChanged = !sameSet(tagIds, base.tagIds);
-  const dirty = altChanged || tagsChanged || !sameFocal(focal, base.focal);
-
   // Opening the original replaces this form: with edits in it, that is asked in place first.
   const openOriginal = (id: string) => {
-    if (dirty) setConfirmOpen(id);
+    if (dirty || rightsDirty) setConfirmOpen(id);
     else props.onOpenAsset?.(id);
   };
 
@@ -243,6 +261,7 @@ export function AssetDetailSheet(props: {
 
   const save = async () => {
     setBusy(true);
+    setSaveError(undefined);
     try {
       await client.setAssetMetadata(asset.id, {
         ...(altChanged ? { altText: { ...asset.metadata.altText, [locale]: altText } } : {}),
@@ -251,17 +270,20 @@ export function AssetDetailSheet(props: {
       });
       toast.success('Metadata saved');
       props.onSaved();
-      props.onOpenChange(false);
+      setBase({ altText, tagIds: [...tagIds], focal });
+      // Rights have their own Save: this one's success doesn't speak for them.
+      if (rightsDirty) guard.onOpenChange(false);
+      else props.onOpenChange(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+      setSaveError(guard.saveFailed(e));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
+    <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
+      <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle className="truncate">{asset.file.fileName}</SheetTitle>
           <SheetDescription className="font-mono text-xs">
@@ -303,7 +325,7 @@ export function AssetDetailSheet(props: {
               {confirmOpen && (
                 <InlineConfirm
                   message="Open the original and discard your changes?"
-                  note="Alt text, tags and the focal point here are not saved."
+                  note={guard.unconfirmed ? UNCONFIRMED_NOTE : unsaved}
                   cancelLabel="Keep editing"
                   onCancel={() => setConfirmOpen(null)}
                 >
@@ -646,20 +668,34 @@ export function AssetDetailSheet(props: {
             </TabsContent>
 
             <TabsContent value="rights" forceMount className="pt-3 data-[state=inactive]:hidden">
-              <AssetRightsForm key={asset.id} asset={asset} onAssetChange={props.onAssetChange} />
+              <AssetRightsForm
+                key={asset.id}
+                asset={asset}
+                onAssetChange={props.onAssetChange}
+                onDirty={setRightsDirty}
+                onSaving={setRightsSaving}
+                onSaveFailed={guard.saveFailed}
+              />
             </TabsContent>
           </Tabs>
         </div>
 
         {/* Save metadata saves the Details tab; the other tabs act at once or have their own. */}
-        {tab === 'details' && (
+        {(tab === 'details' || guard.asking) && (
           <SheetFooter>
-            <Button type="button" onClick={save} disabled={busy}>
-              {busy ? 'Saving…' : 'Save metadata'}
-            </Button>
+            {saveError && <DialogError>{saveError}</DialogError>}
+            <DiscardAsk
+              guard={guard}
+              message={`Discard your changes to ${asset.file.fileName}?`}
+              note={unsaved}
+            >
+              <Button type="button" onClick={save} disabled={busy}>
+                {busy ? 'Saving…' : 'Save metadata'}
+              </Button>
+            </DiscardAsk>
           </SheetFooter>
         )}
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import type { ContentType } from '@contentworker/domain';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CanvasDialog } from '~/cms/components/CanvasDialog';
 import type { GeneratedDraft } from '~/cms/lib/management';
 
 globalThis.ResizeObserver ??= class {
@@ -96,7 +97,7 @@ describe('GenerateEntryDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }));
 
     const proposal = await screen.findByRole('alertdialog', { name: 'Apply 2 drafted fields?' });
-    expect(onGenerate).toHaveBeenCalledWith('Launch post', 'balanced');
+    expect(onGenerate).toHaveBeenCalledWith('Launch post', 'balanced', expect.any(AbortSignal));
     expect(onApply).not.toHaveBeenCalled();
     expect(proposal.textContent).toContain('Realtime sync is here');
     expect(proposal.textContent).toContain('Title (en-US)');
@@ -119,6 +120,107 @@ describe('GenerateEntryDialog', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect((screen.getByLabelText('Prompt') as HTMLTextAreaElement).value).toBe('Launch post');
     expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it('closing during a generation aborts it, drops a late result and keeps the prompt', async () => {
+    let finish: (d: GeneratedDraft) => void = () => {};
+    let signal: AbortSignal | undefined;
+    const onGenerate = vi.fn((_p: string, _t: string, s: AbortSignal) => {
+      signal = s;
+      return new Promise<GeneratedDraft>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const onOpenChange = vi.fn();
+    const dialog = (open: boolean) => (
+      <GenerateEntryDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        contentType={article}
+        onGenerate={onGenerate}
+        onApply={() => {}}
+      />
+    );
+    const view = render(dialog(true));
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Launch post' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }));
+    await screen.findByRole('button', { name: 'Generating…' });
+
+    // Both ways out work while the model hangs.
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(signal?.aborted).toBe(true);
+    view.rerender(dialog(false));
+
+    await act(async () => finish(draft));
+    view.rerender(dialog(true));
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect((screen.getByLabelText('Prompt') as HTMLTextAreaElement).value).toBe('Launch post');
+    expect(screen.getByRole('button', { name: 'Generate draft' })).toBeTruthy();
+  });
+
+  it('a draft under review survives Escape and a press outside', async () => {
+    const onOpenChange = vi.fn();
+    const dialog = (open: boolean) => (
+      <GenerateEntryDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        contentType={article}
+        onGenerate={async () => draft}
+        onApply={() => {}}
+      />
+    );
+    const view = render(dialog(true));
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Launch post' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }));
+    await screen.findByRole('alertdialog');
+
+    // Focus sits on Discard, but Escape is not a decision to discard.
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    view.rerender(dialog(false));
+    view.rerender(dialog(true));
+    expect(screen.getByRole('alertdialog', { name: 'Apply 2 drafted fields?' })).toBeTruthy();
+
+    fireEvent.pointerDown(document.body);
+    fireEvent.click(document.body);
+    view.rerender(dialog(false));
+    view.rerender(dialog(true));
+    expect(screen.getByRole('alertdialog', { name: 'Apply 2 drafted fields?' })).toBeTruthy();
+  });
+});
+
+describe('CanvasDialog', () => {
+  it('closing during a mapping aborts it and keeps the prose', async () => {
+    let signal: AbortSignal | undefined;
+    const onMap = vi.fn((_p: string, _t: string, s: AbortSignal) => {
+      signal = s;
+      return new Promise<void>(() => {});
+    });
+    const onOpenChange = vi.fn();
+    const dialog = (open: boolean) => (
+      <CanvasDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        contentTypeName="Article"
+        onMap={onMap}
+      />
+    );
+    const view = render(dialog(true));
+    fireEvent.change(screen.getByLabelText('Prose'), { target: { value: 'Notes' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Map to fields' }));
+    await screen.findByRole('button', { name: 'Mapping…' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(signal?.aborted).toBe(true);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    view.rerender(dialog(false));
+    view.rerender(dialog(true));
+    expect((screen.getByLabelText('Prose') as HTMLTextAreaElement).value).toBe('Notes');
+    expect(screen.getByRole('button', { name: 'Map to fields' })).toBeTruthy();
   });
 });
 

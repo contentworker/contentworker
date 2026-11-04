@@ -8,8 +8,16 @@ import type { UIMessage } from 'ai';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const conn = { space: 'sp_1', environment: 'main', locale: 'en-US' };
-vi.mock('~/cms/lib/client-context', () => ({ useClient: () => ({ conn }) }));
+const home = { space: 'sp_1', environment: 'main', locale: 'en-US' };
+let conn = home;
+const client = vi.hoisted(() => ({
+  diffVersions: vi.fn<(id: string, from: unknown, to: unknown) => Promise<unknown>>(),
+  getEntry: vi.fn<(id: string) => Promise<unknown>>(),
+  listContentTypes: vi.fn(async () => [] as unknown[]),
+  listEntries: vi.fn(async () => [] as unknown[]),
+  getAsset: vi.fn<(id: string) => Promise<unknown>>(),
+}));
+vi.mock('~/cms/lib/client-context', () => ({ useClient: () => ({ conn, client }) }));
 vi.mock('~/lib/use-me', () => ({ useMe: () => ({ kind: 'user', id: 'usr_1', role: 'admin' }) }));
 
 type Handlers = {
@@ -53,6 +61,7 @@ vi.mock('@cloudflare/ai-chat/react', () => ({
 const { AssistantProvider, useAssistantEdit } = await import('~/cms/lib/assistant');
 const { AssistantPanel } = await import('~/cms/components/assistant/panel');
 const { ActionCard, EditLine, entryHref } = await import('~/cms/components/assistant/parts');
+const { ApiError } = await import('~/cms/lib/management');
 
 type Edit = ReturnType<typeof useAssistantEdit>;
 let edit!: Edit;
@@ -75,6 +84,30 @@ const renderPanel = () => {
   return { sync: () => view.rerender(tree()) };
 };
 
+/** A diff of the entry: its title changed, its body didn't. */
+const diff = {
+  entryId: 'e1',
+  contentType: 'article',
+  from: 1,
+  to: 2,
+  changes: [
+    {
+      field: 'title',
+      name: 'Title',
+      fieldType: 'Symbol',
+      kind: 'changed',
+      locales: [{ locale: 'en-US', kind: 'changed', before: 'Old', after: 'New' }],
+    },
+    {
+      field: 'body',
+      name: 'Body',
+      fieldType: 'Text',
+      kind: 'unchanged',
+      locales: [{ locale: 'en-US', kind: 'unchanged', before: 'Same', after: 'Same' }],
+    },
+  ],
+};
+
 const card = (over: Record<string, unknown> = {}) =>
   ({
     type: 'tool-entries_publish',
@@ -90,6 +123,9 @@ beforeEach(() => {
   chat.messages = [];
   socket.call.mockReset();
   chat.addToolApprovalResponse.mockReset();
+  client.diffVersions.mockReset().mockResolvedValue(diff);
+  client.getEntry.mockReset();
+  conn = home;
   localStorage.clear();
 });
 afterEach(() => vi.useRealTimers());
@@ -202,16 +238,19 @@ describe('a page’s edits through the panel', () => {
   });
 
   it('answers a card the model proposed through the AI SDK, not resolve', async () => {
+    client.getEntry.mockResolvedValue({ id: 'e1', status: 'changed', fields: {} });
     chat.messages = [
       {
         id: 'm1',
         role: 'assistant',
+        metadata: { scope: { spaceId: 'sp_1', environmentId: 'main' } },
         parts: [card({ toolCallId: 'call_7', approval: { id: 'ap_7' }, toolMetadata: undefined })],
       },
     ];
     renderPanel();
     act(() => socket.options.onOpen?.());
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    await screen.findByText('1 field goes live:');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(chat.addToolApprovalResponse).toHaveBeenCalledExactlyOnceWith({
       id: 'ap_7',
       approved: true,
@@ -252,9 +291,10 @@ describe('a page’s edits through the panel', () => {
 describe('a card', () => {
   const inRouter = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>);
 
-  it('names the action and what it is about, and answers Confirm or Not now once', () => {
+  it('names the action and what it is about, and answers Confirm or Not now once', async () => {
     const respond = vi.fn();
     inRouter(<ActionCard part={card()} respond={respond} actionKey="m1:0" direct />);
+    await screen.findByText('1 field goes live:');
     const region = screen.getByRole('region', { name: 'Publish this entry' });
     expect(within(region).getByText('Spring launch notes')).toBeTruthy();
     fireEvent.click(within(region).getByRole('button', { name: 'Confirm' }));
@@ -326,6 +366,352 @@ describe('a card', () => {
     expect(
       screen.getByText('Publish this entry · Spring launch notes: left as it was'),
     ).toBeTruthy();
+  });
+});
+
+describe('a publish card', () => {
+  const inRouter = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>);
+  const confirm = () => screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
+  const show = (part = card()) =>
+    inRouter(<ActionCard part={part} respond={vi.fn()} actionKey="m1:0" direct />);
+
+  it('lists the changed fields from the version diff, and reviews them in full', async () => {
+    show();
+    await screen.findByText('1 field goes live:');
+    expect(client.diffVersions).toHaveBeenCalledExactlyOnceWith('e1', 'published', 'draft');
+    const list = screen.getByRole('list', { name: 'Changed fields' });
+    expect(within(list).getByText('Title')).toBeTruthy();
+    expect(within(list).queryByText('Body')).toBeNull();
+
+    expect(screen.queryByText('Old')).toBeNull();
+    const review = screen.getByRole('button', { name: 'Review changes' });
+    fireEvent.click(review);
+    expect(review.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Old')).toBeTruthy();
+    expect(screen.getByText('New')).toBeTruthy();
+    // Unchanged fields stay out of the way there too.
+    expect(screen.queryByText('Same')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 unchanged field' }));
+    expect(screen.getByText('Same')).toBeTruthy();
+  });
+
+  it('reads the version the card is held to, not whatever the draft has become', async () => {
+    show(card({ input: { id: 'e1', expectedVersion: 7, space: 'sp_1', environment: 'main' } }));
+    await screen.findByText('1 field goes live:');
+    expect(client.diffVersions).toHaveBeenCalledExactlyOnceWith('e1', 'published', 7);
+  });
+
+  it('shows the system’s fields, whatever a model put in its proposal', async () => {
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'article',
+      status: 'changed',
+      fields: {},
+    });
+    inRouter(
+      <ActionCard
+        part={card({
+          toolCallId: 'call_1',
+          toolMetadata: undefined,
+          input: {
+            id: 'e1',
+            summary: 'Only a typo fix',
+            changes: [{ field: 'Pricing', kind: 'changed' }],
+          },
+        })}
+        respond={vi.fn()}
+        actionKey="m1:0"
+        direct={false}
+        turn={{ spaceId: 'sp_1', environmentId: 'main' }}
+      />,
+    );
+    await screen.findByText('1 field goes live:');
+    expect(screen.getByRole('list', { name: 'Changed fields' }).textContent).toBe('TitleChanged');
+    expect(screen.queryByText(/typo/)).toBeNull();
+    expect(screen.queryByText('Pricing')).toBeNull();
+    // A proposal has no page to name its entry: the entry does.
+    expect(client.getEntry).toHaveBeenCalledWith('e1');
+    expect(screen.getByText('Untitled entry')).toBeTruthy();
+  });
+
+  it('waits for the diff before it can be confirmed; Not now never waits', async () => {
+    let arrive = (_: unknown) => {};
+    client.diffVersions.mockReturnValue(new Promise((r) => (arrive = r)));
+    show();
+    expect(screen.getByText('Comparing with what’s live…')).toBeTruthy();
+    expect(confirm().disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Not now' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    await act(async () => arrive(diff));
+    expect(confirm().disabled).toBe(false);
+  });
+
+  const reason = 'You can’t confirm until this can show what goes live.';
+  /** Confirm is off, says why in words a screen reader is pointed at, and Not now still answers. */
+  const expectBlocked = () => {
+    const button = confirm();
+    expect(button.disabled).toBe(true);
+    const why = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+    expect(why?.textContent).toBe(reason);
+    expect(why?.getAttribute('role')).toBe('status');
+    expect((screen.getByRole('button', { name: 'Not now' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  };
+
+  it('won’t confirm after a failed read, and Not now still answers', async () => {
+    client.diffVersions.mockRejectedValue(new Error('down'));
+    const respond = vi.fn();
+    inRouter(<ActionCard part={card()} respond={respond} actionKey="m1:0" direct />);
+    await screen.findByText('Couldn’t load what changed');
+    expectBlocked();
+    expect(screen.queryByRole('list', { name: 'Changed fields' })).toBeNull();
+    fireEvent.click(confirm());
+    expect(respond).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
+    expect(respond).toHaveBeenCalledExactlyOnceWith(expect.anything(), false);
+  });
+
+  it('reads again on Try again, keeps focus on Not now, and confirms once it can show', async () => {
+    client.diffVersions.mockRejectedValueOnce(new Error('down'));
+    show();
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    retry.focus();
+    fireEvent.click(retry);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
+    await screen.findByText('1 field goes live:');
+    expect(client.diffVersions).toHaveBeenCalledTimes(2);
+    expect(confirm().disabled).toBe(false);
+    expect(confirm().getAttribute('aria-describedby')).toBeNull();
+    expect(screen.queryByText(reason)).toBeNull();
+  });
+
+  it('stays off when trying again fails too, and offers it again', async () => {
+    client.diffVersions.mockRejectedValue(new Error('down'));
+    show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(client.diffVersions).toHaveBeenCalledTimes(2));
+    await screen.findByRole('button', { name: 'Try again' });
+    expectBlocked();
+  });
+
+  it('says a first publish puts the whole entry live', async () => {
+    client.diffVersions.mockRejectedValue(new ApiError(404, 'EntryVersion not found'));
+    client.getEntry.mockResolvedValue({ id: 'e1', status: 'draft', fields: {} });
+    show();
+    await screen.findByText(
+      'This entry hasn’t been published before, so the whole entry goes live.',
+    );
+  });
+
+  it('claims nothing about an entry that can’t be read', async () => {
+    client.diffVersions.mockRejectedValue(new ApiError(404, 'Entry not found'));
+    client.getEntry.mockRejectedValue(new ApiError(404, 'Entry not found'));
+    show();
+    await screen.findByText('Couldn’t load what changed');
+    expect(screen.queryByText(/whole entry goes live/)).toBeNull();
+  });
+
+  it('says when nothing would change', async () => {
+    client.diffVersions.mockResolvedValue({ ...diff, changes: [diff.changes[1]] });
+    show();
+    await screen.findByText('The draft matches the published version; publishing re-confirms it.');
+    expect(screen.queryByRole('button', { name: 'Review changes' })).toBeNull();
+  });
+
+  it('never says nothing changed while a field the person can’t read did', async () => {
+    client.diffVersions.mockResolvedValue({
+      ...diff,
+      changes: [diff.changes[1]],
+      hiddenChanges: 1,
+    });
+    show();
+    await screen.findByText('1 field you can’t read goes live.');
+    expect(screen.queryByText(/draft matches/)).toBeNull();
+  });
+
+  it('adds what the person can’t read to what they can', async () => {
+    client.diffVersions.mockResolvedValue({ ...diff, hiddenChanges: 2 });
+    show();
+    await screen.findByText('2 fields you can’t read also go live.');
+    expect(screen.getByRole('list', { name: 'Changed fields' }).textContent).toBe('TitleChanged');
+  });
+
+  it('reads nothing from the wrong environment: an id there can be another entry', async () => {
+    show(card({ input: { id: 'e1', space: 'sp_1', environment: 'staging' } }));
+    await screen.findByText(/another space or environment/);
+    expect(client.diffVersions).not.toHaveBeenCalled();
+    expectBlocked();
+  });
+
+  it('reads and confirms as normal once the person switches back', async () => {
+    const elsewhere = card({ input: { id: 'e1', space: 'sp_1', environment: 'main' } });
+    conn = { ...home, environment: 'staging' };
+    const tree = () => (
+      <MemoryRouter>
+        <ActionCard part={elsewhere} respond={vi.fn()} actionKey="m1:0" direct />
+      </MemoryRouter>
+    );
+    const view = render(tree());
+    await screen.findByText(/Switch back/);
+    expectBlocked();
+    conn = home;
+    view.rerender(tree());
+    await screen.findByText('1 field goes live:');
+    expect(confirm().disabled).toBe(false);
+  });
+
+  it('hands focus to Not now when Confirm turns off under it', async () => {
+    const part = card();
+    const tree = () => (
+      <MemoryRouter>
+        <ActionCard part={part} respond={vi.fn()} actionKey="m1:0" direct />
+      </MemoryRouter>
+    );
+    const view = render(tree());
+    await screen.findByText('1 field goes live:');
+    confirm().focus();
+    conn = { ...home, environment: 'staging' };
+    view.rerender(tree());
+    await screen.findByText(/Switch back/);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
+  });
+
+  it('confirms a first publish and a publish that changes nothing, as ever', async () => {
+    client.diffVersions.mockRejectedValueOnce(new ApiError(404, 'EntryVersion not found'));
+    client.getEntry.mockResolvedValue({ id: 'e1', status: 'draft', fields: {} });
+    const first = show();
+    await screen.findByText(/whole entry goes live/);
+    expect(confirm().disabled).toBe(false);
+    first.unmount();
+    client.diffVersions.mockResolvedValue({ ...diff, changes: [diff.changes[1]] });
+    show();
+    await screen.findByText(/draft matches/);
+    expect(confirm().disabled).toBe(false);
+  });
+
+  it.each([
+    [
+      'ran elsewhere',
+      { spaceId: 'sp_1', environmentId: 'staging' },
+      /another space or environment/,
+    ],
+    ['can’t say where it ran', undefined, /Choose Not now, then ask again/],
+  ])(
+    'reads nothing for a model’s card whose turn %s, whatever its input says',
+    async (_, turn, says) => {
+      inRouter(
+        <ActionCard
+          part={card({
+            toolCallId: 'call_1',
+            toolMetadata: undefined,
+            input: { id: 'e1', space: 'sp_1', environment: 'main' },
+          })}
+          respond={vi.fn()}
+          actionKey="m1:0"
+          direct={false}
+          {...(turn ? { turn } : {})}
+        />,
+      );
+      await screen.findByText(says);
+      expect(client.diffVersions).not.toHaveBeenCalled();
+      expectBlocked();
+    },
+  );
+
+  it.each([
+    ['entries_unpublish', { id: 'e1' }],
+    ['entries_trash', { id: 'e1' }],
+    ['entries_restore_version', { id: 'e1', version: 2 }],
+    ['entries_bulk_action', { action: 'publish', ids: ['e1', 'e2'] }],
+    ['bulk_job_start', { action: 'publish', entryIds: ['e1', 'e2'] }],
+  ])('keeps %s as it was: no list, nothing read', (tool, input) => {
+    show(card({ type: `tool-${tool}`, input }));
+    expect(screen.queryByRole('list', { name: 'Changed fields' })).toBeNull();
+    expect(client.diffVersions).not.toHaveBeenCalled();
+    expect(confirm().disabled).toBe(false);
+  });
+});
+
+describe('a card’s focus', () => {
+  const answered = card({
+    state: 'output-denied',
+    approval: { id: 'direct_1', approved: false },
+  });
+  const Frame = (props: { part: unknown }) => (
+    <MemoryRouter>
+      <div data-testid="card">
+        <ActionCard part={props.part as never} respond={vi.fn()} actionKey="m1:0" direct />
+      </div>
+    </MemoryRouter>
+  );
+
+  it.each(['Not now', 'Confirm'])('keeps focus on the card when %s is pressed', async (name) => {
+    const view = render(<Frame part={card()} />);
+    await screen.findByText('1 field goes live:');
+    fireEvent.click(screen.getByRole('button', { name }));
+    const holder = screen.getByTestId('card').firstElementChild;
+    expect(document.activeElement).toBe(holder);
+    // The answer lands: the buttons go, and focus stays with the line that replaces them.
+    view.rerender(<Frame part={answered} />);
+    expect(screen.getByText(/left as it was/)).toBeTruthy();
+    expect(document.activeElement).toBe(holder);
+  });
+
+  it('keeps focus when the card is answered somewhere else', async () => {
+    const view = render(<Frame part={card()} />);
+    await screen.findByText('1 field goes live:');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
+    view.rerender(<Frame part={answered} />);
+    expect(document.activeElement).toBe(screen.getByTestId('card').firstElementChild);
+  });
+
+  it('leaves focus alone when it was elsewhere on the page', async () => {
+    const view = render(
+      <>
+        <input aria-label="Somewhere else" />
+        <Frame part={card()} />
+      </>,
+    );
+    await screen.findByText('1 field goes live:');
+    const field = screen.getByRole('textbox', { name: 'Somewhere else' });
+    field.focus();
+    view.rerender(
+      <>
+        <input aria-label="Somewhere else" />
+        <Frame part={answered} />
+      </>,
+    );
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('takes focus on a cold open only once the panel has opened', async () => {
+    // The card's message beats the page's answer: it is in the conversation, in an inert panel.
+    socket.call.mockImplementation(async (method) => {
+      if (method !== 'act') return {};
+      chat.messages = [{ id: 'm1', role: 'assistant', parts: [card()] }];
+      view.sync();
+      expect(document.activeElement).not.toBe(screen.queryByRole('button', { name: 'Not now' }));
+      return { callId: 'direct_1', waiting: true };
+    });
+    const view = renderPanel();
+    act(() => socket.options.onOpen?.());
+    await act(async () => {
+      void edit('entries_publish', { id: 'e1' }, 'Spring launch notes');
+    });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' })),
+    );
+  });
+
+  it('brings the waiting card back on the safe choice, past its Review changes', async () => {
+    chat.messages = [{ id: 'm1', role: 'assistant', parts: [card()] }];
+    renderPanel();
+    const review = await screen.findByRole('button', { name: 'Review changes' });
+    review.focus();
+    fireEvent.click(screen.getByRole('button', { name: /Waiting for you/ }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' }));
   });
 });
 

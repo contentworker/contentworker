@@ -38,6 +38,7 @@ import {
   type Release,
   type Role,
   runEntryQuery,
+  type SavedView,
   type ScheduledAction,
   type Scope,
   type SpaceMember,
@@ -121,6 +122,7 @@ import type {
   ReferenceRepo,
   ReleaseRepo,
   RoleRepo,
+  SavedViewRepo,
   ScheduledActionRepo,
   SchedulerJobRepo,
   ScopedAgentSchedule,
@@ -6426,6 +6428,82 @@ function makeMenuRepo(x: Exec): MenuRepo {
   };
 }
 
+type SavedViewRow = typeof schema.savedViews.$inferSelect;
+const toSavedView = (r: SavedViewRow): SavedView => ({
+  id: r.id,
+  name: r.name,
+  contentTypeApiId: r.contentType,
+  visibility: r.visibility,
+  createdBy: r.createdBy,
+  query: r.query,
+  ...(r.columns ? { columns: r.columns } : {}),
+  revision: r.revision,
+  createdAt: r.createdAt.toISOString(),
+  updatedAt: r.updatedAt.toISOString(),
+});
+
+/** Saved views are the space's: every read and write keys on `scope.spaceId` alone. */
+function makeSavedViewRepo(x: Exec): SavedViewRepo {
+  const db = x.db;
+  const t = schema.savedViews;
+  const one = (scope: Scope, id: string) => and(eq(t.spaceId, scope.spaceId), eq(t.id, id));
+  return {
+    async list(scope, opts = {}) {
+      const shared = eq(t.visibility, 'shared');
+      const mine =
+        opts.owner === undefined
+          ? shared
+          : or(shared, and(eq(t.visibility, 'personal'), eq(t.createdBy, opts.owner)));
+      const rows = await db
+        .select()
+        .from(t)
+        .where(and(eq(t.spaceId, scope.spaceId), mine))
+        .orderBy(asc(t.name), asc(t.id));
+      return rows.map(toSavedView);
+    },
+    async get(scope, id) {
+      const [row] = await db.select().from(t).where(one(scope, id));
+      return row ? toSavedView(row) : null;
+    },
+    async save(scope, view, expected) {
+      const values = {
+        name: view.name,
+        contentType: view.contentTypeApiId,
+        visibility: view.visibility,
+        query: view.query,
+        columns: view.columns ? [...view.columns] : null,
+        revision: view.revision,
+        updatedAt: new Date(view.updatedAt),
+      };
+      if (expected === undefined) {
+        await x.write(
+          db.insert(t).values({
+            spaceId: scope.spaceId,
+            id: view.id,
+            createdBy: view.createdBy,
+            createdAt: new Date(view.createdAt),
+            ...values,
+          }),
+        );
+        return;
+      }
+      const changed = await db
+        .update(t)
+        .set(values)
+        .where(and(one(scope, view.id), eq(t.revision, expected)))
+        .returning({ id: t.id });
+      if (changed.length === 0) throw new TransactionConflictError();
+    },
+    async delete(scope, id, expected) {
+      const changed = await db
+        .delete(t)
+        .where(and(one(scope, id), eq(t.revision, expected)))
+        .returning({ id: t.id });
+      if (changed.length === 0) throw new TransactionConflictError();
+    },
+  };
+}
+
 function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
   const db = x.db;
   const u = schema.taxonomyUsage;
@@ -7114,6 +7192,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     taxonomy: makeTaxonomyRepo(x),
     redirects: makeRedirectRepo(x),
     menus: makeMenuRepo(x),
+    savedViews: makeSavedViewRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),
     storedSecrets: makeStoredSecretRepo(x),

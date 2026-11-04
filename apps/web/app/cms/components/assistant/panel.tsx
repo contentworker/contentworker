@@ -95,6 +95,7 @@ import {
   Prose,
   ReadLine,
   TurnError,
+  type TurnScope,
   toolTitle,
 } from './parts';
 
@@ -745,7 +746,7 @@ function WaitingBar({ pending }: { pending: Waiting[] }) {
     if (!card) return;
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     card.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
-    card.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+    card.querySelector<HTMLButtonElement>('[data-safe-choice]')?.focus({ preventScroll: true });
   };
   return (
     <button
@@ -786,6 +787,7 @@ function AssistantMessage({
 }) {
   const lastText = m.parts.findLastIndex((p) => p.type === 'text');
   const text = textOf(m);
+  const turn = (m.metadata as { scope?: TurnScope } | undefined)?.scope;
   return (
     <MessageFrame from="assistant">
       <MessageContent className="space-y-2">
@@ -806,6 +808,7 @@ function AssistantMessage({
                 actionKey={key}
                 direct={isDirectCall(p)}
                 replaced={replaced.has(key)}
+                {...(turn ? { turn } : {})}
               />
             );
           if (isWrite(name) || isDirectCall(p)) return <EditLine key={key} part={p} />;

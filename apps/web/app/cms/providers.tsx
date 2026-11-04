@@ -39,11 +39,14 @@ export function CmsPage({
   title,
   children,
   bare,
+  skeleton,
 }: {
   title: string;
   children: React.ReactNode;
   /** Skip the body width (screens that lay out their own full-bleed canvas). */
   bare?: boolean;
+  /** Drawn while the scope loads, in place of the page skeleton; on a `bare` page, outside `Body`. */
+  skeleton?: React.ReactNode;
 }) {
   const state = useScopeState();
   const inner =
@@ -56,12 +59,15 @@ export function CmsPage({
         The API didn’t answer. Reload the page to try again.
       </ScopeNotice>
     ) : (
-      <PageSkeleton title={title} />
+      (skeleton ?? <PageSkeleton title={title} />)
     );
+  // A space notice is a text page, so it keeps the body's gutters on any screen.
+  const fullBleed =
+    bare && state !== 'no-spaces' && state !== 'error' && (state === 'ready' || skeleton);
   return (
     <>
       <title>{`${title} · contentworker`}</title>
-      {bare && state === 'ready' ? inner : <Body>{inner}</Body>}
+      {fullBleed ? inner : <Body>{inner}</Body>}
     </>
   );
 }

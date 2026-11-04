@@ -128,6 +128,11 @@ export const TAGS: { name: string; description: string }[] = [
   { name: 'Comments & tasks', description: 'Editorial collaboration on entries.' },
   { name: 'Workflows', description: 'Editorial workflow definitions and entry transitions.' },
   {
+    name: 'Saved views',
+    description:
+      'Named entries-list queries and columns, personal or shared, run with the caller’s own grants.',
+  },
+  {
     name: 'Releases & scheduling',
     description: 'Grouped releases and scheduled publish/unpublish actions.',
   },
@@ -164,7 +169,10 @@ const TAG_GROUPS = [
     tags: ['System', 'Auth', 'Spaces & environments', 'Roles & permissions', 'Audit'],
   },
   { name: 'Content model', tags: ['Content types', 'Taxonomy'] },
-  { name: 'Authoring', tags: ['Entries', 'Versions', 'Assets', 'Comments & tasks', 'Workflows'] },
+  {
+    name: 'Authoring',
+    tags: ['Entries', 'Saved views', 'Versions', 'Assets', 'Comments & tasks', 'Workflows'],
+  },
   {
     name: 'Publishing & automation',
     tags: ['Releases & scheduling', 'Redirects', 'Menus', 'Webhooks', 'Functions', 'Apps'],
@@ -199,6 +207,7 @@ const TAG_RULES: [RegExp, string][] = [
   [/\/(releases|scheduled-actions)/, 'Releases & scheduling'],
   [/\/redirects/, 'Redirects'],
   [/\/menus/, 'Menus'],
+  [/\/saved-views/, 'Saved views'],
   [/\/webhooks/, 'Webhooks'],
   [/\/functions/, 'Functions'],
   [/\/app-extensions/, 'Apps'],

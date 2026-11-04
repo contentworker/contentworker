@@ -80,8 +80,19 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 - **Content** (`/content`): content types and their schema editor; entries per type with filters,
   search, sorting from the column headers, a bulk bar for publishing and unpublishing what is
   ticked, and Load more past the first 100 (`/content/:typeId`; `/content/:typeId/new` starts a new
-  entry); a singleton type's sidebar and overview links go to `/content/:typeId/entry`
-  (`SingletonEntry.tsx`), which opens its one entry in the editor, or a new one when it has none,
+  entry). The list's filters, search, sort, columns and open saved view are its URL, in the Preview
+  API's own query string (`?fields.title[match]=cat&order=-sys.updatedAt&columns=sys.status,team&view=<id>`;
+  `cms/lib/entry-url.ts`), so a link and a view agree and Back undoes a picked view; a parameter nothing
+  here reads is kept and saved with a view, never sent, and a key something does read (a filter, a
+  list or connection parameter) never comes out of a view's `extra`. A **views menu** (`entries/SavedViewsMenu.tsx`)
+  before the search picks a saved view (yours, then those shared with the space), saves the list as a
+  new view (shared with the space when the role holds `content:manage`), saves changes over the open
+  one (the trigger says "edited" once the list has moved off it), renames, shares or (for the view's
+  creator) stops sharing, and deletes; a shared view is offered to pick but not to change without
+  `content:manage`. Over a view of every type, field columns aren't saved. **Columns**
+  (`entries/ColumnPicker.tsx`) picks what shows after the title: Status, Updated and the type's own
+  fields, kept with the view; a singleton type's sidebar and overview links go to
+  `/content/:typeId/entry` (`SingletonEntry.tsx`), which opens its one entry in the editor, or a new one when it has none,
   and its rows offer no Duplicate; each type's row on the overview has a menu (`More actions for
   “…”`) with Clone… and Delete… (`ContentTypeActions.tsx`): the delete dialog reads
   `…/dependents`, names what blocks it, offers to delete the entries too (a `content_type_delete`

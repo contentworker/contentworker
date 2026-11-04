@@ -14,22 +14,31 @@ function AlertDialogTrigger(props: React.ComponentProps<typeof AlertDialogPrimit
 
 function AlertDialogContent({
   className,
+  children,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content>) {
   return (
     <AlertDialogPrimitive.Portal>
       <AlertDialogPrimitive.Overlay
         data-slot="alert-dialog-overlay"
-        className="fixed inset-0 isolate z-50 bg-black/30 duration-100 supports-backdrop-filter:backdrop-blur-sm data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0"
+        className="fixed inset-0 isolate z-50 bg-transparent supports-backdrop-filter:backdrop-blur-sm duration-100 supports-backdrop-filter:backdrop-blur-sm data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0"
       />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          'fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 gap-6 rounded-4xl bg-popover p-6 text-popover-foreground shadow-xl ring-1 ring-foreground/5 duration-100 outline-none dark:ring-foreground/10 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          'fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-4xl bg-popover text-popover-foreground shadow-xl ring-1 ring-foreground/5 outline-none dark:ring-foreground/10 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:duration-(--motion-instant) data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:duration-(--motion-move)',
           className,
         )}
         {...props}
-      />
+      >
+        {/* As in a Dialog: the body scrolls, the header and footer stick to its edges. */}
+        <div
+          data-slot="alert-dialog-body"
+          className="grid min-h-0 flex-1 gap-6 overflow-y-auto overscroll-contain px-6"
+        >
+          {children}
+        </div>
+      </AlertDialogPrimitive.Content>
     </AlertDialogPrimitive.Portal>
   );
 }
@@ -38,7 +47,10 @@ function AlertDialogHeader({ className, ...props }: React.ComponentProps<'div'>)
   return (
     <div
       data-slot="alert-dialog-header"
-      className={cn('grid gap-1.5 text-left', className)}
+      className={cn(
+        'sticky top-0 z-10 -mx-6 -mb-3 grid gap-1.5 bg-popover px-6 pt-6 pb-3 text-left',
+        className,
+      )}
       {...props}
     />
   );
@@ -48,7 +60,10 @@ function AlertDialogFooter({ className, ...props }: React.ComponentProps<'div'>)
   return (
     <div
       data-slot="alert-dialog-footer"
-      className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
+      className={cn(
+        'sticky bottom-0 z-10 -mx-6 -mt-3 flex flex-col-reverse gap-2 bg-popover px-6 pt-3 pb-6 sm:flex-row sm:justify-end',
+        className,
+      )}
       {...props}
     />
   );
@@ -61,7 +76,7 @@ function AlertDialogTitle({
   return (
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
-      className={cn('font-medium text-lg', className)}
+      className={cn('section-title text-balance', className)}
       {...props}
     />
   );
@@ -80,13 +95,16 @@ function AlertDialogDescription({
   );
 }
 
-/** The confirming button; `destructive` for an action that can't be undone. */
+/**
+ * The confirming button. `variant` is required, so every confirm chooses: `destructive` for what
+ * removes something for good, `default` for the rest.
+ */
 function AlertDialogAction({
   className,
-  variant = 'default',
+  variant,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Action> & {
-  variant?: 'default' | 'destructive';
+  variant: 'default' | 'destructive';
 }) {
   return (
     <AlertDialogPrimitive.Action

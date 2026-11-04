@@ -114,7 +114,7 @@ renamed step misses its cached result for every running instance.
 `packages/db/src/schema.ts` (or `auth-schema.ts`). Expand-only: add a column or table now; drop or
 rename only in a later change once no deployed code reads it. A migration on `origin/main` has been
 applied by CI to every deployment and is never edited. Remote databases are migrated only by CI
-(`deploy.yml`: bookmark, `wrangler d1 migrations apply DB --remote`, then the Workers).
+(`scripts/deploy.sh`: bookmark, `wrangler d1 migrations apply DB --remote`, then the Workers).
 
 **Why.** CI migrates before it deploys and never rolls D1 back, so the old code runs on the new
 schema during every deploy and after any Worker rollback.
@@ -131,7 +131,7 @@ the class's data. A new class appends its tag in the config and in `APPLIED` in
 
 **Why.** Cloudflare applies a tag once and remembers it; editing it only desyncs the config, and a
 delete destroys every object of the class. The engine also can't roll back past a DO migration
-(`deploy.yml` stops the rollback there).
+(`scripts/deploy.sh` stops the rollback there).
 
 **Check.** `pnpm test:fleet` (runs `node --test scripts/*.test.ts`, including do-migrations).
 

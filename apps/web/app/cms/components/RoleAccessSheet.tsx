@@ -1,20 +1,14 @@
 import type { ContentTypeGrant } from '@contentworker/domain';
-import { Alert, AlertDescription } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { useId, useState } from 'react';
-import { InlineConfirm } from '~/cms/components/InlineConfirm';
-import { useMedia } from '~/cms/lib/device';
-import { apiErrorMessage, type RoleSummary } from '../lib/management';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
+import type { RoleSummary } from '../lib/management';
 import {
   actionAvailable,
   actionNeeds,
@@ -39,25 +33,22 @@ export function RoleAccessSheet(props: {
   onOpenChange: (open: boolean) => void;
   onSave: (grants: readonly ContentTypeGrant[]) => Promise<void>;
 }) {
-  const phone = useMedia('(max-width: 639px)');
   const id = useId();
   const [grants, setGrants] = useState<readonly ContentTypeGrant[]>(props.role.contentGrants);
   const [adding, setAdding] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [discarding, setDiscarding] = useState(false);
   const dirty = !sameGrants(grants, props.role.contentGrants);
+  const guard = useDiscardGuard({
+    saving: busy,
+    open: props.open,
+    dirty,
+    onOpenChange: props.onOpenChange,
+  });
   const names = new Map(props.contentTypes.map((t) => [t.apiId, t.name]));
   const addable = ['*', ...props.contentTypes.map((t) => t.apiId)].filter(
     (apiId) => !grants.some((g) => g.contentTypeApiId === apiId),
   );
-
-  // Every way out (the close button, Escape, the overlay, Cancel) asks while there are changes.
-  const close = (open: boolean) => {
-    if (open) return props.onOpenChange(true);
-    if (dirty) setDiscarding(true);
-    else props.onOpenChange(false);
-  };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,22 +57,17 @@ export function RoleAccessSheet(props: {
     try {
       await props.onSave(grants);
     } catch (err) {
-      setError(apiErrorMessage(err));
+      setError(guard.saveFailed(err));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Sheet open={props.open} onOpenChange={close}>
-      <SheetContent
-        side={phone ? 'bottom' : 'right'}
-        className="w-full gap-0 overflow-y-auto sm:max-w-lg"
-      >
+    <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
+      <ResponsiveSheetContent className="w-full gap-0 overflow-y-auto sm:max-w-lg">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            Content access: {props.role.name}
-          </SheetTitle>
+          <SheetTitle>Content access: {props.role.name}</SheetTitle>
           <SheetDescription className="text-xs">
             Write and Publish bring Delete and Unpublish with them; untick either to withhold it. An
             exact type wins over Every type.
@@ -188,35 +174,20 @@ export function RoleAccessSheet(props: {
               </Button>
             </div>
           ) : null}
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-          {discarding ? (
-            <InlineConfirm
+          {error ? <DialogError>{error}</DialogError> : null}
+          <div className="flex justify-end gap-2">
+            <DiscardAsk
+              guard={guard}
               message={`Discard your changes to ${props.role.name}’s access?`}
-              note="Nothing has been saved."
-              cancelLabel="Keep editing"
-              onCancel={() => setDiscarding(false)}
             >
-              {/* The ink pill: nothing stored is deleted, only this sheet's unsaved ticks. */}
-              <Button type="button" size="sm" onClick={() => props.onOpenChange(false)}>
-                Discard
-              </Button>
-            </InlineConfirm>
-          ) : (
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={() => close(false)}>
-                Cancel
-              </Button>
+              <GuardCancel guard={guard} />
               <Button type="submit" disabled={busy || !dirty}>
                 Save access
               </Button>
-            </div>
-          )}
+            </DiscardAsk>
+          </div>
         </form>
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

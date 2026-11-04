@@ -4,6 +4,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -20,6 +21,7 @@ import { Textarea } from '@contentworker/ui/textarea';
 import { PenLine } from 'lucide-react';
 import { useState } from 'react';
 import type { ModelTier } from '../lib/management';
+import { useStoppable } from '../lib/use-stoppable';
 
 const TIERS: { value: ModelTier; label: string }[] = [
   { value: 'fast', label: 'Fast' },
@@ -36,33 +38,46 @@ export function CanvasDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contentTypeName: string;
-  onMap: (prose: string, tier: ModelTier) => Promise<void>;
+  /** Maps the prose into the form; once `signal` aborts, it must leave the form alone. */
+  onMap: (prose: string, tier: ModelTier, signal: AbortSignal) => Promise<void>;
+  /** Where focus goes as it closes, when what opened it may be gone. */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const [prose, setProse] = useState('');
   const [tier, setTier] = useState<ModelTier>('balanced');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const mapping = useStoppable();
+
+  // A late result landing after the dialog closed would silently mutate the form, so closing walks
+  // away from a mapping under way: the request aborts and its result is dropped. The prose stays.
+  const close = () => {
+    mapping.stop();
+    setBusy(false);
+    props.onOpenChange(false);
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prose.trim()) return;
+    const signal = mapping.start();
     setBusy(true);
     setError(undefined);
     try {
-      await props.onMap(prose.trim(), tier);
+      await props.onMap(prose.trim(), tier, signal);
+      if (signal.aborted) return;
       props.onOpenChange(false);
     } catch (err) {
+      if (signal.aborted) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   };
 
   return (
-    // Dismissal is blocked while a mapping is in flight: a late result landing
-    // after the dialog closed would silently mutate the form.
-    <Dialog open={props.open} onOpenChange={(o) => !busy && props.onOpenChange(o)}>
-      <DialogContent className="sm:max-w-2xl">
+    <Dialog open={props.open} onOpenChange={(o) => (o ? props.onOpenChange(o) : close())}>
+      <DialogContent className="sm:max-w-2xl" onCloseAutoFocus={props.onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PenLine className="size-4 text-primary" />
@@ -101,18 +116,13 @@ export function CanvasDialog(props: {
             </Select>
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <p className="sr-only" aria-live="polite">
             {busy ? 'Mapping the text to fields.' : ''}
           </p>
 
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={() => props.onOpenChange(false)}
-            >
+            <Button type="button" variant="outline" onClick={close}>
               Cancel
             </Button>
             <Button type="submit" disabled={busy || !prose.trim()}>

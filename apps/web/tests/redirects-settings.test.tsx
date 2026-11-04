@@ -200,7 +200,10 @@ describe('Settings → Redirects', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Check' }));
     expect(await within(dialog).findByText(/2 to add/)).toBeTruthy();
-    expect(client.importRedirects).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
+    expect(client.importRedirects).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: true }),
+      expect.any(AbortSignal),
+    );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
     await waitFor(() =>
       expect(client.importRedirects).toHaveBeenLastCalledWith(

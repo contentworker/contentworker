@@ -139,21 +139,43 @@ describe('content type details, layout and field settings over HTTP', () => {
     expect(JSON.stringify(await bad.json())).toContain('not a field of this type');
   });
 
-  it('refuses a time-only Date and a list of numbers on write, for now', async () => {
+  it('takes a time-only Date and a list of numbers, and holds entries to them', async () => {
     const { send } = setup();
-    const time = await send(`${M}/content-types`, 'POST', {
+    const res = await send(`${M}/content-types`, 'POST', {
       ...event,
       layout: null,
-      fields: [event.fields[0], sym('opens', 1, { type: 'Date', format: 'time' })],
+      fields: [
+        event.fields[0],
+        sym('opens', 1, { type: 'Date', format: 'time' }),
+        sym('sizes', 2, { type: 'Array', items: { type: 'Integer' } }),
+      ],
     });
-    expect(time.status).toBe(422);
-    expect(JSON.stringify(await time.json())).toContain('accepted on write by the next');
-    const list = await send(`${M}/content-types`, 'POST', {
-      ...event,
-      layout: null,
-      fields: [event.fields[0], sym('sizes', 1, { type: 'Array', items: { type: 'Integer' } })],
+    expect(res.status, await res.clone().text()).toBe(201);
+    const got = (await (await send(`${M}/content-types/event`, 'GET')).json()) as {
+      fields: Record<string, unknown>[];
+    };
+    expect(got.fields[1]).toMatchObject({ format: 'time' });
+    expect(got.fields[2]).toMatchObject({ items: { type: 'Integer' } });
+    await send(`${M}/content-types/event/published`, 'POST');
+    const ok = await send(`${M}/entries`, 'POST', {
+      contentTypeApiId: 'event',
+      fields: {
+        title: { 'en-US': 'Launch' },
+        opens: { 'en-US': '09:30' },
+        sizes: { 'en-US': [1, 2] },
+      },
     });
-    expect(list.status).toBe(422);
+    expect(ok.status, await ok.clone().text()).toBe(201);
+    const bad = await send(`${M}/entries`, 'POST', {
+      contentTypeApiId: 'event',
+      fields: {
+        title: { 'en-US': 'Launch' },
+        opens: { 'en-US': '2026-11-03' },
+        sizes: { 'en-US': [1.5] },
+      },
+    });
+    expect(bad.status).toBe(422);
+    expect(JSON.stringify(await bad.json())).toContain('Expected an integer');
   });
 
   it('saves a tightened Date format, and answers with how many entries it now refuses', async () => {

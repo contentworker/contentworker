@@ -1,4 +1,5 @@
 import {
+  type ArrayItemType,
   blockVariants,
   CONTENT_TYPE_LIMITS,
   type ContentType,
@@ -20,6 +21,7 @@ import {
   type PatternPreset,
   type RuleAction,
   type RuleOperator,
+  SCALAR_ITEM_TYPES,
   UNIQUE_FIELD_TYPES,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
@@ -28,6 +30,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -45,6 +48,7 @@ import {
 import { Textarea } from '@contentworker/ui/textarea';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { toApiId } from '../lib/api-id';
 import { CONTENT_TYPE_ICONS, contentTypeIcon } from '../lib/content-type-icons';
 import {
@@ -94,6 +98,11 @@ interface FieldRow {
    * elements take one of these shapes. Offered in the type menu as "Blocks".
    */
   blocks?: VariantRow[];
+  /**
+   * What a list of scalars holds, as chosen under Items (see {@link choosesItems}). Unset for a
+   * stored list with no item type, which keeps editing as JSON until one is chosen.
+   */
+  itemType?: ArrayItemType;
   /**
    * The definition this row was loaded from, if any.
    *
@@ -168,6 +177,17 @@ function settingsKind(row: Pick<FieldRow, 'type' | 'source'>): 'date' | 'text' |
     return 'asset';
   }
   return null;
+}
+
+/**
+ * Whether the row is a list whose element type this dialog chooses: a list of scalars, or one with
+ * no item type yet. A list of links or components keeps the items it was given elsewhere.
+ */
+function choosesItems(row: Pick<FieldRow, 'type' | 'blocks' | 'source'>): boolean {
+  if (row.type !== 'Array' || row.blocks) return false;
+  const src = row.source;
+  if (!src || src.type !== 'Array' || blockVariants(src)) return true;
+  return !src.items || SCALAR_ITEM_TYPES.includes(src.items.type);
 }
 
 /** Whether a row's settings say anything (what the collapsed Settings button marks). */
@@ -364,6 +384,14 @@ function toDefinition(
   // Rows rebuild the rules only once one was edited; the rules this dialog can't draw ride along.
   const edited = [...row.rules.map((r) => ruleFromRow(r, siblings)), ...row.keptRules];
   const savedRules = row.rulesTouched ? edited : rules;
+  // A chosen element type keeps the stored items while it is unchanged (their format and rules),
+  // and starts them afresh when it changes.
+  const listItems =
+    choosesItems(row) && row.itemType
+      ? !retyped && items?.type === row.itemType
+        ? items
+        : { type: row.itemType }
+      : undefined;
   const blocksItems = row.blocks
     ? {
         ...(retyped ? {} : { validations: items?.validations }),
@@ -376,6 +404,7 @@ function toDefinition(
     ...(retyped ? {} : { linkType, items, fields, defaultValue }),
     validations: savedValidations,
     format,
+    ...(listItems ? { items: listItems } : {}),
     ...(blocksItems ? { items: blocksItems } : {}),
     apiId: row.apiId,
     name: row.name.trim(),
@@ -426,6 +455,7 @@ function fromContentType(ct: ContentType): { name: string; apiId: string; fields
       rulesOpen: Boolean(f.rules?.length),
       rulesTouched: false,
       ...(blockVariants(f) ? { blocks: variantRowsFrom(blockVariants(f) ?? []) } : {}),
+      ...(f.items && SCALAR_ITEM_TYPES.includes(f.items.type) ? { itemType: f.items.type } : {}),
       source: f,
     })),
   };
@@ -539,6 +569,28 @@ export function ContentTypeDialog(props: {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
+  // Everything a person can have changed, against how the form opened: a schema is long work, and
+  // a press outside the dialog must not throw it away.
+  const form = JSON.stringify({
+    name,
+    apiId,
+    fields,
+    displayField,
+    urlPattern,
+    singleton,
+    group,
+    description,
+    icon,
+    tabs,
+  });
+  const [opened] = useState(form);
+  const guard = useDiscardGuard({
+    saving: busy,
+    open: props.open,
+    dirty: form !== opened,
+    onOpenChange: props.onOpenChange,
+  });
+
   const setField = (i: number, patch: Partial<FieldRow>) =>
     setFields((prev) => prev.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
 
@@ -596,15 +648,15 @@ export function ContentTypeDialog(props: {
       });
       props.onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(guard.saveFailed(err));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{editing ? 'Edit content type' : 'New content type'}</DialogTitle>
           <DialogDescription>
@@ -740,7 +792,12 @@ export function ContentTypeDialog(props: {
                           i,
                           v === BLOCKS
                             ? { type: 'Array', blocks: f.blocks ?? [newVariant()] }
-                            : { type: v as FieldType, blocks: undefined },
+                            : {
+                                type: v as FieldType,
+                                blocks: undefined,
+                                // A new list holds short text until told otherwise.
+                                ...(v === 'Array' ? { itemType: f.itemType ?? 'Symbol' } : {}),
+                              },
                         )
                       }
                     >
@@ -768,6 +825,27 @@ export function ContentTypeDialog(props: {
                       </SelectContent>
                     </Select>
                   </div>
+                  {choosesItems(f) && (
+                    <div className="w-28 space-y-1">
+                      <span className="text-xs text-muted-foreground">Items</span>
+                      <NativeSelect
+                        size="sm"
+                        aria-label={`Items for ${f.name || f.apiId || 'field'}`}
+                        wrapperClassName="w-full"
+                        value={f.itemType ?? ''}
+                        onChange={(e) => setField(i, { itemType: e.target.value as ArrayItemType })}
+                      >
+                        {!f.itemType && (
+                          <NativeSelectOption value="">Any (JSON)</NativeSelectOption>
+                        )}
+                        {SCALAR_ITEM_TYPES.map((t) => (
+                          <NativeSelectOption key={t} value={t}>
+                            {t}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </div>
+                  )}
                   {/* A wrapping label does not name a <button role="checkbox">
                       (see Settings.tsx). The names spell the abbreviations out:
                       "Req" and "Loc" are fine to read in a dense row but poor to
@@ -889,7 +967,6 @@ export function ContentTypeDialog(props: {
                       id={`ct-field-${i}-settings`}
                       fieldLabel={f.name || f.apiId || `field ${i + 1}`}
                       kind={settingsKind(f) as 'date' | 'text' | 'asset'}
-                      storedTime={f.source?.format === 'time'}
                       value={f.settings}
                       onChange={(patch) =>
                         setField(i, {
@@ -1058,15 +1135,20 @@ export function ContentTypeDialog(props: {
             ))}
           </fieldset>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Saving…' : editing ? 'Save changes' : 'Create content type'}
-            </Button>
+            <DiscardAsk
+              guard={guard}
+              message={
+                editing ? `Discard your changes to ${seed.name}?` : 'Discard this content type?'
+              }
+            >
+              <GuardCancel guard={guard} />
+              <Button type="submit" disabled={busy}>
+                {busy ? 'Saving…' : editing ? 'Save changes' : 'Create content type'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -1279,6 +1361,7 @@ function iconLabel(name: string): string {
 const FORMAT_LABELS: readonly [DateFormat | '', string][] = [
   ['datetime', 'Date and time'],
   ['date', 'Date'],
+  ['time', 'Time of day'],
   ['', 'Any ISO date'],
 ];
 
@@ -1291,15 +1374,10 @@ function FieldSettings(props: {
   id: string;
   fieldLabel: string;
   kind: 'date' | 'text' | 'asset';
-  /** The stored field holds times of day: offered as kept, since a new one is refused for now. */
-  storedTime: boolean;
   value: SettingsRow;
   onChange: (patch: Partial<SettingsRow>) => void;
 }) {
   const { id, fieldLabel, kind, value, onChange } = props;
-  const formats: readonly [DateFormat | '', string][] = props.storedTime
-    ? [['time', 'Time of day'], ...FORMAT_LABELS]
-    : FORMAT_LABELS;
   const inputType = value.format === 'date' ? 'date' : value.format === 'time' ? 'time' : 'text';
   const example = value.format ? DATE_FORMAT_EXAMPLES[value.format] : 'an ISO date';
   return (
@@ -1318,7 +1396,7 @@ function FieldSettings(props: {
               value={value.format}
               onChange={(e) => onChange({ format: e.target.value as DateFormat | '' })}
             >
-              {formats.map(([f, label]) => (
+              {FORMAT_LABELS.map(([f, label]) => (
                 <NativeSelectOption key={f || 'any'} value={f}>
                   {label}
                 </NativeSelectOption>

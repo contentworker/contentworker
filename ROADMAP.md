@@ -33,8 +33,9 @@ Everything below is built and tested on v2.
   `placeholder`, `description`), conditional field rules (hide or disable a field while a sibling
   matches, judged in the domain on every surface), components and unique values; model
   ergonomics (a group, description and icon per content type, the sidebar grouped by them, an
-  editor-only layout of tabs and field groups, date and date-and-time formats with `dateRange`,
-  asset MIME rules on asset links, named pattern presets); the entry lifecycle (draft → published → archived,
+  editor-only layout of tabs and field groups, date, date-and-time and time-of-day formats with
+  `dateRange`, lists of Text, Integer, Number and Date values, asset MIME rules on asset links,
+  named pattern presets); the entry lifecycle (draft → published → archived,
   trash, purge, duplicate); versions with a readable diff (per field and locale, by type: words,
   rich-text blocks, list moves) and restore; references and `include`; rich text
   with HTML import; slugs; redirects (delivery data a front end or edge worker applies: exact and
@@ -83,7 +84,7 @@ Everything below is built and tested on v2.
   recovery codes, self-service password reset by an emailed code, with the person forwarded to the
   api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a stateful edge object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (239 tools, plus skills and the docs
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (245 tools, plus skills and the docs
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached at the edge) in front of an edge-cached entrypoint keyed by visibility profile, with ETags,
@@ -211,13 +212,39 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 - [x] **Richer queries.** `startsWith` and `between`, OR and AND groups in a `where` JSON parameter
   (≤ 4 deep, ≤ 20 predicates), component subfield paths through `json_tree` with bound keys, and
   distinct field values (`…/content-types/:apiId/fields/:field/values`, `entries_field_values`).
-- [ ] **Saved views.** Named filters, sort and columns per content type, personal or shared.
-- [ ] **Model ergonomics, writers.** Accept time-only Date fields and lists of Text, Integer, Number
-  and Date on write, once the release that reads them is deployed everywhere.
+- [x] **Saved views.** Named filters, `where` trees, sort and columns per content type (or every
+  type), personal or shared with the space (`content:manage`); space-scoped (`0029_saved_views`),
+  validated by the live query's checks, run with the viewer's own grants; HTTP, MCP `views_*`,
+  `cma.savedViews`, and the admin's views menu, URL list state and column picker.
 - [x] **Delivery locales.** A per-locale "delivered" flag (0025, `locale_settings` beside
   `locales`): an undelivered locale is edited and previewed, while Delivery answers 404 for it,
   fallbacks skip it and the sitemap's `hreflang` alternates leave it out; and a text direction,
   served on the space config and set as `dir` on the admin's inputs.
+
+#### Follow-ups from M1 and M2
+
+Found while building and reviewing M1 and M2. None blocks a release.
+
+- [ ] **Re-check a running job's starter.** Record who started a bulk job and check their access
+  again before each chunk, so a trash or purge job stops when its starter loses access.
+- [ ] **Audit promotion and cross-space clone.** Check both against per-type and field rules, as
+  imports, snapshots and merge now are.
+- [ ] **Delegated bearers and people.** Refuse invitations and member role changes from personal
+  access tokens and OAuth tokens, so a short-lived token can't create a lasting admin.
+- [ ] **Environment-wide checks in the use-cases.** Move `authorizeEveryContentType` from the HTTP
+  routes and MCP tools into the use-cases with a required principal, so a new surface can't skip it.
+- [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
+  `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
+- [ ] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
+  `security/credentials.ts`, as the `email` preset already was.
+- [ ] **Role version check.** A revision on `PUT /roles/:id`, closing the last read-then-write window
+  in the Access sheet.
+- [ ] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
+  return `nextCursor`.
+- [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
+  library tests that fail under a full parallel run and pass alone.
+- [ ] **Unused api email config.** Drop `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email` comment
+  from `apps/api/wrangler.jsonc`; nothing on the api sends email.
 
 #### M3. Collaboration
 
