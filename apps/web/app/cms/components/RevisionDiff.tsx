@@ -24,7 +24,7 @@ const KIND_TONE: Record<DiffKind, Tone> = {
   unchanged: 'idle',
 };
 
-function KindBadge({ kind, moved }: { kind: DiffKind; moved?: boolean }) {
+export function KindBadge({ kind, moved }: { kind: DiffKind; moved?: boolean }) {
   if (moved && kind === 'unchanged') return <ToneBadge tone="idle" label="Moved" />;
   return (
     <span className="inline-flex items-center gap-1">

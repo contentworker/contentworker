@@ -853,7 +853,6 @@ export function EntryEditor() {
           if (!open) setPublishConfirm(null);
         }}
         title={about}
-        contentType={selectedType}
         status={lastAggregate && lastAggregate.id === entryId ? lastAggregate.status : meta?.status}
         changes={publishConfirm?.changes}
         compare={

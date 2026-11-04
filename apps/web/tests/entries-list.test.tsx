@@ -21,11 +21,20 @@ const client = {
   trashEntry: vi.fn(async () => {}),
   restoreEntry: vi.fn(async () => {}),
   publishEntry: vi.fn<(id: string) => Promise<unknown>>(async () => ({})),
-  getPublished: vi.fn(async (id: string) => ({
-    id,
+  diffVersions: vi.fn(async (entryId: string) => ({
+    entryId,
     contentType: 'article',
-    fields: { title: 'Pricing' },
-    publishedAt: '2026-10-01T00:00:00.000Z',
+    from: 1,
+    to: 2,
+    changes: [
+      {
+        field: 'title',
+        name: 'Title',
+        fieldType: 'Symbol',
+        kind: 'changed',
+        locales: [{ locale: 'en-US', kind: 'changed', before: 'Pricing', after: 'Pricing page' }],
+      },
+    ],
   })),
   unpublishEntry: vi.fn<(id: string) => Promise<unknown>>(async () => ({})),
   bulkEntryAction: vi.fn(async (_action: string, ids: string[]) => ({
@@ -309,9 +318,10 @@ describe('EntriesList row Publish', () => {
     setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Publish “Pricing page”' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Pricing page”?' });
-    // The draft against what delivery serves now, as the editor's confirm compares it.
+    // The draft against the published version, as the editor's confirm and the card compare it.
     await within(dialog).findByText('1 field changed');
-    expect(client.getPublished).toHaveBeenCalledWith('e-changed');
+    expect(client.diffVersions).toHaveBeenCalledWith('e-changed', 'published', 'draft');
+    expect(within(dialog).getByText('Pricing page')).toBeTruthy();
     expect(client.publishEntry).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Publish entry' }));

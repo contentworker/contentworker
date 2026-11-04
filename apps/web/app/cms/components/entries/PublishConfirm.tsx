@@ -1,4 +1,4 @@
-import type { ContentType, FieldDiff } from '@contentworker/domain';
+import type { FieldDiff } from '@contentworker/domain';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,18 +9,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
-import { Badge } from '@contentworker/ui/badge';
 import { cn } from '@contentworker/ui/lib/utils';
-import { humanize } from '../../lib/format';
 import type { ManagementClient, PreviewEntry } from '../../lib/management';
-import { EntryDiff } from '../EntryDiff';
+import {
+  ChangedFields,
+  EntryDiff,
+  FIRST_PUBLISH,
+  fieldsGoLive,
+  NO_CHANGES,
+  reviewFields,
+} from './EntryReview';
 
 export interface PublishConfirmProps {
   readonly open: boolean;
   onOpenChange(open: boolean): void;
   /** What the entry is called (its display field, or "Untitled entry"). */
   readonly title: string;
-  readonly contentType: ContentType;
   /** The entry's status before publishing: `draft` has nothing live to compare with. */
   readonly status: string | undefined;
   /**
@@ -46,18 +50,17 @@ export interface PublishConfirmProps {
 /**
  * The one publish confirmation, for the editor's Publish and an entries row's alike: it names the
  * entry and says what goes live. A first publish puts the whole entry live; an entry that has been
- * live lists the fields that change (from the version diff when known, else draft against
- * delivery), so publishing reads the same wherever it starts.
+ * live shows each field that changes, published beside draft, from the same review the assistant's
+ * card reads (`EntryReview`), so publishing reads the same wherever it starts.
  */
 export function PublishConfirm(props: PublishConfirmProps) {
-  const { changes, compare, status, contentType } = props;
+  const { changes, compare, status } = props;
   const firstPublish = status === 'draft';
-  const nameOf = (apiId: string) =>
-    contentType.fields.find((f) => f.apiId === apiId)?.name ?? humanize(apiId);
+  const review = !firstPublish && (!changes || changes.length > 0);
   return (
     <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
       <AlertDialogContent
-        className={cn(!changes && !firstPublish && compare && 'sm:max-w-xl')}
+        className={cn(review && compare && 'sm:max-w-xl')}
         onCloseAutoFocus={(e) => {
           const target = props.returnFocus?.();
           if (!target?.isConnected) return;
@@ -70,28 +73,33 @@ export function PublishConfirm(props: PublishConfirmProps) {
           <AlertDialogDescription>
             {changes
               ? changes.length === 0
-                ? 'The draft matches the published version; publishing re-confirms it.'
-                : `${changes.length} ${changes.length === 1 ? 'field goes' : 'fields go'} live:`
+                ? NO_CHANGES
+                : fieldsGoLive(changes.length)
               : firstPublish
-                ? 'This entry hasn’t been published before, so the whole entry goes live.'
+                ? FIRST_PUBLISH
                 : compare
                   ? 'The draft replaces what’s live now. Changed fields are listed first.'
                   : 'Everything changed since the last publish goes live.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {changes && changes.length > 0 ? (
-          <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
-            {changes.map((c) => (
-              <li key={c.field} className="flex items-center gap-2">
-                <span className="font-medium">{nameOf(c.field)}</span>
-                <Badge variant="outline">{humanize(c.kind)}</Badge>
-              </li>
-            ))}
-          </ul>
-        ) : !changes && !firstPublish && compare ? (
-          <div className="max-h-[50dvh] min-w-0 overflow-y-auto">
-            <EntryDiff client={compare.client} entry={compare.entry} locale={compare.locale} />
-          </div>
+        {review && (compare || changes) ? (
+          <section
+            aria-label="What changes"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region must be reachable by keyboard.
+            tabIndex={0}
+            className="cw-scroll cw-scroll-cue -m-1 max-h-[50dvh] min-w-0 overflow-y-auto rounded-sm p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {compare ? (
+              <EntryDiff
+                client={compare.client}
+                entry={compare.entry}
+                locale={compare.locale}
+                {...(changes ? { changes } : {})}
+              />
+            ) : changes ? (
+              <ChangedFields fields={reviewFields(changes, '')} />
+            ) : null}
+          </section>
         ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel>Keep as draft</AlertDialogCancel>
