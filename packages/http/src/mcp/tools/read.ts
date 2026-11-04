@@ -4,7 +4,9 @@ import {
   draftEntry,
   findDuplicates,
   getContentType,
+  getDeliveredSingleton,
   getPreviewEntry,
+  getPreviewSingleton,
   getSchedulerStatus,
   hybridSearch,
   listContentTypes,
@@ -13,6 +15,7 @@ import {
   MAX_FIELD_VALUES_PAGE,
   MAX_PAGE_LIMIT,
   MAX_WHERE_LENGTH,
+  maskDeliveredFields,
   relatedEntries,
   requestReindex,
   resolveEmbed,
@@ -23,6 +26,7 @@ import {
 } from '@contentworker/application';
 import {
   ANY_FIELD,
+  assertAuthorIdQuery,
   assertPathFilterBudget,
   assertQueryRespectsFieldRules,
   authorizeContent,
@@ -34,6 +38,7 @@ import {
   queryFilterIssues,
   SCOPES,
   ValidationError,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { generateTypes } from '@contentworker/sdk-codegen';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -185,7 +190,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
               z.object({
                 field: z
                   .string()
-                  .describe('field apiId, a component path (seo.title) or a sys.* pseudo-field'),
+                  .describe(
+                    'field apiId, a component path (seo.title) or a sys.* pseudo-field: sys.id, ' +
+                      'sys.contentType, sys.status, sys.updatedAt, sys.createdAt, sys.createdBy, ' +
+                      'sys.updatedBy, sys.firstPublishedAt. For sys.createdBy and sys.updatedBy ' +
+                      'the value "me" is the caller',
+                  ),
                 op: z.enum(FILTER_OPS),
                 value: z
                   .any()
@@ -248,6 +258,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
         select: args.select,
         search: args.search,
       });
+      assertAuthorIdQuery(principal, { filters, ...(where ? { where } : {}), order: args.order });
       const page = await listPreviewEntryPage(
         ctx,
         scopeOf(args),
@@ -270,7 +281,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       return ok({
         items: page.items
           .filter((e) => canAccessContentType(principal, 'read', e.contentType))
-          .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) })),
+          .map((e) =>
+            withAuthorIdsFor(principal, {
+              ...e,
+              fields: maskDeniedFields(principal, e.contentType, e.fields),
+            }),
+          ),
         ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
       });
     },
@@ -326,10 +342,62 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.previewRead, scopeOf(args));
       const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
       authorizeContent(principal, 'read', entry.contentType);
-      return ok({
-        ...entry,
-        fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+      return ok(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    'singleton_get',
+    {
+      description:
+        'Get the one entry of a singleton content type (site settings, a home page) by the ' +
+        'type’s apiId, no entry id needed: its current version, a draft included, or with ' +
+        'published=true what Delivery serves (GET …/singletons/:apiId), links resolved to ' +
+        '`include` levels. Not found when the type is not a singleton or has no such entry.',
+      inputSchema: toolSchema('singleton_get', () =>
+        z.object({
+          contentType: z.string(),
+          published: z.boolean().optional().describe('the published entry, as Delivery serves it'),
+          locale: z.string().optional(),
+          include: z
+            .number()
+            .int()
+            .min(0)
+            .max(10)
+            .optional()
+            .describe('link resolution depth (published only)'),
+          ...scopeArgs,
+        }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(args.published ? SCOPES.deliveryRead : SCOPES.previewRead, scopeOf(args));
+      authorizeContent(principal, 'read', args.contentType);
+      if (args.published) {
+        const entry = await getDeliveredSingleton(ctx, scopeOf(args), args.contentType, {
+          locale: args.locale,
+          include: args.include,
+        });
+        return ok({
+          ...entry,
+          fields: maskDeliveredFields(principal, entry.contentType, entry.fields),
+        });
+      }
+      const entry = await getPreviewSingleton(ctx, scopeOf(args), args.contentType, {
+        locale: args.locale,
       });
+      return ok(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
+      );
     },
   );
 

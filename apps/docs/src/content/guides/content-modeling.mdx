@@ -16,7 +16,8 @@ A content type has:
 - a **name** people see (`Article`);
 - a **display field**, the field used as each entry's title in lists, pickers and search results;
 - an ordered list of **fields**;
-- optionally a **URL pattern**, where its entries live on your site.
+- optionally a **URL pattern**, where its entries live on your site;
+- optionally **singleton**: it holds one entry only.
 
 Creating or changing a content type makes a draft definition. Each revision bumps the type's
 `version`; publishing marks that version live for authoring and delivery and emits a
@@ -33,6 +34,26 @@ of the type's own `Slug` fields; anything else is refused. In the content type d
 an entry that was already published, contentworker writes a `301` from the old path to the new one;
 see [Redirects](/guides/redirects/#redirect-slug-changes). A revision that removes a slug a kept
 pattern names is refused.
+
+### Singletons
+
+A singleton type holds at most one entry outside the trash: site settings, a home page, a footer.
+In the content type dialog it is **One entry only (singleton)**; over the API and MCP it is
+`singleton: true` on `POST …/content-types` and `model_create_content_type` (left out of a
+revision, it stays as it was). A second entry is refused with `409` on every path that makes one:
+create, bulk create, duplicate, import, a snapshot restore, a promotion or an environment merge.
+Trashing the entry frees the place; restoring it is refused while another entry has taken it.
+Turning `singleton` on is refused while the type has more than one entry outside the trash, and
+names them. A promotion that would give a singleton a second entry is refused when it is
+requested, before anyone approves it. Cloning an environment, or exporting and importing one,
+keeps the flag.
+
+The admin's sidebar opens a singleton's entry in the editor (or a new one when it has none)
+instead of a list. Delivery serves it by the type's API ID, with no entry id:
+`GET …/singletons/{apiId}` (see [Reading content](/guides/reading-content/#singletons)). Delivery
+goes by the type as last published: turning `singleton` on or off takes effect there (REST and
+GraphQL alike) when you publish the type. Turned off in a draft, the type can take more entries
+at once; until that draft is published, Delivery serves the published entry with the lowest id.
 
 ## Field types
 
@@ -223,6 +244,22 @@ Generated TypeScript types carry a field's description (or help) as its doc comm
 - **Keep the model in a file.** `contentworker model export` writes it out, and `contentworker
   model apply --dry-run` shows what a changed file would add, change and remove before anything
   does; see the [command-line tool](/guides/cli/#the-content-model-as-code).
+- **Cloning a type** copies its fields, display field and singleton flag under a new API ID and
+  name, as a draft with no entries; its URL pattern stays behind, so two types never route the
+  same paths. In the admin it is **Clone…** in the type's menu on the Content page; over the API
+  `POST …/content-types/{apiId}/clone` with `{ apiId, name }`, over MCP `model_clone_content_type`.
+- **Deleting a type** is refused, naming every reason, while anything depends on it: entries (the
+  trash included), another type whose links are restricted to it (in a component or block too), a
+  menu or slug redirect naming one of its entries, or its URL pattern (clear it first, so the
+  site's routes change on purpose). `GET …/content-types/{apiId}/dependents` lists them. To delete
+  a type with its entries, ask for it (`DELETE …/content-types/{apiId}?purge_entries=true`,
+  `model_delete_content_type` with `purgeEntries`, or the checkbox in the admin's delete dialog,
+  confirmed by typing the API ID): a background job moves each entry to the trash and deletes it
+  permanently, keeping any that another type's published entry links to, and the type goes when
+  none are left. That takes `content:write` and `content:publish` as well as `content:manage`.
+  What became of the type is recorded on the job, as `config.typeDeletion` on `GET
+  …/bulk/jobs/{id}` (`{ deleted: true }`, or `{ deleted: false, reason }`); the admin shows it on
+  the job's card. A deleted type sends `content_type.deleted`.
 - **Try risky changes in an environment.** Clone `main` into a `staging` environment, change the
   model there, point a preview at it, then merge it back. See
   [Environments](/guides/environments/).

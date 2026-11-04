@@ -40,6 +40,8 @@ export const PURGING_EVENTS = new Set<string>([
   // Delivery serves each published type's URL pattern (`GET …/routes`), builds GraphQL from it,
   // and lists the type's entries in the sitemap by it.
   'content_type.published',
+  // A deleted type leaves GraphQL, the routes and the sitemap.
+  'content_type.deleted',
   'release.published',
   'environment_alias.changed',
   'environment.deleted',
@@ -142,6 +144,13 @@ export async function planPurges(
       }
       break;
     }
+    case 'space_locales.changed':
+      // Locale settings belong to the space: what every environment delivers changes with them
+      // (a locale turned off is no longer served, nor reached by a fallback, nor in the sitemap).
+      for (const env of await ctx.store.spaces.listEnvironments(spaceId)) {
+        plan.delivery.add(deliveryScopeTag(spaceId, env.id));
+      }
+      break;
     case 'environment.deleted':
     // Each purge step too: the last one clears the gate again (an entry written back while the
     // rows were still there), so the environment's cached media is purged after it, now and once

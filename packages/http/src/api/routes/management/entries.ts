@@ -13,6 +13,7 @@ import {
   maskDeniedFields,
   SCOPES,
   ValidationError,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
@@ -28,7 +29,7 @@ import {
   resolveEmbedBody,
   validateEntryBody,
 } from '../../validation';
-import { BASE, entryAccess, scopeOf } from './shared';
+import { actingCtx, BASE, entryAccess, scopeOf } from './shared';
 
 export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, hasher, ai } = deps;
@@ -50,7 +51,11 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const principal = c.get('principal');
       authorizeContent(principal, 'write', body.contentTypeApiId);
       assertWritableFields(principal, body.contentTypeApiId, body.fields ?? {});
-      const view = await createEntry(ctx, scopeOf(c), body as Parameters<typeof createEntry>[2]);
+      const view = await createEntry(
+        actingCtx(ctx, c),
+        scopeOf(c),
+        body as Parameters<typeof createEntry>[2],
+      );
       return c.json(view, 201);
     },
   );
@@ -138,7 +143,7 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const principal = c.get('principal');
       authorizeContent(principal, 'read', view.entry.contentTypeApiId);
       return c.json({
-        ...view,
+        entry: withAuthorIdsFor(principal, view.entry),
         fields: maskDeniedFields(principal, view.entry.contentTypeApiId, view.fields),
       });
     },

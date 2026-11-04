@@ -344,7 +344,16 @@ export const contentTypeBody = z.object({
       'Where its entries live on the site, e.g. /blog/{slug} ({id}, {locale} or a Slug field). ' +
         'A publish that changes the slug redirects the old path. null clears it.',
     ),
+  singleton: z
+    .boolean()
+    .optional()
+    .describe(
+      'Holds at most one entry (site settings, a home page), served at GET …/singletons/:apiId. ' +
+        'Turning it on is refused while the type has more than one entry. Left out, unchanged.',
+    ),
 });
+/** A content type's copy: its new apiId and name. */
+export const cloneContentTypeBody = z.object({ apiId: zId, name: zShort });
 export const createEntryBody = z.object({
   contentTypeApiId: zId,
   fields: zFieldValues.optional(),
@@ -804,4 +813,28 @@ export const schedulerAlertsBody = z.object({
     .array(z.string().max(320))
     .max(SCHEDULER_ALERT_MAX_RECIPIENTS)
     .describe('Email addresses; an empty list turns the emails off'),
+});
+
+/**
+ * Per-locale settings to change, by locale; a locale left out keeps its own. Shapes are checked
+ * here, and again (with the space's own locales and default) by the use-case.
+ */
+export const localeSettingsBody = z.object({
+  localeSettings: z
+    .record(
+      z.string().min(2).max(35).describe('One of the space’s locales'),
+      z
+        .object({
+          delivered: z
+            .boolean()
+            .optional()
+            .describe('false: editable and previewable, never delivered (not the default locale)'),
+          direction: z
+            .enum(['ltr', 'rtl'])
+            .optional()
+            .describe('Which way its text runs; absent: from the language'),
+        })
+        .strict(),
+    )
+    .describe('Settings by locale'),
 });

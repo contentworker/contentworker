@@ -8,6 +8,7 @@ import {
   type PermissionScope,
   type PluginCapability,
   type Principal,
+  pluginActor,
   type Scope,
   scopeForCapability,
 } from '@contentworker/domain';
@@ -23,7 +24,7 @@ import type {
   RemoteFetcher,
 } from '@contentworker/ports';
 import { getAsset, listAssets } from './assets';
-import type { AppContext } from './context';
+import { type AppContext, withActor } from './context';
 import { listPublishedEntries } from './delivery';
 import { createEntry, updateEntry } from './entries';
 import { resolveSettingsForPlugin } from './plugin-settings';
@@ -142,12 +143,18 @@ function buildCapabilities(
     };
   }
 
+  // What a plugin writes is the plugin's, as the audit log names it.
+  const asPlugin = withActor(ctx, pluginActor(plugin.id));
   if (has('content:write')) {
     const content = (capabilities.content ?? {}) as Record<string, unknown>;
+    // Only the two fields: a plugin can't hand over an entry's id or authorship.
     content.create = async (input: { contentTypeApiId: string; fields: Record<string, never> }) =>
-      createEntry(ctx, scope, input);
+      createEntry(asPlugin, scope, {
+        contentTypeApiId: input.contentTypeApiId,
+        fields: input.fields,
+      });
     content.update = async (id: string, fields: Record<string, never>) =>
-      updateEntry(ctx, scope, id, fields);
+      updateEntry(asPlugin, scope, id, fields);
     capabilities.content = content;
   }
 
@@ -156,7 +163,7 @@ function buildCapabilities(
     // Through the same use-case as the API's publish route; the context a
     // plugin is handed has no hook dispatcher, so this cannot re-enter the
     // plugin chain.
-    content.publish = async (id: string) => publishEntry(ctx, scope, id);
+    content.publish = async (id: string) => publishEntry(asPlugin, scope, id);
     capabilities.content = content;
   }
 

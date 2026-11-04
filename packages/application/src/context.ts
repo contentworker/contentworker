@@ -1,3 +1,4 @@
+import { type Principal, principalActorId } from '@contentworker/domain';
 import type {
   Cache,
   Clock,
@@ -24,6 +25,13 @@ export interface AppContext {
   readonly store: ContentStore;
   readonly clock: Clock;
   readonly ids: IdGenerator;
+  /**
+   * Who the writes made through this context are by: stamped on entries as their authorship
+   * (`createdBy`, `updatedBy`, a version's `createdBy`). Never set at the composition root; each
+   * surface derives a context for the work it runs (`actingAs` per HTTP request and MCP session,
+   * `withActor` for an agent, a workflow node, a job or the scheduler). Absent → unattributed (null).
+   */
+  readonly actor?: string;
   /** Optional delivery cache; when absent, reads go straight to the store. */
   readonly cache?: Cache;
   /**
@@ -99,3 +107,20 @@ export const DEFAULT_DELIVERY_CACHE_TTL_SECONDS = 86_400;
 
 /** Default {@link AppContext.deliveryListTtlSeconds}. */
 export const DEFAULT_DELIVERY_LIST_TTL_SECONDS = 3_600;
+
+/** `ctx` acting as `actor` for authorship (see {@link AppContext.actor}). */
+export function withActor(ctx: AppContext, actor: string | undefined): AppContext {
+  if (ctx.actor === actor) return ctx;
+  if (actor === undefined) {
+    const { actor: _actor, ...rest } = ctx;
+    return rest;
+  }
+  return { ...ctx, actor };
+}
+
+/** The actor a write through `ctx` is recorded as, or null when nobody is named. */
+export const actorOf = (ctx: AppContext): string | null => ctx.actor ?? null;
+
+/** `ctx` acting for the principal of a request: its audit identity is the writes' author. */
+export const actingAs = (ctx: AppContext, principal: Principal): AppContext =>
+  withActor(ctx, principalActorId(principal));

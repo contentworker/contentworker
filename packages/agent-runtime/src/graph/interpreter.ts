@@ -269,6 +269,7 @@ export async function runGraph(
           act.compensateNode({
             scope: p.scope,
             runId: p.runId,
+            workflowId: p.workflowId,
             entryId: p.entryId,
             generation: p.generation,
             nodeId: c.node.id,

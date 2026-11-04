@@ -77,7 +77,11 @@ curl -s "$API/spaces/$SPACE/merge" \
 The comparison lists each content type and entry as `added`, `changed`, `removed` or `unchanged`,
 framed as what merging would do. A merge only adds and overwrites: it never deletes target content,
 so `removed` items stay where they are. Entries keep their ids and are validated against the
-target's content type, so include a type in the merge before the entries that use it. The
+target's content type, so include a type in the merge before the entries that use it. Unique
+values (and a singleton's one entry) hold as they do for edits: before anything is written, a
+merge whose entries would take a value another entry holds, or the same value twice, is refused
+with `409`, naming each entry and its holder; entries swapping values between them merge fine. An
+entry that is in the target's trash gets the new version and stays in the trash. The
 response lists `mergedContentTypes` and `mergedEntries`. The MCP tools are `environments_compare`
 and `environments_merge`.
 

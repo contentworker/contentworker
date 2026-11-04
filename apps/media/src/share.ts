@@ -13,13 +13,14 @@
  * environment: revoking the link, or a change to what it lists, purges it. Files go through the
  * published file's own cached URL, so a shared file costs no second copy in the cache.
  */
-import { openShareLink, sharedAssetFile, sharedAssets } from '@contentworker/application';
-import { palette, type Scheme } from '@contentworker/design/tokens';
 import {
-  type LocalizedValue,
-  parseShareLinkPath,
-  type ShareLinkAddress,
-} from '@contentworker/domain';
+  openShareLink,
+  sharedAssetFile,
+  sharedAssets,
+  sharedText,
+} from '@contentworker/application';
+import { palette, type Scheme } from '@contentworker/design/tokens';
+import { parseShareLinkPath, type ShareLinkAddress } from '@contentworker/domain';
 import {
   mediaAssetTag,
   mediaCollectionTag,
@@ -38,7 +39,7 @@ import { canonicalMediaUrl, contentDisposition, INTERNAL_ORIGIN, singleByteRange
 export interface ShareDeps {
   readonly paths: MediaPathSigner;
   /** Read-only, through a replica. */
-  readonly store?: Pick<ContentStore, 'assets' | 'assetShareLinks' | 'assetCollections'>;
+  readonly store?: Pick<ContentStore, 'assets' | 'assetShareLinks' | 'assetCollections' | 'spaces'>;
   readonly passwords: PasswordHasher;
   /** Password attempts, per link and client address. */
   readonly limiter?: { limit(o: { key: string }): Promise<{ success: boolean }> };
@@ -208,12 +209,6 @@ ${error ? `<p role="alert" id="unlock-error">${html(error)}</p>` : ''}
   );
 }
 
-/** The first non-empty value of a localized text (a share page has no locale to pick by). */
-function firstText(value: LocalizedValue | undefined): string {
-  for (const v of Object.values(value ?? {})) if (typeof v === 'string' && v.trim()) return v;
-  return '';
-}
-
 function humanSize(bytes: number | undefined): string {
   if (bytes === undefined) return '';
   const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
@@ -233,7 +228,9 @@ const fileHref = (path: string, s: PublishedAsset) =>
  * The share page (the cached entrypoint's miss path): the target's published files, as HTML
  * (`?f=html`) or JSON (`?f=json`). Tagged so revoking the link, a change to the collection, a
  * publish or unpublish of the asset, or deleting the environment purges it; cached no longer than
- * the link lasts. A link that no longer opens, or whose target is gone, is `no-store`.
+ * the link lasts. A link that no longer opens, or whose target is gone, is `no-store`. Titles and
+ * alt text are the default locale's, else the first the space delivers (`sharedText`); turning a
+ * locale off purges Delivery, not these pages, so a cached one catches up within PAGE_MAX_AGE.
  */
 export async function serveSharePage(request: Request, deps: ShareDeps): Promise<Response> {
   const url = new URL(request.url);
@@ -267,7 +264,7 @@ export async function serveSharePage(request: Request, deps: ShareDeps): Promise
       allowDownload: entry.allowDownload,
       files: shared.items.map((s) => ({
         assetId: s.assetId,
-        title: firstText(s.title) || s.file.fileName,
+        title: sharedText(s.title, shared.locales) || s.file.fileName,
         fileName: s.file.fileName,
         contentType: s.file.contentType,
         ...(s.file.size !== undefined ? { size: s.file.size } : {}),
@@ -284,9 +281,9 @@ export async function serveSharePage(request: Request, deps: ShareDeps): Promise
   const items = shared.items
     .filter((s) => !s.file.video)
     .map((s) => {
-      const title = firstText(s.title) || s.file.fileName;
+      const title = sharedText(s.title, shared.locales) || s.file.fileName;
       const href = fileHref(path, s);
-      const alt = firstText(s.metadata.altText);
+      const alt = sharedText(s.metadata.altText, shared.locales);
       const preview =
         s.file.contentType.startsWith('image/') && s.file.contentType !== 'image/svg+xml'
           ? `<img src="${html(href)}" alt="${html(alt)}" loading="lazy"${s.file.width && s.file.height ? ` width="${s.file.width}" height="${s.file.height}"` : ''}>`

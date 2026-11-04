@@ -173,6 +173,7 @@ export class InMemoryVectorStore implements VectorStore {
       .filter((r) => key(r.scope) === key(scope))
       .map((r) => ({
         entryId: r.entryId,
+        locale: r.locale,
         chunkText: r.chunkText,
         score: cosine(embedding, r.embedding),
       }))

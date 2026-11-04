@@ -30,6 +30,7 @@ const { NAV, SETTINGS_GROUPS, SETTINGS_SECTIONS, visibleNav } = await import(
   '~/cms/components/layout/nav'
 );
 const { SettingsNav } = await import('~/cms/components/layout/SettingsNav');
+const { SpaceSwitcher } = await import('~/cms/components/layout/SpaceSwitcher');
 const { Breadcrumbs } = await import('~/cms/components/layout/Breadcrumbs');
 const { NewEntry } = await import('~/cms/components/layout/NewEntry');
 const { DEFAULT_FEATURES } = await import('~/cms/lib/features');
@@ -94,6 +95,7 @@ describe('nav source', () => {
         'roles',
         'webhooks',
         'environments',
+        'locales',
         'redirects',
         'menus',
         'trash',
@@ -171,6 +173,30 @@ describe('command palette', () => {
     );
   });
 
+  it('opens a singleton rather than offering a new entry or an import', async () => {
+    client.listContentTypes.mockResolvedValueOnce([
+      { apiId: 'article', name: 'Article', displayField: 'title', fields: [], status: 'published' },
+      {
+        apiId: 'settings',
+        name: 'Site settings',
+        displayField: 'title',
+        fields: [],
+        status: 'published',
+        singleton: true,
+      } as never,
+    ]);
+    palette('/content/settings');
+    act(openCommandPalette);
+    const list = await screen.findByRole('listbox', { name: 'Results' });
+    const open = await within(list).findByRole('option', { name: 'Open Site settings' });
+    expect(within(list).queryByRole('option', { name: /^New .* entry$/ })).toBeNull();
+    expect(within(list).queryByRole('option', { name: /^Import / })).toBeNull();
+    fireEvent.click(open);
+    await waitFor(() =>
+      expect(screen.getByTestId('path').textContent).toBe('/content/settings/entry'),
+    );
+  });
+
   it('finds Settings sections by name once you type', async () => {
     palette('/dashboard');
     act(openCommandPalette);
@@ -220,6 +246,24 @@ describe('New entry', () => {
     fireEvent.pointerDown(button, { button: 0, ctrlKey: false });
     const item = await screen.findByRole('menuitem', { name: 'Article' });
     expect(item.getAttribute('href')).toBe('/content/article/new');
+  });
+});
+
+describe('the header locale switcher', () => {
+  it('says which locales Delivery doesn’t serve, in words', async () => {
+    client.getSpaceConfig.mockResolvedValueOnce({
+      locales: ['en-US', 'ar'],
+      defaultLocale: 'en-US',
+      localeSettings: {
+        'en-US': { delivered: true, direction: 'ltr' },
+        ar: { delivered: false, direction: 'rtl' },
+      },
+    } as never);
+    renderAt('/', <SpaceSwitcher />);
+    const trigger = await screen.findByRole('combobox', { name: 'Locale' });
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    expect(await screen.findByRole('option', { name: 'ar Not delivered' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'en-US' })).toBeTruthy();
   });
 });
 

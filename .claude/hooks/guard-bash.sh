@@ -17,6 +17,12 @@ ci="Production deploys from CI: merging to main runs .github/workflows/ci.yml, w
 S='[[:space:]]'
 while IFS= read -r seg; do
   seg=$(printf '%s' "$seg" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+  # Read through what hides a wrangler subcommand from the patterns below: quotes (`bash -c "…"`),
+  # a version pin or a direct script (`npx wrangler@4`, `node …/wrangler.js`), and wrangler's global
+  # flags before the subcommand (`wrangler -c x.json deploy`). Only the matching sees this form.
+  seg=$(printf '%s' "$seg" | tr -d "\"'" | sed -E \
+    -e 's#(^| |/)wrangler(@[^ ]+|\.js)?( |$)#\1wrangler\3#g' \
+    -e 's#(^| |/)wrangler(( +(-c|--config|-e|--env|--cwd|--env-file|--profile)( +|=)[^ ]+)+)( |$)#\1wrangler\6#g')
   [ -z "$seg" ] && continue
   m() { printf '%s\n' "$seg" | grep -qE -- "$1"; }
 
@@ -28,8 +34,14 @@ while IFS= read -r seg; do
   elif m "(^|$S|/)wrangler$S+(deploy|versions$S+deploy|rollback|delete)($S|$)"; then
     deny PreToolUse "Blocked \`$seg\`. $ci"
   fi
+  # Uploads that don't deploy still reach Cloudflare: a Preview shares production's D1, KV, queues
+  # and Workflows, a version upload can be promoted by anyone, and cron triggers change at once.
+  if ! m "$S--dry-run($S|$)"; then
+    m "(^|$S|/)wrangler$S+(preview|triggers$S+deploy|versions$S+upload)($S|$)" &&
+      deny PreToolUse "Blocked \`$seg\`: it uploads to Cloudflare (a Preview, a Worker version or cron triggers). Check a bundle with \`wrangler deploy --dry-run --outdir <dir>\` or \`wrangler versions upload --dry-run\`. $ci"
+  fi
   m "(^|$S|/)wrangler$S+d1$S+migrations$S+apply($S.*)?$S--remote($S|=|$)" &&
-    deny PreToolUse "Blocked \`$seg\`. Remote D1 migrations run in CI before the Workers deploy, and a failed smoke test rolls the Workers back but not D1. Apply locally with \`pnpm --filter @contentworker/web db:migrate:local\` (the D1 \`pnpm dev\` uses). $ci"
+    deny PreToolUse "Blocked \`$seg\`. Remote D1 migrations run in CI before the Workers deploy, and a failed smoke test rolls the Workers back but not D1. Apply locally with \`pnpm db:migrate:local\` (the D1 \`pnpm dev\` uses). $ci"
   m "(^|$S|/)wrangler$S+d1$S+time-travel$S+restore($S|$)" &&
     deny PreToolUse "Blocked \`$seg\`: a Time Travel restore replaces the whole production database and loses every write since the bookmark. It's an incident decision for the user (docs/backup-and-restore.md, and the bookmark each deploy job records in its summary); give them the command instead."
   m "(^|$S|/)wrangler$S+(d1|kv$S+namespace|r2$S+bucket|queues)$S+delete($S|$)" &&
@@ -40,7 +52,7 @@ while IFS= read -r seg; do
       m "($S)(run$S+)?(docs:)?deploy($S|$)" && deny PreToolUse "Blocked \`$seg\`. $ci"
     fi
     m "($S)(run$S+)?db:migrate:remote($S|$)" &&
-      deny PreToolUse "Blocked \`$seg\`. Remote D1 migrations run in CI before the Workers deploy. Apply locally with \`pnpm --filter @contentworker/web db:migrate:local\`. $ci"
+      deny PreToolUse "Blocked \`$seg\`. Remote D1 migrations run in CI before the Workers deploy. Apply locally with \`pnpm db:migrate:local\`. $ci"
   fi
 
   # ── Ask: sometimes right, hard to undo ─────────────────────────────────────
@@ -48,6 +60,24 @@ while IFS= read -r seg; do
     ask PreToolUse "\`$seg\` runs SQL against a production D1. Reads are fine with the user's go-ahead; schema or data changes belong in a numbered migration that CI applies."
   m "(^|$S|/)wrangler$S+secret$S+(put|delete|bulk)($S|$)" &&
     ask PreToolUse "\`$seg\` changes a deployed Worker's secret. CI writes every Worker's secrets (PRINCIPAL_KEY, DATA_KEY, TOKEN_PEPPER, MEDIA_SIGNING_SECRET and the rest) from the deployment's GitHub environment on each deploy (\`node scripts/fleet.ts secrets\`); a rotation goes through the *_PREVIOUS keys (docs/deployment.md, \"Secrets\")."
+  m "(^|$S|/)wrangler$S+versions$S+secret$S+(put|delete|bulk)($S|$)" &&
+    ask PreToolUse "\`$seg\` writes a Worker secret into a new version. CI writes every Worker's secrets from the deployment's GitHub environment (docs/deployment.md, \"Secrets\")."
+  # An applied migration rewritten through the shell; the Edit and Write tools are covered by
+  # guard-invariants.sh. Applied means it is on origin/main (or main without a remote).
+  mig='(\./)?packages/db/migrations/[0-9]{4}_[A-Za-z0-9_]+\.sql'
+  targets=$(
+    m "(^|$S)(sed$S+(.*$S)?(-[a-zA-Z]*i|--in-place)|perl$S+-[a-zA-Z]*i|truncate|rm|mv)$S" &&
+      printf '%s\n' "$seg" | grep -oE "$mig"
+    printf '%s\n' "$seg" | grep -oE "(>>?|tee($S+-a)?)$S*$mig" | grep -oE "$mig"
+  )
+  if [ -n "$targets" ]; then
+    for f in $(printf '%s\n' "$targets" | sed 's#^\./##' | sort -u); do
+      base=origin/main
+      git -C "${cwd:-.}" rev-parse -q --verify "$base" >/dev/null || base=main
+      git -C "${cwd:-.}" cat-file -e "$base:$f" 2>/dev/null &&
+        deny PreToolUse "Blocked \`$seg\`: $f is on $base, so CI has applied it to every deployment and migrations are never edited once applied. Add the next numbered migration instead (d1-migration skill)."
+    done
+  fi
   m "(^|$S|/)scripts/provision\.sh($S|$)" &&
     ask PreToolUse "\`$seg\` creates Cloudflare resources and a GitHub environment for a deployment. Run it only for a deployment the user named."
   m "^gh$S+pr$S+merge($S|$)" &&

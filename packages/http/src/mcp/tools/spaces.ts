@@ -1,12 +1,12 @@
-import { listSpacesFor } from '@contentworker/application';
+import { getLocaleSettings, listSpacesFor, setLocaleSettings } from '@contentworker/application';
 import { authorize, SCOPES, SPACE_ID_PATTERN } from '@contentworker/domain';
 import { createSpaceWithStarter, STARTERS } from '@contentworker/seed';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerSpaceTools(server: McpServer, t: ToolContext): void {
-  const { deps, ctx, principal } = t;
+  const { deps, ctx, principal, guard } = t;
   // --- spaces (deployment) -------------------------------------------------
   server.registerTool(
     'spaces_list',
@@ -60,6 +60,54 @@ export function registerSpaceTools(server: McpServer, t: ToolContext): void {
         starter: created.starter,
         ...(created.installed ? { installed: created.installed } : {}),
       });
+    },
+  );
+
+  // --- locale settings (space-wide) ------------------------------------------
+  server.registerTool(
+    'locale_settings_get',
+    {
+      description:
+        'Read the space config: its default locale, locales and fallbacks, with each locale’s ' +
+        'settings resolved in localeSettings: delivered (false: editors write and preview it, ' +
+        'Delivery never serves it) and direction (ltr or rtl, from the language unless set).',
+      inputSchema: toolSchema('locale_settings_get', () => z.object({ ...scopeArgs })),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(await getLocaleSettings(ctx, scopeOf(args)));
+    },
+  );
+
+  server.registerTool(
+    'locale_settings_set',
+    {
+      description:
+        'Set per-locale settings: delivered (false takes the locale out of Delivery in every ' +
+        'environment: a request naming it is 404, fallbacks skip it, all-locale responses and ' +
+        'the sitemap leave it out; the default locale is always delivered) and direction (ltr or ' +
+        'rtl). A locale left out keeps its settings. Needs space:admin.',
+      inputSchema: toolSchema('locale_settings_set', () =>
+        z.object({
+          localeSettings: z.record(
+            z.string(),
+            z
+              .object({
+                delivered: z.boolean().optional(),
+                direction: z.enum(['ltr', 'rtl']).optional(),
+              })
+              .strict(),
+          ),
+          ...scopeArgs,
+        }),
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (args) => {
+      const s = scopeOf(args);
+      guard(SCOPES.spaceAdmin, s);
+      return ok(await setLocaleSettings(ctx, principal, s, args.localeSettings));
     },
   );
 }

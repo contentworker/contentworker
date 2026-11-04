@@ -141,11 +141,11 @@ const ENTRIES = [
   entry('e-live2', 'published', 'Careers'),
 ];
 
-function setup(list?: ListPage) {
+function setup(list?: ListPage, type: ContentType = article) {
   if (list) client.listEntryPage.mockImplementation(list);
   else client.listEntryPage.mockResolvedValue({ items: ENTRIES });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const outlet = { types: [article], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
+  const outlet = { types: [type], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
   render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
@@ -191,6 +191,17 @@ const rowOf = (title: string) => {
 };
 
 describe('EntriesList trash and Undo', () => {
+  it('offers Import for an ordinary type and not for a singleton', async () => {
+    setup();
+    expect(
+      await screen.findByRole('button', { name: 'Import' }, { timeout: FIRST_RENDER_MS }),
+    ).toBeTruthy();
+    cleanup();
+    setup(undefined, { ...article, singleton: true });
+    await screen.findByText('About us', undefined, { timeout: FIRST_RENDER_MS });
+    expect(screen.queryByRole('button', { name: 'Import' })).toBeNull();
+  });
+
   it('undoing the trash of a published entry restores and then republishes it', async () => {
     setup();
     await rowMenu('About us', 'Move to trash');
@@ -510,6 +521,30 @@ describe('EntriesList sorting from the headers', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Updated' }));
     await waitFor(() => expect(client.listEntryPage.mock.lastCall?.[1]?.order).toBeUndefined());
+  });
+});
+
+describe('EntriesList Mine filter', () => {
+  it('lists only the signed-in person’s entries, and Clear brings everyone’s back', async () => {
+    setup();
+    const mine = await screen.findByRole('button', { name: 'Mine' }, { timeout: FIRST_RENDER_MS });
+    expect(mine.getAttribute('aria-pressed')).toBe('false');
+    // Off is an outline pill, on the ink fill; the words say what it does, so no tooltip.
+    expect(mine.getAttribute('data-variant')).toBe('outline');
+    expect(mine.hasAttribute('title')).toBe(false);
+    fireEvent.click(mine);
+    expect(mine.getAttribute('aria-pressed')).toBe('true');
+    expect(mine.getAttribute('data-variant')).toBe('default');
+    await waitFor(() =>
+      expect(client.listEntryPage).toHaveBeenLastCalledWith(
+        'article',
+        expect.objectContaining({ mine: true }),
+        undefined,
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(client.listEntryPage.mock.lastCall?.[1]?.mine).toBeUndefined());
+    expect(screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-pressed')).toBe('false');
   });
 });
 

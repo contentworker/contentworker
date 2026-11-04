@@ -106,6 +106,8 @@ export interface ContentType {
   readonly fields: readonly FieldDefinition[];
   /** Where its entries live on the site, e.g. `/blog/{slug}`. */
   readonly urlPattern?: string;
+  /** Holds at most one entry, read by type with the delivery client's `getSingleton`. */
+  readonly singleton?: true;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -141,6 +143,22 @@ export interface FieldValuesPage {
   readonly nextCursor?: string;
 }
 
+/** What still depends on a content type (`contentTypes.dependents`). */
+export interface ContentTypeDependents {
+  readonly contentType: string;
+  readonly entries: { readonly live: number; readonly trashed: number };
+  /** Other types' fields whose links are restricted to it; `field` is a path. */
+  readonly linkedFrom: readonly { readonly contentType: string; readonly field: string }[];
+  readonly menus: readonly { readonly id: string; readonly handle: string }[];
+  readonly redirects: readonly { readonly id: string; readonly source: string }[];
+  readonly urlPattern?: string;
+}
+
+/** What `contentTypes.delete` did: the type is gone, or a job is deleting its entries first. */
+export type ContentTypeDeletion =
+  | { readonly deleted: true }
+  | { readonly deleted: false; readonly job: BulkJob };
+
 export interface ContentTypeDraft {
   readonly apiId: string;
   readonly name: string;
@@ -152,6 +170,12 @@ export interface ContentTypeDraft {
    * `null` clears it.
    */
   readonly urlPattern?: string | null;
+  /**
+   * Holds at most one entry (site settings, a home page): a second is refused, and Delivery
+   * serves the one at `GET …/singletons/:apiId`. Turning it on is refused while the type has more
+   * than one entry. Left out of a revision, unchanged.
+   */
+  readonly singleton?: boolean;
 }
 
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
@@ -289,7 +313,21 @@ export interface ResolvedMenu {
   readonly items: readonly ResolvedMenuItem[];
 }
 
-export interface Entry {
+/**
+ * Who wrote an entry and when (`sys.createdBy` and the rest in a query). An actor is a person's id,
+ * `admin-token`, an API key's kind, or `agent:<name>`, `workflow:<id>`, `plugin:<id>` or `system`.
+ * Null when unknown: an entry from before authorship was recorded, or one never published.
+ */
+export interface EntryAuthorship {
+  readonly createdAt: string | null;
+  readonly createdBy: string | null;
+  /** Who made the last change, the one `updatedAt` records. */
+  readonly updatedBy: string | null;
+  /** Kept through unpublish and republish. */
+  readonly firstPublishedAt: string | null;
+}
+
+export interface Entry extends EntryAuthorship {
   readonly id: string;
   readonly contentTypeApiId: string;
   readonly status: EntryStatus;
@@ -959,6 +997,26 @@ export interface SpaceRef {
   readonly name: string;
 }
 
+/** Which way a locale's text runs. */
+export type TextDirection = 'ltr' | 'rtl';
+
+/** What is set for one locale; absent keys take the defaults (delivered, the language's direction). */
+export interface LocaleSettings {
+  /** False: editors write and preview it, Delivery never serves it. Never the default locale. */
+  readonly delivered?: boolean;
+  readonly direction?: TextDirection;
+}
+
+/** A space's locales, each with its settings resolved. */
+export interface SpaceLocales {
+  readonly spaceId: string;
+  readonly name: string;
+  readonly defaultLocale: string;
+  readonly locales: readonly string[];
+  readonly fallbacks?: Readonly<Record<string, string | null>>;
+  readonly localeSettings: Readonly<Record<string, Required<LocaleSettings>>>;
+}
+
 /** `sample` installs sample content into the new space's first environment; `empty` doesn't. */
 export type SpaceStarter = 'empty' | 'sample';
 
@@ -1004,11 +1062,13 @@ export interface Principal {
 }
 
 /** An entry as Preview serves it: the latest saved version, drafts included. */
-export interface PreviewEntry {
+export interface PreviewEntry extends EntryAuthorship {
   readonly id: string;
   readonly contentType: string;
   readonly status: EntryStatus;
   readonly version: number;
+  /** When the entry last changed. */
+  readonly updatedAt?: string;
   /** Keyed by locale, or plain values when the list was read with `locale`. */
   readonly fields: Readonly<Record<string, unknown>>;
 }
@@ -1024,6 +1084,10 @@ export interface EntryListQuery {
   readonly order?: string;
   /** Full-text match over text fields. */
   readonly query?: string;
+  /** Who created the entries: an actor id, or `me` for the caller (`sys.createdBy`). */
+  readonly createdBy?: string;
+  /** Who changed the entries last: an actor id, or `me` for the caller (`sys.updatedBy`). */
+  readonly updatedBy?: string;
 }
 
 /** Maps source records onto one content type: target field apiId → source field name. */
@@ -1347,6 +1411,21 @@ export function createManagementClient(opts: ManagementClientOptions) {
           `${envBase}/content-types/${e(apiId)}/fields/${e(field)}/values`,
           opts,
         ),
+      /** What depends on a content type: why `delete` would be refused. */
+      dependents: (apiId: string) =>
+        get<ContentTypeDependents>(`${envBase}/content-types/${e(apiId)}/dependents`),
+      /**
+       * Deletes a content type; a 409 names what still depends on it.
+       * `purgeEntries` deletes its entries too, as a bulk job (`{ deleted: false, job }`): the
+       * type goes when the job completes cleanly.
+       */
+      delete: (apiId: string, o: { readonly purgeEntries?: boolean } = {}) =>
+        del<ContentTypeDeletion>(`${envBase}/content-types/${e(apiId)}`, {
+          purge_entries: o.purgeEntries ? 'true' : undefined,
+        }),
+      /** Copies the definition under a new apiId and name, as a draft with no entries. */
+      clone: (apiId: string, to: { readonly apiId: string; readonly name: string }) =>
+        post<ContentType>(`${envBase}/content-types/${e(apiId)}/clone`, to),
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */
@@ -1445,6 +1524,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
             skip: query.skip,
             order: query.order,
             query: query.query,
+            'sys.createdBy': query.createdBy,
+            'sys.updatedBy': query.updatedBy,
           },
         ),
       create: (input: { contentTypeApiId: string; fields: EntryFields }) =>
@@ -1916,6 +1997,19 @@ export function createManagementClient(opts: ManagementClientOptions) {
       list: () => items(get<{ items: SpaceRef[] }>(`${root}/spaces`)),
       /** Creates a space, optionally with sample content. Deployment administrators only. */
       create: (input: CreateSpaceInput) => post<CreatedSpace>(`${root}/spaces`, input),
+    },
+
+    /** The space's locales and what is set per locale (the client's space and environment). */
+    locales: {
+      /** The space config, every locale's settings resolved (delivered, direction). */
+      get: () => get<SpaceLocales>(`${envBase}/space-config`),
+      /**
+       * Changes the named locales' settings; the others keep theirs. `delivered: false` takes a
+       * locale out of Delivery (404 when asked for, skipped by fallbacks and the sitemap) while
+       * editors keep writing it. Needs `space:admin`.
+       */
+      set: (localeSettings: Readonly<Record<string, LocaleSettings>>) =>
+        put<SpaceLocales>(`${envBase}/locale-settings`, { localeSettings }),
     },
 
     environments: {

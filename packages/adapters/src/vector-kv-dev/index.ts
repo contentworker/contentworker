@@ -101,7 +101,12 @@ export function createKvDevVectorStore(kv: KvVectorBinding): VectorStore {
           for (const row of await read(name)) {
             const score = cosine(embedding, row.embedding);
             if (score >= (opts.minScore ?? 0)) {
-              matches.push({ entryId: row.entryId, chunkText: row.chunkText, score });
+              matches.push({
+                entryId: row.entryId,
+                locale: row.locale,
+                chunkText: row.chunkText,
+                score,
+              });
             }
           }
         }

@@ -51,6 +51,13 @@ describe('liveEventFor', () => {
     expect(liveEventFor(postsOnly, typePublished('post'))).not.toBeNull();
     expect(liveEventFor(postsOnly, typePublished('page'))).toBeNull();
 
+    // A deleted type names itself: only a key that may read it hears of it.
+    const typeDeleted = (t: string) =>
+      ev({ type: 'content_type.deleted', contentTypeApiId: t, version: 3 });
+    expect(liveEventFor(postsOnly, typeDeleted('post'))).not.toBeNull();
+    expect(liveEventFor(postsOnly, typeDeleted('page'))).toBeNull();
+    expect(liveEventFor(open, typeDeleted('page'))).not.toBeNull();
+
     expect(
       liveEventFor(postsOnly, ev({ type: 'environment_alias.changed', targetEnvironmentId: 'b' })),
     ).not.toBeNull();

@@ -22,8 +22,12 @@ import { useContentTypesQuery } from '../../lib/queries';
 export function NewEntry({ look, quiet }: { look: 'header' | 'float'; quiet?: boolean }) {
   const { pathname } = useLocation();
   const typeId = matchPath('/content/:typeId/*', pathname)?.params.typeId;
-  const onType = typeId && typeId !== 'new' ? typeId : undefined;
   const types = useContentTypesQuery().data;
+  // On a singleton's pages there is no second entry to make: the menu of every type instead.
+  const onType =
+    typeId && typeId !== 'new' && !types?.find((t) => t.apiId === typeId)?.singleton
+      ? typeId
+      : undefined;
 
   const className =
     look === 'header'
@@ -70,7 +74,10 @@ export function NewEntry({ look, quiet }: { look: 'header' | 'float'; quiet?: bo
         ) : (
           types.map((t) => (
             <DropdownMenuItem key={t.apiId} asChild>
-              <Link to={`/content/${t.apiId}/new`}>{t.name}</Link>
+              {/* A singleton's one entry, made or opened: never a second. */}
+              <Link to={t.singleton ? `/content/${t.apiId}/entry` : `/content/${t.apiId}/new`}>
+                {t.name}
+              </Link>
             </DropdownMenuItem>
           ))
         )}

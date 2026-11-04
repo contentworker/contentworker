@@ -37,7 +37,15 @@ const type = (apiId: string, name: string, status: 'draft' | 'published'): Conte
 
 function setup(types: ContentType[], typesPending = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const outlet = { types, typesPending, locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
+  const deleteJob = { state: null, start() {}, dismiss() {}, cancel() {}, cancelling: false };
+  const outlet = {
+    types,
+    typesPending,
+    locales: ['en-US'],
+    defaultLocale: 'en-US',
+    reload() {},
+    deleteJob,
+  };
   render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>

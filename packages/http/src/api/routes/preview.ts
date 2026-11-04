@@ -1,8 +1,10 @@
 import {
+  actingAs,
   authenticate,
   clampCount,
   getPreviewAsset,
   getPreviewEntry,
+  getPreviewSingleton,
   listPreviewAssets,
   listPreviewEntryPage,
   parseEntryQuery,
@@ -13,6 +15,7 @@ import {
   suggestEntries,
 } from '@contentworker/application';
 import {
+  assertAuthorIdQuery,
   assertQueryRespectsFieldRules,
   authorize,
   authorizeContent,
@@ -23,6 +26,7 @@ import {
   type Scope,
   scopesForKind,
   ValidationError,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -37,7 +41,7 @@ import {
 } from '../auth';
 import { doc } from '../docs/openapi';
 import { deliveredAsset, deliveredAssetPage } from '../docs/schemas/assets';
-import { previewEntryPage } from '../docs/schemas/entries';
+import { previewEntry, previewEntryPage } from '../docs/schemas/entries';
 import { parseDeliveredAssetQuery } from '../query';
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({
@@ -132,7 +136,9 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
         locale: 'Resolve one locale',
         limit: 'Page size (at most 100)',
         cursor: 'nextCursor from the previous page, with the same filters and order',
-        order: 'Sort keys, e.g. -sys.updatedAt,fields.title',
+        order: 'Sort keys, e.g. -sys.updatedAt,fields.title or -sys.firstPublishedAt',
+        'sys.createdBy':
+          'Who created it; me is the caller (also sys.updatedBy, with [in] and [ne])',
         query: 'Full-text search across text fields',
         where: 'AND/OR groups of predicates as JSON (as on Delivery)',
         links_to_entry: 'Entries whose current version links to this entry id in any field',
@@ -155,9 +161,11 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
         ]);
       const principal = c.get('principal');
       assertQueryRespectsFieldRules(principal, query);
+      assertAuthorIdQuery(principal, query);
       const cursor = c.req.query('cursor');
       const page = await listPreviewEntryPage(
-        ctx,
+        // Acting as the caller, so `sys.createdBy=me` names them.
+        actingAs(ctx, principal),
         scopeOf(c),
         { ...query, ...(cursor ? { cursor } : {}) },
         {
@@ -170,7 +178,12 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
       // The grant already narrowed the query; this is the belt to that, and masks denied fields.
       const visible = page.items
         .filter((e) => canAccessContentType(principal, 'read', e.contentType))
-        .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) }));
+        .map((e) =>
+          withAuthorIdsFor(principal, {
+            ...e,
+            fields: maskDeniedFields(principal, e.contentType, e.fields),
+          }),
+        );
       return c.json({
         items: visible,
         total: visible.length,
@@ -240,6 +253,34 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
     },
   );
 
+  app.get(
+    `${BASE}/singletons/:apiId`,
+    doc('Preview', 'Get a singleton’s draft/current entry', {
+      ok: previewEntry,
+      description:
+        'The entry of a singleton content type as it is now, a draft included, by the type’s ' +
+        'apiId. 404 when the type is not a singleton or has no entry outside the trash.',
+      query: { locale: 'Resolve one locale' },
+    }),
+    principalMiddleware(deps),
+    environmentMiddleware(deps),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const principal = c.get('principal');
+      const apiId = c.req.param('apiId');
+      authorizeContent(principal, 'read', apiId);
+      const entry = await getPreviewSingleton(ctx, scopeOf(c), apiId, {
+        locale: c.req.query('locale'),
+      });
+      return c.json(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
+      );
+    },
+  );
+
   // Shareable preview links use ?preview_token= instead of a bearer header.
   app.get(
     `${BASE}/entries/:id`,
@@ -261,10 +302,12 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
         locale: c.req.query('locale'),
       });
       authorizeContent(principal, 'read', entry.contentType);
-      return c.json({
-        ...entry,
-        fields: maskDeniedFields(principal, entry.contentType, entry.fields),
-      });
+      return c.json(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
+      );
     },
   );
 

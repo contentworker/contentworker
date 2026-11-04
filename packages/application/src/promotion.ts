@@ -27,8 +27,8 @@ import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
 import { auditActor } from './audit';
 import { compareEnvironments } from './branching';
-import { describeRemovedInUse, publishContentType, removedContentInUse } from './content-types';
-import type { AppContext } from './context';
+import { describeRemovedInUse, removedContentInUse, saveContentTypeOver } from './content-types';
+import { type AppContext, withActor } from './context';
 import { createEntry, updateEntry } from './entries';
 import { loadPublishGuard } from './publish-gate';
 import { publishEntry } from './publishing';
@@ -137,6 +137,8 @@ export async function requestPromotion(
       publish: live !== null,
     });
   }
+
+  await assertSingletonsHold(ctx, target, types, entries);
 
   // A workflow that gates publishing an entry in the target publishes it there, not a promotion:
   // such an entry goes as a draft, and the record says why.
@@ -318,10 +320,12 @@ export async function listPromotions(
  * the target holds what was pinned. Any failure marks it `failed`, naming the cause; what was
  * applied before the failure stays, like any other edits.
  */
-async function applyPromotion(ctx: AppContext, promotion: Promotion): Promise<Promotion> {
+async function applyPromotion(base: AppContext, promotion: Promotion): Promise<Promotion> {
   if (promotion.status !== 'applying') {
     throw new InvalidStateError(`Promotion ${promotion.id} is ${promotion.status}`);
   }
+  // Written as whoever approved it, whether the approval's request or a later sweep applies it.
+  const ctx = withActor(base, promotion.decidedBy ?? promotion.requestedBy);
   const source: Scope = { spaceId: promotion.spaceId, environmentId: promotion.source };
   const target: Scope = { spaceId: promotion.spaceId, environmentId: promotion.target };
   const result = {
@@ -365,8 +369,14 @@ async function applyPromotion(ctx: AppContext, promotion: Promotion): Promise<Pr
           `The content type "${pinned.apiId}" changed in ${promotion.source} after the promotion was requested; request a new one`,
         );
       }
-      await ctx.store.contentTypes.save(target, ct);
-      if (ct.status === 'published') await publishContentType(ctx, target, pinned.apiId);
+      await saveContentTypeOver(
+        ctx,
+        target,
+        await ctx.store.contentTypes.get(target, ct.apiId),
+        ct,
+      );
+      // A published definition is saved as published, and the save announces it
+      // (`content_type.published`, once): no separate publish.
       result.contentTypes.push(pinned.apiId);
     }
     const pinned = new Map<string, EntryFields>();
@@ -377,10 +387,21 @@ async function applyPromotion(ctx: AppContext, promotion: Promotion): Promise<Pr
       if (await ctx.store.entries.get(target, e.entryId)) {
         await updateEntry(ctx, target, e.entryId, version.fields);
       } else {
+        // A new entry in the target is the source's, promoted: it keeps who created it and when.
+        const from = (await ctx.store.entries.get(source, e.entryId))?.entry;
         await createEntry(ctx, target, {
           contentTypeApiId: e.contentTypeApiId,
           fields: version.fields,
           id: e.entryId,
+          ...(from
+            ? {
+                authorship: {
+                  createdAt: from.createdAt ?? null,
+                  createdBy: from.createdBy ?? null,
+                  firstPublishedAt: from.firstPublishedAt ?? null,
+                },
+              }
+            : {}),
         });
       }
       result.entries.push(e.entryId);
@@ -421,6 +442,56 @@ async function applyPromotion(ctx: AppContext, promotion: Promotion): Promise<Pr
     const error = err instanceof Error ? err.message : String(err);
     await finish({ status: 'failed', result: { ...result, mismatched: [] }, error });
     throw err;
+  }
+}
+
+/** Entry ids a singleton refusal names; the details carry them all. */
+const SINGLETON_NAMED = 10;
+
+/**
+ * Refuses, when it is requested, a promotion that the apply would refuse for a singleton: one that
+ * leaves a type that is a singleton in the target (as promoted, or as the target has it) with more
+ * than one entry outside the trash, counting the target's entries and the promoted ones together.
+ * The apply still holds the rule (the claim, `saveContentTypeOver`); this says so before anyone
+ * approves it.
+ */
+async function assertSingletonsHold(
+  ctx: AppContext,
+  target: Scope,
+  types: readonly ContentType[],
+  entries: readonly PromotedEntry[],
+): Promise<void> {
+  const incoming = new Map(types.map((t) => [t.apiId, t]));
+  const promoted = new Map<string, string[]>();
+  for (const e of entries) {
+    promoted.set(e.contentTypeApiId, [...(promoted.get(e.contentTypeApiId) ?? []), e.entryId]);
+  }
+  for (const apiId of new Set([...incoming.keys(), ...promoted.keys()])) {
+    const singleton = incoming.has(apiId)
+      ? incoming.get(apiId)?.singleton === true
+      : (await ctx.store.contentTypes.get(target, apiId))?.singleton === true;
+    if (!singleton) continue;
+    const ids = promoted.get(apiId) ?? [];
+    const [live, there] = await Promise.all([
+      ctx.store.entries.list(target, { contentTypeApiId: apiId, limit: ids.length + 2 }),
+      ids.length ? ctx.store.entries.getMany(target, ids) : Promise.resolve([]),
+    ]);
+    // A promoted entry the target holds in its trash stays there; any other is outside it after.
+    const trashed = new Set(
+      there.filter((e) => e.entry.status === 'archived').map((e) => e.entry.id),
+    );
+    const after = [
+      ...new Set([...live.map((e) => e.entry.id), ...ids.filter((id) => !trashed.has(id))]),
+    ];
+    if (after.length <= 1) continue;
+    const more =
+      after.length > SINGLETON_NAMED ? ` and ${after.length - SINGLETON_NAMED} more` : '';
+    throw new ConflictError(
+      `"${apiId}" is a singleton type in ${target.environmentId}, and the promotion would leave it ` +
+        `more than one entry outside the trash (${after.slice(0, SINGLETON_NAMED).join(', ')}${more}). ` +
+        'Promote one entry, or move the others to the trash first.',
+      { singleton: apiId, entries: after },
+    );
   }
 }
 

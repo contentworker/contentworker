@@ -10,8 +10,9 @@ import {
   type ScheduledActionType,
   type ScheduledEntityType,
   type Scope,
+  SYSTEM_ACTOR,
 } from '@contentworker/domain';
-import type { AppContext } from './context';
+import { type AppContext, withActor } from './context';
 import { assertReleaseUngated, loadPublishGuard } from './publish-gate';
 import { publishEntry, unpublishEntry } from './publishing';
 import { authorizeReleaseMembers, publishRelease } from './releases';
@@ -134,9 +135,11 @@ export async function runDueScheduledActions(
   const due = await ctx.store.scheduledActions.findDue(now, opts.limit);
   let executed = 0;
   let failed = 0;
+  // Nobody is at the keyboard when a schedule fires: the publish is written as the system.
+  const acting = withActor(ctx, SYSTEM_ACTOR);
   for (const { scope, action } of due) {
     try {
-      await execute(ctx, scope, action);
+      await execute(acting, scope, action);
       await ctx.store.scheduledActions.save(scope, completeAction(action, now));
       executed += 1;
     } catch (err) {

@@ -3,6 +3,7 @@ import {
   assetTransformTarget,
   clampCount,
   type DeliveryReads,
+  deliveredSearch,
   deliveredSitemapFile,
   deliveryGraphResolvers,
   deliveryReads,
@@ -10,9 +11,9 @@ import {
   getDeliveredCollection,
   getDeliveredConcept,
   getDeliveredMenu,
+  getDeliveredSingleton,
   getDeliveredTag,
   getPublishedEntry,
-  hybridSearch,
   listDeliveredAssets,
   listDeliveredConcepts,
   listDeliveredMenus,
@@ -29,7 +30,6 @@ import {
   parseImageTransform,
   resolveDeliveredRedirect,
   searchDeliveredAssets,
-  semanticSearch,
   transformPublishedAssetUrl,
   visibleSearchHits,
 } from '@contentworker/application';
@@ -157,16 +157,13 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
   // ?mode=lexical selects a single leg.
   app.get(`${BASE}/search`, describe('search'), requireScope(SCOPES.searchRead), async (c) => {
     const q = c.req.query('q') ?? '';
-    const mode = c.req.query('mode') ?? 'hybrid';
-    const opts = { topK: clampCount(c.req.query('top_k'), MAX_PAGE_LIMIT, { min: 1 }) };
+    const mode = c.req.query('mode');
     const scope = scopeOf(c);
-    let hits =
-      mode === 'semantic'
-        ? await semanticSearch(rag, scope, q, opts)
-        : await hybridSearch(rag, ctx, scope, q, {
-            ...opts,
-            lexicalOnly: mode === 'lexical',
-          });
+    // Over the locales the space delivers only: an undelivered one neither matches nor is quoted.
+    let hits = await deliveredSearch(rag, ctx, scope, q, {
+      topK: clampCount(c.req.query('top_k'), MAX_PAGE_LIMIT, { min: 1 }),
+      mode: mode === 'semantic' || mode === 'lexical' ? mode : 'hybrid',
+    });
     hits = await visibleSearchHits(ctx, scope, c.get('principal'), hits);
     return c.json({ hits });
   });
@@ -203,6 +200,26 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       });
       const principal = c.get('principal');
       authorizeContent(principal, 'read', entry.contentType);
+      return c.json({
+        ...entry,
+        fields: maskDeliveredFields(principal, entry.contentType, entry.fields),
+      });
+    },
+  );
+
+  app.get(
+    `${BASE}/singletons/:apiId`,
+    describe('getSingleton'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => {
+      const principal = c.get('principal');
+      const apiId = c.req.param('apiId');
+      // Before the read: a type the key can't read answers as the entry route would.
+      authorizeContent(principal, 'read', apiId);
+      const entry = await getDeliveredSingleton(ctx, scopeOf(c), apiId, {
+        locale: c.req.query('locale'),
+        include: clampCount(c.req.query('include'), MAX_INCLUDE_DEPTH, { min: 0 }),
+      });
       return c.json({
         ...entry,
         fields: maskDeliveredFields(principal, entry.contentType, entry.fields),
@@ -546,7 +563,8 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       ? types.filter((t) => canAccessContentType(principal, 'read', t.apiId))
       : types;
     const shape = grantedTypes
-      .map((t) => `${t.apiId}@${t.version}`)
+      // The singleton flag changes a root's shape on a publish that keeps the version.
+      .map((t) => `${t.apiId}@${t.version}${t.singleton ? ':singleton' : ''}`)
       .sort()
       .join(',');
     const key = `${scope.spaceId}:${scope.environmentId}:${shape}`;

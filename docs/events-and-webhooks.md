@@ -129,7 +129,10 @@ retry of one webhook, and without it a failed delivery is recorded and not retri
 
 After dispatch, `consumeEvent` publishes the event to the scope's **`LiveHubDO`** stateful edge
 object (when `LIVE_HUB` is bound), which fans it out to Live Content SSE clients
-(`GET /delivery/:space/:env/live`). A live-publish failure is logged and never blocks dispatch.
+(`GET /delivery/:space/:env/live`). An `entry.published` goes out through `liveEventOf` first,
+which reads the space's config and drops the locales it doesn't deliver from `fields` (webhooks
+and the outbox keep the event as published). A live-publish failure is logged and never blocks
+dispatch.
 
 On `entry.published`, on-publish agents run when `AGENTS_ENRICH` / `AGENTS_MODERATE` are enabled.
 With `AGENTS_QUEUE` bound, the consumer enqueues a job on `contentworker-agents` instead of running
@@ -150,13 +153,14 @@ space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/pur
 collection's published members), `taxonomy.changed` (Delivery serves tags and concepts),
 `redirects.changed` (Delivery serves the enabled redirects), `menus.changed` (Delivery serves each
 menu resolved), `content_type.published` (Delivery
-serves each published type's `urlPattern` at `…/routes`, the sitemap built from it, and GraphQL's schema), `release.published`,
-`environment_alias.changed`, `environment.deleted`. The sitemap (`…/sitemap`, `…/sitemap.xml`) has no
+serves each published type's `urlPattern` at `…/routes`, the sitemap built from it, and GraphQL's schema), `content_type.deleted` (the same, for a type that is gone), `release.published`,
+`environment_alias.changed`, `environment.deleted`, `space_locales.changed`. The sitemap (`…/sitemap`, `…/sitemap.xml`) has no
 event of its own: it is a delivery read under the scope's tag, so the publishes that change it purge it. It sends them as **one** message on `contentworker-purge`, so a burst
 of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
-path's environment and the one it resolves to. `asset_renditions.changed` adds the tag of every
-environment of the space (presets belong to the space). `asset.ingested` adds the tag only when
+path's environment and the one it resolves to. `asset_renditions.changed` and
+`space_locales.changed` add the tag of every environment of the space (presets and locale settings
+belong to the space). `asset.ingested` adds the tag only when
 its `published` is true: ingest of a draft changes nothing Delivery serves. A failed enqueue is logged, counted
 (`contentworker_purge_enqueue_errors_total`) and not retried: responses then go stale for their
 60 s `max-age`.
@@ -360,6 +364,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset.expired`                                                                    | `assetId`, `expiresAt` (the expiry sweep unpublished it; sent with `asset.unpublished`)                                                                                                                              |
 | `asset.ingested`                                                                   | `assetId`, `version`, `published`, `contentHash` (absent over 512 MiB), `duplicateOf` (ingest finished a file version: hashed, measured, enriched where empty, indexed)                                              |
 | `asset_renditions.changed`                                                         | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged; `scope` is the environment it was changed through, so other environments' scoped hooks don't hear it) |
+| `space_locales.changed`                                                            | `undelivered` (the locales Delivery no longer serves; a space's locale settings changed, and every environment of the space is purged, in Delivery's cache and at the edge) |
 | `asset_collection.changed`                                                         | `collectionId` (a collection was created, renamed or deleted, or its members were added, removed or reordered; also sent for each collection a deleted asset leaves; Delivery's collection read and every share page that shows it are purged) |
 | `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the media origin reads the link's row itself; a revoke purges its cached page, now and after 90 s) |
 | `taxonomy.changed`                                                                 | `termKind` (`tag` or `concept`), `termId` (a tag or concept was created, changed or deleted; Delivery's taxonomy reads are purged with the scope's tag) |
@@ -367,6 +372,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `redirects.changed`                                                                | `count` (redirects written or removed by a create, update, delete, import, chain collapse or snapshot import; Delivery's `redirects` reads are purged. A publish whose slug change writes redirects does not send it: its `entry.published` purges the same responses) |
 | `menus.changed`                                                                    | `menuId?`, `handle?` (a menu was created, saved, moved or deleted; both absent when a snapshot import wrote several; Delivery's `menus` reads are purged. A publish or unpublish that changes what a menu resolves to does not send it: its entry event purges the same responses) |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                                                                        |
+| `content_type.deleted`                                                             | `contentTypeApiId`, `version` (the type had no entries left, the trash included; Delivery's responses are purged, and cached lists of the type and the scope's renders invalidated; on the live stream for keys that may read the type) |
 | `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                                                              |
 | `environment_alias.changed`                                                        | `targetEnvironmentId` (null when removed); `scope.environmentId` is the alias                                                                                                                                        |
 | `environment.deleted`                                                              | `entryIds` (published entries whose search documents and vectors go; chunks of 500)                                                                                                                                  |

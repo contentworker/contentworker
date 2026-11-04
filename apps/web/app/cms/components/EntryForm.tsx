@@ -36,8 +36,8 @@ import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Textarea } from '@contentworker/ui/textarea';
 import { Plus } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AppExtension } from '../lib/management';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { AppExtension, TextDirection } from '../lib/management';
 import { EntityPicker } from './EntityPicker';
 import { ExtensionFrame } from './ExtensionFrame';
 import { RichTextEditor } from './RichTextEditor';
@@ -55,6 +55,24 @@ export interface PickOption {
 export interface Pickers {
   readonly entries: PickOption[];
   readonly assets: PickOption[];
+}
+
+/**
+ * Each locale's text direction, for the inputs that hold its words (Symbol, Text, rich text),
+ * nested ones in components and blocks included. Absent until the space config has said.
+ */
+const DirectionsContext = createContext<Readonly<Record<string, TextDirection>> | undefined>(
+  undefined,
+);
+
+/**
+ * `dir` and `lang` for an input holding `locale`'s words: a screen reader speaks it in its
+ * language and the caret runs its way. Only on the value, never on the label or the field's chrome
+ * (the admin reads in its own direction).
+ */
+function useWritingIn(locale: string): { readonly lang: string; readonly dir?: TextDirection } {
+  const dir = useContext(DirectionsContext)?.[locale];
+  return dir ? { lang: locale, dir } : { lang: locale };
 }
 
 /** Per-field, per-locale working state: `{ apiId: { locale: value } }`. */
@@ -196,6 +214,16 @@ export function EntryForm(props: {
   locales: readonly string[];
   defaultLocale: string;
   fallbacks?: Readonly<Record<string, string | null>>;
+  /**
+   * Each locale's text direction: the inputs holding its words take it as `dir`, with the locale
+   * as `lang` (Arabic and Hebrew run `rtl`).
+   */
+  directions?: Readonly<Record<string, TextDirection>>;
+  /**
+   * Whether Delivery serves each locale: one it doesn't is still written and previewed, and its
+   * tab says "Not delivered". Absent until the space config has said.
+   */
+  delivered?: Readonly<Record<string, boolean>>;
   pickers: Pickers;
   /** Installed custom field editors; the first matching a field's type replaces its input. */
   fieldEditors?: readonly AppExtension[];
@@ -355,157 +383,169 @@ export function EntryForm(props: {
 
   return (
     <form id={props.formId} onSubmit={submit} className="max-w-2xl space-y-4">
-      {hasLocalized && locales.length > 1 && (
-        // Locale switcher: a segmented row of <button>s (role=button) — component
-        // tests select a locale via getByRole('button', { name: 'de-DE' }).
-        <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
-          {locales.map((loc) => {
-            const errCount = errorsByLocale.get(loc) ?? 0;
-            return (
-              <Button
-                type="button"
-                key={loc}
-                size="sm"
-                variant={loc === activeLocale ? 'default' : 'ghost'}
-                onClick={() => setActiveLocale(loc)}
-              >
-                {loc}
-                {loc === defaultLocale ? ' (default)' : ''}
-                {errCount > 0 && (
-                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-2xl bg-destructive/15 px-1 text-xs text-destructive">
-                    {errCount}
-                    {/* A bare <span> has no role, and `aria-label` on a roleless
+      <DirectionsContext.Provider value={props.directions}>
+        {hasLocalized && locales.length > 1 && (
+          // Locale switcher: a segmented row of <button>s (role=button) — component
+          // tests select a locale via getByRole('button', { name: 'de-DE' }).
+          <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
+            {locales.map((loc) => {
+              const errCount = errorsByLocale.get(loc) ?? 0;
+              return (
+                <Button
+                  type="button"
+                  key={loc}
+                  size="sm"
+                  variant={loc === activeLocale ? 'default' : 'ghost'}
+                  onClick={() => setActiveLocale(loc)}
+                >
+                  {loc}
+                  {loc === defaultLocale ? ' (default)' : ''}
+                  {props.delivered?.[loc] === false && (
+                    <>
+                      {' '}
+                      {/* In words and ruled in the button's own colour, so it reads on the ink of
+                        the chosen tab and the muted row alike. */}
+                      <span className="rounded-full border border-current px-1.5 font-normal text-2xs leading-4">
+                        Not delivered
+                      </span>
+                    </>
+                  )}
+                  {errCount > 0 && (
+                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-2xl bg-destructive/15 px-1 text-xs text-destructive">
+                      {errCount}
+                      {/* A bare <span> has no role, and `aria-label` on a roleless
                         element is ignored — the count was announced as a naked
                         number. Visually-hidden text is read instead. */}
-                    <span className="sr-only">
-                      {` validation ${errCount === 1 ? 'error' : 'errors'}`}
-                    </span>
-                  </span>
-                )}
-              </Button>
-            );
-          })}
-        </div>
-      )}
-
-      <Card>
-        <CardContent className="space-y-5">
-          {activeLocale !== defaultLocale &&
-            (() => {
-              const shared = contentType.fields.filter((f) => !f.localized).length;
-              return shared > 0 ? (
-                <p className="text-muted-foreground text-xs">
-                  {shared} {shared === 1 ? 'field' : 'fields'} shared across all locales{' '}
-                  {shared === 1 ? 'is' : 'are'} edited on the {defaultLocale} (default) tab.
-                </p>
-              ) : null;
-            })()}
-          {contentType.fields.map((f) => {
-            // Non-localized fields are only editable on the default-locale tab.
-            const locale = f.localized ? activeLocale : defaultLocale;
-            if (!f.localized && activeLocale !== defaultLocale) return null;
-            const id = `field-${f.apiId}`;
-            const err = fieldErrors[errorKey(f.apiId, locale)];
-            const hint =
-              f.localized && locales.length > 1
-                ? fallbackHint(f, values, locale, localeConfig)
-                : undefined;
-            const helpId = f.help ? `${id}-help` : undefined;
-            return (
-              <div className="space-y-1.5" key={f.apiId}>
-                <Label id={`${id}-label`} htmlFor={id} className="gap-1">
-                  {f.name}
-                  {f.required && <RequiredMark />}
-                  {locales.length > 1 && (
-                    <span className="ml-1 font-normal text-muted-foreground">
-                      {f.localized ? activeLocale : 'all locales'}
+                      <span className="sr-only">
+                        {` validation ${errCount === 1 ? 'error' : 'errors'}`}
+                      </span>
                     </span>
                   )}
-                </Label>
-                <FieldInput
-                  id={id}
-                  field={f}
-                  value={values[f.apiId]?.[locale]}
-                  invalid={Boolean(err)}
-                  errorId={err ? `${id}-error` : undefined}
-                  hintId={helpId}
-                  pickers={props.pickers}
-                  editor={fieldEditors?.find(
-                    (e) =>
-                      !e.fieldTypes || e.fieldTypes.length === 0 || e.fieldTypes.includes(f.type),
-                  )}
-                  editorContext={props.entryContext}
-                  locale={locale}
-                  path={f.apiId}
-                  onSearchEntries={props.onSearchEntries}
-                  errorFor={(p) => fieldErrors[errorKey(p, locale)]}
-                  // A nested edit clears its own error, not the whole
-                  // component's: fixing card 1 must not make card 2 look fine.
-                  onEdited={(p) => clearError(p, locale)}
-                  onChange={(v) => set(f.apiId, locale, v)}
-                />
-                {f.help && (
-                  <p id={helpId} className="max-w-measure text-muted-foreground text-xs">
-                    {f.help}
-                  </p>
-                )}
-                {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}
-                {err && (
-                  <p id={`${id}-error`} className="text-xs text-destructive">
-                    {err}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </CardContent>
-      </Card>
-
-      {Object.keys(fieldErrors).length > 0 && (
-        <div
-          ref={summaryRef}
-          role="alert"
-          className="space-y-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm"
-        >
-          <p className="font-medium text-destructive">
-            Can’t save yet: {Object.keys(fieldErrors).length}{' '}
-            {Object.keys(fieldErrors).length === 1 ? 'field needs' : 'fields need'} attention.
-          </p>
-          <ul className="space-y-0.5">
-            {Object.entries(fieldErrors).map(([key, message]) => {
-              const [apiId = '', loc = defaultLocale] = key.split(':');
-              return (
-                <li key={key} className="text-destructive">
-                  {loc === activeLocale ? (
-                    <span>
-                      {fieldName(apiId, loc)} ({loc}): {message}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="underline underline-offset-2"
-                      onClick={() => setActiveLocale(loc)}
-                    >
-                      {fieldName(apiId, loc)} ({loc}): {message}
-                    </button>
-                  )}
-                </li>
+                </Button>
               );
             })}
-          </ul>
-        </div>
-      )}
+          </div>
+        )}
 
-      {!props.hideActions && (
-        <div className="flex items-center gap-2">
-          <Button type="submit" disabled={props.busy}>
-            Save draft
-          </Button>
-          <Button type="button" variant="outline" onClick={props.onCancel} disabled={props.busy}>
-            Cancel
-          </Button>
-        </div>
-      )}
+        <Card>
+          <CardContent className="space-y-5">
+            {activeLocale !== defaultLocale &&
+              (() => {
+                const shared = contentType.fields.filter((f) => !f.localized).length;
+                return shared > 0 ? (
+                  <p className="text-muted-foreground text-xs">
+                    {shared} {shared === 1 ? 'field' : 'fields'} shared across all locales{' '}
+                    {shared === 1 ? 'is' : 'are'} edited on the {defaultLocale} (default) tab.
+                  </p>
+                ) : null;
+              })()}
+            {contentType.fields.map((f) => {
+              // Non-localized fields are only editable on the default-locale tab.
+              const locale = f.localized ? activeLocale : defaultLocale;
+              if (!f.localized && activeLocale !== defaultLocale) return null;
+              const id = `field-${f.apiId}`;
+              const err = fieldErrors[errorKey(f.apiId, locale)];
+              const hint =
+                f.localized && locales.length > 1
+                  ? fallbackHint(f, values, locale, localeConfig)
+                  : undefined;
+              const helpId = f.help ? `${id}-help` : undefined;
+              return (
+                <div className="space-y-1.5" key={f.apiId}>
+                  <Label id={`${id}-label`} htmlFor={id} className="gap-1">
+                    {f.name}
+                    {f.required && <RequiredMark />}
+                    {locales.length > 1 && (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        {f.localized ? activeLocale : 'all locales'}
+                      </span>
+                    )}
+                  </Label>
+                  <FieldInput
+                    id={id}
+                    field={f}
+                    value={values[f.apiId]?.[locale]}
+                    invalid={Boolean(err)}
+                    errorId={err ? `${id}-error` : undefined}
+                    hintId={helpId}
+                    pickers={props.pickers}
+                    editor={fieldEditors?.find(
+                      (e) =>
+                        !e.fieldTypes || e.fieldTypes.length === 0 || e.fieldTypes.includes(f.type),
+                    )}
+                    editorContext={props.entryContext}
+                    locale={locale}
+                    path={f.apiId}
+                    onSearchEntries={props.onSearchEntries}
+                    errorFor={(p) => fieldErrors[errorKey(p, locale)]}
+                    // A nested edit clears its own error, not the whole
+                    // component's: fixing card 1 must not make card 2 look fine.
+                    onEdited={(p) => clearError(p, locale)}
+                    onChange={(v) => set(f.apiId, locale, v)}
+                  />
+                  {f.help && (
+                    <p id={helpId} className="max-w-measure text-muted-foreground text-xs">
+                      {f.help}
+                    </p>
+                  )}
+                  {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}
+                  {err && (
+                    <p id={`${id}-error`} className="text-xs text-destructive">
+                      {err}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+
+        {Object.keys(fieldErrors).length > 0 && (
+          <div
+            ref={summaryRef}
+            role="alert"
+            className="space-y-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm"
+          >
+            <p className="font-medium text-destructive">
+              Can’t save yet: {Object.keys(fieldErrors).length}{' '}
+              {Object.keys(fieldErrors).length === 1 ? 'field needs' : 'fields need'} attention.
+            </p>
+            <ul className="space-y-0.5">
+              {Object.entries(fieldErrors).map(([key, message]) => {
+                const [apiId = '', loc = defaultLocale] = key.split(':');
+                return (
+                  <li key={key} className="text-destructive">
+                    {loc === activeLocale ? (
+                      <span>
+                        {fieldName(apiId, loc)} ({loc}): {message}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="underline underline-offset-2"
+                        onClick={() => setActiveLocale(loc)}
+                      >
+                        {fieldName(apiId, loc)} ({loc}): {message}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {!props.hideActions && (
+          <div className="flex items-center gap-2">
+            <Button type="submit" disabled={props.busy}>
+              Save draft
+            </Button>
+            <Button type="button" variant="outline" onClick={props.onCancel} disabled={props.busy}>
+              Cancel
+            </Button>
+          </div>
+        )}
+      </DirectionsContext.Provider>
     </form>
   );
 }
@@ -535,6 +575,7 @@ function FieldInput(props: {
 }) {
   const { id, field, value, invalid, errorId, onChange, pickers, editor, editorContext, locale } =
     props;
+  const writing = useWritingIn(locale);
   const inputClass = invalid ? 'border-destructive focus-visible:ring-destructive/30' : undefined;
   const describedBy = [errorId, props.hintId].filter(Boolean).join(' ') || undefined;
   const aria = { 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy };
@@ -673,6 +714,8 @@ function FieldInput(props: {
         id={id}
         ariaLabelledBy={`${id}-label`}
         ariaDescribedBy={describedBy}
+        lang={writing.lang}
+        dir={writing.dir}
         value={value}
         pickers={pickers}
         onChange={onChange}
@@ -742,6 +785,7 @@ function FieldInput(props: {
         id={id}
         className={inputClass}
         {...aria}
+        {...writing}
         rows={4}
         placeholder={field.placeholder}
         value={typeof value === 'string' ? value : ''}
@@ -769,6 +813,7 @@ function FieldInput(props: {
         id={id}
         className={inputClass}
         {...aria}
+        {...writing}
         placeholder={field.placeholder}
         value={typeof value === 'string' ? value : ''}
         onChange={(e) => onChange(e.target.value)}

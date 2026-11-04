@@ -60,6 +60,7 @@ API:
 
 ```ts
 client.getEntry<F>(id, { locale?, include? }): Promise<DeliveredEntry<F>>
+client.getSingleton<F>(contentType, { locale?, include? }): Promise<DeliveredEntry<F>> // a singleton type's one entry; 404 DeliveryError otherwise
 client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: number; nextCursor? }>
 client.search(query, { topK? }): Promise<SearchHit[]>
 client.getAsset(id, { locale? }): Promise<DeliveredAsset>
@@ -392,6 +393,7 @@ cma.approvals.count()                                 // what waits on a person
 
 cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
 cma.contentTypes.fieldValues(apiId, field, { locale?, limit?, cursor? }): Promise<FieldValuesPage>
+cma.contentTypes.dependents(apiId) / .delete(apiId, { purgeEntries? }) / .clone(apiId, { apiId, name })
                                                       // create on an existing apiId revises it
 
 cma.entries.list({ contentType?, locale?, limit?, skip?, order?, query? })  // Preview: drafts included

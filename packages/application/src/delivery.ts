@@ -9,12 +9,14 @@ import {
   canAccessContentType,
   deniedFieldsFor,
   fallbackChain,
+  isLocaleDelivered,
   MAX_RICH_TEXT_DEPTH,
   maskDeniedFields,
   NotFoundError,
   type Principal,
   resolveLocalizedValue,
   type Scope,
+  withoutUndeliveredLocales,
 } from '@contentworker/domain';
 import type { EntryQuery, PublishedAsset, PublishedEntry, SpaceConfig } from '@contentworker/ports';
 import { projectionContextOf, projectPublishedAsset } from './asset-delivery';
@@ -23,7 +25,7 @@ import {
   DEFAULT_DELIVERY_CACHE_TTL_SECONDS,
   DEFAULT_DELIVERY_LIST_TTL_SECONDS,
 } from './context';
-import { type DeliveryReads, deliveryReads } from './delivery-reads';
+import { assertDeliveredLocale, type DeliveryReads, deliveryReads } from './delivery-reads';
 import { usesReferenceFilters } from './entry-query';
 import { cacheTag, contentTypeTag, epochTag } from './events/dispatch';
 import { hasSlugFilters, resolveSlugFilters, slugFilterSlugs } from './taxonomy-delivery';
@@ -46,6 +48,11 @@ export interface DeliveredEntry {
   readonly contentType: string;
   readonly fields: Record<string, unknown>;
   readonly publishedAt: string;
+  /**
+   * When the entry was first published, when known. The only authorship Delivery serves: who
+   * created or changed an entry names people and keys, which a public read has no business seeing.
+   */
+  readonly firstPublishedAt?: string;
   /** Taxonomy associations (tags + concepts), when the entry has any. */
   readonly metadata?: { readonly tags: readonly string[]; readonly concepts: readonly string[] };
 }
@@ -57,10 +64,19 @@ function spaceConfig(scope: Scope, config: SpaceConfig | null | undefined): Spac
   return config;
 }
 
+/** The locales a space turns off, for a store query to skip (nothing when it delivers them all). */
+const hiddenLocalesOf = (config: SpaceConfig): { hiddenLocales?: string[] } => {
+  const hidden = Object.keys(config.localeSettings ?? {}).filter(
+    (l) => !isLocaleDelivered(config, l),
+  );
+  return hidden.length > 0 ? { hiddenLocales: hidden } : {};
+};
+
 const toLocaleConfig = (s: SpaceConfig): LocaleConfig => ({
   defaultLocale: s.defaultLocale,
   locales: s.locales,
   fallbacks: s.fallbacks,
+  localeSettings: s.localeSettings,
 });
 
 function isEntryLink(value: unknown): value is { id: string; linkType: 'Entry' } {
@@ -156,7 +172,7 @@ async function prefetchLinked(
     for (const e of fetchedEntries) entries.set(e.entryId, e);
     frontier = fetchedEntries;
   }
-  const pc = projectionContextOf(scope, renditions, opts.locale, config);
+  const pc = projectionContextOf(scope, renditions, opts.locale, config, reads.everyLocale);
   return {
     entries,
     assets,
@@ -228,7 +244,10 @@ function render(
       if (resolved !== undefined) fields[apiId] = resolve(resolved);
     } else {
       const perLocale: Record<string, unknown> = {};
-      for (const [loc, v] of Object.entries(localized)) perLocale[loc] = resolve(v);
+      for (const [loc, v] of Object.entries(localized)) {
+        // A locale the space doesn't deliver is edited and previewed, never served.
+        if (isLocaleDelivered(localeCfg, loc)) perLocale[loc] = resolve(v);
+      }
       fields[apiId] = perLocale;
     }
   }
@@ -238,6 +257,7 @@ function render(
     contentType: snapshot.contentTypeApiId,
     fields,
     publishedAt: snapshot.publishedAt,
+    ...(snapshot.firstPublishedAt ? { firstPublishedAt: snapshot.firstPublishedAt } : {}),
     ...(snapshot.metadata
       ? { metadata: { tags: snapshot.metadata.tags, concepts: snapshot.metadata.concepts } }
       : {}),
@@ -268,9 +288,10 @@ export async function getPublishedEntry(
   // The snapshot and the space config: one round trip.
   const reads = opts.reads ?? deliveryReads(ctx);
   const read = await reads.read(scope, { entryId: id, config: true });
+  const config = spaceConfig(scope, read.config);
+  assertDeliveredLocale(config, opts.locale);
   const snapshot = read.entry;
   if (!snapshot) throw new NotFoundError('PublishedEntry', id);
-  const config = spaceConfig(scope, read.config);
   const collected = new Set<string>();
   const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts, reads, config);
   const result = render(scope, snapshot, config, opts, depth, new Set([id]), collected, fetched);
@@ -290,6 +311,50 @@ export async function getPublishedEntry(
     });
   }
   return result;
+}
+
+/**
+ * A singleton type's published entry, rendered as `getPublishedEntry` renders one (`GET
+ * …/singletons/:apiId`): the type and its entry in one round trip with the space config, then
+ * linked entries per include level. Not found unless `apiId` names a type whose PUBLISHED
+ * revision is a singleton (a draft turning the flag on or off changes nothing here until it is
+ * published) and that has a published entry, so a client can't read an ordinary type's first
+ * entry through it. While a draft that turned the flag off waits to be published, the type can
+ * gain more entries (the claim is given back with the draft); Delivery then serves the published
+ * one with the lowest entry id, until the turn-off is published.
+ *
+ * Not kept in this tag cache (`ctx.cache`), but the Delivery Worker's entrypoint caches the
+ * response like every other, until the scope's next purge. Everything that changes the answer
+ * purges it: the entry's publish or unpublish (trashing unpublishes), and the type's publish or a
+ * published save that changes its flag (`content_type.published`), or its delete.
+ */
+export async function getDeliveredSingleton(
+  ctx: AppContext,
+  scope: Scope,
+  apiId: string,
+  opts: RenderOptions = {},
+): Promise<DeliveredEntry> {
+  const depth = clampDepth(opts.include);
+  const reads = opts.reads ?? deliveryReads(ctx);
+  const read = await reads.read(scope, { singleton: { contentType: apiId }, config: true });
+  const config = spaceConfig(scope, read.config);
+  assertDeliveredLocale(config, opts.locale);
+  if (!read.singleton?.contentType || !read.singleton.publishedSingleton) {
+    throw new NotFoundError('Singleton', apiId);
+  }
+  const snapshot = read.singleton.entry;
+  if (!snapshot) throw new NotFoundError('Published singleton entry', apiId);
+  const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts, reads, config);
+  return render(
+    scope,
+    snapshot,
+    config,
+    opts,
+    depth,
+    new Set([snapshot.entryId]),
+    new Set(),
+    fetched,
+  );
 }
 
 /**
@@ -387,6 +452,8 @@ export async function listPublishedEntries(
     ...(slugs?.concepts.length ? { concepts: { slugs: slugs.concepts } } : {}),
   });
   const config = spaceConfig(scope, first.config);
+  assertDeliveredLocale(config, opts.locale);
+  assertDeliveredLocale(config, requested.locale);
   const query = slugs
     ? resolveSlugFilters(requested, { tags: first.tags ?? [], concepts: first.concepts ?? [] })
     : requested;
@@ -409,6 +476,8 @@ export async function listPublishedEntries(
     ...(refs ? { contentTypes: first.contentTypes ?? [] } : {}),
     locale,
     fallbackLocales: localeFallbackChain(config, locale),
+    // An undelivered locale's value never decides a filter, an order or a `query=` match.
+    ...hiddenLocalesOf(config),
   });
   // One shared prefetch across all rows: N rows × M links costs one batched
   // read per depth level, not N×M point reads.
@@ -577,9 +646,28 @@ export const LIVE_EVENT_TYPES: ReadonlySet<DomainEvent['type']> = new Set([
   'asset.published',
   'asset.unpublished',
   'content_type.published',
+  'content_type.deleted',
   'release.published',
   'environment_alias.changed',
 ]);
+
+/**
+ * An event as the live stream may carry it at all, before any subscriber's access applies: an
+ * `entry.published` keeps only the locales the space delivers, as every Delivery read does. The
+ * LiveHub object holds no store, so the consumer that fans the event out writes this filtered
+ * copy once, reading the space's config only for an entry publish (every other live fact names
+ * ids, not text). A space with every locale delivered gets the event unchanged.
+ */
+export async function liveEventOf(ctx: AppContext, event: DomainEvent): Promise<DomainEvent> {
+  if (event.type !== 'entry.published') return event;
+  const config = await ctx.store.spaces.getConfig(event.scope);
+  if (!config?.localeSettings) return event;
+  const fields: Record<string, Record<string, unknown>> = {};
+  for (const [apiId, localized] of Object.entries(event.fields)) {
+    fields[apiId] = withoutUndeliveredLocales(localized, config);
+  }
+  return { ...event, fields: fields as typeof event.fields };
+}
 
 /**
  * What `principal` may see of `event` on the live stream, or null for nothing: the same rules as
@@ -604,6 +692,7 @@ export function liveEventFor(
       };
     case 'entry.unpublished':
     case 'content_type.published':
+    case 'content_type.deleted':
       return canAccessContentType(p, 'read', event.contentTypeApiId) ? event : null;
     case 'environment_alias.changed':
       return event;

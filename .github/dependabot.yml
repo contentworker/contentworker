@@ -25,8 +25,9 @@ updates:
       minor-and-patch:
         update-types: [minor, patch]
     ignore:
-      # Pinned: 5.0.4's module cache breaks @cloudflare/vitest-plugin (see AGENTS.md).
+      # 5.0.4's module cache breaks @cloudflare/vitest-plugin; later versions go through CI as usual.
       - dependency-name: vitest
+        versions: ["5.0.4"]
 
   - package-ecosystem: github-actions
     directory: /

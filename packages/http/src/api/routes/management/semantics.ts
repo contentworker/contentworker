@@ -14,7 +14,7 @@ import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as entryDocs from '../../docs/schemas/entries';
 import { parseBody, reindexBody } from '../../validation';
-import { BASE, entryAccess, expectedVersionOf, scopeOf } from './shared';
+import { actingCtx, BASE, entryAccess, expectedVersionOf, scopeOf } from './shared';
 
 export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, rag, agents } = deps;
@@ -117,7 +117,7 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
       // post-publish moderation retracting a flagged entry instead. Do not
       // read this flag as "flagged content can never reach delivery".
       if (deps.moderateBeforePublish) {
-        const verdict = await moderateEntry(ctx, agents, scopeOf(c), id);
+        const verdict = await moderateEntry(actingCtx(ctx, c), agents, scopeOf(c), id);
         if (verdict.flagged) {
           throw new ValidationError([
             {
@@ -127,7 +127,7 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
           ]);
         }
       }
-      return c.json(await publishEntry(ctx, scopeOf(c), id, expectedVersionOf(c)));
+      return c.json(await publishEntry(actingCtx(ctx, c), scopeOf(c), id, expectedVersionOf(c)));
     },
   );
   app.delete(
@@ -144,7 +144,14 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentPublish),
     async (c) => {
       await guardEntry(c, c.req.param('id'), 'unpublish');
-      return c.json(await unpublishEntry(ctx, scopeOf(c), c.req.param('id'), expectedVersionOf(c)));
+      return c.json(
+        await unpublishEntry(
+          actingCtx(ctx, c),
+          scopeOf(c),
+          c.req.param('id'),
+          expectedVersionOf(c),
+        ),
+      );
     },
   );
 

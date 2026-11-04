@@ -81,7 +81,7 @@ catalog:
   tsx: ^4.23.15
   turbo: ^2.11.7
   "@biomejs/biome": ^2.5.15
-  "@types/node": ^24.19.2 # tracks the Node major in .nvmrc and CI, not npm latest
+  "@types/node": ^26.6.6 # tracks the Node major in .nvmrc and CI, not npm latest
   jsonc-parser: 3.3.1
 
   # Testing

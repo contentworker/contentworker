@@ -2,6 +2,8 @@ import {
   type AssetShareLink,
   type AssetShareTargetType,
   ConflictError,
+  isLocaleDelivered,
+  type LocalizedValue,
   NotFoundError,
   type Scope,
   type StoredAssetShareLink,
@@ -14,6 +16,7 @@ import {
   type ContentStore,
   type PublishedAsset,
   type ShareLinkGateEntry,
+  type SpaceConfig,
   TransactionConflictError,
 } from '@contentworker/ports';
 import type { AppContext } from './context';
@@ -229,9 +232,36 @@ export interface SharedAssets {
   readonly title: string;
   readonly description?: string;
   readonly items: readonly PublishedAsset[];
+  /** The space's locales, for {@link sharedText}; null when the space is gone. */
+  readonly locales: SpaceConfig | null;
 }
 
 type ShareReadStore = Pick<ContentStore, 'assets' | 'assetCollections'>;
+
+/**
+ * The one text a share page shows for a localized value (it has no locale to pick by): the
+ * default locale's, else the first the space delivers, in the space's order. A locale the space
+ * doesn't deliver is never shown, as on Delivery. Without the space's config, the first non-empty.
+ */
+export function sharedText(
+  value: LocalizedValue | undefined,
+  locales: Pick<SpaceConfig, 'defaultLocale' | 'locales' | 'localeSettings'> | null,
+): string {
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v : '');
+  if (!value) return '';
+  if (!locales) {
+    for (const v of Object.values(value)) if (text(v)) return text(v);
+    return '';
+  }
+  const order = [
+    locales.defaultLocale,
+    ...locales.locales.filter((l) => l !== locales.defaultLocale),
+  ];
+  for (const l of order) {
+    if (isLocaleDelivered(locales, l) && text(value[l])) return text(value[l]);
+  }
+  return '';
+}
 
 /**
  * The published files a link's target holds now: the asset (if still published) or the
@@ -239,20 +269,26 @@ type ShareReadStore = Pick<ContentStore, 'assets' | 'assetCollections'>;
  * media origin (through a replica).
  */
 export async function sharedAssets(
-  store: ShareReadStore,
+  store: ShareReadStore & { readonly spaces: Pick<ContentStore['spaces'], 'getConfig'> },
   scope: Scope,
   entry: Pick<ShareLinkGateEntry, 'targetType' | 'targetId'>,
 ): Promise<SharedAssets | null> {
   if (entry.targetType === 'asset') {
-    const snapshot = await store.assets.getPublished(scope, entry.targetId);
+    const [snapshot, locales] = await Promise.all([
+      store.assets.getPublished(scope, entry.targetId),
+      store.spaces.getConfig(scope),
+    ]);
     if (!snapshot) return null;
-    const title = Object.values(snapshot.title)[0];
     return {
-      title: typeof title === 'string' && title ? title : snapshot.file.fileName,
+      title: sharedText(snapshot.title, locales) || snapshot.file.fileName,
       items: [snapshot],
+      locales,
     };
   }
-  const collection = await store.assetCollections.get(scope, entry.targetId);
+  const [collection, locales] = await Promise.all([
+    store.assetCollections.get(scope, entry.targetId),
+    store.spaces.getConfig(scope),
+  ]);
   if (!collection) return null;
   const items: PublishedAsset[] = [];
   let cursor: string | undefined;
@@ -268,6 +304,7 @@ export async function sharedAssets(
     title: collection.name,
     ...(collection.description ? { description: collection.description } : {}),
     items: items.slice(0, MAX_SHARED_FILES),
+    locales,
   };
 }
 

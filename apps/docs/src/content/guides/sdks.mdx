@@ -188,6 +188,14 @@ The subpath `@contentworker/sdk/redirects` applies them in a front-door edge fun
 `cma.redirects.{list, get, create, update, delete, import, resolve, analyze, collapseChains}`, and a
 content type draft takes `urlPattern`.
 
+### Singletons
+
+`client.getSingleton('settings', { locale, include })` returns a
+[singleton type's](/guides/content-modeling/#singletons) one entry by the type's API ID (from a
+preview client, as it is now). The management client's content type draft takes `singleton`, and
+`cma.contentTypes.{dependents, delete, clone}` check, delete (`{ purgeEntries: true }` starts the
+job that deletes its entries first) and copy a type.
+
 ### Menus
 
 `client.menus()` lists the navigation menus and `client.menu(handle, { locale })` returns one

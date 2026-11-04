@@ -32,14 +32,19 @@ export function EntryPreview({
   fields,
   locale,
   localeConfig,
+  direction,
   pickers,
 }: {
   contentType: ContentType;
   fields: EntryFields;
   locale: string;
   localeConfig: LocaleConfig;
+  /** `locale`'s text direction, as the form writes it; absent until the space config has said. */
+  direction?: 'ltr' | 'rtl';
   pickers: Pickers;
 }) {
+  // The values read in the form's locale and its direction; the captions stay the admin's.
+  const writing = direction ? { lang: locale, dir: direction } : { lang: locale };
   const shownValue = (f: FieldDefinition) => {
     const byLocale = (fields[f.apiId] ?? {}) as Record<string, unknown>;
     return f.localized
@@ -56,7 +61,7 @@ export function EntryPreview({
           {contentType.name}
           {localeConfig.locales.length > 1 ? ` · ${locale}` : null}
         </p>
-        <h2 className="break-words font-semibold text-xl tracking-title">
+        <h2 {...writing} className="break-words font-semibold text-xl tracking-title">
           {isFilled(title) ? (
             String(title)
           ) : (
@@ -69,7 +74,7 @@ export function EntryPreview({
           {rest.map((f) => (
             <div key={f.apiId} className="min-w-0 space-y-1">
               <dt className="caption">{f.name}</dt>
-              <dd className="min-w-0 text-sm">
+              <dd {...writing} className="min-w-0 text-sm">
                 <FieldValue field={f} value={shownValue(f)} pickers={pickers} />
               </dd>
             </div>

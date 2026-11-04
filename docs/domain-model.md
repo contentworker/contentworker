@@ -394,6 +394,7 @@ interface ContentType {
   displayField: string; // apiId of the field used as the entry's display title
   fields: readonly FieldDefinition[];
   urlPattern?: string; // where its entries live on the site, e.g. /blog/{slug}
+  singleton?: true; // holds at most one entry outside the trash; absent otherwise
   version: number; // bumped on each revision
   status: 'draft' | 'published';
 }
@@ -404,7 +405,53 @@ interface ContentType {
   `ValidationError` / `ConflictError`.
 - `reviseContentType(current, changes)` — increments `version`, resets status to `draft`, sorts
   fields by `position`, optionally updates `name`/`displayField`/`fields`/`urlPattern` (`null` or
-  `''` clears it).
+  `''` clears it) and `singleton` (left out, kept).
+- **Singletons.** Every entry of a singleton type stakes `singletonClaim(apiId)` (field
+  `SINGLETON_CLAIM_FIELD`, `$singleton`, which no field apiId can be) beside its unique values, so
+  the `entry_unique_values` unique index admits one entry outside the trash whatever the race.
+  `createEntry`, `restoreEntry` and an environment merge also read for one first
+  (`assertSingletonFree`), which names the entry and still refuses when its claim went missing (an
+  entry saved by a release from before singletons). `saveContentTypeOver` is the one save of a
+  definition over another (a revision, a merge, a promotion): turning the flag on is refused over
+  more than one entry outside the trash and claims the one there is, in the same unit as the save,
+  guarded (`ContentTypeRepo.guard` with the entries it read) so an entry created meanwhile fails
+  the commit (`409`); turning it off gives the claim back. A published save that changes the flag
+  appends `content_type.published`, which purges Delivery. Every new entry (`writeNewEntry`, used
+  by `createEntry` and the merge, which also claims the entry's unique values) is written in a unit
+  guarded on its type as read (`guard(scope, apiId, { singleton })`): a type deleted, or flipped,
+  since its read fails the commit, mapped to `409`. A promotion that would leave a singleton with a
+  second entry is refused when it is requested. Snapshots (clone, export and import) carry the
+  flag. Stored in `content_types.singleton` (0027_singleton_types); Delivery serves by
+  `content_types.published_singleton`, the flag as last saved published (0028_published_singleton),
+  so a draft's change reaches it with the type's publish: `…/singletons/:apiId` and GraphQL's roots
+  (Delivery's `contentTypes` read reports `singleton` as last published) alike. A draft that turns
+  the flag off gives the claim back at once, so the type can gain entries before the turn-off is
+  published; meanwhile Delivery serves the published entry with the lowest id. Every save over a
+  stored definition (`saveContentTypeOver`, and `publishContentType`) is guarded on the flag it
+  read, so a save that raced a turn on or off fails (`409`) rather than undoing it, and every
+  save of a published definition announces `content_type.published` once (a promotion's apply
+  relies on it, with no separate publish).
+- **Merging entries** (`mergeEnvironments`) checks every selected entry's unique values (the
+  singleton's claim included) before the first write, against the target and against each other,
+  and refuses once (`409`, `details.conflicts`), naming each entry and its holder; a value an entry
+  of the merge gives up is free (a swap). Entries the target already has are applied first, each
+  with its claims rebuilt in the same unit, as `updateEntry` does; new ones then stake theirs. An
+  entry the target holds in its trash gets the new version and stays there, claiming nothing.
+- **Delete and clone** (`content-type-lifecycle.ts`). `fieldsLinkingTo(types, apiId)` finds other
+  types' fields whose `linkContentTypes` name it, through components, repeaters and block variants
+  (a path like `body.byline.who`). `contentTypeDependents` adds its entry counts (live, trashed),
+  menus and slug redirects naming its entries, and its `urlPattern`; `deleteContentType` refuses
+  while any is there, then deletes in one unit with `content_type.deleted`. The store's
+  `ContentTypeRepo.delete(scope, apiId, version)` is a compare-and-set whose own `WHERE` also
+  requires no entry of the type, so a revision or an entry written after the reads fails the
+  commit (`TransactionConflictError`). `deleteContentTypeWithEntries` starts a `content_type_delete`
+  bulk job instead (chunks of `ENTRY_TRASH_CHUNK_SIZE`): `trashEntry`, then `purgeEntry`, forced
+  only past links from entries of the same type, over ids read by `EntryRepo.idsOfType` (an id-only
+  keyset read); `finishContentTypeDeletion` deletes the type on the job's clean
+  `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
+  `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
+  stopped). `cloneContentType` defines a copy (fields, display field, singleton; not `urlPattern`)
+  at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
   `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields; anything else is a
@@ -422,6 +469,10 @@ interface Entry {
   status: EntryStatus;
   currentVersion: number; // latest saved draft snapshot
   publishedVersion: number | null; // snapshot served by Delivery (if any)
+  createdAt?: string | null; // authorship (below); null when unknown
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  firstPublishedAt?: string | null;
 }
 
 interface EntryVersion {
@@ -429,6 +480,7 @@ interface EntryVersion {
   entryId: string;
   version: number;
   fields: EntryFields;
+  createdBy?: string | null; // who saved it
 }
 ```
 
@@ -453,6 +505,49 @@ Transitions (pure functions; each throws `InvalidStateError` when its preconditi
 
 `currentVersion`/`publishedVersion` are pointers into the immutable version ledger; each
 `saveDraft` appends a new version, and `publishedVersion` pins which one Delivery serves.
+
+### Authorship
+
+Every write stamps who made it, from the context's `actor` (`AppContext.actor`) and `ctx.clock`
+(`stampCreated`, `stampChanged`, `stampPublished` in `entry/authorship.ts`). An actor is the
+principal's audit identity (`principalActorId`: a person's subject, `admin-token`, or the key kind),
+or names what acted without a request: `agent:<name>` (an editorial agent), `workflow:<id>` (a
+workflow node or its compensation, whatever principal's grants it runs with), `plugin:<id>` (a
+plugin's capabilities) and `system` (the scheduler). The HTTP routes and the MCP session derive the
+context per request (`actingAs`); a bulk job records who started it in its `config.actor` and its
+chunks write as them; a promotion writes as whoever approved it.
+
+| Field              | Set by                                                   | `sys.*`              |
+| ------------------ | -------------------------------------------------------- | -------------------- |
+| `createdAt`        | creation (kept by a clone, a merge or a promotion)       | `sys.createdAt`      |
+| `createdBy`        | creation (kept likewise; never from an uploaded snapshot) | `sys.createdBy`      |
+| `updatedBy`        | every change, the one `sys.updatedAt` records            | `sys.updatedBy`      |
+| `firstPublishedAt` | the first publish only; kept through unpublish           | `sys.firstPublishedAt` |
+
+The store writes creation once and `first_published_at` with `COALESCE`, so a stale aggregate or a
+lost race never moves either; the publish upsert copies `entry_published.first_published_at` from
+`entries` in the same batch (a subquery), so the read model always matches that result. An entry
+already live with nothing recorded (from before `0024_entry_authorship`) keeps an unknown (null)
+first publish when republished. A known gap: an entry published and then unpublished before
+`0024` left no trace of that, so its next publish is recorded as its first.
+
+A new entry a merge (`mergeEnvironments`) brings into the target keeps the source's creation and
+first publish, as a promotion's does; one the target already has keeps its own. An environment
+clone keeps all three (`ImportOptions.keepCreators`, set only by the clone paths). An uploaded
+snapshot keeps `createdAt` and `firstPublishedAt`, checked by `carriedAuthorshipIssues` (ISO-8601
+UTC instants; a creator at most 320 characters), and credits its importer as the creator: a file
+can name anyone.
+
+Management and Preview serve all four, filter and sort on them, and resolve `me` in
+`sys.createdBy` and `sys.updatedBy` to the caller's actor id (`principalActorId`: a person's
+subject, `admin-token`, or an API key's kind, so `me` is every key of that kind). The writer ids
+go only where `seesAuthorIds` holds (a teammate, the admin token, or a key with a management
+scope): a preview key reads entries and versions without `createdBy`/`updatedBy`
+(`withAuthorIdsFor`, on every read it can reach: Preview, the management entry and version reads,
+and their MCP tools), and `assertAuthorIdQuery` refuses its filter or order on them, in `filters`
+or anywhere in a `where` tree (400). Agent-review decisions record
+`decidedBy` with the same actor id. Delivery serves `firstPublishedAt` alone, since the others name
+people and keys a public read has no business seeing.
 
 ### Comparing versions
 
@@ -497,6 +592,7 @@ interface LocaleConfig {
   defaultLocale: LocaleCode;
   locales: readonly LocaleCode[];
   fallbacks?: Record<LocaleCode, LocaleCode | null>; // locale → fallback (null = stop)
+  localeSettings?: Record<LocaleCode, { delivered?: boolean; direction?: 'ltr' | 'rtl' }>;
 }
 ```
 
@@ -507,6 +603,33 @@ interface LocaleConfig {
   defined value.
 - `resolveFieldsForLocale(fields, config, requested)` — flattens an entry's fields to a single
   locale with fallback applied; used by Delivery/Preview when `?locale=` is given.
+
+**Delivered locales and direction.** `localeSettings` (stored beside `locales`,
+`0025_locale_settings`) says per locale whether Delivery serves it (`isLocaleDelivered`: the
+default always, any other unless `delivered: false`) and which way its text runs
+(`localeDirection`: as set, else `rtl` for a right-to-left language or script, `rtlByLanguage`).
+`assertLocaleSettings` refuses a locale the space lacks, an undelivered default and unknown keys.
+Delivery reads the space through `deliveredLocaleConfig`: undelivered locales leave `locales`, and
+each fallback is re-pointed past them (`fr-CA → fr → en` with `fr` off is `fr-CA → en`), so no
+render, sitemap alternate, menu or label reaches their values; `withoutUndeliveredLocales` drops
+them from all-locale maps (entry fields, taxonomy labels, and asset title, description and alt
+text, alone or embedded by `include`). The same holds on every other Delivery output: GraphQL's
+`localize` answers `null` for an undelivered locale; list filters, `where` trees, ordering and
+`query=` skip their values (`hiddenLocales` on the store query, so the any-locale fallback never
+compares one); Delivery search (`deliveredSearch`, REST `/search` and GraphQL `search`) drops a
+vector chunk in an undelivered locale and re-checks and re-ranks each lexical hit on its delivered
+text alone, quoting only that in snippets; Delivery asset search (`searchDeliveredAssets`, whose
+indexes hold every locale in one document and one embedding per asset) scans delivered text only
+and drops a hit any query term finds only in undelivered title, caption or alt text, and a
+vector-only hit on an asset that has undelivered text; and the queue consumer strips undelivered locales from an
+`entry.published` before the LiveHub fans it out to live subscribers (`liveEventOf`; the object
+holds no store, so the consumer writes the filtered copy once). A request naming an undelivered locale is a `NotFoundError` (404),
+rather than a fallback, so a front end leaves the route out instead of serving another language
+under it; a locale the space doesn't have still resolves through the default, as before. Preview
+and Management read every locale. `setLocaleSettings` (`space:admin`) writes the settings and a
+`space_locales.changed` event in one unit; the engine purges every environment of the space.
+GET `…/space-config` serves each locale's settings resolved; the admin sets `dir` on each
+locale's inputs from `direction`.
 
 ## Assets
 

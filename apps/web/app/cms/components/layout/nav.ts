@@ -118,6 +118,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     icon: Building2,
     sections: [
       { id: 'environments', label: 'Environments' },
+      { id: 'locales', label: 'Locales' },
       { id: 'redirects', label: 'Redirects' },
       { id: 'menus', label: 'Menus' },
       { id: 'trash', label: 'Trash' },

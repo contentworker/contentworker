@@ -4,7 +4,7 @@ import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import { parseBody, spaceExportImportBody } from '../../validation';
-import { BASE, scopeOf } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 export function spaceExportRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
@@ -75,7 +75,10 @@ export function spaceExportRoutes(deps: AuthDeps): Hono<AuthVars> {
           },
         ]);
       }
-      return c.json(await startSpaceExportImport(ctx, blob, scopeOf(c), reader, input), 202);
+      return c.json(
+        await startSpaceExportImport(actingCtx(ctx, c), blob, scopeOf(c), reader, input),
+        202,
+      );
     },
   );
 

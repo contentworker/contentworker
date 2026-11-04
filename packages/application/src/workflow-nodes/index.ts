@@ -20,8 +20,9 @@ import {
   type WorkflowNode,
   type WorkflowRunActor,
   withDefaults,
+  workflowActor,
 } from '@contentworker/domain';
-import type { AppContext } from '../context';
+import { type AppContext, withActor } from '../context';
 import { AI_EXECUTORS, AI_RESUMES } from './ai';
 import { WORKFLOW_COMPENSATIONS } from './compensations';
 import { CONTENT_EXECUTORS } from './content';
@@ -107,7 +108,9 @@ const clean = (r: NodeResult): NodeResult => JSON.parse(JSON.stringify(r)) as No
 
 function prepare(ctx: AppContext, deps: WorkflowNodeDeps, input: ExecuteWorkflowNodeInput) {
   return {
-    ctx,
+    // A node's writes are the workflow's: authorship names it, not the person it acts for (whose
+    // grants still decide what it may do, through `actor`).
+    ctx: withActor(ctx, workflowActor(input.workflowId)),
     deps,
     scope: input.scope,
     runId: input.runId,
@@ -173,6 +176,8 @@ export async function resumeWorkflowNode(
 export interface CompensateWorkflowNodeInput {
   readonly scope: Scope;
   readonly runId: string;
+  /** The run's workflow: its compensations are written as it, as its nodes were. */
+  readonly workflowId: string;
   readonly entryId: string;
   readonly generation: number;
   readonly nodeId: string;
@@ -207,7 +212,7 @@ export async function compensateWorkflowNode(
   );
   if (record?.status === 'rolled_back') return 'Already undone';
   const message = await compensate({
-    ctx,
+    ctx: withActor(ctx, workflowActor(input.workflowId)),
     deps,
     scope: input.scope,
     runId: input.runId,

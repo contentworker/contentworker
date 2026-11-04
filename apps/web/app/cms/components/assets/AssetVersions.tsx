@@ -11,13 +11,8 @@ import { partsLine } from '~/cms/components/assets/AssetUploadList';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { StatusBadge } from '~/cms/components/status';
-import {
-  fileSize,
-  type PartsProgress,
-  replaceInParts,
-  uploadsInParts,
-  versionAuthor,
-} from '~/cms/lib/assets';
+import { fileSize, type PartsProgress, replaceInParts, uploadsInParts } from '~/cms/lib/assets';
+import { actorLabel } from '~/cms/lib/authorship';
 import { useClient } from '~/cms/lib/client-context';
 import { ApiError, apiErrorMessage, type TeamPerson } from '~/cms/lib/management';
 import { useToast } from '~/cms/lib/toast';
@@ -320,7 +315,7 @@ export function AssetVersions(props: { asset: Asset; onAssetChange?: (asset: Ass
                         <Ago at={v.createdAt} />
                       </>
                     )}
-                    {v.createdBy && ` · by ${versionAuthor(v.createdBy, people)}`}
+                    {v.createdBy && ` · by ${actorLabel(v.createdBy, { people }, 'inSentence')}`}
                   </p>
                 </div>
                 {!v.current && confirm !== v.version && (

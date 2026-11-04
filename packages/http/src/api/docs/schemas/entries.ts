@@ -8,12 +8,40 @@ export const entryFields = z
   .record(z.string().describe('Field apiId'), localizedValue)
   .describe('Entry field values by field apiId');
 
+/** Who wrote an entry and when: `sys.createdBy` and the rest, as a list filters and sorts them. */
+const authorship = {
+  createdAt: z.iso
+    .datetime()
+    .nullable()
+    .describe(
+      'When the entry was created (sys.createdAt); null for one from before it was recorded',
+    ),
+  createdBy: z
+    .string()
+    .nullable()
+    .describe(
+      'Who created it (sys.createdBy): a person id, admin-token, a key kind, agent:<name>, ' +
+        'workflow:<id>, plugin:<id> or system; null when unknown',
+    ),
+  updatedBy: z
+    .string()
+    .nullable()
+    .describe(
+      'Who made its last change, the one updatedAt records (sys.updatedBy); null when unknown',
+    ),
+  firstPublishedAt: z.iso
+    .datetime()
+    .nullable()
+    .describe('When it was first published (sys.firstPublishedAt); kept through unpublish'),
+};
+
 export const entry = z.object({
   id: z.uuid().describe('UUIDv7 entry id'),
   contentTypeApiId: z.string(),
   status: z.enum(['draft', 'published', 'changed', 'archived']),
   currentVersion: z.int(),
   publishedVersion: z.int().optional(),
+  ...authorship,
   fields: entryFields.optional(),
 });
 
@@ -37,6 +65,13 @@ export const publishedEntry = z.object({
   contentType: z.string().describe('Content type apiId'),
   fields: entryFields,
   publishedAt: z.iso.datetime(),
+  firstPublishedAt: z.iso
+    .datetime()
+    .optional()
+    .describe(
+      'When the entry was first published (sort with order=-sys.firstPublishedAt); absent when ' +
+        'unknown. Delivery serves no other authorship',
+    ),
 });
 
 export const publishedEntryList = z.object({
@@ -50,6 +85,18 @@ export const previewEntry = z.object({
   status: z.enum(['draft', 'published', 'changed', 'archived']),
   version: z.int().describe('The current (draft) version'),
   updatedAt: z.iso.datetime().optional().describe('When the entry last changed'),
+  ...authorship,
+  // Writer ids go to teammates and management keys only: a preview key reads them as absent,
+  // and filtering or sorting on them answers 400.
+  createdBy: authorship.createdBy
+    .optional()
+    .describe(
+      `${authorship.createdBy.description}. Absent for a preview key (and a filter or sort on ` +
+        'sys.createdBy from one is a 400)',
+    ),
+  updatedBy: authorship.updatedBy
+    .optional()
+    .describe(`${authorship.updatedBy.description}. Absent for a preview key`),
   fields: entryFields,
 });
 

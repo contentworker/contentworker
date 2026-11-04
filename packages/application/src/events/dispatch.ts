@@ -23,6 +23,7 @@ import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
 import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../asset-search';
 import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
+import { contentTypePurgeChunkRunner, finishContentTypeDeletion } from '../content-type-lifecycle';
 import type { AppContext } from '../context';
 import { entryTrashChunkRunner } from '../entry-trash-bulk';
 import { runEnvironmentPurge } from '../environment-purge';
@@ -140,6 +141,7 @@ export async function dispatchEvent(
     await runBulkChunk(ctx, event, {
       assetBulkChunk: assetBulkChunkRunner(ctx),
       entryTrashChunk: entryTrashChunkRunner(ctx, deps.blob ? { blob: deps.blob } : {}),
+      contentTypePurgeChunk: contentTypePurgeChunkRunner(ctx, deps.blob ? { blob: deps.blob } : {}),
       ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob, deps.remoteFetcher) } : {}),
       ...(deps.assetIngest
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
@@ -279,8 +281,13 @@ export async function dispatchEvent(
   }
 
   // 2d. A rendition preset changed: delivered assets list the space's renditions, embedded in
-  // cached entry renders of every environment, so each environment's scope epoch bumps.
-  if (deps.cache && event.type === 'asset_renditions.changed') {
+  // cached entry renders of every environment, so each environment's scope epoch bumps. Locale
+  // settings belong to the space too, and every cached render was made with them: a locale turned
+  // off must leave every environment's cache at once.
+  if (
+    deps.cache &&
+    (event.type === 'asset_renditions.changed' || event.type === 'space_locales.changed')
+  ) {
     const tags = (await ctx.store.spaces.listEnvironments(scope.spaceId))
       .map((env) => epochTag({ spaceId: scope.spaceId, environmentId: env.id }))
       .filter((t) => !deps.invalidatedTags?.has(t));
@@ -358,6 +365,23 @@ export async function dispatchEvent(
 
   if (deps.cache && event.type === 'bulk.job_completed') {
     await deps.cache.invalidateTag(epochTag(scope));
+  }
+
+  // A content type's delete, its entries gone: the type goes too. Redelivered, it finds the type
+  // gone and does nothing; refused (a dependent added while the job ran), the type stays. Either
+  // way the outcome is recorded on the job (`typeDeletion`), where REST, MCP and the admin read it.
+  if (event.type === 'bulk.job_completed' && event.action === 'content_type_delete') {
+    const kept = await finishContentTypeDeletion(ctx, scope, event.jobId);
+    if (kept) console.warn('content type kept after its delete job', event.jobId, kept);
+  }
+
+  // A deleted content type leaves Delivery's GraphQL schema, routes and sitemap: cached lists of
+  // its entries and every render under the scope go stale with it.
+  if (deps.cache && event.type === 'content_type.deleted') {
+    await deps.cache.invalidateTags([
+      contentTypeTag(scope, event.contentTypeApiId),
+      epochTag(scope),
+    ]);
   }
 
   // 3. RAG: (re)embed on publish, drop vectors on unpublish.

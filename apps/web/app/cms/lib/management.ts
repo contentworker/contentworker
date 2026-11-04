@@ -219,7 +219,19 @@ export interface ManagementClientOptions {
   readonly onUnauthorized?: () => void;
 }
 
-export interface EntryAggregate {
+/**
+ * Who wrote an entry and when, as the api records it (null when unknown: an entry from before it
+ * was recorded). Actor ids read as words through `actorLabel`.
+ */
+export interface EntryAuthorship {
+  readonly createdAt?: string | null;
+  readonly createdBy?: string | null;
+  /** Who made the last change. */
+  readonly updatedBy?: string | null;
+  readonly firstPublishedAt?: string | null;
+}
+
+export interface EntryAggregate extends EntryAuthorship {
   readonly id: string;
   readonly contentTypeApiId: string;
   readonly status: string;
@@ -228,7 +240,7 @@ export interface EntryAggregate {
 }
 
 /** Preview view of an entry (current/draft version). */
-export interface PreviewEntry {
+export interface PreviewEntry extends EntryAuthorship {
   readonly id: string;
   readonly contentType: string;
   readonly status: string;
@@ -284,6 +296,8 @@ export interface EntryListQuery {
   readonly limit?: number;
   /** List the trash instead of live entries. Trash is hidden by default. */
   readonly trashed?: boolean;
+  /** Only the entries the signed-in person created (`sys.createdBy=me`). */
+  readonly mine?: boolean;
 }
 
 /** Namespaces a field path for the query string: `sys.*` stays, else `fields.*`. */
@@ -309,6 +323,8 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
   if (query.search) params.set('query', query.search);
   if (query.limit != null) params.set('limit', String(query.limit));
   if (query.trashed) params.set('trashed', 'true');
+  // `me` is whoever the api's principal is: the signed-in person, without the admin naming them.
+  if (query.mine) params.set('sys.createdBy', 'me');
   return params;
 }
 
@@ -353,7 +369,17 @@ export interface SpaceConfig {
   readonly defaultLocale: string;
   readonly locales: readonly string[];
   readonly fallbacks?: Readonly<Record<string, string | null>>;
+  /**
+   * Every locale's settings, resolved by the api: whether Delivery serves it (an undelivered one
+   * is still edited and previewed) and which way its text runs, the `dir` of its inputs.
+   */
+  readonly localeSettings?: Readonly<
+    Record<string, { readonly delivered: boolean; readonly direction: TextDirection }>
+  >;
 }
+
+/** Which way a locale's text runs. */
+export type TextDirection = 'ltr' | 'rtl';
 
 /** A published entry as served by the Delivery API (locale-collapsed, links embedded). */
 export interface DeliveredEntry {
@@ -582,6 +608,7 @@ export const WEBHOOK_TOPICS = [
   'entry.published',
   'entry.unpublished',
   'content_type.published',
+  'content_type.deleted',
 ] as const;
 export type WebhookTopic = (typeof WEBHOOK_TOPICS)[number];
 
@@ -807,6 +834,16 @@ export interface EntrySuggestion {
 }
 
 /** A durable job's progress, as the management API reports it. */
+/** What still depends on a content type (`GET …/content-types/:apiId/dependents`). */
+export interface ContentTypeDependents {
+  readonly contentType: string;
+  readonly entries: { readonly live: number; readonly trashed: number };
+  readonly linkedFrom: readonly { readonly contentType: string; readonly field: string }[];
+  readonly menus: readonly { readonly id: string; readonly handle: string }[];
+  readonly redirects: readonly { readonly id: string; readonly source: string }[];
+  readonly urlPattern?: string;
+}
+
 export interface BulkJobSummary {
   readonly id: string;
   readonly action:
@@ -821,7 +858,8 @@ export interface BulkJobSummary {
     | 'asset_tag'
     | 'asset_publish'
     | 'asset_unpublish'
-    | 'asset_archive';
+    | 'asset_archive'
+    | 'content_type_delete';
   readonly status: 'running' | 'completed' | 'cancelled';
   readonly totalItems: number;
   readonly totalChunks: number;
@@ -830,6 +868,14 @@ export interface BulkJobSummary {
   readonly failed: number;
   readonly createdAt?: string;
   readonly completedAt?: string;
+  /**
+   * The action's own settings. A `content_type_delete` job names its type, and records what
+   * became of it once that is decided (`typeDeletion`): absent until the job ends.
+   */
+  readonly config?: {
+    readonly contentType?: string;
+    readonly typeDeletion?: { readonly deleted: boolean; readonly reason?: string };
+  };
 }
 
 /**
@@ -1302,6 +1348,17 @@ export function createManagementClient(
     getSpaceConfig(): Promise<SpaceConfig> {
       return req('GET', `${mgmt}/space-config`);
     },
+    /**
+     * Sets locales' settings (`delivered`, `direction`); a locale left out keeps its own. Answers
+     * the space config with every locale resolved. Needs `space:admin`.
+     */
+    setLocaleSettings(
+      localeSettings: Readonly<
+        Record<string, { readonly delivered?: boolean; readonly direction?: TextDirection }>
+      >,
+    ): Promise<SpaceConfig> {
+      return req('PUT', `${mgmt}/locale-settings`, { localeSettings });
+    },
     /** Spaces the current token can reach (admin → all; a scoped key → its own). */
     async listSpaces(): Promise<SpaceRef[]> {
       const r = await req<{ items: SpaceRef[] }>('GET', `${root}/spaces`);
@@ -1383,6 +1440,25 @@ export function createManagementClient(
     publishContentType(apiId: string): Promise<ContentType> {
       return req('POST', `${mgmt}/content-types/${apiId}/published`);
     },
+    /** What depends on a content type: why deleting it would be refused. */
+    contentTypeDependents(apiId: string): Promise<ContentTypeDependents> {
+      return req('GET', `${mgmt}/content-types/${encodeURIComponent(apiId)}/dependents`);
+    },
+    /**
+     * Deletes a content type nothing depends on; with `purgeEntries`, its entries first, as a job
+     * (follow it with {@link getBulkJob}): the type goes when the job completes cleanly.
+     */
+    deleteContentType(
+      apiId: string,
+      opts: { readonly purgeEntries?: boolean } = {},
+    ): Promise<{ deleted: true } | { deleted: false; job: BulkJobSummary }> {
+      const q = opts.purgeEntries ? '?purge_entries=true' : '';
+      return req('DELETE', `${mgmt}/content-types/${encodeURIComponent(apiId)}${q}`);
+    },
+    /** Copies a type's definition under a new apiId and name, as a draft with no entries. */
+    cloneContentType(apiId: string, to: { apiId: string; name: string }): Promise<ContentType> {
+      return req('POST', `${mgmt}/content-types/${encodeURIComponent(apiId)}/clone`, to);
+    },
     /** Entries per content type by status, from one grouped count (the content overview). */
     async contentTypeEntryCounts(): Promise<ContentTypeEntryCounts[]> {
       const r = await req<{ items: ContentTypeEntryCounts[] }>(
@@ -1443,6 +1519,22 @@ export function createManagementClient(
       const entry = r.items.find((e) => e.id === id);
       if (!entry) throw new ApiError(404, `Entry ${id} was not found`);
       return entry;
+    },
+
+    /**
+     * A singleton type's one entry as it is now, or null when it has none outside the trash (or
+     * the type is not a singleton): what the sidebar opens for the type.
+     */
+    async getSingletonEntry(contentType: string): Promise<PreviewEntry | null> {
+      try {
+        return await req<PreviewEntry>(
+          'GET',
+          `${preview}/singletons/${encodeURIComponent(contentType)}`,
+        );
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
     },
 
     // --- trash lifecycle -------------------------------------------------

@@ -13,7 +13,7 @@ import { assertWritableFields, authorizeContent, SCOPES } from '@contentworker/d
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { bulkEntriesBody, bulkJobBody, idsBody, parseBody } from '../../validation';
-import { BASE, entryAccess, scopeOf } from './shared';
+import { actingCtx, BASE, entryAccess, scopeOf } from './shared';
 
 export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
@@ -30,7 +30,7 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
     }
     return c.json(
       await bulkCreateEntries(
-        ctx,
+        actingCtx(ctx, c),
         scopeOf(c),
         (body.items ?? []) as Parameters<typeof bulkCreateEntries>[2],
       ),
@@ -40,12 +40,14 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.post(`${BASE}/bulk/entries/publish`, requireScope(SCOPES.contentPublish), async (c) => {
     const body = await parseBody(c, idsBody);
     for (const id of body.ids ?? []) await guardEntry(c, id, 'publish');
-    return c.json(await bulkEntryAction(ctx, scopeOf(c), 'publish', body.ids ?? []));
+    return c.json(await bulkEntryAction(actingCtx(ctx, c), scopeOf(c), 'publish', body.ids ?? []));
   });
   app.post(`${BASE}/bulk/entries/unpublish`, requireScope(SCOPES.contentPublish), async (c) => {
     const body = await parseBody(c, idsBody);
     for (const id of body.ids ?? []) await guardEntry(c, id, 'unpublish');
-    return c.json(await bulkEntryAction(ctx, scopeOf(c), 'unpublish', body.ids ?? []));
+    return c.json(
+      await bulkEntryAction(actingCtx(ctx, c), scopeOf(c), 'unpublish', body.ids ?? []),
+    );
   });
 
   // --- bulk jobs (durable, chunked; for id sets beyond the sync routes) ----
@@ -60,7 +62,7 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.post(`${BASE}/bulk/jobs`, requireScope(SCOPES.contentPublish), async (c) => {
     const body = await parseBody(c, bulkJobBody);
     authorizeBulkJob(c.get('principal'), body.action);
-    return c.json(await startBulkJob(ctx, scopeOf(c), body), 202);
+    return c.json(await startBulkJob(actingCtx(ctx, c), scopeOf(c), body), 202);
   });
   // Reads are `content:write`, not `content:publish`: an import job is started
   // with content:write, and someone who can start a job must be able to watch

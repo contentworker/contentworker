@@ -1,6 +1,11 @@
 import {
+  authorizeBulkJob,
+  cloneContentType,
+  contentTypeDependents,
   createContentType,
   createEntry,
+  deleteContentType,
+  deleteContentTypeWithEntries,
   getPreviewEntry,
   moderateEntry,
   publishContentType,
@@ -55,6 +60,13 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
               'where its entries live on the site, e.g. /blog/{slug} ({id}, {locale} or a Slug ' +
                 'field); a publish that changes the slug redirects the old path. null clears it',
             ),
+          singleton: z
+            .boolean()
+            .optional()
+            .describe(
+              'holds at most one entry (site settings, a home page), read with singleton_get; ' +
+                'refused while the type has more than one entry. Left out, unchanged',
+            ),
           ...scopeArgs,
         }),
       ),
@@ -67,6 +79,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           name: args.name,
           displayField: args.displayField,
           ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
+          ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
           fields: args.fields as any,
         }),
@@ -85,6 +98,80 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
       return ok(await publishContentType(ctx, scopeOf(args), args.apiId));
+    },
+  );
+
+  server.registerTool(
+    'model_content_type_dependents',
+    {
+      description:
+        'What depends on a content type, so why model_delete_content_type would refuse it: its ' +
+        'entries (live and in the trash), other types whose links are restricted to it, menus ' +
+        'and slug redirects naming its entries, and its URL pattern.',
+      inputSchema: toolSchema('model_content_type_dependents', () =>
+        z.object({ apiId: z.string(), ...scopeArgs }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      authorizeContent(principal, 'read', args.apiId);
+      return ok(await contentTypeDependents(ctx, scopeOf(args), args.apiId));
+    },
+  );
+
+  server.registerTool(
+    'model_delete_content_type',
+    {
+      description:
+        'Delete a content type. Refused, naming every reason, while anything depends on it (see ' +
+        'model_content_type_dependents). purgeEntries: true deletes its entries too, as a ' +
+        'resumable bulk job (each trashed, then purged; needs content:write and content:publish; ' +
+        'follow it with bulk_job_status): the type goes when the job completes cleanly, and the ' +
+        "job's config.typeDeletion then says { deleted: true } or { deleted: false, reason }. " +
+        'Answers { deleted } and, for a job, { job }.',
+      inputSchema: toolSchema('model_delete_content_type', () =>
+        z.object({
+          apiId: z.string(),
+          purgeEntries: z
+            .boolean()
+            .optional()
+            .describe('delete its entries (the trash included) first, as a job'),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      if (!args.purgeEntries) {
+        await deleteContentType(ctx, scopeOf(args), args.apiId);
+        return ok({ deleted: true });
+      }
+      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.contentPublish, scopeOf(args));
+      authorizeBulkJob(principal, 'content_type_delete');
+      return ok(await deleteContentTypeWithEntries(ctx, scopeOf(args), args.apiId));
+    },
+  );
+
+  server.registerTool(
+    'model_clone_content_type',
+    {
+      description:
+        'Copy a content type’s definition (fields, display field, singleton) under a new apiId ' +
+        'and name, as a draft with no entries. Not its URL pattern.',
+      inputSchema: toolSchema('model_clone_content_type', () =>
+        z.object({
+          apiId: z.string().describe('the type to copy'),
+          newApiId: z.string(),
+          name: z.string(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(await cloneContentType(ctx, scopeOf(args), args.apiId, args.newApiId, args.name));
     },
   );
 

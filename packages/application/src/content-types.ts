@@ -11,7 +11,10 @@ import {
   removedVariantUses,
   reviseContentType,
   type Scope,
+  singletonClaim,
+  uniqueClaims,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
 
 /** Creates a new content type definition (status "draft", version 1). */
@@ -36,14 +39,107 @@ export async function updateContentType(
   ctx: AppContext,
   scope: Scope,
   apiId: string,
-  changes: Partial<Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern'>>,
+  changes: Partial<
+    Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern' | 'singleton'>
+  >,
 ): Promise<ContentType> {
   const current = await ctx.store.contentTypes.get(scope, apiId);
   if (!current) throw new NotFoundError('ContentType', apiId);
   const revised = reviseContentType(current, changes);
   await assertNoRemovedContentInUse(ctx, scope, current, revised);
-  await ctx.store.contentTypes.save(scope, revised);
+  await saveContentTypeOver(ctx, scope, current, revised);
   return revised;
+}
+
+/** Entry ids a refusal to make a type a singleton names; the details carry the same. */
+const SINGLETON_NAMED = 10;
+
+/**
+ * Saves `next` over `current` (null when the type is new to the scope): the one save every path
+ * that writes a definition over another goes through (a revision, an environment merge, a
+ * promotion), so turning `singleton` on or off keeps its rule wherever it happens.
+ *
+ * Turning it on is refused while the type has more than one entry outside the trash, naming them;
+ * with one, that entry takes the singleton's claim in the same unit as the save, guarded so an
+ * entry created after the read fails the commit (409) rather than becoming a second one. Turning
+ * it off gives the claim back the same way. A save that leaves the flag alone is the plain save.
+ *
+ * Every save over a stored definition is guarded on the singleton flag it read, so a save racing
+ * a turn on or off fails (409) rather than undoing it.
+ *
+ * Delivery serves by the definition as last published (its singleton flag included), so a save
+ * of a published definition (a merge or a promotion copies one) announces
+ * `content_type.published` in the same unit, which purges the scope's delivery responses: one
+ * event per published save. A draft's change reaches Delivery with its publish.
+ */
+export async function saveContentTypeOver(
+  ctx: AppContext,
+  scope: Scope,
+  current: ContentType | null,
+  next: ContentType,
+): Promise<void> {
+  const was = current?.singleton === true;
+  const is = next.singleton === true;
+  // Whose claims change (none while the flag stays as it was): on, the type's entries outside the trash (at most one, or the turn is
+  // refused); off, whichever entry holds the claim.
+  let holders: { id: string; fields: EntryFields }[] = [];
+  if (was === is) {
+    // The plain save: no claim changes hands.
+  } else if (is) {
+    const live = await ctx.store.entries.list(scope, {
+      contentTypeApiId: next.apiId,
+      limit: SINGLETON_NAMED + 1,
+    });
+    if (live.length > 1) {
+      const ids = live.slice(0, SINGLETON_NAMED).map((e) => e.entry.id);
+      const more = live.length > SINGLETON_NAMED ? ' and more' : '';
+      throw new ConflictError(
+        `"${next.apiId}" has more than one entry outside the trash (${ids.join(', ')}${more}), ` +
+          'so it cannot be a singleton. Move all but one to the trash first.',
+        { entries: ids },
+      );
+    }
+    holders = live.map((e) => ({ id: e.entry.id, fields: e.fields }));
+  } else {
+    const [held] = await ctx.store.entries.findUniqueConflicts(scope, [singletonClaim(next.apiId)]);
+    const found = held ? await ctx.store.entries.get(scope, held.entryId) : null;
+    holders = found ? [{ id: found.entry.id, fields: found.fields }] : [];
+  }
+  try {
+    await ctx.store.withTransaction(async (tx) => {
+      // Every save over a stored definition is judged against the flag it read, so one that
+      // raced a turn on or off fails rather than undoing it; turning it on also against the
+      // entries it read.
+      if (current) {
+        await tx.contentTypes.guard(scope, next.apiId, {
+          singleton: was,
+          ...(is && !was ? { entries: holders.map((h) => h.id) } : {}),
+        });
+      }
+      await tx.contentTypes.save(scope, next);
+      // Rebuilt from the entry's fields, so its unique values keep their claims beside it.
+      for (const h of holders) {
+        await tx.entries.replaceUniqueClaims(scope, h.id, uniqueClaims(next, h.fields));
+      }
+      if (next.status === 'published') {
+        await tx.outbox.append({
+          id: ctx.ids.newId(),
+          type: 'content_type.published',
+          scope,
+          occurredAt: ctx.clock.now().toISOString(),
+          contentTypeApiId: next.apiId,
+          version: next.version,
+        });
+      }
+    });
+  } catch (err) {
+    if (!(err instanceof TransactionConflictError)) throw err;
+    throw new ConflictError(
+      is && !was
+        ? `"${next.apiId}" gained an entry or changed while it was being made a singleton; try again`
+        : `"${next.apiId}" changed while it was being saved; try again`,
+    );
+  }
 }
 
 /** Entries read per page while looking for content a revision would strand. */
@@ -230,19 +326,27 @@ export async function publishContentType(
   scope: Scope,
   apiId: string,
 ): Promise<ContentType> {
-  return ctx.store.withTransaction(async (tx) => {
-    const current = await tx.contentTypes.get(scope, apiId);
-    if (!current) throw new NotFoundError('ContentType', apiId);
-    const published: ContentType = { ...current, status: 'published' };
-    await tx.contentTypes.save(scope, published);
-    await tx.outbox.append({
-      id: ctx.ids.newId(),
-      type: 'content_type.published',
-      scope,
-      occurredAt: ctx.clock.now().toISOString(),
-      contentTypeApiId: apiId,
-      version: published.version,
+  return ctx.store
+    .withTransaction(async (tx) => {
+      const current = await tx.contentTypes.get(scope, apiId);
+      if (!current) throw new NotFoundError('ContentType', apiId);
+      const published: ContentType = { ...current, status: 'published' };
+      // Published as read: a turn on or off committed since fails this unit rather than being
+      // published over with the stale flag.
+      await tx.contentTypes.guard(scope, apiId, { singleton: current.singleton === true });
+      await tx.contentTypes.save(scope, published);
+      await tx.outbox.append({
+        id: ctx.ids.newId(),
+        type: 'content_type.published',
+        scope,
+        occurredAt: ctx.clock.now().toISOString(),
+        contentTypeApiId: apiId,
+        version: published.version,
+      });
+      return published;
+    })
+    .catch((err: unknown) => {
+      if (!(err instanceof TransactionConflictError)) throw err;
+      throw new ConflictError(`"${apiId}" changed while it was being published; try again`);
     });
-    return published;
-  });
 }

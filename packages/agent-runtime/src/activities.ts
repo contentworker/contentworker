@@ -12,9 +12,11 @@ import {
   settleReviewOutcome,
   UNTRUSTED_CONTENT_GUARD,
   unpublishEntry,
+  withActor,
   wrapUntrusted,
 } from '@contentworker/application';
 import {
+  agentActor,
   type EntryFields,
   InvalidStateError,
   NotFoundError,
@@ -45,9 +47,9 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
     async recordRun(scope, run) {
       await recordAgentRun(ctx, scope, run);
     },
-    async retractEntry(scope, entryId) {
+    async retractEntry(scope, entryId, agent) {
       try {
-        await unpublishEntry(ctx, scope, entryId);
+        await unpublishEntry(withActor(ctx, agentActor(agent)), scope, entryId);
       } catch (err) {
         // "Already gone / not published" means the entry is ALREADY out of
         // delivery — the desired end state, so a no-op. Anything else (store
@@ -115,10 +117,10 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
       return { fields, usage: result.usage };
     },
 
-    async applyFields(scope, entryId, enriched) {
+    async applyFields(scope, entryId, enriched, agent) {
       // Merge enriched values into the entry's current fields, then save a new
-      // draft version (the core validates the full set).
-      await applyProposedFields(ctx, scope, entryId, enriched);
+      // draft version (the core validates the full set), written as the agent.
+      await applyProposedFields(withActor(ctx, agentActor(agent)), scope, entryId, enriched);
     },
 
     async createReview(scope, input) {

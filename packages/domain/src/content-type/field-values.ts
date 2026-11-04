@@ -217,10 +217,11 @@ export interface UniqueClaim {
  *
  * Empty and null values are skipped: "no value" is not a value, and treating
  * it as one would let a single entry with an empty slug block every other
- * entry from having one.
+ * entry from having one. An entry of a singleton type also stakes
+ * {@link singletonClaim}.
  */
 export function uniqueClaims(contentType: ContentType, fields: EntryFields): UniqueClaim[] {
-  const claims: UniqueClaim[] = [];
+  const claims: UniqueClaim[] = contentType.singleton ? [singletonClaim(contentType.apiId)] : [];
   for (const field of contentType.fields) {
     if (!field.unique || !UNIQUE_FIELD_TYPES.includes(field.type)) continue;
     const values = fields[field.apiId];
@@ -236,6 +237,21 @@ export function uniqueClaims(contentType: ContentType, fields: EntryFields): Uni
     }
   }
   return claims;
+}
+
+/**
+ * The field name a singleton's one entry claims under. A field apiId starts with a letter, so no
+ * field can ever claim it.
+ */
+export const SINGLETON_CLAIM_FIELD = '$singleton';
+
+/**
+ * The claim every entry of a singleton type stakes: the same value for all of them, so the
+ * database's unique index on claims admits one entry at a time (outside the trash, which releases
+ * claims), whatever the race.
+ */
+export function singletonClaim(contentTypeApiId: string): UniqueClaim {
+  return { contentTypeApiId, fieldApiId: SINGLETON_CLAIM_FIELD, locale: '', value: '' };
 }
 
 /** True when the content type declares any unique field at all. */

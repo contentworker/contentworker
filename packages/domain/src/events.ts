@@ -9,6 +9,7 @@ export type DomainEvent =
   | EntryPublishedEvent
   | EntryUnpublishedEvent
   | ContentTypePublishedEvent
+  | ContentTypeDeletedEvent
   | ReleasePublishedEvent
   | AssetPublishedEvent
   | AssetUnpublishedEvent
@@ -37,6 +38,7 @@ export type DomainEvent =
   | InviteEmailDueEvent
   | RedirectsChangedEvent
   | MenusChangedEvent
+  | SpaceLocalesChangedEvent
   | WebhookTestEvent;
 
 export interface BaseEvent {
@@ -151,6 +153,17 @@ export interface AssetIngestedEvent extends BaseEvent {
 export interface AssetRenditionsChangedEvent extends BaseEvent {
   readonly type: 'asset_renditions.changed';
   readonly name: string;
+}
+
+/**
+ * A space's locale settings changed (a locale delivered or not, its text direction). Settings
+ * belong to the whole space, so the engine purges what every environment of it delivers: a locale
+ * just turned off must stop being served at once, from every cache.
+ */
+export interface SpaceLocalesChangedEvent extends BaseEvent {
+  readonly type: 'space_locales.changed';
+  /** The locales Delivery no longer serves, after the change. */
+  readonly undelivered: readonly string[];
 }
 
 /**
@@ -276,6 +289,17 @@ export interface ContentTypePublishedEvent extends BaseEvent {
   readonly version: number;
 }
 
+/**
+ * A content type was deleted (it had no entries left, the trash included): Delivery's GraphQL
+ * schema, routes and sitemap no longer have it.
+ */
+export interface ContentTypeDeletedEvent extends BaseEvent {
+  readonly type: 'content_type.deleted';
+  readonly contentTypeApiId: string;
+  /** The version it was deleted at. */
+  readonly version: number;
+}
+
 /** Emitted when a release ships. Per-member entry events are emitted separately
  *  in the same transaction, so this is a summary for webhooks/audit. */
 export interface ReleasePublishedEvent extends BaseEvent {
@@ -341,7 +365,8 @@ export interface BulkJobCompletedEvent extends BaseEvent {
   /**
    * Which kind of job finished. An import creates drafts; it publishes nothing. An asset reindex
    * sent assets through ingest again. Trash, restore and purge moved entries into, out of, or
-   * permanently out of the trash.
+   * permanently out of the trash. A content type delete removed a type's entries; the type itself
+   * goes on this event.
    */
   readonly action:
     | 'publish'
@@ -355,7 +380,8 @@ export interface BulkJobCompletedEvent extends BaseEvent {
     | 'asset_tag'
     | 'asset_publish'
     | 'asset_unpublish'
-    | 'asset_archive';
+    | 'asset_archive'
+    | 'content_type_delete';
   readonly total: number;
   readonly succeeded: number;
   readonly failed: number;

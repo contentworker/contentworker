@@ -21,6 +21,7 @@ import {
   type EntryMetadata,
   type EntryVersion,
   type EntryWorkflowState,
+  entrySysOf,
   type InstalledPlugin,
   inviteStatus,
   isWebhookSendRequest,
@@ -124,6 +125,7 @@ import type {
   SchedulerJobRepo,
   SchedulerJobStatus,
   ScopedScheduledAction,
+  SingletonRead,
   SitemapPage,
   SpaceConfig,
   SpaceRepo,
@@ -141,6 +143,7 @@ import type {
   WorkflowTaskRepo,
 } from '@contentworker/ports';
 import { DEFAULT_ASSET_SORT, TransactionConflictError } from '@contentworker/ports';
+import { JournaledMap } from './journaled-map';
 
 const scopeKey = (s: Scope) => `${s.spaceId}::${s.environmentId}`;
 
@@ -183,15 +186,17 @@ export class InMemoryContentStore implements ContentStore {
   private readonly spaceConfigs = new Map<string, SpaceConfig>();
   /** Where the trash retention sweep resumes, by environment (as `environments.trash_sweep_cursor`). */
   private readonly trashSweepCursors = new Map<string, ExpiredTrashEntry>();
-  private readonly contentTypeData = new Map<string, ContentType>();
-  private readonly entryData = new Map<string, Entry>();
+  private readonly contentTypeData = new JournaledMap<string, ContentType>();
+  /** As the D1 column: each type's `singleton` as last saved published, which Delivery serves by. */
+  private readonly publishedSingletonData = new JournaledMap<string, boolean>();
+  private readonly entryData = new JournaledMap<string, Entry>();
   /**
    * When each entry last changed, standing in for D1's `updated_at`: stamped from `nowMs`, and
    * nudged a millisecond past the last stamp so write order is total even on a frozen clock.
    */
-  private readonly entryTouched = new Map<string, string>();
+  private readonly entryTouched = new JournaledMap<string, string>();
   private lastEntryTouch = 0;
-  private readonly versionData = new Map<string, EntryVersion[]>();
+  private readonly versionData = new JournaledMap<string, EntryVersion[]>();
   /** Archived versions' object keys, by `${scopeKey}::${entryId}::${version}`. */
   private readonly archivedBodies = new Map<string, string>();
   /** Where archived version bodies are read from (as the D1 store's `versionBodies`). */
@@ -204,7 +209,7 @@ export class InMemoryContentStore implements ContentStore {
     if (raw === null) return { ...v, fields: {}, bodyUnavailable: true };
     return { ...v, fields: JSON.parse(raw) as EntryFields };
   }
-  private readonly publishedData = new Map<string, PublishedEntry>();
+  private readonly publishedData = new JournaledMap<string, PublishedEntry>();
   private readonly outboxData: { event: OutboxEntry; relayed: boolean; relayedAt?: number }[] = [];
 
   private readonly environmentData = new Map<string, { id: string; name: string }[]>();
@@ -218,7 +223,24 @@ export class InMemoryContentStore implements ContentStore {
     getConfig: async (scope) => this.spaceConfigs.get(scope.spaceId) ?? null,
     list: async () => [...this.spaceConfigs.values()],
     create: async (config) => {
-      this.spaceConfigs.set(config.spaceId, config);
+      // As D1: re-creating a space keeps its locale settings unless the config names its own.
+      const kept = this.spaceConfigs.get(config.spaceId)?.localeSettings;
+      this.spaceConfigs.set(
+        config.spaceId,
+        !config.localeSettings && kept ? { ...config, localeSettings: kept } : config,
+      );
+    },
+    setLocaleSettings: async (spaceId, settings, expected) => {
+      const config = this.spaceConfigs.get(spaceId);
+      // As D1's compare-and-set: changed (or gone) since the caller read it is a lost race.
+      const was = config?.localeSettings;
+      const same = (a: unknown) => (a && Object.keys(a).length > 0 ? JSON.stringify(a) : null);
+      if (!config || same(was) !== same(expected)) throw new TransactionConflictError();
+      const { localeSettings: _was, ...rest } = config;
+      this.spaceConfigs.set(
+        spaceId,
+        Object.keys(settings).length > 0 ? { ...rest, localeSettings: { ...settings } } : rest,
+      );
     },
     getTrashSweepCursor: async (scope) => this.trashSweepCursors.get(scopeKey(scope)) ?? null,
     setTrashSweepCursor: async (scope, cursor) => {
@@ -392,13 +414,84 @@ export class InMemoryContentStore implements ContentStore {
         .map(([, v]) => v);
     },
     save: async (scope, ct) => {
-      this.contentTypeData.set(`${scopeKey(scope)}::${ct.apiId}`, ct);
+      const key = `${scopeKey(scope)}::${ct.apiId}`;
+      this.contentTypeData.set(key, ct);
+      if (ct.status === 'published') this.publishedSingletonData.set(key, ct.singleton === true);
+    },
+    // As the D1 store's insert: never over a type already there.
+    create: async (scope, ct) => {
+      const key = `${scopeKey(scope)}::${ct.apiId}`;
+      if (this.contentTypeData.has(key)) throw new TransactionConflictError();
+      await this.contentTypes.save(scope, ct);
+    },
+    // As the D1 store's guard: the type as the caller read it, and no other entry outside the trash.
+    guard: async (scope, apiId, expected) => {
+      const ct = this.contentTypeData.get(`${scopeKey(scope)}::${apiId}`);
+      if (!ct || (ct.singleton === true) !== expected.singleton) {
+        throw new TransactionConflictError();
+      }
+      if (expected.entries) {
+        const allowed = new Set(expected.entries);
+        const prefix = `${scopeKey(scope)}::`;
+        const other = [...this.entryData].some(
+          ([k, e]) =>
+            k.startsWith(prefix) &&
+            e.contentTypeApiId === apiId &&
+            e.status !== 'archived' &&
+            !allowed.has(e.id),
+        );
+        if (other) throw new TransactionConflictError();
+      }
+    },
+    // Judged at the call, as the D1 store's WHERE judges it at commit.
+    delete: async (scope, apiId, version) => {
+      const key = `${scopeKey(scope)}::${apiId}`;
+      const prefix = `${scopeKey(scope)}::`;
+      const hasEntries = [...this.entryData.entries()].some(
+        ([k, e]) => k.startsWith(prefix) && e.contentTypeApiId === apiId,
+      );
+      if (this.contentTypeData.get(key)?.version !== version || hasEntries) {
+        throw new TransactionConflictError();
+      }
+      this.contentTypeData.delete(key);
+      this.publishedSingletonData.delete(key);
     },
   };
 
-  private setEntry(scope: Scope, entry: Entry): void {
+  /** As the D1 delivery read: each type with its singleton flag as last published. */
+  private async deliveredContentTypes(scope: Scope): Promise<ContentType[]> {
+    return (await this.contentTypes.list(scope)).map((ct) => {
+      const { singleton: _draft, ...rest } = ct;
+      return this.publishedSingletonData.get(`${scopeKey(scope)}::${ct.apiId}`)
+        ? { ...rest, singleton: true as const }
+        : rest;
+    });
+  }
+
+  /**
+   * As D1 writes an entry: a create records its authorship whole; a later save keeps the creation
+   * and fills in the first publish only once (`COALESCE`), whatever the aggregate it is handed says.
+   */
+  /** As D1: the snapshot's first publish is the entry's, as its aggregate holds it now. */
+  private setPublished(scope: Scope, snapshot: PublishedEntry): void {
+    const key = `${scopeKey(scope)}::${snapshot.entryId}`;
+    const { firstPublishedAt: _carried, ...rest } = snapshot;
+    const first = this.entryData.get(key)?.firstPublishedAt;
+    this.publishedData.set(key, { ...rest, ...(first ? { firstPublishedAt: first } : {}) });
+  }
+
+  private setEntry(scope: Scope, entry: Entry, created = false): void {
     const key = `${scopeKey(scope)}::${entry.id}`;
-    this.entryData.set(key, entry);
+    const before = created ? undefined : this.entryData.get(key);
+    this.entryData.set(key, {
+      ...entry,
+      createdAt: before
+        ? (before.createdAt ?? null)
+        : (entry.createdAt ?? new Date(this.nowMs()).toISOString()),
+      createdBy: before ? (before.createdBy ?? null) : (entry.createdBy ?? null),
+      updatedBy: entry.updatedBy ?? null,
+      firstPublishedAt: before?.firstPublishedAt ?? entry.firstPublishedAt ?? null,
+    });
     this.lastEntryTouch = Math.max(this.nowMs(), this.lastEntryTouch + 1);
     this.entryTouched.set(key, new Date(this.lastEntryTouch).toISOString());
   }
@@ -459,18 +552,26 @@ export class InMemoryContentStore implements ContentStore {
         withFields,
         query,
         (r) => r.fields,
-        (r) => ({
-          id: r.entry.id,
-          contentType: r.entry.contentTypeApiId,
-          status: r.entry.status,
-          updatedAt: r.updatedAt,
-        }),
+        (r) => entrySysOf(r.entry, r.updatedAt),
       );
       if (!query.select) return filtered;
       return filtered.map((r) => ({
         ...r,
         fields: projectFields(r.fields, query.select as string[]),
       }));
+    },
+    idsOfType: async (scope, contentTypeApiId, page) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return [...this.entryData]
+        .filter(
+          ([k, e]) =>
+            k.startsWith(prefix) &&
+            e.contentTypeApiId === contentTypeApiId &&
+            (!page.after || e.id > page.after),
+        )
+        .map(([, e]) => e.id)
+        .sort()
+        .slice(0, page.limit);
     },
     countByStatus: async (scope) => {
       const prefix = `${scopeKey(scope)}::`;
@@ -516,7 +617,7 @@ export class InMemoryContentStore implements ContentStore {
         .slice(0, query.limit);
     },
     create: async (scope, entry, version) => {
-      this.setEntry(scope, entry);
+      this.setEntry(scope, entry, true);
       this.versionData.set(`${scopeKey(scope)}::${entry.id}`, [version]);
     },
     saveVersion: async (scope, entry, version) => {
@@ -652,10 +753,10 @@ export class InMemoryContentStore implements ContentStore {
       return marked;
     },
     putPublished: async (scope, snapshot) => {
-      this.publishedData.set(`${scopeKey(scope)}::${snapshot.entryId}`, snapshot);
+      this.setPublished(scope, snapshot);
     },
     putPublishedMany: async (scope, snapshots) => {
-      for (const s of snapshots) this.publishedData.set(`${scopeKey(scope)}::${s.entryId}`, s);
+      for (const s of snapshots) this.setPublished(scope, s);
     },
     removePublished: async (scope, entryId) => {
       this.publishedData.delete(`${scopeKey(scope)}::${entryId}`);
@@ -721,6 +822,7 @@ export class InMemoryContentStore implements ContentStore {
           id: r.entryId,
           contentType: r.contentTypeApiId,
           publishedAt: r.publishedAt,
+          firstPublishedAt: r.firstPublishedAt,
           'metadata.tags': r.metadata?.tags ?? [],
           'metadata.concepts': r.metadata?.concepts ?? [],
         }),
@@ -771,14 +873,14 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly assetData = new Map<string, Asset>();
-  private readonly publishedAssetData = new Map<string, PublishedAsset>();
+  private readonly assetData = new JournaledMap<string, Asset>();
+  private readonly publishedAssetData = new JournaledMap<string, PublishedAsset>();
   /** Earlier files, keyed `scope::assetId::version`. */
-  private readonly assetVersionData = new Map<string, AssetVersionRecord>();
+  private readonly assetVersionData = new JournaledMap<string, AssetVersionRecord>();
   /** Write order per asset key, standing in for D1's `updated_at` (the clock may be frozen). */
-  private readonly assetTouched = new Map<string, number>();
+  private readonly assetTouched = new JournaledMap<string, number>();
   private assetWrites = 0;
-  private readonly assetFolderData = new Map<string, AssetFolder>();
+  private readonly assetFolderData = new JournaledMap<string, AssetFolder>();
 
   private touchAsset(scope: Scope, asset: Asset): void {
     const key = `${scopeKey(scope)}::${asset.id}`;
@@ -1091,7 +1193,7 @@ export class InMemoryContentStore implements ContentStore {
   };
 
   /** Rendition presets, keyed by space (they belong to it, not to an environment). */
-  private readonly renditionData = new Map<string, AssetRendition>();
+  private readonly renditionData = new JournaledMap<string, AssetRendition>();
 
   readonly assetRenditions: AssetRenditionRepo = {
     list: async (scope) =>
@@ -1173,9 +1275,9 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly collectionData = new Map<string, Omit<AssetCollection, 'itemCount'>>();
+  private readonly collectionData = new JournaledMap<string, Omit<AssetCollection, 'itemCount'>>();
   /** Memberships by `${scopeKey}::${collectionId}::${assetId}`. */
-  private readonly collectionItemData = new Map<
+  private readonly collectionItemData = new JournaledMap<
     string,
     { collectionId: string; assetId: string; position: number; addedAt: string }
   >();
@@ -1378,7 +1480,7 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly shareLinkData = new Map<string, StoredAssetShareLink>();
+  private readonly shareLinkData = new JournaledMap<string, StoredAssetShareLink>();
 
   readonly assetShareLinks: AssetShareLinkRepo = {
     get: async (scope, id) => this.shareLinkData.get(`${scopeKey(scope)}::${id}`) ?? null,
@@ -1415,7 +1517,7 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly zipJobData = new Map<string, AssetZipJob>();
+  private readonly zipJobData = new JournaledMap<string, AssetZipJob>();
 
   readonly assetZips: AssetZipJobRepo = {
     get: async (scope, id) => this.zipJobData.get(`${scopeKey(scope)}::${id}`) ?? null,
@@ -1453,7 +1555,7 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly uploadData = new Map<string, AssetUpload>();
+  private readonly uploadData = new JournaledMap<string, AssetUpload>();
 
   readonly assetUploads: AssetUploadRepo = {
     get: async (scope, assetId, uploadId) =>
@@ -1480,7 +1582,7 @@ export class InMemoryContentStore implements ContentStore {
         }),
   };
 
-  private referenceData = new Map<string, ReferenceEdge[]>();
+  private readonly referenceData = new JournaledMap<string, ReferenceEdge[]>();
 
   readonly references: ReferenceRepo = {
     replaceForEntry: async (scope, fromEntryId, edges) => {
@@ -1623,7 +1725,7 @@ export class InMemoryContentStore implements ContentStore {
       const [config, contentTypes, renditions, entry, asset, entries, assets, assetPage] =
         await Promise.all([
           request.config ? this.spaces.getConfig(scope) : undefined,
-          request.contentTypes ? this.contentTypes.list(scope) : undefined,
+          request.contentTypes ? this.deliveredContentTypes(scope) : undefined,
           request.renditions ? this.assetRenditions.list(scope) : undefined,
           request.entryId !== undefined
             ? this.entries.getPublished(scope, request.entryId)
@@ -1706,13 +1808,33 @@ export class InMemoryContentStore implements ContentStore {
           };
         } else menu = null;
       }
+      let singleton: SingletonRead | undefined;
+      if (request.singleton) {
+        const apiId = request.singleton.contentType;
+        const prefix = `${scopeKey(scope)}::`;
+        const [first] = [...this.publishedData.entries()]
+          .filter(([k, p]) => k.startsWith(prefix) && p.contentTypeApiId === apiId)
+          .map(([, p]) => p)
+          .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
+        singleton = {
+          contentType: (await this.contentTypes.get(scope, apiId)) ?? null,
+          publishedSingleton:
+            this.publishedSingletonData.get(`${scopeKey(scope)}::${apiId}`) === true,
+          entry: first ?? null,
+        };
+      }
       const result: DeliveryReadResult = {
+        ...(singleton ? { singleton } : {}),
         ...(sitemap ? { sitemap } : {}),
         ...(request.config ? { config: config ?? null } : {}),
         ...(contentTypes ? { contentTypes } : {}),
         ...(renditions ? { renditions } : {}),
         ...(request.entryId !== undefined ? { entry: entry ?? null } : {}),
         ...(request.assetId !== undefined ? { asset: asset ?? null } : {}),
+        // As D1, where the settings ride the asset statement: present when it found anything.
+        ...(request.assetLocales && (asset || assetPage?.items.length)
+          ? { assetLocales: { ...(this.spaceConfigs.get(scope.spaceId)?.localeSettings ?? {}) } }
+          : {}),
         ...(entries ? { entries } : {}),
         ...(assets ? { assets } : {}),
         ...(assetPage ? { assetPage } : {}),
@@ -1838,7 +1960,7 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly memberData = new Map<string, SpaceMember>();
+  private readonly memberData = new JournaledMap<string, SpaceMember>();
 
   readonly members: MemberRepo = {
     save: async (member) => {
@@ -1861,7 +1983,7 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly inviteData = new Map<string, MemberInvite>();
+  private readonly inviteData = new JournaledMap<string, MemberInvite>();
 
   readonly invites: InviteRepo = {
     create: async (invite) => {
@@ -1970,10 +2092,10 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly releaseData = new Map<string, Release>();
-  private readonly releaseItemData = new Map<string, ReleaseItem[]>();
+  private readonly releaseData = new JournaledMap<string, Release>();
+  private readonly releaseItemData = new JournaledMap<string, ReleaseItem[]>();
 
-  private readonly promotionData = new Map<string, Promotion>();
+  private readonly promotionData = new JournaledMap<string, Promotion>();
 
   readonly promotions: PromotionRepo = {
     create: async (promotion) => {
@@ -2362,11 +2484,11 @@ export class InMemoryContentStore implements ContentStore {
 
   // ---- workflow runs / tasks ------------------------------------------------
 
-  private readonly workflowRunData = new Map<string, WorkflowRun>();
-  private readonly workflowNodeRunData = new Map<string, WorkflowNodeRunRecord>();
+  private readonly workflowRunData = new JournaledMap<string, WorkflowRun>();
+  private readonly workflowNodeRunData = new JournaledMap<string, WorkflowNodeRunRecord>();
   /** `${scope}::${runId}::${key}` → entry. */
-  private readonly workflowTimelineData = new Map<string, WorkflowTimelineRecord>();
-  private readonly workflowTaskData = new Map<string, WorkflowTask>();
+  private readonly workflowTimelineData = new JournaledMap<string, WorkflowTimelineRecord>();
+  private readonly workflowTaskData = new JournaledMap<string, WorkflowTask>();
 
   readonly workflowRuns: WorkflowRunRepo = {
     create: async (scope, run) => {
@@ -2541,9 +2663,9 @@ export class InMemoryContentStore implements ContentStore {
   }
 
   /** `space::env::id` → redirect. */
-  private readonly redirectData = new Map<string, Redirect>();
+  private readonly redirectData = new JournaledMap<string, Redirect>();
   /** `space::env` → the set's revision. */
-  private readonly redirectRevisionData = new Map<string, number>();
+  private readonly redirectRevisionData = new JournaledMap<string, number>();
 
   private redirectsOf(scope: Scope): Redirect[] {
     const prefix = `${scopeKey(scope)}::`;
@@ -2622,7 +2744,7 @@ export class InMemoryContentStore implements ContentStore {
   };
 
   /** `space::env::id` → menu. */
-  private readonly menuData = new Map<string, Menu>();
+  private readonly menuData = new JournaledMap<string, Menu>();
 
   private menusOf(scope: Scope): Menu[] {
     const prefix = `${scopeKey(scope)}::`;
@@ -2937,8 +3059,8 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly bulkJobData = new Map<string, BulkJob>();
-  private readonly bulkChunkData = new Map<
+  private readonly bulkJobData = new JournaledMap<string, BulkJob>();
+  private readonly bulkChunkData = new JournaledMap<
     string,
     BulkJobChunk & { createdAtMs: number; claimedAtMs?: number }
   >();
@@ -3009,6 +3131,11 @@ export class InMemoryContentStore implements ContentStore {
       };
       this.bulkJobData.set(jobKey, updated);
       return updated;
+    },
+    mergeConfig: async (scope, id, patch) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const job = this.bulkJobData.get(key);
+      if (job) this.bulkJobData.set(key, { ...job, config: { ...job.config, ...patch } });
     },
     finalizeJob: async (scope, id, status, at) => {
       const key = `${scopeKey(scope)}::${id}`;
@@ -3095,12 +3222,13 @@ export class InMemoryContentStore implements ContentStore {
   };
 
   /** The collections a transaction can mutate, for snapshot/rollback. */
-  private txCollections(): Map<string, unknown>[] {
+  private txCollections(): JournaledMap<string, unknown>[] {
     return [
       this.promotionData,
       this.inviteData,
       this.memberData,
       this.contentTypeData,
+      this.publishedSingletonData,
       this.entryData,
       this.entryTouched,
       this.versionData,
@@ -3128,27 +3256,23 @@ export class InMemoryContentStore implements ContentStore {
       this.redirectData,
       this.redirectRevisionData,
       this.menuData,
-    ] as Map<string, unknown>[];
+    ] as JournaledMap<string, unknown>[];
   }
 
   /**
-   * Runs `fn` with rollback: the D1 store commits nothing when `fn` throws,
-   * so the fake snapshots every transactional collection up front and restores
-   * it if `fn` throws — giving tests real all-or-nothing semantics (e.g. a
-   * release that fails mid-publish leaves nothing published).
+   * Runs `fn` with rollback: the D1 store commits nothing when `fn` throws, so the fake journals
+   * what `fn` touches in every transactional collection and puts it back if `fn` throws, giving
+   * tests real all-or-nothing semantics (e.g. a release that fails mid-publish leaves nothing
+   * published). The journal records only touched keys, so a transaction costs what it touches,
+   * not the size of the store.
    */
   async withTransaction<T>(fn: (tx: ContentStoreTx) => Promise<T>): Promise<T> {
-    // Stored values are plain JSON data, so a JSON round-trip deep-clones them
-    // (defeating in-place array mutation that a shallow Map copy would miss).
-    const clone = <V>(v: V): V => JSON.parse(JSON.stringify(v)) as V;
-    const snapshot = this.txCollections().map(
-      (m) => [m, [...m.entries()].map(([k, v]) => [k, clone(v)] as const)] as const,
-    );
+    const journals = this.txCollections().map((m) => [m, m.begin()] as const);
     const outboxSnapshot = [...this.outboxData];
     // Purge progress marks hold Dates, so they are copied here rather than JSON round-tripped.
     const purgeSnapshot = [...this.purgeData].map(([k, v]) => [k, { ...v }] as const);
     try {
-      return await fn({
+      const result = await fn({
         spaces: this.spaces,
         contentTypes: this.contentTypes,
         entries: this.entries,
@@ -3173,11 +3297,10 @@ export class InMemoryContentStore implements ContentStore {
         invites: this.invites,
         members: this.members,
       });
+      for (const [m, journal] of journals) m.commit(journal);
+      return result;
     } catch (err) {
-      for (const [m, entries] of snapshot) {
-        m.clear();
-        for (const [k, v] of entries) m.set(k, v);
-      }
+      for (const [m, journal] of journals) m.rollback(journal);
       this.outboxData.length = 0;
       this.outboxData.push(...outboxSnapshot);
       this.purgeData.clear();

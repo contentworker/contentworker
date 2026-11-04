@@ -103,6 +103,7 @@ Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
 | `redirects.changed`      | `count` | Redirects are created, changed, deleted, imported or collapsed (not for the redirect a slug change writes on publish; that publish sends `entry.published`) |
 | `menus.changed`          | `menuId`, `handle` | A menu is created, saved, reordered or deleted (both absent when a snapshot import writes several; not for a publish that changes what a menu resolves to, which sends `entry.published` or `entry.unpublished`) |
 | `content_type.published` | `contentTypeApiId`, `version`                         | A content type's definition is published |
+| `content_type.deleted` | `contentTypeApiId`, `version`                         | A content type was deleted |
 | `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
 | `environment_alias.changed` | `targetEnvironmentId` (`null` when removed)        | An alias is created, repointed or removed; `scope.environmentId` is the alias name |
 | `environment.deleted`    | `entryIds`                                            | An environment is deleted; `scope` is the deleted environment, and a large one sends several events splitting `entryIds`. Reliably delivered only to space-wide webhooks (the deleted environment's own are being removed) |

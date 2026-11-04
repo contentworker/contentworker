@@ -20,7 +20,7 @@ import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as entryDocs from '../../docs/schemas/entries';
 import { parseBody, trashSettingsBody, updateEntryBody } from '../../validation';
-import { BASE, entryAccess, scopeOf } from './shared';
+import { actingCtx, BASE, entryAccess, scopeOf } from './shared';
 
 export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
@@ -43,7 +43,7 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentWrite),
     async (c) => {
       await guardTrash(c, c.req.param('id'));
-      return c.json(await trashEntry(ctx, scopeOf(c), c.req.param('id')));
+      return c.json(await trashEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id')));
     },
   );
   app.post(
@@ -54,7 +54,7 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentWrite),
     async (c) => {
       await guardEntry(c, c.req.param('id'), 'write');
-      return c.json(await restoreEntry(ctx, scopeOf(c), c.req.param('id')));
+      return c.json(await restoreEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id')));
     },
   );
   app.delete(
@@ -114,7 +114,7 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentWrite),
     async (c) => {
       await guardEntry(c, c.req.param('id'), 'read');
-      const created = await duplicateEntry(ctx, scopeOf(c), c.req.param('id'));
+      const created = await duplicateEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'));
       // Writing a copy is a write of that content type, not just a read.
       authorizeContent(c.get('principal'), 'write', created.entry.contentTypeApiId);
       return c.json(created, 201);
@@ -138,7 +138,9 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
         authorizeContent(principal, 'write', entry.contentTypeApiId);
         assertWritableFields(principal, entry.contentTypeApiId, body.fields ?? {});
       }
-      return c.json(await updateEntry(ctx, scopeOf(c), c.req.param('id'), body.fields));
+      return c.json(
+        await updateEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'), body.fields),
+      );
     },
   );
 

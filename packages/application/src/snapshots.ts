@@ -12,6 +12,7 @@ import {
   type Concept,
   type ConceptScheme,
   type ContentType,
+  carriedAuthorshipIssues,
   checkMenuDescription,
   checkMenuHandle,
   checkMenuItems,
@@ -91,6 +92,15 @@ export interface SnapshotEntry {
    */
   readonly publishedFields?: EntryFields;
   readonly metadata?: EntryMetadata;
+  /**
+   * Its authorship. A clone keeps all three rather than crediting whoever ran it; an uploaded
+   * snapshot keeps the instants (checked) and credits its importer as the creator, since anyone
+   * can write any name into a file. Absent in older snapshots (and when unknown): the import's
+   * own principal is then its creator, created now.
+   */
+  readonly createdAt?: string;
+  readonly createdBy?: string;
+  readonly firstPublishedAt?: string;
 }
 
 export interface EnvironmentSnapshot {
@@ -208,6 +218,9 @@ export async function exportSnapshot(
       fields: r.fields,
       ...(live.has(r.entry.id) ? { publishedFields: live.get(r.entry.id) } : {}),
       metadata: byEntry.get(r.entry.id)?.metadata,
+      ...(r.entry.createdAt ? { createdAt: r.entry.createdAt } : {}),
+      ...(r.entry.createdBy ? { createdBy: r.entry.createdBy } : {}),
+      ...(r.entry.firstPublishedAt ? { firstPublishedAt: r.entry.firstPublishedAt } : {}),
     })),
     assets: await allAssets(ctx, scope),
     assetFolders: await ctx.store.assetFolders.list(scope),
@@ -334,6 +347,12 @@ export interface ImportOptions {
    * snapshot is anyone's JSON.
    */
   readonly filesFrom?: string;
+  /**
+   * Keep each entry's `createdBy` from the snapshot. Only a clone sets it (the snapshot is the
+   * server's own export of the source); never taken from a request, where it would let anyone
+   * credit an entry to someone else. Unset, the importer is every entry's creator.
+   */
+  readonly keepCreators?: boolean;
 }
 
 /**
@@ -411,7 +430,11 @@ export async function importSnapshot(
   }
 
   for (const entry of snapshot.entries) {
-    await createSnapshotEntry(ctx, target, stagedEntry(entry, taxonomyIds, publishing));
+    await createSnapshotEntry(
+      ctx,
+      target,
+      stagedEntry(entry, taxonomyIds, publishing, options.keepCreators),
+    );
   }
   if (publishing) {
     for (const entry of publishable) {
@@ -534,7 +557,9 @@ export async function writeSnapshotModel(
   snapshot: EnvironmentSnapshot,
   skipped: string[],
 ): Promise<ReadonlyMap<string, string>> {
-  // Content model first: entries cannot be validated without it.
+  // Content model first: entries cannot be validated without it. The singleton flag is the
+  // snapshot's either way: left out, a revision would keep the target's, and a clone promoted or
+  // merged back would then turn production's off (or keep one the source no longer has).
   for (const ct of snapshot.contentTypes) {
     await createContentType(ctx, target, {
       apiId: ct.apiId,
@@ -542,6 +567,7 @@ export async function writeSnapshotModel(
       displayField: ct.displayField,
       fields: [...ct.fields],
       ...(ct.urlPattern ? { urlPattern: ct.urlPattern } : {}),
+      singleton: ct.singleton === true,
     });
     if (ct.status === 'published') await publishContentType(ctx, target, ct.apiId);
   }
@@ -672,6 +698,8 @@ export interface StagedSnapshotEntry {
   readonly fields: EntryFields;
   readonly tags: readonly string[];
   readonly concepts: readonly string[];
+  /** The source entry's authorship, when the snapshot carries it. */
+  readonly authorship?: Pick<SnapshotEntry, 'createdAt' | 'createdBy' | 'firstPublishedAt'>;
 }
 
 /** A publication an import makes: the entry, and the draft to lay on top of a changed one. */
@@ -680,18 +708,32 @@ export interface StagedSnapshotPublication {
   readonly draft?: EntryFields;
 }
 
-/** A changed entry starts from its live version (when publishing); the draft goes on top later. */
+/**
+ * A changed entry starts from its live version (when publishing); the draft goes on top later.
+ * Its creator comes along only with `keepCreator` (a clone, {@link ImportOptions.keepCreators}).
+ */
 export function stagedEntry(
   entry: SnapshotEntry,
   taxonomyIds: ReadonlyMap<string, string>,
   publishing: boolean,
+  keepCreator = false,
 ): StagedSnapshotEntry {
+  const createdBy = keepCreator ? entry.createdBy : undefined;
   return {
     id: entry.id,
     contentTypeApiId: entry.contentTypeApiId,
     fields: (publishing && entry.publishedFields) || entry.fields,
     tags: entry.metadata?.tags.map((t) => taxonomyIds.get(t) ?? t) ?? [],
     concepts: entry.metadata?.concepts.map((c) => taxonomyIds.get(c) ?? c) ?? [],
+    ...(entry.createdAt || createdBy || entry.firstPublishedAt
+      ? {
+          authorship: {
+            ...(entry.createdAt ? { createdAt: entry.createdAt } : {}),
+            ...(createdBy ? { createdBy } : {}),
+            ...(entry.firstPublishedAt ? { firstPublishedAt: entry.firstPublishedAt } : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -874,6 +916,7 @@ export async function createSnapshotEntry(
       contentTypeApiId: entry.contentTypeApiId,
       fields: entry.fields,
       id: entry.id,
+      ...(entry.authorship ? { authorship: entry.authorship } : {}),
     });
   }
   if (entry.tags.length > 0 || entry.concepts.length > 0) {
@@ -1026,6 +1069,7 @@ function preflight(
       });
       continue;
     }
+    for (const issue of carriedAuthorshipIssues(entry)) add(entry.id, issue);
     const versions =
       publishing && entry.publishedFields ? [entry.publishedFields, entry.fields] : [entry.fields];
     for (const fields of versions) {
@@ -1061,5 +1105,6 @@ export async function cloneEnvironment(
   return importSnapshot(ctx, target, await exportSnapshot(ctx, source), {
     ...options,
     filesFrom: source.spaceId,
+    keepCreators: true,
   });
 }

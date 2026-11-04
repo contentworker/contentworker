@@ -33,7 +33,7 @@ import {
 } from '@contentworker/domain';
 import { type PublishedEntry, TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
-import { type DeliveryReads, deliveryReads } from './delivery-reads';
+import { assertDeliveredLocale, type DeliveryReads, deliveryReads } from './delivery-reads';
 
 /**
  * Navigation menus: an environment's named trees of links (`main`, `footer`), managed here and
@@ -516,6 +516,7 @@ export async function getDeliveredMenu(
     menu: { handle },
   });
   if (!read.config) throw new NotFoundError('Space', scope.spaceId);
+  assertDeliveredLocale(read.config, opts.locale);
   if (!read.menu) throw new NotFoundError('Menu', handle);
   const { menu, entries, tags, concepts } = read.menu;
   const src = sourcesOf(

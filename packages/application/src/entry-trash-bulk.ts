@@ -1,6 +1,6 @@
 import { DomainError, type Scope } from '@contentworker/domain';
 import type { BlobStore, BulkItemFailure, BulkJob, BulkJobChunk } from '@contentworker/ports';
-import type { BulkChunkOutcome } from './bulk-jobs';
+import { actingForJob, type BulkChunkOutcome } from './bulk-jobs';
 import type { AppContext } from './context';
 import { purgeEntry, restoreEntry, trashEntry } from './entries';
 
@@ -30,6 +30,7 @@ export function entryTrashChunkRunner(
   deps: EntryTrashChunkDeps = {},
 ): (scope: Scope, job: BulkJob, chunk: BulkJobChunk) => Promise<BulkChunkOutcome> {
   return async (scope, job, chunk) => {
+    const acting = actingForJob(ctx, job);
     // One read for the chunk, so entries already done are skipped without a transaction each.
     const status = new Map(
       (await ctx.store.entries.getMany(scope, chunk.entryIds)).map((e) => [
@@ -44,11 +45,11 @@ export function entryTrashChunkRunner(
         switch (job.action) {
           case 'trash':
             if (current === undefined) failures.push({ id, error: 'Entry not found' });
-            else if (current !== 'archived') await trashEntry(ctx, scope, id);
+            else if (current !== 'archived') await trashEntry(acting, scope, id);
             break;
           case 'restore':
             if (current === undefined) failures.push({ id, error: 'Entry not found' });
-            else if (current === 'archived') await restoreEntry(ctx, scope, id);
+            else if (current === 'archived') await restoreEntry(acting, scope, id);
             break;
           case 'purge':
             if (current !== undefined) {

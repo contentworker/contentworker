@@ -1,6 +1,8 @@
 import {
+  type Entry,
   type EntryKeyset,
   entryKeysetOf,
+  entrySysOf,
   keysetOrder,
   NotFoundError,
   projectFields,
@@ -9,13 +11,32 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { EntryQuery } from '@contentworker/ports';
-import type { AppContext } from './context';
+import { type AppContext, actorOf } from './context';
 import { localeFallbackChain, type RenderOptions } from './delivery';
-import { usesReferenceFilters } from './entry-query';
+import { resolveMe, usesReferenceFilters } from './entry-query';
 import { renderFields } from './render';
 
-/** A previewed entry: the current (draft) version, including its status. */
-export interface PreviewedEntry {
+/**
+ * Who created an entry and changed it last, when it was created and first published: the
+ * `sys.createdBy`, `sys.updatedBy`, `sys.createdAt` and `sys.firstPublishedAt` a list filters and
+ * sorts on. Null when unknown (an entry from before authorship was recorded, or never published).
+ */
+export interface EntryAuthorship {
+  readonly createdAt: string | null;
+  readonly createdBy: string | null;
+  readonly updatedBy: string | null;
+  readonly firstPublishedAt: string | null;
+}
+
+export const authorshipOf = (entry: Entry): EntryAuthorship => ({
+  createdAt: entry.createdAt ?? null,
+  createdBy: entry.createdBy ?? null,
+  updatedBy: entry.updatedBy ?? null,
+  firstPublishedAt: entry.firstPublishedAt ?? null,
+});
+
+/** A previewed entry: the current (draft) version, including its status and authorship. */
+export interface PreviewedEntry extends EntryAuthorship {
   readonly id: string;
   readonly contentType: string;
   readonly status: string;
@@ -48,6 +69,35 @@ export async function getPreviewEntry(
     contentType: found.entry.contentTypeApiId,
     status: found.entry.status,
     version: found.entry.currentVersion,
+    ...authorshipOf(found.entry),
+    fields: renderFields(found.fields, config, opts.locale),
+  };
+}
+
+/**
+ * A singleton type's entry as it is now (`GET /preview/…/singletons/:apiId`): its current version,
+ * a draft included, as {@link getPreviewEntry} serves one. Not found unless `apiId` names a
+ * singleton type with an entry outside the trash.
+ */
+export async function getPreviewSingleton(
+  ctx: AppContext,
+  scope: Scope,
+  apiId: string,
+  opts: RenderOptions = {},
+): Promise<PreviewedEntry> {
+  const [contentType, [found], config] = await Promise.all([
+    ctx.store.contentTypes.get(scope, apiId),
+    ctx.store.entries.list(scope, { contentTypeApiId: apiId, limit: 1 }),
+    spaceConfig(ctx, scope),
+  ]);
+  if (!contentType?.singleton) throw new NotFoundError('Singleton', apiId);
+  if (!found) throw new NotFoundError('Singleton entry', apiId);
+  return {
+    id: found.entry.id,
+    contentType: found.entry.contentTypeApiId,
+    status: found.entry.status,
+    version: found.entry.currentVersion,
+    ...authorshipOf(found.entry),
     fields: renderFields(found.fields, config, opts.locale),
   };
 }
@@ -73,6 +123,7 @@ export async function listPreviewEntries(
     contentType: found.entry.contentTypeApiId,
     status: found.entry.status,
     version: found.entry.currentVersion,
+    ...authorshipOf(found.entry),
     fields: renderFields(found.fields, config, opts.locale),
   }));
 }
@@ -143,7 +194,9 @@ export async function listPreviewEntryPage(
   } = {},
   opts: RenderOptions & { readonly readable?: (contentType: string) => boolean } = {},
 ): Promise<PreviewEntryPage> {
-  const { cursor, select, ...rest } = query;
+  const { cursor, select, ...asked } = query;
+  // `sys.createdBy=me`: the caller is whoever `ctx` acts for.
+  const rest = resolveMe(asked, actorOf(ctx));
   let filters = rest.filters;
   if (opts.readable) {
     const readable = opts.readable;
@@ -183,12 +236,7 @@ export async function listPreviewEntryPage(
   });
   const page = rows.slice(0, limit);
   const last = page.at(-1);
-  const sysOf = (r: (typeof rows)[number]) => ({
-    id: r.entry.id,
-    contentType: r.entry.contentTypeApiId,
-    status: r.entry.status,
-    updatedAt: r.updatedAt,
-  });
+  const sysOf = (r: (typeof rows)[number]) => entrySysOf(r.entry, r.updatedAt);
   return {
     items: page.map((found) => ({
       id: found.entry.id,
@@ -196,6 +244,7 @@ export async function listPreviewEntryPage(
       status: found.entry.status,
       version: found.entry.currentVersion,
       ...(found.updatedAt ? { updatedAt: found.updatedAt } : {}),
+      ...authorshipOf(found.entry),
       fields: renderFields(
         select ? projectFields(found.fields, select) : found.fields,
         config,

@@ -12,10 +12,11 @@ import {
   type Tag,
   type TermUsage,
   ValidationError,
+  withoutUndeliveredLocales,
 } from '@contentworker/domain';
 import type { DeliveryReadResult, EntryQuery, SpaceConfig } from '@contentworker/ports';
 import type { AppContext } from './context';
-import { type DeliveryReads, deliveryReads } from './delivery-reads';
+import { assertDeliveredLocale, type DeliveryReads, deliveryReads } from './delivery-reads';
 
 /**
  * Taxonomy on the Delivery API: what a front end needs to build archive pages. Every read here is
@@ -58,8 +59,14 @@ export interface TermDeliveryOptions {
   readonly reads?: DeliveryReads;
 }
 
-function spaceConfig(scope: Scope, result: DeliveryReadResult): SpaceConfig {
+/** The space's config, refusing a locale it doesn't deliver (404). */
+function spaceConfig(
+  scope: Scope,
+  result: DeliveryReadResult,
+  opts: { readonly locale?: string },
+): SpaceConfig {
   if (!result.config) throw new NotFoundError('Space', scope.spaceId);
+  assertDeliveredLocale(result.config, opts.locale);
   return result.config;
 }
 
@@ -78,7 +85,14 @@ function deliverTerm(
       locale === undefined
         ? defaultLabel
         : resolveTermLabel(defaultLabel, term.labels, config, locale),
-    ...(locale === undefined ? { labels: allTermLabels(defaultLabel, term.labels, config) } : {}),
+    ...(locale === undefined
+      ? {
+          labels: withoutUndeliveredLocales(
+            allTermLabels(defaultLabel, term.labels, config),
+            config,
+          ),
+        }
+      : {}),
     description: term.description,
     count: counted.count,
     countsByContentType: counted.byContentType,
@@ -127,7 +141,7 @@ export async function listDeliveredTags(
     tags: {},
     termUsage: { kind: 'tag' },
   });
-  const config = spaceConfig(scope, result);
+  const config = spaceConfig(scope, result, opts);
   return bySlug(result.tags ?? []).map((t) => deliverTag(t, result.termUsage ?? [], config, opts));
 }
 
@@ -144,7 +158,7 @@ export async function getDeliveredTag(
     tags: { slugs: [slug] },
     termUsage: { kind: 'tag', slugs: [slug] },
   });
-  const config = spaceConfig(scope, result);
+  const config = spaceConfig(scope, result, opts);
   const [tag] = result.tags ?? [];
   if (!tag) throw new NotFoundError('Tag', slug);
   return deliverTag(tag, result.termUsage ?? [], config, opts);
@@ -163,7 +177,7 @@ export async function listDeliveredConcepts(
     concepts: narrow,
     termUsage: { kind: 'concept', ...narrow },
   });
-  const config = spaceConfig(scope, result);
+  const config = spaceConfig(scope, result, opts);
   return deliverConcepts(bySlug(result.concepts ?? []), result.termUsage ?? [], config, opts);
 }
 
@@ -184,7 +198,7 @@ export async function getDeliveredConcept(
     concepts: { ...narrow, slugs: [slug] },
     termUsage: { kind: 'concept', ...narrow, slugs: [slug] },
   });
-  const config = spaceConfig(scope, result);
+  const config = spaceConfig(scope, result, opts);
   const found = result.concepts ?? [];
   if (found.length === 0) throw new NotFoundError('Concept', slug);
   if (found.length > 1) {

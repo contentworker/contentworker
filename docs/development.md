@@ -7,7 +7,10 @@ the database schema and the schema reference.
 
 - Node.js ≥ 24 (`.nvmrc`) and pnpm 10 (`packageManager` in the root `package.json`).
 - No platform account: local development runs every edge worker in the local runtime through the
-  platform's Vite plugin, with a local database.
+  platform's Vite plugin, with a local database. Remote bindings are off;
+  `CONTENTWORKER_REMOTE=1 pnpm dev` turns them on (it needs a `wrangler login`).
+- `jq`, for the Claude Code hooks in `.claude/` (without it they silently do nothing).
+- For the device tests only: `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
 ## Running locally
 
@@ -334,6 +337,20 @@ space's value, means off), the nullable `environments.trash_sweep_cursor` (JSON 
 where the retention sweep resumes in that environment; NULL is from the oldest) and the partial index `entries_trashed` on `(space_id, environment_id,
 updated_at, id) WHERE status = 'archived'`, which the engine's trash retention sweep reads. Nothing
 is backfilled (see [Architecture](./architecture.md)).
+
+`0025_locale_settings.sql` adds the nullable JSON `spaces.locale_settings` (`{ delivered?,
+direction? }` by locale) beside `locales`, which stays the string array older code reads; NULL,
+every existing space's value, means every locale is delivered in its language's direction.
+Nothing is backfilled (see [Domain model](./domain-model.md#locales--fallback)).
+
+`0024_entry_authorship.sql` adds nullable authorship columns: `entries.created_at`, `created_by`,
+`modified_by` and `first_published_at`, `entry_versions.created_by`, and
+`entry_published.first_published_at` (the read model's copy, so Delivery sorts by it without a
+join), with the index `entries_by_creator` on `(space_id, environment_id, created_by)`. Code older
+than the migration names its columns on every write, so it never touches them. It backfills only
+`entries.created_at`, from each entry's version 1 (a primary-key read, and only where it is NULL,
+so a re-run changes nothing); who created an entry and when it was first published aren't recorded
+anywhere exact, so existing rows keep NULL (see [Domain model](./domain-model.md#authorship)).
 
 `0007_dam.sql` adds the asset library's columns to `assets` (`kind`, `mime`, `size`, `width`,
 `height`, `content_hash`, `folder_id`, `version`, `r2_key`, `created_at`, `created_by`,

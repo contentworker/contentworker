@@ -65,6 +65,11 @@ export const spaces = sqliteTable('spaces', {
   defaultLocale: text('default_locale').notNull(),
   locales: text('locales', { mode: 'json' }).$type<string[]>().notNull(),
   fallbacks: text('fallbacks', { mode: 'json' }).$type<Record<string, string | null>>(),
+  /** Per-locale settings, `{ delivered?, direction? }` by locale; null: the defaults for every
+   *  locale (0025_locale_settings). */
+  localeSettings: text('locale_settings', { mode: 'json' }).$type<
+    Record<string, { delivered?: boolean; direction?: 'ltr' | 'rtl' }>
+  >(),
   /** Default separation of duties for workflow approvals that leave it unset. */
   workflowSeparateDuties: integer('workflow_separate_duties', { mode: 'boolean' })
     .notNull()
@@ -164,6 +169,12 @@ export const contentTypes = sqliteTable(
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
     /** Where the type's entries live on the site (0017_redirects). */
     urlPattern: text('url_pattern'),
+    /** Holds at most one entry (0027_singleton_types). */
+    singleton: integer('singleton', { mode: 'boolean' }).notNull().default(false),
+    /** `singleton` as last published: what Delivery serves by (0028_published_singleton). */
+    publishedSingleton: integer('published_singleton', { mode: 'boolean' })
+      .notNull()
+      .default(false),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.apiId] })],
 );
@@ -179,9 +190,18 @@ export const entries = sqliteTable(
     currentVersion: integer('current_version').notNull(),
     publishedVersion: integer('published_version'),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
+    /** Authorship (0024_entry_authorship): null when unknown (written before it). An actor is the
+     *  principal's audit identity, `agent:<name>`, `workflow:<id>`, `plugin:<id>` or `system`. */
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }),
+    createdBy: text('created_by'),
+    /** Who made the change `updatedAt` records. */
+    modifiedBy: text('modified_by'),
+    /** Set by the first publish and never moved again (the store writes it with COALESCE). */
+    firstPublishedAt: integer('first_published_at', { mode: 'timestamp_ms' }),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    index('entries_by_creator').on(t.spaceId, t.environmentId, t.createdBy),
     // The trash retention sweep: an archived entry's `updated_at` is when it was trashed.
     index('entries_trashed')
       .on(t.spaceId, t.environmentId, t.updatedAt, t.id)
@@ -230,6 +250,8 @@ export const entryVersions = sqliteTable(
     /** Set once the body has moved to object storage under this key; `fields` is then `{}`
      *  (0004_version_bodies). */
     bodyKey: text('body_key'),
+    /** Who saved this version; null when unknown (0024_entry_authorship). */
+    createdBy: text('created_by'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.entryId, t.version] })],
 );
@@ -264,6 +286,8 @@ export const entryPublished = sqliteTable(
     fields: text('fields', { mode: 'json' }).$type<EntryFields>().notNull(),
     metadata: text('metadata', { mode: 'json' }).$type<{ tags: string[]; concepts: string[] }>(),
     publishedAt: integer('published_at', { mode: 'timestamp_ms' }).notNull(),
+    /** The entry's first publish, copied from `entries` (0024_entry_authorship); null when unknown. */
+    firstPublishedAt: integer('first_published_at', { mode: 'timestamp_ms' }),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.entryId] }),

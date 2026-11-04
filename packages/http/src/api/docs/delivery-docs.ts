@@ -56,6 +56,15 @@ const DOCS = {
       ok: publishedEntry,
       query: { locale: 'Resolve fields for one locale', include: 'Reference resolution depth' },
     }),
+  getSingleton: () =>
+    doc('Delivery', 'Get a singleton’s entry', {
+      ok: publishedEntry,
+      description:
+        'The published entry of a singleton content type (one that holds at most one entry: ' +
+        'site settings, a home page), by the type’s apiId, so a front end needs no entry id. ' +
+        '404 when the type is not a singleton or its entry is not published.',
+      query: { locale: 'Resolve fields for one locale', include: 'Reference resolution depth' },
+    }),
   listAssets: () =>
     doc('Delivery', 'List or search published assets', {
       ok: z.union([deliveredAssetPage, deliveredAssetSearchPage]),

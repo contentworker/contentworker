@@ -1,5 +1,7 @@
 import type { ContentType } from '@contentworker/domain';
 import { useOutletContext } from 'react-router';
+import type { ContentTypeDeleteJob } from '../components/ContentTypeDeleteJob';
+import type { TextDirection } from '../lib/management';
 
 /** Shared data the Content layout provides to its nested entry routes. */
 export interface ContentOutlet {
@@ -9,7 +11,13 @@ export interface ContentOutlet {
   readonly locales: readonly string[];
   readonly defaultLocale: string;
   readonly fallbacks?: Readonly<Record<string, string | null>>;
+  /** Each locale's text direction (`dir` on its inputs); absent until the config loads. */
+  readonly directions?: Readonly<Record<string, TextDirection>>;
+  /** Whether Delivery serves each locale ("Not delivered" on its tab); absent until it loads. */
+  readonly delivered?: Readonly<Record<string, boolean>>;
   reload(): void;
+  /** A content type's delete job, followed from the layout so it outlives navigation. */
+  readonly deleteJob: ContentTypeDeleteJob;
 }
 
 export function useContentOutlet(): ContentOutlet {

@@ -18,6 +18,9 @@ export interface DeliveredEntry<F extends Fields = Fields> {
   readonly contentType: string;
   readonly fields: F;
   readonly publishedAt: string;
+  /** When the entry was first published (sort with `-sys.firstPublishedAt`); absent when unknown.
+   *  Delivery serves no other authorship. */
+  readonly firstPublishedAt?: string;
 }
 
 /**
@@ -493,6 +496,21 @@ export function createDeliveryClient(opts: ClientOptions) {
       o: Pick<EntryQuery, 'locale' | 'include'> = {},
     ): Promise<DeliveredEntry<F>> {
       return get<DeliveredEntry<F>>(`/entries/${encodeURIComponent(id)}`, {
+        locale: o.locale,
+        include: o.include,
+      });
+    },
+
+    /**
+     * The one entry of a singleton content type (site settings, a home page) by the type's apiId:
+     * published, or from Preview as it is now. A 404 `DeliveryError` when the type is not a
+     * singleton or has no such entry. Preview ignores `include`.
+     */
+    async getSingleton<F extends Fields = Fields>(
+      contentType: string,
+      o: Pick<EntryQuery, 'locale' | 'include'> = {},
+    ): Promise<DeliveredEntry<F>> {
+      return get<DeliveredEntry<F>>(`/singletons/${encodeURIComponent(contentType)}`, {
         locale: o.locale,
         include: o.include,
       });

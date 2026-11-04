@@ -80,7 +80,16 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 - **Content** (`/content`): content types and their schema editor; entries per type with filters,
   search, sorting from the column headers, a bulk bar for publishing and unpublishing what is
   ticked, and Load more past the first 100 (`/content/:typeId`; `/content/:typeId/new` starts a new
-  entry);
+  entry); a singleton type's sidebar and overview links go to `/content/:typeId/entry`
+  (`SingletonEntry.tsx`), which opens its one entry in the editor, or a new one when it has none,
+  and its rows offer no Duplicate; each type's row on the overview has a menu (`More actions for
+  “…”`) with Clone… and Delete… (`ContentTypeActions.tsx`): the delete dialog reads
+  `…/dependents`, names what blocks it, offers to delete the entries too (a `content_type_delete`
+  job), and is confirmed by typing the API ID. The job's card (`ContentTypeDeleteJob.tsx`) is kept
+  by `ContentLayout`, so it survives a visit to an entry; it polls until the job records the type's
+  outcome (`config.typeDeletion`), then reloads and shows that the type was deleted, or kept with
+  the failed entries from the job's report or the refusal's reason; Stop cancels the job. A
+  singleton's pages offer no Import (nor the palette's New/Import, which become "Open ‹type›");
   the entry editor (TipTap rich text, components and repeaters, references, localized fields; a
   `Seo` field renders as a component of `SEO_FIELDS` in `EntryForm.tsx`, each part with a helper
   line wired to `aria-describedby`: title and description count characters against what search

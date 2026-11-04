@@ -12,6 +12,8 @@ export interface ResolvedEntry {
   readonly contentType: string;
   readonly fields: Record<string, unknown>;
   readonly publishedAt: string;
+  /** When it was first published, when known. */
+  readonly firstPublishedAt?: string;
 }
 
 export interface DeliverySearchHit {
@@ -33,6 +35,8 @@ export interface ResolvedAsset {
 /** Data access the generated schema needs — bound to a space/environment. */
 export interface DeliveryResolvers {
   entry(contentType: string, id: string, locale?: string): Promise<ResolvedEntry | null>;
+  /** A singleton type's published entry (`<type>` with no `id`), null when it has none. */
+  singleton(contentType: string, locale?: string): Promise<ResolvedEntry | null>;
   collection(
     contentType: string,
     args: {

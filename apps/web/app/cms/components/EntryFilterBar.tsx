@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import { ListFilter, Plus, Search, X } from 'lucide-react';
+import { ListFilter, Plus, Search, UserRound, X } from 'lucide-react';
 import { useId, useState } from 'react';
 import { statusLabel } from '../lib/format';
 import type { EntryFilter, EntryListQuery } from '../lib/management';
@@ -206,6 +206,8 @@ export function EntryFilterBar(props: {
     onChange({ ...value, filters: filters.filter((_, j) => j !== i) });
 
   const activeCount = filters.length + (value.search ? 1 : 0);
+  // "Mine" is a toggle of its own, beside the panel's filters; Clear clears it with them.
+  const clearable = activeCount > 0 || value.mine === true;
 
   return (
     <div className="space-y-3">
@@ -244,13 +246,26 @@ export function EntryFilterBar(props: {
             </Badge>
           )}
         </Button>
-        {activeCount > 0 && (
+        <Button
+          type="button"
+          // Pressed reads as the ink fill, so on and off differ by more than a tint.
+          variant={value.mine ? 'default' : 'outline'}
+          size="sm"
+          aria-pressed={value.mine === true}
+          onClick={() => onChange({ ...value, mine: value.mine ? undefined : true })}
+        >
+          <UserRound aria-hidden="true" className="size-4" />
+          Mine
+        </Button>
+        {clearable && (
           <Button
             type="button"
             variant="ghost"
             size="sm"
             // Filters and search only: the sort and the trash view aren't filters.
-            onClick={() => onChange({ ...value, filters: undefined, search: undefined })}
+            onClick={() =>
+              onChange({ ...value, filters: undefined, search: undefined, mine: undefined })
+            }
             className="text-muted-foreground"
           >
             <X aria-hidden="true" className="size-4" />
