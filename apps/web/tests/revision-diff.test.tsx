@@ -250,4 +250,29 @@ describe('VersionHistory compare', () => {
     await screen.findByRole('region');
     expect(screen.queryByRole('button', { name: 'Live version' })).toBeNull();
   });
+
+  it('asks in place before a restore, since the version it replaces stays in the list', async () => {
+    client.restoreVersion.mockClear();
+    renderHistory(false);
+    open();
+    const [restore] = await screen.findAllByRole('button', { name: 'Restore' });
+    fireEvent.click(restore as HTMLElement);
+
+    const ask = await screen.findByRole('alertdialog', { name: /Restore version 2\?/ });
+    // In the list, not over the page, and the safe choice has focus.
+    expect(ask.closest('li')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(
+      within(ask).getByRole('button', { name: 'Keep current draft' }),
+    );
+
+    fireEvent.click(within(ask).getByRole('button', { name: 'Keep current draft' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(client.restoreVersion).not.toHaveBeenCalled();
+
+    fireEvent.click(restore as HTMLElement);
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore version' }));
+    await waitFor(() => expect(client.restoreVersion).toHaveBeenCalledWith('e1', 2));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
 });

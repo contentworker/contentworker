@@ -53,7 +53,8 @@ export interface InlineConfirmProps {
 }
 
 /**
- * An "are you sure?" in place, where the action was, never a modal.
+ * An "are you sure?" in place, where the action was: how anything undoable confirms (a modal is
+ * only for what can't be undone).
  *
  * - Focus lands on the safe choice (Cancel), so a stray Enter backs out.
  * - Escape cancels the newest open confirm only, and is swallowed so an

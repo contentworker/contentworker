@@ -323,9 +323,9 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   unpublish, the trash, restoring a version, a bulk change) opens the panel at its confirm card
   (Confirm, or Not now, focused) and the page waits; any other edit (saving, duplicating) runs at
   once and leaves a line ("Published · Spring launch notes") linking to the entry. When its socket
-  is down the panel says so in one quiet line and the page makes the edit itself, confirming in its
-  own dialog as before. Beside the column a page is narrower than the screen, so the Content pages'
-  content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
+  is down the panel says so in one quiet line and the page makes the edit itself, confirming in
+  place or in a dialog as The Undoable Confirms In Place Rule says. Beside the column a page is
+  narrower than the screen, so the Content pages' content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
   In that list a singleton links to its one entry (`/content/:typeId/entry`), not a list of one,
   and stays marked current anywhere under the type.
 - **Slow pages:** a navigation that takes over 400ms draws a link-blue rule sweeping under the
@@ -401,9 +401,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   entries, drafts, changed entries and fields as figures, Edit, and a ghost ⋯ menu ("More actions
   for ‹type›") with Clone… and, after a separator, a destructive Delete…; a Draft badge only on a
   type whose schema isn't published. Clone… opens a dialog with the copy's name and API ID. Closed
-  either way, focus goes back to the row's ⋯. **Deleting a type** is the second written exception
-  to "never a modal" (the trash's Delete permanently is the first): it can't be undone, so a dialog
-  reads what depends on the type first, names in a warning Alert whatever blocks it (another type
+  either way, focus goes back to the row's ⋯. **Deleting a type** can't be undone, so it confirms
+  in a modal (The Undoable Confirms In Place Rule): a dialog reads what depends on the type first, names in a warning Alert whatever blocks it (another type
   linking to it, a menu or redirect naming its entries, its URL pattern; then no confirm is
   offered), and with entries offers "Also delete its N entries" as an unticked opt-in. It is
   confirmed by typing the API ID, and a refusal shows as a destructive Alert in the dialog. Deleted
@@ -834,9 +833,18 @@ for code and data blocks only.
   ending that went badly is ruled in the colour with a mark (✕ or undo) instead of tinted, so it
   reads apart without colour. `ToneBadge` for another vocabulary (a diff's change, a finding's
   severity); `StatusDot` alone where the word sits beside it.
-- **Inline confirm** (`cms/components/InlineConfirm.tsx`): an "are you sure?" where the action was,
-  never a modal. The safe choice has focus, Escape backs out of the newest one, and focus goes back
-  to what asked.
+- **Inline confirm** (`cms/components/InlineConfirm.tsx`): an "are you sure?" where the action was.
+  The safe choice has focus, Escape backs out of the newest one, and focus goes back to what asked.
+  **The Undoable Confirms In Place Rule:** a modal confirm only when nothing can be undone; anything
+  undoable confirms inline. So restoring a version asks in place, since it appends a new version
+  and the one it replaced can be restored in turn. Revoking a key or a token, disconnecting an
+  application, deleting a webhook, uninstalling a plugin (its settings and stored data go with it),
+  deleting a saved view, starting a new conversation, discarding an entry's unsaved changes, and
+  Delete permanently and deleting a content type are modals: the data is gone, and asking again
+  makes something new rather than bringing it back. A publish confirms in a modal too: readers and
+  webhooks have it at once, and no undo calls that back. The entries list's bulk Unpublish and Move
+  to trash can be undone and still confirm in a dialog, listing what they change; they are the
+  rule's open debt.
 - **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
   toast carries its Undo action.
 - **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"
