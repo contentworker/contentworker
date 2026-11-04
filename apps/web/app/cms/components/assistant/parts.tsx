@@ -289,7 +289,7 @@ function publishTarget(
   if (getToolName(part) !== 'entries_publish') return null;
   const input = (part.input ?? {}) as Record<string, unknown>;
   const { id, expectedVersion } = input;
-  if (typeof id !== 'string') return null;
+  if (typeof id !== 'string') return 'unknown';
   const space = direct ? input.space : turn?.spaceId;
   const environment = direct ? input.environment : turn?.environmentId;
   // Nothing says where it runs (no scope stored, or a continuation from elsewhere left none).
@@ -305,30 +305,36 @@ function publishTarget(
 
 /**
  * What a publish card will put live, from the system's own diff of the entry the call names. Nothing
- * here comes from the model: its text never reaches this card, and a read that fails says so.
+ * here comes from the model: its text never reaches this card. Each way it can't show that says
+ * what would let the person confirm: trying again, switching back, or asking again.
  */
 function PublishReview({
   review,
   place,
+  onRetry,
 }: {
   review: EntryReview;
   /** Why the review wasn't read: the card runs somewhere else, or nothing says where. */
   place?: 'elsewhere' | 'unknown' | undefined;
+  onRetry: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const note = (text: string) => <p className="text-muted-foreground text-xs">{text}</p>;
   if (place === 'unknown')
-    return note('Coworker can’t tell where this runs, so it can’t show what goes live.');
+    return note(
+      'Coworker can’t tell where this runs, so it can’t show what goes live. Choose Not now, then ask again.',
+    );
   if (place === 'elsewhere')
     return note(
-      'This was asked in another space or environment. Switch back to see what goes live.',
+      'This was asked in another space or environment. Switch back to see what goes live and confirm.',
     );
   // Held at about a short list's height, so Not now and Confirm don't move under the pointer.
   if (review.status === 'loading')
     return <div className="min-h-20">{note('Comparing with what’s live…')}</div>;
   if (review.status === 'first') return note(FIRST_PUBLISH);
-  if (review.status === 'failed') return <ReviewFailed />;
+  if (review.status === 'failed')
+    return <ReviewFailed onRetry={onRetry} next="Try again to see what goes live and confirm." />;
   if (review.status !== 'ready') return null;
   const changed = review.fields.filter((f) => f.kind !== 'unchanged').length;
   const { hiddenChanges } = review;
@@ -359,7 +365,7 @@ function PublishReview({
 /**
  * A call waiting for the person: a page's action, or anything the model proposed to change. One
  * press confirms it; Not now leaves everything as it was. A publish lists what will go live, and
- * can't be confirmed until that has been read. Focus starts on the safe choice when the card came
+ * can't be confirmed unless that has been read; Not now always can. Focus starts on the safe choice when the card came
  * from a page (the person just pressed for it) or the person is already in the conversation, never
  * pulled out of a field they are typing in. A card a newer, identical request replaced stops
  * asking, so only one button can do the thing.
@@ -399,6 +405,10 @@ export function ActionCard({
     conn.locale,
   );
   const about = aboutOf(part) ?? ('title' in review && review.title ? review.title : undefined);
+  // A publish that can't show what goes live can't be confirmed from here, wherever it's pressed.
+  const blocked = place !== undefined || review.status === 'failed';
+  const confirmOff = sent || blocked || review.status === 'loading';
+  const reasonId = useId();
 
   // The panel is inert until it opens, and focus can't land in it: a card that arrives first (a
   // cold open, whose message can beat the page's answer) waits for that, then asks once.
@@ -422,7 +432,16 @@ export function ActionCard({
     if (!asking && focusWithin.current && document.activeElement === document.body)
       holder.current?.focus({ preventScroll: true });
   }, [asking]);
+  // Confirm can turn off with focus on it (a switch of environment): Not now takes it.
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!confirmOff || sent) return;
+    const now = document.activeElement;
+    if (now === confirmButton.current || (now === document.body && focusWithin.current))
+      safe.current?.focus({ preventScroll: true });
+  }, [confirmOff, sent]);
   const answer = (approved: boolean) => {
+    if (approved && confirmOff) return;
     holder.current?.focus({ preventScroll: true });
     setSent(true);
     respond(part, approved);
@@ -465,12 +484,26 @@ export function ActionCard({
             {about || target ? (
               <CardContent className="space-y-2">
                 {about ? <p className="break-words text-ui leading-snug">{about}</p> : null}
-                {target ? <PublishReview review={review} place={place} /> : null}
+                {target ? (
+                  <PublishReview
+                    review={review}
+                    place={place}
+                    onRetry={() => {
+                      // The button goes with the failure; focus doesn't go with it.
+                      safe.current?.focus({ preventScroll: true });
+                      if (review.status === 'failed') review.retry?.();
+                    }}
+                  />
+                ) : null}
               </CardContent>
             ) : null}
             <CardFooter className="flex-col items-stretch gap-2 rounded-b-2xl border-t bg-wait/10 pb-(--card-spacing)">
               <p className="text-muted-foreground text-xs leading-snug">
                 Nothing changes until you confirm, here or wherever else you’re signed in.
+              </p>
+              {/* Always there, so a screen reader hears it fill. */}
+              <p id={reasonId} role="status" className="text-xs leading-snug empty:hidden">
+                {blocked ? 'You can’t confirm until this card can show what goes live.' : null}
               </p>
               <ConfirmationActions>
                 <Button
@@ -486,7 +519,9 @@ export function ActionCard({
                 <Button
                   size="sm"
                   variant={isDestructive(part) ? 'destructive' : 'default'}
-                  disabled={sent || review.status === 'loading'}
+                  ref={confirmButton}
+                  disabled={confirmOff}
+                  aria-describedby={blocked ? reasonId : undefined}
                   onClick={() => answer(true)}
                 >
                   Confirm

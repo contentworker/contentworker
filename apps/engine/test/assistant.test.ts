@@ -663,6 +663,24 @@ describe('a confirm is held to the entry as its card showed it', () => {
     );
     expect(await partOf(ada, secondCall)).toMatchObject({ state: 'approval-requested' });
     expect(waiting?.metadata).toMatchObject({ scope: null });
+
+    // That card can't be confirmed from the panel. Its way out is Not now, then asking again.
+    const declined = panel.nextOtherTurn();
+    panel.send({
+      type: 'cf_agent_tool_approval',
+      toolCallId: secondCall,
+      approved: false,
+      autoContinue: true,
+    });
+    await declined;
+    await panel.ask('Publish this entry', pageOf(second, 'Second proposal'));
+    const asked = (await messagesOf(ada)).findLast((m) =>
+      m.parts.some(
+        (x) =>
+          x.type === 'tool-entries_publish' && 'state' in x && x.state === 'approval-requested',
+      ),
+    );
+    expect(asked?.metadata).toMatchObject({ scope: { spaceId: SPACE_A, environmentId: 'main' } });
     panel.close();
   });
 

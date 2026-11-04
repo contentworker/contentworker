@@ -46,8 +46,8 @@ export type EntryReview =
       readonly hiddenChanges: number;
       readonly title?: string;
     }
-  /** The diff couldn't be read, so nothing can be said about what changes. */
-  | { readonly status: 'failed' };
+  /** The diff couldn't be read, so nothing can be said about what changes. `retry` reads again. */
+  | { readonly status: 'failed'; readonly retry?: () => void };
 
 export interface ReviewTarget {
   readonly entryId: string;
@@ -198,15 +198,17 @@ export function useEntryReview(
   locale: string,
 ): EntryReview {
   const [review, setReview] = useState(LOADING);
+  const [attempt, setAttempt] = useState(0);
   const entryId = target?.entryId;
   const version = target?.version;
   const changes = target?.changes;
   const hiddenChanges = target?.hiddenChanges;
   const named = target?.named;
   useEffect(() => {
+    // Nothing kept for later: a target that comes back (a switch back) reads afresh.
+    setReview(LOADING);
     if (!entryId) return;
     let live = true;
-    setReview(LOADING);
     readReview(
       client,
       {
@@ -228,8 +230,11 @@ export function useEntryReview(
     return () => {
       live = false;
     };
-  }, [client, entryId, version, changes, hiddenChanges, named, locale]);
-  return target ? review : IDLE;
+  }, [client, entryId, version, changes, hiddenChanges, named, locale, attempt]);
+  if (!target) return IDLE;
+  return review.status === 'failed'
+    ? { status: 'failed', retry: () => setAttempt((n) => n + 1) }
+    : review;
 }
 
 /** Past this many a list of names stops and says how many more: Review changes has them all. */
@@ -341,12 +346,26 @@ export function HiddenChanges({ count, alone }: { count: number; alone: boolean 
 }
 
 /** The diff couldn't be read: said as plainly as the decision beside it deserves. */
-export function ReviewFailed() {
+export function ReviewFailed({
+  onRetry,
+  next = 'Check the entry before you go on.',
+}: {
+  onRetry?: (() => void) | undefined;
+  /** What to do about it, where that isn't to check the entry. */
+  next?: string;
+}) {
   return (
     <Alert variant="destructive">
       <TriangleAlert />
       <AlertTitle>Couldn’t load what changed</AlertTitle>
-      <AlertDescription>Check the entry before you go on.</AlertDescription>
+      <AlertDescription>
+        <p>{next}</p>
+        {onRetry ? (
+          <Button size="xs" variant="outline" className="mt-2" onClick={onRetry}>
+            Try again
+          </Button>
+        ) : null}
+      </AlertDescription>
     </Alert>
   );
 }
@@ -382,7 +401,7 @@ export function EntryDiff(props: {
         </AlertDescription>
       </Alert>
     );
-  if (review.status === 'failed') return <ReviewFailed />;
+  if (review.status === 'failed') return <ReviewFailed onRetry={review.retry} />;
   if (review.status !== 'ready') return <p className="text-muted-foreground text-sm">Comparing…</p>;
   const count = review.fields.filter(isChanged).length;
   return (
