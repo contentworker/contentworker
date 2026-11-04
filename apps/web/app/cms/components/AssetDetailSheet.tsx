@@ -13,7 +13,6 @@ import {
 } from '@contentworker/ui/select';
 import {
   Sheet,
-  SheetContent,
   SheetDescription,
   SheetFooter,
   SheetHeader,
@@ -32,6 +31,7 @@ import { AssetVersions } from '~/cms/components/assets/AssetVersions';
 import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge, StatusDot, ToneBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { ImageTransform } from '../lib/management';
@@ -267,7 +267,7 @@ export function AssetDetailSheet(props: {
 
   return (
     <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
+      <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle className="truncate">{asset.file.fileName}</SheetTitle>
           <SheetDescription className="font-mono text-xs">
@@ -667,7 +667,7 @@ export function AssetDetailSheet(props: {
             </DiscardAsk>
           </SheetFooter>
         )}
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

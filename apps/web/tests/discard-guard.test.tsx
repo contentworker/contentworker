@@ -23,7 +23,8 @@ function NewContentType({ onClosed }: { onClosed: () => void }) {
   );
 }
 
-const escape = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+const pressEscape = () =>
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 const pressOutside = () => {
   fireEvent.pointerDown(document.body);
   fireEvent.click(document.body);
@@ -37,13 +38,13 @@ describe('discard guard', () => {
     const onClosed = vi.fn();
     render(<NewContentType onClosed={onClosed} />);
     await screen.findByRole('dialog');
-    escape();
+    pressEscape();
     await waitFor(() => expect(onClosed).toHaveBeenCalled());
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it.each([
-    ['Escape', escape],
+    ['Escape', pressEscape],
     ['a press outside', pressOutside],
     ['the close button', () => fireEvent.click(screen.getByRole('button', { name: 'Close' }))],
     ['Cancel', () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))],
@@ -93,7 +94,7 @@ describe('discard guard', () => {
     pressOutside();
     await screen.findByRole('alertdialog');
 
-    escape();
+    pressEscape();
 
     expect(question()).toBeNull();
     expect(onClosed).not.toHaveBeenCalled();

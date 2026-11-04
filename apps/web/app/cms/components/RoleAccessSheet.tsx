@@ -4,16 +4,10 @@ import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { useId, useState } from 'react';
 import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
-import { useMedia } from '~/cms/lib/device';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { apiErrorMessage, type RoleSummary } from '../lib/management';
 import {
   actionAvailable,
@@ -39,7 +33,6 @@ export function RoleAccessSheet(props: {
   onOpenChange: (open: boolean) => void;
   onSave: (grants: readonly ContentTypeGrant[]) => Promise<void>;
 }) {
-  const phone = useMedia('(max-width: 639px)');
   const id = useId();
   const [grants, setGrants] = useState<readonly ContentTypeGrant[]>(props.role.contentGrants);
   const [adding, setAdding] = useState('');
@@ -71,10 +64,7 @@ export function RoleAccessSheet(props: {
 
   return (
     <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
-      <SheetContent
-        side={phone ? 'bottom' : 'right'}
-        className="w-full gap-0 overflow-y-auto sm:max-w-lg"
-      >
+      <ResponsiveSheetContent className="w-full gap-0 overflow-y-auto sm:max-w-lg">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
           <SheetTitle className="font-semibold text-base tracking-title">
             Content access: {props.role.name}
@@ -204,7 +194,7 @@ export function RoleAccessSheet(props: {
             </DiscardAsk>
           </div>
         </form>
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

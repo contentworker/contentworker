@@ -17,13 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import {
   Table,
@@ -50,6 +44,7 @@ import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { ReleasePublishConfirm } from '~/cms/components/ReleasePublishConfirm';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
 import { humanize, plural, statusLabel } from '~/cms/lib/format';
@@ -543,7 +538,7 @@ function ReleaseDetailSheet(props: {
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && props.onClose()}>
-      <SheetContent side="right" className="flex w-full flex-col overflow-y-auto sm:max-w-lg">
+      <ResponsiveSheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{release?.title ?? 'Release'}</SheetTitle>
           {release ? (
@@ -682,7 +677,7 @@ function ReleaseDetailSheet(props: {
             </div>
           )}
         </div>
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

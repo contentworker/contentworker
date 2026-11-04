@@ -2,17 +2,11 @@ import type { TermUsageSummary } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { Textarea } from '@contentworker/ui/textarea';
 import { useEffect, useId, useState } from 'react';
 import { DiscardAsk, type DiscardGuard, useDiscardGuard } from '~/cms/components/discard-guard';
-import { useMedia } from '~/cms/lib/device';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import type { TermFields } from '~/cms/lib/management';
 
 /** A tag or concept as the editor shows it: its own label is the default locale's. */
@@ -74,12 +68,11 @@ export function TermEditor({
   onSave: (changes: TermChanges) => void;
   onOpenChange: (open: boolean) => void;
 }) {
-  const phone = useMedia('(max-width: 639px)');
   const [dirty, setDirty] = useState(false);
   const guard = useDiscardGuard({ open: term !== null, dirty, onOpenChange });
   return (
     <Sheet open={term !== null} onOpenChange={guard.onOpenChange}>
-      <SheetContent side={phone ? 'bottom' : 'right'} className="gap-0 overflow-y-auto sm:max-w-md">
+      <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
           <SheetTitle className="font-semibold text-base tracking-title">
             {term ? `Edit “${term.label}”` : 'Edit'}
@@ -102,7 +95,7 @@ export function TermEditor({
             onDirty={setDirty}
           />
         ) : null}
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

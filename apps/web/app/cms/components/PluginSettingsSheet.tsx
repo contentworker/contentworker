@@ -3,13 +3,7 @@ import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -17,8 +11,8 @@ import { Ago } from '~/cms/components/ago';
 import { DiscardAsk, type DiscardGuard, useDiscardGuard } from '~/cms/components/discard-guard';
 import { LoadingStatus } from '~/cms/components/loading';
 import { RequiredMark } from '~/cms/components/required-mark';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { ToneBadge } from '~/cms/components/status';
-import { useMedia } from '~/cms/lib/device';
 import {
   ApiError,
   apiErrorMessage,
@@ -55,7 +49,6 @@ export function PluginSettingsSheet(props: {
   onOpenChange: (open: boolean) => void;
 }) {
   const { client, plugin } = props;
-  const phone = useMedia('(max-width: 639px)');
   const [view, setView] = useState<PluginSettingsView>();
   const [loadError, setLoadError] = useState<unknown>();
   const [dirty, setDirty] = useState(false);
@@ -76,7 +69,7 @@ export function PluginSettingsSheet(props: {
 
   return (
     <Sheet open onOpenChange={guard.onOpenChange}>
-      <SheetContent side={phone ? 'bottom' : 'right'} className="gap-0 overflow-y-auto sm:max-w-md">
+      <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
           <SheetTitle className="font-semibold text-base tracking-title">
             {plugin.name} settings
@@ -136,7 +129,7 @@ export function PluginSettingsSheet(props: {
             />
           )}
         </div>
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

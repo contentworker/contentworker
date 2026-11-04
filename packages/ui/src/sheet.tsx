@@ -2,6 +2,7 @@ import { XIcon } from 'lucide-react';
 import { Dialog as SheetPrimitive } from 'radix-ui';
 import type * as React from 'react';
 
+import { keyboardInset } from './lib/keyboard-inset';
 import { cn } from './lib/utils';
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
@@ -50,6 +51,7 @@ function SheetContent({
     <SheetPortal>
       <SheetOverlay />
       <SheetPrimitive.Content
+        ref={keyboardInset}
         data-slot="sheet-content"
         data-side={side}
         className={cn(
@@ -64,7 +66,7 @@ function SheetContent({
           side === 'top' &&
             'inset-x-0 top-0 h-auto border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
           side === 'bottom' &&
-            'inset-x-0 bottom-0 h-auto max-h-[85dvh] overflow-y-auto overscroll-contain border-t px-safe-0 pb-safe-0 data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+            'inset-x-0 bottom-[var(--keyboard-inset,0px)] h-auto max-h-[calc(85dvh-var(--keyboard-inset,0px))] overflow-y-auto overscroll-contain border-t px-safe-0 pb-safe-0 data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
           className,
         )}
         {...props}
@@ -74,10 +76,10 @@ function SheetContent({
             button measured 16×16, under WCAG 2.5.8's 24×24 floor, on every sheet in
             the app. The padding is what makes the target, so the icon stays the same
             size and the hit area grows around it. */}
-        {/* On a touch screen it grows to 40px: 24px is the floor for a pointer, not
+        {/* On a touch screen it grows to 44px: 24px is the floor for a pointer, not
             for a finger, and this is the only way out of a drawer. */}
         {showCloseButton && (
-          <SheetPrimitive.Close className="absolute top-3.5 right-[max(0.875rem,var(--safe-right))] flex size-6 items-center justify-center rounded-4xl touch:size-10 in-data-[side=left]:top-[calc(0.875rem+var(--safe-top))] in-data-[side=right]:top-[calc(0.875rem+var(--safe-top))] opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
+          <SheetPrimitive.Close className="absolute top-3.5 right-[max(0.875rem,var(--safe-right))] flex size-6 items-center justify-center rounded-4xl touch:size-11 in-data-[side=left]:top-[calc(0.875rem+var(--safe-top))] in-data-[side=right]:top-[calc(0.875rem+var(--safe-top))] opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
             <XIcon className="size-4" />
             <span className="sr-only">Close</span>
           </SheetPrimitive.Close>

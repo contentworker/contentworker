@@ -10,13 +10,7 @@ import {
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
 import { Button } from '@contentworker/ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { type InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
@@ -32,6 +26,7 @@ import {
   rememberedCount,
 } from '~/cms/components/loading';
 import { Empty, EmptyState, PageHeader } from '~/cms/components/page';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { EntryDiff } from '../components/EntryDiff';
 import { ColumnPicker } from '../components/entries/ColumnPicker';
 import {
@@ -1178,7 +1173,7 @@ export function EntriesList() {
       </AlertDialog>
 
       <Sheet open={!!diffEntry} onOpenChange={(o) => !o && setDiffEntry(null)}>
-        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+        <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>Diff vs published</SheetTitle>
             <SheetDescription>Draft changes since this entry was last published.</SheetDescription>
@@ -1186,7 +1181,7 @@ export function EntriesList() {
           <div className="px-4 pb-4">
             {diffEntry && <EntryDiff client={client} entry={diffEntry} locale={conn.locale} />}
           </div>
-        </SheetContent>
+        </ResponsiveSheetContent>
       </Sheet>
     </div>
   );

@@ -654,7 +654,7 @@ export function ContentTypeDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{editing ? 'Edit content type' : 'New content type'}</DialogTitle>
           <DialogDescription>
