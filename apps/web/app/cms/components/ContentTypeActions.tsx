@@ -171,7 +171,7 @@ export function DeleteContentTypeDialog(props: {
   const entries = d ? d.entries.live + d.entries.trashed : 0;
   const blocked = d ? otherBlockers(d) : [];
   const isBlocked = blocked.length > 0;
-  const entriesLabel = `Also delete its ${plural(entries, 'entry', 'entries')}`;
+  const entriesLabel = `Delete its ${plural(entries, 'entry', 'entries')} too`;
   // What still stands between the person and the delete, said beside the disabled button.
   const outstanding = [
     ...(entries > 0 && !withEntries ? [`tick “${entriesLabel}”`] : []),
@@ -266,9 +266,9 @@ export function DeleteContentTypeDialog(props: {
                     </span>
                   </Label>
                   <p id="ct-delete-entries-hint" className="text-muted-foreground text-ui">
-                    A background job moves each to the trash, unpublishing the live ones, then
-                    deletes it permanently. An entry other published entries link to is kept, and so
-                    is the content type.
+                    Required: a type can’t go while it holds entries. A background job moves each to
+                    the trash, unpublishing the live ones, then deletes it permanently. An entry
+                    other published entries link to is kept, and so is the content type.
                   </p>
                 </div>
               )}

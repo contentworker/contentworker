@@ -1,6 +1,6 @@
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 
 export interface DiscardGuard {
@@ -63,6 +63,25 @@ export function useDiscardGuard({
   };
 }
 
+/** What a person was editing, in the dialog or sheet around `slot`. */
+function useLastField(slot: RefObject<HTMLElement | null>) {
+  const last = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const holder = slot.current?.closest('[role="dialog"]');
+    const note = (event: Event) => {
+      if (event.target instanceof HTMLElement && event.target.matches(FIELD)) {
+        last.current = event.target;
+      }
+    };
+    holder?.addEventListener('focusin', note);
+    return () => holder?.removeEventListener('focusin', note);
+  }, [slot]);
+  return last;
+}
+
+const FIELD =
+  'input, textarea, select, [contenteditable="true"], [role="combobox"], [role="radio"], [role="checkbox"], [role="switch"]';
+
 /** The form's buttons, or while {@link useDiscardGuard} asks, the question in their place. */
 export function DiscardAsk({
   guard,
@@ -78,6 +97,7 @@ export function DiscardAsk({
   children: ReactNode;
 }) {
   const slot = useRef<HTMLSpanElement>(null);
+  const field = useLastField(slot);
   return (
     <span ref={slot} className={cn(guard.asking ? 'block w-full min-w-0' : 'contents')}>
       {guard.asking ? (
@@ -85,7 +105,11 @@ export function DiscardAsk({
           message={message}
           note={note}
           cancelLabel="Keep editing"
-          onCancel={guard.keep}
+          onCancel={() => {
+            // Keep editing means the field, wherever the asking came from.
+            if (field.current?.isConnected) field.current.focus();
+            guard.keep();
+          }}
           // The buttons it stood in for are new ones by then.
           returnFocus={() => slot.current?.querySelector('button')}
         >

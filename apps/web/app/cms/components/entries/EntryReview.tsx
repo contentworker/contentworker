@@ -309,6 +309,7 @@ export function FieldReview({ fields }: { fields: readonly ReviewField[] }) {
       {same.length ? (
         <Collapsible open={open} onOpenChange={setOpen}>
           <Button
+            type="button"
             variant="link"
             size="xs"
             className="px-0"

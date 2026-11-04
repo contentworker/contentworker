@@ -1,4 +1,5 @@
 import {
+  type Asset,
   type AssetShareLink,
   type AssetShareTargetType,
   MAX_SHARE_LINK_SECONDS,
@@ -70,6 +71,8 @@ export function AssetShareDialog(props: {
   target: ShareTarget;
   /** For an asset: whether it is published (only a published asset can be shared). */
   published?: boolean;
+  /** The asset was published from here, so it could be shared. */
+  onPublished?: (asset: Asset) => void;
 }) {
   const { target } = props;
   const { client } = useClient();
@@ -94,8 +97,12 @@ export function AssetShareDialog(props: {
   const [unconfirmed, setUnconfirmed] = useState<string>();
   // The link just made: it takes focus (its Copy button), so it can be copied at once.
   const [made, setMade] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  // Published from here: the caller's `published` catches up when its read does.
+  const [publishedHere, setPublishedHere] = useState(false);
   const listHeading = useRef<HTMLHeadingElement>(null);
   const list = useRef<HTMLUListElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   // A fresh form each time the dialog opens on a target.
   useEffect(() => {
@@ -107,7 +114,15 @@ export function AssetShareDialog(props: {
     setIssues({});
     setRefusal(null);
     setMade(null);
+    setPublishedHere(false);
   }, [props.open, target.type, target.id]);
+
+  // Publish asset goes with the warning: the form that replaces it carries the keyboard on.
+  useEffect(() => {
+    if (publishedHere) {
+      formRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus();
+    }
+  }, [publishedHere]);
 
   useEffect(() => {
     if (!made) return;
@@ -120,7 +135,7 @@ export function AssetShareDialog(props: {
   }, [made, links.data]);
 
   const forbidden = isForbidden(links.error);
-  const unpublished = target.type === 'asset' && props.published === false;
+  const unpublished = target.type === 'asset' && props.published === false && !publishedHere;
   const active = links.data ?? [];
 
   const create = async (e: FormEvent) => {
@@ -159,6 +174,22 @@ export function AssetShareDialog(props: {
     }
   };
 
+  // Goes live at once, as an asset's Publish does in the library. Refused under an embargo or past
+  // an expiry, in the server's words.
+  const publish = async () => {
+    setPublishing(true);
+    try {
+      const asset = await client.publishAsset(target.id);
+      toast.success(`Published “${target.name}”`);
+      setPublishedHere(true);
+      props.onPublished?.(asset);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   const revoke = async (link: AssetShareLink) => {
     try {
       await client.revokeShareLink(link.id);
@@ -189,7 +220,13 @@ export function AssetShareDialog(props: {
 
   const what = target.type === 'asset' ? 'this file' : 'the collection’s files';
   const form = (
-    <form className="space-y-4" onSubmit={create} noValidate aria-label="New share link">
+    <form
+      ref={formRef}
+      className="space-y-4"
+      onSubmit={create}
+      noValidate
+      aria-label="New share link"
+    >
       {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
       {refusal && (
         <Alert variant="destructive">
@@ -324,7 +361,17 @@ export function AssetShareDialog(props: {
               <Alert variant="warning">
                 <AlertTitle>Publish it to share it</AlertTitle>
                 <AlertDescription>
-                  A share link only serves published files, and this asset isn’t published.
+                  <p>A share link only serves published files, and this asset isn’t published.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    disabled={publishing}
+                    onClick={() => void publish()}
+                  >
+                    {publishing ? 'Publishing…' : 'Publish asset'}
+                  </Button>
                 </AlertDescription>
               </Alert>
             ) : (

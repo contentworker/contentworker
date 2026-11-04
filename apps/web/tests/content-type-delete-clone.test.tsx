@@ -115,10 +115,10 @@ describe('deleting a content type from the admin', () => {
     const confirm = await screen.findByLabelText(/to confirm/);
     const gate = () => document.getElementById('ct-delete-gate')?.textContent;
     expect(deleteButton().getAttribute('aria-describedby')).toBe('ct-delete-gate');
-    expect(gate()).toBe('To delete it, tick “Also delete its 4 entries” and type note.');
+    expect(gate()).toBe('To delete it, tick “Delete its 4 entries too” and type note.');
 
     fireEvent.change(confirm, { target: { value: 'note' } });
-    expect(gate()).toBe('To delete it, tick “Also delete its 4 entries”.');
+    expect(gate()).toBe('To delete it, tick “Delete its 4 entries too”.');
 
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('checkbox'));
     expect(gate()).toBeUndefined();
@@ -160,7 +160,7 @@ describe('deleting a content type from the admin', () => {
     expect(deleteButton().hasAttribute('disabled')).toBe(true);
     const box = within(screen.getByRole('dialog')).getByRole('checkbox');
     expect(document.getElementById(box.getAttribute('aria-labelledby') ?? '')?.textContent).toBe(
-      'Also delete its 4 entries (1 in the trash)',
+      'Delete its 4 entries too (1 in the trash)',
     );
     fireEvent.click(box);
     fireEvent.click(deleteButton());

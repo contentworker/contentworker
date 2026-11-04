@@ -88,8 +88,23 @@ describe('discard guard', () => {
     expect(onClosed).not.toHaveBeenCalled();
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Blog Post');
     expect(screen.getByRole('button', { name: 'Create content type' })).toBeTruthy();
-    // The buttons came back as new elements: focus goes to one, not to <body>.
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+    // The form's first field took focus as it opened: that is what editing goes back to.
+    expect(document.activeElement).toBe(screen.getByLabelText('Name'));
+  });
+
+  it('Keep editing goes back to the field, not to whatever asked', async () => {
+    render(<NewContentType onClosed={vi.fn()} />);
+    await screen.findByRole('dialog');
+    const name = screen.getByLabelText('Name');
+    name.focus();
+    typeName('Blog Post');
+    // As in WebKit: the press leaves focus on the dialog itself, not on the button.
+    screen.getByRole('dialog').focus();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('alertdialog');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Name')));
   });
 
   it('Escape from the question keeps the form rather than closing it', async () => {

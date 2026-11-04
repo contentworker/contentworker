@@ -2,6 +2,7 @@ import { XIcon } from 'lucide-react';
 import { Dialog as SheetPrimitive } from 'radix-ui';
 import type * as React from 'react';
 
+import { Button } from './button';
 import { useFocusReturn } from './lib/focus-return';
 import { keyboardInset } from './lib/keyboard-inset';
 import { cn } from './lib/utils';
@@ -90,17 +91,17 @@ function SheetContent({
         >
           {children}
         </div>
-        {/* The icon is 16px, but the control must not be: a bare `size-4` close
-            button measured 16×16, under WCAG 2.5.8's 24×24 floor, on every sheet in
-            the app. The padding is what makes the target, so the icon stays the same
-            size and the hit area grows around it. */}
-        {/* On a touch screen it grows to 44px: 24px is the floor for a pointer, not
-            for a finger, and this is the only way out of a drawer. */}
         {showCloseButton && (
-          <SheetPrimitive.Close className="absolute top-3.5 right-[max(0.875rem,var(--safe-right))] z-20 flex size-6 items-center justify-center rounded-4xl touch:size-11 in-data-[side=left]:top-[calc(0.875rem+var(--safe-top))] in-data-[side=right]:top-[calc(0.875rem+var(--safe-top))] opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
-            <XIcon className="size-4" />
-            <span className="sr-only">Close</span>
-          </SheetPrimitive.Close>
+          // The same control as a dialog's. Placed by a wrapper: on touch `hit-area` makes the button
+          // itself `relative`. A side drawer meets the status bar, so it clears the top inset too.
+          <div className="absolute top-4 right-[max(1rem,var(--safe-right))] z-20 in-data-[side=left]:top-[calc(1rem+var(--safe-top))] in-data-[side=right]:top-[calc(1rem+var(--safe-top))]">
+            <SheetPrimitive.Close data-slot="sheet-close" asChild>
+              <Button variant="ghost" className="bg-secondary" size="icon-sm">
+                <XIcon />
+                <span className="sr-only">Close</span>
+              </Button>
+            </SheetPrimitive.Close>
+          </div>
         )}
       </SheetPrimitive.Content>
     </SheetPortal>

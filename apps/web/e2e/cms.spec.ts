@@ -1640,7 +1640,7 @@ test('a content type is cloned, then deleted with its entries, from its menu', a
   const remove = page.getByRole('dialog', { name: `Delete “Scratch ${stamp}”?` });
   await remove.getByLabel(/to confirm/).fill(apiId);
   await expect(remove.getByRole('button', { name: 'Delete type and entries' })).toBeDisabled();
-  await remove.getByRole('checkbox', { name: /Also delete its 1 entry/ }).check();
+  await remove.getByRole('checkbox', { name: /Delete its 1 entry too/ }).check();
   await remove.getByRole('button', { name: 'Delete type and entries' }).click();
   await expect(
     page.getByRole('status').filter({ hasText: `Deleted 1 entry of “Scratch ${stamp}”` }),

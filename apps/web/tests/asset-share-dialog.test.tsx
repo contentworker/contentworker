@@ -24,6 +24,7 @@ const link = (over: Partial<AssetShareLink> = {}): AssetShareLink => ({
 
 let links: AssetShareLink[] = [];
 const client = {
+  publishAsset: vi.fn(async (id: string): Promise<unknown> => ({ id, status: 'published' })),
   listShareLinks: vi.fn(async (_t: unknown) => links),
   createShareLink: vi.fn(async (input: ShareLinkInput) => {
     const made = link({
@@ -66,7 +67,12 @@ afterEach(() => {
 });
 
 function renderDialog(
-  props: { type?: 'asset' | 'collection'; published?: boolean; name?: string } = {},
+  props: {
+    type?: 'asset' | 'collection';
+    published?: boolean;
+    name?: string;
+    onPublished?: () => void;
+  } = {},
 ) {
   const type = props.type ?? 'asset';
   return render(
@@ -79,6 +85,7 @@ function renderDialog(
           onOpenChange={() => {}}
           target={{ type, id: type === 'asset' ? 'a1' : 'c1', name: props.name ?? 'hero.jpg' }}
           {...(type === 'asset' ? { published: props.published ?? true } : {})}
+          {...(props.onPublished ? { onPublished: props.onPublished } : {})}
         />
       </ToastProvider>
     </QueryClientProvider>,
@@ -209,6 +216,28 @@ describe('sharing an asset or a collection', () => {
       '[role="alert"]',
     ) as HTMLElement;
     expect(within(alert).getByText(/publish it first/)).toBeTruthy();
+  });
+
+  it('publishes an unpublished asset from the warning, then offers the form', async () => {
+    const onPublished = vi.fn();
+    renderDialog({ published: false, onPublished });
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish asset' }));
+    expect(await screen.findByRole('form', { name: 'New share link' })).toBeTruthy();
+    expect(client.publishAsset).toHaveBeenCalledExactlyOnceWith('a1');
+    expect(onPublished).toHaveBeenCalledOnce();
+    expect(screen.queryByText('Publish it to share it')).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('radio', { name: '7 days' })),
+    );
+  });
+
+  it('keeps the warning when the publish is refused, saying why', async () => {
+    client.publishAsset.mockRejectedValueOnce(new Error('Under embargo'));
+    renderDialog({ published: false });
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish asset' }));
+    await waitFor(() => expect(client.publishAsset).toHaveBeenCalledOnce());
+    expect(await screen.findByText('Publish it to share it')).toBeTruthy();
+    expect(screen.queryByRole('form', { name: 'New share link' })).toBeNull();
   });
 
   it('revokes a link after asking in a modal over the dialog', async () => {

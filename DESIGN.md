@@ -355,8 +355,8 @@ through the variables, never `env()` directly.
 
 - **Targets:** 44px for a finger. A small control keeps its drawn size and gets `hit-area`, an
   invisible box grown to 2.75rem on a coarse pointer. The shared buttons have it at every size,
-  a dialog's close and footer buttons included; raw buttons and links in the bars add it, and a
-  sheet's close grows to 2.75rem. A tab grows instead: on a coarse pointer each trigger
+  a dialog's and a sheet's close and footer buttons included; raw buttons and links in the bars add
+  it. A tab grows instead: on a coarse pointer each trigger
   is at least 44px and its list grows to hold it (a mouse keeps the 32px list), since a tab list
   that scrolls sideways would clip an invisible box to its own height.
 - **Fields:** 16px on a touch screen whatever their classes say (an unlayered rule in index.css),
@@ -415,8 +415,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   either way, focus goes back to the row's ⋯. **Deleting a type** can't be undone, so it confirms
   in a modal (The Blast Radius Rule): a dialog reads what depends on the type first, names in a warning Alert whatever blocks it (another type
   linking to it, a menu or redirect naming its entries, its URL pattern; then no confirm is
-  offered: no opt-in, no red button, only Keep it), and with entries offers "Also delete its N
-  entries" as an unticked opt-in. It is confirmed by typing the API ID, with a muted line tied to
+  offered: no opt-in, no red button, only Keep it), and with entries asks for a tick on "Delete its
+  N entries too", said to be required: a type can't go while it holds entries. It is confirmed by typing the API ID, with a muted line tied to
   the disabled button saying which steps are outstanding, and a refusal shows as a destructive
   Alert in the dialog. Keep it holds focus while the check runs; once it lands, focus moves to the
   first field. Deleted at once, focus moves to the next row's ⋯, or the page heading when it was the last. With its
@@ -693,7 +693,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   in 3 days (date)", `idle` stamps for Password and Downloads allowed or View only, then Copy
   (outline) and Revoke (ghost, an alert dialog over the Share dialog, since the link can't be
   brought back; focus goes to the heading). An unpublished asset
-  gets a warning Alert ("Publish it to share it") in place of the form; a role without
+  gets a warning Alert ("Publish it to share it", with an outline Publish asset that goes live at
+  once, as the library's Publish does, and hands on to the form) in place of the form; a role without
   content:publish, a warning Alert saying who can share, and no form; a refusal is a destructive
   Alert in the server's words, a field's beside the field as an alert (heard at once), tied to the
   expiry choice or the field by `aria-describedby`. Archiving one asset is an
@@ -866,8 +867,9 @@ for code and data blocks only.
 - **Sheet** (`ui/sheet.tsx`): built as a dialog is, from the side or from the bottom. Capped to the
   screen, less an on-screen keyboard and the safe areas; `SheetHeader` and `SheetFooter` stick to the
   edges of a body that scrolls (`bodyClassName` for its padding, `className` for the sheet's size),
-  and the close button sits outside the body, so a long sheet never scrolls its way out or its
-  action off a phone. A consumer never puts `overflow-y-auto` on the content.
+  and the close button (a dialog's: a filled 32px `icon-sm`) sits outside the body, so a long sheet
+  never scrolls its way out or its action off a phone. Its footer is a dialog's, stacked primary
+  first on a phone. A consumer never puts `overflow-y-auto` on the content.
   - **Title:** `section-title`, the same in a dialog, an alert dialog and a sheet.
   - **Closing:** focus goes back to what opened it, in a dialog, an alert dialog and a sheet alike
     (`ui/lib/focus-return.ts`): the control that was pressed even where Safari didn't focus it, a
@@ -882,7 +884,8 @@ for code and data blocks only.
     beside the field, and a notice that blocks the task (a refusal with a way on) is an Alert.
   - **Leaving:** a form with work in it never goes quietly (`cms/components/discard-guard.tsx`).
     Escape, a press outside, the close button and Cancel all ask in place of its buttons ("Discard
-    this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, and an
+    this redirect?", Keep editing focused, then a destructive Discard); Keep editing goes back to
+    the field last in use; saving doesn't ask, and an
     untouched form just closes. A save under way holds the form: Cancel waits, and a try at leaving
     says "Still saving". Only a save holds it; a read (Check, Fetch) stays closable. A save that
     never answers times out (`RequestTimeoutError`, in `req`): the form lets go and keeps what was

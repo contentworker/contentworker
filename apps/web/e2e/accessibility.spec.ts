@@ -1008,7 +1008,7 @@ test('a content type’s clone and delete dialogs have no accessibility violatio
   await more.click();
   await page.getByRole('menuitem', { name: 'Delete…' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('checkbox', { name: /Also delete its 1 entry/ })).toBeVisible();
+  await expect(dialog.getByRole('checkbox', { name: /Delete its 1 entry too/ })).toBeVisible();
   await scan(page, testInfo);
 });
 
