@@ -20,7 +20,8 @@ import {
   apiErrorMessage,
   apiFieldIssues,
   isForbidden,
-  RequestTimeoutError,
+  refusedSave,
+  UNCONFIRMED_SAVE,
 } from '~/cms/lib/management';
 import { useToast } from '~/cms/lib/toast';
 import { useNow } from '~/cms/lib/use-now';
@@ -65,6 +66,8 @@ export function AssetRightsForm(props: {
   onDirty?: (dirty: boolean) => void;
   /** Says when a save is under way, so the sheet holds rather than offer to discard it. */
   onSaving?: (saving: boolean) => void;
+  /** Says a save failed, so the sheet can tell a refusal from a save that may have landed. */
+  onSaveFailed?: (err: unknown) => void;
 }) {
   const { asset } = props;
   const { client } = useClient();
@@ -79,8 +82,10 @@ export function AssetRightsForm(props: {
   }, [dirty, onDirty]);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [refusal, setRefusal] = useState<{ forbidden: boolean; message: string } | null>(null);
-  // A save that didn't answer: it may have gone through, so it can't say it wasn't saved.
+  // A save with no answer to go on: it may have gone through, so it can't say it wasn't saved.
   const [unconfirmed, setUnconfirmed] = useState<string>();
+  // A refused retry doesn't speak for a save before it that may have landed.
+  const [mayHaveLanded, setMayHaveLanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const { onSaving } = props;
   useEffect(() => {
@@ -126,13 +131,15 @@ export function AssetRightsForm(props: {
       toast.success('Rights saved');
       props.onAssetChange?.(next);
     } catch (err) {
+      props.onSaveFailed?.(err);
       const fields = apiFieldIssues(err);
       setIssues(fields);
       const named = (['license', 'credit', 'expiresAt', 'embargoUntil'] as const).some(
         (f) => fields[`rights.${f}`] ?? fields[f],
       );
-      if (err instanceof RequestTimeoutError) {
-        setUnconfirmed(err.message);
+      if (!refusedSave(err)) {
+        setUnconfirmed(UNCONFIRMED_SAVE);
+        setMayHaveLanded(true);
       } else if (isForbidden(err)) {
         setRefusal({
           forbidden: true,
@@ -193,7 +200,11 @@ export function AssetRightsForm(props: {
       {refusal && (
         <Alert variant={refusal.forbidden ? 'warning' : 'destructive'}>
           <AlertTitle>
-            {refusal.forbidden ? 'Your role can’t set rights' : 'The rights weren’t saved'}
+            {refusal.forbidden
+              ? 'Your role can’t set rights'
+              : mayHaveLanded
+                ? 'This try was refused'
+                : 'The rights weren’t saved'}
           </AlertTitle>
           <AlertDescription>{refusal.message}</AlertDescription>
         </Alert>

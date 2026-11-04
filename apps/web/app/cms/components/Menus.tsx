@@ -53,6 +53,7 @@ import {
   type MenuItemPreview,
   type MenuItemStatus,
   type MenuSummary,
+  refusedSave,
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -349,6 +350,8 @@ function MenuEditor(props: { client: ManagementClient; id: string; onClose: () =
   const preview = useScopedQuery(['menus', id, 'preview'], () => client.previewMenu(id)).data;
   const [menu, setMenu] = useState<Menu>();
   const [stale, setStale] = useState(false);
+  // A write here may have landed, so the revision that moved may be this person's own.
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const [editing, setEditing] = useState<MenuItem | 'new' | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [said, setSaid] = useState('');
@@ -403,6 +406,7 @@ function MenuEditor(props: { client: ManagementClient; id: string; onClose: () =
       if (done) toast.success(done);
       return next;
     } catch (err) {
+      if (!refusedSave(err)) setUnconfirmed(true);
       if (isStale(err)) setStale(true);
       else toast.error(apiErrorMessage(err));
       throw err;
@@ -442,7 +446,9 @@ function MenuEditor(props: { client: ManagementClient; id: string; onClose: () =
         <Alert variant="warning">
           <AlertTitle>This menu changed since you opened it</AlertTitle>
           <AlertDescription>
-            Someone else saved it. Reload to see their version; your last change wasn’t saved.
+            {unconfirmed
+              ? 'That may be your own save that didn’t confirm, or someone else’s. Reload to see what’s there; your last change wasn’t saved.'
+              : 'Someone else saved it. Reload to see their version; your last change wasn’t saved.'}
           </AlertDescription>
           <AlertAction>
             <Button
@@ -452,6 +458,7 @@ function MenuEditor(props: { client: ManagementClient; id: string; onClose: () =
                 setMenu(await client.getMenu(id));
                 await invalidate(['menus']);
                 setStale(false);
+                setUnconfirmed(false);
               }}
             >
               Reload
@@ -680,9 +687,10 @@ function MenuDialog(props: {
       });
       props.onOpenChange(false);
     } catch (err) {
+      const said = guard.saveFailed(err);
       const fields = apiFieldIssues(err);
       setIssues(fields);
-      if (Object.keys(fields).length === 0) setError(apiErrorMessage(err));
+      if (Object.keys(fields).length === 0) setError(said);
     } finally {
       setBusy(false);
     }
@@ -832,12 +840,13 @@ export function MenuItemDialog(props: {
       });
       props.onOpenChange(false);
     } catch (err) {
+      const said = guard.saveFailed(err);
       // The API names the item by its path (items[3].link.url): the last part is the field.
       const fields = Object.fromEntries(
         Object.entries(apiFieldIssues(err)).map(([f, m]) => [f.split('.').at(-1) ?? f, m]),
       );
       setIssues(fields);
-      if (Object.keys(fields).length === 0 && !isStale(err)) setError(apiErrorMessage(err));
+      if (Object.keys(fields).length === 0 && !isStale(err)) setError(said);
       if (isStale(err)) props.onOpenChange(false);
     } finally {
       setBusy(false);

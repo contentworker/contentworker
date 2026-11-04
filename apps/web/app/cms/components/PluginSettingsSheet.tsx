@@ -21,7 +21,8 @@ import {
   type ManagementClient,
   type PluginSettingField,
   type PluginSettingsView,
-  RequestTimeoutError,
+  refusedSave,
+  UNCONFIRMED_SAVE,
 } from '~/cms/lib/management';
 import {
   defaultHint,
@@ -152,7 +153,7 @@ function SettingsForm(props: {
   const [draft, setDraft] = useState<SettingsDraft>(() => settingsDraft(view));
   const [issues, setIssues] = useState<Readonly<Record<string, string>>>({});
   const [refusal, setRefusal] = useState<Refusal | null>(null);
-  // A save that didn't answer: it may have gone through, so it can't say it wasn't saved.
+  // A save with no answer to go on: it may have gone through, so it can't say it wasn't saved.
   const [unconfirmed, setUnconfirmed] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -188,18 +189,20 @@ function SettingsForm(props: {
       toast.success(`${plugin.name}: settings saved`);
       props.onSaved(next);
     } catch (err) {
+      props.guard.saveFailed(err);
       const { byKey, form } = settingsIssues(view.fields, err);
       setIssues(byKey);
       const first = view.fields.find((f) => byKey[f.key]);
-      if (err instanceof RequestTimeoutError) {
-        setUnconfirmed(err.message);
+      if (!refusedSave(err)) {
+        setUnconfirmed(UNCONFIRMED_SAVE);
       } else if (isForbidden(err)) {
         setRefusal({ kind: 'forbidden', message: FORBIDDEN });
       } else if (err instanceof ApiError && err.status === 409) {
         setRefusal({
           kind: 'conflict',
-          message:
-            'Someone saved these settings after you opened them. Reload to see their changes; what you typed here is discarded.',
+          message: props.guard.unconfirmed
+            ? 'These settings moved on after you opened them, perhaps by your own save that didn’t confirm. Reload to see what’s there; what you typed here is discarded.'
+            : 'Someone saved these settings after you opened them. Reload to see their changes; what you typed here is discarded.',
         });
       } else if (!first || form.length > 0) {
         setRefusal({ kind: 'error', message: form[0] ?? apiErrorMessage(err) });
@@ -223,7 +226,9 @@ function SettingsForm(props: {
               ? 'Your role can’t change plugin settings'
               : refusal.kind === 'conflict'
                 ? 'These settings changed'
-                : 'The settings weren’t saved'}
+                : props.guard.unconfirmed
+                  ? 'This try was refused'
+                  : 'The settings weren’t saved'}
           </AlertTitle>
           <AlertDescription>
             {refusal.message}

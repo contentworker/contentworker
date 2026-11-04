@@ -29,7 +29,7 @@ import { AssetIngestBadges, BADGE_BUTTON_FOCUS } from '~/cms/components/assets/A
 import { AssetRightsForm } from '~/cms/components/assets/AssetRightsForm';
 import { AssetShareDialog } from '~/cms/components/assets/AssetShareDialog';
 import { AssetVersions } from '~/cms/components/assets/AssetVersions';
-import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
+import { DiscardAsk, UNCONFIRMED_NOTE, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
@@ -124,8 +124,15 @@ export function AssetDetailSheet(props: {
     open: props.open,
     dirty: dirty || rightsDirty,
     saving: busy || rightsSaving,
+    subject: assetId,
     onOpenChange: props.onOpenChange,
   });
+  // What leaving would lose. Each half saves on its own, so neither speaks for the other.
+  const unsaved = !dirty
+    ? 'The rights here are not saved.'
+    : rightsDirty
+      ? 'Alt text, tags, the focal point and rights here are not saved.'
+      : 'Alt text, tags and the focal point here are not saved.';
 
   if (!asset) return null;
   const isImage = asset.file.contentType.startsWith('image/');
@@ -268,7 +275,7 @@ export function AssetDetailSheet(props: {
       if (rightsDirty) guard.onOpenChange(false);
       else props.onOpenChange(false);
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e));
+      setSaveError(guard.saveFailed(e));
     } finally {
       setBusy(false);
     }
@@ -318,7 +325,7 @@ export function AssetDetailSheet(props: {
               {confirmOpen && (
                 <InlineConfirm
                   message="Open the original and discard your changes?"
-                  note="Alt text, tags, the focal point and rights here are not saved."
+                  note={guard.unconfirmed ? UNCONFIRMED_NOTE : unsaved}
                   cancelLabel="Keep editing"
                   onCancel={() => setConfirmOpen(null)}
                 >
@@ -667,6 +674,7 @@ export function AssetDetailSheet(props: {
                 onAssetChange={props.onAssetChange}
                 onDirty={setRightsDirty}
                 onSaving={setRightsSaving}
+                onSaveFailed={guard.saveFailed}
               />
             </TabsContent>
           </Tabs>
@@ -679,7 +687,7 @@ export function AssetDetailSheet(props: {
             <DiscardAsk
               guard={guard}
               message={`Discard your changes to ${asset.file.fileName}?`}
-              {...(dirty ? {} : { note: 'The rights here are not saved.' })}
+              note={unsaved}
             >
               <Button type="button" onClick={save} disabled={busy}>
                 {busy ? 'Saving…' : 'Save metadata'}

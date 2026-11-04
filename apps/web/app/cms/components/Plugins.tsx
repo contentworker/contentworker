@@ -559,7 +559,7 @@ function InstallPluginDialog(props: {
       }
       close(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(guard.saveFailed(err));
     } finally {
       setBusy(false);
     }
@@ -800,7 +800,7 @@ function UpgradePluginDialog(props: {
       await props.onUpgrade({ manifest, bundle, approvedCapabilities: approved });
       props.onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(guard.saveFailed(err));
     } finally {
       setBusy(false);
     }

@@ -72,7 +72,7 @@ export function WebhookDialog(props: {
       });
       props.onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(guard.saveFailed(err));
     } finally {
       setBusy(false);
     }

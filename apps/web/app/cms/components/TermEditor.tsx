@@ -85,7 +85,7 @@ export function TermEditor({
     try {
       await onSave(changes);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(guard.saveFailed(err));
     } finally {
       setSaving(false);
     }
