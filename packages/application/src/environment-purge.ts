@@ -5,7 +5,7 @@ import {
 } from '@contentworker/domain';
 import type { AssetGate, BlobStore } from '@contentworker/ports';
 import { type AssetSearchDeps, removeAssetFromSearch } from './asset-search';
-import { allAssets, isAssetFileKey } from './assets';
+import { allAssets, isAssetFileKey, otherEnvironments } from './assets';
 import type { AppContext } from './context';
 
 /**
@@ -142,7 +142,7 @@ export async function resumeStalledEnvironmentPurges(
 /**
  * Deletes a removed environment's asset files, except any another environment's asset records
  * still point at: an environment import keeps asset ids and their files, so a clone shares its
- * source's files. Keys are `${space}/${environment}/${assetId}/…` (assetObjectKey).
+ * source's files, in another space too. Keys are `${space}/${environment}/${assetId}/…` (assetObjectKey).
  */
 async function deleteEnvironmentFiles(
   ctx: AppContext,
@@ -154,9 +154,7 @@ async function deleteEnvironmentFiles(
   // files are left behind instead, as deleteAssetFiles does.
   if (!isReservedSpaceId(scope.spaceId)) {
     const inUse = new Set<string>();
-    for (const env of await ctx.store.spaces.listEnvironments(scope.spaceId)) {
-      if (env.id === scope.environmentId) continue;
-      const other = { spaceId: scope.spaceId, environmentId: env.id };
+    for (const other of await otherEnvironments(ctx, scope)) {
       for (const asset of await allAssets(ctx, other)) inUse.add(asset.id);
     }
     // An asset's files (every version's) stay while another environment's asset of the same id
