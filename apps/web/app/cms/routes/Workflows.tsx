@@ -36,7 +36,7 @@ import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
 import { plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import { RequestTimeoutError, type WorkflowListItem } from '../lib/management';
+import { refusedSave, type WorkflowListItem } from '../lib/management';
 import { useContentTypesQuery, useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
@@ -240,9 +240,6 @@ function NewWorkflowForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A workflow's name isn't unique, so a create that didn't confirm can't be retried blindly: it
-  // could make a second one. The button says what it would do.
-  const [unconfirmed, setUnconfirmed] = useState(false);
   const nameId = useId();
   const templateId = useId();
   const hintId = useId();
@@ -276,13 +273,10 @@ function NewWorkflowForm({
         graph: fromTemplate?.graph ?? { nodes: [], edges: [] },
       });
       await onCreated(workflow.id);
-      setUnconfirmed(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      const timedOut = err instanceof RequestTimeoutError;
-      setUnconfirmed(timedOut);
+      setError(guard.saveFailed(err));
       // It may have landed: the list behind the sheet is where to check.
-      if (timedOut) onUnconfirmed();
+      if (!refusedSave(err)) onUnconfirmed();
     } finally {
       setBusy(false);
     }
@@ -356,7 +350,8 @@ function NewWorkflowForm({
           <DiscardAsk guard={guard} message="Discard this workflow?">
             <GuardCancel guard={guard} />
             <Button type="submit" disabled={busy}>
-              {busy ? 'Creating…' : unconfirmed ? 'Create again' : 'Create workflow'}
+              {/* A name isn't unique, so a retry could make a second one: the button says so. */}
+              {busy ? 'Creating…' : guard.unconfirmed ? 'Create again' : 'Create workflow'}
             </Button>
           </DiscardAsk>
         </SheetFooter>

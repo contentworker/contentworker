@@ -13,7 +13,7 @@ import {
   type ImpliedContentAction,
   type ListedContentAction,
 } from '@contentworker/domain';
-import type { RoleSummary } from './management';
+import { type RoleSummary, SaveRefusedError } from './management';
 
 export { CONTENT_ACTIONS } from '@contentworker/domain';
 
@@ -109,7 +109,7 @@ export async function saveRoleGrants(
 ): Promise<RoleSummary> {
   const current = await client.getRole(opened.id);
   if (!sameGrants(current.contentGrants, opened.contentGrants)) {
-    throw new Error(
+    throw new SaveRefusedError(
       `${current.name}’s content access changed while you were editing it. Close this and open it again to see the change.`,
     );
   }

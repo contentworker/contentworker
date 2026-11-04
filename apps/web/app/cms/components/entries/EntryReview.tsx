@@ -16,7 +16,7 @@ import { humanize } from '../../lib/format';
 import { ApiError, type ManagementClient, type PreviewEntry } from '../../lib/management';
 import { entryRef, fetchEntriesById } from '../dashboard/entry-titles';
 import { FieldValue, type LinkTitles, linkOf, valueText } from '../EntryDiff';
-import { KindBadge } from '../RevisionDiff';
+import { changeCount, KindBadge } from '../RevisionDiff';
 
 /** One value's before and after, as words. A field holds one per locale that changed. */
 interface ReviewRow {
@@ -75,6 +75,8 @@ export const hiddenGoLive = (n: number, alone: boolean) =>
   } live.`;
 
 const isChanged = (f: ReviewField) => f.kind !== 'unchanged';
+/** How many fields a person would see changed: a field added empty isn't one. */
+export const changedCount = (fields: readonly ReviewField[]) => fields.filter(isChanged).length;
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v) && !('nodeType' in v) && !linkOf(v);
@@ -456,13 +458,11 @@ export function EntryDiffView({
     );
   if (review.status === 'failed') return <ReviewFailed onRetry={onRetry ?? review.retry} />;
   if (review.status !== 'ready') return <p className="text-muted-foreground text-sm">Comparing…</p>;
-  const count = review.fields.filter(isChanged).length;
+  const count = changedCount(review.fields);
   return (
     <div className="space-y-3">
       {counted ? (
-        <p className="text-muted-foreground text-sm">
-          {`${count} field${count === 1 ? '' : 's'} changed`}
-        </p>
+        <p className="text-muted-foreground text-sm">{changeCount(count, review.hiddenChanges)}</p>
       ) : null}
       {review.hiddenChanges > 0 ? (
         <HiddenChanges count={review.hiddenChanges} alone={count === 0} />

@@ -23,7 +23,7 @@ import { Empty, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { count, plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import type { ContentTypeEntryCounts } from '../lib/management';
+import { apiErrorMessage, type ContentTypeEntryCounts } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
@@ -69,13 +69,24 @@ export function ContentTypesOverview() {
   const countsFor = (apiId: string): ContentTypeEntryCounts | undefined =>
     countsQuery.data?.find((c) => c.contentType === apiId);
 
-  const save = (draft: ContentTypeDraft) =>
-    run(async () => {
-      await client.saveContentType(draft);
-      await client.publishContentType(draft.apiId);
-      reload();
-      toast.success(`Content type “${draft.name}” saved`);
+  // A failure goes back to the dialog, which keeps the form and says what happened.
+  const save = async (draft: ContentTypeDraft) => {
+    let failed: unknown;
+    await run(async () => {
+      try {
+        await client.saveContentType(draft);
+        // The draft has landed by now, so a refused publish doesn't mean nothing was saved.
+        await client.publishContentType(draft.apiId).catch((err) => {
+          throw new Error(`The draft saved but wasn’t published: ${apiErrorMessage(err)}`);
+        });
+        reload();
+        toast.success(`Content type “${draft.name}” saved`);
+      } catch (err) {
+        failed = err;
+      }
     });
+    if (failed !== undefined) throw failed;
+  };
 
   const publish = (ct: ContentType) =>
     run(async () => {

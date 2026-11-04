@@ -50,7 +50,7 @@ import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
 import { humanize, plural, statusLabel } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import { RequestTimeoutError } from '../lib/management';
+import { refusedSave } from '../lib/management';
 import {
   useAllEntriesQuery,
   useContentTypesQuery,
@@ -339,7 +339,7 @@ export function Releases() {
             });
             if (failed === undefined) return;
             // It may have landed: the list behind the dialog is where to check.
-            if (failed instanceof RequestTimeoutError) await reload();
+            if (!refusedSave(failed)) await reload();
             throw failed;
           }}
           busy={busy}
@@ -366,9 +366,6 @@ export function CreateReleaseDialog(props: {
   // Its own write, not `busy`, which any action on the page sets.
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
-  // A release has no natural key, so a create that didn't confirm can't be retried blindly: it
-  // could make a second one. The button says what it would do.
-  const [unconfirmed, setUnconfirmed] = useState(false);
   const guard = useDiscardGuard({
     saving,
     open: props.open,
@@ -381,10 +378,8 @@ export function CreateReleaseDialog(props: {
     setError(undefined);
     try {
       await props.onCreate({ title: title.trim(), description: description.trim() || undefined });
-      setUnconfirmed(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setUnconfirmed(err instanceof RequestTimeoutError);
+      setError(guard.saveFailed(err));
     } finally {
       setSaving(false);
     }
@@ -396,7 +391,6 @@ export function CreateReleaseDialog(props: {
       setTitle('');
       setDescription('');
       setError(undefined);
-      setUnconfirmed(false);
     }
   }, [props.open]);
 
@@ -436,7 +430,8 @@ export function CreateReleaseDialog(props: {
               disabled={!title.trim() || props.busy}
               onClick={() => void create()}
             >
-              {unconfirmed ? 'Create again' : 'Create'}
+              {/* No natural key, so a retry could make a second one: the button says so. */}
+              {guard.unconfirmed ? 'Create again' : 'Create'}
             </Button>
           </DiscardAsk>
         </DialogFooter>

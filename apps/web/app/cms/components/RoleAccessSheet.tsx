@@ -14,7 +14,7 @@ import {
 import { useId, useState } from 'react';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
-import { apiErrorMessage, type RoleSummary } from '../lib/management';
+import type { RoleSummary } from '../lib/management';
 import {
   actionAvailable,
   actionNeeds,
@@ -63,7 +63,7 @@ export function RoleAccessSheet(props: {
     try {
       await props.onSave(grants);
     } catch (err) {
-      setError(apiErrorMessage(err));
+      setError(guard.saveFailed(err));
     } finally {
       setBusy(false);
     }

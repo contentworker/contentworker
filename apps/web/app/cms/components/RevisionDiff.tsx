@@ -296,6 +296,13 @@ function FieldRow(props: {
 /** Fields that changed which this person may not read: never "No field changes". */
 const hiddenChanged = (n: number) => `${n} ${n === 1 ? 'field' : 'fields'} you can’t read changed`;
 
+/** How many fields changed, the ones this person can't read included. */
+export function changeCount(changed: number, hidden: number): string {
+  if (changed === 0) return hidden > 0 ? hiddenChanged(hidden) : 'No field changes';
+  const count = `${changed} ${changed === 1 ? 'field' : 'fields'} changed`;
+  return hidden > 0 ? `${count} · ${hiddenChanged(hidden)}` : count;
+}
+
 export function RevisionDiff(props: {
   diff: VersionDiff;
   contentType?: ContentType;
@@ -317,14 +324,7 @@ export function RevisionDiff(props: {
       <p className="text-muted-foreground text-xs">
         <span className="font-mono">{props.fromLabel}</span> →{' '}
         <span className="font-mono">{props.toLabel}</span> ·{' '}
-        {changed.length === 0
-          ? diff.hiddenChanges > 0
-            ? hiddenChanged(diff.hiddenChanges)
-            : 'No field changes'
-          : `${changed.length} ${changed.length === 1 ? 'field' : 'fields'} changed`}
-        {changed.length > 0 && diff.hiddenChanges > 0
-          ? ` · ${hiddenChanged(diff.hiddenChanges)}`
-          : null}
+        {changeCount(changed.length, diff.hiddenChanges)}
       </p>
       {changed.length > 0 ? (
         <ul className="space-y-3">

@@ -107,7 +107,7 @@ vi.mock('~/cms/lib/client-context', () => ({
 
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { AssetLibrary } = await import('~/cms/components/AssetLibrary');
-const { ApiError } = await import('~/cms/lib/management');
+const { ApiError, RequestTimeoutError } = await import('~/cms/lib/management');
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -398,6 +398,52 @@ describe('the Rights tab', () => {
 
     expect(await screen.findByRole('alertdialog', { name: /Discard your changes/ })).toBeTruthy();
     expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('never says the rights aren’t saved once their save didn’t confirm', async () => {
+    assets = [asset()];
+    client.setAssetRights.mockRejectedValueOnce(new RequestTimeoutError(true));
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    fireEvent.change(within(sheet).getByLabelText('License'), { target: { value: 'CC0' } });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save rights' }));
+    await within(sheet).findByText(/didn’t confirm/);
+
+    // The form tells the sheet its save is over in an effect: until then leaving only waits.
+    const ask = await waitFor(() => {
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
+      return screen.getByRole('alertdialog', { name: /Discard your changes/ });
+    });
+    expect(ask.textContent).not.toContain('The rights here are not saved.');
+    expect(ask.textContent).toContain('may have gone through');
+  });
+
+  it('a refused retry doesn’t say the rights weren’t saved', async () => {
+    assets = [asset()];
+    client.setAssetRights
+      .mockRejectedValueOnce(new RequestTimeoutError(true))
+      .mockRejectedValueOnce(new ApiError(409, 'POST → 409'));
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    fireEvent.change(within(sheet).getByLabelText('License'), { target: { value: 'CC0' } });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save rights' }));
+    await within(sheet).findByText(/didn’t confirm/);
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save rights' }));
+    await within(sheet).findByText('This try was refused');
+    expect(within(sheet).queryByText('The rights weren’t saved')).toBeNull();
+  });
+
+  it('says only what the form holds is unsaved, once the rights beside it went', async () => {
+    assets = [asset()];
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Details');
+    fireEvent.change(within(sheet).getByLabelText(/^Alt text/), { target: { value: 'A pier' } });
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    const ask = await screen.findByRole('alertdialog', { name: /Discard your changes/ });
+    expect(ask.textContent).toContain('Alt text, tags and the focal point here are not saved.');
+    expect(ask.textContent).not.toContain('Nothing has been saved');
   });
 
   it('Save metadata saves, then asks rather than closing over unsaved rights', async () => {

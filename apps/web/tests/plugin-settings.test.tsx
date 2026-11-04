@@ -2,7 +2,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginSettingsSheet } from '~/cms/components/PluginSettingsSheet';
-import { ApiError, type ManagementClient, type PluginSettingsView } from '~/cms/lib/management';
+import {
+  ApiError,
+  type ManagementClient,
+  type PluginSettingsView,
+  RequestTimeoutError,
+} from '~/cms/lib/management';
 import { settingsDraft, settingsIssues, settingsPatch } from '~/cms/lib/plugin-settings';
 import { ToastProvider } from '~/cms/lib/toast';
 
@@ -285,6 +290,53 @@ describe('PluginSettingsSheet', () => {
     expect(await screen.findByText('These settings changed')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Reload settings' }));
     await waitFor(() => expect(client.getPluginSettings).toHaveBeenCalledTimes(2));
+  });
+
+  it('says a save with no answer may have landed, however the answer was lost', async () => {
+    const client = fakeClient(view());
+    client.setPluginSettings.mockRejectedValueOnce(new ApiError(503, 'unavailable'));
+    open(client);
+    fireEvent.change(await screen.findByLabelText('Site name'), { target: { value: 'Acme' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('didn’t confirm');
+    expect(screen.queryByText('The settings weren’t saved')).toBeNull();
+  });
+
+  it('doesn’t blame someone else for a conflict its own lost save may have caused', async () => {
+    const client = fakeClient(view());
+    client.setPluginSettings
+      .mockRejectedValueOnce(new RequestTimeoutError(true))
+      .mockRejectedValueOnce(
+        new ApiError(409, 'conflict', { error: { code: 'conflict', message: 'changed' } }),
+      );
+    open(client);
+    fireEvent.change(await screen.findByLabelText('Site name'), { target: { value: 'Acme' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    expect(await screen.findByText('These settings changed')).toBeTruthy();
+    expect(screen.queryByText(/Someone saved/)).toBeNull();
+    expect(screen.getByText(/your own save that didn’t confirm/)).toBeTruthy();
+  });
+
+  it('a refused retry doesn’t say the settings weren’t saved, and the question hedges', async () => {
+    const client = fakeClient(view());
+    client.setPluginSettings
+      .mockRejectedValueOnce(new RequestTimeoutError(true))
+      .mockRejectedValueOnce(new ApiError(400, 'bad'));
+    open(client);
+    fireEvent.change(await screen.findByLabelText('Site name'), { target: { value: 'Acme' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await screen.findByText('This try was refused');
+    expect(screen.queryByText('The settings weren’t saved')).toBeNull();
+    // The form tells the sheet its save is over in an effect: until then leaving only waits.
+    const ask = await waitFor(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      return screen.getByRole('alertdialog', { name: /Discard/ });
+    });
+    expect(ask.textContent).toContain('may have gone through');
   });
 
   it('says a role without space:admin can’t, in place of a form', async () => {

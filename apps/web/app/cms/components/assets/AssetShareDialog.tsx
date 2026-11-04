@@ -40,7 +40,8 @@ import {
   apiErrorMessage,
   apiFieldIssues,
   isForbidden,
-  RequestTimeoutError,
+  refusedSave,
+  UNCONFIRMED_SAVE,
 } from '~/cms/lib/management';
 import { useInvalidate, useScopedQuery } from '~/cms/lib/queries';
 import { useToast } from '~/cms/lib/toast';
@@ -97,6 +98,7 @@ export function AssetShareDialog(props: {
   const [refusal, setRefusal] = useState<string | null>(null);
   // A link that didn't answer may exist: the list below is where to check, so it is read again.
   const [unconfirmed, setUnconfirmed] = useState<string>();
+  const [mayHaveLanded, setMayHaveLanded] = useState(false);
   // The link just made: it takes focus (its Copy button), so it can be copied at once.
   const [made, setMade] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
@@ -170,8 +172,9 @@ export function AssetShareDialog(props: {
     } catch (err) {
       const fields = apiFieldIssues(err);
       setIssues(fields);
-      if (err instanceof RequestTimeoutError) {
-        setUnconfirmed(err.message);
+      if (!refusedSave(err)) {
+        setUnconfirmed(UNCONFIRMED_SAVE);
+        setMayHaveLanded(true);
         void links.refetch();
       } else if (isForbidden(err)) setRefusal(FORBIDDEN);
       else if (!fields.expiresAt && !fields.password) setRefusal(apiErrorMessage(err));
@@ -241,7 +244,10 @@ export function AssetShareDialog(props: {
       {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
       {refusal && (
         <Alert variant="destructive">
-          <AlertTitle>The link wasn’t created</AlertTitle>
+          {/* A refused retry doesn't speak for a try before it that may have landed. */}
+          <AlertTitle>
+            {mayHaveLanded ? 'This try was refused' : 'The link wasn’t created'}
+          </AlertTitle>
           <AlertDescription>{refusal}</AlertDescription>
         </Alert>
       )}
