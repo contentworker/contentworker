@@ -314,6 +314,50 @@ export async function getPublishedEntry(
 }
 
 /**
+ * A singleton type's published entry, rendered as `getPublishedEntry` renders one (`GET
+ * …/singletons/:apiId`): the type and its entry in one round trip with the space config, then
+ * linked entries per include level. Not found unless `apiId` names a type whose PUBLISHED
+ * revision is a singleton (a draft turning the flag on or off changes nothing here until it is
+ * published) and that has a published entry, so a client can't read an ordinary type's first
+ * entry through it. While a draft that turned the flag off waits to be published, the type can
+ * gain more entries (the claim is given back with the draft); Delivery then serves the published
+ * one with the lowest entry id, until the turn-off is published.
+ *
+ * Not kept in this tag cache (`ctx.cache`), but the Delivery Worker's entrypoint caches the
+ * response like every other, until the scope's next purge. Everything that changes the answer
+ * purges it: the entry's publish or unpublish (trashing unpublishes), and the type's publish or a
+ * published save that changes its flag (`content_type.published`), or its delete.
+ */
+export async function getDeliveredSingleton(
+  ctx: AppContext,
+  scope: Scope,
+  apiId: string,
+  opts: RenderOptions = {},
+): Promise<DeliveredEntry> {
+  const depth = clampDepth(opts.include);
+  const reads = opts.reads ?? deliveryReads(ctx);
+  const read = await reads.read(scope, { singleton: { contentType: apiId }, config: true });
+  const config = spaceConfig(scope, read.config);
+  assertDeliveredLocale(config, opts.locale);
+  if (!read.singleton?.contentType || !read.singleton.publishedSingleton) {
+    throw new NotFoundError('Singleton', apiId);
+  }
+  const snapshot = read.singleton.entry;
+  if (!snapshot) throw new NotFoundError('Published singleton entry', apiId);
+  const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts, reads, config);
+  return render(
+    scope,
+    snapshot,
+    config,
+    opts,
+    depth,
+    new Set([snapshot.entryId]),
+    new Set(),
+    fetched,
+  );
+}
+
+/**
  * The locale-preference chain used for query field resolution, passed to the
  * store so filtering/ordering/search resolve the same locale on every backend
  * (jsonb key order is not insertion order).
@@ -602,6 +646,7 @@ export const LIVE_EVENT_TYPES: ReadonlySet<DomainEvent['type']> = new Set([
   'asset.published',
   'asset.unpublished',
   'content_type.published',
+  'content_type.deleted',
   'release.published',
   'environment_alias.changed',
 ]);
@@ -647,6 +692,7 @@ export function liveEventFor(
       };
     case 'entry.unpublished':
     case 'content_type.published':
+    case 'content_type.deleted':
       return canAccessContentType(p, 'read', event.contentTypeApiId) ? event : null;
     case 'environment_alias.changed':
       return event;

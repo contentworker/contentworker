@@ -34,6 +34,12 @@ export interface ContentType {
    * from it too.
    */
   readonly urlPattern?: string;
+  /**
+   * At most one entry outside the trash: a site's settings, its home page, its footer. Delivery
+   * serves it at `GET …/singletons/:apiId`. Present only when true. Held by a unique claim
+   * ({@link singletonClaim}), so two concurrent creates can't both win.
+   */
+  readonly singleton?: true;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -45,6 +51,8 @@ export interface ContentTypeDraft {
   fields: FieldDefinition[];
   /** `null` or `''` clears it on a revision. */
   urlPattern?: string | null;
+  /** Holds at most one entry ({@link ContentType.singleton}). Left out on a revision, kept. */
+  singleton?: boolean;
 }
 
 /**
@@ -66,6 +74,7 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
     displayField: draft.displayField,
     fields: [...draft.fields].map(withoutBlankGuidance).sort((a, b) => a.position - b.position),
     ...(urlPattern ? { urlPattern } : {}),
+    ...(draft.singleton ? { singleton: true as const } : {}),
     version: 1,
     status: 'draft',
   };
@@ -78,7 +87,9 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
  */
 export function reviseContentType(
   current: ContentType,
-  changes: Partial<Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern'>>,
+  changes: Partial<
+    Pick<ContentTypeDraft, 'name' | 'displayField' | 'fields' | 'urlPattern' | 'singleton'>
+  >,
 ): ContentType {
   const fields = changes.fields ?? [...current.fields];
   const displayField = changes.displayField ?? current.displayField;
@@ -86,13 +97,15 @@ export function reviseContentType(
   // Checked against the revised fields too: removing the slug a kept pattern names is refused.
   const pattern = changes.urlPattern === undefined ? current.urlPattern : changes.urlPattern;
   const urlPattern = pattern ? checkUrlPattern(pattern, fields) : undefined;
-  const { urlPattern: _old, ...rest } = current;
+  const singleton = changes.singleton ?? current.singleton === true;
+  const { urlPattern: _old, singleton: _was, ...rest } = current;
   return {
     ...rest,
     name: changes.name ?? current.name,
     displayField,
     fields: [...fields].map(withoutBlankGuidance).sort((a, b) => a.position - b.position),
     ...(urlPattern ? { urlPattern } : {}),
+    ...(singleton ? { singleton: true as const } : {}),
     version: current.version + 1,
     status: 'draft',
   };
@@ -593,4 +606,38 @@ export function urlPath(
     return encodeURIComponent(value);
   });
   return missing ? null : path;
+}
+
+/** A field of another content type that may link to a given one (`validations.linkContentTypes`). */
+export interface LinkingField {
+  readonly contentType: string;
+  /** The field's path, through components and blocks: `body.cta.target`. */
+  readonly field: string;
+}
+
+/**
+ * The fields of `types` other than `apiId` itself whose links are restricted to it, at any depth:
+ * a Link or list of links (`validations` or `items.validations`), inside a component, a repeater
+ * or a blocks variant (named in the path). A type's links to itself don't count: they go with it.
+ */
+export function fieldsLinkingTo(
+  types: readonly Pick<ContentType, 'apiId' | 'fields'>[],
+  apiId: string,
+): LinkingField[] {
+  const found: LinkingField[] = [];
+  const walk = (contentType: string, fields: readonly FieldDefinition[], path: string) => {
+    for (const f of fields) {
+      const at = path ? `${path}.${f.apiId}` : f.apiId;
+      const targets = [
+        ...(f.validations?.linkContentTypes ?? []),
+        ...(f.items?.validations?.linkContentTypes ?? []),
+      ];
+      if (targets.includes(apiId)) found.push({ contentType, field: at });
+      if (f.fields) walk(contentType, f.fields, at);
+      if (f.items?.fields) walk(contentType, f.items.fields, at);
+      for (const v of f.items?.variants ?? []) walk(contentType, v.fields, `${at}.${v.apiId}`);
+    }
+  };
+  for (const t of types) if (t.apiId !== apiId) walk(t.apiId, t.fields, '');
+  return found;
 }

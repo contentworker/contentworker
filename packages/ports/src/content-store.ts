@@ -1481,7 +1481,10 @@ export interface DeliveryReadRequest {
    * locales the space doesn't deliver). Present when the asset or page holds anything.
    */
   readonly assetLocales?: boolean;
-  /** Every content type in the scope. */
+  /**
+   * Every content type in the scope, as Delivery sees it: `singleton` is the flag as last
+   * published (what `…/singletons/:apiId` serves by), so GraphQL's singleton roots agree with it.
+   */
   readonly contentTypes?: boolean;
   /** The space's rendition presets. */
   readonly renditions?: boolean;
@@ -1512,6 +1515,24 @@ export interface DeliveryReadRequest {
   readonly menu?: { readonly handle: string };
   /** A page of the sitemap's published entries. */
   readonly sitemap?: SitemapQuery;
+  /**
+   * One content type and its published entry: what `GET …/singletons/:apiId` serves, in the same
+   * batch. The entry is the type's first published one by id (a singleton has at most one).
+   */
+  readonly singleton?: { readonly contentType: string };
+}
+
+/** A content type and its published entry, as {@link DeliveryReadRequest.singleton} reads them. */
+export interface SingletonRead {
+  /** Null when no content type has the apiId. */
+  readonly contentType: ContentType | null;
+  /**
+   * Whether the type's published revision is a singleton: what Delivery serves by, so a draft
+   * revision turning the flag on or off changes nothing there until the type is published.
+   */
+  readonly publishedSingleton: boolean;
+  /** Null when none of its entries is published. */
+  readonly entry: PublishedEntry | null;
 }
 
 /**
@@ -1582,6 +1603,7 @@ export interface DeliveryReadResult {
   readonly sitemap?: SitemapPage;
   /** Null when no menu has the handle. */
   readonly menu?: MenuRead | null;
+  readonly singleton?: SingletonRead;
 }
 
 /** Delivery's reads, batched. Read-only: it never writes, so it is safe on a replica session. */
@@ -1687,6 +1709,28 @@ export interface ContentTypeRepo {
   list(scope: Scope): Promise<ContentType[]>;
   /** Upserts the definition at its version. */
   save(scope: Scope, contentType: ContentType): Promise<void>;
+  /**
+   * Inserts a new definition, never over another: a type of the same apiId already there (one
+   * written after the caller looked) is a `TransactionConflictError` (at commit, inside a unit).
+   */
+  create(scope: Scope, contentType: ContentType): Promise<void>;
+  /**
+   * Writes nothing: a unit of work's guard that the type still exists with this `singleton` flag
+   * and, with `entries`, holds no entry outside the trash but those. A type deleted or flipped
+   * since the caller read it, or an entry created meanwhile, is a `TransactionConflictError` (at
+   * commit, inside a unit).
+   */
+  guard(
+    scope: Scope,
+    apiId: string,
+    expected: { readonly singleton: boolean; readonly entries?: readonly string[] },
+  ): Promise<void>;
+  /**
+   * Deletes the definition while it is still at `version` and no entry of the type exists (the
+   * trash included), both judged by the delete itself: a type revised since (or gone), or an
+   * entry written in the meantime, is a `TransactionConflictError` (at commit, inside a unit).
+   */
+  delete(scope: Scope, apiId: string, version: number): Promise<void>;
 }
 
 /** A superseded entry version whose body can move to object storage. */
@@ -1863,6 +1907,15 @@ export interface EntryRepo {
   contentTypesOf(scope: Scope, ids: readonly string[]): Promise<ReadonlyMap<string, string>>;
   /** Lists draft/current entries (the Preview read path), newest-affected first. */
   list(scope: Scope, query: EntryQuery): Promise<EntryWithFields[]>;
+  /**
+   * A page of one content type's entry ids, the trash included, by id after `after`: an id-only
+   * keyset read (no fields, no bodies) for callers that enumerate a whole type.
+   */
+  idsOfType(
+    scope: Scope,
+    contentTypeApiId: string,
+    page: { readonly after?: string; readonly limit: number },
+  ): Promise<string[]>;
   /**
    * How many entries this scope holds, per content type and status (trash included, as
    * `archived`): one grouped count, never a page of rows measured. Groups with no entries are
@@ -2125,7 +2178,12 @@ export type BulkJobAction =
   | 'import'
   | 'asset_reindex'
   | EntryTrashBulkJobAction
-  | AssetBulkJobAction;
+  | AssetBulkJobAction
+  /**
+   * Deletes a content type's entries (each trashed, then purged), then the type: `config` names
+   * it as `{ contentType }`.
+   */
+  | 'content_type_delete';
 
 /** What an entry trash bulk job does to each entry: each through its single-entry use-case. */
 export type EntryTrashBulkJobAction = 'trash' | 'restore' | 'purge';
@@ -2250,6 +2308,11 @@ export interface BulkJobRepo {
       failures: readonly BulkItemFailure[];
     },
   ): Promise<BulkJob>;
+  /**
+   * Merges `patch` into the job's `config` (top-level keys replaced): what an action records about
+   * its own outcome after the job ends, for its readers. No-op for an unknown job.
+   */
+  mergeConfig(scope: Scope, id: string, patch: Readonly<Record<string, unknown>>): Promise<void>;
   /** Transitions a running job terminal; no-ops (returns null) otherwise. */
   finalizeJob(scope: Scope, id: string, status: BulkJobStatus, at: Date): Promise<BulkJob | null>;
   /**

@@ -240,6 +240,51 @@ describe('entries_query over MCP', () => {
     }
   });
 
+  it('serves a preview key no writer ids on singleton_get', async () => {
+    await createContentType(deps.ctx, scope, {
+      apiId: 'settings',
+      name: 'Settings',
+      displayField: 'title',
+      singleton: true,
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: false,
+          position: 0,
+        },
+      ],
+    });
+    await publishContentType(deps.ctx, scope, 'settings');
+    const writer: Principal = {
+      spaceId: SPACE,
+      kind: 'user',
+      subject: 'person-1',
+      scopes: [SCOPES.contentWrite, SCOPES.previewRead],
+    };
+    const author = await connect(deps, writer);
+    const created = await author.callTool({
+      name: 'entries_create',
+      arguments: { space: SPACE, contentType: 'settings', fields: { title: { 'en-US': 'One' } } },
+    });
+    expect(created.isError).toBeFalsy();
+
+    const read = async (client: Client) =>
+      text(
+        await client.callTool({
+          name: 'singleton_get',
+          arguments: { space: SPACE, contentType: 'settings' },
+        }),
+      ) as Record<string, unknown>;
+    expect(await read(author)).toMatchObject({ createdBy: 'person-1', updatedBy: 'person-1' });
+    const theirs = await read(await connect(deps, READER));
+    expect(theirs).toMatchObject({ contentType: 'settings' });
+    expect(theirs).not.toHaveProperty('createdBy');
+    expect(theirs).not.toHaveProperty('updatedBy');
+  });
+
   it('serves a preview key no writer ids in version history or the trash', async () => {
     const writer: Principal = {
       spaceId: SPACE,

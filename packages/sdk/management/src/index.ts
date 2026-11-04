@@ -106,6 +106,8 @@ export interface ContentType {
   readonly fields: readonly FieldDefinition[];
   /** Where its entries live on the site, e.g. `/blog/{slug}`. */
   readonly urlPattern?: string;
+  /** Holds at most one entry, read by type with the delivery client's `getSingleton`. */
+  readonly singleton?: true;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -141,6 +143,22 @@ export interface FieldValuesPage {
   readonly nextCursor?: string;
 }
 
+/** What still depends on a content type (`contentTypes.dependents`). */
+export interface ContentTypeDependents {
+  readonly contentType: string;
+  readonly entries: { readonly live: number; readonly trashed: number };
+  /** Other types' fields whose links are restricted to it; `field` is a path. */
+  readonly linkedFrom: readonly { readonly contentType: string; readonly field: string }[];
+  readonly menus: readonly { readonly id: string; readonly handle: string }[];
+  readonly redirects: readonly { readonly id: string; readonly source: string }[];
+  readonly urlPattern?: string;
+}
+
+/** What `contentTypes.delete` did: the type is gone, or a job is deleting its entries first. */
+export type ContentTypeDeletion =
+  | { readonly deleted: true }
+  | { readonly deleted: false; readonly job: BulkJob };
+
 export interface ContentTypeDraft {
   readonly apiId: string;
   readonly name: string;
@@ -152,6 +170,12 @@ export interface ContentTypeDraft {
    * `null` clears it.
    */
   readonly urlPattern?: string | null;
+  /**
+   * Holds at most one entry (site settings, a home page): a second is refused, and Delivery
+   * serves the one at `GET …/singletons/:apiId`. Turning it on is refused while the type has more
+   * than one entry. Left out of a revision, unchanged.
+   */
+  readonly singleton?: boolean;
 }
 
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
@@ -1387,6 +1411,21 @@ export function createManagementClient(opts: ManagementClientOptions) {
           `${envBase}/content-types/${e(apiId)}/fields/${e(field)}/values`,
           opts,
         ),
+      /** What depends on a content type: why `delete` would be refused. */
+      dependents: (apiId: string) =>
+        get<ContentTypeDependents>(`${envBase}/content-types/${e(apiId)}/dependents`),
+      /**
+       * Deletes a content type; a 409 names what still depends on it.
+       * `purgeEntries` deletes its entries too, as a bulk job (`{ deleted: false, job }`): the
+       * type goes when the job completes cleanly.
+       */
+      delete: (apiId: string, o: { readonly purgeEntries?: boolean } = {}) =>
+        del<ContentTypeDeletion>(`${envBase}/content-types/${e(apiId)}`, {
+          purge_entries: o.purgeEntries ? 'true' : undefined,
+        }),
+      /** Copies the definition under a new apiId and name, as a draft with no entries. */
+      clone: (apiId: string, to: { readonly apiId: string; readonly name: string }) =>
+        post<ContentType>(`${envBase}/content-types/${e(apiId)}/clone`, to),
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

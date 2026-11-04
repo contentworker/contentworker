@@ -79,7 +79,7 @@ Everything below is built and tested on v2.
   recovery codes, self-service password reset by an emailed code, with the person forwarded to the
   api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a stateful edge object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (235 tools, plus skills and the docs
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (239 tools, plus skills and the docs
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached at the edge) in front of an edge-cached entrypoint keyed by visibility profile, with ETags,
@@ -194,10 +194,13 @@ in-browser model, page-per-language translation, and rich text or styles stored 
   as an `IN` over the reference edges with one JSON parameter, Preview scans the draft's fields.
 - [ ] **Conditional field rules.** `rules` on a field (hide or disable when a sibling matches),
   evaluated in the domain so a hidden field skips `required` on every surface.
-- [ ] **Singleton types.** At most one entry; Delivery `GET /singletons/:apiId`; the admin opens the
-  editor directly.
-- [ ] **Delete and clone a content type.** Delete refuses while entries exist or runs as a resumable
-  trash-then-purge job; clone copies the definition under a new `apiId`.
+- [x] **Singleton types.** At most one entry outside the trash, held by a unique claim on every
+  create path; Delivery and Preview `GET /singletons/:apiId`, a GraphQL root without `id`,
+  `singleton_get`, the SDK's `getSingleton`; the admin opens the editor directly.
+- [x] **Delete and clone a content type.** Delete refuses, naming them, while entries, linking
+  types, menus, slug redirects or a URL pattern depend on it, or runs as a resumable
+  trash-then-purge job (`content_type_delete`); `content_type.deleted`; clone copies the
+  definition under a new `apiId` (REST, MCP, SDK, the admin's type menu).
 - [x] **Authorship.** `created_by`, `modified_by`, `created_at` and `first_published_at` on entries
   and `created_by` on versions (0024, expand-only), stamped on every write path from the request's
   principal or the agent, workflow, plugin or scheduler acting; served as `sys` fields in

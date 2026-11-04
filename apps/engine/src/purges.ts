@@ -40,6 +40,8 @@ export const PURGING_EVENTS = new Set<string>([
   // Delivery serves each published type's URL pattern (`GET …/routes`), builds GraphQL from it,
   // and lists the type's entries in the sitemap by it.
   'content_type.published',
+  // A deleted type leaves GraphQL, the routes and the sitemap.
+  'content_type.deleted',
   'release.published',
   'environment_alias.changed',
   'environment.deleted',

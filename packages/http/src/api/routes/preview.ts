@@ -4,6 +4,7 @@ import {
   clampCount,
   getPreviewAsset,
   getPreviewEntry,
+  getPreviewSingleton,
   listPreviewAssets,
   listPreviewEntryPage,
   parseEntryQuery,
@@ -40,7 +41,7 @@ import {
 } from '../auth';
 import { doc } from '../docs/openapi';
 import { deliveredAsset, deliveredAssetPage } from '../docs/schemas/assets';
-import { previewEntryPage } from '../docs/schemas/entries';
+import { previewEntry, previewEntryPage } from '../docs/schemas/entries';
 import { parseDeliveredAssetQuery } from '../query';
 
 const scopeOf = (c: Context<AuthVars>): Scope => ({
@@ -248,6 +249,34 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
           c.req.param('id'),
           locale !== undefined ? { locale } : {},
         ),
+      );
+    },
+  );
+
+  app.get(
+    `${BASE}/singletons/:apiId`,
+    doc('Preview', 'Get a singleton’s draft/current entry', {
+      ok: previewEntry,
+      description:
+        'The entry of a singleton content type as it is now, a draft included, by the type’s ' +
+        'apiId. 404 when the type is not a singleton or has no entry outside the trash.',
+      query: { locale: 'Resolve one locale' },
+    }),
+    principalMiddleware(deps),
+    environmentMiddleware(deps),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const principal = c.get('principal');
+      const apiId = c.req.param('apiId');
+      authorizeContent(principal, 'read', apiId);
+      const entry = await getPreviewSingleton(ctx, scopeOf(c), apiId, {
+        locale: c.req.query('locale'),
+      });
+      return c.json(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
       );
     },
   );

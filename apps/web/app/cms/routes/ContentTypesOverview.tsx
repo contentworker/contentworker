@@ -1,10 +1,22 @@
 import type { ContentType, ContentTypeDraft } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { Skeleton, SkeletonText } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
-import { Plus, Shapes } from 'lucide-react';
-import { useState } from 'react';
+import { MoreHorizontalIcon, Plus, Shapes } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router';
+import {
+  CloneContentTypeDialog,
+  DeleteContentTypeDialog,
+} from '~/cms/components/ContentTypeActions';
+import { ContentTypeDeleteJobCard } from '~/cms/components/ContentTypeDeleteJob';
 import { ContentTypeDialog } from '~/cms/components/ContentTypeDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Empty, PageHeader } from '~/cms/components/page';
@@ -12,7 +24,7 @@ import { StatusBadge } from '~/cms/components/status';
 import { count, plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
 import type { ContentTypeEntryCounts } from '../lib/management';
-import { useScopedQuery } from '../lib/queries';
+import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
@@ -24,9 +36,36 @@ import { useContentOutlet } from './content-context';
  */
 export function ContentTypesOverview() {
   const { client, run } = useClient();
-  const { types, typesPending, reload } = useContentOutlet();
+  const { types, typesPending, reload, deleteJob } = useContentOutlet();
   const toast = useToast();
   const [dialog, setDialog] = useState<{ open: boolean; initial?: ContentType }>({ open: false });
+  // A type's menu: Clone and Delete, each in its own dialog.
+  const [cloning, setCloning] = useState<ContentType | null>(null);
+  const [deleting, setDeleting] = useState<ContentType | null>(null);
+  const invalidate = useInvalidate();
+  // Each row's ⋯ button, so focus comes back to it when a dialog it opened closes (the menu item
+  // that opened the dialog is gone by then, and focus would otherwise fall to the page).
+  const triggers = useRef(new Map<string, HTMLButtonElement>());
+  // Set when a delete removed the type at once: its row (and button) go with it.
+  const deletedNow = useRef(false);
+  const focusTrigger = (apiId: string) => (event: Event) => {
+    event.preventDefault();
+    triggers.current.get(apiId)?.focus();
+  };
+  /** After a delete: the next row's button, or the page's heading when it was the last row. */
+  const focusAfterDelete = (apiId: string) => (event: Event) => {
+    if (!deletedNow.current) return focusTrigger(apiId)(event);
+    event.preventDefault();
+    deletedNow.current = false;
+    const next = types[types.findIndex((t) => t.apiId === apiId) + 1];
+    const to = next ? triggers.current.get(next.apiId) : undefined;
+    if (to) return to.focus();
+    const heading = document.querySelector<HTMLElement>('h1');
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus();
+    }
+  };
   // Under the entries prefix, so every entry mutation's invalidation refreshes them too. Silent:
   // the counts are a summary beside the list, which works without them.
   const countsQuery = useScopedQuery(['entries', 'counts'], () => client.contentTypeEntryCounts(), {
@@ -71,6 +110,8 @@ export function ContentTypesOverview() {
           </Button>
         }
       />
+      {/* Kept by the Content layout, so it is still here after a visit to an entry. */}
+      <ContentTypeDeleteJobCard job={deleteJob} />
       {typesPending ? (
         // Never "No content types yet" before the types have arrived.
         <div className="card overflow-clip" aria-busy="true">
@@ -115,14 +156,18 @@ export function ContentTypesOverview() {
                     <Td>
                       <div className="flex flex-wrap items-center gap-2">
                         <Link
-                          to={`/content/${ct.apiId}`}
+                          // A singleton opens its one entry, as the sidebar does.
+                          to={ct.singleton ? `/content/${ct.apiId}/entry` : `/content/${ct.apiId}`}
                           className="font-medium text-foreground hover:underline"
                         >
                           {ct.name}
                         </Link>
                         {ct.status === 'draft' ? <StatusBadge status="draft" /> : null}
                       </div>
-                      <div className="font-mono text-muted-foreground text-xs">{ct.apiId}</div>
+                      <div className="text-muted-foreground text-xs">
+                        <span className="font-mono">{ct.apiId}</span>
+                        {ct.singleton ? ' · one entry only' : null}
+                      </div>
                     </Td>
                     <Td numeric label="Entries">
                       {figure(n?.total)}
@@ -151,6 +196,34 @@ export function ContentTypesOverview() {
                         >
                           Edit
                         </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              ref={(el) => {
+                                if (el) triggers.current.set(ct.apiId, el);
+                                else triggers.current.delete(ct.apiId);
+                              }}
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`More actions for “${ct.name}”`}
+                            >
+                              <MoreHorizontalIcon aria-hidden="true" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-auto min-w-40">
+                            <DropdownMenuItem onSelect={() => setCloning(ct)}>
+                              Clone…
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onSelect={() => setDeleting(ct)}
+                            >
+                              Delete…
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </Td>
                   </Tr>
@@ -159,6 +232,38 @@ export function ContentTypesOverview() {
             </TableBody>
           </Table>
         </div>
+      )}
+
+      {cloning && (
+        <CloneContentTypeDialog
+          key={cloning.apiId}
+          source={cloning}
+          open
+          onOpenChange={(open) => !open && setCloning(null)}
+          onCloseAutoFocus={focusTrigger(cloning.apiId)}
+          onCloned={(clone) => {
+            reload();
+            toast.success(`Cloned as “${clone.name}”, a draft`);
+          }}
+        />
+      )}
+      {deleting && (
+        <DeleteContentTypeDialog
+          key={deleting.apiId}
+          type={deleting}
+          open
+          onOpenChange={(open) => !open && setDeleting(null)}
+          onCloseAutoFocus={focusAfterDelete(deleting.apiId)}
+          onDeleted={(job) => {
+            if (job) deleteJob.start(job, deleting);
+            else {
+              deletedNow.current = true;
+              reload();
+              void invalidate(['entries']);
+              toast.success(`Deleted “${deleting.name}”`);
+            }
+          }}
+        />
       )}
 
       {/* Key on the target so the form seeds fresh each time it opens. */}

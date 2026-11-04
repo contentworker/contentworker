@@ -50,6 +50,19 @@ text included), of the sitemap's alternates, of GraphQL, of search matches and s
 live stream, and of what list filters, ordering and `query=` compare. A locale the space doesn't
 have at all still resolves to the default.
 
+### Singletons
+
+A [singleton type](/guides/content-modeling/#singletons) has one entry, read by the type's API ID:
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/singletons/settings?locale=en-US&include=1" \
+  -H "Authorization: Bearer $CDA"
+```
+
+It returns the published entry in the same shape as `…/entries/{id}`, and takes `locale` and
+`include`. It answers `404` when the type is not a singleton as last published, or its entry is
+not published.
+
 ### Filters
 
 Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>`:
@@ -216,7 +229,8 @@ curl -s "$CDN/delivery/$SPACE/main/graphql" \
 ```
 
 Each content type gets `article(id:, locale:)` and `articleCollection(...)` root queries, plus
-`asset(id:)` and `search(query:, topK:)`. A collection takes:
+`asset(id:)` and `search(query:, topK:)`. A singleton type's root takes no `id`: `settings(locale:)`
+is its published entry. A collection takes:
 
 | Argument | Meaning |
 | --- | --- |
@@ -308,7 +322,8 @@ last change) and `firstPublishedAt`, each null when unknown, and `sys.createdBy=
 caller's own entries (for an API key, `me` is its kind, so every key of that kind). `createdBy`
 and `updatedBy` go only to people on the team and to keys with a management scope: a preview key
 gets entries without them, and filtering or sorting on them from one answers `400`. Delivery serves `firstPublishedAt` and no other authorship: who created or
-changed an entry names people and keys. `…/entries/{id}` also accepts
+changed an entry names people and keys. `…/singletons/{apiId}` returns a singleton's entry as it
+is now, a draft included. `…/entries/{id}` also accepts
 `?preview_token=`, a shareable link token minted from the entry, in place of a bearer key. Roles and
 denied fields apply as they do on Delivery.
 

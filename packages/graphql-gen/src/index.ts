@@ -215,7 +215,7 @@ function scalarFor(field: FieldDefinition): GraphQLOutputType {
  * Builds a GraphQL Delivery schema from a set of published content types. Each
  * content type becomes an object type (scalar fields typed; rich/link fields as
  * JSON), with `<type>` and `<type>Collection` root queries plus `asset` and
- * `search`. Field values come from the resolver-rendered entry, so locale
+ * `search`. A singleton type's `<type>` takes no `id` to read its one entry. Field values come from the resolver-rendered entry, so locale
  * flattening and reference resolution are reused, not reimplemented.
  */
 export function buildDeliverySchema(contentTypes: readonly ContentType[]): GraphQLSchema {
@@ -273,12 +273,22 @@ export function buildDeliverySchema(contentTypes: readonly ContentType[]): Graph
     }
     const objectType = new GraphQLObjectType<ResolvedEntry>({ name: cap(ct.apiId), fields });
 
-    query[ct.apiId] = {
-      type: objectType,
-      args: { id: { type: new GraphQLNonNull(GraphQLID) }, ...localeArg },
-      resolve: (_root, args: { id: string; locale?: string }, ctx: DeliveryContext) =>
-        ctx.resolvers.entry(ct.apiId, args.id, args.locale),
-    };
+    // A singleton's root needs no id: without one it is the type's one published entry.
+    query[ct.apiId] = ct.singleton
+      ? {
+          type: objectType,
+          args: { id: { type: GraphQLID }, ...localeArg },
+          resolve: (_root, args: { id?: string | null; locale?: string }, ctx: DeliveryContext) =>
+            args.id
+              ? ctx.resolvers.entry(ct.apiId, args.id, args.locale)
+              : ctx.resolvers.singleton(ct.apiId, args.locale),
+        }
+      : {
+          type: objectType,
+          args: { id: { type: new GraphQLNonNull(GraphQLID) }, ...localeArg },
+          resolve: (_root, args: { id: string; locale?: string }, ctx: DeliveryContext) =>
+            ctx.resolvers.entry(ct.apiId, args.id, args.locale),
+        };
     query[`${ct.apiId}Collection`] = {
       type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(objectType))),
       args: {

@@ -169,6 +169,12 @@ export const contentTypes = sqliteTable(
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
     /** Where the type's entries live on the site (0017_redirects). */
     urlPattern: text('url_pattern'),
+    /** Holds at most one entry (0027_singleton_types). */
+    singleton: integer('singleton', { mode: 'boolean' }).notNull().default(false),
+    /** `singleton` as last published: what Delivery serves by (0028_published_singleton). */
+    publishedSingleton: integer('published_singleton', { mode: 'boolean' })
+      .notNull()
+      .default(false),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.apiId] })],
 );

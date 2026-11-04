@@ -608,6 +608,7 @@ export const WEBHOOK_TOPICS = [
   'entry.published',
   'entry.unpublished',
   'content_type.published',
+  'content_type.deleted',
 ] as const;
 export type WebhookTopic = (typeof WEBHOOK_TOPICS)[number];
 
@@ -833,6 +834,16 @@ export interface EntrySuggestion {
 }
 
 /** A durable job's progress, as the management API reports it. */
+/** What still depends on a content type (`GET …/content-types/:apiId/dependents`). */
+export interface ContentTypeDependents {
+  readonly contentType: string;
+  readonly entries: { readonly live: number; readonly trashed: number };
+  readonly linkedFrom: readonly { readonly contentType: string; readonly field: string }[];
+  readonly menus: readonly { readonly id: string; readonly handle: string }[];
+  readonly redirects: readonly { readonly id: string; readonly source: string }[];
+  readonly urlPattern?: string;
+}
+
 export interface BulkJobSummary {
   readonly id: string;
   readonly action:
@@ -847,7 +858,8 @@ export interface BulkJobSummary {
     | 'asset_tag'
     | 'asset_publish'
     | 'asset_unpublish'
-    | 'asset_archive';
+    | 'asset_archive'
+    | 'content_type_delete';
   readonly status: 'running' | 'completed' | 'cancelled';
   readonly totalItems: number;
   readonly totalChunks: number;
@@ -856,6 +868,14 @@ export interface BulkJobSummary {
   readonly failed: number;
   readonly createdAt?: string;
   readonly completedAt?: string;
+  /**
+   * The action's own settings. A `content_type_delete` job names its type, and records what
+   * became of it once that is decided (`typeDeletion`): absent until the job ends.
+   */
+  readonly config?: {
+    readonly contentType?: string;
+    readonly typeDeletion?: { readonly deleted: boolean; readonly reason?: string };
+  };
 }
 
 /**
@@ -1420,6 +1440,25 @@ export function createManagementClient(
     publishContentType(apiId: string): Promise<ContentType> {
       return req('POST', `${mgmt}/content-types/${apiId}/published`);
     },
+    /** What depends on a content type: why deleting it would be refused. */
+    contentTypeDependents(apiId: string): Promise<ContentTypeDependents> {
+      return req('GET', `${mgmt}/content-types/${encodeURIComponent(apiId)}/dependents`);
+    },
+    /**
+     * Deletes a content type nothing depends on; with `purgeEntries`, its entries first, as a job
+     * (follow it with {@link getBulkJob}): the type goes when the job completes cleanly.
+     */
+    deleteContentType(
+      apiId: string,
+      opts: { readonly purgeEntries?: boolean } = {},
+    ): Promise<{ deleted: true } | { deleted: false; job: BulkJobSummary }> {
+      const q = opts.purgeEntries ? '?purge_entries=true' : '';
+      return req('DELETE', `${mgmt}/content-types/${encodeURIComponent(apiId)}${q}`);
+    },
+    /** Copies a type's definition under a new apiId and name, as a draft with no entries. */
+    cloneContentType(apiId: string, to: { apiId: string; name: string }): Promise<ContentType> {
+      return req('POST', `${mgmt}/content-types/${encodeURIComponent(apiId)}/clone`, to);
+    },
     /** Entries per content type by status, from one grouped count (the content overview). */
     async contentTypeEntryCounts(): Promise<ContentTypeEntryCounts[]> {
       const r = await req<{ items: ContentTypeEntryCounts[] }>(
@@ -1480,6 +1519,22 @@ export function createManagementClient(
       const entry = r.items.find((e) => e.id === id);
       if (!entry) throw new ApiError(404, `Entry ${id} was not found`);
       return entry;
+    },
+
+    /**
+     * A singleton type's one entry as it is now, or null when it has none outside the trash (or
+     * the type is not a singleton): what the sidebar opens for the type.
+     */
+    async getSingletonEntry(contentType: string): Promise<PreviewEntry | null> {
+      try {
+        return await req<PreviewEntry>(
+          'GET',
+          `${preview}/singletons/${encodeURIComponent(contentType)}`,
+        );
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
     },
 
     // --- trash lifecycle -------------------------------------------------

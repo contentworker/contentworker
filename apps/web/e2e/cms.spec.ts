@@ -1267,3 +1267,129 @@ test('the editor names who created and last edited an entry, and Mine lists one�
   await page.getByRole('button', { name: 'Clear' }).click();
   await expect(mine).toHaveAttribute('aria-pressed', 'false');
 });
+
+test('a singleton type opens its one entry, and refuses a second', async ({ page, request }) => {
+  const stamp = Date.now();
+  const name = `Settings ${stamp}`;
+  const apiId = `settings${stamp}`;
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'New content type' }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'New content type' });
+  await dialog.getByLabel('Name', { exact: true }).fill(name);
+  await dialog.getByLabel('API ID', { exact: true }).fill(apiId);
+  await dialog.getByRole('checkbox', { name: /one entry only/i }).check();
+  await dialog.getByRole('button', { name: 'Create content type' }).click();
+  await expect(dialog).toBeHidden();
+
+  // The sidebar and the overview open the entry, not a list: a new one while there is none.
+  await expect(
+    page.locator(`nav[aria-labelledby="content-types-nav"] a[href="/content/${apiId}/entry"]`),
+  ).toHaveCount(1);
+  const row = page
+    .getByRole('main')
+    .getByRole('table')
+    .getByRole('row', { name: new RegExp(name) });
+  await expect(row.getByText('one entry only')).toBeVisible();
+  await row.getByRole('link', { name, exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/content/${apiId}/new$`));
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByRole('textbox', { name: /Title/ }).fill('Our site');
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/content/${apiId}/[0-9a-f-]{36}$`));
+  const editorUrl = page.url();
+
+  // With its entry made, the same link opens that entry.
+  await openCms(page, `/content/${apiId}/entry`);
+  await expect(page).toHaveURL(editorUrl);
+  await expect(page.getByRole('heading', { name: 'Our site' })).toBeVisible();
+
+  // A second entry is refused, whoever asks.
+  const second = await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: apiId,
+    fields: { title: { 'en-US': 'Another' } },
+  });
+  expect(second.status()).toBe(409);
+});
+
+test('a content type is cloned, then deleted with its entries, from its menu', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  const apiId = `scratch${stamp}`;
+  const made = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId,
+    name: `Scratch ${stamp}`,
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+    ],
+  });
+  expect(made.status()).toBe(201);
+  await api(request, 'POST', `${MGMT}/content-types/${apiId}/published`);
+
+  await openCms(page, '/content');
+  const focused = () =>
+    page.evaluate(() => {
+      const at = document.activeElement;
+      return at?.getAttribute('aria-label') ?? at?.tagName ?? null;
+    });
+  // Closed without cloning, focus goes back to the row's menu button, not to the page.
+  await page.getByRole('button', { name: `More actions for “Scratch ${stamp}”` }).click();
+  await page.getByRole('menuitem', { name: 'Clone…' }).click();
+  await expect(page.getByRole('dialog', { name: `Clone “Scratch ${stamp}”` })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect.poll(focused).toBe(`More actions for “Scratch ${stamp}”`);
+
+  await page.getByRole('button', { name: `More actions for “Scratch ${stamp}”` }).click();
+  await page.getByRole('menuitem', { name: 'Clone…' }).click();
+  const clone = page.getByRole('dialog', { name: `Clone “Scratch ${stamp}”` });
+  await clone.getByLabel('Name', { exact: true }).fill(`Copy ${stamp}`);
+  await clone.getByRole('button', { name: 'Clone content type' }).click();
+  await expect(page.getByText(`Cloned as “Copy ${stamp}”, a draft`)).toBeVisible();
+  const copyId = `copy${stamp}`;
+  expect((await api(request, 'GET', `${MGMT}/content-types/${copyId}`)).status()).toBe(200);
+
+  // The original gets an entry; deleting it then takes the entries with it, as a job.
+  await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: apiId,
+    fields: { title: { 'en-US': 'Doomed' } },
+  });
+  await page.getByRole('button', { name: `More actions for “Scratch ${stamp}”` }).click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  const remove = page.getByRole('dialog', { name: `Delete “Scratch ${stamp}”?` });
+  await remove.getByLabel(/to confirm/).fill(apiId);
+  await expect(remove.getByRole('button', { name: 'Delete type and entries' })).toBeDisabled();
+  await remove.getByRole('checkbox', { name: /Also delete its 1 entry/ }).check();
+  await remove.getByRole('button', { name: 'Delete type and entries' }).click();
+  await expect(
+    page.getByRole('status').filter({ hasText: `Deleted 1 entry of “Scratch ${stamp}”` }),
+  ).toBeVisible({
+    timeout: 30_000,
+  });
+  // The card waits for the type's own delete, recorded on the job, and says when it is done.
+  await expect(
+    page.getByRole('alert').filter({ hasText: `“Scratch ${stamp}” was deleted, with its entries` }),
+  ).toBeVisible({ timeout: 30_000 });
+  expect((await api(request, 'GET', `${MGMT}/content-types/${apiId}`)).status()).toBe(404);
+  await expect(page.getByRole('link', { name: `Scratch ${stamp}`, exact: true })).toHaveCount(0);
+
+  // The clone has no entries: deleted at once.
+  await page.getByRole('button', { name: `More actions for “Copy ${stamp}”` }).click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  const second = page.getByRole('dialog', { name: `Delete “Copy ${stamp}”?` });
+  await second.getByLabel(/to confirm/).fill(copyId);
+  await second.getByRole('button', { name: 'Delete content type' }).click();
+  await expect(page.getByText(`Deleted “Copy ${stamp}”`)).toBeVisible();
+  expect((await api(request, 'GET', `${MGMT}/content-types/${copyId}`)).status()).toBe(404);
+  // Its row is gone: focus moves to the next row's menu button, or the page's heading.
+  await expect.poll(focused).toMatch(/^(More actions for “(?!Copy \d+”).*”|H1)$/);
+});

@@ -11,6 +11,7 @@ import {
   getDeliveredCollection,
   getDeliveredConcept,
   getDeliveredMenu,
+  getDeliveredSingleton,
   getDeliveredTag,
   getPublishedEntry,
   listDeliveredAssets,
@@ -199,6 +200,26 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       });
       const principal = c.get('principal');
       authorizeContent(principal, 'read', entry.contentType);
+      return c.json({
+        ...entry,
+        fields: maskDeliveredFields(principal, entry.contentType, entry.fields),
+      });
+    },
+  );
+
+  app.get(
+    `${BASE}/singletons/:apiId`,
+    describe('getSingleton'),
+    requireScope(SCOPES.deliveryRead),
+    async (c) => {
+      const principal = c.get('principal');
+      const apiId = c.req.param('apiId');
+      // Before the read: a type the key can't read answers as the entry route would.
+      authorizeContent(principal, 'read', apiId);
+      const entry = await getDeliveredSingleton(ctx, scopeOf(c), apiId, {
+        locale: c.req.query('locale'),
+        include: clampCount(c.req.query('include'), MAX_INCLUDE_DEPTH, { min: 0 }),
+      });
       return c.json({
         ...entry,
         fields: maskDeliveredFields(principal, entry.contentType, entry.fields),
@@ -542,7 +563,8 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       ? types.filter((t) => canAccessContentType(principal, 'read', t.apiId))
       : types;
     const shape = grantedTypes
-      .map((t) => `${t.apiId}@${t.version}`)
+      // The singleton flag changes a root's shape on a publish that keeps the version.
+      .map((t) => `${t.apiId}@${t.version}${t.singleton ? ':singleton' : ''}`)
       .sort()
       .join(',');
     const key = `${scope.spaceId}:${scope.environmentId}:${shape}`;

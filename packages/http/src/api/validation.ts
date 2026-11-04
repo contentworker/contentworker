@@ -344,7 +344,16 @@ export const contentTypeBody = z.object({
       'Where its entries live on the site, e.g. /blog/{slug} ({id}, {locale} or a Slug field). ' +
         'A publish that changes the slug redirects the old path. null clears it.',
     ),
+  singleton: z
+    .boolean()
+    .optional()
+    .describe(
+      'Holds at most one entry (site settings, a home page), served at GET …/singletons/:apiId. ' +
+        'Turning it on is refused while the type has more than one entry. Left out, unchanged.',
+    ),
 });
+/** A content type's copy: its new apiId and name. */
+export const cloneContentTypeBody = z.object({ apiId: zId, name: zShort });
 export const createEntryBody = z.object({
   contentTypeApiId: zId,
   fields: zFieldValues.optional(),

@@ -146,7 +146,7 @@ delivery bind them by `script_name`) and handles:
   touched by an event in `PURGING_EVENTS` (`entry.published`, `entry.unpublished`,
   `entries.published_bulk`, `asset.published`, `asset.unpublished`, `asset.deleted`,
   `asset.rights_changed`, `asset_collection.changed`, `taxonomy.changed`, `redirects.changed`,
-  `menus.changed`, `content_type.published`, `release.published`, `environment_alias.changed`,
+  `menus.changed`, `content_type.published`, `content_type.deleted`, `release.published`, `environment_alias.changed`,
   `environment.deleted`; the sitemap is purged with the rest of the scope; `asset.ingested` only
   when `published`; `asset_renditions.changed` purges every environment of the space). Asset events
   also write or remove the media gate (`assetGate`, key-value store) and send the media worker's

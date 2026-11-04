@@ -10,6 +10,7 @@ import type { DeliveryResolvers, ResolvedEntry } from '@contentworker/ports';
 import { getDeliveredAsset } from './asset-delivery';
 import type { AppContext } from './context';
 import {
+  getDeliveredSingleton,
   getPublishedEntry,
   listPublishedEntries,
   maskDeliveredFields,
@@ -60,6 +61,22 @@ export function deliveryGraphResolvers(
         });
         if (e.contentType !== contentType) return null;
         // Same field-level masking as the REST single-entry path.
+        return {
+          ...e,
+          fields: maskDeliveredFields(principal, e.contentType, e.fields),
+        } as ResolvedEntry;
+      } catch {
+        return null;
+      }
+    },
+    singleton: async (contentType, locale) => {
+      if (!canAccessContentType(principal, 'read', contentType)) return null;
+      try {
+        const e = await getDeliveredSingleton(ctx, scope, contentType, {
+          locale: await localeOr(locale),
+          include: 1,
+          reads,
+        });
         return {
           ...e,
           fields: maskDeliveredFields(principal, e.contentType, e.fields),

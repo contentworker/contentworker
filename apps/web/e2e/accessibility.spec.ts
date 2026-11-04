@@ -859,3 +859,77 @@ test('the taxonomy tag table and its term editor have no accessibility violation
   await expect(sheet.getByLabel('Slug')).toHaveValue(`a11y-${stamp}`);
   await scan(page, testInfo, ['[role="dialog"]']);
 });
+
+test('a singleton’s entry, opened by its type, has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const apiId = `a11ySettings${Date.now()}`;
+  const made = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId,
+    name: 'A11y settings',
+    displayField: 'title',
+    singleton: true,
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+    ],
+  });
+  expect(made.status()).toBe(201);
+  await api(request, 'POST', `${MGMT}/content-types/${apiId}/published`);
+  await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: apiId,
+    fields: { title: { 'en-US': 'Site' } },
+  });
+  await openCms(page, `/content/${apiId}/entry`);
+  await expect(page).toHaveURL(new RegExp(`/content/${apiId}/[0-9a-f-]{36}$`));
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('a content type’s clone and delete dialogs have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const apiId = `a11yDoomed${Date.now()}`;
+  await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId,
+    name: `A11y doomed ${apiId}`,
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+    ],
+  });
+  await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: apiId,
+    fields: { title: { 'en-US': 'x' } },
+  });
+  await openCms(page, '/content');
+  const more = page.getByRole('button', { name: `More actions for “A11y doomed ${apiId}”` });
+  // The open menu, scanned on its own: a modal Radix menu hides the page behind it with
+  // aria-hidden (focus is trapped in the menu), which axe would report outside it.
+  await more.click();
+  await scan(page, testInfo, ['[role="menu"]']);
+  await page.getByRole('menuitem', { name: 'Clone…' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await scan(page, testInfo);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await more.click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('checkbox', { name: /Also delete its 1 entry/ })).toBeVisible();
+  await scan(page, testInfo);
+});

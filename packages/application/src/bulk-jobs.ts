@@ -41,7 +41,9 @@ export const ENTRY_TRASH_CHUNK_SIZE = 50;
  */
 export const ENTRY_TRASH_MAX_ITEMS = 100_000;
 
+/** Trash, restore and purge, and a content type's delete: each entry through its use-cases. */
 const isEntryTrashAction = (action: BulkJobAction): boolean =>
+  action === 'content_type_delete' ||
   (ENTRY_TRASH_BULK_ACTIONS as readonly string[]).includes(action);
 
 /** How many ids one chunk of `action` takes. */
@@ -243,6 +245,16 @@ export interface BulkChunkDeps {
     job: BulkJob,
     chunk: BulkJobChunk,
   ) => Promise<BulkChunkOutcome>;
+  /**
+   * Runs a content type delete's chunk, trashing and purging its entries
+   * (`content-type-lifecycle.ts`), injected for the blob store as above. Absent, the chunk stays
+   * claimable.
+   */
+  readonly contentTypePurgeChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
 }
 
 /** Who started `job` (recorded by `persistJob`), as its chunks' writes are authored; undefined when
@@ -304,6 +316,10 @@ export async function runBulkChunk(
   // Trash, restore or purge: each entry through its single-entry use-case.
   if (job.action === 'trash' || job.action === 'restore' || job.action === 'purge') {
     return runChunkAndFold(ctx, deps.entryTrashChunk, scope, job, chunk);
+  }
+  // A content type's delete: its entries trashed and purged, each through its use-cases.
+  if (job.action === 'content_type_delete') {
+    return runChunkAndFold(ctx, deps.contentTypePurgeChunk, scope, job, chunk);
   }
   // An asset library action: each asset through its own use-case, failures reported by name.
   if (job.action !== 'publish' && job.action !== 'unpublish') {
@@ -544,16 +560,39 @@ export async function cancelBulkJob(
   id: string,
   deps: { readonly blob?: BlobStore } = {},
 ): Promise<BulkJob> {
-  const job = await ctx.store.bulkJobs.finalizeJob(scope, id, 'cancelled', ctx.clock.now());
+  // The stop and, for a content type's delete, its outcome commit together: the type stays, and
+  // its readers are told so as a completed job's are (`finishContentTypeDeletion`), never left
+  // waiting for an outcome that never comes.
+  const job = await ctx.store
+    .withTransaction(async (tx) => {
+      const stopped = await tx.bulkJobs.finalizeJob(scope, id, 'cancelled', ctx.clock.now());
+      if (stopped?.action !== 'content_type_delete') return stopped;
+      await tx.bulkJobs.mergeConfig(scope, id, { typeDeletion: STOPPED });
+      return { ...stopped, config: { ...stopped.config, typeDeletion: STOPPED } };
+    })
+    .catch((err: unknown) => {
+      // Another finalizer won at commit: the job is terminal, read below as it is.
+      if (err instanceof TransactionConflictError) return null;
+      throw err;
+    });
   // Its unrun chunks' staged work, and that of the job it would have started, are never read now.
   if (job && deps.blob) await discardStagedJob(deps.blob, scope, job, { nextStarted: false });
   if (!job) {
     const existing = await ctx.store.bulkJobs.getJob(scope, id);
     if (!existing) throw new NotFoundError('BulkJob', id);
+    // Stopped by a release that recorded no outcome: record it now, so it is never missing.
+    const recorded = (existing.config as { typeDeletion?: unknown } | undefined)?.typeDeletion;
+    if (existing.action === 'content_type_delete' && existing.status === 'cancelled' && !recorded) {
+      await ctx.store.bulkJobs.mergeConfig(scope, id, { typeDeletion: STOPPED });
+      return { ...existing, config: { ...existing.config, typeDeletion: STOPPED } };
+    }
     return existing; // already terminal — cancel is idempotent
   }
   return job;
 }
+
+/** A stopped content type delete's outcome: the type stays. */
+const STOPPED = { deleted: false, reason: 'the job was stopped' } as const;
 
 /**
  * Runs an import, asset or entry trash chunk and folds its outcome into the job.

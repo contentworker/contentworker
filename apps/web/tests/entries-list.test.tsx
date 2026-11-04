@@ -141,11 +141,11 @@ const ENTRIES = [
   entry('e-live2', 'published', 'Careers'),
 ];
 
-function setup(list?: ListPage) {
+function setup(list?: ListPage, type: ContentType = article) {
   if (list) client.listEntryPage.mockImplementation(list);
   else client.listEntryPage.mockResolvedValue({ items: ENTRIES });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const outlet = { types: [article], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
+  const outlet = { types: [type], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
   render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
@@ -191,6 +191,17 @@ const rowOf = (title: string) => {
 };
 
 describe('EntriesList trash and Undo', () => {
+  it('offers Import for an ordinary type and not for a singleton', async () => {
+    setup();
+    expect(
+      await screen.findByRole('button', { name: 'Import' }, { timeout: FIRST_RENDER_MS }),
+    ).toBeTruthy();
+    cleanup();
+    setup(undefined, { ...article, singleton: true });
+    await screen.findByText('About us', undefined, { timeout: FIRST_RENDER_MS });
+    expect(screen.queryByRole('button', { name: 'Import' })).toBeNull();
+  });
+
   it('undoing the trash of a published entry restores and then republishes it', async () => {
     setup();
     await rowMenu('About us', 'Move to trash');

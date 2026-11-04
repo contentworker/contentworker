@@ -34,6 +34,9 @@ export default [
         route(':typeId', 'routes/content-entries.tsx', { id: 'content-type' }),
         route(':typeId/new', 'routes/content-entry.tsx', { id: 'content-new' }),
         route(':typeId/import', 'routes/content-import.tsx', { id: 'content-import' }),
+        // A singleton type's one entry, wherever it is: the sidebar's link for such a type. An
+        // entry id is a UUID, so it never shadows one.
+        route(':typeId/entry', 'routes/content-singleton.tsx', { id: 'content-singleton' }),
         route(':typeId/:entryId', 'routes/content-entry.tsx', { id: 'content-entry' }),
       ]),
       route('approvals', 'routes/approvals.tsx', { id: 'approvals' }),

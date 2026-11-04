@@ -152,7 +152,17 @@ export function CommandPalette() {
     const currentType = typeId ? types.find((t) => t.apiId === typeId) : undefined;
     const typeName = currentType?.name ?? typeId;
     const actions: Item[] = [];
-    if (typeId && typeName) {
+    if (currentType?.singleton) {
+      // A singleton holds one entry: it is opened, never added to or imported into.
+      actions.push({
+        id: 'action:open-singleton',
+        group: 'Actions',
+        label: `Open ${currentType.name}`,
+        to: `/content/${currentType.apiId}/entry`,
+        icon: FileText,
+        search: `open singleton ${currentType.name}`.toLowerCase(),
+      });
+    } else if (typeId && typeName) {
       actions.push(
         {
           id: 'action:new-entry',

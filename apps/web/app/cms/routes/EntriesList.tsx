@@ -835,7 +835,8 @@ export function EntriesList() {
         >
           {viewingTrash ? 'Back to entries' : 'View trash'}
         </Button>
-        {!viewingTrash && (
+        {/* A singleton holds one entry, so there is nothing to import into it. */}
+        {!viewingTrash && !selectedType.singleton && (
           <>
             <Button
               type="button"

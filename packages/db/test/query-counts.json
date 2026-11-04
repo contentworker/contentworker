@@ -31,12 +31,16 @@
   "delivery: GET /sitemap.xml": { "statements": 4, "roundTrips": 2 },
   "delivery: GET /menus": { "statements": 1, "roundTrips": 1 },
   "delivery: GET /menus/:handle?locale=de": { "statements": 6, "roundTrips": 1 },
+  "delivery: GET /singletons/:apiId?locale=de": { "statements": 3, "roundTrips": 1 },
+  "delivery: GET /singletons/:apiId?include=1": { "statements": 4, "roundTrips": 2 },
+  "delivery: POST /graphql singleton": { "statements": 5, "roundTrips": 3 },
+  "preview: GET /singletons/:apiId": { "statements": 3, "roundTrips": 3 },
   "management: GET /entries/:id": { "statements": 1, "roundTrips": 1 },
   "management: GET /entries?content_type=article": { "statements": 2, "roundTrips": 2 },
   "preview: GET /entries?content_type=article (page)": { "statements": 2, "roundTrips": 2 },
   "preview: GET /entries?content_type=article&cursor": { "statements": 2, "roundTrips": 2 },
-  "management: POST /entries": { "statements": 4, "roundTrips": 3 },
-  "management: POST /entries (blocks)": { "statements": 4, "roundTrips": 3 },
+  "management: POST /entries": { "statements": 7, "roundTrips": 3 },
+  "management: POST /entries (blocks)": { "statements": 7, "roundTrips": 3 },
   "management: POST /entries/:id/published": { "statements": 12, "roundTrips": 6 },
   "management: PATCH /entries/:id/seo": { "statements": 6, "roundTrips": 4 }
 }

@@ -394,6 +394,7 @@ interface ContentType {
   displayField: string; // apiId of the field used as the entry's display title
   fields: readonly FieldDefinition[];
   urlPattern?: string; // where its entries live on the site, e.g. /blog/{slug}
+  singleton?: true; // holds at most one entry outside the trash; absent otherwise
   version: number; // bumped on each revision
   status: 'draft' | 'published';
 }
@@ -404,7 +405,53 @@ interface ContentType {
   `ValidationError` / `ConflictError`.
 - `reviseContentType(current, changes)` — increments `version`, resets status to `draft`, sorts
   fields by `position`, optionally updates `name`/`displayField`/`fields`/`urlPattern` (`null` or
-  `''` clears it).
+  `''` clears it) and `singleton` (left out, kept).
+- **Singletons.** Every entry of a singleton type stakes `singletonClaim(apiId)` (field
+  `SINGLETON_CLAIM_FIELD`, `$singleton`, which no field apiId can be) beside its unique values, so
+  the `entry_unique_values` unique index admits one entry outside the trash whatever the race.
+  `createEntry`, `restoreEntry` and an environment merge also read for one first
+  (`assertSingletonFree`), which names the entry and still refuses when its claim went missing (an
+  entry saved by a release from before singletons). `saveContentTypeOver` is the one save of a
+  definition over another (a revision, a merge, a promotion): turning the flag on is refused over
+  more than one entry outside the trash and claims the one there is, in the same unit as the save,
+  guarded (`ContentTypeRepo.guard` with the entries it read) so an entry created meanwhile fails
+  the commit (`409`); turning it off gives the claim back. A published save that changes the flag
+  appends `content_type.published`, which purges Delivery. Every new entry (`writeNewEntry`, used
+  by `createEntry` and the merge, which also claims the entry's unique values) is written in a unit
+  guarded on its type as read (`guard(scope, apiId, { singleton })`): a type deleted, or flipped,
+  since its read fails the commit, mapped to `409`. A promotion that would leave a singleton with a
+  second entry is refused when it is requested. Snapshots (clone, export and import) carry the
+  flag. Stored in `content_types.singleton` (0027_singleton_types); Delivery serves by
+  `content_types.published_singleton`, the flag as last saved published (0028_published_singleton),
+  so a draft's change reaches it with the type's publish: `…/singletons/:apiId` and GraphQL's roots
+  (Delivery's `contentTypes` read reports `singleton` as last published) alike. A draft that turns
+  the flag off gives the claim back at once, so the type can gain entries before the turn-off is
+  published; meanwhile Delivery serves the published entry with the lowest id. Every save over a
+  stored definition (`saveContentTypeOver`, and `publishContentType`) is guarded on the flag it
+  read, so a save that raced a turn on or off fails (`409`) rather than undoing it, and every
+  save of a published definition announces `content_type.published` once (a promotion's apply
+  relies on it, with no separate publish).
+- **Merging entries** (`mergeEnvironments`) checks every selected entry's unique values (the
+  singleton's claim included) before the first write, against the target and against each other,
+  and refuses once (`409`, `details.conflicts`), naming each entry and its holder; a value an entry
+  of the merge gives up is free (a swap). Entries the target already has are applied first, each
+  with its claims rebuilt in the same unit, as `updateEntry` does; new ones then stake theirs. An
+  entry the target holds in its trash gets the new version and stays there, claiming nothing.
+- **Delete and clone** (`content-type-lifecycle.ts`). `fieldsLinkingTo(types, apiId)` finds other
+  types' fields whose `linkContentTypes` name it, through components, repeaters and block variants
+  (a path like `body.byline.who`). `contentTypeDependents` adds its entry counts (live, trashed),
+  menus and slug redirects naming its entries, and its `urlPattern`; `deleteContentType` refuses
+  while any is there, then deletes in one unit with `content_type.deleted`. The store's
+  `ContentTypeRepo.delete(scope, apiId, version)` is a compare-and-set whose own `WHERE` also
+  requires no entry of the type, so a revision or an entry written after the reads fails the
+  commit (`TransactionConflictError`). `deleteContentTypeWithEntries` starts a `content_type_delete`
+  bulk job instead (chunks of `ENTRY_TRASH_CHUNK_SIZE`): `trashEntry`, then `purgeEntry`, forced
+  only past links from entries of the same type, over ids read by `EntryRepo.idsOfType` (an id-only
+  keyset read); `finishContentTypeDeletion` deletes the type on the job's clean
+  `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
+  `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
+  stopped). `cloneContentType` defines a copy (fields, display field, singleton; not `urlPattern`)
+  at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
   `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields; anything else is a

@@ -290,6 +290,9 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
         status: ct.status,
         updatedAt: new Date(),
         urlPattern: ct.urlPattern ?? null,
+        singleton: ct.singleton === true,
+        // Delivery serves by the flag as last published: a draft save leaves it as it was.
+        publishedSingleton: ct.status === 'published' && ct.singleton === true,
       };
       await x.write(
         db
@@ -309,9 +312,94 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
               status: values.status,
               updatedAt: values.updatedAt,
               urlPattern: values.urlPattern,
+              singleton: values.singleton,
+              publishedSingleton:
+                ct.status === 'published'
+                  ? values.publishedSingleton
+                  : sql`${schema.contentTypes.publishedSingleton}`,
             },
           }),
       );
+    },
+    async create(scope, ct) {
+      const insert = db
+        .insert(schema.contentTypes)
+        .values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          apiId: ct.apiId,
+          name: ct.name,
+          displayField: ct.displayField,
+          fields: [...ct.fields],
+          version: ct.version,
+          status: ct.status,
+          updatedAt: new Date(),
+          urlPattern: ct.urlPattern ?? null,
+          singleton: ct.singleton === true,
+          publishedSingleton: ct.status === 'published' && ct.singleton === true,
+        })
+        .onConflictDoNothing();
+      if (x.inUnit) {
+        await x.write(insert);
+        x.expectChanged(1);
+        return;
+      }
+      if ((await insert.returning({ apiId: schema.contentTypes.apiId })).length === 0) {
+        throw new TransactionConflictError();
+      }
+    },
+    async guard(scope, apiId, expected) {
+      const t = schema.contentTypes;
+      const e = schema.entries;
+      // A no-op update whose WHERE is the guard: it matches the row only while the type is as the
+      // caller read it, so the unit's expectChanged(1) fails the commit otherwise. The entries a
+      // caller allows travel as one JSON parameter, whatever their number.
+      const others = expected.entries
+        ? sql`NOT EXISTS (SELECT 1 FROM ${e} WHERE ${e.spaceId} = ${scope.spaceId} AND ${e.environmentId} = ${scope.environmentId} AND ${e.contentTypeApiId} = ${apiId} AND ${e.status} != 'archived' AND ${e.id} NOT IN (SELECT value FROM json_each(${JSON.stringify(expected.entries)})))`
+        : undefined;
+      const touch = db
+        .update(t)
+        .set({ apiId: sql`${t.apiId}` })
+        .where(
+          and(
+            scopeFilter(t, scope),
+            eq(t.apiId, apiId),
+            eq(t.singleton, expected.singleton),
+            others,
+          ),
+        );
+      if (x.inUnit) {
+        await x.write(touch);
+        x.expectChanged(1);
+        return;
+      }
+      if ((await touch.returning({ apiId: t.apiId })).length === 0) {
+        throw new TransactionConflictError();
+      }
+    },
+    async delete(scope, apiId, version) {
+      const t = schema.contentTypes;
+      const e = schema.entries;
+      // The entries check is the delete's own WHERE, so an entry written after the caller looked
+      // (a create that read the type before this committed) leaves the type in place.
+      const remove = db
+        .delete(t)
+        .where(
+          and(
+            scopeFilter(t, scope),
+            eq(t.apiId, apiId),
+            eq(t.version, version),
+            sql`NOT EXISTS (SELECT 1 FROM ${e} WHERE ${e.spaceId} = ${scope.spaceId} AND ${e.environmentId} = ${scope.environmentId} AND ${e.contentTypeApiId} = ${apiId})`,
+          ),
+        );
+      if (x.inUnit) {
+        await x.write(remove);
+        x.expectChanged(1);
+        return;
+      }
+      if ((await remove.returning({ apiId: t.apiId })).length === 0) {
+        throw new TransactionConflictError();
+      }
     },
   };
 }
@@ -630,6 +718,22 @@ function makeEntryRepo(
         value: r.kind === 0 ? Boolean(r.atom) : r.kind === 1 ? Number(r.atom) : String(r.atom),
         count: Number(r.n),
       }));
+    },
+    async idsOfType(scope, contentTypeApiId, page) {
+      const e = schema.entries;
+      const rows = await db
+        .select({ id: e.id })
+        .from(e)
+        .where(
+          and(
+            scopeFilter(e, scope),
+            eq(e.contentTypeApiId, contentTypeApiId),
+            page.after ? gt(e.id, page.after) : undefined,
+          ),
+        )
+        .orderBy(asc(e.id))
+        .limit(page.limit);
+      return rows.map((r) => r.id);
     },
     async create(scope, entry, version) {
       await writeAll(x, [
@@ -2718,6 +2822,17 @@ function makeBulkJobRepo(x: Exec): BulkJobRepo {
         );
       }
       return toJob(job);
+    },
+    async mergeConfig(scope, id, patch) {
+      // One statement, judged against the row as it stands: keys another writer merged stay.
+      await x.write(
+        db
+          .update(schema.bulkJobs)
+          .set({
+            config: sql`json_patch(coalesce(${schema.bulkJobs.config}, '{}'), ${JSON.stringify(patch)})`,
+          })
+          .where(jobWhere(scope, id)),
+      );
     },
     async finalizeJob(scope, id, status, at) {
       const running = and(jobWhere(scope, id), eq(schema.bulkJobs.status, 'running'));
@@ -6671,8 +6786,11 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         });
       }
       if (request.contentTypes) {
+        // Delivery's view: the singleton flag as last published, not as a draft has it.
         add(contentTypesQuery(db, scope), (rows) => {
-          result.contentTypes = rows.map(toContentType);
+          result.contentTypes = rows.map((row) =>
+            toContentType({ ...row, singleton: row.publishedSingleton }),
+          );
         });
       }
       if (request.renditions) {
@@ -6818,6 +6936,42 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         );
       }
 
+      if (request.singleton) {
+        // The type and its published entry, two statements of the same batch: whether the type is
+        // a singleton at all is the caller's to judge, from the row read here.
+        const apiId = request.singleton.contentType;
+        const read: {
+          contentType: ContentType | null;
+          publishedSingleton: boolean;
+          entry: PublishedEntry | null;
+        } = { contentType: null, publishedSingleton: false, entry: null };
+        result.singleton = read;
+        add(
+          db
+            .select()
+            .from(schema.contentTypes)
+            .where(
+              and(scopeFilter(schema.contentTypes, scope), eq(schema.contentTypes.apiId, apiId)),
+            ),
+          ([row]) => {
+            read.contentType = row ? toContentType(row) : null;
+            read.publishedSingleton = row?.publishedSingleton === true;
+          },
+        );
+        const ep = schema.entryPublished;
+        add(
+          db
+            .select()
+            .from(ep)
+            .where(and(scopeFilter(ep, scope), eq(ep.contentTypeApiId, apiId)))
+            .orderBy(asc(ep.entryId))
+            .limit(1),
+          ([row]) => {
+            read.entry = row ? toPublished(row) : null;
+          },
+        );
+      }
+
       if (queries.length === 0) return result;
       const rows =
         queries.length === 1
@@ -6958,6 +7112,7 @@ const toContentType = (r: CtRow): ContentType => ({
   displayField: r.displayField,
   fields: r.fields,
   ...(r.urlPattern ? { urlPattern: r.urlPattern } : {}),
+  ...(r.singleton ? { singleton: true as const } : {}),
   version: r.version,
   status: r.status,
 });
