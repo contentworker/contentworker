@@ -174,6 +174,63 @@ describe('granular RBAC over HTTP', () => {
     expect(again.fields.internalNotes).toEqual({ 'en-US': 'secret' });
   });
 
+  it('duplicates for a writer without the fields it may not read; the copy keeps them', async () => {
+    const res = await app.request(`${M}/entries/${postId}/duplicate`, {
+      method: 'POST',
+      headers: editor,
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const copy = (await res.json()) as {
+      entry: { id: string };
+      fields: Record<string, unknown>;
+    };
+    expect(copy.fields).toEqual({ title: { 'en-US': 'A post (copy)' } });
+
+    const asAdmin = (await (
+      await app.request(`${M}/entries/${copy.entry.id}`, { headers: admin })
+    ).json()) as { fields: Record<string, unknown> };
+    expect(asAdmin.fields.internalNotes).toEqual({ 'en-US': 'secret' });
+  });
+
+  it('refuses a duplicate without write on the type, and leaves no copy behind', async () => {
+    const roleRes = await app.request('/spaces/s1/roles', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        name: 'Post reader',
+        scopes: ['content:write', 'preview:read'],
+        contentGrants: [{ contentTypeApiId: 'post', actions: ['read'] }],
+      }),
+    });
+    const role = (await roleRes.json()) as { id: string };
+    const keyRes = await app.request('/spaces/s1/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cma', roleId: role.id }),
+    });
+    const { token } = (await keyRes.json()) as { token: string };
+    const reader = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const res = await app.request(`${M}/entries/${postId}/duplicate`, {
+      method: 'POST',
+      headers: reader,
+    });
+    expect(res.status).toBe(403);
+
+    // A type the role has no grant for at all is refused the same way.
+    const other = await app.request(`${M}/entries/${pageId}/duplicate`, {
+      method: 'POST',
+      headers: editor,
+    });
+    expect(other.status).toBe(403);
+
+    const counts = (await (
+      await app.request(`${M}/content-types/entry-counts`, { headers: admin })
+    ).json()) as { items: { contentType: string; total: number }[] };
+    expect(counts.items.find((c) => c.contentType === 'post')?.total).toBe(1);
+    expect(counts.items.find((c) => c.contentType === 'page')?.total).toBe(1);
+  });
+
   it('counts entries per content type, leaving out types the role cannot read', async () => {
     type Counts = { items: { contentType: string; total: number; published: number }[] };
     const all = await app.request(`${M}/content-types/entry-counts`, { headers: admin });

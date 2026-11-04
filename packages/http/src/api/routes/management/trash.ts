@@ -16,6 +16,7 @@ import {
   maskDeniedFields,
   SCOPES,
   unwritableFieldsFor,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
@@ -111,15 +112,24 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Entries', 'Duplicate an entry', {
       ok: entryDocs.createdEntry,
       status: 201,
-      description: 'Copies fields and taxonomy metadata into a new draft.',
+      description:
+        'Copies fields and taxonomy metadata into a new draft. A role needs read and write on the ' +
+        'type; the copy holds every field, and answers without the ones the role may not read.',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
-      await guardEntry(c, c.req.param('id'), 'read');
+      // Writing a copy is a write of that content type, not just a read: refused before it exists.
+      await guardEntry(c, c.req.param('id'), ['read', 'write']);
       const created = await duplicateEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'));
-      // Writing a copy is a write of that content type, not just a read.
-      authorizeContent(c.get('principal'), 'write', created.entry.contentTypeApiId);
-      return c.json(created, 201);
+      const principal = c.get('principal');
+      return c.json(
+        {
+          ...created,
+          entry: withAuthorIdsFor(principal, created.entry),
+          fields: maskDeniedFields(principal, created.entry.contentTypeApiId, created.fields),
+        },
+        201,
+      );
     },
   );
 

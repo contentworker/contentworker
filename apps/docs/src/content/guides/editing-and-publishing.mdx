@@ -46,7 +46,8 @@ new draft, so history is never rewritten.
 | Duplicate           | `POST …/entries/{id}/duplicate`                         | `content:write`   |
 
 **Duplicate** (in the entries list's row menu, or `entries_duplicate` over MCP) copies the fields
-and taxonomy metadata into a new draft.
+and taxonomy metadata into a new draft. A role needs read and write on the type. The copy holds
+every field, and the response leaves out the ones the role may not read.
 
 ### What a comparison shows
 

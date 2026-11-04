@@ -40,8 +40,13 @@ const writer: Principal = {
     },
   ],
 };
+// Holds the coarse write scope, but its role only reads the type.
+const reader: Principal = {
+  ...writer,
+  contentGrants: [{ contentTypeApiId: 'listing', actions: ['read'] }],
+};
 
-async function setup() {
+async function setup(principal: Principal = writer) {
   const ctx: AppContext = {
     store: new InMemoryContentStore(),
     clock: new FixedClock(),
@@ -80,7 +85,7 @@ async function setup() {
     },
   });
 
-  const server = buildServer(deps, writer);
+  const server = buildServer(deps, principal);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: 'test', version: '0.0.0' });
@@ -134,5 +139,25 @@ describe('a restricted writer over MCP', () => {
     });
     expect(res.isError).toBe(true);
     expect(res.text).toContain('listing.price');
+  });
+
+  it('duplicates without the fields it may not read; the copy keeps them', async () => {
+    const { ctx, call, id } = await setup();
+    const res = await call('entries_duplicate', { id });
+    expect(res.isError, res.text).toBe(false);
+    expect(res.text).not.toContain('secret');
+    const copy = JSON.parse(res.text);
+    expect(copy.fields).toEqual({ title: { 'en-US': 'A (copy)' }, price: { 'en-US': 100 } });
+
+    const stored = await getEntry(ctx, scope, copy.entry.id);
+    expect(stored.fields.internalNotes).toEqual({ 'en-US': 'secret' });
+  });
+
+  it('refuses a duplicate without write on the type, and leaves no copy behind', async () => {
+    const { ctx, call, id } = await setup(reader);
+    const res = await call('entries_duplicate', { id });
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('content:write:listing');
+    expect(await ctx.store.entries.list(scope, { contentTypeApiId: 'listing' })).toHaveLength(1);
   });
 });

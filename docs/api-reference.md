@@ -333,7 +333,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 | GET    | `…/content-types/:apiId/dependents` | `preview:read`   | What blocks a delete: `{ entries: { live, trashed }, linkedFrom, menus, redirects, urlPattern? }`; `403` for a role without read on the type |
 | DELETE | `…/content-types/:apiId`           | `content:manage`  | Delete (`{ deleted: true }`, emits `content_type.deleted`); `409` naming every dependent (`details.dependents`); `?purge_entries=true` (also `content:write` and `content:publish`, and a role on every type) → `202 { deleted: false, job }`, a `content_type_delete` bulk job that trashes and purges each entry, then deletes the type on `bulk.job_completed`; the job's `config.typeDeletion` (on `GET …/bulk/jobs/:id`) is then `{ deleted: true }` or `{ deleted: false, reason }` (also when the job is stopped) |
-| POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton; not `urlPattern`; draft, version 1; `409` for a taken apiId, also when a concurrent clone or create took it after the check (the insert never overwrites) |
+| POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton, group, description, icon, layout; not `urlPattern`; draft, version 1; `409` for a taken apiId, also when a concurrent clone or create took it after the check (the insert never overwrites) |
 
 A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,
 `{locale}` or its own `Slug` fields' apiIds, e.g. `/blog/{slug}`; `null` or `''` clears it; `422`
@@ -381,7 +381,7 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 | DELETE | `…/entries/:id/permanent`          | `content:publish` | **Irreversible** delete of a trashed entry. `?force=true` overrides the inbound-link guard                     |
 | GET    | `…/trash-settings`                 | `preview:read`    | `{ retentionDays }` (null: off, the default)                                                                   |
 | PUT    | `…/trash-settings`                 | `space:admin`     | `{ retentionDays: 1..3650 \| null }`: the hourly `trash-retention` sweep purges entries trashed longer ago, in every environment of the space, never one a published entry links to |
-| POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft                                                               |
+| POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft; a role needs read and write on the type, and the response is masked for it |
 | POST   | `…/entries/:id/preview-link`       | `content:write`   | Mint a shareable preview link `{ ttlHours?, previewBaseUrl? }` (default 72 h); `201 { url, token, expiresAt }` |
 | POST   | `…/embeds/resolve`                 | `content:write`   | Resolve a media URL `{ url }` into a rich-text `embed` node's data; `200 { embed, resolved }`                  |
 
