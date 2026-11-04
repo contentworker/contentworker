@@ -5,7 +5,7 @@
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EntryDiff, reviewFields } from '~/cms/components/entries/EntryReview';
+import { EntryDiff, NO_CHANGES, reviewFields } from '~/cms/components/entries/EntryReview';
 import { PublishConfirm } from '~/cms/components/entries/PublishConfirm';
 import { ApiError, type ManagementClient, type PreviewEntry } from '~/cms/lib/management';
 
@@ -141,6 +141,42 @@ describe('the diff', () => {
     diffOf();
     await screen.findByText('Couldn’t load what changed');
     expect(screen.queryByText('No published version')).toBeNull();
+  });
+});
+
+describe('changes this person can’t read', () => {
+  const hidden = (n: number, list: unknown[]) =>
+    client.diffVersions.mockResolvedValue({ changes: list, hiddenChanges: n });
+
+  it('are counted beside what they can read, never named', async () => {
+    hidden(2, changes);
+    diffOf();
+    await screen.findByText('2 fields you can’t read also go live.');
+    expect(screen.getByText('5 fields changed')).toBeTruthy();
+  });
+
+  it('say so alone when nothing readable changed', async () => {
+    hidden(1, [changes[5]]);
+    diffOf();
+    await screen.findByText('1 field you can’t read goes live.');
+  });
+
+  it('are carried from the editor’s own diff, in place of “nothing changed”', () => {
+    render(
+      <PublishConfirm
+        open
+        onOpenChange={vi.fn()}
+        title="Pricing"
+        status="changed"
+        changes={[]}
+        hiddenChanges={1}
+        compare={{ client: asClient, entry, locale: 'en-US' }}
+        busy={false}
+        onConfirm={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('1 field you can’t read goes live.')).toBeTruthy();
+    expect(screen.queryByText(NO_CHANGES)).toBeNull();
   });
 });
 

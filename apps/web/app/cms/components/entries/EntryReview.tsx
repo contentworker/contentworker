@@ -39,7 +39,13 @@ export type EntryReview =
   | { readonly status: 'loading' }
   /** Never published: there is nothing to compare, and the whole entry goes live. */
   | { readonly status: 'first'; readonly title?: string }
-  | { readonly status: 'ready'; readonly fields: readonly ReviewField[]; readonly title?: string }
+  | {
+      readonly status: 'ready';
+      readonly fields: readonly ReviewField[];
+      /** Fields that changed which this person may not read. */
+      readonly hiddenChanges: number;
+      readonly title?: string;
+    }
   /** The diff couldn't be read, so nothing can be said about what changes. */
   | { readonly status: 'failed' };
 
@@ -49,6 +55,8 @@ export interface ReviewTarget {
   readonly version?: number;
   /** The diff, when the caller already has it (the editor, right after a save). */
   readonly changes?: readonly FieldDiff[];
+  /** With `changes`: how many more changed that this person may not read. */
+  readonly hiddenChanges?: number;
   /** Also read the entry's title, for a card nobody named (one the model proposed). */
   readonly named?: boolean;
 }
@@ -59,6 +67,11 @@ export const FIRST_PUBLISH =
 /** A publish that changes nothing. */
 export const NO_CHANGES = 'The draft matches the published version; publishing re-confirms it.';
 export const fieldsGoLive = (n: number) => `${n} ${n === 1 ? 'field goes' : 'fields go'} live:`;
+/** Changes this person may not read go live with the rest, so nothing here may read as none. */
+export const hiddenGoLive = (n: number, alone: boolean) =>
+  `${n} ${n === 1 ? 'field' : 'fields'} you can’t read ${alone ? '' : 'also '}${
+    n === 1 ? 'goes' : 'go'
+  } live.`;
 
 const isChanged = (f: ReviewField) => f.kind !== 'unchanged';
 
@@ -138,11 +151,13 @@ async function readReview(
 ): Promise<EntryReview> {
   const { entryId, named } = target;
   let changes = target.changes;
+  let hiddenChanges = target.hiddenChanges ?? 0;
   let entry: PreviewEntry | null = null;
   if (!changes) {
     try {
       const diff = await client.diffVersions(entryId, 'published', target.version ?? 'draft');
       changes = diff.changes;
+      hiddenChanges = diff.hiddenChanges;
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 404) return { status: 'failed' };
       // No published version, or no such entry: only the entry can say which.
@@ -169,7 +184,8 @@ async function readReview(
     ...linked.map((e): [string, string] => [e.id, entryRef(e, types, locale).title]),
     ...assets,
   ]);
-  return { status: 'ready', fields: reviewFields(changes, locale, titles), ...title };
+  const fields = reviewFields(changes, locale, titles);
+  return { status: 'ready', fields, hiddenChanges, ...title };
 }
 
 const LOADING: EntryReview = { status: 'loading' };
@@ -185,6 +201,7 @@ export function useEntryReview(
   const entryId = target?.entryId;
   const version = target?.version;
   const changes = target?.changes;
+  const hiddenChanges = target?.hiddenChanges;
   const named = target?.named;
   useEffect(() => {
     if (!entryId) return;
@@ -196,6 +213,7 @@ export function useEntryReview(
         entryId,
         ...(version === undefined ? {} : { version }),
         ...(changes ? { changes } : {}),
+        ...(hiddenChanges ? { hiddenChanges } : {}),
         ...(named ? { named } : {}),
       },
       locale,
@@ -210,7 +228,7 @@ export function useEntryReview(
     return () => {
       live = false;
     };
-  }, [client, entryId, version, changes, named, locale]);
+  }, [client, entryId, version, changes, hiddenChanges, named, locale]);
   return target ? review : IDLE;
 }
 
@@ -312,6 +330,16 @@ export function FieldReview({ fields }: { fields: readonly ReviewField[] }) {
   );
 }
 
+/** Changes this person can't read: never silent, because publishing puts them live too. */
+export function HiddenChanges({ count, alone }: { count: number; alone: boolean }) {
+  return (
+    <Alert variant="warning">
+      <TriangleAlert />
+      <AlertDescription>{hiddenGoLive(count, alone)}</AlertDescription>
+    </Alert>
+  );
+}
+
 /** The diff couldn't be read: said as plainly as the decision beside it deserves. */
 export function ReviewFailed() {
   return (
@@ -332,11 +360,16 @@ export function EntryDiff(props: {
   entry: PreviewEntry;
   locale: string;
   changes?: readonly FieldDiff[];
+  hiddenChanges?: number;
 }) {
-  const { client, entry, locale, changes } = props;
+  const { client, entry, locale, changes, hiddenChanges } = props;
   const target = useMemo(
-    () => ({ entryId: entry.id, ...(changes ? { changes } : {}) }),
-    [entry.id, changes],
+    () => ({
+      entryId: entry.id,
+      ...(changes ? { changes } : {}),
+      ...(hiddenChanges ? { hiddenChanges } : {}),
+    }),
+    [entry.id, changes, hiddenChanges],
   );
   const review = useEntryReview(client, target, locale);
   if (review.status === 'first')
@@ -359,6 +392,9 @@ export function EntryDiff(props: {
           {`${count} field${count === 1 ? '' : 's'} changed`}
         </p>
       )}
+      {review.hiddenChanges > 0 ? (
+        <HiddenChanges count={review.hiddenChanges} alone={count === 0} />
+      ) : null}
       <FieldReview fields={review.fields} />
     </div>
   );

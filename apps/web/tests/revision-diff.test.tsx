@@ -112,6 +112,7 @@ const diffOf = (
   from,
   to,
   changes: diffEntryFields(before, after, article),
+  hiddenChanges: 0,
 });
 
 const client = {

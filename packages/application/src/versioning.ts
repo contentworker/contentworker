@@ -3,7 +3,9 @@ import {
   type EntryVersion,
   type FieldDiff,
   InvalidStateError,
+  maskDeniedFields,
   NotFoundError,
+  type Principal,
   type Scope,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
@@ -55,6 +57,31 @@ export interface VersionDiff {
   readonly to: number;
   /** Every field either version holds, in the content type's order, unchanged ones included. */
   readonly changes: readonly FieldDiff[];
+}
+
+/** A diff as one principal may read it. */
+export interface VisibleVersionDiff extends VersionDiff {
+  /**
+   * How many fields changed that this principal may not read. Their names and values stay out; the
+   * count is here so that "nothing changed" is never said of a change they can't see.
+   */
+  readonly hiddenChanges: number;
+}
+
+/** Drops the fields `principal` may not read from a diff, and counts the ones that changed. */
+export function visibleDiff(principal: Principal, diff: VersionDiff): VisibleVersionDiff {
+  const allowed = maskDeniedFields(
+    principal,
+    diff.contentType,
+    Object.fromEntries(diff.changes.map((c) => [c.field, c])),
+  );
+  return {
+    ...diff,
+    changes: Object.values(allowed),
+    hiddenChanges: diff.changes.filter(
+      (c) => !(c.field in allowed) && c.locales.some((l) => l.kind !== 'unchanged'),
+    ).length,
+  };
 }
 
 /**

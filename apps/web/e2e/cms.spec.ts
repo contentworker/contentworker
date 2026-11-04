@@ -924,7 +924,7 @@ test.describe('publishing from a row, without the assistant', () => {
     await withoutAssistant(page);
   });
 
-  test('a changed entry confirms what goes live; Keep as draft publishes nothing, Publish entry publishes', async ({
+  test('a changed entry confirms what goes live; Keep live version publishes nothing, Publish entry publishes', async ({
     page,
     request,
   }) => {
@@ -950,7 +950,7 @@ test.describe('publishing from a row, without the assistant', () => {
       dialog.getByRole('list', { name: 'Unchanged fields' }).getByText(title),
     ).toBeVisible();
 
-    await dialog.getByRole('button', { name: 'Keep as draft' }).click();
+    await dialog.getByRole('button', { name: 'Keep live version' }).click();
     await expect(dialog).toBeHidden();
     expect(await statusOf(request, id)).toBe('changed');
     await expect(row.getByRole('button', { name: `Publish “${title}”` })).toBeVisible();
@@ -988,7 +988,7 @@ test.describe('publishing from a row, without the assistant', () => {
     expect(await region.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 
     // A keyboard reaches the scroller, and leaves the safe choice as where it starts.
-    await expect(dialog.getByRole('button', { name: 'Keep as draft' })).toBeFocused();
+    await expect(dialog.getByRole('button', { name: 'Keep live version' })).toBeFocused();
     expect(await region.getAttribute('tabindex')).toBe('0');
   });
 

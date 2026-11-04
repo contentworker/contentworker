@@ -16,6 +16,7 @@ import {
   EntryDiff,
   FIRST_PUBLISH,
   fieldsGoLive,
+  hiddenGoLive,
   NO_CHANGES,
   reviewFields,
 } from './EntryReview';
@@ -32,6 +33,8 @@ export interface PublishConfirmProps {
    * right after a save). Without it, an entry that has been live is compared through `compare`.
    */
   readonly changes?: readonly FieldDiff[] | null;
+  /** With `changes`: how many more changed that this person may not read. */
+  readonly hiddenChanges?: number;
   /** The draft to compare with what delivery serves, when `changes` isn't known. */
   readonly compare?: {
     readonly client: ManagementClient;
@@ -54,7 +57,7 @@ export interface PublishConfirmProps {
  * card reads (`EntryReview`), so publishing reads the same wherever it starts.
  */
 export function PublishConfirm(props: PublishConfirmProps) {
-  const { changes, compare, status } = props;
+  const { changes, compare, status, hiddenChanges = 0 } = props;
   const firstPublish = status === 'draft';
   const review = !firstPublish && (!changes || changes.length > 0);
   return (
@@ -73,7 +76,9 @@ export function PublishConfirm(props: PublishConfirmProps) {
           <AlertDialogDescription>
             {changes
               ? changes.length === 0
-                ? NO_CHANGES
+                ? hiddenChanges > 0
+                  ? hiddenGoLive(hiddenChanges, true)
+                  : NO_CHANGES
                 : fieldsGoLive(changes.length)
               : firstPublish
                 ? FIRST_PUBLISH
@@ -94,7 +99,7 @@ export function PublishConfirm(props: PublishConfirmProps) {
                 client={compare.client}
                 entry={compare.entry}
                 locale={compare.locale}
-                {...(changes ? { changes } : {})}
+                {...(changes ? { changes, hiddenChanges } : {})}
               />
             ) : changes ? (
               <ChangedFields fields={reviewFields(changes, '')} />
@@ -102,7 +107,9 @@ export function PublishConfirm(props: PublishConfirmProps) {
           </section>
         ) : null}
         <AlertDialogFooter>
-          <AlertDialogCancel>Keep as draft</AlertDialogCancel>
+          <AlertDialogCancel>
+            {firstPublish ? 'Keep as draft' : 'Keep live version'}
+          </AlertDialogCancel>
           <AlertDialogAction disabled={props.busy} onClick={props.onConfirm}>
             Publish entry
           </AlertDialogAction>

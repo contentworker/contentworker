@@ -36,6 +36,7 @@ import {
   FIRST_PUBLISH,
   FieldReview,
   fieldsGoLive,
+  HiddenChanges,
   NO_CHANGES,
   ReviewFailed,
   type ReviewTarget,
@@ -319,11 +320,14 @@ function PublishReview({ review, elsewhere }: { review: EntryReview; elsewhere: 
   if (review.status === 'failed') return <ReviewFailed />;
   if (review.status !== 'ready') return null;
   const changed = review.fields.filter((f) => f.kind !== 'unchanged').length;
-  if (changed === 0) return note(NO_CHANGES);
+  const { hiddenChanges } = review;
+  if (changed === 0)
+    return hiddenChanges > 0 ? <HiddenChanges count={hiddenChanges} alone /> : note(NO_CHANGES);
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="space-y-1">
       {note(fieldsGoLive(changed))}
       <ChangedFields fields={review.fields} />
+      {hiddenChanges > 0 ? <HiddenChanges count={hiddenChanges} alone={false} /> : null}
       <Button
         variant="link"
         size="xs"

@@ -335,7 +335,7 @@ describe('EntriesList row Publish', () => {
     setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Publish “Pricing page”' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Pricing page”?' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep as draft' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep live version' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(client.publishEntry).not.toHaveBeenCalled();
     expect(within(rowOf('Pricing page')).getByText('Changed')).toBeTruthy();

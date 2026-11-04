@@ -326,7 +326,8 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   goes live from the entry's own version diff, never from anything a model wrote (one source with
   `PublishConfirm`: `entries/EntryReview.tsx`): the changed fields by name, then Review changes for
   each field's published and draft values; Confirm waits for that read, and a read that fails says
-  so in a destructive Alert and leaves the choice. The other cards list nothing. Any other edit (saving, duplicating) runs
+  so in a destructive Alert and leaves the choice. Fields the person's role can't read aren't listed
+  but are counted in a warning Alert ("1 field you can't read goes live."), never "nothing changed". The other cards list nothing. Any other edit (saving, duplicating) runs
   at once and leaves a line ("Published · Spring launch notes") linking to the entry. When its socket
   is down the panel says so in one quiet line and the page makes the edit itself, confirming in its
   own dialog as before. Beside the column a page is narrower than the screen, so the Content pages'

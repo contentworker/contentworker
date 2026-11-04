@@ -1,4 +1,4 @@
-import { NotFoundError } from '@contentworker/domain';
+import { NotFoundError, type Principal } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -13,6 +13,7 @@ import {
   publishEntry,
   restoreVersion,
   updateEntry,
+  visibleDiff,
 } from '../src/index';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
@@ -176,5 +177,37 @@ describe('entry version history', () => {
     // Restoring v1 is valid and produces a fresh draft version.
     const restored = await restoreVersion(ctx, scope, entry.id, 1);
     expect(restored.fields).toEqual({ title: { 'en-US': 'keep' } });
+  });
+});
+
+describe('a diff as one principal reads it', () => {
+  const field = (name: string, kind: 'changed' | 'unchanged') =>
+    ({ field: name, kind, locales: [{ locale: 'en-US', kind }] }) as const;
+  const diff = {
+    entryId: 'e1',
+    contentType: 'post',
+    from: 1,
+    to: 2,
+    changes: [field('title', 'changed'), field('notes', 'changed'), field('owner', 'unchanged')],
+  };
+  const principal = (deniedFields?: string[]): Principal => ({
+    spaceId: 's1',
+    kind: 'cma',
+    scopes: [],
+    ...(deniedFields
+      ? { contentGrants: [{ contentTypeApiId: 'post', actions: ['read'], deniedFields }] }
+      : {}),
+  });
+
+  it('counts a denied field that changed, and only that', () => {
+    const seen = visibleDiff(principal(['notes', 'owner']), diff);
+    expect(seen.changes.map((c) => c.field)).toEqual(['title']);
+    expect(seen.hiddenChanges).toBe(1);
+  });
+
+  it('hides nothing from a principal denied nothing', () => {
+    const seen = visibleDiff(principal(), diff);
+    expect(seen.changes).toHaveLength(3);
+    expect(seen.hiddenChanges).toBe(0);
   });
 });

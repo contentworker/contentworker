@@ -736,6 +736,8 @@ export interface VersionDiff {
   readonly from: number;
   readonly to: number;
   readonly changes: readonly FieldDiff[];
+  /** How many fields changed that this person may not read; they go live all the same. */
+  readonly hiddenChanges: number;
 }
 
 /** How a source-environment item relates to the target. */

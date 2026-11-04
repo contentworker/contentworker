@@ -474,6 +474,24 @@ describe('a publish card', () => {
     expect(screen.queryByRole('button', { name: 'Review changes' })).toBeNull();
   });
 
+  it('never says nothing changed while a field the person can’t read did', async () => {
+    client.diffVersions.mockResolvedValue({
+      ...diff,
+      changes: [diff.changes[1]],
+      hiddenChanges: 1,
+    });
+    show();
+    await screen.findByText('1 field you can’t read goes live.');
+    expect(screen.queryByText(/draft matches/)).toBeNull();
+  });
+
+  it('adds what the person can’t read to what they can', async () => {
+    client.diffVersions.mockResolvedValue({ ...diff, hiddenChanges: 2 });
+    show();
+    await screen.findByText('2 fields you can’t read also go live.');
+    expect(screen.getByRole('list', { name: 'Changed fields' }).textContent).toBe('TitleChanged');
+  });
+
   it('reads nothing from the wrong environment: an id there can be another entry', async () => {
     show(card({ input: { id: 'e1', space: 'sp_1', environment: 'staging' } }));
     await screen.findByText(/another space or environment/);

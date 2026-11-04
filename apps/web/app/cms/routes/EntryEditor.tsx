@@ -112,9 +112,10 @@ export function EntryEditor() {
   // Freshest aggregate we hold (from save/publish responses); backs the
   // publish confirmation's changed-fields diff.
   const [lastAggregate, setLastAggregate] = useState<EntryAggregate | null>(null);
-  const [publishConfirm, setPublishConfirm] = useState<{ changes: FieldDiff[] | null } | null>(
-    null,
-  );
+  const [publishConfirm, setPublishConfirm] = useState<{
+    changes: FieldDiff[] | null;
+    hiddenChanges: number;
+  } | null>(null);
   if (patchState.target !== `${typeId}:${entryId ?? 'new'}`) {
     setPatchState({ target: `${typeId}:${entryId ?? 'new'}`, patch: null });
     setLastAggregate(null);
@@ -303,11 +304,13 @@ export function EntryEditor() {
   const computePublishConfirm = async (agg: EntryAggregate | null) => {
     if (!entryId) return;
     let changes: FieldDiff[] | null = null;
+    let hiddenChanges = 0;
     if (agg && agg.publishedVersion != null) {
       const diff = await client.diffVersions(entryId, agg.publishedVersion, agg.currentVersion);
       changes = diff.changes.filter((c) => c.kind !== 'unchanged');
+      hiddenChanges = diff.hiddenChanges;
     }
-    setPublishConfirm({ changes });
+    setPublishConfirm({ changes, hiddenChanges });
   };
 
   // Set just before a Publish-triggered form submit; consumed synchronously by
@@ -855,6 +858,7 @@ export function EntryEditor() {
         title={about}
         status={lastAggregate && lastAggregate.id === entryId ? lastAggregate.status : meta?.status}
         changes={publishConfirm?.changes}
+        hiddenChanges={publishConfirm?.hiddenChanges ?? 0}
         compare={
           entryQuery.data ? { client, entry: entryQuery.data, locale: conn.locale } : undefined
         }
