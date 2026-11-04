@@ -28,7 +28,6 @@ import {
 } from '~/cms/components/loading';
 import { Empty, EmptyState, PageHeader } from '~/cms/components/page';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
-import { EntryDiff } from '../components/EntryDiff';
 import { ColumnPicker } from '../components/entries/ColumnPicker';
 import {
   EntriesTable,
@@ -37,6 +36,7 @@ import {
   SORT_UPDATED,
 } from '../components/entries/EntriesTable';
 import { EntryBulkBar } from '../components/entries/EntryBulkBar';
+import { EntryDiff } from '../components/entries/EntryReview';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { SavedViewsMenu } from '../components/entries/SavedViewsMenu';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
@@ -1162,7 +1162,6 @@ export function EntriesList() {
           if (!open) setConfirmPublish(null);
         }}
         title={confirmPublish ? titleOf(confirmPublish.id) : ''}
-        contentType={selectedType}
         status={confirmPublish?.status}
         compare={
           confirmPublish ? { client, entry: confirmPublish, locale: conn.locale } : undefined

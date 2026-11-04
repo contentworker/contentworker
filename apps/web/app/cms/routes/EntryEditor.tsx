@@ -112,9 +112,10 @@ export function EntryEditor() {
   // Freshest aggregate we hold (from save/publish responses); backs the
   // publish confirmation's changed-fields diff.
   const [lastAggregate, setLastAggregate] = useState<EntryAggregate | null>(null);
-  const [publishConfirm, setPublishConfirm] = useState<{ changes: FieldDiff[] | null } | null>(
-    null,
-  );
+  const [publishConfirm, setPublishConfirm] = useState<{
+    changes: FieldDiff[] | null;
+    hiddenChanges: number;
+  } | null>(null);
   if (patchState.target !== `${typeId}:${entryId ?? 'new'}`) {
     setPatchState({ target: `${typeId}:${entryId ?? 'new'}`, patch: null });
     setLastAggregate(null);
@@ -304,11 +305,13 @@ export function EntryEditor() {
   const computePublishConfirm = async (agg: EntryAggregate | null) => {
     if (!entryId) return;
     let changes: FieldDiff[] | null = null;
+    let hiddenChanges = 0;
     if (agg && agg.publishedVersion != null) {
       const diff = await client.diffVersions(entryId, agg.publishedVersion, agg.currentVersion);
       changes = diff.changes.filter((c) => c.kind !== 'unchanged');
+      hiddenChanges = diff.hiddenChanges;
     }
-    setPublishConfirm({ changes });
+    setPublishConfirm({ changes, hiddenChanges });
   };
 
   // Set just before a Publish-triggered form submit; consumed synchronously by
@@ -359,7 +362,8 @@ export function EntryEditor() {
           return;
         }
         toast.success('Draft updated');
-        if (chainPublish) await publish(view.entry);
+        // Named as just saved: this render's title is from before the save.
+        if (chainPublish) await publish(view.entry, titleOf(fields) ?? about);
       } finally {
         // A create that failed or wasn't saved hands the form back.
         if (!isEdit && !swapped) setSwapping(false);
@@ -376,14 +380,14 @@ export function EntryEditor() {
 
   // Publishing: a card in the assistant, or, when it can't be reached, the page's own dialog. No
   // `run` here: callers wrap it, and `run` doesn't nest.
-  const publish = async (agg: EntryAggregate | null) => {
+  const publish = async (agg: EntryAggregate | null, label = about) => {
     if (!entryId) return;
     // Held to the version on screen: confirmed after someone saved a newer draft, it is refused.
     const version = agg?.currentVersion ?? meta?.version;
     const r = await edit<EntryAggregate>(
       'entries_publish',
       { id: entryId, ...(version ? { expectedVersion: version } : {}) },
-      about,
+      label,
     );
     if (r === null) return computePublishConfirm(agg);
     if ('output' in r) published(r.output, neverPublished(agg));
@@ -864,9 +868,9 @@ export function EntryEditor() {
           if (!open) setPublishConfirm(null);
         }}
         title={about}
-        contentType={selectedType}
         status={lastAggregate && lastAggregate.id === entryId ? lastAggregate.status : meta?.status}
         changes={publishConfirm?.changes}
+        hiddenChanges={publishConfirm?.hiddenChanges ?? 0}
         compare={
           entryQuery.data ? { client, entry: entryQuery.data, locale: conn.locale } : undefined
         }

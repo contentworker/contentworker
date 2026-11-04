@@ -34,11 +34,20 @@ const client = {
     publishedVersion: null,
   })),
   updateEntry: vi.fn(),
-  getPublished: vi.fn(async (id: string) => ({
-    id,
+  diffVersions: vi.fn(async (entryId: string) => ({
+    entryId,
     contentType: 'article',
-    fields: { title: 'Pricing' },
-    publishedAt: '2026-10-01T00:00:00.000Z',
+    from: 1,
+    to: 2,
+    changes: [
+      {
+        field: 'title',
+        name: 'Title',
+        fieldType: 'Symbol',
+        kind: 'changed',
+        locales: [{ locale: 'en-US', kind: 'changed', before: 'Pricing', after: 'Pricing page' }],
+      },
+    ],
   })),
 };
 vi.mock('~/cms/lib/client-context', () => ({
@@ -230,7 +239,7 @@ describe('EntryEditor Publish', () => {
     fireEvent.click(button('Publish'));
     const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Pricing page”?' });
     await within(dialog).findByText('1 field changed');
-    expect(client.getPublished).toHaveBeenCalledWith('e1');
+    expect(client.diffVersions).toHaveBeenCalledWith('e1', 'published', 'draft');
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Publish entry' }));
     await screen.findByText('Published v2');

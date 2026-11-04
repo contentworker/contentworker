@@ -112,6 +112,7 @@ const diffOf = (
   from,
   to,
   changes: diffEntryFields(before, after, article),
+  hiddenChanges: 0,
 });
 
 const client = {
@@ -155,6 +156,22 @@ describe('RevisionDiff', () => {
         toLabel="v3 (current draft)"
       />,
     );
+
+  it('never says no field changed while one the person can’t read did', () => {
+    const none = { ...diffOf(1, 3, v1, v1), hiddenChanges: 1 };
+    const view = render(<RevisionDiff diff={none} fromLabel="v1" toLabel="v3" />);
+    expect(screen.getByText(/1 field you can’t read changed/)).toBeTruthy();
+    expect(screen.queryByText(/No field changes/)).toBeNull();
+    view.unmount();
+    render(
+      <RevisionDiff
+        diff={{ ...diffOf(1, 3, v1, v3), hiddenChanges: 2 }}
+        fromLabel="v1"
+        toLabel="v3"
+      />,
+    );
+    expect(screen.getByText(/4 fields changed · 2 fields you can’t read changed/)).toBeTruthy();
+  });
 
   it('names each changed field as the content type does and counts the rest', () => {
     renderDiff();
@@ -266,8 +283,10 @@ describe('VersionHistory compare', () => {
     // In the list, not over the page, and the safe choice has focus.
     expect(ask.closest('li')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(document.activeElement).toBe(
-      within(ask).getByRole('button', { name: 'Keep current draft' }),
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(ask).getByRole('button', { name: 'Keep current draft' }),
+      ),
     );
 
     fireEvent.click(within(ask).getByRole('button', { name: 'Keep current draft' }));

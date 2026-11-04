@@ -43,12 +43,15 @@ test.beforeEach(async ({ page }) => {
 /** The seeded content type's entries list, from the Content section's own sub-nav. */
 /**
  * Confirms a page's action at its card in the assistant's panel; the page waits on the answer. The
- * newest card: the conversation is the one person's, kept across tests.
+ * conversation is the one person's, kept across tests and live in all of them, so the card is found
+ * by the entry it names: the newest "Publish this entry" can be another test's, here before this
+ * one's has arrived. Newest of those, for an entry asked about twice.
  */
-async function confirmCard(page: Page, title: string) {
+async function confirmCard(page: Page, title: string, about: string) {
   const card = page
     .getByRole('complementary', { name: 'Coworker' })
     .getByRole('region', { name: title })
+    .filter({ hasText: about })
     .last();
   await card.getByRole('button', { name: 'Confirm' }).click();
 }
@@ -100,7 +103,7 @@ test('authors and publishes an entry end-to-end', async ({ page }) => {
 
   // Publish from the editor header: confirmed at the assistant's card.
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
-  await confirmCard(page, 'Publish this entry');
+  await confirmCard(page, 'Publish this entry', title);
   await expect(page.getByText(/Published v\d+/)).toBeVisible();
 
   // Back on the list, the entry shows as published (in words, not only colour).
@@ -169,7 +172,8 @@ test('publishing with unsaved edits saves first, then confirms', async ({ page }
 
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
   await expect(page.getByText('Draft updated')).toBeVisible();
-  await confirmCard(page, 'Publish this entry');
+  // Named as just saved, not as the page read before the save.
+  await confirmCard(page, 'Publish this entry', `${title} v2`);
   await expect(page.getByText(/Published v\d+/)).toBeVisible();
 
   // Publish with an INVALID form: feedback at the button, no confirm.
@@ -419,7 +423,7 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
   const row = page.getByRole('row', { name: new RegExp(title) });
   await row.getByRole('button', { name: /^More actions for / }).click();
   await page.getByRole('menuitem', { name: 'Move to trash' }).click();
-  await confirmCard(page, 'Move this entry to the trash');
+  await confirmCard(page, 'Move this entry to the trash', title);
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
 
   await page.getByRole('button', { name: 'View trash' }).click();
@@ -435,7 +439,7 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
     .getByRole('button', { name: /^More actions for / })
     .click();
   await page.getByRole('menuitem', { name: 'Move to trash' }).click();
-  await confirmCard(page, 'Move this entry to the trash');
+  await confirmCard(page, 'Move this entry to the trash', title);
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
   await page.getByRole('button', { name: 'View trash' }).click();
   await page
@@ -443,7 +447,7 @@ test('trashes an entry, restores it, then deletes it permanently', async ({ page
     .getByRole('button', { name: /^More actions for / })
     .click();
   await page.getByRole('menuitem', { name: 'Delete permanently…' }).click();
-  await confirmCard(page, 'Delete this entry for good');
+  await confirmCard(page, 'Delete this entry for good', title);
   await expect(page.getByRole('row', { name: new RegExp(title) })).toBeHidden();
 });
 
@@ -889,12 +893,42 @@ test('deleting an asset an entry uses names that entry and links to it', async (
   await expect(library.getByRole('button', { name: `Open “${assetTitle}”` })).toBeVisible();
 });
 
+test('a changed entry’s card says what goes live, and declining keeps focus in the panel', async ({
+  page,
+  request,
+}) => {
+  const title = `Carded ${Date.now()}`;
+  const id = await createChanged(request, title);
+  await openCms(page, '/content/article');
+  await page
+    .getByRole('row', { name: new RegExp(title) })
+    .getByRole('button', { name: `Publish “${title}”` })
+    .click();
+
+  const card = page
+    .getByRole('complementary', { name: 'Coworker' })
+    .getByRole('region', { name: 'Publish this entry' })
+    .filter({ hasText: title });
+  await expect(card.getByText('1 field goes live:')).toBeVisible();
+  await expect(card.getByRole('list', { name: 'Changed fields' })).toContainText('Body');
+  await expect(card.getByRole('button', { name: 'Not now' })).toBeFocused();
+
+  await card.getByRole('button', { name: 'Review changes' }).click();
+  await expect(card.getByText('Live body')).toBeVisible();
+  await expect(card.getByText('Edited body')).toBeVisible();
+
+  await card.getByRole('button', { name: 'Not now' }).click();
+  await expect(page.getByText(/left as it was/).last()).toBeVisible();
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
+  expect(await statusOf(request, id)).toBe('changed');
+});
+
 test.describe('publishing from a row, without the assistant', () => {
   test.beforeEach(async ({ page }) => {
     await withoutAssistant(page);
   });
 
-  test('a changed entry confirms what goes live; Keep as draft publishes nothing, Publish entry publishes', async ({
+  test('a changed entry confirms what goes live; Keep live version publishes nothing, Publish entry publishes', async ({
     page,
     request,
   }) => {
@@ -909,12 +943,18 @@ test.describe('publishing from a row, without the assistant', () => {
     await expect(dialog.getByRole('heading', { name: `Publish “${title}”?` })).toBeVisible();
     // Only the body differs from what's live: it is listed as changed, the title is not.
     await expect(dialog.getByText('1 field changed')).toBeVisible();
-    const changed = dialog.getByRole('row', { name: /^body Changed/ });
+    const changed = dialog.getByRole('list', { name: 'Changes' }).getByRole('listitem');
+    await expect(changed).toHaveCount(1);
+    await expect(changed.getByText('Body', { exact: true })).toBeVisible();
     await expect(changed.getByText('Live body')).toBeVisible();
     await expect(changed.getByText('Edited body')).toBeVisible();
-    await expect(dialog.getByRole('row', { name: /^title/ }).getByText('Changed')).toHaveCount(0);
+    await expect(dialog.getByText(title, { exact: true })).toHaveCount(0);
+    await dialog.getByRole('button', { name: /^Show \d+ unchanged field/ }).click();
+    await expect(
+      dialog.getByRole('list', { name: 'Unchanged fields' }).getByText(title),
+    ).toBeVisible();
 
-    await dialog.getByRole('button', { name: 'Keep as draft' }).click();
+    await dialog.getByRole('button', { name: 'Keep live version' }).click();
     await expect(dialog).toBeHidden();
     expect(await statusOf(request, id)).toBe('changed');
     await expect(row.getByRole('button', { name: `Publish “${title}”` })).toBeVisible();
@@ -924,6 +964,36 @@ test.describe('publishing from a row, without the assistant', () => {
     await expect(page.getByText(`“${title}” published`)).toBeVisible();
     await expect(row.getByRole('button', { name: `Publish “${title}”` })).toHaveCount(0);
     expect(await statusOf(request, id)).toBe('published');
+  });
+
+  test('at phone width the value going live sits inside the dialog, however long', async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width: 393, height: 852 });
+    const title = `Narrow ${Date.now()}`;
+    const id = await createChanged(request, title);
+    const long = `https://example.com/${'unbroken-'.repeat(30)}`;
+    const edited = await api(request, 'PUT', `${MGMT}/entries/${id}`, {
+      fields: { title: { 'en-US': title }, body: { 'en-US': long } },
+    });
+    expect(edited.ok(), await edited.text()).toBe(true);
+    await openCms(page, '/content/article');
+    await page.getByRole('link', { name: title }).focus();
+    await page.getByRole('button', { name: `Publish “${title}”` }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    const region = dialog.getByRole('region', { name: 'What changes' });
+    const value = region.getByText(long);
+    await expect(value).toBeVisible();
+    const box = (await value.boundingBox()) ?? { x: 0, width: Number.POSITIVE_INFINITY };
+    const bounds = (await region.boundingBox()) ?? { x: 0, width: 0 };
+    expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+    expect(await region.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+    // A keyboard reaches the scroller, and leaves the safe choice as where it starts.
+    await expect(dialog.getByRole('button', { name: 'Keep live version' })).toBeFocused();
+    expect(await region.getAttribute('tabindex')).toBe('0');
   });
 
   test('a draft publishes at once with an Undo that returns it to draft', async ({

@@ -648,6 +648,18 @@
   overscroll-behavior: contain;
 }
 
+/* A scroller that says there is more: a soft shadow at an edge with content past it, covered by the
+   surface's own colour once scrolled to that end. Backgrounds only, so it needs no script. */
+.cw-scroll-cue {
+  --cue-cover: var(--popover);
+  --cue-shade: color-mix(in oklab, var(--foreground) 14%, transparent);
+  background:
+    linear-gradient(var(--cue-cover) 40%, transparent) top / 100% 2rem no-repeat local,
+    linear-gradient(transparent, var(--cue-cover) 60%) bottom / 100% 2rem no-repeat local,
+    linear-gradient(var(--cue-shade), transparent) top / 100% 0.5rem no-repeat scroll,
+    linear-gradient(transparent, var(--cue-shade)) bottom / 100% 0.5rem no-repeat scroll;
+}
+
 /* Work in progress as a light sweeping across muted text (AI Elements' Shimmer). Still, in plain
    muted text, where motion is reduced. */
 .cw-shimmer {

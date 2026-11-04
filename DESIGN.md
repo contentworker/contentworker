@@ -322,11 +322,20 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   composer in the `wait` tint. ⌘J toggles it (`aria-keyshortcuts`). Escape closes the sheet (the
   column stays) and hands focus back to the page. A page's edits go through it: an action (publish,
   unpublish, the trash, restoring a version, a bulk change) opens the panel at its confirm card
-  (Confirm, or Not now, focused) and the page waits; any other edit (saving, duplicating) runs at
-  once and leaves a line ("Published · Spring launch notes") linking to the entry. When its socket
+  (Confirm, or Not now, focused, once the panel is open) and the page waits; answered, focus stays
+  with the line that replaces the card, never falling to the page's body. A publish card says what
+  goes live from the entry's own version diff, never from anything a model wrote (one source with
+  `PublishConfirm`: `entries/EntryReview.tsx`): the changed fields by name, then Review changes for
+  each field's published and draft values. Confirm stays off until that read has something to show,
+  saying why in words (a status line it is described by) and whatever else can answer it: a read
+  that fails offers Try again, a card from another space or environment asks to switch back, and one
+  that can't say where it runs asks for Not now and a new question. Not now always works, and takes
+  focus if Confirm loses it. Fields the person's role can't read aren't listed
+  but are counted in a warning Alert ("1 field you can't read goes live."), never "nothing changed". The other cards list nothing. Any other edit (saving, duplicating) runs
+  at once and leaves a line ("Published · Spring launch notes") linking to the entry. When its socket
   is down the panel says so in one quiet line and the page makes the edit itself, confirming in
-  place or in a dialog as The Undoable Confirms In Place Rule says. Beside the column a page is
-  narrower than the screen, so the Content pages' content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
+  place or in a dialog as The Undoable Confirms In Place Rule says. Beside the column a page is narrower than the screen, so the Content pages'
+  content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
   In that list a singleton links to its one entry (`/content/:typeId/entry`), not a list of one,
   and stays marked current anywhere under the type.
 - **Slow pages:** a navigation that takes over 400ms draws a link-blue rule sweeping under the
@@ -471,7 +480,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   (Draft from prose, Generate with AI, Copy preview link) are ghost and fold into a ghost ⋯ menu
   ("More entry actions") when the editor is narrower than 56rem. Publishing an entry that has been
   live confirms with what changed, from the editor and from an entries row alike
-  (`entries/PublishConfirm.tsx`). A first publish confirms in the editor, where the whole entry is
+  (`entries/PublishConfirm.tsx`), held as the card is (Publish entry stays off until the read has
+  something to show, says why, and a failed read offers Try again; the cancel always works): each
+  changed field by name, its published and draft values side
+  by side where the container has room and stacked where it hasn't (a container query, so a dialog
+  or the Coworker column narrows it as a phone does), links by the title of what they point at,
+  unchanged fields behind "Show 4 unchanged fields". The scroller takes keyboard focus. A first publish confirms in the editor, where the whole entry is
   in front of you, and goes at once from a row, with Undo in the toast. Beside the form sits the **side pane** (after felix's):
   where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
   the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
