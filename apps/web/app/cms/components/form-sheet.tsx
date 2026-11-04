@@ -1,7 +1,6 @@
 import { Button } from '@contentworker/ui/button';
 import {
   Sheet,
-  SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
@@ -9,7 +8,7 @@ import {
 } from '@contentworker/ui/sheet';
 import { Plus } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { useMedia } from '~/cms/lib/device';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 
 /**
  * A create form behind one button, so a list page shows the list rather than a form nobody is
@@ -38,7 +37,6 @@ export function FormSheet({
   onCloseAutoFocus?: (e: Event) => void;
   children: ReactNode;
 }) {
-  const phone = useMedia('(max-width: 639px)');
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetTrigger asChild>
@@ -46,23 +44,20 @@ export function FormSheet({
           <Plus aria-hidden="true" /> {label}
         </Button>
       </SheetTrigger>
-      <SheetContent
-        side={phone ? 'bottom' : 'right'}
+      <ResponsiveSheetContent
         className="gap-0 overflow-y-auto sm:max-w-md"
         onCloseAutoFocus={onCloseAutoFocus}
         // With no description, say so, rather than point at one that isn't there.
         {...(description ? {} : { 'aria-describedby': undefined })}
       >
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            {title ?? label}
-          </SheetTitle>
+          <SheetTitle>{title ?? label}</SheetTitle>
           {description ? (
             <SheetDescription className="text-xs">{description}</SheetDescription>
           ) : null}
         </SheetHeader>
         <div className="p-4">{children}</div>
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

@@ -1,12 +1,6 @@
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import {
   Table,
@@ -20,6 +14,7 @@ import { Send } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
 import { EmptyState } from '~/cms/components/page';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { WebhookDeliveryRecord, WebhookSummary } from '../lib/management';
@@ -120,7 +115,7 @@ export function WebhookDeliveriesSheet(props: {
 
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-3xl">
+      <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-3xl">
         <SheetHeader>
           <SheetTitle>Deliveries</SheetTitle>
           <SheetDescription className="break-all font-mono text-xs">
@@ -245,7 +240,7 @@ export function WebhookDeliveriesSheet(props: {
             </Table>
           )}
         </div>
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

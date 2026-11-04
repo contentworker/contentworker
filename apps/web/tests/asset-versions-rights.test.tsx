@@ -388,6 +388,84 @@ describe('the Versions tab', () => {
 });
 
 describe('the Rights tab', () => {
+  it('asks before the sheet closes on rights not yet saved', async () => {
+    assets = [asset()];
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    fireEvent.change(within(sheet).getByLabelText('License'), { target: { value: 'CC0' } });
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    expect(await screen.findByRole('alertdialog', { name: /Discard your changes/ })).toBeTruthy();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('Save metadata saves, then asks rather than closing over unsaved rights', async () => {
+    assets = [asset()];
+    client.setAssetMetadata.mockResolvedValueOnce(undefined);
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    fireEvent.change(within(sheet).getByLabelText('License'), { target: { value: 'CC0' } });
+    const details = within(sheet).getByRole('tab', { name: 'Details' });
+    fireEvent.mouseDown(details);
+    fireEvent.click(details);
+    await waitFor(() => expect(details.getAttribute('aria-selected')).toBe('true'));
+
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save metadata' }));
+
+    await waitFor(() => expect(client.setAssetMetadata).toHaveBeenCalled());
+    const ask = await screen.findByRole('alertdialog', { name: /Discard your changes/ });
+    // The metadata went: only the rights are at stake, and the question says so.
+    expect(ask.textContent).toContain('The rights here are not saved.');
+    expect(ask.textContent).not.toContain('Nothing has been saved');
+    expect(screen.getByRole('dialog')).toBeTruthy();
+
+    fireEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+    const rights = within(sheet).getByRole('tab', { name: 'Rights' });
+    fireEvent.mouseDown(rights);
+    fireEvent.click(rights);
+    await waitFor(() => expect(rights.getAttribute('aria-selected')).toBe('true'));
+    expect((within(sheet).getByLabelText('License') as HTMLInputElement).value).toBe('CC0');
+  });
+
+  it('Save metadata closes when no rights are waiting', async () => {
+    assets = [asset()];
+    client.setAssetMetadata.mockResolvedValueOnce(undefined);
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Details');
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save metadata' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('holds the sheet while rights save', async () => {
+    assets = [asset()];
+    client.setAssetRights.mockReturnValueOnce(new Promise(() => {}));
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    fireEvent.change(within(sheet).getByLabelText('License'), { target: { value: 'CC0' } });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save rights' }));
+    await within(sheet).findByRole('button', { name: 'Saving…' });
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('asks before the duplicate badge replaces unsaved rights', async () => {
+    assets = [asset({ duplicateOf: 'orig' })];
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    fireEvent.change(within(sheet).getByLabelText('License'), { target: { value: 'CC0' } });
+
+    fireEvent.click(within(sheet).getByRole('button', { name: /^Possible duplicate/ }));
+
+    const ask = await screen.findByRole('alertdialog', {
+      name: 'Open the original and discard your changes?',
+    });
+    expect(ask.textContent).toContain('rights');
+  });
+
   it('reads the saved rights as a status', async () => {
     assets = [
       asset({

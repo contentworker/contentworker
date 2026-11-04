@@ -39,6 +39,7 @@ export function ProposalBanner({
   busy,
   onApply,
   onDismiss,
+  onEscape,
   className,
 }: {
   proposal: WorkflowProposal;
@@ -50,6 +51,7 @@ export function ProposalBanner({
   busy?: boolean;
   onApply: () => void;
   onDismiss: () => void;
+  onEscape?: () => void;
   className?: string;
 }) {
   const changes = proposal.changes ?? graphDiff(base, proposal.graph);
@@ -63,6 +65,7 @@ export function ProposalBanner({
       busy={busy}
       onApply={onApply}
       onDismiss={onDismiss}
+      onEscape={onEscape}
       className={className}
       provenance={
         <p className="text-muted-foreground text-xs">

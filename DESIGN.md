@@ -235,7 +235,7 @@ Tailwind's default breakpoints, read as devices:
 
 | Width                     | Typically                 | What changes                                                                                                                                                                      |
 | ------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| below `sm` (640px)        | iPhone upright            | Header shows the mark, and Search and Coworker as icons; the scope (space, environment, locale) opens from More                                                                   |
+| below `sm` (640px)        | iPhone upright            | Header shows the mark, and Search and Coworker as icons; the scope (space, environment, locale) opens from More; dialogs and form sheets come from the bottom                     |
 | below `md` (768px)        | phones, either way up     | Bottom tab bar, no sidebar; tables stack into cards; the content-type list leaves the Content pages (their overview lists the types)                                              |
 | `md` to `lg` (768–1023px) | iPad upright              | The sidebar is an icon rail beside the page and opens over it                                                                                                                     |
 | `lg` and up (1024px)      | iPad on its side, desktop | The full sidebar (the reader can collapse it); the space, environment and locale switchers in the header; the entry editor's side pane beside the form; the assistant as a column |
@@ -310,7 +310,8 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   voice control. Approvals is behind the `approvals` feature (`cms/lib/features.tsx`,
   on): off, it leaves the sidebar, the tab bar, the palette, the shortcuts list and its G-letter.
 - **Main** pads its foot by `--tabbar-h` and lays every page in `Body` (the page width and
-  gutters). Never hard-code the bar heights.
+  gutters), except a canvas: the workflow editor is `bare`, full-bleed beside the rail, and draws
+  its own frame and loading skeleton. Never hard-code the bar heights.
 - **Coworker (the assistant):** named Coworker everywhere a person sees it (the button, the panel's
   heading and accessible name, its messages, the shortcuts list); `assistant` in code. Behind the `assistant` feature (`cms/lib/features.tsx`, on). A column beside the
   page at lg; below that a sheet between the header and the tab bar,
@@ -332,8 +333,8 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   focus if Confirm loses it. Fields the person's role can't read aren't listed
   but are counted in a warning Alert ("1 field you can't read goes live."), never "nothing changed". The other cards list nothing. Any other edit (saving, duplicating) runs
   at once and leaves a line ("Published · Spring launch notes") linking to the entry. When its socket
-  is down the panel says so in one quiet line and the page makes the edit itself, confirming in its
-  own dialog as before. Beside the column a page is narrower than the screen, so the Content pages'
+  is down the panel says so in one quiet line and the page makes the edit itself, confirming in
+  place or in a dialog as The Undoable Confirms In Place Rule says. Beside the column a page is narrower than the screen, so the Content pages'
   content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
   In that list a singleton links to its one entry (`/content/:typeId/entry`), not a list of one,
   and stays marked current anywhere under the type.
@@ -353,8 +354,9 @@ through the variables, never `env()` directly.
 ## Touch
 
 - **Targets:** 44px for a finger. A small control keeps its drawn size and gets `hit-area`, an
-  invisible box grown to 2.75rem on a coarse pointer. The shared buttons have it at every size;
-  raw buttons and links in the bars add it. A tab grows instead: on a coarse pointer each trigger
+  invisible box grown to 2.75rem on a coarse pointer. The shared buttons have it at every size,
+  a dialog's close and footer buttons included; raw buttons and links in the bars add it, and a
+  sheet's close grows to 2.75rem. A tab grows instead: on a coarse pointer each trigger
   is at least 44px and its list grows to hold it (a mouse keeps the 32px list), since a tab list
   that scrolls sideways would clip an invisible box to its own height.
 - **Fields:** 16px on a touch screen whatever their classes say (an unlayered rule in index.css),
@@ -410,13 +412,14 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   entries, drafts, changed entries and fields as figures, Edit, and a ghost ⋯ menu ("More actions
   for ‹type›") with Clone… and, after a separator, a destructive Delete…; a Draft badge only on a
   type whose schema isn't published. Clone… opens a dialog with the copy's name and API ID. Closed
-  either way, focus goes back to the row's ⋯. **Deleting a type** is the second written exception
-  to "never a modal" (the trash's Delete permanently is the first): it can't be undone, so a dialog
-  reads what depends on the type first, names in a warning Alert whatever blocks it (another type
+  either way, focus goes back to the row's ⋯. **Deleting a type** can't be undone, so it confirms
+  in a modal (The Undoable Confirms In Place Rule): a dialog reads what depends on the type first, names in a warning Alert whatever blocks it (another type
   linking to it, a menu or redirect naming its entries, its URL pattern; then no confirm is
-  offered), and with entries offers "Also delete its N entries" as an unticked opt-in. It is
-  confirmed by typing the API ID, and a refusal shows as a destructive Alert in the dialog. Deleted
-  at once, focus moves to the next row's ⋯, or the page heading when it was the last. With its
+  offered: no opt-in, no red button, only Keep it), and with entries offers "Also delete its N
+  entries" as an unticked opt-in. It is confirmed by typing the API ID, with a muted line tied to
+  the disabled button saying which steps are outstanding, and a refusal shows as a destructive
+  Alert in the dialog. Keep it holds focus while the check runs; once it lands, focus moves to the
+  first field. Deleted at once, focus moves to the next row's ⋯, or the page heading when it was the last. With its
   entries, the delete runs as a bulk job shown in the trash's card above the table, Stop included,
   kept by the Content layout so it is still there after a visit to an entry. The type goes in a
   step after the last entry: the card says "Deleting the content type…" until that is recorded on
@@ -451,7 +454,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   live) and sending only the entries it changes. A polite sr-only line says "2 entries selected".
   The header checkbox is mixed while some are ticked. A new order or a search leaves ticked only
   what it still shows. Bulk changes confirm once, naming the first five entries and counting the
-  rest ("and 3 more"); what failed stays ticked and is named in an Alert. **The trash** (View
+  rest ("and 3 more"): Publish selected in a dialog, Unpublish selected and Move to trash in place
+  under the bar, Keep as is focused; what failed stays ticked and is named in an Alert. **The trash** (View
   trash) is the same table with each title as plain text, a row's outline Restore and "Delete
   permanently…" in its ⋯ menu (a dialog naming the entry); its rows tick too, and its bulk bar
   offers Restore selected and Delete permanently… (both outline). Move to trash, Restore selected
@@ -459,7 +463,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   trash ("Move 2 entries to the trash?", saying live ones are unpublished first) and Delete
   permanently ("Permanently delete 2 entries?", naming them, saying it can't be undone and that an
   entry published entries link to is kept; Keep in trash, then a destructive Delete permanently)
-  confirm at the assistant's card, or the page's own dialog without it; Restore selected runs at
+  confirm at the assistant's card; without it the page asks, in place for the trash and in a
+  dialog for Delete permanently. Restore selected runs at
   once, as a row's Restore does. Each of the three a role can't start (it doesn't hold that job's
   actions on every type, as the api's `bulkJobs` answer says) is disabled, with the reason under
   the bar (`aria-describedby`). The job shows
@@ -546,7 +551,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   is, its title beside Add tab; each tab a row (its name, a ghost Remove), and each field row gains
   Tab and Group selects once a tab exists.
 - **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the
-  noun), then cards or a stacked table.
+  noun), then cards or a stacked table. Publishing a release confirms in an alert dialog, naming
+  what goes live and what to look at first (never-published entries, members in the trash).
 - **Assets** (`cms/components/AssetLibrary.tsx`, `cms/components/assets/`): `PageHeader` with
   Upload, which names the open folder ("Upload to “Brand”"); the library section is the drop
   target too, ringed while files are over it. From md the **folder tree** stands beside the
@@ -734,8 +740,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 
 ## Screens that change shape
 
-- **Workflow editor** (`cms/routes/WorkflowEditor.tsx`): at lg it builds,
-  palette | canvas | inspector. On touch, a palette item is tapped in (dragging is offered only to
+- **Workflow editor** (`cms/routes/WorkflowEditor.tsx`): full-bleed, the window's height at lg
+  (the page never scrolls; its columns do). At lg it builds, palette | canvas | inspector; with
+  Coworker open the inspector steps aside until a step is picked. On touch, a palette item is tapped in (dragging is offered only to
   a fine pointer: iPadOS drag is unreliable), node handles grow and carry a 32px target, and a
   connection snaps from 40px. Below lg it is review-only, saying so in place ("Building workflows
   needs a wider screen…"): the canvas, the checks and each step's settings show read-only, and
@@ -778,6 +785,8 @@ opacity, colour and a few pixels of travel.
   `--motion-instant` 100ms (feedback, anything leaving), `--motion-move` 180ms (something appearing
   or changing state), `--motion-travel` 240ms (pages and panels).
 - **Easing:** `ease-arrive` (`cubic-bezier(0.16,1,0.3,1)`) for arrivals, `ease-leave` for exits.
+- **Overlays:** a sheet, or a dialog rising on a phone, travels in on `--motion-travel` and
+  `ease-arrive`; a dialog appears on `--motion-move`; all of them leave on `--motion-instant`.
 - **Arrival:** `animate-arrive`, a fade and a 4px rise, for a toast, a confirm or a new row
   (`useArrivals` decides what is new).
 - **Pages** cross-fade with View Transitions while the header, the sidebar and the tab bar hold
@@ -842,18 +851,55 @@ for code and data blocks only.
   remembered row count (`cms/components/loading.tsx`).
 - **Item, Field, Kbd, Spinner, Badge, Separator, Breadcrumb, Tooltip, Sheet, Dropdown
   menu, Alert, Alert dialog, Dialog, Select, Tabs, Checkbox, Avatar** (`packages/ui`): radix-maia
-  primitives on the Ledger tokens.
+  primitives on the Ledger tokens. Dialogs, alert dialogs and sheets open over a clear backdrop that
+  blurs the page (`backdrop-blur-sm`), with no tint.
+- **Dialog** (`ui/dialog.tsx`, `ui/alert-dialog.tsx`): capped to the screen, less an on-screen
+  keyboard (`--keyboard-inset`, since iOS leaves that out of `dvh`), so what gives way is the body,
+  which scrolls: the header, the footer and the close button stay put and every action stays in
+  reach. A dialog comes from the bottom on a phone and sits centred from `sm`; an alert dialog is a
+  question, not a form, and stays centred. The palette anchors to the top at every width
+  (`placement="top"`), so its search box holds still as the results shrink.
+  - **Title:** `section-title`, the same in a dialog, an alert dialog and a sheet.
+  - **Footer:** an outline Cancel, then the primary at the default size, on the right. On a phone
+    they stack, the primary on top.
+  - **Errors:** `DialogError`, one line (or a title and a list) in `destructive`, `role="alert"`,
+    above the footer, for what stopped the form, in a dialog or a sheet; it brings itself into view,
+    since the pinned footer can be pressed from anywhere in the scroll. A field's own error stays
+    beside the field, and a notice that blocks the task (a refusal with a way on) is an Alert.
+  - **Leaving:** a form with work in it never goes quietly (`cms/components/discard-guard.tsx`).
+    Escape, a press outside, the close button and Cancel all ask in place of its buttons ("Discard
+    this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, and an
+    untouched form just closes. A save under way holds the form: Cancel waits, and a try at leaving
+    says "Still saving". Only a save holds it; a read (Check, Fetch) stays closable. A save that
+    never answers times out (`RequestTimeoutError`, in `req`): the form lets go and keeps what was
+    typed, and `DialogError` says the save didn't confirm and to check before trying again, never
+    that nothing was saved. Where a create has no natural key, the button turns to "Create again". A form of a line
+    or two (a view's name, an invitation, a clone's name) isn't guarded, and New space and New
+    environment keep what was typed when they close. Dialogs that talk to a model keep their work instead: the prompt
+    and a draft under review stay for when they open again, and only Discard or Apply clear them.
+    Closing one while the model works aborts the request and drops a late answer, so a model that
+    hangs never holds the dialog shut.
 - **Status badge** (`components/status.tsx`): a pill tinted 11% in the status colour with a dot; an
   ending that went badly is ruled in the colour with a mark (✕ or undo) instead of tinted, so it
   reads apart without colour. `ToneBadge` for another vocabulary (a diff's change, a finding's
   severity); `StatusDot` alone where the word sits beside it.
-- **Inline confirm** (`cms/components/InlineConfirm.tsx`): an "are you sure?" where the action was,
-  never a modal. The safe choice has focus, Escape backs out of the newest one, and focus goes back
-  to what asked.
+- **Inline confirm** (`cms/components/InlineConfirm.tsx`): an "are you sure?" where the action was.
+  The safe choice has focus, Escape backs out of the newest one, and focus goes back to what asked.
+  **The Undoable Confirms In Place Rule:** a modal confirm only when nothing can be undone; anything
+  undoable confirms inline. So restoring a version asks in place, since it appends a new version
+  and the one it replaced can be restored in turn. Revoking a key or a token, disconnecting an
+  application, deleting a webhook, uninstalling a plugin (its settings and stored data go with it),
+  deleting a saved view, starting a new conversation, discarding an entry's unsaved changes, and
+  Delete permanently and deleting a content type are modals: the data is gone, and asking again
+  makes something new rather than bringing it back. A publish confirms in a modal too, an entry's, a
+  bulk publish or a release's: readers and webhooks have it at once, and no undo calls that back.
+  Unpublishing and moving to the trash ask in place, one entry or many: Undo or Restore puts them
+  back.
 - **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
   toast carries its Undo action.
 - **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"
-  button, in a sheet from the side (from the bottom on a phone).
+  button, in a sheet from the side (from the bottom on a phone, as every sheet with a form or a
+  detail is: `ResponsiveSheetContent`).
 - **Relative time** (`components/ago.tsx`): "3m ago" that stays true, the full time in its tooltip.
 - **Copy and share** (`components/copy-button.tsx`, `cms/components/share-button.tsx`): copy says so
   for a moment; share uses the system sheet where there is one.

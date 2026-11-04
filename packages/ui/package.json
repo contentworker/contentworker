@@ -6,6 +6,7 @@
   "description": "Shared React UI primitives (shadcn/ui) for the contentworker admin (apps/web).",
   "exports": {
     "./*": "./src/*.tsx",
+    "./lib/keyboard-inset": "./src/lib/keyboard-inset.ts",
     "./lib/utils": "./src/lib/utils.ts"
   },
   "scripts": {

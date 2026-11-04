@@ -331,6 +331,23 @@
   }
 }
 
+/* The Reduced Motion Rule, for the overlays: they fade, without sliding or growing. Unlayered, to
+   win over the slide and zoom utilities. */
+@media (prefers-reduced-motion: reduce) {
+  :is(
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="sheet-content"]
+  ) {
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-enter-scale: 1;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+    --tw-exit-scale: 1;
+  }
+}
+
 /* A phone on its side: too short for stacked chrome, too narrow for the lg layouts. */
 @custom-variant short {
   @media (orientation: landscape) and (max-height: 32rem) and (width < 64rem) {

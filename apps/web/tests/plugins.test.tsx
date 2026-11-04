@@ -386,6 +386,30 @@ describe('installing from a URL', () => {
     );
   });
 
+  it('stays closable while a package is fetched, and drops what comes back late', async () => {
+    const client = fakeClient();
+    let signal: AbortSignal | undefined;
+    client.inspectPluginPackage.mockImplementationOnce((_input: unknown, s: AbortSignal) => {
+      signal = s;
+      return new Promise(() => {});
+    });
+    renderWith(<Plugins client={client} />);
+    await openUrlMode();
+    fireEvent.change(screen.getByLabelText(/package url/i), {
+      target: { value: 'https://plugins.example.com/seo.json' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^fetch$/i }));
+    await screen.findByRole('button', { name: 'Fetching…' });
+
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(cancel.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(cancel);
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(signal?.aborted).toBe(true);
+  });
+
   it('shows what the server verified, not what the URL claimed', async () => {
     const client = fakeClient();
     renderWith(<Plugins client={client} />);
@@ -396,9 +420,10 @@ describe('installing from a URL', () => {
     fireEvent.click(screen.getByRole('button', { name: /^fetch$/i }));
 
     await screen.findByText('It is asking to:');
-    expect(client.inspectPluginPackage).toHaveBeenCalledWith({
-      packageUrl: 'https://plugins.example.com/seo.json',
-    });
+    expect(client.inspectPluginPackage).toHaveBeenCalledWith(
+      { packageUrl: 'https://plugins.example.com/seo.json' },
+      expect.any(AbortSignal),
+    );
     expect(screen.getByText(/1,234 bytes/)).toBeTruthy();
     expect(screen.getByText(new RegExp('b'.repeat(64)))).toBeTruthy();
   });

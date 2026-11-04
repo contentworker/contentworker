@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { nodeSpec, type WorkflowGraph, withDefaults } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowListItem } from '~/cms/lib/management';
@@ -50,6 +50,7 @@ const UNPUBLISHED = { latestVersion: null, publishedTrigger: null, startsAlongsi
 const client = {
   listWorkflowGraphs: vi.fn<() => Promise<WorkflowListItem[]>>(),
   listContentTypes: vi.fn(async () => [{ apiId: 'article', name: 'Article' }]),
+  createWorkflowDraft: vi.fn(),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -89,6 +90,30 @@ const rowOf = async (name: string) => {
 };
 
 describe('workflows list', () => {
+  it('holds the New workflow sheet while it creates, rather than offer to discard', async () => {
+    let finish: (r: { workflow: { id: string } }) => void = () => {};
+    client.createWorkflowDraft.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    setup([]);
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const sheet = await screen.findByRole('dialog');
+    fireEvent.change(within(sheet).getByLabelText(/^Name/), { target: { value: 'Legal' } });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Create workflow' }));
+    await within(sheet).findByRole('button', { name: 'Creating…' });
+
+    expect(within(sheet).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(
+      true,
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(within(sheet).getByRole('status').textContent).toContain('Still saving');
+    await act(async () => finish({ workflow: { id: 'wf-new' } }));
+  });
+
   it('lists each workflow as a row with what starts it, what it covers and its version', async () => {
     setup([
       workflow('wf-1', 'Editorial review', 'trigger.manual', {

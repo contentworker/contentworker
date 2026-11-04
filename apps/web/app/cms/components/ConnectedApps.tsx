@@ -159,7 +159,9 @@ function DisconnectButton(props: { name: string; onConfirm: () => void }) {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={props.onConfirm}>Disconnect</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={props.onConfirm}>
+            Disconnect
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -374,7 +376,9 @@ function RevokeTokenButton(props: { name: string; onConfirm: () => void }) {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={props.onConfirm}>Revoke token</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={props.onConfirm}>
+            Revoke token
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

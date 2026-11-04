@@ -12,6 +12,9 @@ import { useMediaQuery } from './shortcuts';
  */
 export const useMedia = useMediaQuery;
 
+/** Below Tailwind's `sm`: an iPhone upright, where a form sheet comes from the bottom. */
+export const PHONE = '(max-width: 639px)';
+
 /** Tailwind's `lg`: the width the assistant column and the entry editor's side panels need. */
 export const WIDE = '(min-width: 1024px)';
 

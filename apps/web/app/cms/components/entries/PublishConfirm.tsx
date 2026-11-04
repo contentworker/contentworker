@@ -141,6 +141,7 @@ export function PublishConfirm(props: PublishConfirmProps) {
             {firstPublish ? 'Keep as draft' : 'Keep live version'}
           </AlertDialogCancel>
           <AlertDialogAction
+            variant="default"
             ref={publish}
             disabled={props.busy || pending || blocked}
             aria-describedby={pending || blocked ? reasonId : undefined}

@@ -1,23 +1,19 @@
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
+import { DiscardAsk, type DiscardGuard, useDiscardGuard } from '~/cms/components/discard-guard';
 import { LoadingStatus } from '~/cms/components/loading';
 import { RequiredMark } from '~/cms/components/required-mark';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { ToneBadge } from '~/cms/components/status';
-import { useMedia } from '~/cms/lib/device';
 import {
   ApiError,
   apiErrorMessage,
@@ -25,6 +21,7 @@ import {
   type ManagementClient,
   type PluginSettingField,
   type PluginSettingsView,
+  RequestTimeoutError,
 } from '~/cms/lib/management';
 import {
   defaultHint,
@@ -54,9 +51,11 @@ export function PluginSettingsSheet(props: {
   onOpenChange: (open: boolean) => void;
 }) {
   const { client, plugin } = props;
-  const phone = useMedia('(max-width: 639px)');
   const [view, setView] = useState<PluginSettingsView>();
   const [loadError, setLoadError] = useState<unknown>();
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const guard = useDiscardGuard({ dirty, saving, onOpenChange: props.onOpenChange });
 
   const load = useCallback(async () => {
     setLoadError(undefined);
@@ -72,12 +71,10 @@ export function PluginSettingsSheet(props: {
   }, [load]);
 
   return (
-    <Sheet open onOpenChange={props.onOpenChange}>
-      <SheetContent side={phone ? 'bottom' : 'right'} className="gap-0 overflow-y-auto sm:max-w-md">
+    <Sheet open onOpenChange={guard.onOpenChange}>
+      <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            {plugin.name} settings
-          </SheetTitle>
+          <SheetTitle>{plugin.name} settings</SheetTitle>
           <SheetDescription className="text-xs">
             What the plugin reads when it runs. Secrets are write-only: once saved, they can be
             replaced or cleared, never read back.
@@ -123,6 +120,9 @@ export function PluginSettingsSheet(props: {
               client={client}
               plugin={plugin}
               view={view}
+              guard={guard}
+              onDirty={setDirty}
+              onSaving={setSaving}
               onSaved={(next) => {
                 setView(next);
                 props.onOpenChange(false);
@@ -131,7 +131,7 @@ export function PluginSettingsSheet(props: {
             />
           )}
         </div>
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }
@@ -140,6 +140,9 @@ function SettingsForm(props: {
   client: ManagementClient;
   plugin: { readonly id: string; readonly name: string };
   view: PluginSettingsView;
+  guard: DiscardGuard;
+  onDirty: (dirty: boolean) => void;
+  onSaving: (saving: boolean) => void;
   onSaved: (view: PluginSettingsView) => void;
   onReload: () => Promise<void>;
 }) {
@@ -149,10 +152,21 @@ function SettingsForm(props: {
   const [draft, setDraft] = useState<SettingsDraft>(() => settingsDraft(view));
   const [issues, setIssues] = useState<Readonly<Record<string, string>>>({});
   const [refusal, setRefusal] = useState<Refusal | null>(null);
+  // A save that didn't answer: it may have gone through, so it can't say it wasn't saved.
+  const [unconfirmed, setUnconfirmed] = useState<string>();
   const [busy, setBusy] = useState(false);
 
   const patch = settingsPatch(view, draft);
   const dirty = Object.keys(patch).length > 0;
+  const { onDirty, onSaving } = props;
+  useEffect(() => {
+    onDirty(dirty);
+    return () => onDirty(false);
+  }, [dirty, onDirty]);
+  useEffect(() => {
+    onSaving(busy);
+    return () => onSaving(false);
+  }, [busy, onSaving]);
 
   const set = (key: string, value: SettingDraft) => {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -164,6 +178,7 @@ function SettingsForm(props: {
     if (!dirty) return;
     setBusy(true);
     setRefusal(null);
+    setUnconfirmed(undefined);
     try {
       const next = await props.client.setPluginSettings(plugin.id, {
         values: patch,
@@ -176,7 +191,9 @@ function SettingsForm(props: {
       const { byKey, form } = settingsIssues(view.fields, err);
       setIssues(byKey);
       const first = view.fields.find((f) => byKey[f.key]);
-      if (isForbidden(err)) {
+      if (err instanceof RequestTimeoutError) {
+        setUnconfirmed(err.message);
+      } else if (isForbidden(err)) {
         setRefusal({ kind: 'forbidden', message: FORBIDDEN });
       } else if (err instanceof ApiError && err.status === 409) {
         setRefusal({
@@ -237,10 +254,13 @@ function SettingsForm(props: {
         />
       ))}
 
+      {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
       <div className="flex flex-wrap items-center gap-3 pt-1">
-        <Button type="submit" disabled={busy || !dirty}>
-          {busy ? 'Saving…' : 'Save settings'}
-        </Button>
+        <DiscardAsk guard={props.guard} message={`Discard your changes to ${plugin.name}?`}>
+          <Button type="submit" disabled={busy || !dirty}>
+            {busy ? 'Saving…' : 'Save settings'}
+          </Button>
+        </DiscardAsk>
         {view.updatedAt && (
           <p className="text-muted-foreground text-xs">
             Last saved <Ago at={view.updatedAt} />

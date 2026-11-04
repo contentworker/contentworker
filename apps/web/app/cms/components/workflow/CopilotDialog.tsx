@@ -14,6 +14,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -23,6 +24,7 @@ import { Label } from '@contentworker/ui/label';
 import { Textarea } from '@contentworker/ui/textarea';
 import { useId, useState } from 'react';
 import { useClient } from '~/cms/lib/client-context';
+import { useStoppable } from '~/cms/lib/use-stoppable';
 import { ProposalBanner, type WorkflowProposal } from './ProposalBanner';
 
 const EMPTY: WorkflowGraph = { nodes: [], edges: [] };
@@ -73,6 +75,7 @@ export function CopilotDialog({
   const [proposal, setProposal] = useState<WorkflowProposal | null>(null);
   const promptId = useId();
   const nameId = useId();
+  const request = useStoppable();
 
   const reset = () => {
     setPrompt('');
@@ -82,28 +85,41 @@ export function CopilotDialog({
   };
 
   const draft = async () => {
-    if (!prompt.trim()) {
-      setError('Describe the steps you want, then draft again.');
-      return;
-    }
+    const signal = request.start();
     setDrafting(true);
     setError(null);
     try {
-      const r = await client.workflowCopilot({
-        prompt: prompt.trim(),
-        ...(graph ? { graph } : {}),
-        ...(contentTypes?.length ? { contentTypes } : {}),
-      });
+      const r = await client.workflowCopilot(
+        {
+          prompt: prompt.trim(),
+          ...(graph ? { graph } : {}),
+          ...(contentTypes?.length ? { contentTypes } : {}),
+        },
+        signal,
+      );
+      if (signal.aborted) return;
       if (onProposal) {
         onProposal(r);
         reset();
         onOpenChange(false);
       } else setProposal(r);
     } catch (e) {
+      if (signal.aborted) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setDrafting(false);
+      if (!signal.aborted) setDrafting(false);
     }
+  };
+
+  // Closing walks away from a draft under way: the request aborts, so a late proposal can't land
+  // after the dialog closed. What was typed and a proposal under review stay for when it opens
+  // again; only applying clears them. An apply is a write, so it is waited for.
+  const close = () => {
+    if (applying) return;
+    request.stop();
+    setDrafting(false);
+    setError(null);
+    onOpenChange(false);
   };
 
   const apply = async () => {
@@ -122,14 +138,7 @@ export function CopilotDialog({
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (drafting || applying) return;
-        if (!o) reset();
-        onOpenChange(o);
-      }}
-    >
+    <Dialog open={open} onOpenChange={(o) => (o ? onOpenChange(o) : close())}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{graph ? 'Change with AI' : 'Draft a workflow with AI'}</DialogTitle>
@@ -153,6 +162,7 @@ export function CopilotDialog({
             busy={applying}
             onApply={() => void apply()}
             onDismiss={() => setProposal(null)}
+            onEscape={close}
           />
         ) : (
           <div className="space-y-4">
@@ -179,25 +189,24 @@ export function CopilotDialog({
                 onChange={(e) => setPrompt(e.target.value)}
                 className="text-base md:text-sm"
                 placeholder="When someone asks to publish, check the entry is valid, ask an editor to approve, then publish it. If it is rejected, comment why."
-                aria-invalid={error && !prompt.trim() ? true : undefined}
               />
             </div>
           </div>
         )}
-        {error ? (
-          <p role="alert" className="text-bad text-sm">
-            {error}
-          </p>
-        ) : null}
+        {error ? <DialogError>{error}</DialogError> : null}
         <p className="sr-only" aria-live="polite">
           {drafting ? 'Drafting the workflow.' : ''}
         </p>
         {proposal ? null : (
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={close}>
               Cancel
             </Button>
-            <Button type="button" disabled={drafting} onClick={() => void draft()}>
+            <Button
+              type="button"
+              disabled={drafting || !prompt.trim()}
+              onClick={() => void draft()}
+            >
               {drafting ? (
                 <>
                   <ComposeLoader icon={composeIcons.workflow} />

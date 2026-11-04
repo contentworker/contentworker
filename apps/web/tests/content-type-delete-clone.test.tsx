@@ -92,7 +92,63 @@ describe('deleting a content type from the admin', () => {
     expect(screen.getByText('The menu “main” links its entries')).toBeTruthy();
     expect(screen.getByText(/URL pattern \/notes\/\{id\}/)).toBeTruthy();
     expect(screen.queryByLabelText(/to confirm/)).toBeNull();
-    expect(deleteButton().hasAttribute('disabled')).toBe(true);
+    // No disabled red button, no opt-in and no job explanation: what blocks it is the whole answer.
+    expect(screen.queryByRole('button', { name: /^Delete/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Keep it' })).toBeTruthy();
+  });
+
+  it('offers no opt-in while blocked, even with entries', async () => {
+    client.contentTypeDependents.mockResolvedValue({
+      ...free,
+      entries: { live: 3, trashed: 1 },
+      menus: [{ id: 'm', handle: 'main' }],
+    });
+    renderDelete();
+    await screen.findByText('The menu “main” links its entries');
+    expect(within(screen.getByRole('dialog')).queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByText(/A background job/)).toBeNull();
+  });
+
+  it('says which step is outstanding on the disabled button', async () => {
+    client.contentTypeDependents.mockResolvedValue({ ...free, entries: { live: 3, trashed: 1 } });
+    renderDelete();
+    const confirm = await screen.findByLabelText(/to confirm/);
+    const gate = () => document.getElementById('ct-delete-gate')?.textContent;
+    expect(deleteButton().getAttribute('aria-describedby')).toBe('ct-delete-gate');
+    expect(gate()).toBe('To delete it, tick “Also delete its 4 entries” and type note.');
+
+    fireEvent.change(confirm, { target: { value: 'note' } });
+    expect(gate()).toBe('To delete it, tick “Also delete its 4 entries”.');
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('checkbox'));
+    expect(gate()).toBeUndefined();
+    expect(deleteButton().hasAttribute('disabled')).toBe(false);
+  });
+
+  it('moves focus from Keep it to the first field once the check lands', async () => {
+    let answer: (d: typeof free) => void = () => {};
+    client.contentTypeDependents.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderDelete();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep it' })),
+    );
+    answer({ ...free, entries: { live: 1, trashed: 0 } });
+    const box = await within(screen.getByRole('dialog')).findByRole('checkbox');
+    await waitFor(() => expect(document.activeElement).toBe(box));
+  });
+
+  it('leaves focus on Keep it when the check finds it blocked', async () => {
+    client.contentTypeDependents.mockResolvedValue({
+      ...free,
+      menus: [{ id: 'm', handle: 'main' }],
+    });
+    renderDelete();
+    await screen.findByText('The menu “main” links its entries');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep it' }));
   });
 
   it('deletes the entries too only when asked to, as a job', async () => {
