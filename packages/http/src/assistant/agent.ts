@@ -662,7 +662,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
    */
   override async onChatMessage(
     _onFinish: Parameters<AIChatAgent<AgentEnv>['onChatMessage']>[0],
-    options?: { abortSignal?: AbortSignal; body?: Record<string, unknown> },
+    options?: { abortSignal?: AbortSignal; body?: Record<string, unknown>; continuation?: boolean },
   ): Promise<Response> {
     const say = (text: string) =>
       new Response(text, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
@@ -720,13 +720,32 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
         // `scope` is where this turn's calls run: a card reads what it would change from there, and
         // the model's tools have no scope of their own to say so.
         messageMetadata: ({ part }) =>
-          part.type === 'start' ? { source: used.source, at: Date.now(), scope } : undefined,
+          part.type === 'start'
+            ? {
+                source: used.source,
+                at: Date.now(),
+                scope: options?.continuation ? this.continuedScope(scope) : scope,
+              }
+            : undefined,
       });
     } catch (err) {
       close();
       logFailure('turn', err);
       return say(errorLine(err));
     }
+  }
+
+  /**
+   * The scope a continuation may claim. It writes into the last reply, whose cards may still wait,
+   * and its body is the last one sent, which can be from elsewhere (a turn stopped before any part
+   * arrived). Those cards run where they were made, so a reply from another scope claims none.
+   */
+  private continuedScope(scope: { spaceId: string; environmentId: string }) {
+    const last = this.messages.findLast((m) => m.role === 'assistant');
+    const was = (last?.metadata as { scope?: typeof scope | null } | undefined)?.scope;
+    return was?.spaceId === scope.spaceId && was.environmentId === scope.environmentId
+      ? scope
+      : null;
   }
 
   /**

@@ -628,6 +628,75 @@ describe('a confirm is held to the entry as its card showed it', () => {
     panel.close();
   });
 
+  it('won’t let a continuation vouch for a waiting card from another scope', async () => {
+    const ada = await person('ada_stale_scope');
+    const first = await entryIn(SPACE_A, 'First proposal');
+    const second = await entryIn(SPACE_A, 'Second proposal');
+    const panel = await socket(ada);
+    const pageOf = (entryId: string, label: string) =>
+      contextIn(SPACE_A, { kind: 'entry', entryId, contentType: 'article', label });
+    await panel.ask('Publish this entry', pageOf(first, 'First proposal'));
+    await panel.ask('Publish this entry', pageOf(second, 'Second proposal'));
+    const cards = (await messagesOf(ada)).flatMap((m) =>
+      m.parts.filter((x) => x.type === 'tool-entries_publish').map((x) => ({ m, x })),
+    );
+    expect(cards.length).toBe(2);
+    const [firstCall = '', secondCall = ''] = cards.map(
+      (c) => (c.x as { toolCallId: string }).toolCallId,
+    );
+
+    // A turn sent from space B and stopped before any part arrived: its body stays, nothing else.
+    await runInDurableObject(agentOf(ada), (agent: AssistantAgent) => {
+      (agent as unknown as { _lastBody: unknown })._lastBody = { context: contextIn(SPACE_B) };
+    });
+    const continued = panel.nextOtherTurn();
+    panel.send({
+      type: 'cf_agent_tool_approval',
+      toolCallId: firstCall,
+      approved: true,
+      autoContinue: true,
+    });
+    await continued;
+
+    const waiting = (await messagesOf(ada)).find((m) =>
+      m.parts.some((x) => (x as { toolCallId?: string }).toolCallId === secondCall),
+    );
+    expect(await partOf(ada, secondCall)).toMatchObject({ state: 'approval-requested' });
+    expect(waiting?.metadata).toMatchObject({ scope: null });
+    panel.close();
+  });
+
+  it('keeps a reply’s scope through a continuation from the same place', async () => {
+    const ada = await person('ada_same_scope');
+    const id = await entryIn(SPACE_A, 'Same place');
+    const panel = await socket(ada);
+    await panel.ask(
+      'Publish this entry',
+      contextIn(SPACE_A, {
+        kind: 'entry',
+        entryId: id,
+        contentType: 'article',
+        label: 'Same place',
+      }),
+    );
+    const card = (await messagesOf(ada))
+      .flatMap((m) => m.parts)
+      .find((x) => x.type === 'tool-entries_publish') as { toolCallId: string };
+    const continued = panel.nextOtherTurn();
+    panel.send({
+      type: 'cf_agent_tool_approval',
+      toolCallId: card.toolCallId,
+      approved: true,
+      autoContinue: true,
+    });
+    await continued;
+    const reply = (await messagesOf(ada)).find((m) =>
+      m.parts.some((x) => (x as { toolCallId?: string }).toolCallId === card.toolCallId),
+    );
+    expect(reply?.metadata).toMatchObject({ scope: { spaceId: SPACE_A, environmentId: 'main' } });
+    panel.close();
+  });
+
   it('runs the model’s publish when nothing changed since its card', async () => {
     const ada = await person('ada_held_model_ok');
     const id = await entryIn(SPACE_A, 'Unchanged');
