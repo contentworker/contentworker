@@ -236,7 +236,10 @@ describe('sharing an asset or a collection', () => {
     renderDialog({ published: false });
     fireEvent.click(await screen.findByRole('button', { name: 'Publish asset' }));
     await waitFor(() => expect(client.publishAsset).toHaveBeenCalledOnce());
-    expect(await screen.findByText('Publish it to share it')).toBeTruthy();
+    // In the dialog, in the server's words: a toast sits outside the modal.
+    const alert = (await screen.findByText('It wasn’t published')).closest('[role="alert"]');
+    expect(alert?.textContent).toContain('Under embargo');
+    expect(screen.getByText('Publish it to share it')).toBeTruthy();
     expect(screen.queryByRole('form', { name: 'New share link' })).toBeNull();
   });
 

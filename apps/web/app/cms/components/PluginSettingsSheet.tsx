@@ -261,7 +261,7 @@ function SettingsForm(props: {
       ))}
 
       {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
-      <SheetFooter className="-mx-4 -mb-4 sm:items-center">
+      <SheetFooter className="-mx-4 -mb-4 sm:flex-wrap sm:items-center">
         {view.updatedAt && (
           <p className="text-muted-foreground text-xs sm:mr-auto">
             Last saved <Ago at={view.updatedAt} />

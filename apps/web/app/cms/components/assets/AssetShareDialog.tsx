@@ -98,6 +98,7 @@ export function AssetShareDialog(props: {
   // The link just made: it takes focus (its Copy button), so it can be copied at once.
   const [made, setMade] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [publishRefusal, setPublishRefusal] = useState<string | null>(null);
   // Published from here: the caller's `published` catches up when its read does.
   const [publishedHere, setPublishedHere] = useState(false);
   const listHeading = useRef<HTMLHeadingElement>(null);
@@ -115,6 +116,7 @@ export function AssetShareDialog(props: {
     setRefusal(null);
     setMade(null);
     setPublishedHere(false);
+    setPublishRefusal(null);
   }, [props.open, target.type, target.id]);
 
   // Publish asset goes with the warning: the form that replaces it carries the keyboard on.
@@ -177,6 +179,7 @@ export function AssetShareDialog(props: {
   // Goes live at once, as an asset's Publish does in the library. Refused under an embargo or past
   // an expiry, in the server's words.
   const publish = async () => {
+    setPublishRefusal(null);
     setPublishing(true);
     try {
       const asset = await client.publishAsset(target.id);
@@ -184,7 +187,7 @@ export function AssetShareDialog(props: {
       setPublishedHere(true);
       props.onPublished?.(asset);
     } catch (err) {
-      toast.error(apiErrorMessage(err));
+      setPublishRefusal(apiErrorMessage(err));
     } finally {
       setPublishing(false);
     }
@@ -357,6 +360,12 @@ export function AssetShareDialog(props: {
           </Alert>
         ) : (
           <>
+            {unpublished && publishRefusal ? (
+              <Alert variant="destructive">
+                <AlertTitle>It wasn’t published</AlertTitle>
+                <AlertDescription>{publishRefusal}</AlertDescription>
+              </Alert>
+            ) : null}
             {unpublished ? (
               <Alert variant="warning">
                 <AlertTitle>Publish it to share it</AlertTitle>

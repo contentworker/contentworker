@@ -36,9 +36,14 @@ const GAP = 8;
 export function keyboardInset(el: HTMLElement | null) {
   const viewport = window.visualViewport;
   if (!el || !viewport) return;
+  let inset = -1;
   const update = () => {
     const covered = window.innerHeight - viewport.height - viewport.offsetTop;
-    el.style.setProperty('--keyboard-inset', `${viewport.scale > 1 ? 0 : Math.max(0, covered)}px`);
+    const next = viewport.scale > 1 ? 0 : Math.max(0, covered);
+    if (next === inset) return;
+    inset = next;
+    el.style.setProperty('--keyboard-inset', `${next}px`);
+    // Only as the keyboard moves: a pan or a pinch must not pull the body back to the field.
     keepFieldClear(el);
   };
   const focused = () => keepFieldClear(el);

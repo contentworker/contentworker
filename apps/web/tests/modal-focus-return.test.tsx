@@ -120,6 +120,77 @@ describe('closing an overlay opened from state', () => {
     await focused('Neighbour');
   });
 
+  it('looks further up when nothing stands right beside the opener', async () => {
+    function Row() {
+      const [open, setOpen] = useState(false);
+      const [busy, setBusy] = useState(false);
+      return (
+        <main>
+          <table>
+            <tbody>
+              <tr>
+                <td>
+                  <button type="button">Row title</button>
+                </td>
+                <td>
+                  <button type="button" disabled={busy} onClick={() => setOpen(true)}>
+                    Open
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent aria-describedby={undefined}>
+              <DialogTitle>Details</DialogTitle>
+              <button type="button" onClick={() => setBusy(true)}>
+                Change
+              </button>
+              <DialogClose>Done</DialogClose>
+            </DialogContent>
+          </Dialog>
+        </main>
+      );
+    }
+    render(<Row />);
+    await openDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+    close();
+    await focused('Row title');
+  });
+
+  it('forgets a press once the person has pressed elsewhere', async () => {
+    function Opened() {
+      const [open, setOpen] = useState(false);
+      return (
+        <main tabIndex={-1}>
+          <button type="button">Old press</button>
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-hidden
+            onClick={() => setOpen(true)}
+            data-testid="key"
+          />
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent aria-describedby={undefined}>
+              <DialogTitle>Details</DialogTitle>
+              <DialogClose>Done</DialogClose>
+            </DialogContent>
+          </Dialog>
+        </main>
+      );
+    }
+    render(<Opened />);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Old press' }));
+    fireEvent.pointerDown(document.body);
+    // A shortcut, not a press: nothing is focused and nothing was pressed.
+    fireEvent.click(screen.getByTestId('key'));
+    await screen.findByRole('dialog');
+    close();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('main')));
+  });
+
   it('falls back to the page when nothing near is left', async () => {
     function Lone() {
       const [open, setOpen] = useState(true);

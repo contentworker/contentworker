@@ -188,6 +188,10 @@ export function EntriesList() {
   // what changes) as the editor's Publish.
   const [confirmPublish, setConfirmPublish] = useState<PreviewEntry | null>(null);
   const publishedRow = useRef<string | null>(null);
+  // What the confirm says as it leaves: `confirmPublish` is gone by then, the dialog not yet.
+  const lastAskedPublish = useRef<PreviewEntry | null>(null);
+  if (confirmPublish) lastAskedPublish.current = confirmPublish;
+  const askedPublish = confirmPublish ?? lastAskedPublish.current;
   // Bulk action awaiting confirmation (bulk selections are tedious to rebuild,
   // so the whole batch is confirmed once before it runs).
   const [confirmBulk, setConfirmBulk] = useState<BulkConfirm | null>(null);
@@ -1133,11 +1137,9 @@ export function EntriesList() {
         onOpenChange={(open) => {
           if (!open) setConfirmPublish(null);
         }}
-        title={confirmPublish ? titleOf(confirmPublish.id) : ''}
-        status={confirmPublish?.status}
-        compare={
-          confirmPublish ? { client, entry: confirmPublish, locale: conn.locale } : undefined
-        }
+        title={askedPublish ? titleOf(askedPublish.id) : ''}
+        status={askedPublish?.status}
+        compare={askedPublish ? { client, entry: askedPublish, locale: conn.locale } : undefined}
         busy={busy}
         onConfirm={() => {
           const entry = confirmPublish;

@@ -342,7 +342,7 @@ export function AssetFolderTree(props: {
               select.current?.focus();
             }}
           >
-            <SheetHeader className="px-0">
+            <SheetHeader className="pr-10 pl-0">
               <SheetTitle>{open ? open.name : 'Folders'}</SheetTitle>
               <SheetDescription>
                 {open ? folderLabel(open, folders) : 'Add a folder at the top of the library.'}

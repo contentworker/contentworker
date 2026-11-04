@@ -17,11 +17,22 @@ const controlOf = (node: EventTarget | null) =>
 // can't say what asked. Listening from the start: the overlay mounts after the press it answers.
 let lastControl: HTMLElement | null = null;
 if (typeof document !== 'undefined') {
-  const note = (event: Event) => {
-    lastControl = controlOf(event.target) ?? lastControl;
-  };
-  document.addEventListener('pointerdown', note, true);
-  document.addEventListener('focusin', note, true);
+  // A press on nothing moves the person on from the last control; focus going somewhere that isn't
+  // one (a dialog's own container, after a press in it) says nothing about what they pressed.
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      lastControl = controlOf(event.target);
+    },
+    true,
+  );
+  document.addEventListener(
+    'focusin',
+    (event) => {
+      lastControl = controlOf(event.target) ?? lastControl;
+    },
+    true,
+  );
 }
 
 /** A menu's item is gone once the menu closes: the keyboard carries on from what opened the menu. */
@@ -81,8 +92,10 @@ function land(el: HTMLElement | null | undefined) {
 function returnTo(opener: Opener | undefined) {
   for (let at = opener; at; at = at.outer) {
     if (land(at.control)) return;
-    const near = at.around.find((el) => el.isConnected);
-    for (const el of near?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []) if (land(el)) return;
+    for (const near of at.around) {
+      if (!near.isConnected) continue;
+      for (const el of near.querySelectorAll<HTMLElement>(FOCUSABLE)) if (land(el)) return;
+    }
   }
   land(document.querySelector<HTMLElement>('main'));
 }

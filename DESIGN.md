@@ -683,7 +683,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   ("Uploading “film.mov”", value text and a muted tabular line "64 MB of 150 MB · 1 of 3 parts",
   "· retrying part 2" while one waits to try again, its badge then a `run` "Retrying"), and an
   icon Cancel ("Cancel uploading “film.mov”"), which a file still waiting has too; a cancelled file
-  is an `idle` "Cancelled". **Share** (`assets/AssetShareDialog.tsx`, from the sheet's header and
+  is an `idle` "Cancelled". **Share** (`assets/AssetShareDialog.tsx`, from the sheet and
   a collection's) is a dialog, "Share “x”", saying anyone with the link sees the published files
   until it expires or is revoked (for a collection, that its drafts stay off the page). Then a
   form: Expires after (a `Segmented` of 1 day, 7 days, 30 days and Custom, which adds a
@@ -921,7 +921,12 @@ for code and data blocks only.
   menu's editor, an environment alias, a function, an AI action, an app extension, a comment or a
   task on an entry, and an empty asset folder (a folder with anything in it is refused). The team
   page's account actions and revoking an invitation also ask in place for now: their step-up field
-  posts with their form. Anything new joins this list by being written here.
+  posts with their form. Anything new joins this list by being written here. The rule is about what
+  is stored, so three kinds of asking sit outside it: leaving a form with work in it (Leaving,
+  above, and leaving a workflow with edits) loses only what was never saved; stopping a bulk job
+  leaves done what is done, and the rest can be run again; and a workflow's Publish asks in place,
+  since a run keeps the version it began on. An asset's Publish doesn't ask: unpublishing it puts
+  back what was delivered.
 - **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
   toast carries its Undo action.
 - **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"

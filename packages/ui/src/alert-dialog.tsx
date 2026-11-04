@@ -44,7 +44,7 @@ function AlertDialogContent({
         {...focusReturn}
         data-slot="alert-dialog-content"
         className={cn(
-          'fixed z-50 flex flex-col overflow-hidden bg-popover text-popover-foreground shadow-xl ring-1 ring-foreground/5 outline-none dark:ring-foreground/10 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-(--motion-instant) data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:duration-(--motion-move)',
+          'fixed z-50 flex flex-col overflow-hidden bg-popover text-popover-foreground shadow-xl ring-1 ring-foreground/5 outline-none dark:ring-foreground/10 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-(--motion-instant) data-[state=open]:animate-in data-[state=open]:fade-in-0 data-open:duration-(--motion-move)',
           PLACEMENTS[placement],
           className,
         )}
