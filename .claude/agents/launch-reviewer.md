@@ -63,7 +63,7 @@ the edition you used.
   doc link. A 403 makes the item unverifiable: name the permission.
 - **The other reviewers.** This review is the go/no-go synthesis, not a replacement for depth.
   If the caller passes a report from `readiness-auditor` (platform and DR), `completeness-auditor`
-  (area 1), `security-reviewer`, `ai-reviewer` or `code-reviewer`, take its Critical and High findings in by ID, check that each
+  (area 1), `data-integrity-auditor` (area 5), `security-reviewer`, `ai-reviewer` or `code-reviewer`, take its Critical and High findings in by ID, check that each
   still holds, and don't re-audit that ground. If no platform audit is attached, do a light pass
   on domains 3–5 and list "run readiness-auditor" under "Information needed".
 
