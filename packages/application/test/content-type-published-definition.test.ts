@@ -534,6 +534,50 @@ describe('a promotion over a target with a draft', () => {
   });
 });
 
+describe('a snapshot of a draft the write path would take', () => {
+  // `tier`'s rule reads `rating` as a number. A revision that retypes `rating` leaves the rule alone
+  // and is accepted, as it would not be on a type defined from nothing.
+  const tier = {
+    ...field('tier', 'Symbol', 3),
+    rules: [{ action: 'hide', when: { field: 'rating', operator: 'gt', value: 3 } }],
+  } as FieldDefinition;
+  const ruled = [...fields, field('rating', 'Integer', 2), tier];
+  const retyped = [...fields, field('rating', 'Symbol', 2), tier];
+
+  beforeEach(async () => {
+    await updateContentType(ctx, scope, 'page', { fields: ruled });
+    await publishContentType(ctx, scope, 'page');
+    await updateContentType(ctx, scope, 'page', { fields: retyped });
+  });
+
+  it('passes a dry run, and imports both definitions', async () => {
+    const snapshot = await exportSnapshot(ctx, scope);
+    await importSnapshot(ctx, copy, snapshot, { dryRun: true });
+    await importSnapshot(ctx, copy, snapshot);
+    const types = async (at: typeof scope) => [
+      (await delivered(at))?.fields.find((f) => f.apiId === 'rating')?.type,
+      (await getContentType(ctx, at, 'page')).fields.find((f) => f.apiId === 'rating')?.type,
+    ];
+    expect(await types(copy)).toEqual(['Integer', 'Symbol']);
+    expect(await types(copy)).toEqual(await types(scope));
+  });
+
+  it('clones', async () => {
+    await cloneEnvironment(ctx, scope, copy);
+    expect((await delivered(copy))?.status).toBe('published');
+    expect((await getContentType(ctx, copy, 'page')).status).toBe('draft');
+  });
+
+  it('drops the rule from the copy’s draft, as normalizing any snapshot drops an unusable one', async () => {
+    await importSnapshot(ctx, copy, await exportSnapshot(ctx, scope));
+    const tierOf = (ct: { fields: readonly FieldDefinition[] } | undefined) =>
+      ct?.fields.find((f) => f.apiId === 'tier');
+    expect(tierOf(await delivered(copy))?.rules).toHaveLength(1);
+    expect(tierOf(await getContentType(ctx, copy, 'page'))).not.toHaveProperty('rules');
+    expect(tierOf(await getContentType(ctx, scope, 'page'))?.rules).toHaveLength(1);
+  });
+});
+
 describe('a snapshot with a definition that can’t be written', () => {
   const crafted: FieldDefinition[] = [
     ...fields,
@@ -572,6 +616,30 @@ describe('a snapshot with a definition that can’t be written', () => {
     };
     await expect(importSnapshot(ctx, copy, bad)).rejects.toBeInstanceOf(ValidationError);
     expect(await store.contentTypes.list(copy)).toEqual([]);
+  });
+
+  it('refuses a bad block in the draft over a good published definition', async () => {
+    await updateContentType(ctx, scope, 'page', { name: 'Two' });
+    const snapshot = await exportSnapshot(ctx, scope);
+    const bad = {
+      ...snapshot,
+      contentTypes: snapshot.contentTypes.map((ct) => ({ ...ct, fields: crafted })),
+    };
+    await expect(importSnapshot(ctx, copy, bad)).rejects.toBeInstanceOf(ValidationError);
+    expect(await store.contentTypes.list(copy)).toEqual([]);
+  });
+
+  it('ignores `published` on a published row, as the write does', async () => {
+    const snapshot = await exportSnapshot(ctx, scope);
+    const stray = {
+      ...snapshot,
+      contentTypes: snapshot.contentTypes.map((ct) => ({
+        ...ct,
+        published: { name: 'x', displayField: 'title', fields: crafted, version: 1 },
+      })),
+    };
+    await importSnapshot(ctx, copy, stray);
+    expect((await delivered(copy))?.fields.map((f) => f.apiId)).toEqual(['title', 'slug']);
   });
 
   it('reports it on a dry run', async () => {

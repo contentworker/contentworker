@@ -7160,6 +7160,10 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
   };
   return {
     // Once more without the column only when the replica lacks it, so a read pays nothing for this.
+    // That second read can land on a replica past 0030, where it ignores a kept definition and
+    // serves the row: one response, possibly cached until the next purge or its max-age, and the
+    // next read is right. Accepted as rare and self-clearing. Remove this once every deployment is
+    // past 0030.
     read: (scope, request) =>
       readOn(scope, request, false).catch((err: unknown) => {
         if (!isBehind0030(err)) throw err;

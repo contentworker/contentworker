@@ -37,6 +37,7 @@ import {
   type Redirect,
   redirectKey,
   redirectSetError,
+  reviseContentType,
   type Scope,
   type Tag,
   ValidationError,
@@ -592,30 +593,10 @@ export async function writeSnapshotModel(
       ct.published &&
       !(await ctx.store.contentTypes.get(target, ct.apiId))
     ) {
-      await createContentType(ctx, target, {
-        apiId: ct.apiId,
-        name: ct.published.name,
-        displayField: ct.published.displayField,
-        fields: [...ct.published.fields],
-        ...(ct.published.urlPattern ? { urlPattern: ct.published.urlPattern } : {}),
-        singleton: ct.published.singleton === true,
-      });
+      await createContentType(ctx, target, publishedDraftOf(ct, ct.published));
       await publishContentType(ctx, target, ct.apiId);
     }
-    await createContentType(ctx, target, {
-      apiId: ct.apiId,
-      name: ct.name,
-      displayField: ct.displayField,
-      fields: [...ct.fields],
-      // Stated either way: left out, a revision would keep the pattern just published above, and
-      // a draft that dropped the slug it names couldn't be saved at all.
-      urlPattern: ct.urlPattern ?? null,
-      singleton: ct.singleton === true,
-      ...(ct.group ? { group: ct.group } : {}),
-      ...(ct.description ? { description: ct.description } : {}),
-      ...(ct.icon ? { icon: ct.icon } : {}),
-      ...(ct.layout ? { layout: ct.layout } : {}),
-    });
+    await createContentType(ctx, target, workingDraftOf(ct));
     if (ct.status === 'published') await publishContentType(ctx, target, ct.apiId);
   }
 
@@ -1003,6 +984,37 @@ export async function publishSnapshotEntry(
   }
 }
 
+/** What a live type's published definition is written as, before its draft goes over it. */
+const publishedDraftOf = (
+  ct: SnapshotContentType,
+  published: PublishedContentTypeDefinition,
+): ContentTypeDraft => ({
+  apiId: ct.apiId,
+  name: published.name,
+  displayField: published.displayField,
+  fields: [...published.fields],
+  ...(published.urlPattern ? { urlPattern: published.urlPattern } : {}),
+  singleton: published.singleton === true,
+});
+
+/**
+ * What a snapshot's type is written as. `urlPattern` is stated either way: left out, a revision
+ * would keep the pattern just published under it, and a draft that dropped the slug it names
+ * couldn't be saved at all.
+ */
+const workingDraftOf = (ct: SnapshotContentType): ContentTypeDraft => ({
+  apiId: ct.apiId,
+  name: ct.name,
+  displayField: ct.displayField,
+  fields: [...ct.fields],
+  urlPattern: ct.urlPattern ?? null,
+  singleton: ct.singleton === true,
+  ...(ct.group ? { group: ct.group } : {}),
+  ...(ct.description ? { description: ct.description } : {}),
+  ...(ct.icon ? { icon: ct.icon } : {}),
+  ...(ct.layout ? { layout: ct.layout } : {}),
+});
+
 /** Shown at most, so a broken snapshot's error stays readable. */
 const MAX_PREFLIGHT_ISSUES = 50;
 
@@ -1024,10 +1036,12 @@ function preflight(
   const issues: FieldIssue[] = [];
 
   // The model is written first, one type at a time: one that can't be written would stop the import
-  // partway, in an environment no longer empty, so it can't be run again. Stopped here instead.
-  const definable = (ct: SnapshotContentType, label: string, draft: ContentTypeDraft) => {
+  // partway, in an environment no longer empty, so it can't be run again. Stopped here instead, by
+  // doing what the write will do: a live type's draft is a revision over its published definition,
+  // anything else a definition from nothing (where a stray `published` means nothing).
+  const writable = <T>(ct: SnapshotContentType, label: string, write: () => T): T | null => {
     try {
-      defineContentType(draft);
+      return write();
     } catch (err) {
       if (!(err instanceof DomainError)) throw err;
       const said =
@@ -1035,28 +1049,18 @@ function preflight(
           ? err.issues.map((i) => `${i.field}: ${i.message}`).join('; ')
           : err.message;
       issues.push({ field: 'contentTypes', message: `${label} of "${ct.apiId}": ${said}` });
+      return null;
     }
   };
   for (const ct of snapshot.contentTypes) {
-    definable(ct, 'The definition', {
-      apiId: ct.apiId,
-      name: ct.name,
-      displayField: ct.displayField,
-      fields: [...ct.fields],
-      ...(ct.urlPattern ? { urlPattern: ct.urlPattern } : {}),
-      ...(ct.group ? { group: ct.group } : {}),
-      ...(ct.description ? { description: ct.description } : {}),
-      ...(ct.icon ? { icon: ct.icon } : {}),
-      ...(ct.layout ? { layout: ct.layout } : {}),
-    });
-    if (ct.published) {
-      definable(ct, 'The published definition', {
-        apiId: ct.apiId,
-        name: ct.published.name,
-        displayField: ct.published.displayField,
-        fields: [...ct.published.fields],
-        ...(ct.published.urlPattern ? { urlPattern: ct.published.urlPattern } : {}),
-      });
+    const live = ct.status !== 'published' ? ct.published : undefined;
+    if (live) {
+      const base = writable(ct, 'The published definition', () =>
+        defineContentType(publishedDraftOf(ct, live)),
+      );
+      if (base) writable(ct, 'The definition', () => reviseContentType(base, workingDraftOf(ct)));
+    } else {
+      writable(ct, 'The definition', () => defineContentType(workingDraftOf(ct)));
     }
   }
 

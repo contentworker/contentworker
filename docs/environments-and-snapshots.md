@@ -46,9 +46,14 @@ it is published. Into a target without the type it arrives as a plain draft, whi
 published there: GraphQL serves it as it stands at once, and the routes, sitemap and menus leave it
 out until it is published.
 
-Preflight runs each definition, and `published`, through `defineContentType`, so one that can't be
-written is refused (`422`, and on a dry run) before anything is, rather than partway through an
-environment that then can't be imported into again.
+Preflight does what the write will do, so a definition that can't be written is refused (`422`, and
+on a dry run) before anything is, rather than partway through an environment that then can't be
+imported into again. A draft with a `published` definition is defined from that and revised over it
+(`reviseContentType`, which passes what it finds unchanged); anything else goes through
+`defineContentType`, and `published` on a published row is ignored, as the write ignores it. Both run
+on the normalised model, so a rule normalising finds unusable is gone before either: a draft that
+retypes `rating` under a rule comparing it with `gt` imports, and the rule stays in the target's
+published definition and not in its draft, where the source's draft still holds it.
 
 A snapshot's content model is normalised once, before the checks (`normalizeSnapshotModel`): an
 `in` list stored before options were checked keeps its usable options, once each (and goes when

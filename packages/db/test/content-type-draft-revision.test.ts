@@ -583,19 +583,32 @@ describe('a read replica that hasn’t reached 0030', () => {
     expect((await lagging.contentTypes.publishedDefinitions(scope)).size).toBe(0);
   });
 
-  it('still surfaces any other failed read', async () => {
+  it('still surfaces a missing column that isn’t the kept definition', async () => {
     const { scope } = await harness();
+    // Qualified, or SQLite reads the name as a string. Only the statement that names the kept
+    // definition breaks, so a check that retried on any missing column would succeed, not reject.
     const broken = new Proxy(testDb, {
       get(t, key) {
         if (key === 'prepare') {
-          return (sql: string) => t.prepare(sql.replaceAll('"content_types"', '"no_such_table"'));
+          return (sql: string) =>
+            t.prepare(
+              sql.includes('published_definition')
+                ? sql.replaceAll(
+                    '"published_singleton"',
+                    '"content_types"."published_singleton_gone"',
+                  )
+                : sql,
+            );
         }
         const value = Reflect.get(t, key, t);
         return typeof value === 'function' ? value.bind(t) : value;
       },
     });
-    await expect(
-      createD1Store(broken).delivery.read(scope, { contentTypes: true }),
-    ).rejects.toThrow();
+    const refused = await createD1Store(broken)
+      .delivery.read(scope, { contentTypes: true })
+      .catch((err: unknown) => err);
+    expect(refused).toBeInstanceOf(Error);
+    expect(String((refused as Error).cause)).toContain('no such column');
+    expect(String((refused as Error).cause)).toContain('published_singleton_gone');
   });
 });

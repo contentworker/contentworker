@@ -367,8 +367,11 @@ column`, and `ContentTypeRepo.publishedDefinitions` answers empty, which is righ
 on a database from before 0030. The column is always read table-qualified (`keptDefinition`):
 Drizzle leaves a single table's columns bare, and SQLite takes a double-quoted name it can't find
 for a string, so a bare read returns the text `published_definition` instead of failing. Management
-reads don't name the column. The triggers need no such care: writes go only to the primary. Remove
-the retry once every deployment is past 0030.
+reads don't name the column. The triggers need no such care: writes go only to the primary. The
+retry can itself land on a replica past 0030, where it ignores a kept definition and serves the row:
+one response, possibly cached until the next purge or its max-age, and the next read is right. That
+is accepted as rare and self-clearing, with no marker to keep it out of the cache. Remove the retry
+once every deployment is past 0030.
 
 `0026_content_type_details.sql` adds four nullable columns to `content_types`: `group_name`,
 `description`, `icon` and `layout` (JSON, the entry form's tabs and field groups; editor-only and
