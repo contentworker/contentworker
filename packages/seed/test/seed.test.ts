@@ -35,7 +35,13 @@ function makeContext(): AppContext {
   return { store, clock: new FixedClock(), ids: new SequenceIdGenerator('s') };
 }
 
-describe('seedDev', () => {
+// Every test here seeds a corpus through the real use-cases — hundreds to
+// thousands of entries — so they are legitimately slow, and the sibling tests
+// were running at 2.4s against vitest 4's 5s default: a margin thin enough to
+// flip on a loaded runner. Scoped to this suite rather than raised globally,
+// because the shorter default is a useful signal everywhere else and a
+// project-wide bump would hide the next slow test.
+describe('seedDev', { timeout: 60_000 }, () => {
   it('seeds every capability surface against a fresh store', async () => {
     const ctx = makeContext();
     await seedDev(ctx, config, { blob: new FakeBlobStore() });
