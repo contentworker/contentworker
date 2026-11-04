@@ -1007,6 +1007,9 @@ importers:
       '@contentworker/ports':
         specifier: workspace:*
         version: link:../ports
+      '@contentworker/redaction':
+        specifier: workspace:*
+        version: link:../redaction
       '@contentworker/security':
         specifier: workspace:*
         version: link:../security

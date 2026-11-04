@@ -21,6 +21,7 @@ import type { Principal } from '@contentworker/domain';
 import type { AuthDeps } from '@contentworker/http/api/auth';
 import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/delivery';
 import { liveRoutes } from '@contentworker/http/routes/live';
+import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import type { PurgeMessage } from '@contentworker/platform/messages';
 import { drain } from '@contentworker/platform/purge';
@@ -153,20 +154,13 @@ export default {
   async queue(batch, env, ctx) {
     if (batch.queue === queueName(env, 'contentworker-purge-dlq')) {
       // Purges that failed every retry: their responses age out on max-age (60s) plus
-      // stale-while-revalidate, so nothing is served stale forever; say so loudly, then drop them.
-      for (const msg of batch.messages) {
-        console.error(
-          JSON.stringify({
-            msg: 'delivery purge dead-lettered',
-            tags: (msg.body as PurgeMessage).tags,
-          }),
-        );
+      // stale-while-revalidate, so nothing is served stale forever; keep a record, then drop them.
+      await recordDeadLetters(batch, env.MEDIA_BUCKET, () =>
         env.METRICS?.writeDataPoint({
           blobs: ['contentworker_purge_dead_letters_total'],
           doubles: [1],
-        });
-        msg.ack();
-      }
+        }),
+      );
       return;
     }
     const exports = (ctx as unknown as { exports: Exports }).exports;

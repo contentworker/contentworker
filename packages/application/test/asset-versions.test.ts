@@ -108,6 +108,8 @@ describe('asset file keys', () => {
     // Extracted text sits beside the version's file, five segments deep: never served.
     expect(isAssetFileKey(`shop/main/${id}/v2/text.md`)).toBe(false);
     expect(parseAssetObjectKey(`shop/main/${id}/v2/text.md`)).toBeNull();
+    // A dead letter's key has an asset key's four segments; writing one must not start an ingest.
+    expect(parseAssetObjectKey('dlq/contentworker-events-dlq/2026-11-04/m1.json')).toBeNull();
     expect(isAssetFileKey(`shop/main/${id}/v1/file/a.png`)).toBe(false);
     expect(isAssetFileKey(`shop/main/${id}/v02/file/a.png`)).toBe(false);
     expect(isAssetFileKey(`shop/main/${id}/v2/other/a.png`)).toBe(false);
