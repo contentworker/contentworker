@@ -14,17 +14,20 @@ import { useId, useRef } from 'react';
 import type { ManagementClient, PreviewEntry } from '../../lib/management';
 import {
   ChangedFields,
+  changedCount,
   EntryDiffView,
   FIRST_PUBLISH,
   fieldsGoLive,
   HiddenChanges,
-  hiddenGoLive,
   NO_CHANGES,
   ReviewHold,
   reviewFields,
   useEntryReview,
   useHandFocus,
 } from './EntryReview';
+
+/** What publishing does, for when the list below it can't say more. */
+const REPLACES_LIVE = 'The draft replaces what’s live now.';
 
 export interface PublishConfirmProps {
   readonly open: boolean;
@@ -64,7 +67,11 @@ export interface PublishConfirmProps {
 export function PublishConfirm(props: PublishConfirmProps) {
   const { changes, compare, status, hiddenChanges = 0 } = props;
   const firstPublish = status === 'draft';
-  const review = !firstPublish && (!changes || changes.length > 0);
+  // As the review counts them, so a field added empty doesn't read as a change it can't list.
+  const listed = changes ? changedCount(reviewFields(changes, '')) : 0;
+  const review = !firstPublish && (!changes || listed > 0);
+  // The editor's own diff with nothing to name: there is nothing to read, but never nothing to say.
+  const hiddenOnly = Boolean(changes) && listed === 0 && hiddenChanges > 0;
   // Read here, not in the diff: what it shows decides whether Publish entry may be pressed. The
   // editor's own diff has nothing left to fail, and with nothing to read, nothing can be shown.
   const read = useEntryReview(
@@ -79,6 +86,9 @@ export function PublishConfirm(props: PublishConfirmProps) {
   );
   const pending = read.status === 'loading';
   const blocked = read.status === 'failed' || (review && !compare && !changes);
+  // Only a finished read can say the draft matches; one that failed knows nothing.
+  const matches =
+    read.status === 'ready' && changedCount(read.fields) === 0 && !(read.hiddenChanges > 0);
   const reasonId = useId();
   const cancel = useRef<HTMLButtonElement>(null);
   const publish = useRef<HTMLButtonElement>(null);
@@ -96,18 +106,26 @@ export function PublishConfirm(props: PublishConfirmProps) {
       >
         <AlertDialogHeader>
           <AlertDialogTitle>Publish “{props.title}”?</AlertDialogTitle>
-          <AlertDialogDescription>
-            {changes
-              ? changes.length === 0
-                ? hiddenChanges > 0
-                  ? hiddenGoLive(hiddenChanges, true)
-                  : NO_CHANGES
-                : fieldsGoLive(changes.length)
-              : firstPublish
-                ? FIRST_PUBLISH
-                : compare
-                  ? 'The draft replaces what’s live now. Changed fields are listed first.'
-                  : 'Everything changed since the last publish goes live.'}
+          {/* A div, so the warning is part of what the dialog is described by. */}
+          <AlertDialogDescription asChild>
+            <div className="space-y-3">
+              <p>
+                {changes
+                  ? listed > 0
+                    ? fieldsGoLive(listed)
+                    : hiddenOnly
+                      ? REPLACES_LIVE
+                      : NO_CHANGES
+                  : firstPublish || read.status === 'first'
+                    ? FIRST_PUBLISH
+                    : matches
+                      ? NO_CHANGES
+                      : compare
+                        ? REPLACES_LIVE
+                        : 'Everything changed since the last publish goes live.'}
+              </p>
+              {hiddenOnly ? <HiddenChanges count={hiddenChanges} alone /> : null}
+            </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
         {review && (compare || changes) ? (
@@ -120,7 +138,7 @@ export function PublishConfirm(props: PublishConfirmProps) {
             {compare ? (
               <EntryDiffView
                 review={read}
-                counted={!changes}
+                counted={!changes && !matches}
                 onRetry={() => {
                   // The button goes with the failure; focus doesn't go with it.
                   cancel.current?.focus({ preventScroll: true });
@@ -138,7 +156,7 @@ export function PublishConfirm(props: PublishConfirmProps) {
         <ReviewHold id={reasonId} verb="publish" pending={pending} blocked={blocked} />
         <AlertDialogFooter>
           <AlertDialogCancel ref={cancel}>
-            {firstPublish ? 'Keep as draft' : 'Keep live version'}
+            {firstPublish || read.status === 'first' ? 'Keep as draft' : 'Keep live version'}
           </AlertDialogCancel>
           <AlertDialogAction
             variant="default"

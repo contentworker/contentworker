@@ -3,9 +3,14 @@
 // diff all read it: field names and link titles rather than API ids and JSON, each changed locale,
 // unchanged fields behind a disclosure, and honest words when the diff can't be read.
 
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EntryDiff, NO_CHANGES, reviewFields } from '~/cms/components/entries/EntryReview';
+import {
+  EntryDiff,
+  FIRST_PUBLISH,
+  NO_CHANGES,
+  reviewFields,
+} from '~/cms/components/entries/EntryReview';
 import { PublishConfirm } from '~/cms/components/entries/PublishConfirm';
 import { ApiError, type ManagementClient, type PreviewEntry } from '~/cms/lib/management';
 
@@ -136,6 +141,13 @@ describe('the diff', () => {
     await screen.findByText('No published version');
   });
 
+  it('says nothing changed in words, not as a zero', async () => {
+    client.diffVersions.mockResolvedValue({ changes: [changes[5]], hiddenChanges: 0 });
+    diffOf();
+    await screen.findByText('No field changes');
+    expect(screen.queryByText(/0 fields changed/)).toBeNull();
+  });
+
   it('says a read that failed failed, not that nothing was published', async () => {
     client.diffVersions.mockRejectedValue(new ApiError(500, 'boom'));
     diffOf();
@@ -152,13 +164,21 @@ describe('changes this person can’t read', () => {
     hidden(2, changes);
     diffOf();
     await screen.findByText('2 fields you can’t read also go live.');
-    expect(screen.getByText('5 fields changed')).toBeTruthy();
+    expect(screen.getByText('5 fields changed · 2 fields you can’t read changed')).toBeTruthy();
   });
 
   it('say so alone when nothing readable changed', async () => {
     hidden(1, [changes[5]]);
     diffOf();
     await screen.findByText('1 field you can’t read goes live.');
+  });
+
+  it('are the count when nothing readable changed, never “0 fields changed”', async () => {
+    hidden(1, [changes[5]]);
+    diffOf();
+    await screen.findByText('1 field you can’t read changed');
+    expect(screen.queryByText(/0 fields changed/)).toBeNull();
+    expect(screen.queryByText('No field changes')).toBeNull();
   });
 
   it('are carried from the editor’s own diff, in place of “nothing changed”', () => {
@@ -177,6 +197,121 @@ describe('changes this person can’t read', () => {
     );
     expect(screen.getByText('1 field you can’t read goes live.')).toBeTruthy();
     expect(screen.queryByText(NO_CHANGES)).toBeNull();
+  });
+
+  describe('alone in the editor’s own diff, right after a save', () => {
+    const confirm = (props: Partial<Parameters<typeof PublishConfirm>[0]> = {}) =>
+      render(
+        <PublishConfirm
+          open
+          onOpenChange={vi.fn()}
+          title="Pricing"
+          status="changed"
+          changes={[]}
+          hiddenChanges={1}
+          compare={{ client: asClient, entry, locale: 'en-US' }}
+          busy={false}
+          onConfirm={vi.fn()}
+          {...props}
+        />,
+      );
+    const warning = () =>
+      screen.getByText('1 field you can’t read goes live.').closest('[data-slot="alert"]');
+
+    it('are a warning Alert, not the dialog’s description', () => {
+      confirm();
+      expect(warning()?.className).toContain('bg-wait/10');
+      const dialog = screen.getByRole('alertdialog');
+      const description = document.getElementById(dialog.getAttribute('aria-describedby') ?? '');
+      // Inside the description, so a screen reader hears it with the question.
+      expect(description?.textContent).toBe(
+        'The draft replaces what’s live now.1 field you can’t read goes live.',
+      );
+    });
+
+    it('still confirm at once, reading nothing, and with nothing to compare too', () => {
+      const onConfirm = vi.fn();
+      const view = confirm({ onConfirm });
+      const publish = screen.getByRole('button', { name: 'Publish entry' }) as HTMLButtonElement;
+      expect(publish.disabled).toBe(false);
+      fireEvent.click(publish);
+      expect(onConfirm).toHaveBeenCalledOnce();
+      expect(client.diffVersions).not.toHaveBeenCalled();
+      view.unmount();
+
+      confirm({ compare: undefined as never });
+      expect(warning()).toBeTruthy();
+      expect(
+        (screen.getByRole('button', { name: 'Publish entry' }) as HTMLButtonElement).disabled,
+      ).toBe(false);
+    });
+  });
+});
+
+describe('what the confirmation says above the list', () => {
+  const lead = () => {
+    const dialog = screen.getByRole('alertdialog');
+    return document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent;
+  };
+  const dialog = (props: Partial<Parameters<typeof PublishConfirm>[0]> = {}) =>
+    render(
+      <PublishConfirm
+        open
+        onOpenChange={vi.fn()}
+        title="Pricing"
+        status="changed"
+        compare={{ client: asClient, entry, locale: 'en-US' }}
+        busy={false}
+        onConfirm={vi.fn()}
+        {...props}
+      />,
+    );
+
+  it('says the draft matches only once a read has shown it, and counts nothing twice', async () => {
+    client.diffVersions.mockResolvedValue({ changes: [changes[5]], hiddenChanges: 0 });
+    dialog();
+    expect(lead()).toBe('The draft replaces what’s live now.');
+    await waitFor(() => expect(lead()).toBe(NO_CHANGES));
+    expect(screen.queryByText('No field changes')).toBeNull();
+  });
+
+  it('never says the draft matches while a field the person can’t read changed', async () => {
+    client.diffVersions.mockResolvedValue({ changes: [changes[5]], hiddenChanges: 1 });
+    dialog();
+    await screen.findByText('1 field you can’t read goes live.');
+    expect(lead()).toBe('The draft replaces what’s live now.');
+    expect(screen.getByText('1 field you can’t read changed')).toBeTruthy();
+  });
+
+  it('promises no list it can’t show when the read fails', async () => {
+    client.diffVersions.mockRejectedValue(new ApiError(500, 'boom'));
+    dialog();
+    await screen.findByText('Couldn’t load what changed');
+    expect(lead()).toBe('The draft replaces what’s live now.');
+  });
+
+  it('says a whole entry goes live when the read finds nothing was published', async () => {
+    client.diffVersions.mockRejectedValue(new ApiError(404, 'EntryVersion not found'));
+    client.getEntry.mockResolvedValue({ ...entry, status: 'draft' });
+    dialog();
+    await screen.findByText('No published version');
+    expect(lead()).toBe(FIRST_PUBLISH);
+    expect(screen.getByRole('button', { name: 'Keep as draft' })).toBeTruthy();
+  });
+
+  it('counts the editor’s diff as the review does: a field added empty isn’t a change', () => {
+    const empty = {
+      field: 'note',
+      kind: 'added',
+      locales: [{ locale: 'en-US', kind: 'unchanged', after: null }],
+    };
+    const view = dialog({ changes: [empty] as never });
+    expect(lead()).toBe(NO_CHANGES);
+    expect(screen.queryByRole('region', { name: 'What changes' })).toBeNull();
+    view.unmount();
+
+    dialog({ changes: [empty, changes[0]] as never });
+    expect(lead()).toBe('1 field goes live:');
   });
 });
 
