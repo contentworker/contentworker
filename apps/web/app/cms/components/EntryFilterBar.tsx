@@ -324,7 +324,8 @@ export function EntryFilterBar(props: {
             Clear
           </Button>
         )}
-        {props.trailing && <div className="ml-auto">{props.trailing}</div>}
+        {/* Off a phone only: its rows show no field columns, and the buttons keep to one row. */}
+        {props.trailing && <div className="ml-auto max-md:hidden">{props.trailing}</div>}
       </div>
 
       {open && (

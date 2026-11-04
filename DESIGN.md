@@ -426,7 +426,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   filters only, status values in the status words, and a muted line with a link-button to remove
   grouped conditions a view or link brought, and another for a link's `links_to_entry`), **Mine**, a toggle, `aria-pressed`, an outline pill at
   rest and the ink fill while pressed, with no tooltip since its word says it: only the entries the
-  signed-in person created, `sys.createdBy=me`, which Clear clears with the filters, and **Columns** at the row's end (an outline `sm`
+  signed-in person created, `sys.createdBy=me`, which Clear clears with the filters, and **Columns** at the row's end, from `md` (an outline `sm`
   pill; a checkbox menu that stays open: Status, Updated and the type's fields). The filters,
   search, sort, columns and view are the page's URL. Then the table: checkbox, the title linking
   to the editor, then the picked columns, by default Status and Updated (`Ago`, the full time in

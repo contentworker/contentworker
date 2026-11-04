@@ -61,10 +61,12 @@ test('the search has its own full-width row, with the buttons beside each other'
 
   const views = (await page.getByRole('button', { name: 'Views' }).boundingBox())!;
   const filters = (await page.getByRole('button', { name: /^Filters/ }).boundingBox())!;
-  const columns = (await page.getByRole('button', { name: 'Columns' }).boundingBox())!;
+  const mine = (await page.getByRole('button', { name: 'Mine' }).boundingBox())!;
   expect(views.y, 'the buttons sit under the search').toBeGreaterThanOrEqual(box.y + box.height);
   expect(filters.y).toBe(views.y);
-  expect(columns.y).toBe(views.y);
+  expect(mine.y).toBe(views.y);
+  // A phone's rows show no field columns, so there is nothing for the picker to do here.
+  await expect(page.getByRole('button', { name: 'Columns' })).toBeHidden();
 
   const [scroll, inner] = await page.evaluate(() => [
     document.documentElement.scrollWidth,
