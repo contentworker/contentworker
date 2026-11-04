@@ -75,8 +75,10 @@ describe('discard guard', () => {
     expect(onClosed).not.toHaveBeenCalled();
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Blog Post');
     // The safe choice has focus, and it stands in for the buttons rather than beside them.
-    expect(document.activeElement).toBe(
-      within(asked).getByRole('button', { name: 'Keep editing' }),
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(asked).getByRole('button', { name: 'Keep editing' }),
+      ),
     );
     expect(screen.queryByRole('button', { name: 'Create content type' })).toBeNull();
   });

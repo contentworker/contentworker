@@ -148,7 +148,9 @@ describe('deleting a content type from the admin', () => {
     });
     renderDelete();
     await screen.findByText('The menu “main” links its entries');
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep it' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep it' })),
+    );
   });
 
   it('deletes the entries too only when asked to, as a job', async () => {

@@ -1,7 +1,7 @@
 import { Button } from '@contentworker/ui/button';
 import { focusIsAdrift } from '@contentworker/ui/lib/focus-return';
 import { cn } from '@contentworker/ui/lib/utils';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 /** Open confirmations' roots, newest last. */
 const open: { readonly root: { current: HTMLElement | null } }[] = [];
@@ -89,14 +89,21 @@ export function InlineConfirm({
   const returnFocusRef = useRef(returnFocus);
   returnFocusRef.current = returnFocus;
 
-  useEffect(() => {
-    const me = { root };
-    open.push(me);
+  // In a layout effect, so the safe choice has focus in the commit that shows it. Handing focus
+  // back stays in the effect below: a layout cleanup runs with this confirm still in the DOM, so
+  // it couldn't tell that focus had gone.
+  const asked = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
     // <body>, or the dialog around it, isn't "what asked" (Safari doesn't focus
     // a pressed button), so it falls through to `returnFocus`.
     const active = document.activeElement;
-    const before = active instanceof HTMLElement && !focusIsAdrift(active) ? active : null;
+    asked.current = active instanceof HTMLElement && !focusIsAdrift(active) ? active : null;
     cancel.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const me = { root };
+    open.push(me);
     // Window capture runs before Radix's document-level Escape handling, so a
     // confirm inside a Sheet backs out of the confirm without closing the Sheet.
     // Only when the key comes from inside this confirm (the innermost one that
@@ -115,7 +122,7 @@ export function InlineConfirm({
       // A trigger disabled by the action it confirmed can't take focus.
       const usable = (el: HTMLElement | null | undefined) =>
         el?.isConnected && !(el as HTMLButtonElement).disabled ? el : undefined;
-      const target = usable(before) ?? usable(returnFocusRef.current?.());
+      const target = usable(asked.current) ?? usable(returnFocusRef.current?.());
       target?.focus({ preventScroll: true });
     };
   }, []);

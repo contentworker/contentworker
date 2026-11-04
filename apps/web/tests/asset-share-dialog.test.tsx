@@ -246,7 +246,7 @@ describe('sharing an asset or a collection', () => {
     expect(screen.getByText('Publish it to share it')).toBeTruthy();
     expect(screen.queryByRole('form', { name: 'New share link' })).toBeNull();
     // The button that asked keeps focus through the wait and the refusal.
-    expect(document.activeElement).toBe(publish);
+    await waitFor(() => expect(document.activeElement).toBe(publish));
   });
 
   it('never says it wasn’t published when no answer came, nor on a refused retry', async () => {

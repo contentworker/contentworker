@@ -724,7 +724,11 @@ describe('EntriesList bulk bar', () => {
     // In place under the bar, naming what it changes, with the safe choice focused.
     expect(dialog.closest('[data-slot="alert-dialog-content"]')).toBeNull();
     expect(within(dialog).getByText('About us')).toBeTruthy();
-    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep as is' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(dialog).getByRole('button', { name: 'Keep as is' }),
+      ),
+    );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unpublish entries' }));
     await screen.findByText('1 entry failed');
     expect(screen.getByText(/Locked by a release/)).toBeTruthy();
