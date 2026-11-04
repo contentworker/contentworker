@@ -628,19 +628,37 @@ export function EntryForm(props: {
     const id = `field-${f.apiId}`;
     // A field its rules hide is not drawn; its value stays and is still sent. One that still
     // holds a value is named, so it can be cleared: otherwise a value nobody can see would be
-    // stored and delivered, and two fields hiding each other would hide both for good.
+    // stored and delivered, and two fields hiding each other would hide both for good. One its
+    // rules also disable keeps that value whatever the form sends, so it is named read-only and
+    // offers no Clear that the save would refuse.
     if (state?.hidden) {
       const held = shown[f.apiId]?.[locale];
       if (isEmptyValue(held)) return null;
-      const reason = heldConditions(f, contentType.fields, rulesValues(locale), 'hide');
+      const values = rulesValues(locale);
+      const reason = heldConditions(f, contentType.fields, values, 'hide');
+      const hiddenWhile = reason.length ? ` while ${reason.join(' and ')}` : '';
+      if (state.disabled) {
+        const locked = heldConditions(f, contentType.fields, values, 'disable');
+        return (
+          <p
+            key={f.apiId}
+            id={`${id}-hidden`}
+            className="rounded-lg bg-secondary/40 px-3 py-2 text-sm text-muted-foreground"
+          >
+            <span className="font-medium text-foreground">{f.name}</span> is hidden{hiddenWhile},
+            and keeps the value it holds: it is read-only
+            {locked.length ? ` while ${locked.join(' and ')}` : ''}.
+          </p>
+        );
+      }
       return (
         <div
           key={f.apiId}
           className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-2 text-sm"
         >
           <p id={`${id}-hidden`} className="text-muted-foreground">
-            <span className="font-medium text-foreground">{f.name}</span> is hidden
-            {reason.length ? ` while ${reason.join(' and ')}` : ''}, but still holds a value.
+            <span className="font-medium text-foreground">{f.name}</span> is hidden{hiddenWhile},
+            but still holds a value.
           </p>
           <Button
             type="button"
@@ -815,11 +833,17 @@ export function EntryForm(props: {
 
         {tabs.length > 1 ? (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList aria-label="Sections of the entry" className="w-full overflow-x-auto">
+            {/* Start-aligned: centred tabs that overflow push the first out of reach of the scroll. */}
+            <TabsList
+              aria-label="Sections of the entry"
+              className="w-full justify-start overflow-x-auto"
+            >
               {tabs.map((t) => {
                 const count = errorsByTab.get(t.apiId) ?? 0;
                 return (
-                  <TabsTrigger key={t.apiId} value={t.apiId} className="px-3">
+                  // As wide as its label at least: the touch minimum would otherwise let the tabs
+                  // shrink to fit, overlapping their labels instead of scrolling the bar.
+                  <TabsTrigger key={t.apiId} value={t.apiId} className="shrink-0 basis-auto px-3">
                     {t.name}
                     <ErrorCount count={count} />
                   </TabsTrigger>
@@ -1827,6 +1851,9 @@ function DateInput(props: {
 /** The element types a list editor handles value by value; Symbol lists keep their chips. */
 const LIST_ITEM_TYPES: ReadonlySet<ArrayItemType> = new Set(['Text', 'Integer', 'Number', 'Date']);
 
+/** A row the list's value keeps: an empty one (being typed into, or just added) is left out. */
+const isListValue = (r: unknown) => r !== undefined && r !== '' && !Number.isNaN(r);
+
 /**
  * A list of scalars (Text, Integer, Number or Date) edited one value per row: each with the input
  * its type takes, named "<Field> item N" since the rows repeat, and Remove; Add item appends an
@@ -1850,13 +1877,13 @@ function ScalarListInput(props: {
   const [rows, setRows] = useState<unknown[]>(stored);
   useEffect(() => {
     setRows((current) => {
-      const kept = current.filter((r) => r !== undefined && r !== '');
+      const kept = current.filter(isListValue);
       return JSON.stringify(kept) === JSON.stringify(stored) ? current : stored;
     });
   }, [stored]);
   const emit = (next: unknown[]) => {
     setRows(next);
-    const value = next.filter((r) => r !== undefined && r !== '' && !Number.isNaN(r));
+    const value = next.filter(isListValue);
     props.onChange(value.length > 0 ? value : undefined);
   };
   const numeric = itemType === 'Integer' || itemType === 'Number';
@@ -1873,13 +1900,18 @@ function ScalarListInput(props: {
     else document.getElementById(rowId(target))?.focus();
   });
   const fieldDescribedBy = props.aria['aria-describedby'] as string | undefined;
+  // An error names its item by its place in the value, which leaves out empty rows: row i is item
+  // valueIndex[i] of the value, or none when it is empty.
+  let counted = 0;
+  const valueIndex = rows.map((r) => (isListValue(r) ? counted++ : -1));
   return (
     <div className="space-y-2">
       {rows.map((item, i) => {
         const name = `${label} item ${i + 1}`;
         const change = (v: unknown) => emit(rows.map((r, j) => (j === i ? v : r)));
         // Each row carries its own error, and the list's error and help beside it.
-        const err = props.errorFor?.(`${props.path}[${i}]`);
+        const at = valueIndex[i] ?? -1;
+        const err = at < 0 ? undefined : props.errorFor?.(`${props.path}[${at}]`);
         const errId = err ? `${rowId(i)}-error` : undefined;
         const rowAria = {
           'aria-invalid': Boolean(err) || Boolean(props.aria['aria-invalid']) || undefined,

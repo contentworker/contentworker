@@ -177,6 +177,15 @@ describe('the entry form with a layout', () => {
     expect(screen.getByLabelText('Sizes item 1').getAttribute('aria-invalid')).toBeNull();
   });
 
+  it('finds a row’s error by its place in the value, which leaves out an emptied row', () => {
+    renderForm(EVENT, { email: { 'en-US': 'a@b.co' }, sizes: { 'en-US': [1, 1.5] } });
+    // Item 1 emptied: the value is [1.5], so the error at sizes[0] belongs to the second row.
+    fireEvent.change(screen.getByLabelText('Sizes item 1'), { target: { value: '' } });
+    fireEvent.submit(screen.getByLabelText('Title').closest('form') as HTMLFormElement);
+    expect(screen.getByLabelText('Sizes item 2').getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByLabelText('Sizes item 1').getAttribute('aria-invalid')).toBeNull();
+  });
+
   it('takes a date and time, a time of day and a list of numbers, saved as numbers', () => {
     const onSave = renderForm(EVENT, { email: { 'en-US': 'a@b.co' } });
     fireEvent.change(screen.getByLabelText('Day'), { target: { value: '2026-11-03' } });

@@ -57,6 +57,21 @@ test('entry tabs scroll inside the form, and the page never scrolls sideways', a
   );
   expect(pageOverflow).toBeLessThanOrEqual(0);
 
+  // The bar really overflows, with every tab as wide as its label: squeezed to fit, the labels
+  // would run into each other and there would be nothing to scroll.
+  const bar = await tabs.evaluate((el) => ({
+    overflow: el.scrollWidth - el.clientWidth,
+    clipped: [...el.querySelectorAll('[role=tab]')].filter((t) => t.scrollWidth > t.clientWidth)
+      .length,
+  }));
+  expect(bar.overflow).toBeGreaterThan(0);
+  expect(bar.clipped).toBe(0);
+
+  // The first tab starts inside the bar: tabs centred in an overflowing bar would push it past
+  // the left edge, where no scroll reaches it.
+  const first = (await page.getByRole('tab', { name: 'Overview' }).boundingBox())!;
+  expect(first.x).toBeGreaterThanOrEqual(box.x);
+
   // The last tab is reached by scrolling the bar, and opens its section.
   const last = page.getByRole('tab', { name: 'Press' });
   await last.scrollIntoViewIfNeeded();

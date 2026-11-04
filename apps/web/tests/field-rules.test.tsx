@@ -208,6 +208,42 @@ describe('conditional field rules on the entry form', () => {
     expect(screen.queryByRole('button', { name: 'Clear Link' })).toBeNull();
   });
 
+  it('names a hidden field its rules also lock read-only, with nothing to clear', () => {
+    render(
+      <EntryForm
+        contentType={{
+          ...LISTING,
+          fields: [
+            field({ apiId: 'title', name: 'Title' }),
+            field({ apiId: 'status', name: 'Status', position: 1 }),
+            field({
+              apiId: 'ref',
+              name: 'Reference',
+              position: 2,
+              rules: [
+                { action: 'hide', when: { field: 'status', operator: 'eq', value: 'sold' } },
+                { action: 'disable', when: { field: 'status', operator: 'notEmpty' } },
+              ],
+            }),
+          ],
+        }}
+        initial={{ title: { 'en-US': 'T' }, status: { 'en-US': 'sold' }, ref: { 'en-US': 'R-9' } }}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        pickers={{ entries: [], assets: [] }}
+        onSave={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByLabelText('Reference')).toBeNull();
+    expect(
+      screen.getByText(
+        /is hidden while Status is "sold", and keeps the value it holds: it is read-only while Status is not empty\./,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Clear Reference' })).toBeNull();
+  });
+
   it('hides a nested field by its component sibling', () => {
     renderForm();
     expect(screen.queryByLabelText('URL')).toBeNull();
